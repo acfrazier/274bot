@@ -51,6 +51,6 @@ reconstruction labeling.
 The existing managed-cell and evidence-reader suites were also run. No native,
 network, live, fixture, Rust, client, or 289 operation was performed here.
 
-The native qualifier mode for a future diagnostics-enabled cell must use the
-actual `--diagnostics` flag; do not describe a default/no-sidecar run as
-profile-enabled diagnostics. `performance_acceptance` remains false.
+The named native qualifier protocol now includes the actual `--diagnostics`
+flag; a default/no-sidecar run must not be described as profile-enabled
+diagnostics. `performance_acceptance` remains false.

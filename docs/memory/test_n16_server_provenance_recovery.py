@@ -43,8 +43,9 @@ class RecoveryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             paths = [root / name for name in ("preflight.json", "server.json", "conditions.json")]
-            for path in paths:
-                path.write_text("{}")
+            paths[0].write_text(json.dumps(preflight))
+            paths[1].write_text(json.dumps(identity()))
+            paths[2].write_text(json.dumps(conditions))
             result = recovery.recover_conditions(
                 preflight, identity(), conditions,
                 preflight_path=paths[0], server_identity_path=paths[1], original_conditions_path=paths[2],
@@ -53,24 +54,24 @@ class RecoveryTests(unittest.TestCase):
         self.assertTrue(result["provenance_recovery"]["not_original_artifact"])
 
     def test_absent_duplicate_wrong_processes_fail_closed(self):
-        base = {"native_preflight": {"processes": [process(pid=7)]}}
-        with self.assertRaisesRegex(recovery.RecoveryError, "0 matches"):
-            recovery.recover_conditions(base, identity(), {"native_preflight": {}},
-                                         preflight_path=pathlib.Path("p"),
-                                         server_identity_path=pathlib.Path("s"),
-                                         original_conditions_path=pathlib.Path("c"))
-        duplicate = {"native_preflight": {"processes": [process(), process()]}}
-        with self.assertRaisesRegex(recovery.RecoveryError, "2 matches"):
-            recovery.recover_conditions(duplicate, identity(), {"native_preflight": {}},
-                                         preflight_path=pathlib.Path("p"),
-                                         server_identity_path=pathlib.Path("s"),
-                                         original_conditions_path=pathlib.Path("c"))
-        wrong_name = {"native_preflight": {"processes": [process(name="powershell.exe")]}}
-        with self.assertRaisesRegex(recovery.RecoveryError, "0 matches"):
-            recovery.recover_conditions(wrong_name, identity(), {"native_preflight": {}},
-                                         preflight_path=pathlib.Path("p"),
-                                         server_identity_path=pathlib.Path("s"),
-                                         original_conditions_path=pathlib.Path("c"))
+        def assert_failure(preflight, message):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = pathlib.Path(tmp)
+                paths = [root / name for name in ("preflight.json", "server.json", "conditions.json")]
+                values = [preflight, identity(), {"native_preflight": {}}]
+                for path, value in zip(paths, values):
+                    path.write_text(json.dumps(value))
+                with self.assertRaisesRegex(recovery.RecoveryError, message):
+                    recovery.recover_conditions(
+                        *values, preflight_path=paths[0], server_identity_path=paths[1],
+                        original_conditions_path=paths[2],
+                    )
+
+        assert_failure({"native_preflight": {"processes": [process(pid=7)]}}, "0 matches")
+        assert_failure({"native_preflight": {"processes": [process(), process()]}}, "2 matches")
+        assert_failure({"native_preflight": {"processes": [process(name="powershell.exe")]}}, "0 matches")
+        assert_failure({"native_preflight": {"processes": [process(session=1)]}}, "0 matches")
+        assert_failure({"native_preflight": {"processes": [process(creation=CREATION_MS + 1_000)]}}, "0 matches")
 
     def test_source_hashes_are_stable_and_existing_server_is_not_replaced(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -90,11 +91,13 @@ class RecoveryTests(unittest.TestCase):
             self.assertEqual(before, after)
             self.assertEqual([x["sha256"] for x in result["provenance_recovery"]["source_artifacts"]], list(before.values()))
             existing = copy.deepcopy(result)
+            existing_path = root / "existing.json"
+            existing_path.write_text(json.dumps(existing))
             with self.assertRaisesRegex(recovery.RecoveryError, "existing server"):
                 recovery.recover_conditions(
                     recovery.load_object(paths["preflight"]), recovery.load_object(paths["server"]), existing,
                     preflight_path=paths["preflight"], server_identity_path=paths["server"],
-                    original_conditions_path=paths["conditions"],
+                    original_conditions_path=existing_path,
                 )
 
 

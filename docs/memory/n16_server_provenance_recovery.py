@@ -41,6 +41,18 @@ def load_object(path: Path) -> Mapping[str, Any]:
     return value
 
 
+def load_snapshot(path: Path) -> tuple[Mapping[str, Any], str]:
+    """Parse one byte snapshot and return its digest with the parsed object."""
+    try:
+        raw = path.read_bytes()
+        value = json.loads(raw.decode("utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RecoveryError(f"cannot read JSON object {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise RecoveryError(f"JSON value is not an object: {path}")
+    return value, hashlib.sha256(raw).hexdigest()
+
+
 def creation_date_to_filetime(value: Any) -> int:
     """Convert WMI /Date(milliseconds since Unix epoch)/ exactly to 100ns ticks."""
     if not isinstance(value, str):
@@ -74,9 +86,26 @@ def recover_conditions(
     expected_name: str = "node.exe",
     expected_session: int = 2,
 ) -> dict[str, Any]:
+    source_values = []
+    source_hashes = []
+    for path, supplied in (
+        (preflight_path, preflight),
+        (server_identity_path, server_identity),
+        (original_conditions_path, original_conditions),
+    ):
+        snapshot, digest = load_snapshot(path.resolve(strict=True))
+        if snapshot != supplied:
+            raise RecoveryError(f"in-memory value does not match byte snapshot: {path}")
+        source_values.append(snapshot)
+        source_hashes.append(digest)
+    preflight, server_identity, original_conditions = source_values
     native = preflight.get("native_preflight")
     if not isinstance(native, dict):
-        raise RecoveryError("preflight.native_preflight is missing")
+        # The archived Windows control is the full preflight object itself;
+        # managed host-conditions wraps that object under native_preflight.
+        native = preflight if isinstance(preflight.get("processes"), list) else None
+    if not isinstance(native, dict):
+        raise RecoveryError("preflight process observation is missing")
     processes = native.get("processes")
     if not isinstance(processes, list):
         raise RecoveryError("preflight.native_preflight.processes is missing")
@@ -115,9 +144,10 @@ def recover_conditions(
     output["provenance_recovery"] = {
         "status": "reconstructed",
         "not_original_artifact": True,
-        "method": "unique_process_row_pid_name_session_exact_creation_filetime",
+        "method": "unique_process_row_pid_name_session_creation_filetime_millisecond_precision",
         "source_artifacts": [
-            {"path": str(path.resolve()), "sha256": sha256_file(path)} for path in source_paths
+            {"path": str(path.resolve()), "sha256": digest}
+            for path, digest in zip(source_paths, source_hashes)
         ],
         "matched_server": {
             "pid": pid,
