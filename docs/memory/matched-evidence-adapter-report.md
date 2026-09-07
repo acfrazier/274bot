@@ -125,3 +125,17 @@ build was performed for this Python integration.
   margin is invented.
 - Legacy N1 fixtures without native rows remain bindable; ordinals absent is
   OK only for n=1. N>1 requires validated native ordinals.
+
+## Native runtime contract correction after 7508ade
+
+The one-renderer panel policy legitimately publishes `renderer_present=false`
+and `backend=null` for background slots. The reader now accepts that observed
+absence and canonicalizes its comparison key to `backend=absent`. Present
+renderers require cpu/cpu_fallback/gpu; ended generations or mismatched renderer
+slot IDs are rejected. Slot IDs and generations must be u64-shaped integers,
+loop_cycle i32-shaped, and all native global scalar settings have strict types.
+Native n/frontend/workload must agree with the requested run.
+
+All 44 adapter/resource tests pass, including a production-shaped 16-slot panel
+with 15 absent renderers and eight malformed scalar/identity/backend probes.
+This adds no runtime instrumentation and does not change any frozen binary.

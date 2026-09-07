@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import datetime
 import json
+import copy
 import pathlib
 import shutil
 import sys
@@ -201,7 +202,7 @@ def _native_qual_proof(
                 slot["renderer"] = {
                     "available": True,
                     "source": "host::render_profile::read",
-                    "slot_id": 3000 + i,
+                    "slot_id": slot['cadence_slot_id'],
                     "generation": 1 if phase_tag == "start" else 2,
                     "renderer_present": True,
                     "backend": "cpu",
@@ -1604,6 +1605,44 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
         self.assertTrue(ref_b["binding_ok"])
         self.assertFalse(ref_b["slot_ordinals_present"])
         self.assertEqual(ref_b["match_keys"]["sampler_duration_mode"], "fixed")
+
+
+class NativeRuntimeContractTests(unittest.TestCase):
+    def test_one_renderer_mode_accepts_explicit_absence(self):
+        proof = _native_qual_proof(n=16, name_prefix='panel', started_unix=1000,
+                                  settings_override={'frontend':'panel', 'render_policy_requested':'focused-one'})
+        for boundary in proof:
+            for slot in boundary['slots'][1:]:
+                slot['renderer'].update(renderer_present=False, backend=None)
+        with tempfile.TemporaryDirectory() as tmp:
+            path=pathlib.Path(tmp)
+            (path/'samples.qualification.jsonl').write_text('\n'.join(json.dumps(r) for r in proof)+'\n')
+            result=mea.consume_native_qualification(path,n=16,meta={'frontend':'panel','workload':'active',
+                                                                  'started_unix':1000,'ended_unix':1100})
+        self.assertEqual(result['status'],'available',result)
+        self.assertEqual(sum(r['backend']=='absent' for r in result['match_keys']['renderer_config_by_ordinal']),15)
+
+    def test_typed_native_fields_and_renderer_identity(self):
+        proof = _native_qual_proof(n=1,name_prefix='slot',started_unix=1000)
+        changes = [
+            lambda b: b['settings'].update(scheduling_profile_enabled=1),
+            lambda b: b['settings'].update(n='1'),
+            lambda b: b['slots'][0].update(responsiveness_slot_id=1.5),
+            lambda b: b['slots'][0]['runtime_settings'].update(loop_cycle=1.5),
+            lambda b: b['slots'][0]['renderer'].update(generation=float('nan')),
+            lambda b: b['slots'][0]['renderer'].update(slot_id=123),
+            lambda b: b['slots'][0]['renderer'].update(backend='unknown'),
+            lambda b: b['slots'][0]['renderer'].update(ended=True),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path=pathlib.Path(tmp)
+            for change in changes:
+                rows=copy.deepcopy(proof)
+                for b in rows:
+                    change(b)
+                (path/'samples.qualification.jsonl').write_text('\n'.join(json.dumps(r) for r in rows)+'\n')
+                result=mea.consume_native_qualification(path,n=1,meta={'started_unix':1000,'ended_unix':1100})
+                self.assertEqual(result['status'],'unavailable',result)
 
 
 if __name__ == "__main__":

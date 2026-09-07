@@ -1179,7 +1179,7 @@ def _extract_runtime_settings_match(rs: Any) -> tuple[Optional[dict], Optional[s
                 return None, f"runtime_settings_type:{field}"
         out[field] = val
     # Freshness only — require typed presence, never equality-match across runs.
-    if "loop_cycle" not in rs or type(rs["loop_cycle"]) not in (int, float) or not math.isfinite(float(rs["loop_cycle"])):
+    if type(rs.get("loop_cycle")) is not int or not -(1 << 31) <= rs['loop_cycle'] < (1 << 31):
         return None, "runtime_settings_loop_cycle_invalid"
     if rs.get("loop_cycle_meaning") != "client_mainloop_counter":
         return None, "runtime_settings_loop_cycle_meaning_invalid"
@@ -1199,8 +1199,6 @@ def _extract_renderer_match(slot: dict, *, profile_enabled: bool) -> tuple[Optio
     if renderer.get("available") is not True:
         return None, "renderer_available_not_true"
     backend = renderer.get("backend")
-    if not isinstance(backend, str) or not backend:
-        return None, "renderer_backend_missing"
     for field, expected_type in (
         ("renderer_present", bool),
         ("draw", bool),
@@ -1209,8 +1207,21 @@ def _extract_renderer_match(slot: dict, *, profile_enabled: bool) -> tuple[Optio
     ):
         if type(renderer.get(field)) is not expected_type:
             return None, f"renderer_field_invalid:{field}"
-    if type(renderer.get("generation")) not in (int, float):
+    if type(renderer.get("generation")) is not int or not 0 <= renderer['generation'] < (1 << 64):
         return None, "renderer_generation_invalid"
+    if (type(renderer.get('slot_id')) is not int
+            or renderer['slot_id'] != slot.get('cadence_slot_id')):
+        return None, 'renderer_slot_identity_mismatch'
+    if renderer['ended']:
+        return None, 'renderer_generation_ended'
+    if renderer['renderer_present']:
+        if backend not in ('cpu', 'cpu_fallback', 'gpu'):
+            return None, 'renderer_backend_invalid'
+    elif backend is not None:
+        return None, 'absent_renderer_has_backend'
+    else:
+        # Explicitly observed absence is valid in the one-renderer panel mode.
+        backend = 'absent'
     # Stable config only — omit timestamps, generation, run-local slot_id.
     return {
         "status": "enabled",
@@ -1249,7 +1260,7 @@ def _validate_slot_rows(slots: Any, *, n: int, phase: str) -> tuple[Optional[lis
         names.add(name)
         resp_id = slot.get("responsiveness_slot_id")
         cadence_id = slot.get("cadence_slot_id")
-        if type(resp_id) not in (int, float) or type(cadence_id) not in (int, float):
+        if any(type(v) is not int or not 0 <= v < (1 << 64) for v in (resp_id, cadence_id)):
             return None, f"slot_ids_invalid:{phase}:{idx}"
         if resp_id in resp_ids:
             return None, f"responsiveness_slot_id_duplicate:{phase}"
@@ -1283,6 +1294,14 @@ def _extract_settings_match(settings: Any) -> tuple[Optional[dict], Optional[str
         val = settings[field]
         if val is None:
             return None, f"settings_null:{field}"
+        if field in ('host', 'frontend', 'workload', 'render_policy_requested'):
+            if not isinstance(val, str) or not val:
+                return None, f'settings_type:{field}'
+        elif field in ('port', 'n'):
+            if type(val) is not int or val < 1 or (field == 'port' and val > 65535):
+                return None, f'settings_type:{field}'
+        elif type(val) is not bool:
+            return None, f'settings_type:{field}'
         out[field] = val
     env = settings.get("env_flags_requested")
     if not isinstance(env, dict) or not env:
@@ -1468,6 +1487,13 @@ def consume_native_qualification(
         out["settings_start"] = start_settings
         out["settings_end"] = end_settings
         return out
+    if start_settings['n'] != n:
+        out['reason'] = 'native_settings_n_mismatch'
+        return out
+    for field in ('frontend', 'workload'):
+        if field in meta and start_settings[field] != meta[field]:
+            out['reason'] = 'native_settings_metadata_mismatch:' + field
+            return out
 
     render_enabled = start_settings.get("render_profile_enabled") is True
     if type(start_settings.get("render_profile_enabled")) is not bool:
