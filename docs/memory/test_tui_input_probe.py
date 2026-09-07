@@ -1,18 +1,22 @@
 import json
 import os
 import pathlib
-import pty
 import select
+import sys
 import tempfile
 import time
-import tty
 import unittest
+
+if sys.platform != 'win32':
+    import pty
+    import tty
 
 from tui_input_probe import InputProbe
 import run_diagnostic as rd
 
 
 class ProbeTest(unittest.TestCase):
+    @unittest.skipIf(sys.platform == 'win32', 'Unix PTY transport test')
     def test_real_pty_only_observation_and_restores_overlay(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
@@ -42,6 +46,7 @@ class ProbeTest(unittest.TestCase):
                 os.close(master)
                 os.close(slave)
 
+    @unittest.skipIf(sys.platform == 'win32', 'Unix PTY transport test')
     def test_malformed_boundaries_fail_without_keystrokes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
@@ -60,6 +65,7 @@ class ProbeTest(unittest.TestCase):
                 os.close(master)
                 os.close(slave)
 
+    @unittest.skipIf(sys.platform == 'win32', 'Unix PTY transport test')
     def test_partial_line_waits_and_child_exit_closes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
