@@ -434,3 +434,42 @@ runtime settings/host/server provenance, collector/overhead consumption,
 matched builds with equal instrumentation, then the approved resource,
 responsiveness, panel and lifecycle matrix and final whole-branch Grok-4.6.
 No matched performance win or low-end deployment qualification is accepted.
+
+## 2026-09-07 06:05 UTC — matched instrumentation and managed evidence pipeline
+
+No live frontend run followed the earlier successful N16 diagnostic yet. The
+intermittent N16 failure is still unexplained; no matched saving or deployment
+budget is accepted. The previous section's pending-tool statuses are superseded
+by the following reviewed work.
+
+- Reader provenance corrections 85235ee/84d4ac5 passed Grok review; launcher
+  manifest binding 3f74108 also passed. Legacy N1 artifacts still lack full proof.
+- Continuous collector schema2 and duration/coverage corrections are approved.
+  Optional macOS libproc backend b11e2e7 is approved: current RSS, stable start
+  identity, and Mach CPU conversion (125/3 timebase here), without ps children.
+- Native qualification ordinals/settings c18bc0b/c32c109 and wall-clock brackets
+  1df5890 passed review. Host-play no-alloc has 175 passing tests. Boundary wall
+  brackets fix the unequal launcher and Rust elapsed-clock origins.
+- Root synced these native changes to control 8741399, preserving only the
+  original duplicate-navigation difference. Both release builds succeeded with
+  stable source/client inputs; all four frozen TUI/panel entries verified.
+  See matched-instrumented-build-report.md and its named manifest. Grok review
+  t_e596bc02 approved this build proof. Old binaries were not overwritten.
+- Process coverage reader 6f2e886/b9a929e and cache receipt binding
+  030188f/c6ce0da are approved. They report explicit PID resource ownership and
+  complete local-cache pre/post fingerprints, not overhead acceptance.
+- Corrected managed runner c667764/bd98f5c passed round-2 review t_f856b24f:
+  stop after actual observe-end plus two intervals; independently clean an owned
+  frontend after launcher exit; preserve true exits and runner errors. All 18
+  dummy tests passed. A launcher dying before its required sample tail fails
+  honestly; it is not converted into successful continuous accounting.
+- Native settings reader 7508ade is approved. Root followup 4214e06 handles
+  explicitly absent panel renderers and strict scalar types (44 reader/resource
+  tests), under review t_fcd92604. Root managed resource artifact integration
+  915a79c passed 70 combined tests and awaits review t_f5423a2b.
+
+Current next work: t_dfcac237 wires cache capture and actual helper identities
+into managed receipts. Then qualify the full pipeline on the frozen builds,
+execute the approved OFF/ON/ON/OFF sequence and matched/scaling/resource/latency
+cells, resolve concrete target misses, complete panel/lifecycle/reference-device
+validation and whole-branch Grok-4.6, then resume JavaScript compatibility.
