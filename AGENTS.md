@@ -14,9 +14,21 @@ Read applicable instructions once. Do not search unrelated worktrees or archives
 
 **Rendering:** GPU 3D lives in the client submodule; `BOT_CPU=1` selects CpuPix3D. Preserve the last-FBO freeze while `scene_state==1`.
 
-**SDD roles (operator):** Hermes profile `implementer` uses `grok-composer-2.5-fast`; `reviewer` uses `grok-4.5`; **`branchreviewer` uses `grok-4.6`**. Use profile defaults, without task model/provider overrides; verify the actual review model. The orchestrator may be the current Codex session or the configured Hermes `orch` profile. Screenshot proofs require a tool/model that actually reads the captures; the orchestrator may perform them directly. Do not skip the final Grok pass. Repo hygiene (remotes, force-push, submodules) is **orch inline**, not subagent-driven.
+**SDD workflow (operator, confirmed 2026-09-07):** use the existing Hermes `274bot` board and these configured profiles:
 
-The operator also authorized profile `luna` (`gpt-5.6-luna`, `openai-codex`) for bounded implementation/tooling tasks on 2026-09-06. Use that profile's defaults and the same `reviewer` handoff; required Grok reviews are unchanged.
+| Role / profile | Model | Provider |
+| --- | --- | --- |
+| `implementer` | `grok-composer-2.5-fast` | `xai-oauth` |
+| `luna` (bounded implementation/tooling) | `gpt-5.6-luna` | `openai-codex` |
+| `reviewer` (per-task review) | `grok-4.5` | `xai-oauth` |
+| `branchreviewer` (required whole-branch review) | `grok-4.6` | `xai-oauth` |
+| `orch` (when using Hermes) | `gpt-6-astra` | `openai-codex` |
+
+The current Codex session may orchestrate directly. DeepSeek Flash / Flash Vision assignments in older snapshots are superseded by this operator-confirmed workflow. Screenshot proofs require a tool/model that actually reads the captures; the orchestrator may perform them directly.
+
+Dispatch by **profile name**, using profile defaults without task model/provider overrides. Verify the configured defaults before first dispatch and the actual model used by each review. Implementation hands the same card to profile `reviewer` with `kanban_request_review`, then stops; do not use a model name as the assignee or create a duplicate routine review card. Corrective reviews for wrong-model runs and the separate final `branchreviewer` card are required where applicable. Poll actual runs through review completion; an assignee label or task creation is not proof that a worker ran. Details: `docs/execution.md` in the active campaign checkout.
+
+Do not skip the final Grok pass. Repo hygiene (remotes, force-push, submodules) is **orch inline**, not subagent-driven.
 
 **Git (this is the only copy of the rule — plans must not restate it):**
 - **SDD implementer / spawned subagent:** forbidden on `main`. Run `git branch --show-current`. If it is `main`, **stop** and tell the orch. Commit only on the orch-named branch or a worktree (`isolation: worktree`). Never merge, never push remotes, never `checkout main`.
