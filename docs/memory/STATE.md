@@ -473,3 +473,8 @@ into managed receipts. Then qualify the full pipeline on the frozen builds,
 execute the approved OFF/ON/ON/OFF sequence and matched/scaling/resource/latency
 cells, resolve concrete target misses, complete panel/lifecycle/reference-device
 validation and whole-branch Grok-4.6, then resume JavaScript compatibility.
+
+
+## 2026-09-07 06:32 UTC — managed pipeline live qualification
+
+Fresh N1 cell completed with independent workload/native/cache/process binding available after reviewed f93ec76 path fix; prior failed cell preserved. See [managed-pipeline-qualification-report.md](managed-pipeline-qualification-report.md). All six declared process roles continuously cover native observation. No accepted performance saving or overhead verdict: median host RSS 285.969 MiB and 36.123 loops/s miss N1 targets; input still unobserved. Cadence audit and offline four-cell overhead analysis delegated; no current live process.
