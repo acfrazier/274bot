@@ -21,7 +21,7 @@ Scope: instrumentation + offline adapter only. **No live/performance acceptance,
 
 ### Offline (`docs/memory/reference_metrics.py`)
 - Contained window uses native mono only (domain exact; observe bounds from first/last `elapsed_mono_ns`; read ⊆ sample; cap_hi ≤ read_hi; interior ended rejected).
-- Without mono: fail-closed `publisher_clock_bracket_missing` after counter audit.
+- Without mono: fail closed. The older real N1 captures currently report `unmatched_canceled_counter_missing` first; they also lack the native clock brackets. Rows with the unmatched counter but no clock bracket report `publisher_clock_bracket_missing` after counter validation.
 - Decode identity: `edge = dispatch + canceled - unmatched + pending + dropped + lost`; pending is a gauge.
 - **Both** decode and input run interior histogram + `latency_n` monotonic checks before accepting a span (closes recovered hist-reset false pass).
 - **Per selected native row** (endpoints + every interior): coarse hist sum == `latency_n` == dispatch (decode) / complete (input); required native hist/latency_n/event/bounds fields missing → reject (not optional-when-present). When fine is present on the span, it must be uniform, conserve totals, and roll into coarse ≤100 bins with overflow equality. Maximal contained span is kept — no favorable inner search around a bad middle.
@@ -33,7 +33,7 @@ Scope: instrumentation + offline adapter only. **No live/performance acceptance,
   `paired_within_margin` pass boolean. True paired ≤2 ms evidence adapter (artifact
   binding, slot→run, gate/endpoint match) remains an explicit remaining gap.
 
-## Bounded per-slot storage / work (extra vs pre-task)
+## Bounded structural storage / work (extra vs pre-task)
 
 | Item | Approx size / work |
 |:---|:---|
@@ -41,10 +41,10 @@ Scope: instrumentation + offline adapter only. **No live/performance acceptance,
 | `input_fine_latency_buckets` `[u64; 101]` | 808 B |
 | Separate decode/input capture mono brackets (4×u64 ns) | 32 B |
 | `decode_unmatched_canceled_n` | 8 B |
-| Fine hist increment on record path | +1 bin index + optional add when fine on |
+| Fine hist record path | Scan at most 100 bounds, then increment one bin when fine is on |
 | Fine off | null siblings / no fine bin work |
 
-Exact live on/off overhead measurement remains **missing** (resource overhead proof still unlocked-blocked).
+The fields add 1,656 bytes per `SlotObservation` copy. An active profiled slot retains both `Local.snap` and a registry row, approximately 3,312 additional bytes before temporary read clones, JSON serialization, allocator effects, and any inline optional storage. These are structural sizes, not resident-memory measurements. Exact live on/off overhead measurement remains **missing**; the resource gate stays unavailable.
 
 ## Tests run (this revision)
 
@@ -64,7 +64,7 @@ Adversarial fixtures under `docs/memory/diagnostics/clock-adapter-review-2026090
 
 - No live matched-run performance or latency acceptance from this card.
 - No on/off overhead measurement yet; resource overhead proof remains missing.
-- Legacy JSONL without mono stays `publisher_clock_bracket_missing` (not metadata opt-in).
+- Legacy JSONL remains unavailable. The old real N1 captures report `unmatched_canceled_counter_missing` first and also lack native clock brackets; no timestamps or unmatched counts are synthesized from metadata.
 - Unit fixtures prove adapter fail-closed / clock enclosure semantics only — not product latency.
 - Endpoints remain truthful: TUI draw flush / GPU callback, not physical display scanout.
 - Process-local clocks are not comparable across runs except durations/distributions.
