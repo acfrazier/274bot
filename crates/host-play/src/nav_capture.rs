@@ -588,13 +588,27 @@ pub struct JsonDrainResult {
 }
 
 impl JsonDrainResult {
-    /// Honest missing-capture / loss line for harness stderr (None when writes succeeded).
+    /// Routine drain stderr note: silent when nothing was queued; loss only when
+    /// items were dequeued and all writes failed. Successful writes → None.
+    /// Do not call this on every poll expecting a missing-capture line.
     pub fn completion_note(&self) -> Option<String> {
+        if self.written > 0 || self.attempted == 0 {
+            return None;
+        }
+        Some(format!(
+            "nav-capture drain loss: attempted={} written=0 failed={}",
+            self.attempted, self.failed
+        ))
+    }
+
+    /// Terminal Ok/Err boundary note only. Empty queue is not a global
+    /// "missing capture" claim (earlier successful drains may already exist).
+    pub fn terminal_boundary_note(&self) -> Option<String> {
         if self.written > 0 {
             return None;
         }
         if self.attempted == 0 {
-            Some("no checkpoint JSON drained (missing capture or already empty)".into())
+            Some("no queued checkpoint at this boundary (earlier files may exist)".into())
         } else {
             Some(format!(
                 "nav-capture drain loss: attempted={} written=0 failed={}",
@@ -1150,25 +1164,25 @@ mod tests {
         );
         assert!(
             !pending(),
-            "mkdir failure must clear ready+terminal so TUI Ok(true) cannot hang"
+            "mkdir failure must clear ready+terminal (queue/loss invariant only; TUI match no longer gates on pending — source-level review)"
         );
-        // Production harness completion: original Ok/Err preserved; drain loss
-        // is advisory only (exit decision is independent of pending()).
-        let harness_ok = true; // Ok(true) path
-        let may_exit = harness_ok && !pending();
-        assert!(
-            may_exit,
-            "after drain, harness may complete without pending gate hang"
-        );
+        // Drain loss is advisory: completion_note/terminal_boundary_note from counts.
+        // Do not synthesize harness exit with pending() — that reintroduces the removed gate.
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn completion_note_helper_distinguishes_empty_success_from_loss() {
         let empty = JsonDrainResult::default();
+        // Routine empty drains are silent (no per-pump missing-capture flood).
+        assert!(
+            empty.completion_note().is_none(),
+            "routine empty must be silent, got {:?}",
+            empty.completion_note()
+        );
         assert_eq!(
-            empty.completion_note().as_deref(),
-            Some("no checkpoint JSON drained (missing capture or already empty)")
+            empty.terminal_boundary_note().as_deref(),
+            Some("no queued checkpoint at this boundary (earlier files may exist)")
         );
         let ok = JsonDrainResult {
             attempted: 2,
@@ -1177,6 +1191,7 @@ mod tests {
             notes: vec![],
         };
         assert!(ok.completion_note().is_none());
+        assert!(ok.terminal_boundary_note().is_none());
         let loss = JsonDrainResult {
             attempted: 3,
             written: 0,
@@ -1185,6 +1200,10 @@ mod tests {
         };
         assert_eq!(
             loss.completion_note().as_deref(),
+            Some("nav-capture drain loss: attempted=3 written=0 failed=3")
+        );
+        assert_eq!(
+            loss.terminal_boundary_note().as_deref(),
             Some("nav-capture drain loss: attempted=3 written=0 failed=3")
         );
     }

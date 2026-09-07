@@ -9,7 +9,9 @@ Scope: bounded diagnostic instrumentation only — no live run, no behavior fix,
 - `BOT_NAV_CAPTURES=1` enables capture for **panel and TUI** (`memory.rs` no longer panel-gates `enable`).
 - Launcher: `--nav-captures` allowed on **TUI** as data-only mode; panel still requires `--single-renderer` or `--focused-one`.
 - TUI drain: `nav_capture::drain_json_files() -> JsonDrainResult` writes checkpoint JSON under `274BOT_SMOKE_DIR` (or `~/.274bot/smoke`) with `"drain":"tui-data-only"`. No renderer select, no GPU screenshots, **no 25s terminal wait**.
-- `JsonDrainResult` carries `attempted` / `written` / `failed` / `notes`. Missing-capture stderr uses `completion_note()` from **counts** (not “empty notes”). Successful writes leave `notes` empty and do **not** print missing-capture.
+- `JsonDrainResult` carries `attempted` / `written` / `failed` / `notes`.
+  - **Routine pump** uses `completion_note()`: silent when `attempted==0`; loss note only when dequeued items all fail; successful writes → no missing-capture.
+  - **Terminal Ok/Err** uses `terminal_boundary_note()`: empty queue → `no queued checkpoint at this boundary (earlier files may exist)` (not a global missing-capture claim after prior drains); loss from counts; success → None.
 - Drain always dequeues the ready queue first; mkdir/write failure discards queued items, clears the data-only terminal latch, and reports loss counts so `pending()` cannot hang TUI `Ok(true)`.
 - TUI does **not** gate harness exit on `pending()` (data-only; panel screenshot wait unchanged). On `Err`: immediate drain + original error + exit 1.
 - Panel screenshot focus/timing remains in `panel::nav_capture` (unchanged).
@@ -62,7 +64,7 @@ Scope: bounded diagnostic instrumentation only — no live run, no behavior fix,
 
 ```text
 cargo test -p host-play --lib --features memory-profile nav_capture -- --test-threads=1
-# 14 passed (includes mkdir-discard + completion_note + successful write counts)
+# 14 passed (mkdir-discard + silent empty routine note + terminal boundary note + write counts)
 
 cargo test -p host-play --lib --features memory-profile -- --test-threads=1
 # 165 passed
@@ -75,6 +77,11 @@ cargo check -p tui --features memory-profile
 ```
 
 No client suite (client unchanged). No live/perf acceptance.
+
+### Round-2 drain reporting fix
+- Per-pump empty drains no longer print missing-capture (stderr flood).
+- Boundary empty phrasing is local to the terminal drain moment.
+- Unit tests assert queue/loss/pending-clear only — no synthetic `harness_ok && !pending()` production-proof.
 
 ## Files
 - `crates/host-play/src/nav_capture.rs`

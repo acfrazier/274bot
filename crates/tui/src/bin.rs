@@ -949,12 +949,15 @@ impl TuiSession {
                 // Do not gate Ok/Err completion on pending screenshot-style
                 // queues: drain always dequeues/discards and reports counts.
                 if host_play::nav_capture::enabled() {
+                    // Routine pump: silent when queue empty; notes/loss only.
                     report_nav_json_drain(host_play::nav_capture::drain_json_files());
                 }
                 match run.poll(play) {
                     Ok(true) => {
                         if host_play::nav_capture::enabled() {
-                            report_nav_json_drain(host_play::nav_capture::drain_json_files());
+                            report_nav_json_drain_terminal(
+                                host_play::nav_capture::drain_json_files(),
+                            );
                         }
                         eprintln!("PASS: memory tui observation complete");
                         std::process::exit(0);
@@ -964,7 +967,9 @@ impl TuiSession {
                         // Immediate drain of existing checkpoints / failure
                         // boundary already latched by nav failure path.
                         // Preserve original Err/exit1 — never hold for observe.
-                        report_nav_json_drain(host_play::nav_capture::drain_json_files());
+                        report_nav_json_drain_terminal(
+                            host_play::nav_capture::drain_json_files(),
+                        );
                         eprintln!("FAIL: memory tui: {error}");
                         std::process::exit(1);
                     }
@@ -1412,13 +1417,26 @@ fn multibox_key(session: &mut TuiSession, app: &mut TuiApp) {
     }
 }
 
-/// Report data-only nav-capture drain counts/notes. Never gates harness exit.
+/// Routine pump drain: print I/O notes and write-loss only. Empty queue is silent
+/// so per-poll drains do not flood missing-capture on stderr.
 #[cfg(feature = "memory-profile")]
 fn report_nav_json_drain(result: host_play::nav_capture::JsonDrainResult) {
     for note in &result.notes {
         eprintln!("[nav-capture] {note}");
     }
     if let Some(note) = result.completion_note() {
+        eprintln!("[nav-capture] {note}");
+    }
+}
+
+/// Terminal Ok/Err boundary only: may report empty queue as boundary-local
+/// (earlier files may exist). Never gates harness exit.
+#[cfg(feature = "memory-profile")]
+fn report_nav_json_drain_terminal(result: host_play::nav_capture::JsonDrainResult) {
+    for note in &result.notes {
+        eprintln!("[nav-capture] {note}");
+    }
+    if let Some(note) = result.terminal_boundary_note() {
         eprintln!("[nav-capture] {note}");
     }
 }
