@@ -776,7 +776,7 @@ See hyperv-builder-native-proof-report.md and its raw hashed evidence.
 User requested network observation/notes only while others use it. Both hosts
 use2.4GHz/channel6; disk-free SSH measured6.84MB/s upload and8.70MB/s download
 through guest proxy. Wireless leading hypothesis, not proven sole limit.
-No router/Wi-Fi changes, reconnects or further throughput tests now. Existing
+Throughput tests are authorized; no resets to other users' connections. Existing
 Windows viewer settings unchanged.
 
 Native fingerprint screen protocol predeclared2526bbb; no paired cells yet.
@@ -784,3 +784,10 @@ Luna freeze t_ab1637ae now building candidate after baseline tests passed.
 Submit attribution70e9783 plus uncommitted client diff is in Grok4.5 review
 t_c14b3d93; root must commit reviewed client and gitlink before native build.
 Final performance/latency/lifecycle/scaling and whole-branchGrok4.6 remain.
+
+Operator clarification19:04: throughput tests allowed; do not reset other
+users' connections. Completed32MiB direct TCP diagnostic11.124MB/s upload and
+9.892MB/s download. No disk/SSH required to observe the low ceiling;2.4GHz
+path remains leading cause hypothesis, SSH contributes some overhead. Temporary
+Mac-only Windows firewall rule/listener removed and verified0; taskdisabled.
+No network changes.

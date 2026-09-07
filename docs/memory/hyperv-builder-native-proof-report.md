@@ -77,10 +77,9 @@ replies while SSH worked; do not infer network packet loss from that.
 
 Disk I/O is not needed to reproduce the general low transfer rate. The shared
 2.4GHz path is a leading hypothesis, but SSH overhead and other factors remain
-unseparated. Operator explicitly requested observation/notes only because others
-use the network: no router settings, Wi-Fi reconnects or further throughput
-tests now. No network settings were changed. A later user-approved band/wired
-comparison would be needed for causal attribution.
+unseparated. Operator clarified that others use the network: no shared-network interruption. Throughput tests are authorized; changes
+that reset anyone else's connection are prohibited. No network settings were changed. A later comparison changing only our band/wired connection would be needed
+for causal attribution; shared router changes are not authorized.
 
 ## Evidence
 
@@ -92,3 +91,21 @@ toolchain install command/log, and transfer-probe results. User-data itself and
 private keys are excluded. Native root remains running and ready for bounded
 build work. Future clean Windows measurements must keep builder activity quiet
 and separately record the VM state.
+
+## Subsequent direct TCP probe
+
+Operator clarified throughput tests are fine; nothing may reset other users'
+connections. A single32MiB each-direction direct TCP test (no SSH encryption,
+compression or disk I/O) measured upload11.124MB/s and download9.892MB/s,
+excluding connection startup. This narrows the bottleneck: SSH is not the sole
+low-throughput limit, though it adds overhead in the earlier tests. Link
+conditions/other traffic varied, so this is not a matched cipher benchmark or
+proof of the router's exact bottleneck.
+
+The Windows listener bound10.0.0.205:50274 with a temporary private-profile
+firewall rule restricted to Mac10.0.0.176; the handler also checked the peer IP.
+It used a256KiB buffer,32MiB per direction and bounded waits. Successful task
+exit0 and native cleanup prove rule_count0/listener_count0; its no-trigger
+scheduled task is disabled. No Wi-Fi/router settings or connections changed.
+Raw client timings, scripts and native cleanup are in the same hashed evidence
+directory. No additional throughput or reconnect experiment is underway.
