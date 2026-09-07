@@ -352,7 +352,7 @@ def evaluate_scheduling_slots(
         if None in (cycle_delta, interval_delta, mode_delta, park_delta, anchor_delta):
             slots.append(_unavailable("counter_reset", **base))
             continue
-        if cycle_delta != interval_delta + mode_delta + park_delta + anchor_delta:
+        if cycle_delta != interval_delta + mode_delta + anchor_delta:
             slots.append(_unavailable("interval_coverage_mismatch", **base,
                                        cycle_delta=cycle_delta, interval_n_delta=interval_delta,
                                        mode_break_n_delta=mode_delta, park_n_delta=park_delta,
@@ -383,7 +383,7 @@ def evaluate_scheduling_slots(
                       "observed_fps": fps, "observed_iterations_per_s": fps,
                       "target_interval_ms": target_interval_ms,
                       "target_verdict": verdict,
-                      "coverage_math": "cycle_delta = interval_delta + mode_break_delta + park_delta + anchor_miss_delta",
+                      "coverage_math": "cycle_delta = interval_delta + mode_break_delta + anchor_miss_delta",
                       "scene_transition_separation": erow.get("scene_transition_separation", "unavailable"),
                       "global_mono_alignment_claim": False,
                       "jsonl_row_time_is_not_interval_endpoint": True})

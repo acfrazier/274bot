@@ -53,7 +53,9 @@ hardware-presentation endpoint remain outside this card.
    mono comparison across slots or against global `elapsed_s` is made. The
    lifetime `first_interval_*` fields are deliberately ignored because they
    generally include warmup. Coverage is checked as
-   `cycle_delta = interval_delta + mode_break_delta + park_delta + anchor_miss_delta`;
+   `cycle_delta = interval_delta + mode_break_delta + anchor_miss_delta`;
+   `park_n_delta` is still reported, but parking clears the anchor without
+   incrementing `cycle_n`; the resumed cycle is represented by `anchor_miss_delta`.
    resets, ended/lost rows, stale/missing snapshots, duplicate/missing expected
    slots, and incomplete coverage fail closed. `scene_transition_separation`
    remains unavailable, so this is not steady-scene-only proof.

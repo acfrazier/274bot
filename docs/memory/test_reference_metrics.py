@@ -208,7 +208,7 @@ class PerSlotSchedulingTests(unittest.TestCase):
             "updated_ms": 123, "ended": ended, "cycle_n": cycle,
             "interval_n": intervals, "interval_buckets": buckets,
             "interval_bound_ms": list(rm.SLOT_INTERVAL_BOUNDS_MS),
-            "interval_coverage_complete": cycle == intervals + mode_break + park + anchor_miss,
+            "interval_coverage_complete": cycle == intervals + mode_break + anchor_miss,
             "mode_break_n": mode_break, "park_n": park, "anchor_miss_n": anchor_miss,
             "ended_lost_n": lost, "last_cycle_mono_ms": mono,
             "last_cycle_ms": 1_000_000 + mono,
@@ -234,7 +234,7 @@ class PerSlotSchedulingTests(unittest.TestCase):
         self.assertEqual(slot["measured_duration_ms"], 1000)
         self.assertEqual(slot["interval_n_delta"], 40)
         self.assertEqual(slot["target_verdict"], "meet")
-        self.assertEqual(slot["coverage_math"], "cycle_delta = interval_delta + mode_break_delta + park_delta + anchor_miss_delta")
+        self.assertEqual(slot["coverage_math"], "cycle_delta = interval_delta + mode_break_delta + anchor_miss_delta")
 
     def test_local_origins_are_not_compared_between_slots(self):
         meta = _meta(scheduling_profile=True)
@@ -270,12 +270,13 @@ class PerSlotSchedulingTests(unittest.TestCase):
         meta = _meta(scheduling_profile=True)
         start = self._row(mono=10_000, cycle=0)
         end = self._row(mono=11_000, cycle=42, intervals=40, interval_bucket=27,
-                        mode_break=1, park=1)
+                        mode_break=1, park=1, anchor_miss=1)
         result = rm.evaluate_scheduling_slots(meta, self._pair([start], [end]))
         self.assertEqual(result["status"], "available")
         self.assertEqual(result["slots"][0]["interval_n_delta"], 40)
         self.assertEqual(result["slots"][0]["mode_break_n_delta"], 1)
         self.assertEqual(result["slots"][0]["park_n_delta"], 1)
+        self.assertEqual(result["slots"][0]["anchor_miss_n_delta"], 1)
 
     def test_end_only_expected_slot_is_rejected(self):
         meta = _meta(scheduling_profile=True)
