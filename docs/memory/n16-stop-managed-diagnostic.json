@@ -57,7 +57,10 @@
       "observe": 213
     },
     "diagnostic_terminal_elapsed_s": 322.415266709,
-    "diagnostic_stop_reason_hits": 0,
+    "diagnostic_stop_reason_hits": 1,
+    "diagnostic_stop_reason": "could not reach Bank booth bank",
+    "diagnostic_stop_reason_slot": "live121fc_14",
+    "diagnostic_stop_reason_path": "docs/memory/diagnostics/20260907T014123Z_tui_n16_active/samples.diagnostics.jsonl:315:slots.live121fc_14.runtime.stop_reason",
     "qualification_stop_reason_field": "absent",
     "raw_artifacts_modified": false
   },
@@ -105,7 +108,7 @@
   },
   "verdict": {
     "original_script_stop_reproduced": true,
-    "stop_reason_captured": false,
+    "stop_reason_captured": true,
     "qualified": false,
     "n16_supported": false,
     "performance_acceptance": false,
@@ -120,8 +123,8 @@
   "limitations": [
     "No observe-end or teardown boundary; process exited 1 at the script-stop failure.",
     "Diagnostic sidecar was enabled, so resource observations are excluded from performance acceptance.",
-    "Failure string was retained in diagnostics, but no stop_reason field/value was emitted in qualification artifacts.",
-    "This reproduces the failure class and does not establish root cause or authorize a retry.",
+    "Terminal diagnostics captured stop_reason=\"could not reach Bank booth bank\" for live121fc_14; qualification observe-start has no stop_reason field because it is the pre-failure boundary.",
+    "This reproduces the failure class; the original 005032 exact reason is unknown, so no identical-reason claim is made. It does not establish root cause or authorize a retry.",
     "Reported source hashes are launch provenance and were not independently recomputed in this read-only review."
   ],
   "changed_files": [

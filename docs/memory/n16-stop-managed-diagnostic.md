@@ -11,11 +11,11 @@ Task `t_aa5316e0`. Read-only artifact review of the one orchestrator-managed dia
 | Exact failure | `live121fc_14: script requested stop on tick 529; isolate stopping` |
 | Workload qualification | **false**: missing boundary qualification, observation incomplete, process failed/incomplete |
 | Both qualification boundaries | **No**: `observe-start` exists; `observe-end` is absent |
-| Original script Stop reproduced? | **Yes, same failure class** (new slot/account; exact reason above) |
-| Stop reason sidecar capture | **No**: the diagnostics record reports the failure, but the qualification slot has no `stop_reason` field to retain a value |
+| Original script Stop reproduced? | **Yes, same failure class** (new slot/account; the original `005032` exact reason remains unknown) |
+| Stop reason sidecar capture | **Yes**: terminal diagnostics capture `live121fc_14.runtime.stop_reason` as `"could not reach Bank booth bank"` |
 | N=16 support / performance acceptance | **No / none** |
 
-The original script Stop was reproduced under the same reviewed stop-capture binary and fixture family. This identifies the bounded failure reason but does not fix it, prove a root cause, or authorize a retry. All N16 capacity, performance, and final lifecycle claims remain unresolved.
+The script Stop failure class was reproduced under the same reviewed stop-capture binary and fixture family. The failing slot's captured stop reason was `"could not reach Bank booth bank"`; this does not establish that it is the same exact reason as the original `005032` failure, whose reason is unknown. This identifies a bounded failure reason but does not fix it, prove a root cause, or authorize a retry. All N16 capacity, performance, and final lifecycle claims remain unresolved.
 
 ## Provenance
 
@@ -87,9 +87,9 @@ live121fc_14 dispatched=506 last_completed_tick=529 error="script requested stop
 live121fc_15 dispatched=509 last_completed_tick=528 error=null
 ```
 
-At `observe-start`, the qualification sidecar reports all 16 `Running`, errors null, and per-slot steals 6–14 (the raw run samples around the boundary show the same active workload). There is no valid end boundary or complete per-slot acceptance snapshot. `ingame=true` and `scene_state=2` are visible in the terminal diagnostics for the surviving slots, but this does not qualify the process.
+At `observe-start`, the qualification sidecar reports all 16 `Running`, errors null, and per-slot steals 3–17 (the raw run samples around the boundary show the same active workload). There is no valid end boundary or complete per-slot acceptance snapshot. `ingame=true` and `scene_state=2` are visible in the terminal diagnostics for the surviving slots, but this does not qualify the process.
 
-`stop_reason`/`stopReason` expectation: diagnostic records expose the failure string, but search of the diagnostic and qualification artifacts found no stop-reason field/value. This is not a captured `null`; the field was not written on the qualification slot. The reviewed capture path therefore remains unproven in this live failure.
+`stop_reason`/`stopReason` evidence: the terminal diagnostic record at `samples.diagnostics.jsonl` line 315 contains `slots.live121fc_14.runtime.stop_reason = "could not reach Bank booth bank"`; the paint title carries the same reason. The qualification `observe-start` record has no `stop_reason` field because it is the pre-failure boundary, not the terminal diagnostic capture. The terminal capture therefore records one stop-reason hit, while qualification remains incomplete.
 
 ## Preserved predecessors and limitations
 
