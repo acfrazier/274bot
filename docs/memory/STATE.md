@@ -553,3 +553,77 @@ managed binding qualification, final resource/latency/panel/lifecycle/scaling an
 Linux constrained VM/VPS validation remain incomplete. Operator offers a small
 2GB/2-core Xeon VPS and permits considering laptop Linux VM; no reboot/sign-out
 authorized yet.
+
+
+## 2026-09-07 16:53 UTC — Concord ready and native terminal proof
+
+Concord SSH now has a verified dedicated key and key-only authentication on its
+existing port; operator applied the prepared sudo script and disabled the old
+nightly timer. Fresh login verified; both original and new keys preserved.
+Mac aliases concord/ionnox.com now select the correct key/port. The isolated
+4c95f87 server fixture has 688 verified source files, the same map/wordenc
+additions as Windows, Node24.19.0, fresh local RSA/database, and no reused players.
+Operator started a static systemd service as acfrazier with only low-port bind
+capability. PID152004, loopback80/43594/8898, 7322 static NPCs and world-ready
+verified; root-only log ownership corrected by operator without restart. Old
+nightly engine/repo/data preserved. Concord is Ubuntu24.04.4 x86_64,2vCPU/1967MiB,
+no swap; native runtime qualification still pending.
+
+Windows support410eba6 passed actual Grok4.5 reviews t_f5c57aba/t_9a82e7d4:
+ConPTY and Windows process liveness/cleanup corrections. Native test failures
+are preserved. Root CLI help968846c fixes cp1252 UnicodeEncodeError and passed
+Grok4.5 t_f74f3c59. Root test-only b4b686f confines Unix PTY imports/fixtures to
+Unix, leaving portable writer tests active. WindowsPython3.14.6 now runs151tests
+exit0/7platform skips; real native ConPTY probe verifies120x40,isatty,consoleAPI,
+actual key receipt and true exit42. No TUI latency/performance claim from that
+small transport probe. Native releaseTUI b4b686f/client3456edc built exit0 with
+841 source files hash-stable; SHA9f7d5a7ac9a9bcd579be0697ee96cc244b5b667c18171770f0ad53c33e120ebe.
+First managed ConPTY attempt failed before frontend launch because root spec
+incorrectly named js-cache as the game-cache directory. Preserved; corrected
+second spec uses actual ENGINE_DIR/data/pack/client. Second BotTest native run
+164915Z is in progress with real input writes and active scene2. ConPTY helper
+conhost PID15812 is not yet included in the managed role map; diagnostics only.
+
+Linux x86_64 build t_136083b8 approved by actual Grok4.5: immutable artifact under
+checkout-root diagnostics/concord-linux-build-20260907a (not docs/memory). SHA
+f00e7fb18e28c013fc173e78d956bd4db4b819fd28a3a39b8784de71a7ed2546, host-play176/TUI92
+non-root tests, glibc2.34 floor. Rust inputs stable despite docs-only HEAD change;
+no clean-tree claim. Artifact/workload assets verified and staged on Concord;
+all dynamic libraries resolve and server process sampler works as acfrazier.
+
+Read-only revision/FR-vault rename audit t_95136ece passed round2Grok4.5; see
+revision-preparation-audit.md. No rename, deob download or compatibility
+implementation. 289 primary client/deob remains missing in bounded inventory.
+Memory campaign remains first. All final target/latency/panel/lifecycle/scaling
+and whole-branchGrok4.6 requirements remain incomplete; no accepted new saving.
+
+
+## 2026-09-07 17:21 UTC — native diagnostic review and public development branch
+
+Native Windows ConPTY and Concord Linux N1 diagnostics completed and workload-qualified.
+Report native-platform-functional-report.md approved by actual Grok4.5
+20260907_131658_042934 (t_e7f26ad8), after correcting controller completion wording.
+Both first server sidecars omitted port_listen and configuration. Original receipts
+are preserved; no full binding or performance acceptance. Independent Linux
+native qualification and managed-resource binding are available when read separately;
+that does not repair the failed top-level binding. ConPTY helper accounting correction
+t_7510ad70 is running under Luna; native Windows helper coverage still incomplete.
+Next: complete metadata preflight and collect a newly declared Linux cell, then
+Windows proof after the helper correction passes review. No final target pass.
+
+Operator authorized public development branches without a PR, keeping public main
+working. Published host codex/memory-diagnostics at37062dea797df059508eeccc14b8780b9b344075
+and client codex/windows-native-parking at3456edc8dabf7b25ada78110ffa56327af9f67a4.
+README warning and DEVELOPMENT.md disclose remaining acceptance gates. All10 historical
+client gitlinks are ancestors of the published client tip. Targeted unpublished-history
+credential-pattern scan found no matches; no blobs above10MB. Fresh recursive GitHub
+clone succeeded with exact host/client commits and clean status. Public host main
+remains54cfcf8a33613735bde9f43dd9c9beb8ec06dae9; client r274-bh-modular remains
+4f2048ea10f75b3bb92ff45610b35ba7313b0308. No PR, release, force-push or promotion.
+
+Separate authorized FR-vault rename/289 source setup is complete and reviewed
+t_bc5840eb actualGrok4.5: canonical FR-vault, old aliases preserved,14Gitcheckouts
+repaired, RuneWiki289 pinned0c00ef249546fada67b1f6eb8bbe01ea7c250c95; prior local
+vendor/client-java-289 was present and retained. This supersedes the earlier missing
+289 inventory statement. Private FR-vault main fast-forwarded/pushedb82ac41; FTS
+1621files22557chunks, existing Chroma data/vector service preserved.
