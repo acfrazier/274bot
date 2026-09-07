@@ -77,7 +77,8 @@ def create_launch(path, *, cell_id, index, kind, effective_cli, binary,
     return value
 
 
-def complete(path, *, launch_path, run_dir, launcher_exit_code, sampler_result):
+def complete(path, *, launch_path, run_dir, launcher_exit_code, sampler_result,
+             runner_errors=None):
     """Persist a receipt after children finish, preserving failures and gaps.
 
     Hashes bind raw bytes; they do not turn malformed data into valid metrics.
@@ -85,6 +86,9 @@ def complete(path, *, launch_path, run_dir, launcher_exit_code, sampler_result):
     """
     if type(launcher_exit_code) is not int:
         raise ValueError('launcher exit code must be an integer')
+    if runner_errors is not None and (not isinstance(runner_errors, list)
+            or any(not isinstance(e, str) or not e for e in runner_errors)):
+        raise ValueError('runner errors must be a list of nonempty strings')
     launch_path = pathlib.Path(launch_path).resolve(strict=True)
     launch = _load(launch_path)
     launch_sha = file_sha256(launch_path)
@@ -93,6 +97,8 @@ def complete(path, *, launch_path, run_dir, launcher_exit_code, sampler_result):
                    ended_utc=utc_now(), launcher_exit_code=launcher_exit_code,
                    sampler_result=sampler_result, raw_hashes={}, binding_errors=[])
     errors = receipt['binding_errors']
+    receipt['runner_errors'] = list(runner_errors or [])
+    errors.extend('runner:' + error for error in receipt['runner_errors'])
     if run_dir is not None and not pathlib.Path(run_dir).is_dir():
         errors.append('frontend_run_directory_missing')
         run_dir = None

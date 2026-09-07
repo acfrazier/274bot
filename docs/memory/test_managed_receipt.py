@@ -101,6 +101,16 @@ class ManagedReceiptTests(unittest.TestCase):
         self.assertEqual(result['launch_sha256'], mr.file_sha256(self.launch_path))
         self.assertEqual(result['sampler_output_sha256'], mr.file_sha256(self.sampler))
 
+    def test_runner_failure_keeps_true_child_exit_codes(self):
+        result = mr.complete(self.receipt_path, launch_path=self.launch_path,
+                             run_dir=self.run, launcher_exit_code=0,
+                             sampler_result={'exit_code': 0, 'output': str(self.sampler)},
+                             runner_errors=['missing_observation_boundary'])
+        self.assertEqual(result['status'], 'failed_or_unavailable')
+        self.assertEqual(result['launcher_exit_code'], 0)
+        self.assertEqual(result['sampler_result']['exit_code'], 0)
+        self.assertIn('runner:missing_observation_boundary', result['binding_errors'])
+
     def test_foreign_artifact_changed_since_launch_is_failure(self):
         self.binary.write_bytes(b'changed')
         result = self.finish()
