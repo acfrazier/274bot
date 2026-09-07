@@ -54,7 +54,8 @@ observations:
 | native-linux-n1-b | 1 | 175,255,552 B (167.14 MiB) | 0.06651113 | 49.6703 | 10 |
 | native-linux-n16-a | 16 | 640,348,160 B (610.68 MiB) | 0.72958343 | 48.3294 | 16 slots, 1–17 |
 
-N1B qualified with a 119.575-second observation window; N16A qualified with a
+N1B qualified with a 118.582-second `qualification.observation_s` window;
+N16A qualified with a
 119.273-second observation window. Both are one short diagnostic observations
 with profiles enabled, and both exited cleanly. The N16A slot gains sum to 163
 across the 16 slots. The N16A reader records `qualified: true`, no errors, and
@@ -104,14 +105,16 @@ counter output; it is not combined with the Linux server or treated as a
 trusted cross-platform comparison without validating the recorded counters
 against source semantics.
 
-The raw capture set was read directly from the repository. The scene-ready
-capture shows the courtyard at tile 2661,3305 with four food items; the
-bank-arrival capture shows tile 2655,3286 with 22 food and `modal-1`; the
-return capture shows tile 2649,3284 with one script bank trip. The captures
-show the game, minimap, inventory, and script/status surfaces. No capture
-shows an open bank modal, a freeze, CPU fallback, or a physical-display
-condition. These observations are root evidence, not a claim of model image
-interpretation.
+The raw capture set and its companion JSON were read directly from the
+repository. The scene-ready JSON records courtyard tile `[2661, 3306]` and
+four Lobster. The bank-arrival JSON records tile `[2655, 3286]`,
+`modals.main=5292`, `modals.side=2005`, a populated bank container, and an
+inventory containing three Lobster plus other items. The return JSON records
+tile `[2655, 3286]`, player `[2654, 3286]`, and 22 Lobster. The captures show
+the game, minimap, inventory, and script/status surfaces. They do not establish
+a freeze, CPU fallback, physical-display condition, desktop foreground, RDP
+state, adapter identity, or physical scanout. These are root/companion evidence
+observations, not a claim of model image interpretation.
 
 The Windows run does not establish desktop foreground, RDP state, adapter
 identity, or physical scanout. Those conditions remain unproven. The managed
