@@ -28,3 +28,6 @@ memory-profile = ["host-play/memory-profile"]
 
 # CPU diagnostic: use System directly, report allocator metrics unavailable.
 memory-profile-no-alloc = ["memory-profile", "host-play/memory-profile-no-alloc"]
+
+# Opt-in A1 snapshot family body dedup candidate (not default).
+snapshot-dedup = ["api/snapshot-dedup", "host/snapshot-dedup", "host-play/snapshot-dedup"]

@@ -6,4 +6,10 @@ publish = false
 
 [dependencies]
 client = { workspace = true }
-serde = { version = "=1.0.219", features = ["derive"] }
+serde = { version = "=1.0.219", features = ["derive", "rc"] }
+
+[features]
+default = []
+# Opt-in A1 rebuild-edge exact family body dedup candidate. Feature-off keeps
+# original Vec storage and rebuild path with no equality/registry work.
+snapshot-dedup = []

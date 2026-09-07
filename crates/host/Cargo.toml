@@ -10,6 +10,10 @@ client = { workspace = true }
 num-bigint = "0.4"
 vault = { path = "../vault" }
 
+[features]
+default = []
+snapshot-dedup = ["api/snapshot-dedup"]
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

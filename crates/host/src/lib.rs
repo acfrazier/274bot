@@ -236,6 +236,11 @@ impl Host {
             )),
             ..SlotLoop::new()
         };
+        #[cfg(feature = "snapshot-dedup")]
+        {
+            slot.snapshot
+                .attach_dedup(api::snapshot_dedup::attach_owner_for_slot(username));
+        }
         let mut run_sends = 0u32;
         // The last published random-event status: `client_frame` returns it
         // and the next observe copies it onto the slot's status row and

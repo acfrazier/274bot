@@ -3437,6 +3437,10 @@ impl Play {
             let _ = handle.join();
         }
         self.wakes.remove(name);
+        #[cfg(feature = "snapshot-dedup")]
+        {
+            api::snapshot_dedup::process_slot_table().remove(name);
+        }
     }
 
     /// Register a control arm without spawning a slot thread (panel unit
@@ -3793,6 +3797,12 @@ fn spawn_slot_thread(
                         // gates on its facts; the follow surface reads the
                         // canonical base + route-head tile from it).
                         let mut nav_snapshot = GameSnapshot::new();
+                        #[cfg(feature = "snapshot-dedup")]
+                        {
+                            nav_snapshot.attach_dedup(
+                                api::snapshot_dedup::attach_owner_for_slot(&username),
+                            );
+                        }
                         // The random status `client_frame` published last
                         // frame: copied onto the slot status row, and its
                         // hold freezes script tick and the nav follow.

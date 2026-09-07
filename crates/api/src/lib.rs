@@ -12,6 +12,7 @@ pub mod query;
 pub mod random;
 pub mod settle;
 pub mod snapshot;
-/// Bounded rebuild-edge exact-dedup prototype (A1 discriminator). Not wired
-/// into production owners; used by api integration tests and the report.
+/// Opt-in A1 rebuild-edge exact family body dedup (feature `snapshot-dedup`).
+pub mod snapshot_dedup;
+/// Test harness cursor over [`snapshot_dedup`] (mechanism fixtures).
 pub mod snapshot_dedup_proto;

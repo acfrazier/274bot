@@ -1817,7 +1817,17 @@ impl Session {
                     let mut states = nav_states.lock().unwrap();
                     let slot = states
                         .entry(name.to_string())
-                        .or_insert_with(|| (GameSnapshot::new(), WorldState::empty()));
+                        .or_insert_with(|| {
+                            #[cfg_attr(not(feature = "snapshot-dedup"), allow(unused_mut))]
+                            let mut snap = GameSnapshot::new();
+                            #[cfg(feature = "snapshot-dedup")]
+                            {
+                                snap.attach_dedup(
+                                    api::snapshot_dedup::attach_owner_for_slot(name),
+                                );
+                            }
+                            (snap, WorldState::empty())
+                        });
                     if slot.0.rebuild(c) {
                         slot.1 = WorldState::from_snapshot(&slot.0);
                     }

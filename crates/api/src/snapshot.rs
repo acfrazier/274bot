@@ -8,6 +8,8 @@ use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeView};
 use client::config::{Cache, ObjType};
 use client::dash3d::client_entity::ClientEntity;
 use serde::Serialize;
+#[cfg(feature = "snapshot-dedup")]
+use std::sync::Arc;
 
 /// A world tile: absolute `x`/`z` plus the plane (`level`). The key type
 /// loc/ground-item/player families are positioned by.
@@ -571,7 +573,10 @@ pub struct GameSnapshot {
     attached: bool,
     /// Placed locs from the last loc rebuild (sweeps the sim world's four
     /// layers at `minusedlevel`).
+    #[cfg(not(feature = "snapshot-dedup"))]
     loc: Vec<LocView>,
+    #[cfg(feature = "snapshot-dedup")]
+    loc: Arc<Vec<LocView>>,
     /// Ground-object stacks from the last ground-item rebuild.
     ground_item: Vec<GroundItemView>,
     /// The built scene's collision grid from the last scene rebuild.
@@ -613,8 +618,16 @@ pub struct GameSnapshot {
     bank_component_id: i32,
     trade: TradeView,
     shop: ShopView,
+    /// Widgets body. Feature-off: private `Vec`. Feature-on: `Arc` so equal
+    /// completed rebuilds can share immutable nested payload across owners.
+    #[cfg(not(feature = "snapshot-dedup"))]
     widgets: Vec<WidgetView>,
+    #[cfg(feature = "snapshot-dedup")]
+    widgets: Arc<Vec<WidgetView>>,
+    #[cfg(not(feature = "snapshot-dedup"))]
     side_tabs: Vec<SideTabView>,
+    #[cfg(feature = "snapshot-dedup")]
+    side_tabs: Arc<Vec<SideTabView>>,
     chat_lines: Vec<ChatLineView>,
     chat_options: Vec<ChatOptionView>,
     chat_continue_component_id: i32,
@@ -663,6 +676,14 @@ pub struct GameSnapshot {
     controls_gate: u64,
     #[serde(skip)]
     menu_gate: u64,
+    /// Slot-local dedup handle. Feature-on only; skipped in JSON.
+    #[cfg(feature = "snapshot-dedup")]
+    #[serde(skip)]
+    dedup: Option<crate::snapshot_dedup::DedupHandle>,
+    /// Equality/walk counters for the attached handle (feature-on only).
+    #[cfg(feature = "snapshot-dedup")]
+    #[serde(skip)]
+    dedup_counters: crate::snapshot_dedup::DedupCounters,
 }
 
 impl Default for GameSnapshot {
@@ -688,7 +709,10 @@ impl Default for GameSnapshot {
             ingame: false,
             scene_state: 0,
             attached: false,
+            #[cfg(not(feature = "snapshot-dedup"))]
             loc: Vec::new(),
+            #[cfg(feature = "snapshot-dedup")]
+            loc: Arc::new(Vec::new()),
             ground_item: Vec::new(),
             scene: SceneView::default(),
             world: WorldStateView::default(),
@@ -705,8 +729,14 @@ impl Default for GameSnapshot {
             bank_component_id: -1,
             trade: TradeView::default(),
             shop: ShopView::default(),
+            #[cfg(not(feature = "snapshot-dedup"))]
             widgets: Vec::new(),
+            #[cfg(feature = "snapshot-dedup")]
+            widgets: Arc::new(Vec::new()),
+            #[cfg(not(feature = "snapshot-dedup"))]
             side_tabs: Vec::new(),
+            #[cfg(feature = "snapshot-dedup")]
+            side_tabs: Arc::new(Vec::new()),
             chat_lines: Vec::new(),
             chat_options: Vec::new(),
             chat_continue_component_id: -1,
@@ -742,7 +772,18 @@ impl Default for GameSnapshot {
             modals_gate: 0,
             controls_gate: 0,
             menu_gate: 0,
+            #[cfg(feature = "snapshot-dedup")]
+            dedup: None,
+            #[cfg(feature = "snapshot-dedup")]
+            dedup_counters: crate::snapshot_dedup::DedupCounters::default(),
         }
+    }
+}
+
+#[cfg(feature = "snapshot-dedup")]
+impl Drop for GameSnapshot {
+    fn drop(&mut self) {
+        self.detach_dedup();
     }
 }
 
@@ -932,7 +973,14 @@ impl GameSnapshot {
     /// Placed locs from the last loc rebuild, in scene sweep order (per
     /// tile: wall, ground, ground decoration, wall decoration).
     pub fn locs(&self) -> &[LocView] {
-        &self.loc
+        #[cfg(not(feature = "snapshot-dedup"))]
+        {
+            &self.loc
+        }
+        #[cfg(feature = "snapshot-dedup")]
+        {
+            self.loc.as_slice()
+        }
     }
 
     /// The nearest scene loc whose actions include `Use-quickly` on the
@@ -1026,68 +1074,273 @@ impl GameSnapshot {
     /// Widget views from the last widgets rebuild, one per component
     /// reachable from an open root.
     pub fn widgets(&self) -> &[WidgetView] {
-        &self.widgets
+        #[cfg(not(feature = "snapshot-dedup"))]
+        {
+            &self.widgets
+        }
+        #[cfg(feature = "snapshot-dedup")]
+        {
+            self.widgets.as_slice()
+        }
     }
 
     /// Side-tab views (all 14 slots) from the last side-tabs rebuild.
     pub fn side_tabs(&self) -> &[SideTabView] {
-        &self.side_tabs
+        #[cfg(not(feature = "snapshot-dedup"))]
+        {
+            &self.side_tabs
+        }
+        #[cfg(feature = "snapshot-dedup")]
+        {
+            self.side_tabs.as_slice()
+        }
     }
 
-    /// Prototype/test support: take the owned widgets body after a real
+    /// Attach a slot-local dedup handle so completed Widgets/SideTabs/Loc
+    /// rebuilds intern into the shared weak registry. Feature `snapshot-dedup`
+    /// only; no-op shape is absent when the feature is off.
+    #[cfg(feature = "snapshot-dedup")]
+    pub fn attach_dedup(&mut self, handle: crate::snapshot_dedup::DedupHandle) {
+        if let Some(old) = self.dedup.take() {
+            old.unregister();
+        }
+        self.dedup = Some(handle);
+    }
+
+    /// Drop the attached handle and unregister its weak slots.
+    #[cfg(feature = "snapshot-dedup")]
+    pub fn detach_dedup(&mut self) {
+        if let Some(h) = self.dedup.take() {
+            h.unregister();
+        }
+    }
+
+    #[cfg(feature = "snapshot-dedup")]
+    pub fn dedup_counters(&self) -> &crate::snapshot_dedup::DedupCounters {
+        &self.dedup_counters
+    }
+
+    #[cfg(feature = "snapshot-dedup")]
+    pub fn widgets_arc(&self) -> Arc<Vec<WidgetView>> {
+        Arc::clone(&self.widgets)
+    }
+
+    #[cfg(feature = "snapshot-dedup")]
+    pub fn side_tabs_arc(&self) -> Arc<Vec<SideTabView>> {
+        Arc::clone(&self.side_tabs)
+    }
+
+    #[cfg(feature = "snapshot-dedup")]
+    pub fn locs_arc(&self) -> Arc<Vec<LocView>> {
+        Arc::clone(&self.loc)
+    }
+
+    /// Mechanism/test support: take the owned widgets body after a real
     /// rebuild without changing production gate/rebuild behavior.
     #[doc(hidden)]
     pub fn proto_take_widgets(&mut self) -> Vec<WidgetView> {
-        std::mem::take(&mut self.widgets)
+        #[cfg(not(feature = "snapshot-dedup"))]
+        {
+            std::mem::take(&mut self.widgets)
+        }
+        #[cfg(feature = "snapshot-dedup")]
+        {
+            match Arc::try_unwrap(std::mem::replace(
+                &mut self.widgets,
+                Arc::new(Vec::new()),
+            )) {
+                Ok(v) => v,
+                Err(arc) => (*arc).clone(),
+            }
+        }
     }
 
-    /// Prototype/test support: take the owned side-tabs body.
+    /// Mechanism/test support: take the owned side-tabs body.
     #[doc(hidden)]
     pub fn proto_take_side_tabs(&mut self) -> Vec<SideTabView> {
-        std::mem::take(&mut self.side_tabs)
+        #[cfg(not(feature = "snapshot-dedup"))]
+        {
+            std::mem::take(&mut self.side_tabs)
+        }
+        #[cfg(feature = "snapshot-dedup")]
+        {
+            match Arc::try_unwrap(std::mem::replace(
+                &mut self.side_tabs,
+                Arc::new(Vec::new()),
+            )) {
+                Ok(v) => v,
+                Err(arc) => (*arc).clone(),
+            }
+        }
     }
 
-    /// Prototype/test support: take the owned loc body.
+    /// Mechanism/test support: take the owned loc body.
     #[doc(hidden)]
     pub fn proto_take_locs(&mut self) -> Vec<LocView> {
-        std::mem::take(&mut self.loc)
+        #[cfg(not(feature = "snapshot-dedup"))]
+        {
+            std::mem::take(&mut self.loc)
+        }
+        #[cfg(feature = "snapshot-dedup")]
+        {
+            match Arc::try_unwrap(std::mem::replace(&mut self.loc, Arc::new(Vec::new()))) {
+                Ok(v) => v,
+                Err(arc) => (*arc).clone(),
+            }
+        }
     }
 
-    /// Prototype/test support: restore an owned widgets body (e.g. after
+    /// Mechanism/test support: restore an owned widgets body (e.g. after
     /// measuring a candidate). Does not touch gates.
     #[doc(hidden)]
     pub fn proto_put_widgets(&mut self, body: Vec<WidgetView>) {
-        self.widgets = body;
+        #[cfg(not(feature = "snapshot-dedup"))]
+        {
+            self.widgets = body;
+        }
+        #[cfg(feature = "snapshot-dedup")]
+        {
+            self.widgets = Arc::new(body);
+        }
     }
 
-    /// Prototype/test support: restore an owned side-tabs body.
+    /// Mechanism/test support: restore an owned side-tabs body.
     #[doc(hidden)]
     pub fn proto_put_side_tabs(&mut self, body: Vec<SideTabView>) {
-        self.side_tabs = body;
+        #[cfg(not(feature = "snapshot-dedup"))]
+        {
+            self.side_tabs = body;
+        }
+        #[cfg(feature = "snapshot-dedup")]
+        {
+            self.side_tabs = Arc::new(body);
+        }
     }
 
-    /// Prototype/test support: restore an owned loc body.
+    /// Mechanism/test support: restore an owned loc body.
     #[doc(hidden)]
     pub fn proto_put_locs(&mut self, body: Vec<LocView>) {
-        self.loc = body;
+        #[cfg(not(feature = "snapshot-dedup"))]
+        {
+            self.loc = body;
+        }
+        #[cfg(feature = "snapshot-dedup")]
+        {
+            self.loc = Arc::new(body);
+        }
     }
 
-    /// Prototype/test support: requested capacity of the widgets vector.
+    /// Mechanism/test support: requested capacity of the widgets vector.
     #[doc(hidden)]
     pub fn proto_widgets_capacity(&self) -> usize {
         self.widgets.capacity()
     }
 
-    /// Prototype/test support: requested capacity of the side-tabs vector.
+    /// Mechanism/test support: requested capacity of the side-tabs vector.
     #[doc(hidden)]
     pub fn proto_side_tabs_capacity(&self) -> usize {
         self.side_tabs.capacity()
     }
 
-    /// Prototype/test support: requested capacity of the loc vector.
+    /// Mechanism/test support: requested capacity of the loc vector.
     #[doc(hidden)]
     pub fn proto_locs_capacity(&self) -> usize {
         self.loc.capacity()
+    }
+
+    #[cfg(feature = "snapshot-dedup")]
+    fn family_body_mut_widgets(&mut self) -> &mut Vec<WidgetView> {
+        if Arc::get_mut(&mut self.widgets).is_none() {
+            // Shared body: rebuild into a fresh unique candidate (do not
+            // clone the previous shared payload just to clear it).
+            self.widgets = Arc::new(Vec::new());
+        }
+        let body = Arc::get_mut(&mut self.widgets).expect("unique widgets body");
+        body.clear();
+        body
+    }
+
+    #[cfg(feature = "snapshot-dedup")]
+    fn family_body_mut_side_tabs(&mut self) -> &mut Vec<SideTabView> {
+        if Arc::get_mut(&mut self.side_tabs).is_none() {
+            self.side_tabs = Arc::new(Vec::new());
+        }
+        let body = Arc::get_mut(&mut self.side_tabs).expect("unique side_tabs body");
+        body.clear();
+        body
+    }
+
+    #[cfg(feature = "snapshot-dedup")]
+    fn family_body_mut_loc(&mut self) -> &mut Vec<LocView> {
+        if Arc::get_mut(&mut self.loc).is_none() {
+            self.loc = Arc::new(Vec::new());
+        }
+        let body = Arc::get_mut(&mut self.loc).expect("unique loc body");
+        body.clear();
+        body
+    }
+
+    #[cfg(feature = "snapshot-dedup")]
+    fn intern_widgets_if_attached(&mut self) {
+        let Some(handle) = self.dedup.clone() else {
+            return;
+        };
+        self.dedup_counters.widgets.walks += 1;
+        let candidate = match Arc::try_unwrap(std::mem::replace(
+            &mut self.widgets,
+            Arc::new(Vec::new()),
+        )) {
+            Ok(v) => v,
+            Err(arc) => (*arc).clone(),
+        };
+        let shared = handle
+            .registry
+            .lock()
+            .unwrap()
+            .intern_widgets(handle.cursor, candidate, &mut self.dedup_counters.widgets);
+        self.widgets = shared;
+    }
+
+    #[cfg(feature = "snapshot-dedup")]
+    fn intern_side_tabs_if_attached(&mut self) {
+        let Some(handle) = self.dedup.clone() else {
+            return;
+        };
+        self.dedup_counters.side_tabs.walks += 1;
+        let candidate = match Arc::try_unwrap(std::mem::replace(
+            &mut self.side_tabs,
+            Arc::new(Vec::new()),
+        )) {
+            Ok(v) => v,
+            Err(arc) => (*arc).clone(),
+        };
+        let shared = handle.registry.lock().unwrap().intern_side_tabs(
+            handle.cursor,
+            candidate,
+            &mut self.dedup_counters.side_tabs,
+        );
+        self.side_tabs = shared;
+    }
+
+    #[cfg(feature = "snapshot-dedup")]
+    fn intern_loc_if_attached(&mut self) {
+        let Some(handle) = self.dedup.clone() else {
+            return;
+        };
+        self.dedup_counters.loc.walks += 1;
+        let candidate = match Arc::try_unwrap(std::mem::replace(
+            &mut self.loc,
+            Arc::new(Vec::new()),
+        )) {
+            Ok(v) => v,
+            Err(arc) => (*arc).clone(),
+        };
+        let shared = handle
+            .registry
+            .lock()
+            .unwrap()
+            .intern_loc(handle.cursor, candidate, &mut self.dedup_counters.loc);
+        self.loc = shared;
     }
 
     /// Chat history from the last chat rebuild, newest first (ring order).
@@ -1534,13 +1787,32 @@ impl GameSnapshot {
     /// (TYPE_INV slot contents).
     fn rebuild_widgets(&mut self, client: &Client) -> bool {
         if !self.widgets_gate.moved(client) {
+            #[cfg(feature = "snapshot-dedup")]
+            {
+                self.dedup_counters.widgets.quiet_skips += 1;
+            }
             return false;
         }
-        self.widgets.clear();
-        let roots = widget_roots(client);
-        let mut visited = vec![false; client.ifaces_len()];
-        for (root_id, root) in roots {
-            walk_widget_tree(client, root_id, root, &mut visited, &mut self.widgets);
+        #[cfg(not(feature = "snapshot-dedup"))]
+        {
+            self.widgets.clear();
+            let roots = widget_roots(client);
+            let mut visited = vec![false; client.ifaces_len()];
+            for (root_id, root) in roots {
+                walk_widget_tree(client, root_id, root, &mut visited, &mut self.widgets);
+            }
+        }
+        #[cfg(feature = "snapshot-dedup")]
+        {
+            {
+                let body = self.family_body_mut_widgets();
+                let roots = widget_roots(client);
+                let mut visited = vec![false; client.ifaces_len()];
+                for (root_id, root) in roots {
+                    walk_widget_tree(client, root_id, root, &mut visited, body);
+                }
+            }
+            self.intern_widgets_if_attached();
         }
         true
     }
@@ -1549,32 +1821,70 @@ impl GameSnapshot {
     /// available tab's widget tree.
     fn rebuild_side_tabs(&mut self, client: &Client) -> bool {
         if !self.side_tabs_gate.moved(client) {
+            #[cfg(feature = "snapshot-dedup")]
+            {
+                self.dedup_counters.side_tabs.quiet_skips += 1;
+            }
             return false;
         }
-        self.side_tabs.clear();
-        let mut visited = vec![false; client.ifaces_len()];
-        for index in 0..client.side_icon.len() {
-            let root_component_id = client.side_icon[index];
-            let available = root_component_id != -1;
-            let active = client.active_icon == index as i32;
-            let mut widgets = Vec::new();
-            if available {
-                walk_widget_tree(
-                    client,
+        #[cfg(not(feature = "snapshot-dedup"))]
+        {
+            self.side_tabs.clear();
+            let mut visited = vec![false; client.ifaces_len()];
+            for index in 0..client.side_icon.len() {
+                let root_component_id = client.side_icon[index];
+                let available = root_component_id != -1;
+                let active = client.active_icon == index as i32;
+                let mut widgets = Vec::new();
+                if available {
+                    walk_widget_tree(
+                        client,
+                        root_component_id,
+                        WidgetRoot::Side,
+                        &mut visited,
+                        &mut widgets,
+                    );
+                }
+                self.side_tabs.push(SideTabView {
+                    index: index as i32,
                     root_component_id,
-                    WidgetRoot::Side,
-                    &mut visited,
-                    &mut widgets,
-                );
+                    available,
+                    active,
+                    visible: active && client.side_modal_id == -1 && available,
+                    widgets,
+                });
             }
-            self.side_tabs.push(SideTabView {
-                index: index as i32,
-                root_component_id,
-                available,
-                active,
-                visible: active && client.side_modal_id == -1 && available,
-                widgets,
-            });
+        }
+        #[cfg(feature = "snapshot-dedup")]
+        {
+            {
+                let body = self.family_body_mut_side_tabs();
+                let mut visited = vec![false; client.ifaces_len()];
+                for index in 0..client.side_icon.len() {
+                    let root_component_id = client.side_icon[index];
+                    let available = root_component_id != -1;
+                    let active = client.active_icon == index as i32;
+                    let mut widgets = Vec::new();
+                    if available {
+                        walk_widget_tree(
+                            client,
+                            root_component_id,
+                            WidgetRoot::Side,
+                            &mut visited,
+                            &mut widgets,
+                        );
+                    }
+                    body.push(SideTabView {
+                        index: index as i32,
+                        root_component_id,
+                        available,
+                        active,
+                        visible: active && client.side_modal_id == -1 && available,
+                        widgets,
+                    });
+                }
+            }
+            self.intern_side_tabs_if_attached();
         }
         true
     }
@@ -1833,6 +2143,10 @@ impl GameSnapshot {
         let moved = track(client.gens.scene, &mut self.loc_gen);
         let stamp = loc_model_stamp(client);
         if !moved && stamp == self.loc_model_stamp {
+            #[cfg(feature = "snapshot-dedup")]
+            {
+                self.dedup_counters.loc.quiet_skips += 1;
+            }
             return false;
         }
         let dirty = moved || stamp != self.loc_model_stamp;
@@ -1840,64 +2154,130 @@ impl GameSnapshot {
         let base = (client.map_build_base_x, client.map_build_base_z);
         let level = client.minusedlevel;
         let local_tile = local_world_tile(client);
-        self.loc.clear();
-        for sx in 0..104 {
-            for sz in 0..104 {
-                // Per-tile layer order matches the m8aq sweep: wall,
-                // ground, ground decoration, wall decoration.
-                if let Some(wall) = client.world.get_wall(level, sx, sz) {
-                    self.loc.push(loc_view(
-                        wall.typecode,
-                        wall.typecode2 & 0xff,
-                        LocLayer::Wall,
-                        base,
-                        level,
-                        sx,
-                        sz,
-                        local_tile,
-                        &client.cache,
-                    ));
-                }
-                if let Some(sprite) = client.world.get_scene(level, sx, sz) {
-                    self.loc.push(loc_view(
-                        sprite.typecode,
-                        sprite.typecode2 & 0xff,
-                        LocLayer::Ground,
-                        base,
-                        level,
-                        sx,
-                        sz,
-                        local_tile,
-                        &client.cache,
-                    ));
-                }
-                if let Some(gd) = client.world.get_gd(level, sx, sz) {
-                    self.loc.push(loc_view(
-                        gd.typecode,
-                        gd.typecode2 & 0xff,
-                        LocLayer::GroundDecoration,
-                        base,
-                        level,
-                        sx,
-                        sz,
-                        local_tile,
-                        &client.cache,
-                    ));
-                }
-                if let Some(decor) = client.world.get_decor(level, sx, sz) {
-                    self.loc.push(loc_view(
-                        decor.typecode,
-                        decor.typecode2 & 0xff,
-                        LocLayer::WallDecoration,
-                        base,
-                        level,
-                        sx,
-                        sz,
-                        local_tile,
-                        &client.cache,
-                    ));
+        #[cfg(not(feature = "snapshot-dedup"))]
+        {
+            self.loc.clear();
+            for sx in 0..104 {
+                for sz in 0..104 {
+                    // Per-tile layer order matches the m8aq sweep: wall,
+                    // ground, ground decoration, wall decoration.
+                    if let Some(wall) = client.world.get_wall(level, sx, sz) {
+                        self.loc.push(loc_view(
+                            wall.typecode,
+                            wall.typecode2 & 0xff,
+                            LocLayer::Wall,
+                            base,
+                            level,
+                            sx,
+                            sz,
+                            local_tile,
+                            &client.cache,
+                        ));
+                    }
+                    if let Some(sprite) = client.world.get_scene(level, sx, sz) {
+                        self.loc.push(loc_view(
+                            sprite.typecode,
+                            sprite.typecode2 & 0xff,
+                            LocLayer::Ground,
+                            base,
+                            level,
+                            sx,
+                            sz,
+                            local_tile,
+                            &client.cache,
+                        ));
+                    }
+                    if let Some(gd) = client.world.get_gd(level, sx, sz) {
+                        self.loc.push(loc_view(
+                            gd.typecode,
+                            gd.typecode2 & 0xff,
+                            LocLayer::GroundDecoration,
+                            base,
+                            level,
+                            sx,
+                            sz,
+                            local_tile,
+                            &client.cache,
+                        ));
+                    }
+                    if let Some(decor) = client.world.get_decor(level, sx, sz) {
+                        self.loc.push(loc_view(
+                            decor.typecode,
+                            decor.typecode2 & 0xff,
+                            LocLayer::WallDecoration,
+                            base,
+                            level,
+                            sx,
+                            sz,
+                            local_tile,
+                            &client.cache,
+                        ));
+                    }
                 }
             }
+        }
+        #[cfg(feature = "snapshot-dedup")]
+        {
+            {
+                let body = self.family_body_mut_loc();
+                for sx in 0..104 {
+                    for sz in 0..104 {
+                        if let Some(wall) = client.world.get_wall(level, sx, sz) {
+                            body.push(loc_view(
+                                wall.typecode,
+                                wall.typecode2 & 0xff,
+                                LocLayer::Wall,
+                                base,
+                                level,
+                                sx,
+                                sz,
+                                local_tile,
+                                &client.cache,
+                            ));
+                        }
+                        if let Some(sprite) = client.world.get_scene(level, sx, sz) {
+                            body.push(loc_view(
+                                sprite.typecode,
+                                sprite.typecode2 & 0xff,
+                                LocLayer::Ground,
+                                base,
+                                level,
+                                sx,
+                                sz,
+                                local_tile,
+                                &client.cache,
+                            ));
+                        }
+                        if let Some(gd) = client.world.get_gd(level, sx, sz) {
+                            body.push(loc_view(
+                                gd.typecode,
+                                gd.typecode2 & 0xff,
+                                LocLayer::GroundDecoration,
+                                base,
+                                level,
+                                sx,
+                                sz,
+                                local_tile,
+                                &client.cache,
+                            ));
+                        }
+                        if let Some(decor) = client.world.get_decor(level, sx, sz) {
+                            body.push(loc_view(
+                                decor.typecode,
+                                decor.typecode2 & 0xff,
+                                LocLayer::WallDecoration,
+                                base,
+                                level,
+                                sx,
+                                sz,
+                                local_tile,
+                                &client.cache,
+                            ));
+                        }
+                    }
+                }
+            }
+            self.intern_loc_if_attached();
         }
         dirty
     }
