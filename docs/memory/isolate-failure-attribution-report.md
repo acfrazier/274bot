@@ -32,6 +32,11 @@ the established logging path rather than being re-evaluated for attribution.
 
 ## Verification
 
+- `CARGO_TARGET_DIR=target-memory-attribution cargo test -p script
+  --features load,memory-profile --test load_isolate failure_capture_ --
+  --nocapture` passed (4 tests), covering thrown JS attribution, host
+  termination attribution with interrupt identity and post-interrupt isolate
+  use, first-failure retention, and capture-off absence.
 - `cargo test -p script --features load,memory-profile --lib memory_profile`
   passed, including bounded first-only attribution and capture-off state tests.
 - No live frontend, native run, network/VPS action, client edit, or vendor

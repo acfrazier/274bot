@@ -507,6 +507,40 @@ fn isolate_logs_tick_errors() {
     iso.join();
 }
 
+// (5e-b) Failure capture attributes an ordinary thrown JS error at the
+// call boundary, and retains the first failure rather than later ones.
+#[cfg(feature = "memory-profile")]
+#[test]
+fn failure_capture_attributes_throw_and_retains_first_failure() {
+    let src = "export function tick(api) { if (globalThis.__rs_n === undefined) { globalThis.__rs_n = 0; throw new Error('boom') } globalThis.__rs_n += 1; throw new Error('later') }";
+    let iso = LoadIsolate::spawn_with_capture_for_test(src.to_string(), LoadShape::NativeTick, vec![], true)
+        .expect("spawn capturing isolate");
+    iso.on_game_tick(11);
+    let _ = iso.probe("1 + 1");
+    iso.on_game_tick(12);
+    let _ = iso.probe("1 + 1");
+    let attribution = iso.memory_progress().get("failure_attribution").cloned().expect("captured throw attribution");
+    assert_eq!(attribution["tick"], 11);
+    assert_eq!(attribution["call_path"], "sync");
+    assert_eq!(attribution["terminating_before_cancel"], false);
+    assert!(attribution["interrupt_id"].is_null());
+    assert!(attribution["error_debug"].as_str().unwrap().contains("boom"));
+    iso.join();
+}
+
+// (5e-c) Capture is opt-in end-to-end: a tick error does not appear in the
+// progress payload when the isolate was created with capture disabled.
+#[cfg(feature = "memory-profile")]
+#[test]
+fn failure_capture_off_has_no_attribution_in_memory_progress() {
+    let iso = LoadIsolate::spawn_with_capture_for_test("export function tick(api) { throw new Error('not captured') }".to_string(), LoadShape::NativeTick, vec![], false)
+        .expect("spawn non-capturing isolate");
+    iso.on_game_tick(21);
+    let _ = iso.probe("1 + 1");
+    assert!(iso.memory_progress().get("failure_attribution").is_none());
+    iso.join();
+}
+
 // (5f) A runaway tick is interrupted by the budget terminate (armed, never
 // cancelled from the host), and the isolate stays usable afterwards.
 #[test]
@@ -533,6 +567,27 @@ fn slow_tick_is_interrupted_and_isolate_survives() {
         logs.iter().any(|l| l.contains("interrupted slow tick")),
         "the budget interrupt must be logged: {logs:?}"
     );
+    iso.join();
+}
+
+// (5f-b) A captured host-terminated runaway reports the armed interrupt and
+// the isolate remains usable after cancellation clears on the isolate thread.
+#[cfg(feature = "memory-profile")]
+#[test]
+fn failure_capture_attributes_host_termination_and_preserves_isolate() {
+    let src = "export function tick(api) { globalThis.__rs_n = (globalThis.__rs_n||0)+1; if (globalThis.__rs_n === 1) { while(true){} } }";
+    let iso = LoadIsolate::spawn_with_capture_for_test(src.to_string(), LoadShape::NativeTick, vec![], true)
+        .expect("spawn capturing isolate");
+    iso.on_game_tick(31);
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    iso.pause();
+    iso.resume();
+    iso.on_game_tick(32);
+    assert_eq!(iso.probe("__rs_n").expect("post-interrupt probe"), 2);
+    let attribution = iso.memory_progress().get("failure_attribution").cloned().expect("captured host termination attribution");
+    assert_eq!(attribution["tick"], 31);
+    assert_eq!(attribution["terminating_before_cancel"], true);
+    assert!(attribution["interrupt_id"].as_u64().is_some());
     iso.join();
 }
 

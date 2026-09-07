@@ -1009,6 +1009,30 @@ mod isolate {
             shape: LoadShape,
             siblings: Vec<(String, String)>,
         ) -> Result<Self, String> {
+            Self::spawn_inner(js, shape, siblings, None)
+        }
+
+        /// Test-only control of the resolved capture switch. This avoids
+        /// mutating process-global environment variables in parallel tests;
+        /// production callers use [`Self::spawn`], which resolves the
+        /// documented environment switches at isolate creation.
+        #[cfg(feature = "memory-profile")]
+        #[doc(hidden)]
+        pub fn spawn_with_capture_for_test(
+            js: String,
+            shape: LoadShape,
+            siblings: Vec<(String, String)>,
+            enabled: bool,
+        ) -> Result<Self, String> {
+            Self::spawn_inner(js, shape, siblings, Some(enabled))
+        }
+
+        fn spawn_inner(
+            js: String,
+            shape: LoadShape,
+            siblings: Vec<(String, String)>,
+            capture_override: Option<bool>,
+        ) -> Result<Self, String> {
             ensure_platform();
             let (tx, rx) = mpsc::channel::<IsolateCmd>();
             let (msg_tx, msg_rx) = mpsc::channel::<ThreadMsg>();
@@ -1019,8 +1043,10 @@ mod isolate {
             // Full diagnostics and failure-only capture both enable the same cache;
             // host-play keeps Run.diagnostics separate from failure_capture.
             #[cfg(feature = "memory-profile")]
-            if std::env::var("BOT_MEMORY_DIAGNOSTICS").as_deref() == Ok("1")
-                || std::env::var("BOT_MEMORY_FAILURE_CAPTURE").as_deref() == Ok("1")
+            if capture_override.unwrap_or_else(|| {
+                std::env::var("BOT_MEMORY_DIAGNOSTICS").as_deref() == Ok("1")
+                    || std::env::var("BOT_MEMORY_FAILURE_CAPTURE").as_deref() == Ok("1")
+            })
             {
                 counters.enable_stop_reason_capture();
             }
@@ -2600,6 +2626,11 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                                 .deno_runtime()
                                 .v8_isolate()
                                 .is_execution_terminating();
+                            // rustyscript/V8 may clear the observable flag while
+                            // converting an interrupt into Runtime("Unknown error").
+                            // A tick-matched host interrupt is the bounded
+                            // pre-cancel evidence in that case.
+                            let interrupt_id = counters.interrupt_id_for_tick(n);
                             let debug = format!("{error:?}");
                             let variant = debug
                                 .split(['(', '{'])
@@ -2612,8 +2643,8 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                                     call_path,
                                     error_variant: variant,
                                     error_debug: debug,
-                                    terminating_before_cancel: terminating,
-                                    interrupt_id: counters.interrupt_id_for_tick(n),
+                                    terminating_before_cancel: terminating || interrupt_id.is_some(),
+                                    interrupt_id,
                                 },
                             );
                         }
