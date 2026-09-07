@@ -24,13 +24,15 @@ import json
 import math
 import os
 import pathlib
-import resource
 import signal
 import sys
 import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, TextIO, Tuple
+
+# Unix-only stdlib. Import is lazy so Windows can load this module without resource.
+_resource = None  # type: ignore[var-annotated]
 
 # Adjacent helper module (same directory).
 _ROOT = pathlib.Path(__file__).resolve().parent
@@ -222,24 +224,64 @@ def open_output(path: pathlib.Path) -> TextIO:
     return sr.open_output(path, force=False)
 
 
+def _get_resource_module():
+    """Lazy import of Unix ``resource``; None when unavailable (e.g. Windows)."""
+    global _resource
+    if _resource is False:
+        return None
+    if _resource is not None:
+        return _resource
+    try:
+        import resource as _res  # noqa: WPS433 — intentional lazy/conditional
+
+        _resource = _res
+        return _resource
+    except ImportError:
+        _resource = False
+        return None
+
+
 def _children_rusage_snapshot(
     rusage_children_fn: Optional[Callable[[], Any]] = None,
 ) -> Dict[str, Any]:
-    """Snapshot waited-child cumulative CPU; RSS current is unavailable."""
+    """Snapshot waited-child cumulative CPU; RSS current is unavailable.
+
+    On Windows (and any host without getrusage children), returns explicit
+    unavailable with null counters — never invents children CPU or maps parent
+    CPU onto children.
+    """
+    unavailable_base = {
+        "current_rss_bytes": None,
+        "current_rss_status": "unavailable",
+        "current_rss_note": "not fabricated; ru_maxrss is high-water not current",
+    }
     try:
         if rusage_children_fn is not None:
             ru = rusage_children_fn()
         else:
-            ru = resource.getrusage(resource.RUSAGE_CHILDREN)
+            res = _get_resource_module()
+            if res is None or not hasattr(res, "getrusage") or not hasattr(res, "RUSAGE_CHILDREN"):
+                return {
+                    "status": "unavailable",
+                    "reason": "rusage_children_unsupported_on_platform",
+                    "source": None,
+                    "cumulative_user_s": None,
+                    "cumulative_system_s": None,
+                    "cumulative_total_s": None,
+                    "note": (
+                        "resource.getrusage(RUSAGE_CHILDREN) is not available on this platform "
+                        "(e.g. Windows); children CPU is not fabricated from parent counters"
+                    ),
+                    **unavailable_base,
+                }
+            ru = res.getrusage(res.RUSAGE_CHILDREN)
         user = float(ru.ru_utime)
         system = float(ru.ru_stime)
         if not (math.isfinite(user) and math.isfinite(system)) or user < 0 or system < 0:
             return {
                 "status": "unavailable",
                 "reason": "non_finite_or_negative_rusage_children",
-                "current_rss_bytes": None,
-                "current_rss_status": "unavailable",
-                "current_rss_note": "not fabricated; ru_maxrss is high-water not current",
+                **unavailable_base,
             }
         return {
             "status": "available",
@@ -258,8 +300,10 @@ def _children_rusage_snapshot(
         return {
             "status": "unavailable",
             "reason": str(exc),
-            "current_rss_bytes": None,
-            "current_rss_status": "unavailable",
+            "cumulative_user_s": None,
+            "cumulative_system_s": None,
+            "cumulative_total_s": None,
+            **unavailable_base,
             "current_rss_note": "not fabricated",
         }
 

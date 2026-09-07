@@ -167,12 +167,21 @@ def _mac_sample(pid: int, timeout: Optional[float] = None) -> Dict[str, Any]:
     }
 
 
+def _windows_sample(pid: int, timeout: Optional[float] = None) -> Dict[str, Any]:
+    # Explicit Win32 ctypes backend; never falls back to another OS after failure.
+    from windows_process_sample import sample_process as win_sample
+
+    return win_sample(pid, timeout=timeout)
+
+
 def sample_process(pid: int, timeout: Optional[float] = None) -> Dict[str, Any]:
     validate_pid(pid)
     if sys.platform.startswith("linux"):
         return _linux_sample(pid, timeout=timeout)
     if sys.platform == "darwin":
         return _mac_sample(pid, timeout=timeout)
+    if sys.platform == "win32":
+        return _windows_sample(pid, timeout=timeout)
     raise SampleError(f"unsupported OS: {platform.system()}")
 
 
@@ -185,7 +194,26 @@ def sample_pressure() -> Dict[str, Any]:
         except (OSError, SampleError) as exc:
             return {"status": "unavailable", "reason": "required_pressure_counter_unreadable", "provenance": str(path), "detail": str(exc)}
         return {"status": "available", "source": str(path), "semantics": "Linux PSI memory stall time; avg fields are percent over windows, total is microseconds", "lines": parsed}
-    return {"status": "unavailable", "reason": "unsupported_pressure_counter", "semantics": "no portable macOS pressure counter selected; unavailable is not zero or healthy", "provenance": "none"}
+    if sys.platform == "win32":
+        return {
+            "status": "unavailable",
+            "reason": "unsupported_pressure_counter",
+            "semantics": (
+                "no Windows host memory-pressure counter selected for this standalone sampler; "
+                "unavailable is not zero load and not healthy"
+            ),
+            "provenance": "none",
+            "note": (
+                "Windows does not expose Linux PSI; this collector does not invent a substitute "
+                "or report zero/healthy pressure"
+            ),
+        }
+    return {
+        "status": "unavailable",
+        "reason": "unsupported_pressure_counter",
+        "semantics": "no portable macOS pressure counter selected; unavailable is not zero or healthy",
+        "provenance": "none",
+    }
 
 
 def _utc_now() -> str:
