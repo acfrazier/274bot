@@ -9,6 +9,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 06:32 UTC
+
+- t_7e5149d2 actualLuna running: independent CPU0215 archives/provenance/
+  qualification/restore/visual-scope report, then same-cardGrok review.
+- Single longer focusedAB protocol predeclared1a710aa in
+  tile-boxed-long-confirmation-protocol.md:30/600/60, frozen sources/settings,
+  common and anchored100s bins/final300s to resolve startupRSSdecay. No second
+  stage/retry; missing latency/input/calibration remains unresolved.
+  t_328b94a7 actualLuna running dedicated longer controls/tests; no native work.
+  Require actualGrokreview and nativeAST/fullcontract before either new cell.
+- t_9684b365 actualimplementer running read-only remaining visual-behavior proof
+  plan for scene1FBO/minimap/focus/watch/attachdetach using existing frozen hooks.
+  No source/native mutation. Root owns native machine; currently no frontend,
+  original measurement runtime restored. No retention/final acceptance.
+
 ## Latest boundary — 2026-09-08 06:27 UTC
 
 - Fresh CPU0215 baseline and candidate both complete0, nativebound/qualified1/1,
