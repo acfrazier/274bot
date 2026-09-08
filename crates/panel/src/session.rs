@@ -406,6 +406,19 @@ pub fn stream_capture_for(
     right_up: bool,
     keys: &[(bool, i32)],
 ) {
+    // Seam trace: Left/Right key edges at stream entry (channel + slot Option).
+    if host::input_seam_trace::enabled() {
+        let channel = tx.is_some();
+        let slot_opt = slot_name.filter(|n| !n.is_empty()).is_some();
+        let slot_id = slot_name
+            .filter(|n| !n.is_empty())
+            .map(host::responsiveness_profile::slot_id_for);
+        for &(down, ch) in keys {
+            if let Some(key) = host::input_seam_trace::ArrowKey::from_ch(ch) {
+                host::input_seam_trace::note_stream(key, down, channel, slot_opt, slot_id);
+            }
+        }
+    }
     let Some(tx) = tx else {
         return;
     };

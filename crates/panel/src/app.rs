@@ -1137,7 +1137,37 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         // Capture: only map/enqueue while on and hovered;
         // capture off skips the coord math entirely (tx is
         // also None).
-        if capture && ui.is_item_hovered() {
+        // Preserve short-circuit evaluation when seam tracing is off.
+        if host::input_seam_trace::enabled() {
+            let hover = ui.is_item_hovered();
+            let slot_focused = !name.is_empty();
+            observe_input_seam_arrows_and_gate(
+                ui,
+                draw,
+                capture,
+                hover,
+                slot_focused,
+                true,
+                state.session.capture_tx.is_some(),
+            );
+            if capture && hover {
+                let mouse = ui.io().mouse_pos();
+                let min = ui.item_rect_min();
+                stream_capture_for(
+                    Some(name.as_str()),
+                    &state.session.capture_tx,
+                    mouse[0] - min[0],
+                    mouse[1] - min[1],
+                    size[0],
+                    size[1],
+                    ui.is_mouse_clicked(MouseButton::Left),
+                    ui.is_mouse_clicked(MouseButton::Right),
+                    ui.is_mouse_released(MouseButton::Left),
+                    ui.is_mouse_released(MouseButton::Right),
+                    &capture_keys(ui),
+                );
+            }
+        } else if capture && ui.is_item_hovered() {
             let mouse = ui.io().mouse_pos();
             let min = ui.item_rect_min();
             stream_capture_for(
@@ -1155,6 +1185,17 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             );
         }
     } else {
+        if host::input_seam_trace::enabled() {
+            observe_input_seam_arrows_and_gate(
+                ui,
+                false,
+                capture,
+                false,
+                false,
+                true,
+                state.session.capture_tx.is_some(),
+            );
+        }
         ui.text_disabled("renderer off");
     }
 }
@@ -1218,7 +1259,38 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             ]);
             let draw = draw_for_slot(&state.session.focus.lock().unwrap(), name);
             body_clicked = cell_body(ui, gpu, state, name, size, draw);
-            if is_focused && capture && ui.is_item_hovered() {
+            // Preserve capture/is_focused short-circuit when tracing is off.
+            if host::input_seam_trace::enabled() {
+                let hover = ui.is_item_hovered();
+                if is_focused {
+                    observe_input_seam_arrows_and_gate(
+                        ui,
+                        draw,
+                        capture,
+                        hover,
+                        true,
+                        true,
+                        state.session.capture_tx.is_some(),
+                    );
+                }
+                if is_focused && capture && hover {
+                    let mouse = ui.io().mouse_pos();
+                    let min = ui.item_rect_min();
+                    stream_capture_for(
+                        Some(name.as_str()),
+                        &state.session.capture_tx,
+                        mouse[0] - min[0],
+                        mouse[1] - min[1],
+                        size[0],
+                        size[1],
+                        ui.is_mouse_clicked(MouseButton::Left),
+                        ui.is_mouse_clicked(MouseButton::Right),
+                        ui.is_mouse_released(MouseButton::Left),
+                        ui.is_mouse_released(MouseButton::Right),
+                        &capture_keys(ui),
+                    );
+                }
+            } else if is_focused && capture && ui.is_item_hovered() {
                 let mouse = ui.io().mouse_pos();
                 let min = ui.item_rect_min();
                 stream_capture_for(
@@ -1374,6 +1446,64 @@ fn capture_keys(ui: &Ui) -> Vec<(bool, i32)> {
         }
     }
     keys
+}
+
+/// Bounded seam observation: Left/Right ImGui edges and capture/gate metadata.
+/// Does not send host input and does not change capture/repeat semantics.
+///
+/// `slot_focused` is selected host-slot identity for this GameImage path — not
+/// ImGui keyboard window focus (`win_focused` is recorded separately).
+fn observe_input_seam_arrows_and_gate(
+    ui: &Ui,
+    draw: bool,
+    capture: bool,
+    hover: bool,
+    slot_focused: bool,
+    pane_open: bool,
+    capture_tx: bool,
+) {
+    if !host::input_seam_trace::enabled() {
+        return;
+    }
+    // Read the same edge APIs capture_keys uses; ImGui key state is per-frame.
+    if ui.is_key_pressed_with_repeat(Key::LeftArrow, false) {
+        host::input_seam_trace::note_imgui_arrow(
+            host::input_seam_trace::ArrowKey::Left,
+            true,
+            "press",
+        );
+    }
+    if ui.is_key_released(Key::LeftArrow) {
+        host::input_seam_trace::note_imgui_arrow(
+            host::input_seam_trace::ArrowKey::Left,
+            false,
+            "release",
+        );
+    }
+    if ui.is_key_pressed_with_repeat(Key::RightArrow, false) {
+        host::input_seam_trace::note_imgui_arrow(
+            host::input_seam_trace::ArrowKey::Right,
+            true,
+            "press",
+        );
+    }
+    if ui.is_key_released(Key::RightArrow) {
+        host::input_seam_trace::note_imgui_arrow(
+            host::input_seam_trace::ArrowKey::Right,
+            false,
+            "release",
+        );
+    }
+    let win_focused = ui.is_window_focused();
+    host::input_seam_trace::note_gate(
+        draw,
+        capture,
+        hover,
+        slot_focused,
+        win_focused,
+        pane_open,
+        capture_tx,
+    );
 }
 
 /// Right panel: rs2b0t chrome squished into the 330px strip. Vertical scroll

@@ -2,6 +2,7 @@
 
 mod auto_run;
 pub mod cadence;
+pub mod input_seam_trace;
 pub mod login_queue;
 mod random;
 pub mod render_profile;
@@ -43,10 +44,17 @@ pub fn set_debug(enabled: bool) {
 
 /// Host debug logging is on when `BOT_DEBUG=1` or [`set_debug`] ran.
 pub fn debug_enabled() -> bool {
-    DEBUG.load(Ordering::Relaxed)
+    debug_flag()
         || std::env::var("BOT_DEBUG")
             .map(|v| v == "1")
             .unwrap_or(false)
+}
+
+/// Non-allocating host debug latch (`set_debug` / `--debug` only).
+/// Prefer [`debug_enabled`] for full `BOT_DEBUG=1` semantics.
+#[inline]
+pub fn debug_flag() -> bool {
+    DEBUG.load(Ordering::Relaxed)
 }
 
 /// The 274 client's frame time: one `mainloop` pass every 20 ms.

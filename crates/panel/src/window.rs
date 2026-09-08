@@ -20,8 +20,9 @@ use pollster::block_on;
 use thiserror::Error;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
 /// Panel window-loop error.
@@ -884,6 +885,21 @@ where
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        // Observe Left/Right WindowEvent before platform forwarding.
+        if let WindowEvent::KeyboardInput { event: ref kev, .. } = event {
+            let arrow = match &kev.logical_key {
+                Key::Named(NamedKey::ArrowLeft) => Some(host::input_seam_trace::ArrowKey::Left),
+                Key::Named(NamedKey::ArrowRight) => Some(host::input_seam_trace::ArrowKey::Right),
+                _ => None,
+            };
+            if let Some(key) = arrow {
+                host::input_seam_trace::note_window_arrow(
+                    key,
+                    kev.state == ElementState::Pressed,
+                    kev.repeat,
+                );
+            }
+        }
         // We may recreate the window/gpu stack on fatal GPU errors, so we avoid
         // holding a mutable borrow of self.window across the whole match.
         match event {

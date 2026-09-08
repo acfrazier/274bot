@@ -240,7 +240,8 @@ impl SlotInput {
     /// Drain capture events into the shell. Returns true when at least one
     /// actionable event (`Down` or key-down) was applied this call.
     pub fn drain_with_actionable_flag(&self, shell: &mut GameShell) -> bool {
-        if !self.enabled.load(Ordering::Relaxed) {
+        let enabled = self.enabled.load(Ordering::Relaxed);
+        if !enabled {
             return false;
         }
         let mut g = self.rx.lock().unwrap();
@@ -259,6 +260,11 @@ impl SlotInput {
                 InputEv::Key { down, ch } => {
                     if down {
                         actionable = true;
+                    }
+                    if crate::input_seam_trace::enabled() {
+                        if let Some(key) = crate::input_seam_trace::ArrowKey::from_ch(ch) {
+                            crate::input_seam_trace::note_drain(key, down, enabled);
+                        }
                     }
                     shell.apply_key(down, 0, ch);
                 }

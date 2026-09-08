@@ -801,11 +801,28 @@ impl Drop for Local {
     }
 }
 
+/// Outcome of [`with_live_slot_from`]: row match is not necessarily live.
+#[derive(Clone, Copy, Debug, Default)]
+struct LiveSlotHit {
+    /// Any registry row for `slot_id` (live preferred, else ended fallback).
+    matched: bool,
+    /// True only when the non-ended live row was used.
+    live: bool,
+    /// Row generation when `matched`; otherwise unused.
+    generation: u64,
+}
+
 /// Apply `f` to the live (or most recent) row for `slot_id`, stamping the
 /// **input** capture bracket from `t0` through registry unlock. Callers that
 /// cut INPUT_PENDING must pass a `t0` taken **before** that cut so the
 /// bracket encloses the pending/counter cut, not only the registry write.
-fn with_live_slot_from(t0: Instant, slot_id: u64, f: impl FnOnce(&mut SlotObservation)) {
+///
+/// Returns hit metadata captured from the same row mutation (not a later probe).
+fn with_live_slot_from(
+    t0: Instant,
+    slot_id: u64,
+    f: impl FnOnce(&mut SlotObservation),
+) -> LiveSlotHit {
     let mut reg = REGISTRY.lock().unwrap();
     if let Some(entry) = reg
         .iter_mut()
@@ -813,6 +830,7 @@ fn with_live_slot_from(t0: Instant, slot_id: u64, f: impl FnOnce(&mut SlotObserv
         .find(|s| s.slot_id == slot_id && !s.ended)
     {
         f(entry);
+        let generation = entry.generation;
         entry.updated_ms = wall_ms();
         let t1 = Instant::now();
         stamp_ns_bracket(
@@ -821,8 +839,14 @@ fn with_live_slot_from(t0: Instant, slot_id: u64, f: impl FnOnce(&mut SlotObserv
             t0,
             t1,
         );
+        LiveSlotHit {
+            matched: true,
+            live: true,
+            generation,
+        }
     } else if let Some(entry) = reg.iter_mut().rev().find(|s| s.slot_id == slot_id) {
         f(entry);
+        let generation = entry.generation;
         entry.updated_ms = wall_ms();
         let t1 = Instant::now();
         stamp_ns_bracket(
@@ -831,6 +855,13 @@ fn with_live_slot_from(t0: Instant, slot_id: u64, f: impl FnOnce(&mut SlotObserv
             t0,
             t1,
         );
+        LiveSlotHit {
+            matched: true,
+            live: false,
+            generation,
+        }
+    } else {
+        LiveSlotHit::default()
     }
 }
 
@@ -866,10 +897,25 @@ pub fn note_input_start(slot_id: u64, at: Instant, require_gen: u64) -> bool {
                 ),
             }
         }
-        with_live_slot_from(t0, slot_id, |s| {
+        let hit = with_live_slot_from(t0, slot_id, |s| {
             s.input_dropped_n = s.input_dropped_n.wrapping_add(1);
             s.input_start_n = s.input_start_n.wrapping_add(1);
         });
+        // Trace facts from the same row mutation only; no extra REGISTRY probe.
+        if crate::input_seam_trace::enabled() {
+            crate::input_seam_trace::note_metric_start(
+                slot_id,
+                false,
+                hit.matched,
+                hit.live,
+                hit.matched,
+                if hit.matched {
+                    Some(hit.generation)
+                } else {
+                    None
+                },
+            );
+        }
         return false;
     }
     let cohort_id = if crate::responsiveness_cohort::enabled() {
@@ -901,10 +947,24 @@ pub fn note_input_start(slot_id: u64, at: Instant, require_gen: u64) -> bool {
     });
     let pending_n = q.iter().filter(|p| p.slot_id == slot_id).count() as u64;
     drop(q);
-    with_live_slot_from(t0, slot_id, |s| {
+    let hit = with_live_slot_from(t0, slot_id, |s| {
         s.input_start_n = s.input_start_n.wrapping_add(1);
         s.input_pending_n = pending_n;
     });
+    if crate::input_seam_trace::enabled() {
+        crate::input_seam_trace::note_metric_start(
+            slot_id,
+            true,
+            hit.matched,
+            hit.live,
+            hit.matched,
+            if hit.matched {
+                Some(hit.generation)
+            } else {
+                None
+            },
+        );
+    }
     true
 }
 
@@ -922,7 +982,7 @@ pub fn note_input_canceled(slot_id: u64) {
         }
         let pending_n = q.iter().filter(|p| p.slot_id == slot_id).count() as u64;
         drop(q);
-        with_live_slot_from(t0, slot_id, |s| {
+        let _ = with_live_slot_from(t0, slot_id, |s| {
             s.input_canceled_n = s.input_canceled_n.wrapping_add(1);
             s.input_pending_n = pending_n;
         });
@@ -938,9 +998,25 @@ pub fn note_panel_present(slot_id: u64, presented_gen: u64, at: Instant) {
     if !ENABLED.load(Relaxed) {
         return;
     }
-    complete_input(slot_id, at, |p| {
+    let out = complete_input(slot_id, at, |p| {
         p.surface == InputSurface::Panel && p.require_gen != 0 && p.require_gen <= presented_gen
     });
+    // Trace only when seam gate is on; no extra REGISTRY locks for the probe.
+    if crate::input_seam_trace::enabled() {
+        crate::input_seam_trace::note_present(
+            slot_id,
+            presented_gen,
+            out.removed_n,
+            out.published_n,
+            out.hit.matched,
+            out.hit.live,
+            if out.hit.matched {
+                Some(out.hit.generation)
+            } else {
+                None
+            },
+        );
+    }
 }
 
 /// TUI: terminal.draw finished successfully after possible key handling.
@@ -948,13 +1024,22 @@ pub fn note_tui_draw_flush(slot_id: u64, at: Instant) {
     if !ENABLED.load(Relaxed) {
         return;
     }
-    complete_input(slot_id, at, |p| {
+    let _ = complete_input(slot_id, at, |p| {
         p.surface == InputSurface::Tui && p.slot_id == slot_id
     });
 }
 
+/// Queue-removal vs registry-publish outcome for one complete_input pass.
+struct CompleteOut {
+    /// Pending samples removed from the input queue.
+    removed_n: u32,
+    /// Samples that bumped registry complete counters (0 if no row matched).
+    published_n: u32,
+    hit: LiveSlotHit,
+}
+
 /// Complete all matching pending inputs for slot (FIFO among matches).
-fn complete_input(slot_id: u64, at: Instant, pred: impl Fn(&InputPending) -> bool) {
+fn complete_input(slot_id: u64, at: Instant, pred: impl Fn(&InputPending) -> bool) -> CompleteOut {
     // t0 before pending cut so input bracket encloses the deque mutation.
     let t0 = Instant::now();
     let mut q = INPUT_PENDING.lock().unwrap();
@@ -970,10 +1055,16 @@ fn complete_input(slot_id: u64, at: Instant, pred: impl Fn(&InputPending) -> boo
     }
     let pending_n = q.iter().filter(|p| p.slot_id == slot_id).count() as u64;
     drop(q);
+    let removed_n = completed.len() as u32;
     if completed.is_empty() {
-        return;
+        return CompleteOut {
+            removed_n: 0,
+            published_n: 0,
+            hit: LiveSlotHit::default(),
+        };
     }
-    with_live_slot_from(t0, slot_id, |s| {
+    let mut published_n = 0u32;
+    let hit = with_live_slot_from(t0, slot_id, |s| {
         for (d, cohort_id) in completed {
             if let Some(id) = cohort_id {
                 crate::responsiveness_cohort::complete(id, mono_ns(at));
@@ -987,9 +1078,18 @@ fn complete_input(slot_id: u64, at: Instant, pred: impl Fn(&InputPending) -> boo
                 let fb = fine_latency_bucket(d);
                 s.input_fine_latency_buckets[fb] = s.input_fine_latency_buckets[fb].wrapping_add(1);
             }
+            published_n = published_n.wrapping_add(1);
         }
         s.input_pending_n = pending_n;
     });
+    if !hit.matched {
+        published_n = 0;
+    }
+    CompleteOut {
+        removed_n,
+        published_n,
+        hit,
+    }
 }
 
 /// After panel mailbox store, stamp pending panel inputs that still have
@@ -1002,10 +1102,17 @@ pub fn bind_input_to_mailbox_gen(slot_id: u64, gen: u64) {
         return;
     }
     let mut q = INPUT_PENDING.lock().unwrap();
+    let mut bound_n = 0u32;
     for p in q.iter_mut() {
         if p.slot_id == slot_id && p.surface == InputSurface::Panel && p.require_gen == 0 {
             p.require_gen = gen;
+            bound_n = bound_n.wrapping_add(1);
         }
+    }
+    drop(q);
+    // No extra REGISTRY locks; tracer heartbeats zero-work binds separately.
+    if crate::input_seam_trace::enabled() {
+        crate::input_seam_trace::note_gen_bind(slot_id, gen, bound_n);
     }
 }
 
@@ -1649,5 +1756,72 @@ pub(crate) mod tests {
         let mut b = [0u64; FINE_LATENCY_BUCKETS];
         b[4] = 100; // ≤5 ms
         assert_eq!(fine_p99_upper_bound_ms(&b), Some(5));
+    }
+
+    /// Producer path: admitted start without a live row vs start with a live row;
+    /// bind/present actionable vs zero-work heartbeat capacity.
+    #[test]
+    fn input_seam_trace_producer_path_admission_vs_row() {
+        let _g = lock_tests();
+        let _seam = crate::input_seam_trace::test_lock();
+        crate::input_seam_trace::reset_for_test();
+        crate::input_seam_trace::force_for_test(true);
+        enable();
+        set_input_surface(InputSurface::Panel);
+        INPUT_PENDING.lock().unwrap().clear();
+
+        let orphan = 0x5ea1_u64;
+        assert!(note_input_start(orphan, Instant::now(), 0));
+        assert_eq!(
+            crate::input_seam_trace::stage_counts(crate::input_seam_trace::Stage::MetricStart).0,
+            1
+        );
+        // Orphan start is admitted into the pending queue even with no registry row.
+        assert_eq!(
+            INPUT_PENDING
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|p| p.slot_id == orphan)
+                .count(),
+            1
+        );
+
+        let mut l = fresh_local("resp-seam-hit");
+        let sid = l.slot_id();
+        assert!(note_input_start(sid, Instant::now(), 0));
+        assert_eq!(
+            crate::input_seam_trace::stage_counts(crate::input_seam_trace::Stage::MetricStart).0,
+            2
+        );
+        let rows = read().expect("on");
+        let row = rows.iter().find(|s| s.slot_id == sid).expect("row");
+        assert_eq!(row.input_start_n, 1);
+
+        bind_input_to_mailbox_gen(sid, 7);
+        assert_eq!(
+            crate::input_seam_trace::stage_counts(crate::input_seam_trace::Stage::GenBind).0,
+            1
+        );
+        // No remaining unbound pending for sid → heartbeat path, not actionable stage.
+        bind_input_to_mailbox_gen(sid, 8);
+        assert_eq!(
+            crate::input_seam_trace::stage_counts(crate::input_seam_trace::Stage::GenBind).0,
+            1
+        );
+
+        note_panel_present(sid, 7, Instant::now());
+        assert_eq!(
+            crate::input_seam_trace::stage_counts(crate::input_seam_trace::Stage::Present).0,
+            1
+        );
+        let rows = read().expect("on");
+        let row = rows.iter().find(|s| s.slot_id == sid).expect("row");
+        assert_eq!(row.input_complete_n, 1);
+
+        crate::input_seam_trace::force_for_test(false);
+        crate::input_seam_trace::reset_for_test();
+        INPUT_PENDING.lock().unwrap().clear();
+        l.decode_pending.clear();
     }
 }
