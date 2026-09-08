@@ -9,6 +9,26 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 08:22 UTC
+
+- Focused GPU reader8100b8f APPROVED actualGrok4.5/xai-oauth
+  20260908_041158_98ce2b; integrated source-only as0f25930/d22d733/b49fcae/
+  ec2d716, excluding isolatedSTATEsetup. Root full metrics/adapter/overhead
+  primary suites175/175 passed (no isolated missing-fixture failures here).
+- Root recomputed all six untouched short archives against ORIGINAL primary
+  aca71ac reader8ec0e48a and final33fcbad1: focused-two unavailable→available/meet;
+  allfour background available/meet unchanged. Full per-slot old/new results
+  and raw hashes in diagnostics/focused-gpu-coverage-integration-8100b8f.
+  Fix report corrects samplecounts118..120 and distinguishes old rejected
+  reader comparison from real primary integration proof. No RSS/cadence-scanout/
+  fine/input/calibration/final acceptance inferred. Focused RSS remains parked.
+- Synchronized controller aca71ac t_bfaf7292 rejected for root/reviewer PS5
+  invocation, receipt overwrite, incomplete chronology/stream/cleanup issues;
+  same-card Luna correction running. No new native session since closed0800.
+- NEW t_59c539d3 Luna current-finish-line-gap-audit.md only, full approved
+  target/evidence/next-owner table; read-only, same-card review required.
+  Fullcampaign G1/finaltargets/lifecycle/scaling/wholeGrok remain incomplete.
+
 ## Latest boundary — 2026-09-08 08:13 UTC
 
 - Visual0742 proof38693c6 APPROVED t_da614000 actualGrok4.5/xai-oauth
