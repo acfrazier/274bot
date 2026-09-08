@@ -34,7 +34,7 @@ Additive fixed-window cohort journal publisher on the memory harness path. Activ
 Schema version: `host::responsiveness_cohort::SCHEMA_VERSION` = **1**.  
 Clock domain: `host::responsiveness_profile::CLOCK_DOMAIN` = `"responsiveness_process_mono"`.  
 Default finite tail: name `DEFAULT_TAIL_NS`, value `5_000_000_000` ns (5s), recorded in header/terminal before results.  
-Membership: half-open `[START, END)` on start_mono_ns; completions may land in `[END, END+tail)`.
+Membership: half-open `[START, END)` on start_mono_ns; included events may complete through `END+tail`, including equality (the producer rejects completion timestamps strictly greater than that deadline).
 
 ### Sidecar path
 
@@ -84,9 +84,9 @@ No other record types. Batches may be **counter-only** (empty `records`/`losses`
 | `record` | `"cohort-batch"` | discriminant |
 | `schema_version` | u16 | from `CohortBatch` |
 | `boundaries` | Boundaries | same window |
-| `records` | EventRecord[] | journal EventRecords with `sequence > cursor` (any `Outcome`) |
-| `losses` | LossReceipt[] | loss receipts with `sequence > cursor` |
-| `next_cursor` | u64 | **inclusive** high-water: largest **included** `journal_sequence` in this batch (`max(sequence)` for entries with `sequence > cursor`). Next `extract_since` call still filters `sequence > next_cursor`. Not an exclusive end index. |
+| `records` | EventRecord[] | EventRecords extracted from journal entries after the previous cursor, with any `Outcome`. EventId.sequence is a start identity, not a journal cursor. |
+| `losses` | LossReceipt[] | Retained loss receipts extracted from journal entries after the previous cursor. LossReceipt.sequence is an event identity, not a journal cursor. |
+| `next_cursor` | u64 | **Inclusive** high-water: largest extracted internal `JournalEntry.journal_sequence`, unchanged for an empty batch. This internal append-order sequence is distinct from EventId.sequence and LossReceipt.sequence and is not serialized per entry. Pass the returned cursor unchanged to the next extraction. Never compute it from event IDs or filter records by comparing their event sequence with it. |
 | `complete` | bool | **`State.finalized` only** (source: `complete: s.finalized`). Not proof of producer barrier success, empty pending, or lossless population. Can be `true` on an unavailable final batch after finalize. |
 | `loss_count` | u64 | cumulative losses |
 | `journal_overflow_n` | u64 | cumulative capacity rejects |
@@ -110,7 +110,7 @@ LossReceipt: `{sequence, slot_id, generation: Option<u64>, start_mono_ns: Option
 | `terminal` | bool | summary.terminal (always true on success path) |
 | `available` | bool | `s.available && s.pending.is_empty()` after finalize drain; false on source losses / incomplete / overflow path |
 | `records_n` | u64 | count of **all** EventRecords successfully appended via the terminal path (`records_n` increments for any `Outcome` that becomes an EventRecord). **Not** “Completed latency samples only”. Inspect `outcome` on records; losses are separate (`losses_n` / LossReceipt). |
-| `losses_n` | u64 | cumulative loss receipts (Capacity/Incomplete/etc.) |
+| `losses_n` | u64 | Cumulative counted losses, including capacity losses whose receipts could not be retained. It can exceed the number of serialized LossReceipts; inspect journal_overflow_n and preserve unavailable status. |
 | `pending_n` | u64 | `s.pending.len()` **after** finalize drains prior pending into Incomplete LossReceipts. Typically **0 even when incomplete work existed**. Reader must use `losses_n` / `available` / loss reasons — **never** equate `pending_n == 0` with closed success. |
 | `tail_name` | string | `"DEFAULT_TAIL_NS"` |
 | `producers_joined` | bool | publisher proved stop_slot/join path |
