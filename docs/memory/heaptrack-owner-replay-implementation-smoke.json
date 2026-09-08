@@ -1,0 +1,53 @@
+{
+  "schema": "heaptrack-owner-implementation-smoke/v1",
+  "scope": "portable saved controlled fixture only",
+  "campaign_capture_status": "failed_raw_size_guard",
+  "capture_complete": false,
+  "acceptance": false,
+  "tests": {
+    "command": "python3 -m unittest discover -s docs/memory -p test_heaptrack_owner_replay.py -v",
+    "ran": 21,
+    "linux_only_skips": 2,
+    "exit_code": 0
+  },
+  "saved_smoke_command": "python3 docs/memory/heaptrack_owner_smoke.py diagnostics/heaptrack-owner-replay-implementation-smoke",
+  "saved_smoke_exit_code": 0,
+  "manifest_sha256": "cb1572f555bb53cfa386cb2655a3be882b21410631f05282638a76d00196062f",
+  "receipt_sha256": "32240a83f5580f4eeb1b7161fcd413f6ae36ede0d36fab4b309c1e1721478a07",
+  "tooling_sha256": {
+    "heaptrack_owner_runner.py": "d3d7d034019c705e6930db5bec8bcd6999344f48ccf2f6f8c17a1d5e29e00f21",
+    "heaptrack_owner_replay.py": "fa4c3ef5384055745d38e80b3e01d37a28a8d28774d175ddb0d82ef81ca18ce0"
+  },
+  "raw_interpreted_normalized_event_digest": "bc9ff7ab61ecc464c3cfbea1504f2612d6070c23190ec99cebc6537ee1a3bcc4",
+  "allocations": 6388,
+  "matched_frees": 6354,
+  "unknown_raw_frees": 2,
+  "raw_temporary": 637,
+  "interpreted_analyzer_temporary": 638,
+  "max_descriptor_multiplicity": 2048,
+  "peak": {"bytes": 5730024, "line": 27144, "byte_offset": 250615, "previous_timestamp_ms": 50},
+  "canonical": {"rows": 2951, "positive_rows": 2212, "bytes": 5730024, "full_normalized_positive_multiset_equal": true},
+  "known_bytearray_peak_bytes_asserted_by_test": 4196352,
+  "known_bytearray_eof_bytes_asserted_by_test": 0,
+  "requested": {"requested_ms": 500, "actual_ms": 497, "next_ms": 507, "line": 27231, "byte_offset": 251160, "bytes": 5730024, "count": 4962},
+  "last_mark": {"actual_ms": 1064, "line": 32299, "byte_offset": 281552, "bytes": 407233, "count": 34},
+  "eof": {"bytes": 407233, "count": 34, "file_bytes": 281592},
+  "tables": {"strings": 139, "ips": 1972, "traces": 13943, "descriptors": 3291, "high_charged_bytes": 7082334},
+  "owned_child": {
+    "exit_code": 0,
+    "reaped": true,
+    "wall_s": 0.6969008339999999,
+    "linux_proc_monitor": false,
+    "phase_measurements": [
+      {"phase": 1, "wall_s": 0.13129733300000002, "cpu_s": 0.129862, "cumulative_peak_rss_bytes": 16629760},
+      {"phase": 2, "wall_s": 0.174702375, "cpu_s": 0.17462000000000003, "cumulative_peak_rss_bytes": 17498112},
+      {"phase": 3, "wall_s": 0.362284792, "cpu_s": 0.362218, "cumulative_peak_rss_bytes": 21528576}
+    ]
+  },
+  "notes": [
+    "Smoke correctness execution overlapped small offline tests; these timings are guard receipts, not a production capacity benchmark.",
+    "Source ownership of the Python smoke is deliberately unknown, not mapped to frozen Rust owners.",
+    "Native Linux RSS/address-space qualification remains root-owned; Darwin execution is not a released production executor.",
+    "No large production raw/interpreted replay, new capture, game, remote execution, Windows or Hyper-V action occurred."
+  ]
+}
