@@ -29,7 +29,7 @@ The managed receipt records launcher exit 0, collector exit 0, sampler exit 0, n
 
 The raw stream has 276 rows: 71 seed, 30 warmup, 116 observe, and 59 teardown. The observe samples span 118.265305491 seconds (elapsed `103.645132996` through `221.910438487`). The qualification stream has exactly two 16-slot boundaries:
 
-- `observe-start`, elapsed `102.665305022`: 16/16 slots `Running`, `ingame=true`, `scene_state=2`; no slot errors. Dispatched work was present (per-slot range 56–155), and food inventories were 3–5.
+- `observe-start`, elapsed `102.665305022`: 16/16 slots `Running`, `ingame=true`, `scene_state=2`; no slot errors. Dispatched work was present (per-slot range 56–155), and food inventories were 3–4 (Counter 3×9, 4×7).
 - `observe-end`, elapsed `222.700757229`: 16/16 slots `Running`, `ingame=true`, `scene_state=2`; no slot errors. Dispatched work was present (per-slot range 256–355), and food inventories were 21–22. The rendered runtime status shows progress through the thieving/banking flow, including bank-trip completion by the end boundary.
 
 A scan of all raw qualification and observation rows found no `runtime.error`, `failure_attribution`, or other per-slot failure payload. The run log had no error/failure/unknown/exception event; its only matching line was the successful completion marker. Therefore there is no failure boundary from which to measure a failure duration or infer a causal path.
@@ -43,7 +43,7 @@ Across the 116 ordinary observe samples:
 - Aggregate process CPU slope: `0.716089622805` core-equivalents under the run's existing accounting convention (the 0.5-core target is descriptive only here).
 - Client tick delta: 92,727 over the raw observe sample span, or `49.003699570` client ticks/slot/second across 16 slots.
 
-The qualification boundary elapsed values and raw sample elapsed values have different purposes and clock origins: the boundary rows bracket the harness's qualification reads, while the raw stream reports sampled observations. They must not be presented as interchangeable timings. The new native Hyper-V build/toolchain and this run's clock origins also differ from the earlier Docker-binary evidence; no matched-performance comparison is valid.
+The qualification boundary elapsed values and raw sample elapsed values have different purposes but use the same `MemoryHarness` elapsed clock; the boundary rows bracket qualification reads, while the raw stream reports sampled observations at different instants/windows. They must not be presented as interchangeable timings. Launcher/process accounting has separate origins, and the new native Hyper-V build/toolchain differs from the earlier Docker-binary evidence; no matched-performance comparison is valid.
 
 ## Historical failure retained
 
