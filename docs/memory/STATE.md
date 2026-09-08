@@ -11,6 +11,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 16:12 UTC
+
+- Grok4.5 approved final fixturebca8476 and controllerbf05cb1; both integrated
+  throughf65738a. Native TUI92tests PASS under isolated test-only seam; original
+  failed suite/log remains. See current-native-tui-build-report.md.
+- VPS source/binary/server688files/ldd checks and no-launch preflight PASS.
+  No live cell launched. Build manifest/test qualification remains pending.
+- Native controller17tests exposed a platform-dependent guard test false pass:
+  constructor's captured default reader bypassed mock. Corrective t_31bad671
+  Luna is live, same controls worktree, test/report scope only; same-card review
+  then native rerun required. Original failed native log retained.
+- Next: complete guard proof, fresh launch conditions, release sole120s warmup/
+  600s observe N16TUI calibration, archive/qualify/review and select measured owner.
+
 ## Latest boundary — 2026-09-08 16:01 UTC
 
 - Operator performed prepared VPS reboot. Root verified new boot08c031f9,
