@@ -1,0 +1,591 @@
+//! Bounded, opt-in fixed-window responsiveness cohort journal.
+//!
+//! This is additive to the legacy responsiveness aggregates.  A cohort is a
+//! single process-local observation with an explicit producer-close barrier;
+//! timestamps alone never prove that all pre-end producers have published.
+
+use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
+
+pub const SCHEMA_VERSION: u16 = 1;
+pub const DEFAULT_CAPACITY: usize = 512;
+pub const DEFAULT_TAIL_NS: u64 = 5_000_000_000;
+
+static OPT_IN: AtomicBool = AtomicBool::new(false);
+static STATE: OnceLock<Mutex<State>> = OnceLock::new();
+
+fn state() -> &'static Mutex<State> {
+    STATE.get_or_init(|| Mutex::new(State::default()))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Boundaries {
+    pub start_mono_ns: u64,
+    pub end_mono_ns: u64,
+    pub tail_ns: u64,
+}
+impl Boundaries {
+    fn validate(self) -> Result<(), CohortError> {
+        if self.start_mono_ns >= self.end_mono_ns
+            || self.tail_ns == 0
+            || self.end_mono_ns.checked_add(self.tail_ns).is_none()
+        {
+            return Err(CohortError::MalformedBoundaries);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventId {
+    pub slot_id: u64,
+    pub generation: u64,
+    pub sequence: u64,
+    pub start_mono_ns: u64,
+    pub surface: Surface,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Surface {
+    Decode,
+    Panel,
+    Tui,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Outcome {
+    Completed,
+    Canceled,
+    Lost,
+    Dropped,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventRecord {
+    pub id: EventId,
+    pub complete_mono_ns: Option<u64>,
+    pub outcome: Outcome,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LossReason {
+    Capacity,
+    LateEvent,
+    GenerationMismatch,
+    MissingIdentity,
+    Incomplete,
+    MalformedTimestamp,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LossReceipt {
+    pub sequence: u64,
+    pub slot_id: u64,
+    pub generation: u64,
+    pub start_mono_ns: Option<u64>,
+    pub outcome: Outcome,
+    pub reason: LossReason,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CohortBatch {
+    pub schema_version: u16,
+    pub boundaries: Boundaries,
+    pub records: Vec<EventRecord>,
+    pub losses: Vec<LossReceipt>,
+    /// Cursor is the largest journal sequence included in this batch.
+    pub next_cursor: u64,
+    pub complete: bool,
+    pub loss_count: u64,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalSummary {
+    pub schema_version: u16,
+    pub boundaries: Boundaries,
+    pub terminal: bool,
+    pub available: bool,
+    pub records_n: u64,
+    pub losses_n: u64,
+    pub pending_n: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CohortError {
+    AlreadyActive,
+    AlreadyFinalized,
+    MalformedBoundaries,
+    StaleOrOverlappingBoundaries,
+    NotActive,
+    InvalidCursor,
+    LateEvent,
+    GenerationMismatch,
+    MissingIdentity,
+    Terminal,
+    ProducersNotClosed,
+}
+struct Pending {
+    id: EventId,
+}
+enum Entry {
+    Record(EventRecord),
+    Loss(LossReceipt),
+}
+struct State {
+    boundaries: Option<Boundaries>,
+    journal: VecDeque<Entry>,
+    pending: VecDeque<Pending>,
+    next_sequence: u64,
+    cursor_floor: u64,
+    available: bool,
+    finalized: bool,
+    producers_closed: bool,
+    capacity: usize,
+    last_end: Option<u64>,
+    records_n: u64,
+    losses_n: u64,
+}
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            boundaries: None,
+            journal: VecDeque::new(),
+            pending: VecDeque::new(),
+            next_sequence: 1,
+            cursor_floor: 0,
+            available: true,
+            finalized: false,
+            producers_closed: false,
+            capacity: DEFAULT_CAPACITY,
+            last_end: None,
+            records_n: 0,
+            losses_n: 0,
+        }
+    }
+}
+pub fn enabled() -> bool {
+    OPT_IN.load(Ordering::Acquire)
+}
+
+pub fn begin(boundaries: Boundaries, capacity: usize) -> Result<(), CohortError> {
+    boundaries.validate()?;
+    if capacity == 0 {
+        return Err(CohortError::MalformedBoundaries);
+    }
+    let mut s = state().lock().unwrap();
+    if s.finalized {
+        return Err(CohortError::AlreadyFinalized);
+    }
+    if s.boundaries.is_some() {
+        return Err(CohortError::AlreadyActive);
+    }
+    if s.last_end.is_some_and(|end| boundaries.start_mono_ns < end) {
+        return Err(CohortError::StaleOrOverlappingBoundaries);
+    }
+    s.boundaries = Some(boundaries);
+    s.capacity = capacity;
+    s.available = true;
+    s.producers_closed = false;
+    OPT_IN.store(true, Ordering::Release);
+    Ok(())
+}
+pub fn begin_default(boundaries: Boundaries) -> Result<(), CohortError> {
+    begin(boundaries, DEFAULT_CAPACITY)
+}
+
+/// Establish the producer synchronization barrier. The caller must invoke
+/// this only after all producer threads/slot generations have stopped
+/// publishing starts and terminal outcomes. It never blocks gameplay.
+pub fn acknowledge_producers_closed() -> Result<(), CohortError> {
+    let mut s = state().lock().unwrap();
+    if s.boundaries.is_none() {
+        return Err(CohortError::NotActive);
+    }
+    if s.finalized {
+        return Err(CohortError::AlreadyFinalized);
+    }
+    s.producers_closed = true;
+    Ok(())
+}
+pub fn producers_closed() -> bool {
+    state().lock().unwrap().producers_closed
+}
+
+fn append(s: &mut State, entry: Entry) -> bool {
+    if s.journal.len() >= s.capacity {
+        s.available = false;
+        return false;
+    }
+    s.journal.push_back(entry);
+    true
+}
+fn loss(s: &mut State, r: LossReceipt) {
+    s.losses_n = s.losses_n.saturating_add(1);
+    let _ = append(s, Entry::Loss(r));
+    s.available = false;
+}
+
+pub fn start(
+    slot_id: u64,
+    generation: u64,
+    start_mono_ns: u64,
+    surface: Surface,
+) -> Option<EventId> {
+    if !enabled() {
+        return None;
+    }
+    let mut s = state().lock().unwrap();
+    let b = s.boundaries?;
+    if s.finalized {
+        if start_mono_ns >= b.start_mono_ns && start_mono_ns < b.end_mono_ns {
+            let seq = s.next_sequence;
+            s.next_sequence = seq.wrapping_add(1);
+            loss(
+                &mut s,
+                LossReceipt {
+                    sequence: seq,
+                    slot_id,
+                    generation,
+                    start_mono_ns: Some(start_mono_ns),
+                    outcome: Outcome::Dropped,
+                    reason: LossReason::LateEvent,
+                },
+            );
+        }
+        return None;
+    }
+    if start_mono_ns < b.start_mono_ns || start_mono_ns >= b.end_mono_ns {
+        return None;
+    }
+    if s.pending.len() + s.journal.len() >= s.capacity {
+        let seq = s.next_sequence;
+        s.next_sequence = seq.wrapping_add(1);
+        loss(
+            &mut s,
+            LossReceipt {
+                sequence: seq,
+                slot_id,
+                generation,
+                start_mono_ns: Some(start_mono_ns),
+                outcome: Outcome::Dropped,
+                reason: LossReason::Capacity,
+            },
+        );
+        return None;
+    }
+    let id = EventId {
+        slot_id,
+        generation,
+        sequence: s.next_sequence,
+        start_mono_ns,
+        surface,
+    };
+    s.next_sequence = s.next_sequence.wrapping_add(1);
+    s.pending.push_back(Pending { id });
+    Some(id)
+}
+pub fn dropped_start(slot_id: u64, generation: u64, start_mono_ns: u64, surface: Surface) {
+    if !enabled() {
+        return;
+    }
+    let mut s = state().lock().unwrap();
+    let Some(b) = s.boundaries else { return };
+    if s.finalized || start_mono_ns < b.start_mono_ns || start_mono_ns >= b.end_mono_ns {
+        return;
+    }
+    let seq = s.next_sequence;
+    s.next_sequence = seq.wrapping_add(1);
+    loss(
+        &mut s,
+        LossReceipt {
+            sequence: seq,
+            slot_id,
+            generation,
+            start_mono_ns: Some(start_mono_ns),
+            outcome: Outcome::Dropped,
+            reason: LossReason::Capacity,
+        },
+    );
+    let _ = surface;
+}
+fn terminal(id: EventId, complete: Option<u64>, outcome: Outcome) {
+    let mut s = state().lock().unwrap();
+    let Some(pos) = s.pending.iter().position(|p| p.id == id) else {
+        let reason = if s.finalized {
+            LossReason::LateEvent
+        } else {
+            LossReason::MissingIdentity
+        };
+        loss(
+            &mut s,
+            LossReceipt {
+                sequence: id.sequence,
+                slot_id: id.slot_id,
+                generation: id.generation,
+                start_mono_ns: Some(id.start_mono_ns),
+                outcome,
+                reason,
+            },
+        );
+        return;
+    };
+    let pending = s.pending.remove(pos).unwrap();
+    if outcome != Outcome::Completed {
+        s.available = false;
+    }
+    if let Some(end) = complete {
+        let Some(b) = s.boundaries else { return };
+        if end < pending.id.start_mono_ns {
+            loss(
+                &mut s,
+                LossReceipt {
+                    sequence: id.sequence,
+                    slot_id: id.slot_id,
+                    generation: id.generation,
+                    start_mono_ns: Some(id.start_mono_ns),
+                    outcome,
+                    reason: LossReason::MalformedTimestamp,
+                },
+            );
+            return;
+        }
+        if end > b.end_mono_ns.saturating_add(b.tail_ns) {
+            loss(
+                &mut s,
+                LossReceipt {
+                    sequence: id.sequence,
+                    slot_id: id.slot_id,
+                    generation: id.generation,
+                    start_mono_ns: Some(id.start_mono_ns),
+                    outcome,
+                    reason: LossReason::LateEvent,
+                },
+            );
+            return;
+        }
+    }
+    s.records_n = s.records_n.saturating_add(1);
+    if !append(
+        &mut s,
+        Entry::Record(EventRecord {
+            id: pending.id,
+            complete_mono_ns: complete,
+            outcome,
+        }),
+    ) {
+        s.available = false;
+    }
+}
+pub fn complete(id: EventId, at: u64) {
+    if enabled() {
+        terminal(id, Some(at), Outcome::Completed);
+    }
+}
+pub fn cancel(id: EventId) {
+    if enabled() {
+        terminal(id, None, Outcome::Canceled);
+    }
+}
+pub fn lost(id: EventId) {
+    if enabled() {
+        terminal(id, None, Outcome::Lost);
+    }
+}
+pub fn dropped(id: EventId) {
+    if enabled() {
+        terminal(id, None, Outcome::Dropped);
+    }
+}
+pub fn generation_lost(id: EventId, generation: u64) {
+    if generation == id.generation {
+        lost(id)
+    } else if enabled() {
+        let mut s = state().lock().unwrap();
+        let seq = id.sequence;
+        loss(
+            &mut s,
+            LossReceipt {
+                sequence: seq,
+                slot_id: id.slot_id,
+                generation,
+                start_mono_ns: Some(id.start_mono_ns),
+                outcome: Outcome::Lost,
+                reason: LossReason::GenerationMismatch,
+            },
+        );
+    }
+}
+
+/// Drain journal entries after `cursor`; extraction frees bounded storage.
+pub fn extract_since(cursor: u64) -> Result<CohortBatch, CohortError> {
+    let mut s = state().lock().unwrap();
+    let b = s.boundaries.ok_or(CohortError::NotActive)?;
+    if cursor < s.cursor_floor || cursor >= s.next_sequence {
+        return Err(CohortError::InvalidCursor);
+    }
+    let mut entries: Vec<_> = s.journal.drain(..).collect();
+    entries.sort_by_key(entry_seq);
+    let mut records = Vec::new();
+    let mut losses = Vec::new();
+    let mut next = cursor;
+    let mut keep = VecDeque::new();
+    for entry in entries {
+        let sequence = entry_seq(&entry);
+        if sequence <= cursor {
+            keep.push_back(entry);
+        } else if sequence == next.saturating_add(1) {
+            match entry {
+                Entry::Record(record) => records.push(record),
+                Entry::Loss(receipt) => losses.push(receipt),
+            }
+            next = sequence;
+        } else {
+            keep.push_back(entry);
+        }
+    }
+    s.journal = keep;
+    s.cursor_floor = next;
+    Ok(CohortBatch {
+        schema_version: SCHEMA_VERSION,
+        boundaries: b,
+        records,
+        losses,
+        next_cursor: next,
+        complete: s.finalized,
+        loss_count: s.losses_n,
+    })
+}
+fn entry_seq(e: &Entry) -> u64 {
+    match e {
+        Entry::Record(r) => r.id.sequence,
+        Entry::Loss(r) => r.sequence,
+    }
+}
+
+pub fn finalize(now_mono_ns: u64) -> Result<TerminalSummary, CohortError> {
+    let mut s = state().lock().unwrap();
+    let b = s.boundaries.ok_or(CohortError::NotActive)?;
+    if s.finalized {
+        return Err(CohortError::AlreadyFinalized);
+    }
+    if now_mono_ns < b.end_mono_ns.saturating_add(b.tail_ns) || !s.producers_closed {
+        return Err(if !s.producers_closed {
+            CohortError::ProducersNotClosed
+        } else {
+            CohortError::Terminal
+        });
+    }
+    let pending: Vec<_> = s.pending.drain(..).collect();
+    for p in pending {
+        loss(
+            &mut s,
+            LossReceipt {
+                sequence: p.id.sequence,
+                slot_id: p.id.slot_id,
+                generation: p.id.generation,
+                start_mono_ns: Some(p.id.start_mono_ns),
+                outcome: Outcome::Lost,
+                reason: LossReason::Incomplete,
+            },
+        );
+    }
+    s.finalized = true;
+    s.last_end = Some(b.end_mono_ns);
+    Ok(TerminalSummary {
+        schema_version: SCHEMA_VERSION,
+        boundaries: b,
+        terminal: true,
+        available: s.available && s.pending.is_empty(),
+        records_n: s.records_n,
+        losses_n: s.losses_n,
+        pending_n: s.pending.len() as u64,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex as StdMutex;
+    static LOCK: StdMutex<()> = StdMutex::new(());
+    fn reset() {
+        *state().lock().unwrap() = State::default();
+        OPT_IN.store(false, Ordering::Release);
+    }
+    #[test]
+    fn window_tail_and_barrier() {
+        let _g = LOCK.lock().unwrap();
+        reset();
+        let b = Boundaries {
+            start_mono_ns: 100,
+            end_mono_ns: 200,
+            tail_ns: 50,
+        };
+        begin(b, 8).unwrap();
+        assert!(start(1, 2, 99, Surface::Decode).is_none());
+        let id = start(1, 2, 150, Surface::Decode).unwrap();
+        complete(id, 240);
+        assert!(finalize(250).is_err());
+        acknowledge_producers_closed().unwrap();
+        assert_eq!(finalize(250).unwrap().records_n, 1);
+    }
+    #[test]
+    fn extraction_drains_and_capacity_loss_is_bounded() {
+        let _g = LOCK.lock().unwrap();
+        reset();
+        begin(
+            Boundaries {
+                start_mono_ns: 1,
+                end_mono_ns: 10,
+                tail_ns: 2,
+            },
+            1,
+        )
+        .unwrap();
+        let id = start(1, 1, 2, Surface::Panel).unwrap();
+        assert!(start(1, 1, 3, Surface::Panel).is_none());
+        let a = extract_since(0).unwrap();
+        assert_eq!(a.losses.len(), 0);
+        lost(id);
+        let b = extract_since(a.next_cursor).unwrap();
+        assert_eq!(b.records.len(), 0);
+        assert_eq!(b.loss_count, 1);
+    }
+    #[test]
+    fn incomplete_and_noncompleted_fail_closed() {
+        let _g = LOCK.lock().unwrap();
+        reset();
+        begin(
+            Boundaries {
+                start_mono_ns: 1,
+                end_mono_ns: 10,
+                tail_ns: 2,
+            },
+            8,
+        )
+        .unwrap();
+        let id = start(1, 1, 2, Surface::Panel).unwrap();
+        cancel(id);
+        acknowledge_producers_closed().unwrap();
+        let s = finalize(12).unwrap();
+        assert!(!s.available);
+    }
+
+    #[test]
+    fn existing_decode_entrypoints_publish_cohort_identity() {
+        let _g = LOCK.lock().unwrap();
+        reset();
+        let start_at = std::time::Instant::now();
+        let start_ns = crate::responsiveness_profile::mono_ns(start_at);
+        begin(
+            Boundaries {
+                start_mono_ns: start_ns.saturating_sub(1),
+                end_mono_ns: start_ns + 1_000_000,
+                tail_ns: 50_000_000,
+            },
+            8,
+        )
+        .unwrap();
+        crate::responsiveness_profile::enable();
+        let mut local = crate::responsiveness_profile::Local::new(0xabc).unwrap();
+        local.note_decode_edge(start_at);
+        local.note_script_dispatch(start_at + std::time::Duration::from_millis(1));
+        let batch = extract_since(0).unwrap();
+        assert_eq!(batch.records.len(), 1);
+        assert_eq!(batch.records[0].id.surface, Surface::Decode);
+    }
+}

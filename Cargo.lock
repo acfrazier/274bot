@@ -2310,6 +2310,7 @@ dependencies = [
  "libc",
  "num-bigint",
  "pollster",
+ "serde",
  "vault",
  "wgpu",
  "windows-sys 0.59.0",

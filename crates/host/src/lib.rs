@@ -5,6 +5,7 @@ pub mod cadence;
 pub mod login_queue;
 mod random;
 pub mod render_profile;
+pub mod responsiveness_cohort;
 pub mod responsiveness_profile;
 mod slot;
 mod slot_io;

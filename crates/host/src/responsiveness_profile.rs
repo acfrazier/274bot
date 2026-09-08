@@ -199,6 +199,7 @@ impl ReadSnapshot {
 #[derive(Clone, Copy)]
 struct DecodePending {
     at: Instant,
+    cohort_id: Option<crate::responsiveness_cohort::EventId>,
 }
 
 struct InputPending {
@@ -207,6 +208,7 @@ struct InputPending {
     /// Mailbox generation that must be presented (panel); 0 = any next draw (TUI).
     require_gen: u64,
     surface: InputSurface,
+    cohort_id: Option<crate::responsiveness_cohort::EventId>,
 }
 
 fn wall_ms() -> u64 {
@@ -513,12 +515,24 @@ impl Local {
     pub fn note_decode_edge(&mut self, at: Instant) {
         self.snap.decode_edge_n = self.snap.decode_edge_n.wrapping_add(1);
         if self.decode_pending.len() >= MAX_DECODE_PENDING {
+            crate::responsiveness_cohort::dropped_start(
+                self.snap.slot_id,
+                self.generation,
+                mono_ns(at),
+                crate::responsiveness_cohort::Surface::Decode,
+            );
             self.snap.decode_dropped_n = self.snap.decode_dropped_n.wrapping_add(1);
             self.dirty = true;
             self.maybe_flush();
             return;
         }
-        self.decode_pending.push_back(DecodePending { at });
+        let cohort_id = crate::responsiveness_cohort::start(
+            self.snap.slot_id,
+            self.generation,
+            mono_ns(at),
+            crate::responsiveness_cohort::Surface::Decode,
+        );
+        self.decode_pending.push_back(DecodePending { at, cohort_id });
         self.snap.decode_pending_n = self.decode_pending.len() as u64;
         self.dirty = true;
         self.maybe_flush();
@@ -531,6 +545,9 @@ impl Local {
             return;
         };
         let d = at.saturating_duration_since(pending.at);
+        if let Some(id) = pending.cohort_id {
+            crate::responsiveness_cohort::complete(id, mono_ns(at));
+        }
         self.record_decode_latency(d);
         self.snap.dispatch_n = self.snap.dispatch_n.wrapping_add(1);
         self.snap.decode_pending_n = self.decode_pending.len() as u64;
@@ -542,7 +559,10 @@ impl Local {
     /// Cancels one pending stamp if any; otherwise counts cancel against an
     /// edge that was never stamped (should not happen if callers pair).
     pub fn note_script_canceled(&mut self) {
-        if self.decode_pending.pop_front().is_some() {
+        if let Some(pending) = self.decode_pending.pop_front() {
+            if let Some(id) = pending.cohort_id {
+                crate::responsiveness_cohort::cancel(id);
+            }
             self.snap.decode_canceled_n = self.snap.decode_canceled_n.wrapping_add(1);
             self.snap.decode_pending_n = self.decode_pending.len() as u64;
         } else {
@@ -748,7 +768,10 @@ impl Drop for Local {
         // Drop in-flight bridge events for this generation so a restart of
         // the same username cannot mis-pair stale dispatch/cancel.
         discard_bridge_for(self.snap.slot_id, self.generation);
-        while self.decode_pending.pop_front().is_some() {
+        while let Some(pending) = self.decode_pending.pop_front() {
+            if let Some(id) = pending.cohort_id {
+                crate::responsiveness_cohort::lost(id);
+            }
             self.snap.decode_lost_n = self.snap.decode_lost_n.wrapping_add(1);
         }
         self.snap.decode_pending_n = 0;
@@ -756,9 +779,17 @@ impl Drop for Local {
         let t0 = Instant::now();
         let mut pending = INPUT_PENDING.lock().unwrap();
         let before = pending.len();
+        let cohort_ids: Vec<_> = pending
+            .iter()
+            .filter(|p| p.slot_id == self.snap.slot_id)
+            .filter_map(|p| p.cohort_id)
+            .collect();
         pending.retain(|p| p.slot_id != self.snap.slot_id);
         let lost = (before - pending.len()) as u64;
         drop(pending);
+        for id in cohort_ids {
+            crate::responsiveness_cohort::lost(id);
+        }
         if lost > 0 {
             self.snap.input_lost_n = self.snap.input_lost_n.wrapping_add(lost);
         }
@@ -812,17 +843,40 @@ pub fn note_input_start(slot_id: u64, at: Instant, require_gen: u64) -> bool {
     let mut q = INPUT_PENDING.lock().unwrap();
     if q.len() >= MAX_INPUT_PENDING {
         drop(q);
+        if let Some(generation) = live_generation_for(slot_id) {
+            crate::responsiveness_cohort::dropped_start(
+                slot_id,
+                generation,
+                mono_ns(at),
+                match surface {
+                    InputSurface::Panel => crate::responsiveness_cohort::Surface::Panel,
+                    _ => crate::responsiveness_cohort::Surface::Tui,
+                },
+            );
+        }
         with_live_slot_from(t0, slot_id, |s| {
             s.input_dropped_n = s.input_dropped_n.wrapping_add(1);
             s.input_start_n = s.input_start_n.wrapping_add(1);
         });
         return false;
     }
+    let cohort_id = live_generation_for(slot_id).and_then(|generation| {
+        crate::responsiveness_cohort::start(
+            slot_id,
+            generation,
+            mono_ns(at),
+            match surface {
+                InputSurface::Panel => crate::responsiveness_cohort::Surface::Panel,
+                _ => crate::responsiveness_cohort::Surface::Tui,
+            },
+        )
+    });
     q.push_back(InputPending {
         slot_id,
         at,
         require_gen,
         surface,
+        cohort_id,
     });
     let pending_n = q.iter().filter(|p| p.slot_id == slot_id).count() as u64;
     drop(q);
@@ -841,7 +895,10 @@ pub fn note_input_canceled(slot_id: u64) {
     let t0 = Instant::now();
     let mut q = INPUT_PENDING.lock().unwrap();
     if let Some(pos) = q.iter().position(|p| p.slot_id == slot_id) {
-        q.remove(pos);
+        let pending = q.remove(pos).unwrap();
+        if let Some(id) = pending.cohort_id {
+            crate::responsiveness_cohort::cancel(id);
+        }
         let pending_n = q.iter().filter(|p| p.slot_id == slot_id).count() as u64;
         drop(q);
         with_live_slot_from(t0, slot_id, |s| {
@@ -882,12 +939,12 @@ fn complete_input(slot_id: u64, at: Instant, pred: impl Fn(&InputPending) -> boo
     // t0 before pending cut so input bracket encloses the deque mutation.
     let t0 = Instant::now();
     let mut q = INPUT_PENDING.lock().unwrap();
-    let mut completed: Vec<Duration> = Vec::new();
+    let mut completed: Vec<(Duration, Option<crate::responsiveness_cohort::EventId>)> = Vec::new();
     let mut i = 0;
     while i < q.len() {
         if q[i].slot_id == slot_id && pred(&q[i]) {
             let p = q.remove(i).unwrap();
-            completed.push(at.saturating_duration_since(p.at));
+            completed.push((at.saturating_duration_since(p.at), p.cohort_id));
         } else {
             i += 1;
         }
@@ -898,7 +955,10 @@ fn complete_input(slot_id: u64, at: Instant, pred: impl Fn(&InputPending) -> boo
         return;
     }
     with_live_slot_from(t0, slot_id, |s| {
-        for d in completed {
+        for (d, cohort_id) in completed {
+            if let Some(id) = cohort_id {
+                crate::responsiveness_cohort::complete(id, mono_ns(at));
+            }
             let b = latency_bucket(d);
             s.input_complete_n = s.input_complete_n.wrapping_add(1);
             s.input_latency_n = s.input_latency_n.wrapping_add(1);
@@ -1238,6 +1298,7 @@ mod tests {
                     at: Instant::now(),
                     require_gen: 0,
                     surface: InputSurface::Tui,
+                    cohort_id: None,
                 });
             }
         }
