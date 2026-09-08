@@ -11,6 +11,39 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 12:42 UTC
+
+- Both prepared native roles built and passed scoped regressions; source hashes
+ unchanged through tests. New windows-cohort-native-builds.json records exact
+ binaries: referencebf2d1ed f8f81bfb..1f308; candidate984c639 8247b703..b9f91.
+ Each native role host212/1ignored, publisher6 plus child, panel capture15 PASS.
+- Predeclared candidate N1 input-seam diagnostic completed exit0/no timeout
+ 12:31:29UTC. Root verified all35archive files; tar8a9e5a1a..c7dbd5. Fresh
+ captures read,20/20pulses,40Windows/ImGui/stream edges, every stream channel0,
+ no host drain/admission and zero input counters. Sender attached175ms then
+ absent209ms. No saturation. Raw300Decode records valid unique fixed-window
+ members, no input events. native-cohort-input-trace-report.md has evidence.
+- One capture failed on stale helper path/hash; separately named corrected
+ binding produced inspected captures. All original artifacts preserved. Current
+ native frontends idle. No matched performance acceptance.
+- New t_f2d0af32 implements deterministic Session reproduction and memory-only
+ capture lifecycle fix in panel-memory-capture-arm. Draft59adcdd reproduces
+ direct memory_draw_policy open bypassing capture_on. Root found unconditional
+ extra per-frame play.wake; withheld integration, reclaimed first review and
+ supplied exact finding. Reviewer run738 confirmed the extra-wake finding and requested changes;
+ corrective implementer run739 is live. No native rebuild for this draft yet.
+- Reader69fe3e5 APPROVED actualGrok4.5/xai-oauth20260908_082633_179df0; root57
+ cohort tests PASS. Integration still withheld: real native qualifier records
+ end row314.0232895 vs retained stamp314.0232196, terminal repeats stamp.
+ Reader falsely equates distinct Instant captures. Original archive unchanged;
+ direct structural probe recorded, canonical metadata absent by diagnostic
+ supervisor design and analyze_run correctly unavailable/missing_metadata.
+- New bounded corrective reader t_2a8d467c profileluna actual run736 handed off,
+ same latency-cohort-reader checkout, source-clock ownership/tests/report only.
+ Config verified gpt-5.6-luna/openai-codex; same-card Grok4.5 follows. Capture
+ correction and native-reader acceptance, then combined Grok4.6 milestone,
+ identical native role rebuilds and source-justified input proof remain next.
+
 ## Latest boundary — 2026-09-08 12:17 UTC
 
 - Candidate984c639/clientfd956c9 Windows native release build PASS4m13s,
