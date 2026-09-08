@@ -9,6 +9,22 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 10:20 UTC
+
+- Publisher t_5992fd7a corrective run remains live; draft now arms OPT_IN before
+  START with validation rollback and a concurrent producer test. Harness wiring
+  is unfinished. Root queued review checks: sample refs must precede output
+  serialization, phase/START/END must share one clock boundary, preserve final
+  observe row and fixed absolute tail. No tested or reviewed publisher yet.
+- Input trace t_fedf29c8 first draft reclaimed10:18: unconditional new registry
+  locks violated tracing-off behavior, and per-frame zero bind/present records
+  exhausted the bounded journal before stimulus. Additional accuracy issues:
+  ended fallback row is not a live-row match; removed pending count is not
+  necessarily published completion. Corrective implementer run started10:19,
+  verified live. Dirty work retained in isolated trace checkout only.
+- No native run, integration, or new performance acceptance. Both source cards
+  still require completed tests, actual Grok review, and root verification.
+
 ## Latest boundary — 2026-09-08 10:14 UTC
 
 - Publisher t_5992fd7a first draft reclaimed by root after live source review:
