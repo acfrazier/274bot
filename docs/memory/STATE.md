@@ -9,6 +9,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 07:00 UTC
+
+- Longer baseline0250 actual scheduled task stillRunning06:59:31UTC; no terminal
+  completion. Continue same handle, no retry. Candidate remains unlaunched.
+- t_27ed9e56 actualimplementer running read-only focused GPUcoverage audit:
+  current evaluate_gpu_completion_intervals expects all16 slots even in
+  focused-one where15 are deliberatelyheadless. Determine required policy/
+  identity evidence before proposing aggregation fix; no reader changes yet.
+  Fine/input/calibration limits remain separate. Uses completedshortarchives only.
+- t_a82d06cc actualimplementer running correction of visualplan475c697:
+  exactfb app.rs4185/session.rs1377 memory_focus pins selection everyframe;
+  focus.rs memory_draw_policy resets drawing flags. Need concrete unpinnedN2
+  proofsetup or explicit missingcapability, and transient scene1capture limits.
+  Prior plan approval does not prove this execution path. No visualnative run.
+- Long binder helper bind-tile-boxed-long-native.py has now been copied to
+  C:/Users/Austen/274bot-tools; local prove/archive/fetch helpers ready. No raw
+  longer archive exists yet. Native scripts/runtime/binaries remain unchanged.
+
 ## Latest boundary — 2026-09-08 06:51 UTC
 
 - CPU proof t_7e5149d2 correctedcbb3134 APPROVED actualGrok4.5/xai-oauth
