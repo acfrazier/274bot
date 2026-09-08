@@ -2924,7 +2924,10 @@ fn observe_script_inv(running: bool, tick_edge: bool, client: &Client) -> Option
 
 /// Snapshot rebuild for script/nav: once per server tick. Off-tick
 /// observe keeps the last blob.
-fn observe_rebuild_snapshot(snap: &mut GameSnapshot, client: &Client, tick_edge: bool) -> bool {
+///
+/// Public so offline frame-equivalence tests exercise this exact host-play
+/// publication path (not a parallel rebuild helper).
+pub fn observe_rebuild_snapshot(snap: &mut GameSnapshot, client: &Client, tick_edge: bool) -> bool {
     if !tick_edge {
         return false;
     }

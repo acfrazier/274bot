@@ -972,8 +972,7 @@ impl SlotLoop {
     }
 
     fn after_drain(&mut self, client: &mut Client) -> DrainResult {
-        let result = self.pump.drain(client.gens);
-        rebuild_dirty(&mut self.snapshot, client, result.dirty);
+        let result = drain_and_rebuild_snapshot(&mut self.pump, &mut self.snapshot, client);
 
         // Live client field: UPDATE_RUNENERGY writes here. Snapshot energy
         // can stay 0 if a stat-family rebuild ran before the energy packet.
@@ -994,6 +993,20 @@ impl SlotLoop {
         }
         result
     }
+}
+
+/// Production host snapshot publication used by [`SlotLoop::after_drain`]:
+/// drain `Client.gens` through [`Pump`], then rebuild only the dirty families.
+/// Exposed so offline frame-equivalence tests can drive the real Host path
+/// without cloning the dirty-family map.
+pub fn drain_and_rebuild_snapshot(
+    pump: &mut Pump,
+    snapshot: &mut GameSnapshot,
+    client: &Client,
+) -> DrainResult {
+    let result = pump.drain(client.gens);
+    rebuild_dirty(snapshot, client, result.dirty);
+    result
 }
 
 fn rebuild_dirty(snapshot: &mut GameSnapshot, client: &Client, dirty: DirtyFamilies) {

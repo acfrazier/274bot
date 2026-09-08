@@ -949,6 +949,41 @@ fn nav_snapshot_for_follow<'a>(
     states.get(name).map(|(snap, _)| snap)
 }
 
+/// Production panel `nav_states` publication: insert/join the slot snapshot,
+/// optionally attach the Play-local dedup instance, rebuild from the live
+/// client, and refresh [`WorldState`] when any family moved.
+///
+/// Returns whether `GameSnapshot::rebuild` reported a change (same signal
+/// the WalkTo path uses to refresh world facts).
+pub fn publish_nav_snapshot(
+    states: &mut HashMap<String, (GameSnapshot, WorldState)>,
+    name: &str,
+    client: &Client,
+    #[cfg(feature = "snapshot-dedup")] dedup_dir: Option<&api::snapshot_dedup::SlotDedupDirectory>,
+) -> bool {
+    let slot = states.entry(name.to_string()).or_insert_with(|| {
+        #[cfg_attr(not(feature = "snapshot-dedup"), allow(unused_mut))]
+        let mut snap = GameSnapshot::new();
+        #[cfg(feature = "snapshot-dedup")]
+        {
+            // Join the Play-local slot instance when present (installed at
+            // spawn). Do not mint a process-global username registry.
+            if let Some(dir) = dedup_dir {
+                if let Some(inst) = dir.get(name) {
+                    snap.attach_dedup(inst.attach());
+                }
+            }
+        }
+        (snap, WorldState::empty())
+    });
+    if slot.0.rebuild(client) {
+        slot.1 = WorldState::from_snapshot(&slot.0);
+        true
+    } else {
+        false
+    }
+}
+
 impl Session {
     /// Empty session: no vault, no slots, default `PlayOptions` (same engine
     /// defaults as the host-play CLI). Unlock via [`Session::unlock`].
@@ -1820,25 +1855,10 @@ impl Session {
                 // frame publishes nothing new.
                 {
                     let mut states = nav_states.lock().unwrap();
-                    let slot = states
-                        .entry(name.to_string())
-                        .or_insert_with(|| {
-                            #[cfg_attr(not(feature = "snapshot-dedup"), allow(unused_mut))]
-                            let mut snap = GameSnapshot::new();
-                            #[cfg(feature = "snapshot-dedup")]
-                            {
-                                // Join the Play-local slot instance when present
-                                // (installed at spawn). Do not mint a process-
-                                // global username registry.
-                                if let Some(inst) = nav_dedup.get(name) {
-                                    snap.attach_dedup(inst.attach());
-                                }
-                            }
-                            (snap, WorldState::empty())
-                        });
-                    if slot.0.rebuild(c) {
-                        slot.1 = WorldState::from_snapshot(&slot.0);
-                    }
+                    #[cfg(feature = "snapshot-dedup")]
+                    publish_nav_snapshot(&mut states, name, c, Some(nav_dedup.as_ref()));
+                    #[cfg(not(feature = "snapshot-dedup"))]
+                    publish_nav_snapshot(&mut states, name, c);
                 }
                 // Guardian hold freezes WalkArm follow; the armed route
                 // stays latched and resumes when hold lifts.
@@ -3492,10 +3512,10 @@ mod tests {
     use super::{
         arm_login_all, combo_index, debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats,
         is_local_engine, live_or_walk_paint, maybe_send_click, nav_snapshot_for_follow,
-        null_raster_live_entries_for_target, parse_getvar_line, publish_nav_debug, script_active,
-        script_pause_enabled, script_status_text, script_stop_enabled, seed_on_first_world,
-        stream_capture, stress_live_entries_for_target, temp_live_vault_from, walkto_tele_cmd,
-        Session, SlotIo, WalkArm,
+        null_raster_live_entries_for_target, parse_getvar_line, publish_nav_debug,
+        publish_nav_snapshot, script_active, script_pause_enabled, script_status_text,
+        script_stop_enabled, seed_on_first_world, stream_capture, stress_live_entries_for_target,
+        temp_live_vault_from, walkto_tele_cmd, Session, SlotIo, WalkArm,
     };
     use crate::focus::draw_for_slot;
     use api::snapshot::{GameSnapshot, WorldTile};
@@ -7795,5 +7815,182 @@ ScriptRegistry.register({
 
         s.select_script_card(script::ScriptSource::Catalog, "BoneBurier");
         assert!(s.transpile_queue.is_empty());
+    }
+
+    /// Offline plant matching host-play frame-equivalence fixtures.
+    fn panel_frame_client() -> Client {
+        use client::config::LocType;
+        use client::dash3d::ClientPlayer;
+        use std::sync::Arc as StdArc;
+
+        let mut c = Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
+        c.set_iface(
+            1000,
+            IfType {
+                id: 1000,
+                layer_id: 1000,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![1001]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            1001,
+            IfType {
+                id: 1001,
+                layer_id: 1000,
+                r#type: ComponentType::TYPE_TEXT,
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            1001,
+            IfTypeMut {
+                text: "Hello".into(),
+                colour: 0x00FF00,
+                ..Default::default()
+            },
+        );
+        c.main_modal_id = 1000;
+        c.set_iface(
+            1100,
+            IfType {
+                id: 1100,
+                layer_id: 1100,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![]),
+                ..Default::default()
+            },
+        );
+        c.side_icon[3] = 1100;
+        c.active_icon = 3;
+        c.map_build_base_x = 3200;
+        c.map_build_base_z = 3200;
+        c.local_player = Some(ClientPlayer::at(20, 12));
+        let id = {
+            let cache = StdArc::get_mut(&mut c.cache).expect("sole cache owner");
+            let id = cache.locs.len() as i32;
+            cache.locs.push(LocType {
+                id,
+                name: "Large door".into(),
+                desc: "A sturdy wooden door.".into(),
+                op: vec![Some("Open".into()), None],
+                width: 2,
+                length: 3,
+                blockwalk: false,
+                blockrange: false,
+                active: true,
+                ..Default::default()
+            });
+            id
+        };
+        let typecode = 0x4000_0000 + (id << 14) + 3 + (4 << 7);
+        c.world
+            .set_wall(0, 3, 4, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
+        c.bump_gens(ServerProt::IF_SETTEXT);
+        c.bump_gens(ServerProt::UPDATE_INV_FULL);
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        c
+    }
+
+    /// Panel production `nav_states` publication populates A1 families.
+    #[test]
+    fn publish_nav_snapshot_first_publication_populates_families() {
+        let client = panel_frame_client();
+        let mut states = std::collections::HashMap::new();
+        #[cfg(feature = "snapshot-dedup")]
+        let changed = publish_nav_snapshot(&mut states, "alice", &client, None);
+        #[cfg(not(feature = "snapshot-dedup"))]
+        let changed = publish_nav_snapshot(&mut states, "alice", &client);
+        assert!(changed, "first rebuild must report change");
+        let (snap, _) = states.get("alice").expect("slot entry");
+        assert!(
+            snap.widgets().iter().any(|w| w.component_id == 1001),
+            "widgets missing"
+        );
+        assert!(
+            snap.side_tabs()
+                .iter()
+                .any(|t| t.root_component_id == 1100),
+            "side tab missing"
+        );
+        assert_eq!(snap.locs().len(), 1);
+        assert_eq!(snap.locs()[0].name.as_deref(), Some("Large door"));
+    }
+
+    /// Quiet second publish keeps bodies and returns false when gens quiet.
+    #[test]
+    fn publish_nav_snapshot_quiet_retains_bodies() {
+        let client = panel_frame_client();
+        let mut states = std::collections::HashMap::new();
+        #[cfg(feature = "snapshot-dedup")]
+        {
+            publish_nav_snapshot(&mut states, "alice", &client, None);
+        }
+        #[cfg(not(feature = "snapshot-dedup"))]
+        {
+            publish_nav_snapshot(&mut states, "alice", &client);
+        }
+        let first_ids: Vec<i32> = states["alice"]
+            .0
+            .widgets()
+            .iter()
+            .map(|w| w.component_id)
+            .collect();
+        let ptr = states["alice"].0.widgets().as_ptr();
+        #[cfg(feature = "snapshot-dedup")]
+        let changed = publish_nav_snapshot(&mut states, "alice", &client, None);
+        #[cfg(not(feature = "snapshot-dedup"))]
+        let changed = publish_nav_snapshot(&mut states, "alice", &client);
+        assert!(!changed, "quiet gens must not report change");
+        let second_ids: Vec<i32> = states["alice"]
+            .0
+            .widgets()
+            .iter()
+            .map(|w| w.component_id)
+            .collect();
+        assert_eq!(first_ids, second_ids);
+        assert_eq!(states["alice"].0.widgets().as_ptr(), ptr);
+    }
+
+    #[cfg(feature = "snapshot-dedup")]
+    #[test]
+    fn publish_nav_snapshot_joins_directory_and_shares_with_peer() {
+        use api::snapshot_dedup::SlotDedupInstance;
+
+        let client = panel_frame_client();
+        let dir = api::snapshot_dedup::SlotDedupDirectory::new_shared();
+        let inst = SlotDedupInstance::new();
+        dir.install("alice", inst.clone());
+
+        let mut states = std::collections::HashMap::new();
+        assert!(publish_nav_snapshot(
+            &mut states,
+            "alice",
+            &client,
+            Some(dir.as_ref())
+        ));
+
+        // Second owner on same instance (host-play-like peer).
+        let mut peer = GameSnapshot::new();
+        peer.attach_dedup(inst.attach());
+        assert!(peer.rebuild(&client));
+
+        let panel_snap = &states["alice"].0;
+        assert!(
+            Arc::ptr_eq(&panel_snap.widgets_arc(), &peer.widgets_arc()),
+            "panel nav_states owner must share Arc with peer on equal bodies"
+        );
+        assert!(Arc::ptr_eq(
+            &panel_snap.side_tabs_arc(),
+            &peer.side_tabs_arc()
+        ));
+        assert!(Arc::ptr_eq(&panel_snap.locs_arc(), &peer.locs_arc()));
     }
 }
