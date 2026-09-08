@@ -23,6 +23,17 @@
         "source_recompiled": true,
         "existing_warning": "cadence generation and slot_id unused",
         "native_evidence": false
+      },
+      "local_cohort_lifecycle_tests": {
+        "host_platform": "macOS arm64",
+        "command": "cargo test --locked -p host-play --features memory-profile-no-alloc --lib -- cohort poll_forces_final_observe observe_end_qualification --test-threads=1",
+        "passed": 6,
+        "failed": 0,
+        "filtered_out": 178,
+        "subprocess_passed": 1,
+        "duration_s": 10.21,
+        "source_dependencies_recompiled": true,
+        "native_evidence": false
       }
     },
     "candidate": {
@@ -45,6 +56,17 @@
         "duration_s": 3.93,
         "source_recompiled": true,
         "existing_warning": "cadence generation and slot_id unused",
+        "native_evidence": false
+      },
+      "local_cohort_lifecycle_tests": {
+        "host_platform": "macOS arm64",
+        "command": "cargo test --locked -p host-play --features memory-profile-no-alloc --lib -- cohort poll_forces_final_observe observe_end_qualification --test-threads=1",
+        "passed": 6,
+        "failed": 0,
+        "filtered_out": 178,
+        "subprocess_passed": 1,
+        "duration_s": 10.21,
+        "source_dependencies_recompiled": true,
         "native_evidence": false
       }
     }

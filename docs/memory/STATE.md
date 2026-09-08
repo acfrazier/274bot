@@ -9,6 +9,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 11:30 UTC
+
+- Reader implementer run727 verified live8min; bounded worker log confirms
+  reading actual qualification/sample/metadata schema and preparing complete
+  reader/tests. No runtime/tool failure or review handoff observed.
+- Root ran exact prepared role host-play lifecycle fixtures with
+  memory-profile-no-alloc: reference bf2d1ed and candidate984c639 each
+  6passed/0failed/178filtered plus1passing child-process fixture,10.21s each.
+  Actual role source dependencies recompiled before each result. These verify
+  local publisher arm/off/cursor/drain/finalize/observe-end/join paths only.
+  No native or latency/performance acceptance. Receipt updated.
+- No native actions. Reader completion/review and combined integration review
+  remain next prerequisites; full campaign acceptance requirements unchanged.
+
 ## Latest boundary — 2026-09-08 11:26 UTC
 
 - Reader t_829c6804 configured implementer run727 verified live (~4min),
