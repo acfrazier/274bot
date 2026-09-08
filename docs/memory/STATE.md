@@ -9,6 +9,32 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 10:08 UTC
+
+- Missing-generation correction9aa3e38 APPROVED t_d0facd8d actualGrok4.5/
+  xai-oauth20260908_055815_80528c. Producer final integrated asffefddb,
+  2487ae1,3343998,1ce9edb,27c08b9 (isolated STATE setup excluded).
+  Root primary `cargo test -p host --lib`:198pass/0fail/1existingignored.
+  No native binary change or cohort performance result.
+- Input zero-start audit corrected6955d39 APPROVED t_39d53553 actualGrok4.5/
+  xai-oauth20260908_055815_f64c24. Native20pulses/zero381rowinputcounts is
+  unresolved between delivery/ImGui hover/channel and telemetry slot identity;
+  no proven source cause. Next bounded seam diagnostic must distinguish those
+  stages including row matching and start/bind/present, not infer coverage from
+  SendInput or host drain alone. Both native archives retained, Windows idle.
+- NEW publisher t_5992fd7a configured implementer assigned, isolated
+  .worktrees/latency-cohort-publisher branch codex/latency-cohort-publisher,
+  base27c08b9 plus root-only STATEsetup67e9a17, client3456edc. Scope host-play
+  publisher and minimal host activation/panel+TUI completion ownership hooks,
+  tests/report, no reader/native. Two concrete integration problems: current
+  begin with backdated START can omit activation-racing events; current panel
+  and TUI process::exit bypasses Play Drop, so script-stop is not producer
+  closure. Prove arming before START and actual stop/join before terminal.
+  Preserve cohort-off behavior and exact additive fixed-window evidence.
+- Reader consumption follows frozen publisher schema/review. Combined
+  integration review and new identically instrumented parent-role builds remain
+  prerequisites to native pair. All full campaign gates remain open.
+
 ## Latest boundary — 2026-09-08 09:55 UTC
 
 - Helper424aed5 native invocation failed before input on PS5 `[ushort]` cast.
