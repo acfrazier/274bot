@@ -9,6 +9,27 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 05:20 UTC
+
+- First candidate completed0; native Intel Vulkan and strict native binding
+  passed16/16, no missing match keys. Local qualification passed; all22 archived
+  files hashes/lengths verified. Archivecandidate-focused-plus-background-nativecheck-20260908-0103
+  tarSHA29f1bccab7b2056ed2b6502405920478fcee729fbec8f54c56ba83e5ed6d0650.
+- First forward descriptive screen windows-tile-boxed-forward-root-screen.json:
+  wholeRSS2278535168→1466499072B(-35.64%), CPU-4.73%; commonelapsed
+  requested137.341..221.703s, actual83.43/84.32s, RSS2017333248→1571850240B
+  (-22.08%),CPU-4.12%. This is not accepted savings: reversepair, latency,
+  focusedmode, functional and longer confirmation remain pending.
+- Reverse0116 candidate/baseline privilegedpreflight/stage + limitedBotTest
+  contracts passed. SECONDcandidate launched05:18:08UTC with freshpreflight:
+  candidate-focused-plus-background-reverse-20260908-0116; actualscheduledtask
+  Running05:19:44. Await samehandlecompletion/qualification/archive, then second
+  baseline (prepared contractbaseline-focused-plus-background-reverse-20260908-0116).
+- Independent local tooling t_042f2add actualLuna running05:19: N1 paired CPU
+  fallback functional controls only, newdirectory/report. No native work or
+  cleancontrol/reader/Rust changes; root stages only afterGPUcleancells. Await
+  samecardGrok4.5 review and rootnativecontract before CPUproof.
+
 ## Latest boundary — 2026-09-08 05:13 UTC
 
 - First background baseline completed0 and native binding qualified16/16, no

@@ -1,0 +1,49 @@
+{
+  "cell_id": "candidate-focused-plus-background-nativecheck-20260908-0103",
+  "qualification": {
+    "run": "diagnostics/windows-tile-boxed-clean-20260908/candidate-focused-plus-background-nativecheck-20260908-0103/raw-run-01",
+    "qualified": true,
+    "errors": [],
+    "qualification": {
+      "run": "diagnostics/windows-tile-boxed-clean-20260908/candidate-focused-plus-background-nativecheck-20260908-0103/raw-run-01",
+      "n": 16,
+      "counting": false,
+      "diagnostics": false,
+      "qualified": true,
+      "errors": [],
+      "observation_s": 118.59638240000001,
+      "cpu_seconds": 71.828125,
+      "cpu_cores": 0.6056519056183285,
+      "client_ticks_per_slot_s": 48.938044167525966,
+      "median_resident_bytes": 1466499072,
+      "steal_gains": {
+        "live28080_0": 7,
+        "live28080_1": 8,
+        "live28080_2": 11,
+        "live28080_3": 12,
+        "live28080_4": 5,
+        "live28080_5": 15,
+        "live28080_6": 9,
+        "live28080_7": 8,
+        "live28080_8": 10,
+        "live28080_9": 8,
+        "live28080_10": 13,
+        "live28080_11": 13,
+        "live28080_12": 10,
+        "live28080_13": 12,
+        "live28080_14": 6,
+        "live28080_15": 11
+      },
+      "diagnostic_only": true
+    },
+    "counting": false,
+    "diagnostics": false,
+    "workload": "active",
+    "pass_means": "workload qualification only; not performance or budget acceptance"
+  },
+  "archive_sha256": "29f1bccab7b2056ed2b6502405920478fcee729fbec8f54c56ba83e5ed6d0650",
+  "verified_archive_files": 22,
+  "native_binding_status": "bound",
+  "native_match_keys_missing": null,
+  "performance_acceptance": false
+}

@@ -1,0 +1,64 @@
+{
+  "purpose": "First forward-pair descriptive screen; reverse pair pending",
+  "performance_acceptance": false,
+  "requested_shared_elapsed_range_s": [
+    137.3414382,
+    221.7025809
+  ],
+  "cells": {
+    "baseline": {
+      "whole": {
+        "sample_n": 119,
+        "start_elapsed_s": 103.2073198,
+        "end_elapsed_s": 221.7025809,
+        "duration_s": 118.4952611,
+        "median_resident_bytes": 2278535168,
+        "max_current_resident_bytes": 2605486080,
+        "median_private_commit_bytes": 2763915264,
+        "cpu_cores": 0.6357058020778521
+      },
+      "common": {
+        "sample_n": 85,
+        "start_elapsed_s": 137.3841274,
+        "end_elapsed_s": 221.7025809,
+        "duration_s": 84.31845349999998,
+        "median_resident_bytes": 2017333248,
+        "max_current_resident_bytes": 2455453696,
+        "median_private_commit_bytes": 2778738688,
+        "cpu_cores": 0.6354258501669509
+      }
+    },
+    "candidate": {
+      "whole": {
+        "sample_n": 119,
+        "start_elapsed_s": 137.3414382,
+        "end_elapsed_s": 255.9378206,
+        "duration_s": 118.59638240000001,
+        "median_resident_bytes": 1466499072,
+        "max_current_resident_bytes": 1739694080,
+        "median_private_commit_bytes": 1954598912,
+        "cpu_cores": 0.6056519056183285
+      },
+      "common": {
+        "sample_n": 84,
+        "start_elapsed_s": 137.3414382,
+        "end_elapsed_s": 220.7727661,
+        "duration_s": 83.43132790000001,
+        "median_resident_bytes": 1571850240.0,
+        "max_current_resident_bytes": 1739694080,
+        "median_private_commit_bytes": 1953792000.0,
+        "cpu_cores": 0.6092210957126573
+      }
+    }
+  },
+  "whole_delta": {
+    "median_rss_candidate_minus_baseline_bytes": -812036096,
+    "median_rss_percent": -35.63851492855255,
+    "cpu_percent": -4.7276423089564705
+  },
+  "common_delta": {
+    "median_rss_candidate_minus_baseline_bytes": -445483008.0,
+    "median_rss_percent": -22.08276735842506,
+    "cpu_percent": -4.123967327959443
+  }
+}
