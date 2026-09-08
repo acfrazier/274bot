@@ -1,0 +1,206 @@
+{
+  "schema": "native-cohort-paired-build-manifest-v1",
+  "created_utc": "2026-09-08T13:39:25.379387+00:00",
+  "status": "Frozen native build and runtime fixture bindings; no run or performance acceptance",
+  "performance_acceptance": false,
+  "features": {
+    "requested": "memory-profile-no-alloc",
+    "locked": true,
+    "allocation_counting": false,
+    "allocator": "system"
+  },
+  "binaries": {
+    "control_panel_play": {
+      "path": "C:\\ProgramData\\274bot-Test\\cohort-reference-e25f328\\panel-play.exe",
+      "sha256": "2061d0c7ba82c950084523a7c7e89eed27854e2a533377d9f40ed4a53da5f3ce",
+      "bytes": 76621312
+    },
+    "candidate_panel_play": {
+      "path": "C:\\ProgramData\\274bot-Test\\cohort-candidate-ca56e14\\panel-play.exe",
+      "sha256": "3d0037010e21b345daab8d23435f158a79f42b9a46f3c4b2d720f39946edb81b",
+      "bytes": 76626944
+    }
+  },
+  "nav": {
+    "nav_pack": "C:\\Users\\BotTest\\.274bot\\274bot.navpack",
+    "nav_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+    "nav_flags": "C:\\Users\\BotTest\\.274bot\\274bot.navflags",
+    "nav_flags_sha256": "92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb"
+  },
+  "catalog": {
+    "js_scripts_json": "C:\\Users\\BotTest\\.274bot\\js-scripts.json",
+    "js_scripts_json_sha256": "0caf390147528a34e4aebecc1411d8cfa793bdb18d243d2202cecde3972e8ad8"
+  },
+  "control": {
+    "commit": "e25f32806957b1a44c75a598cbdb7ab53afc5383",
+    "branch": "codex/windows-cohort-reference",
+    "build_exit": 0,
+    "sources_sha256_pre": "1f2289839d4359f6316cc3c27e3740efa18bcf0691d2a5621aae080fb226013b",
+    "sources_sha256_post": "1f2289839d4359f6316cc3c27e3740efa18bcf0691d2a5621aae080fb226013b",
+    "sources_stable_across_build": true,
+    "host_sources_file_count": 877,
+    "host_sources_aggregate_sha256": "1f2289839d4359f6316cc3c27e3740efa18bcf0691d2a5621aae080fb226013b",
+    "source_inventory_note": "Combined frozen source inventory includes client paths; separate client digest below",
+    "client": {
+      "commit": "abb811bd0afa1acd99319ccd5bc36bfb241080f9",
+      "sources_sha256": "ea6402702a56dc29359bf4effd9ca87407734fc9d940bfabdefb92cec8bf41ee",
+      "sources_file_count": 183,
+      "sources_aggregate_sha256": "ea6402702a56dc29359bf4effd9ca87407734fc9d940bfabdefb92cec8bf41ee"
+    },
+    "build_receipt": {
+      "hostCommit": "e25f32806957b1a44c75a598cbdb7ab53afc5383",
+      "clientCommit": "abb811bd0afa1acd99319ccd5bc36bfb241080f9",
+      "source": "C:\\Users\\Austen\\274bot-campaign\\host-e25f328",
+      "exitCode": 0,
+      "startedUtc": "2026-09-08T13:19:38.1053747Z",
+      "endedUtc": "2026-09-08T13:23:36.1277305Z",
+      "command": "cargo build --locked --release -p panel --bin panel-play --features memory-profile-no-alloc",
+      "jobs": 4
+    },
+    "native_tests": [
+      {
+        "name": "host",
+        "argv": [
+          "test",
+          "--locked",
+          "--release",
+          "-p",
+          "host",
+          "--lib",
+          "--",
+          "--test-threads=1"
+        ],
+        "exitCode": 0,
+        "startedUtc": "2026-09-08T13:24:32.1822191Z",
+        "endedUtc": "2026-09-08T13:25:39.5512969Z"
+      },
+      {
+        "name": "publisher",
+        "argv": [
+          "test",
+          "--locked",
+          "--release",
+          "-p",
+          "host-play",
+          "--features",
+          "memory-profile-no-alloc",
+          "--lib",
+          "--",
+          "cohort",
+          "poll_forces_final_observe",
+          "observe_end_qualification",
+          "--test-threads=1"
+        ],
+        "exitCode": 0,
+        "startedUtc": "2026-09-08T13:25:39.5571042Z",
+        "endedUtc": "2026-09-08T13:27:46.5053637Z"
+      },
+      {
+        "name": "panel-capture",
+        "argv": [
+          "test",
+          "--locked",
+          "--release",
+          "-p",
+          "panel",
+          "--features",
+          "memory-profile-no-alloc",
+          "--lib",
+          "--",
+          "capture",
+          "memory_",
+          "--test-threads=1"
+        ],
+        "exitCode": 0,
+        "startedUtc": "2026-09-08T13:27:46.5073660Z",
+        "endedUtc": "2026-09-08T13:27:56.9073413Z"
+      }
+    ]
+  },
+  "candidate": {
+    "commit": "ca56e14371d1edb8c09df1276638ce196d502e36",
+    "branch": "codex/windows-cohort-candidate",
+    "build_exit": 0,
+    "sources_sha256_pre": "7b1f4fa9519037ec00842a6c7517cbb0cc7cfc0730bda1635a838f4118b21cf0",
+    "sources_sha256_post": "7b1f4fa9519037ec00842a6c7517cbb0cc7cfc0730bda1635a838f4118b21cf0",
+    "sources_stable_across_build": true,
+    "host_sources_file_count": 882,
+    "host_sources_aggregate_sha256": "7b1f4fa9519037ec00842a6c7517cbb0cc7cfc0730bda1635a838f4118b21cf0",
+    "source_inventory_note": "Combined frozen source inventory includes client paths; separate client digest below",
+    "client": {
+      "commit": "fd956c91bf09e059359c8e182a33583e2c626cd3",
+      "sources_sha256": "fad2e79248c8d62cff2ceba5c757ef555705e85d3dc6797586c9841d9dbfb53e",
+      "sources_file_count": 183,
+      "sources_aggregate_sha256": "fad2e79248c8d62cff2ceba5c757ef555705e85d3dc6797586c9841d9dbfb53e"
+    },
+    "build_receipt": {
+      "hostCommit": "ca56e14371d1edb8c09df1276638ce196d502e36",
+      "clientCommit": "fd956c91bf09e059359c8e182a33583e2c626cd3",
+      "source": "C:\\Users\\Austen\\274bot-campaign\\host-ca56e14",
+      "exitCode": 0,
+      "startedUtc": "2026-09-08T13:28:17.1578103Z",
+      "endedUtc": "2026-09-08T13:32:12.4259700Z",
+      "command": "cargo build --locked --release -p panel --bin panel-play --features memory-profile-no-alloc",
+      "jobs": 4
+    },
+    "native_tests": [
+      {
+        "name": "host",
+        "argv": [
+          "test",
+          "--locked",
+          "--release",
+          "-p",
+          "host",
+          "--lib",
+          "--",
+          "--test-threads=1"
+        ],
+        "exitCode": 0,
+        "startedUtc": "2026-09-08T13:32:30.2824864Z",
+        "endedUtc": "2026-09-08T13:33:37.5083824Z"
+      },
+      {
+        "name": "publisher",
+        "argv": [
+          "test",
+          "--locked",
+          "--release",
+          "-p",
+          "host-play",
+          "--features",
+          "memory-profile-no-alloc",
+          "--lib",
+          "--",
+          "cohort",
+          "poll_forces_final_observe",
+          "observe_end_qualification",
+          "--test-threads=1"
+        ],
+        "exitCode": 0,
+        "startedUtc": "2026-09-08T13:33:37.5141309Z",
+        "endedUtc": "2026-09-08T13:35:44.1955558Z"
+      },
+      {
+        "name": "panel-capture",
+        "argv": [
+          "test",
+          "--locked",
+          "--release",
+          "-p",
+          "panel",
+          "--features",
+          "memory-profile-no-alloc",
+          "--lib",
+          "--",
+          "capture",
+          "memory_",
+          "--test-threads=1"
+        ],
+        "exitCode": 0,
+        "startedUtc": "2026-09-08T13:35:44.1955558Z",
+        "endedUtc": "2026-09-08T13:35:54.5268222Z"
+      }
+    ]
+  }
+}

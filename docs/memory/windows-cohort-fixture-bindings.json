@@ -1,0 +1,21 @@
+{
+  "utc": "2026-09-08T13:38:41.3335750Z",
+  "files": {
+    "274bot.navpack": {
+      "path": "C:\\Users\\BotTest\\.274bot\\274bot.navpack",
+      "sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+      "bytes": 73438581
+    },
+    "js-scripts.json": {
+      "path": "C:\\Users\\BotTest\\.274bot\\js-scripts.json",
+      "sha256": "0caf390147528a34e4aebecc1411d8cfa793bdb18d243d2202cecde3972e8ad8",
+      "bytes": 157
+    },
+    "274bot.navflags": {
+      "path": "C:\\Users\\BotTest\\.274bot\\274bot.navflags",
+      "sha256": "92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb",
+      "bytes": 260571161
+    }
+  },
+  "frontends": []
+}
