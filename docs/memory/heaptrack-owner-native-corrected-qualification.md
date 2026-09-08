@@ -1,6 +1,6 @@
 # Corrected native fixture qualification — failed
 
-Date: 2026-09-09 UTC
+Date: 2026-09-08 UTC
 Source: `8b4d6f5a3686e85e5fed55574b205936d4be45a1`
 Stage: `/home/acfrazier/owner-native-8b4d6f5`
 Output: `/home/acfrazier/owner-native-8b4d6f5/qualification-1`
@@ -56,10 +56,18 @@ The wide case's phase-3 median is below the required 4,503,128 threshold. The
 qualification JSON records `RuntimeError: necessary throughput threshold failed`.
 
 I independently recomputed every stored phase rate and median from the stored
-byte and CPU rows. All four stored phase-median vectors match the recomputed
-vectors exactly. Phase-3 output rows are included in that recomputation. The
-largest completed-cell observations were 417,792 RSS bytes, 1,445,888 address
-bytes, and a 0.0006020780019753147-second sampling interval.
+byte and CPU rows. The two completed cases provide two phase-median vectors,
+six medians total; all 18 stored phase rates and all six medians match the
+recomputed values exactly (24 arithmetic checks). Phase-3 output rows are
+included in that recomputation. Each completed timed cell has exactly one
+external resource sample (`samples: 1`), so 417,792 RSS bytes and 1,445,888
+address bytes are single early observations, not proven process peaks or a
+largest-cell memory bound. The native phase rows separately report a
+cumulative peak metric of 31,944,704 RSS bytes
+(`cumulative_peak_rss_bytes`). The largest recorded `max_sample_interval_s`,
+0.0006020780019753147 seconds, is only initial sample latency under this
+one-sample result, not a sustained sampling cadence; the unsampled tail spans
+nearly the entire approximately 0.101-second wrapper wall time.
 
 ## Result and limits
 

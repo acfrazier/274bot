@@ -46,6 +46,11 @@
   "arithmetic": {
     "method": "independent Python recomputation of medians from stored repeat phase CPU/byte rows",
     "all_stored_medians_match": true,
+    "stored_phase_rate_checks": 18,
+    "stored_median_checks": 6,
+    "completed_case_median_vectors": 2,
+    "sampling_caveat": "Each completed timed cell has samples=1. The recorded RSS/address values are single early external observations, not proven process peaks; cumulative_peak_rss_bytes is a separate native phase metric. max_sample_interval_s is initial sample latency, not sustained cadence, and the unsampled tail spans nearly the entire approximately 0.101-second wrapper wall time.",
+    "native_phase_cumulative_peak_rss_bytes": 31944704,
     "cases": [
       {
         "size_bound": 250000,
@@ -54,7 +59,9 @@
         "necessary_rate_pass": true,
         "max_peak_rss_bytes": 417792,
         "max_peak_address_bytes": 1445888,
-        "max_sample_interval_s": 0.0005861919999006204
+        "max_sample_interval_s": 0.0005861919999006204,
+        "resource_samples_per_cell": 1,
+        "resource_values_are_single_early_observations": true
       },
       {
         "size_bound": 250000,
@@ -64,7 +71,9 @@
         "failure": "phase 3 median 4416362.4607893815 < required 4503128",
         "max_peak_rss_bytes": 417792,
         "max_peak_address_bytes": 1445888,
-        "max_sample_interval_s": 0.0006020780019753147
+        "max_sample_interval_s": 0.0006020780019753147,
+        "resource_samples_per_cell": 1,
+        "resource_values_are_single_early_observations": true
       }
     ]
   },
