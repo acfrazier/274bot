@@ -118,6 +118,14 @@ def validate_spec(spec: Mapping[str, Any]) -> Dict[str, Any]:
         raise CellError("spec.sampler_interval_s must be finite positive")
     if not _is_pos_num(out.get("max_wall_s")):
         raise CellError("spec.max_wall_s must be finite positive")
+    if "live_max_wall_s" in out:
+        if not _is_pos_num(out["live_max_wall_s"]):
+            raise CellError("spec.live_max_wall_s must be finite positive")
+        windows = out.get("analysis_windows_s")
+        if (not isinstance(windows, list) or len(windows) != 2 or
+                any(not _is_pos_num(value) for value in windows) or
+                out["max_wall_s"] < out["live_max_wall_s"] + sum(windows)):
+            raise CellError("spec.analysis_windows_s must declare two bounded post-exit windows")
     for key in ("observe_s", "warmup_s", "teardown_grace_s"):
         if key in out and out[key] is not None:
             val = out[key]

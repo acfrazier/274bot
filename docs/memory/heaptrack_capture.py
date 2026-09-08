@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 import pathlib
-import resource
 import shutil
 import signal
 import subprocess
@@ -28,7 +27,7 @@ MAX_RAW_BYTES = 3 * GI
 RAW_SOFT_STOP_BYTES = 2 * GI
 MAX_FRONTEND_RSS_BYTES = 512 * 1024 ** 2
 MAX_ANALYSIS_RSS_BYTES = 512 * 1024 ** 2
-MAX_ANALYSIS_AS_BYTES = 768 * GI
+MAX_ANALYSIS_AS_BYTES = 768 * 1024 ** 2
 MAX_PRINTER_OUTPUT_BYTES = 512 * 1024 ** 2
 MIN_ANALYSIS_FREE_BYTES = 8 * GI
 MIN_ANALYSIS_ABORT_FREE_BYTES = 1 * GI
@@ -85,6 +84,7 @@ def prepare_output(path: pathlib.Path) -> Dict[str, Any]:
 def child_preexec(*, inherited_limits: bool = True) -> Callable[[], None]:
     """Return a POSIX child-only umask/size-limit setup function."""
     def setup() -> None:
+        import resource
         os.umask(0o077)
         if not hasattr(resource, "RLIMIT_FSIZE"):
             raise OSError("RLIMIT_FSIZE unavailable")
@@ -134,6 +134,13 @@ def _mem_available() -> Optional[int]:
     except (OSError, ValueError, IndexError):
         return None
     return None
+
+
+def require_mem_available(minimum: int = 768 * 1024 ** 2) -> int:
+    available = _mem_available()
+    if available is None or available < minimum:
+        raise CaptureError(f"MemAvailable below required minimum: {available} < {minimum}")
+    return available
 
 
 def start_guard(pid: int, output: pathlib.Path, on_trigger: Callable[[str], None]) -> tuple[threading.Event, threading.Thread, Dict[str, Any]]:
@@ -189,33 +196,44 @@ def require_free_disk(path: pathlib.Path, minimum: int = MIN_ANALYSIS_FREE_BYTES
 
 def _analysis_preexec(*, as_bytes: int, fsize_bytes: int) -> Callable[[], None]:
     def setup() -> None:
+        import resource
         os.umask(0o077)
-        soft, hard = resource.getrlimit(resource.RLIMIT_AS)
-        cap = min(as_bytes, *(x for x in (soft, hard) if x != resource.RLIM_INFINITY)) if soft != resource.RLIM_INFINITY or hard != resource.RLIM_INFINITY else as_bytes
-        resource.setrlimit(resource.RLIMIT_AS, (cap, cap))
-        soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
-        cap = min(fsize_bytes, *(x for x in (soft, hard) if x != resource.RLIM_INFINITY)) if soft != resource.RLIM_INFINITY or hard != resource.RLIM_INFINITY else fsize_bytes
-        resource.setrlimit(resource.RLIMIT_FSIZE, (cap, cap))
+        if hasattr(resource, "RLIMIT_AS"):
+            soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+            cap = min(as_bytes, *(x for x in (soft, hard) if x != resource.RLIM_INFINITY)) if soft != resource.RLIM_INFINITY or hard != resource.RLIM_INFINITY else as_bytes
+            resource.setrlimit(resource.RLIMIT_AS, (cap, cap))
+        if hasattr(resource, "RLIMIT_FSIZE"):
+            soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+            cap = min(fsize_bytes, *(x for x in (soft, hard) if x != resource.RLIM_INFINITY)) if soft != resource.RLIM_INFINITY or hard != resource.RLIM_INFINITY else fsize_bytes
+            resource.setrlimit(resource.RLIMIT_FSIZE, (cap, cap))
     return setup
 
 
 def run_bounded(argv: Sequence[str], *, stdin_path: Optional[pathlib.Path], stdout_path: pathlib.Path,
                 timeout_s: float = 180.0, as_bytes: int = MAX_ANALYSIS_AS_BYTES,
                 fsize_bytes: int = MAX_RAW_BYTES, rss_limit: int = MAX_ANALYSIS_RSS_BYTES,
-                sample: Optional[Callable[[int], Optional[int]]] = None) -> Dict[str, Any]:
+                sample: Optional[Callable[[int], Optional[int]]] = None,
+                stderr_path: Optional[pathlib.Path] = None) -> Dict[str, Any]:
     """Run one exact argv with timeout/RSS/output bounds; never invoke a shell."""
     stdout_path = pathlib.Path(stdout_path)
     if stdout_path.exists() or stdout_path.is_symlink():
         raise CaptureError(f"analysis output already exists: {stdout_path}")
     stdin = None
     stdout = stdout_path.open("xb")
+    stderr = None
     proc = None
     started = time.monotonic()
     try:
         if stdin_path is not None:
             stdin = pathlib.Path(stdin_path).open("rb")
-        kwargs: Dict[str, Any] = {"stdin": stdin, "stdout": stdout, "stderr": subprocess.STDOUT}
-        if os.name != "nt":
+        if stderr_path is not None:
+            stderr_path = pathlib.Path(stderr_path)
+            if stderr_path.exists() or stderr_path.is_symlink():
+                raise CaptureError(f"analysis stderr already exists: {stderr_path}")
+            stderr = stderr_path.open("xb")
+        kwargs: Dict[str, Any] = {"stdin": stdin, "stdout": stdout,
+                                  "stderr": stderr if stderr is not None else subprocess.DEVNULL}
+        if sys.platform == "linux":
             kwargs["preexec_fn"] = _analysis_preexec(as_bytes=as_bytes, fsize_bytes=fsize_bytes)
         proc = subprocess.Popen(list(argv), **kwargs)
         peak = 0
@@ -226,15 +244,19 @@ def run_bounded(argv: Sequence[str], *, stdin_path: Optional[pathlib.Path], stdo
                     peak = max(peak, value)
                     if value > rss_limit:
                         proc.kill()
+                        proc.wait()
                         raise CaptureError("analysis RSS limit exceeded")
             if time.monotonic() - started > timeout_s:
                 proc.kill()
+                proc.wait()
                 raise CaptureError("analysis timeout")
             if stdout_path.stat().st_size > fsize_bytes:
                 proc.kill()
+                proc.wait()
                 raise CaptureError("analysis output limit exceeded")
             if shutil.disk_usage(stdout_path.parent).free < MIN_ANALYSIS_ABORT_FREE_BYTES:
                 proc.kill()
+                proc.wait()
                 raise CaptureError("analysis free disk fell below 1 GiB")
             time.sleep(0.5)
         rc = proc.wait()
@@ -244,23 +266,52 @@ def run_bounded(argv: Sequence[str], *, stdin_path: Optional[pathlib.Path], stdo
                 "output": str(stdout_path), "output_size": stdout_path.stat().st_size,
                 "elapsed_s": time.monotonic() - started, "peak_rss_bytes": peak}
     finally:
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait()
         if stdin is not None:
             stdin.close()
         stdout.close()
+        if stderr is not None:
+            stderr.close()
 
 
 def analyze(output: pathlib.Path, *, sample: Optional[Callable[[int], Optional[int]]] = None) -> Dict[str, Any]:
     """Interpret and print one completed raw artifact, sequentially."""
     output = pathlib.Path(output).resolve()
     require_free_disk(output)
+    require_mem_available()
+    if sample is None and sys.platform == "linux":
+        sample = _linux_rss
     raw = verify_raw(output / RAW_NAME)
     argv = analysis_argv(output)
     interpreted = run_bounded(argv["interpreter"], stdin_path=output / RAW_NAME,
                               stdout_path=output / INTERPRETED_NAME, sample=sample,
-                              fsize_bytes=MAX_RAW_BYTES)
+                              fsize_bytes=MAX_RAW_BYTES,
+                              stderr_path=output / "interpret-stderr.txt")
+    if (output / INTERPRETED_NAME).stat().st_size <= 0:
+        raise CaptureError("Heaptrack interpreted output is empty")
+    with (output / INTERPRETED_NAME).open("rb") as interpreted_stream:
+        if not interpreted_stream.readline().startswith(b"v "):
+            raise CaptureError("Heaptrack interpreted output has invalid header")
     require_free_disk(output)
+    require_mem_available()
     printed = run_bounded(argv["printer"], stdin_path=None,
                           stdout_path=output / PEAK_LOG_NAME, sample=sample,
-                          fsize_bytes=MAX_PRINTER_OUTPUT_BYTES)
+                          fsize_bytes=MAX_PRINTER_OUTPUT_BYTES,
+                          stderr_path=output / "printer-stderr.txt")
+    stacks = output / PEAK_STACKS_NAME
+    if not stacks.is_file() or stacks.stat().st_size <= 0:
+        raise CaptureError("Heaptrack peak-stacks output is missing or empty")
+    usable = False
+    for line in stacks.read_text(errors="replace").splitlines():
+        try:
+            if int(line.rsplit(None, 1)[1]) > 0:
+                usable = True
+                break
+        except (IndexError, ValueError):
+            continue
+    if not usable:
+        raise CaptureError("Heaptrack peak-stacks has no usable population")
     return {"raw": raw, "interpreter": interpreted, "printer": printed,
             "argv": {"interpreter": argv["interpreter"], "printer": argv["printer"]}}

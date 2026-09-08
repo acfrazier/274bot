@@ -292,6 +292,8 @@ def main(argv=None):
             preload = hc.verify_preload()
             capture = {'output': hc.prepare_output(a.heaptrack_output), 'preload': preload}
             a.heaptrack_capture = capture
+            hc.require_mem_available()
+            hc.require_free_disk(pathlib.Path(capture['output']['directory']))
         except (hc.CaptureError, OSError) as error:
             p.error(f'heaptrack capture: {error}')
     env = build_child_env(a, run)
@@ -450,7 +452,7 @@ def main(argv=None):
         signal.signal(signal.SIGTERM, stop)
         signal.signal(signal.SIGINT, stop)
         rc = child.wait()
-        if capture_guard is not None:
+        if capture:
             guard_stop.set()
             guard_thread.join(timeout=2)
             meta['heaptrack']['guard'] = guard_state
@@ -494,8 +496,16 @@ def main(argv=None):
     if probe and probe.error:
         print(f'FAIL: input probe: {probe.error}', file=sys.stderr)
         sys.exit(1)
-    if capture and meta['heaptrack']['analysis'].get('status') == 'failed':
-        sys.exit(1)
+    if capture:
+        heaptrack_meta = meta.get('heaptrack')
+        if not isinstance(heaptrack_meta, dict):
+            sys.exit(1)
+        heaptrack_result = heaptrack_meta.get('analysis')
+        if not isinstance(heaptrack_result, dict) or heaptrack_result.get('status') == 'failed':
+            sys.exit(1)
+        guard_meta = heaptrack_meta.get('guard')
+        if isinstance(guard_meta, dict) and guard_meta.get('reason'):
+            sys.exit(1)
     sys.exit(rc if rc >= 0 else 128-rc)
 
 if __name__ == '__main__':
