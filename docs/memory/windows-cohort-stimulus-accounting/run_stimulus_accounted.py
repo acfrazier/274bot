@@ -82,6 +82,20 @@ def _sample_record(sampler: Callable[[int], Dict[str, Any]], pid: int, label: st
                 "status": "unavailable", "reason": str(exc)}
 
 
+POWERSHELL_LAUNCH_COMMAND = (
+    "$s=Get-Content -Raw -LiteralPath $args[0]|ConvertFrom-Json;"
+    "$p=@{PanelPid=[int]$s.panelPid;ExpectedStartUtc=[string]$s.expectedStartUtc;"
+    "ExpectedBinary=[string]$s.expectedBinary;ExpectedBinarySha256=[string]$s.expectedBinarySha256;"
+    "ExpectedUser='BotTest';ExpectedSessionId=[int]$s.expectedSessionId;"
+    "ExpectedRect=[int[]]$s.expectedRect;GameImagePoint=[int[]]$s.gameImagePoint;"
+    "OutputDirectory=[string]$s.outputDirectory;Label=[string]$s.label;"
+    "DurationSeconds=120};"
+    "if($s.captureEnabledVerified){$p.CaptureEnabledVerified=$true};"
+    "if($s.slotZeroFocusVerified){$p.SlotZeroFocusVerified=$true};"
+    "& $s.helper @p"
+)
+
+
 def run(manifest_path: Path, *, clock: Any = time, sampler: Callable[[int], Dict[str, Any]],
         popen: Callable[..., Any] = subprocess.Popen,
         sleeper: Callable[[float], None] = time.sleep,
@@ -120,18 +134,18 @@ def run(manifest_path: Path, *, clock: Any = time, sampler: Callable[[int], Dict
     out_dir.mkdir(parents=True, exist_ok=False)
     receipt_path = Path(output["receiptPath"])
     events_path = Path(output["eventsPath"])
-    args = [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(helper_path),
-            "-PanelPid", str(target["pid"]), "-ExpectedStartUtc", str(target["startUtc"]),
-            "-ExpectedBinary", str(target["binary"]), "-ExpectedBinarySha256", str(target["binarySha256"]),
-            "-ExpectedUser", "BotTest", "-ExpectedSessionId", str(target["sessionId"]),
-            "-ExpectedRect", *[str(x) for x in target["observedRect"]],
-            "-GameImagePoint", *[str(x) for x in target["gameImagePoint"]],
-            "-OutputDirectory", str(out_dir), "-Label", str(output["label"]),
-            "-DurationSeconds", "120"]
-    if target["captureEnabled"] is True:
-        args.append("-CaptureEnabledVerified")
-    if target["slotZeroFocus"] is True:
-        args.append("-SlotZeroFocusVerified")
+    launch_spec = out_dir / "helper-launch-spec.json"
+    launch_spec.write_text(json.dumps({
+        "helper": str(helper_path), "panelPid": target["pid"],
+        "expectedStartUtc": target["startUtc"], "expectedBinary": target["binary"],
+        "expectedBinarySha256": target["binarySha256"], "expectedSessionId": target["sessionId"],
+        "expectedRect": target["observedRect"], "gameImagePoint": target["gameImagePoint"],
+        "outputDirectory": str(out_dir), "label": output["label"],
+        "captureEnabledVerified": target["captureEnabled"],
+        "slotZeroFocusVerified": target["slotZeroFocus"],
+    }, indent=2) + "\n", encoding="utf-8")
+    args = [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+            POWERSHELL_LAUNCH_COMMAND, str(launch_spec)]
     started = clock.monotonic()
     try:
         process = popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
@@ -141,9 +155,25 @@ def run(manifest_path: Path, *, clock: Any = time, sampler: Callable[[int], Dict
     samples: List[Dict[str, Any]] = []
     wrapper_pid = os.getpid()
     sample_interval = float(manifest.get("sampleIntervalSeconds", 1.0))
+    max_lifetime = float(manifest.get("maxHelperLifetimeSeconds", 135.0))
+    cleanup_budget = float(manifest.get("cleanupBudgetSeconds", 5.0))
     next_sample = started
+    timed_out = False
     while process.poll() is None:
         current = clock.monotonic()
+        if current - started > max_lifetime:
+            timed_out = True
+            if hasattr(process, "terminate"):
+                process.terminate()
+            cleanup_deadline = current + cleanup_budget
+            while process.poll() is None and clock.monotonic() <= cleanup_deadline:
+                remaining = cleanup_deadline - clock.monotonic()
+                if remaining <= 0:
+                    break
+                sleeper(min(0.1, remaining))
+            if process.poll() is None and hasattr(process, "kill"):
+                process.kill()
+            break
         if current >= next_sample:
             samples.append(_sample_record(sampler, wrapper_pid, "wrapper-sampler", current))
             samples.append(_sample_record(sampler, int(getattr(process, "pid", 0)), "input-helper", current))
@@ -223,8 +253,8 @@ def run(manifest_path: Path, *, clock: Any = time, sampler: Callable[[int], Dict
                "helperStartIdentity": process_summaries.get("input-helper", {}).get("start_identity"),
                "captureEnabledVerified": target["captureEnabled"], "slotZeroFocusVerified": target["slotZeroFocus"],
                "helperPath": str(helper_path), "helperOutputFiles": files,
-               "outcome": "completed" if process.returncode == 0 and helper_receipt_valid else "incomplete",
-               "incompleteReason": None if process.returncode == 0 and helper_receipt_valid else ("helper failure" if process.returncode != 0 else helper_receipt_reason),
+               "outcome": "completed" if not timed_out and process.returncode == 0 and helper_receipt_valid else "incomplete",
+               "incompleteReason": None if not timed_out and process.returncode == 0 and helper_receipt_valid else ("helper lifetime exceeded; cleanup attempted" if timed_out else ("helper failure" if process.returncode != 0 else helper_receipt_reason)),
                "spawnCount": spawn_count, "samples": samples, "managedProcesses": managed,
                "processSummaries": list(process_summaries.values()),
                "sampler": {"label": "root-managed windows_process_sample",

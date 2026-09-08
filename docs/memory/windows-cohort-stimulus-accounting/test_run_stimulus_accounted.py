@@ -35,6 +35,19 @@ class Process:
         return ("helper stdout", "")
 
 
+class NeverProcess(Process):
+    returncode = -9
+
+    def terminate(self):
+        pass
+
+    def kill(self):
+        self._killed = True
+
+    def poll(self):
+        return self.returncode if getattr(self, "_killed", False) else None
+
+
 def manifest(root, **changes):
     value = {
         "schema": "native-panel-input-stimulus-accounting-manifest-v1",
@@ -160,7 +173,27 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result["spawnCount"], 1)
         self.assertEqual(len(captured), 1)
         self.assertIsInstance(captured[0][0], list)
-        self.assertEqual(captured[0][0].count("-File"), 1)
+        self.assertEqual(captured[0][0].count("-Command"), 1)
+        spec = json.loads((self.root / "output" / "helper-launch-spec.json").read_text())
+        self.assertEqual(spec["expectedRect"], [228, 228, 2326, 1154])
+        self.assertEqual(spec["gameImagePoint"], [628, 528])
+        self.assertIn("[int[]]$s.expectedRect", captured[0][0][captured[0][0].index("-Command") + 1])
+
+    def test_hung_helper_hits_bound_and_cleanup_without_respawn(self):
+        value = manifest(self.root, maxHelperLifetimeSeconds=2, cleanupBudgetSeconds=1)
+        process = NeverProcess()
+        called = []
+        clock = Clock(75)
+        def sleep(seconds):
+            called.append(seconds)
+            clock.value += seconds
+        result = controller.run(self.write_manifest(value), clock=clock, sampler=self.sampler,
+                                sleeper=sleep,
+                                popen=lambda *a, **k: process)
+        self.assertEqual(result["spawnCount"], 1)
+        self.assertEqual(result["outcome"], "incomplete")
+        self.assertIn("lifetime exceeded", result["incompleteReason"])
+        self.assertTrue(called)
 
     def test_sampler_failure_is_retained_not_zero(self):
         value = manifest(self.root)
