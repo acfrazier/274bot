@@ -11,6 +11,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 23:44 UTC
+
+- Corrected failed-qualification report6e7f78e passed actual Grok4.5/xai
+  session20260908_193749_b73139. Reviewer independently confirmed all24
+  arithmetic checks, throughput rejection and resource-sampling limitations.
+  This approves the failure report, not native readiness or production capacity.
+- Local measured hot-loop correction t_b03522bc is now running under actual
+  Astra/openai session20260908_194350_db85e2. It may change only the isolated
+  native diagnostic parser with matched local evidence and preserved guards;
+  no new native qualification or production replay is released.
+- 289 G t_7f7981c3 is running under actual Astra/openai session
+  20260908_194150_4db03b. G review, H, authentic live proof and final whole-branch
+  review remain required. No host/client runtime optimization accepted here.
+
 ## Latest boundary — 2026-09-08 23:40 UTC
 
 - Corrected native failed-qualification report6e7f78e is in its final Grok4.5
