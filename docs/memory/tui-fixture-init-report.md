@@ -11,20 +11,21 @@ service and could stall the test process.
 
 ## Change
 
-`crates/tui/src/bin.rs` keeps the production `live_prepare_script` body on its
-original path, including slot spawning. A separate `#[cfg(test)]` fixture entry
-point performs the same preparation with slot spawning omitted. Both paths
-perform the real preparation: temporary vault creation/unlock, scenario setup,
-live names, settings injection, catalog discovery/transpilation, script
-selection, sibling resolution, and pending catalog-start staging. The test-only
-duplication avoids adding a production-compiled spawn-control seam.
+`crates/tui/src/bin.rs` keeps `live_prepare_script` as the single preparation
+implementation. Under `#[cfg(test)]`, `TuiSession` has a per-session
+`suppress_slot_spawn` fixture switch, checked only at the `spawn` boundary; the
+unit fixtures enable it before calling the real production preparation method.
+The production build contains neither the field nor the guard. The tests
+therefore exercise temporary vault creation/unlock, scenario setup, live names,
+settings injection, catalog discovery/transpilation, script selection, sibling
+resolution, and pending catalog-start staging on the path used by `--live`.
 
-The BoneBurier and Thiever tests use that test-only entry point. Their
-substantive catalog-selection and injected-settings assertions remain intact.
+The BoneBurier and Thiever tests use that test-only switch. Their substantive
+catalog-selection and injected-settings assertions remain intact.
 BoneBurier additionally proves that no arm/worker was created and that the
-selected card is staged in `pending_script`; its `script_state != Running`
-assertion is retained only as a non-vacuous boundary check. The unit fixture
-covers vault/catalog/pending staging without slot workers. The meaningful
+selected card is staged in `pending_script`. The unit fixture covers
+vault/catalog/pending staging without slot workers; it does not assert isolate
+state, since `script_state` is idle when no worker exists. The meaningful
 "Start waits for StartScript" isolate-state assertion remains live-harness
 coverage. No production timeout, worker lifecycle, client source, or host-play
 code changed.

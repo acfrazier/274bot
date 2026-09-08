@@ -296,6 +296,8 @@ pub struct TuiSession {
     #[cfg(feature = "memory-profile")]
     memory: Option<host_play::memory::Run>,
     play: Option<Play>,
+    #[cfg(test)]
+    suppress_slot_spawn: bool,
     vault: Option<Vault>,
     pub error: Option<String>,
     /// All profile names (for the strip's slot list), in vault order.
@@ -361,6 +363,11 @@ impl TuiSession {
     fn inject_play(&mut self, play: Play) {
         self.play = Some(play);
     }
+
+    /// Keep preparation tests from creating workers that need a live service.
+    fn suppress_slot_spawn(&mut self) {
+        self.suppress_slot_spawn = true;
+    }
 }
 
 impl TuiSession {
@@ -374,6 +381,8 @@ impl TuiSession {
             #[cfg(feature = "memory-profile")]
             memory: None,
             play: None,
+            #[cfg(test)]
+            suppress_slot_spawn: false,
             vault: None,
             error: None,
             names: Vec::new(),
@@ -527,6 +536,10 @@ impl TuiSession {
     /// immediately and re-handshakes after a DC only when the profile's
     /// `auto_login` is on.
     fn spawn(&mut self, name: &str) -> bool {
+        #[cfg(test)]
+        if self.suppress_slot_spawn {
+            return false;
+        }
         let Some(mut profile) = self.vault.as_ref().and_then(|v| v.get(name)).cloned() else {
             return false;
         };
@@ -604,77 +617,6 @@ impl TuiSession {
         // A scenario that names a script card selects the real `$RS2B0T`
         // catalog script on the driven slot (same as the panel): fill the
         // catalog from `$RS2B0T`, then Start on StartScript after seed.
-        if let Some(card_name) = start_script {
-            self.fill_rs2b0t_cards_once();
-            self.js
-                .ensure_js(script::ScriptSource::Catalog, card_name)
-                .map_err(|e| format!("transpile {card_name}: {e}"))?;
-            let card = self
-                .js
-                .get(script::ScriptSource::Catalog, card_name)
-                .cloned()
-                .ok_or_else(|| {
-                    format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
-                })?;
-            self.script_sel = Some(script::ScriptSel::Loaded(
-                script::ScriptSource::Catalog,
-                card_name.to_string(),
-            ));
-            let bag = self.pending_settings_bag(
-                script::ScriptSource::Catalog,
-                card_name,
-                &card.settings_schema,
-            );
-            let siblings = script::resolve_sibling_modules(
-                &card.path,
-                &card.origin,
-                self.js.cache(),
-                script::CacheMeta {
-                    kind: card.kind,
-                    source: card.source,
-                    shape: None,
-                },
-            )?;
-            *self.pending_script.lock().unwrap() = Some(PendingCatalogStart {
-                slot: names[0].clone(),
-                js: card.js.clone(),
-                shape: card.shape,
-                bag,
-                siblings,
-            });
-        }
-        Ok(())
-    }
-
-    #[cfg(test)]
-    /// Test-only live preparation: exercise vault/catalog/scenario setup while
-    /// leaving slot workers to the live harness, not unit-test teardown.
-    fn live_prepare_script_fixture(&mut self, scenario: scenario::Scenario) -> Result<(), String> {
-        let name = scenario.name.to_string();
-        let start_script = scenario.settings.start_script;
-        let settings_inject = scenario.settings.script_settings_inject;
-        let names = mint_live_names(scenario.seed.profiles.len());
-        let entries = mint_live_entries(&names);
-        let pass = live_vault_passphrase();
-        let path = temp_live_vault(&entries, &pass);
-        self.unlock_at(&path, &pass)?;
-        self.live_name = Some(name);
-        let mut runner = scenario::ScenarioRunner::new(scenario);
-        if let Some(budget) = scenario::budget_s_from_env() {
-            runner.set_deadline(budget);
-            self.live_soak_until = Some(Instant::now() + budget);
-            self.live_announced_pass = false;
-        }
-        runner.set_live_names(&names);
-        if let Some(play) = &self.play {
-            runner.set_obj_names(play.obj_names());
-        }
-        *self.scenario.lock().unwrap() = Some(runner);
-        self.script_settings_inject = scenario::settings_inject_map(settings_inject);
-        self.names = names.clone();
-        self.focus(&names[0]);
-        // Stage the catalog Start exactly as production preparation does, but
-        // leave worker creation to the live harness.
         if let Some(card_name) = start_script {
             self.fill_rs2b0t_cards_once();
             self.js
@@ -1691,8 +1633,9 @@ ScriptRegistry.register({
         let root = fake_rs2b0t_tree(&iso.dir);
         iso.set_rs2b0t(&root);
         let mut session = TuiSession::new(dummy_options());
+        session.suppress_slot_spawn();
         session
-            .live_prepare_script_fixture(scenario::get("bone_burier").expect("registered"))
+            .live_prepare_script(scenario::get("bone_burier").expect("registered"))
             .expect("prepare");
         let name = session.names.first().expect("minted name").clone();
         assert_ne!(name, "test", "live must not log in `test`");
@@ -1719,11 +1662,6 @@ ScriptRegistry.register({
             Some(name.as_str()),
             "preparation stages the selected card for StartScript"
         );
-        assert_ne!(
-            play.script_state(&name),
-            script::RunState::Running,
-            "without a worker, isolate state is not live coverage"
-        );
     }
 
     #[test]
@@ -1747,8 +1685,9 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
         .unwrap();
         iso.set_rs2b0t(&root);
         let mut session = TuiSession::new(dummy_options());
+        session.suppress_slot_spawn();
         session
-            .live_prepare_script_fixture(scenario::get("thiever").expect("registered"))
+            .live_prepare_script(scenario::get("thiever").expect("registered"))
             .expect("prepare");
         let bag = session
             .pending_script
