@@ -17,12 +17,12 @@ size, mmap/GPU ownership, or CPU cost.
 
 The allocation-family discriminator is the first stack frame in the captured
 allocation backtrace that resolves to a frozen Rust function or a named
-allocator boundary, grouped by that symbol and phase. A family is useful only
-when it has live bytes at the declared capture point and can be mapped to an
-owner/lifetime from source. Rust function symbols are readable evidence, not
-source-line or inline-coverage proof. The frozen ELF is known to retain symbols
-such as `script::isolate_fb::encode_snapshot_masked_into`; source/inline
-coverage remains unproven and must be reported as such.
+allocator boundary, grouped by that symbol in the common-time global-peak
+population. A family is useful only when it has positive peak bytes and can be
+mapped to an owner/lifetime from source. Rust function symbols are readable
+evidence, not source-line or inline-coverage proof. The frozen ELF is known to
+retain symbols such as `script::isolate_fb::encode_snapshot_masked_into`;
+source/inline coverage remains unproven and must be reported as such.
 
 ## Exactly one procedure: N1 native TUI allocation capture
 
@@ -96,20 +96,18 @@ capture.
    exact ELF and manifest hashes, current cache identity, current server PID and
    start identity, fixture/config hashes, `heaptrack 1.5.0`, available memory,
    free disk, and output directory emptiness. Record the command and all hashes.
-2. Warmup: run the existing N1 active workload for exactly 120 seconds. Do not
-   interpret warmup allocations as the selected live population; retain them in
-   the profile so initialization families can be distinguished from steady work.
-3. Observe: run exactly 600 seconds with the normal active workload. Identify
-   the observe-start boundary after warmup and select one bounded analysis slice
-   at the existing observe-end boundary. The Heaptrack data is continuous, but
-   report allocation families separately for initialization/warmup, observe,
-   and teardown when the report supports phase timestamps; never silently merge
-   phases.
-4. Teardown: invoke the existing normal Stop path for 60 seconds. Record the
-   after-script-Stop population while the client and snapshots are still alive.
-   Do not call it post-join. If the managed lifecycle reaches a slot join
-   before the capture point, record the explicit barrier and keep that population
-   separate; do not manufacture a post-join sample from process exit.
+2. Warmup: run the existing N1 active workload for exactly 120 seconds. Record
+   the warmup-end controller timestamp, but do not treat it as a Heaptrack
+   boundary or claim that the report separates initialization from steady work.
+3. Observe: run exactly 600 seconds with the normal active workload. Record the
+   observe-start and observe-end controller timestamps as lifecycle metadata only.
+   The continuous Heaptrack profile is analyzed as one common-time global-peak
+   population; it does not provide a phase-separated observe-end live set.
+4. Teardown: invoke the existing normal Stop path for 60 seconds and record the
+   `script_stop` invocation and teardown-end timestamps. These are external
+   barriers only, not an after-Stop allocation population. If the managed
+   lifecycle reaches a slot join before teardown ends, record that fact as
+   metadata; do not manufacture a post-join sample from process exit.
 5. Cleanup: stop the frontend through the existing managed path, wait for the
    frontend and every Heaptrack interpreter/compressor child, close and analyze
    the FIFO, verify output completeness, remove only per-attempt temporary FIFO
