@@ -71,7 +71,7 @@ def _required_binding(manifest: Dict[str, Any]) -> Optional[str]:
         if invalid:
             return invalid
     pub = manifest["observeStartPublication"]
-    if not isinstance(pub.get("monotonicSeconds"), (int, float)):
+    if type(pub.get("monotonicSeconds")) not in (int, float) or not math.isfinite(pub["monotonicSeconds"]):
         return "missing observe-start monotonic publication"
     return None
 
@@ -178,6 +178,9 @@ def run(manifest_path: Path, *, clock: Any = time, sampler: Callable[[int], Dict
     args = [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
             str(launcher_path), str(launch_spec)]
     started = clock.monotonic()
+    delay = started - publication
+    if not 60 <= delay <= 90:
+        return _fail("observe-start trigger window missed during launch preparation", cell_id=cell_id, output_path=envelope_path, binding=manifest)
     started_unix = clock.time() if hasattr(clock, "time") else time.time()
     try:
         process = popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
@@ -287,6 +290,8 @@ def run(manifest_path: Path, *, clock: Any = time, sampler: Callable[[int], Dict
                "helperSha256": HELPER_SHA256, "sourceSha256": manifest["sourceSha256"],
                "cadenceMilliseconds": 1000, "pressMilliseconds": 80, "durationSeconds": 120,
                "startedUnix": started_unix, "triggerDelaySeconds": delay,
+               "helperSpawnMonotonicSeconds": started,
+               "observeStartPublication": manifest["observeStartPublication"],
                "targetPid": target["pid"], "targetStartUtc": target["startUtc"],
                "targetStartIdentity": target["startIdentity"], "helperPid": getattr(process, "pid", None),
                "helperStartUtc": next((row.get("sample", {}).get("start_utc") for row in samples

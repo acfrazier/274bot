@@ -117,6 +117,10 @@ def validate_stimulus_receipt(path, *, plan, cell_id, run_started_unix, target_p
         raise AssertionError("stimulus trigger was outside the observe-start window")
     if publication.get("schema") != "cohort-observe-start-publication-v1" or publication.get("cellId") != cell_id:
         raise AssertionError("stimulus publication belongs to another run")
+    trigger = publication.get("monotonicSeconds")
+    spawn = receipt.get("helperSpawnMonotonicSeconds")
+    if receipt.get("observeStartPublication") != publication or any(type(v) not in (int, float) or not math.isfinite(v) for v in (trigger, spawn)) or spawn - trigger != delay:
+        raise AssertionError("stimulus trigger is not bound to recorded publication")
     accounting = receipt.get("resourceAccounting")
     if not isinstance(accounting, dict) or accounting.get("status") != "available":
         raise AssertionError("stimulus process accounting is unavailable")

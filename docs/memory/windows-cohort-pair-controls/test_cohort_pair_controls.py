@@ -104,14 +104,15 @@ class CohortPairControls(unittest.TestCase):
             samples = [{"pid": pid, "process": role, "status": "available", "sample": {"start_identity": identity(pid), "user_s": 0.5, "system_s": 0.5, "resident_bytes": 1024}} for pid, role in ((7, "input-helper"), (9, "wrapper-sampler"))]
             summary = lambda n: {"pid": samples[n]["pid"], "process": samples[n]["process"], "status": "available", "start_identity": samples[n]["sample"]["start_identity"], "cpu_seconds": 1.0, "rss_bytes": 1024, "sampleIndexes": [n]}
             good = {"schema": "native-panel-input-stimulus-run-receipt-v1", "cellId": "baseline-focused-one-x", "outcome": "completed", "helperSha256": plan["helperSha256"], "cadenceMilliseconds": 1000, "pressMilliseconds": 80, "durationSeconds": 120, "startedUnix": 101, "captureEnabledVerified": True, "slotZeroFocusVerified": True, "helperPid": 7, "helperStartUtc": None, "helperStartIdentity": identity(7), "targetPid": 8, "targetStartIdentity": identity(8), "targetStartUtc": helper["startUtc"], "triggerDelaySeconds": 60, "resourceAccounting": {"status": "available", "helper": summary(0), "wrapper": summary(1), "targetIdentity": identity(8), "targetExcludedFromManagedTotals": True}, "sampler": {"label": "root-managed windows_process_sample", "backend": "windows_process_sample.sample_process"}, "samples": samples, "helperOutputFiles": {str(helper_path): hashlib.sha256(helper_path.read_bytes()).hexdigest()}, "performanceAcceptance": False, "inputCoveragePass": False}
-            kwargs = {"plan": plan, "cell_id": good["cellId"], "run_started_unix": 100, "target_pid": 8, "target_start_identity": identity(8), "publication": {"schema": "cohort-observe-start-publication-v1", "cellId": good["cellId"]}}
+            kwargs = {"plan": plan, "cell_id": good["cellId"], "run_started_unix": 100, "target_pid": 8, "target_start_identity": identity(8), "publication": {"schema": "cohort-observe-start-publication-v1", "cellId": good["cellId"], "monotonicSeconds": 1000}}
+            good.update(observeStartPublication=kwargs["publication"], helperSpawnMonotonicSeconds=1060)
             path = pathlib.Path(temp) / "envelope.json"
             path.write_text(json.dumps(good))
             self.assertEqual(fn(path, **kwargs), good)
             for delay in (60, 60.125, 89.999, 90):
-                candidate = dict(good, triggerDelaySeconds=delay)
+                candidate = dict(good, triggerDelaySeconds=(1000 + delay) - 1000, helperSpawnMonotonicSeconds=1000 + delay)
                 path.write_text(json.dumps(candidate))
-                self.assertEqual(fn(path, **kwargs)["triggerDelaySeconds"], delay)
+                self.assertAlmostEqual(fn(path, **kwargs)["triggerDelaySeconds"], delay)
             invalid = [{"triggerDelaySeconds": delay} for delay in (59.999, 90.001, True, False, None, "60", float("nan"), float("inf"), -float("inf"))]
             invalid += [{"cellId": "candidate-focused-one-x"}, {"startedUnix": 99}, {"startedUnix": float("nan")}, {"helperSha256": "pending"}, {"cadenceMilliseconds": 500}, {"resourceAccounting": {"status": "available"}}, {"targetPid": 99}, {"helperStartIdentity": "fake"}]
             for bad in invalid:
@@ -128,6 +129,51 @@ class CohortPairControls(unittest.TestCase):
             helper_path.write_text("changed artifact")
             with self.assertRaisesRegex(AssertionError, "hash mismatch"):
                 fn(path, **kwargs)
+
+    def test_real_wrapper_envelope_is_consumed_without_schema_translation(self):
+        import importlib.util
+        import os
+        import tempfile
+        source = HERE.parent / "windows-cohort-stimulus-accounting" / "run_stimulus_accounted.py"
+        loader = importlib.util.spec_from_file_location("cohort_wrapper_integration", source)
+        producer = importlib.util.module_from_spec(loader); loader.loader.exec_module(producer)
+        class Clock:
+            value = 75.125
+            def monotonic(self): return self.value
+            def time(self): return 1000 + self.value
+            def sleep(self, delta): self.value += delta
+        class Process:
+            pid = 4242
+            returncode = 0
+            polls = 2
+            def poll(self):
+                self.polls -= 1
+                return None if self.polls >= 0 else 0
+            def communicate(self): return None, None
+        identity = lambda pid: "windows_creation_filetime:" + str(134000000000000000 + pid)
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp); output = root / "owned-output"
+            binary = root / "inert-binary"; binary.write_bytes(b"fixture binary")
+            digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+            helper = HERE / "invoke-panel-input-stimulus.ps1"
+            publication = {"schema": "cohort-observe-start-publication-v1", "cellId": "baseline-focused-one-integration", "monotonicSeconds": 0}
+            target = {"pid": 3131, "startUtc": "2026-09-08T14:00:00Z", "startIdentity": identity(3131), "sessionId": 2, "binary": str(binary), "binarySha256": digest(binary), "observedRect": [1, 2, 100, 200], "gameImagePoint": [20, 30], "scene2": True, "captureEnabled": True, "slotZeroFocus": True}
+            manifest = {"schema": "native-panel-input-stimulus-accounting-manifest-v1", "cellId": publication["cellId"], "sourceSha256": digest(source), "target": target, "helper": {"path": str(helper), "sha256": digest(helper)}, "output": {"directory": str(output), "label": "fixture", "receiptPath": str(output / "fixture.input-stimulus.json"), "postRunEnvelope": str(root / "envelope.json")}, "observeStartPublication": publication, "cadenceMilliseconds": 1000, "pressMilliseconds": 80, "durationSeconds": 120, "triggerWindowSeconds": [60, 90], "noRetry": True}
+            path = root / "manifest.json"; path.write_text(json.dumps(manifest))
+            def spawn(args, **kwargs):
+                self.assertEqual(args[4], "-File")
+                helper_record = {"schema": "native-panel-input-stimulus-v1", "label": "fixture", "pid": target["pid"], "startUtc": target["startUtc"], "binary": target["binary"], "expectedBinarySha256": target["binarySha256"], "expectedRect": target["observedRect"], "gameImagePoint": target["gameImagePoint"], "cadenceMilliseconds": 1000, "pressMilliseconds": 80, "durationSeconds": 120, "requestedPulses": 120, "completedPulses": 120, "outcome": "completed", "events": [{"index": i+1, "direction": "Left" if i % 2 == 0 else "Right", "downSendInputResult": 1, "upSendInputResult": 1, "releaseSucceeded": True} for i in range(120)]}
+                pathlib.Path(manifest["output"]["receiptPath"]).write_text(json.dumps(helper_record))
+                return Process()
+            sampler = lambda pid: {"start_identity": identity(pid), "resident_bytes": 1024, "user_s": 1.0, "system_s": 0.5}
+            clock = Clock()
+            result = producer.run(path, clock=clock, sampler=sampler, popen=spawn, sleeper=clock.sleep)
+            self.assertEqual(result["outcome"], "completed", result.get("incompleteReason"))
+            consumed = controller_functions()["validate_stimulus_receipt"](root / "envelope.json", plan={"helperSha256": digest(helper)}, cell_id=publication["cellId"], run_started_unix=1000, target_pid=3131, target_start_identity=identity(3131), publication=publication)
+            self.assertEqual(consumed, result)
+            self.assertIsNone(consumed["helperStartUtc"])
+            self.assertEqual(consumed["resourceAccounting"]["wrapper"]["pid"], os.getpid())
+            self.assertEqual(consumed["triggerDelaySeconds"], 75.125)
 
     def test_duration_and_tail_are_explicit_in_source(self):
         source = (HERE / "run-cohort-pair.py").read_text()
