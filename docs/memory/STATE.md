@@ -9,6 +9,28 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 01:56 UTC
+
+- Native owner census0150 completed0; Intel/Vulkan selected/requested matches.
+  Archived22files plus raw-run-01; all copied local and hashverified. TarSHA
+  a01f129182a4ff25a3f72057d26a96cec9955045978f22b5ccbfdf0f41cddee2.
+  Native unchanged reader binding_ok/qualified true; local qualifier passes16/16,
+ 119.0890417s median2369544192B,CPU.67543998core,client48.7319187ticks/slot/s.
+  Root report windows-owner-census-root-observation.json records evidence.
+  Owner rows exist at TWO qualification boundaries only, slots[].renderer.owner_census;
+  periodic samples lack owner rows but119observe private-commit values available.
+  Firstslot tile49387600B, uniqueArc15870584B, nested16764772B; do not add nested
+  to unique or subtract logical/commit/GPU fromRSS. Independent census analysis
+  new t_057e73d3 queued Luna; verify actual start/handoff/review. No new native run.
+- Four-cell report rejected547; same-card Luna correcting hash/metrics/alignment
+  and nested timing analysis. Linux fullfixture corrective t_af7aeded Luna running.
+  Both native hosts quiet; no Windows build/test/VM/frontend left running.
+- Operator asked overall position and confirmed use existing resources. Clarified
+  Hyper-V x86_64 higher-RAM Linux build/test remains intended; VM off for panel
+  measurement isolation, recent cached MacDocker build did not change direction.
+  Campaign remains optimization/diagnosis with material RSS gaps, Linux failure
+  investigation and snapshot native comparison before final matrix/lifecycle/Grok.
+
 ## Latest boundary — 2026-09-08 01:49 UTC
 
 - Owner census actual native cell launched 01:47:05.424 UTC:
