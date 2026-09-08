@@ -1,0 +1,16 @@
+{
+  "schema": "native-no-input-interop-probe-v1",
+  "source_commit": "1c694d85a54f1f2b9167b5730bffed35c2a75334",
+  "native_utc": "2026-09-08T08:29:50.0850458Z",
+  "powerShell": "5.1.26100.9168",
+  "ast_errors": 0,
+  "csharp_compiled": true,
+  "input_struct_bytes": 40,
+  "assignment": "C# CreateMouseInput(2) and CreateMouseInput(4)",
+  "observed_down_flags": 2,
+  "observed_up_flags": 4,
+  "input_injected": false,
+  "native_controller_executed": false,
+  "verdict": "layout_and_event_flags_valid",
+  "remaining": "same-card review and actual native synchronized controller execution"
+}

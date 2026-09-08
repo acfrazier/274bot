@@ -9,6 +9,18 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 08:30 UTC
+
+- Synchronized controller corrected1c694d8 awaiting same-card review. Root
+  native no-input dry PS5.1 AST0/C#compile now yields40byteINPUT flags2/4 from
+  C#factory (08:29:50.085UTC); no input/controller executed. Receipt in
+  windows-synchronized-input-interop-1c694d8.json. FullnativeG1 still pending.
+- Gap audit56bbf9a APPROVED actualGrok4.5/xai-oauth20260908_042700_6a786c;
+  current-finish-line-gap-audit.md now separates old/currentpanel evidence,
+  integratedreader, full36finalruns and modestLinuxhardware. Fullcampaign
+  budget/decode/input/calibration/lifecycle/scaling/wholeGrok remain missing.
+  No new native frontend; prepared0830 wrappers await acceptedcontroller.
+
 ## Latest boundary — 2026-09-08 08:27 UTC
 
 - Root native no-input dry interop probe of EXACT02fccce confirms AST0/C#compile
