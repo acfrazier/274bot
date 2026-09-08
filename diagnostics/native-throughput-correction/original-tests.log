@@ -1,0 +1,26 @@
+test_conversion_hash_suffix_and_canonical_not_sum (test_heaptrack_owner_replay.ReplayTests) ... ok
+test_each_table_numeric_input_and_depth_cap (test_heaptrack_owner_replay.ReplayTests) ... ok
+test_linux_native_as_is_bytes_in_owned_child (test_heaptrack_owner_replay.ReplayTests) ... skipped 'Linux address-space limit requires native qualification'
+test_linux_native_memory_guard_small_child (test_heaptrack_owner_replay.ReplayTests) ... skipped 'Linux RLIMIT_AS and /proc native qualification required'
+test_lossless_output_and_fail_closed_output_budget (test_heaptrack_owner_replay.ReplayTests) ... ok
+test_manifest_and_receipt_rejections (test_heaptrack_owner_replay.ReplayTests) ... ok
+test_normalization_collisions_new_stop_inline_unresolved (test_heaptrack_owner_replay.ReplayTests) ... ok
+test_owned_portable_runner_smoke (test_heaptrack_owner_replay.ReplayTests) ... ok
+test_ownership_unknown_callers_are_not_lost (test_heaptrack_owner_replay.ReplayTests) ... ok
+test_real_owned_cpu_guard (test_heaptrack_owner_replay.ReplayTests) ... ok
+test_real_owned_wall_kill_reap_and_bounded_failure (test_heaptrack_owner_replay.ReplayTests) ... ok
+test_record_adversaries (test_heaptrack_owner_replay.ReplayTests) ... ok
+test_reference_and_session_adversaries (test_heaptrack_owner_replay.ReplayTests) ... ok
+test_resource_failure_reports_exact_guard_and_usage (test_heaptrack_owner_replay.ReplayTests) ... ok
+test_resource_guards_and_parent_unchanged (test_heaptrack_owner_replay.ReplayTests) ... ok
+test_saved_smoke_full_canonical_multiset (test_heaptrack_owner_replay.ReplayTests) ... ok
+test_strict_records_preserve_string_bytes (test_heaptrack_owner_replay.ReplayTests) ... ok
+test_suppression_does_not_change_population (test_heaptrack_owner_replay.ReplayTests) ... ok
+test_synthetic_realloc_multiplicity_zero_and_survivor (test_heaptrack_owner_replay.ReplayTests) ... ok
+test_three_pass_baseline_and_first_peak (test_heaptrack_owner_replay.ReplayTests) ... ok
+test_time_rejections_and_unbounded_event_tail (test_heaptrack_owner_replay.ReplayTests) ... ok
+
+----------------------------------------------------------------------
+Ran 21 tests in 6.135s
+
+OK (skipped=2)

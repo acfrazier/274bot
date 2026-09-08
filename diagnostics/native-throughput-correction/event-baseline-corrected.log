@@ -1,0 +1,8 @@
+test_absent_event_is_null (test_event_record.EventRecord) ... ok
+test_last_event_survives_marks_and_metadata (test_event_record.EventRecord) ... ok
+test_malformed_tail_after_last_event_rejects (test_event_record.EventRecord) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.042s
+
+OK

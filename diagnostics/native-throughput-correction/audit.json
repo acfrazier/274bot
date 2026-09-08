@@ -1,0 +1,67 @@
+{
+  "mapping_keys": 21,
+  "native_tests": 39,
+  "retained_repetitions": 18,
+  "source_and_binary_and_artifact_hashes_match": true,
+  "known_zero_descriptor_mismatch": {
+    "reference": {
+      "s": 2,
+      "i": 2,
+      "t": 2
+    },
+    "baseline": {
+      "s": 2,
+      "i": 2,
+      "t": 2,
+      "a": 0
+    },
+    "candidate": {
+      "s": 2,
+      "i": 2,
+      "t": 2,
+      "a": 0
+    }
+  },
+  "process_snapshot_conflicts": {
+    "baseline": [],
+    "candidate": []
+  },
+  "sizes": {
+    "package.py": 1390,
+    "event-baseline.log": 5282,
+    "audit.py": 3682,
+    "predeclared.md": 2168,
+    "retention-red.log": 1641,
+    "candidate-build.log": 1397,
+    "baseline-build.log": 1259,
+    "native-tests.log": 3189,
+    "recompute.py": 1134,
+    "original-tests.log": 2171,
+    "arithmetic.json": 1413,
+    "compare.py": 4858,
+    "core-tests.log": 1894,
+    "event-baseline-corrected.log": 330,
+    "candidate/case-0-repeat-2.json": 12728,
+    "candidate/case-1-repeat-1.json": 12690,
+    "candidate/results.json": 18944,
+    "candidate/case-2-repeat-0.json": 973279,
+    "candidate/case-2-repeat-1.json": 973278,
+    "candidate/case-1-repeat-0.json": 12691,
+    "candidate/case-0-repeat-0.json": 12742,
+    "candidate/case-2-repeat-2.json": 973280,
+    "candidate/case-1-repeat-2.json": 12702,
+    "candidate/case-0-repeat-1.json": 12715,
+    "candidate/freeze.json": 2492,
+    "baseline/case-0-repeat-2.json": 12699,
+    "baseline/case-1-repeat-1.json": 12691,
+    "baseline/results.json": 18887,
+    "baseline/case-2-repeat-0.json": 973279,
+    "baseline/case-2-repeat-1.json": 973279,
+    "baseline/case-1-repeat-0.json": 12701,
+    "baseline/case-0-repeat-0.json": 12714,
+    "baseline/case-2-repeat-2.json": 973279,
+    "baseline/case-1-repeat-2.json": 12687,
+    "baseline/case-0-repeat-1.json": 12725,
+    "baseline/freeze.json": 2491
+  }
+}

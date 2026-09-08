@@ -1,0 +1,44 @@
+test_baseline_zero_multiplicity_and_tail (test_differential.Differential) ... ok
+test_chunk_boundaries (test_differential.Differential) ... ok
+test_chunk_splits_inside_fields_and_utf8 (test_differential.Differential) ... ok
+test_lower_caps (test_differential.Differential) ... ok
+test_native_grammar (test_differential.Differential) ... ok
+test_reference_adversaries (test_differential.Differential) ... ok
+test_seeded_random_pairs (test_differential.Differential) ... ok
+test_whole_stack_inline_output (test_differential.Differential) ... ok
+test_absent_event_is_null (test_event_record.EventRecord) ... ok
+test_last_event_survives_marks_and_metadata (test_event_record.EventRecord) ... ok
+test_malformed_tail_after_last_event_rejects (test_event_record.EventRecord) ... ok
+test_duplicate_keys_and_provenance (test_native_contract.NativeContract) ... ok
+test_receipt_warning_options_and_counters (test_native_contract.NativeContract) ... ok
+test_all_external_samples_and_admission (test_native_guards.NativeGuards) ... ok
+test_explicit_hash_and_no_fallback (test_native_guards.NativeGuards) ... ok
+test_native_address (test_native_guards.NativeGuards) ... skipped 'Linux native RLIMIT_AS requires root qualification'
+test_native_cpu (test_native_guards.NativeGuards) ... ok
+test_native_output_table_scratch_fail_closed (test_native_guards.NativeGuards) ... ok
+test_native_phase_end (test_native_guards.NativeGuards) ... ok
+test_native_protocol_failures (test_native_guards.NativeGuards) ... ok
+test_native_rss (test_native_guards.NativeGuards) ... ok
+test_native_wall_reap (test_native_guards.NativeGuards) ... ok
+test_saved_smoke (test_native_parity.NativeParity) ... ok
+test_all_record_adversaries (test_native_seams.NativeSeams) ... ok
+test_original_normalization (test_native_seams.NativeSeams) ... ok
+test_original_ownership (test_native_seams.NativeSeams) ... ok
+test_zero_and_depth (test_native_seams.NativeSeams) ... ok
+test_conversion_hash_suffix_and_canonical_not_sum (test_original_fixtures.OriginalFixtures) ... ok
+test_each_table_numeric_input_and_depth_cap (test_original_fixtures.OriginalFixtures) ... ok
+test_lossless_output_and_fail_closed_output_budget (test_original_fixtures.OriginalFixtures) ... ok
+test_reference_and_session_adversaries (test_original_fixtures.OriginalFixtures) ... ok
+test_saved_smoke_full_canonical_multiset (test_original_fixtures.OriginalFixtures) ... ok
+test_suppression_does_not_change_population (test_original_fixtures.OriginalFixtures) ... ok
+test_synthetic_realloc_multiplicity_zero_and_survivor (test_original_fixtures.OriginalFixtures) ... ok
+test_three_pass_baseline_and_first_peak (test_original_fixtures.OriginalFixtures) ... ok
+test_time_rejections_and_unbounded_event_tail (test_original_fixtures.OriginalFixtures) ... ok
+test_unresolved_inline_caller_is_not_lost (test_reference_contract.WholeStackUnknownContract) ... ok
+test_unresolved_inline_owner_is_not_lost (test_reference_contract.WholeStackUnknownContract) ... ok
+test_unresolved_primary_caller_control (test_reference_contract.WholeStackUnknownContract) ... ok
+
+----------------------------------------------------------------------
+Ran 39 tests in 9.452s
+
+OK (skipped=1)

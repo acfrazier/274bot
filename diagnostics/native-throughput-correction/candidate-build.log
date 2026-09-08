@@ -1,0 +1,40 @@
+   Compiling heaptrack-owner-native v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/heaptrack-owner-native)
+warning: method `value` is never used
+   --> src/replay.rs:261:12
+    |
+260 | impl Snapshot {
+    | ------------- method in this implementation
+261 |     pub fn value(&self) -> Value {
+    |            ^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `keys` is never used
+  --> src/contract.rs:73:4
+   |
+73 | fn keys(v: &Value, expected: &[&str], reason: &'static str) -> Result<()> {
+   |    ^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `manifest` is never used
+  --> src/contract.rs:87:8
+   |
+87 | pub fn manifest(path: &Path, expected: &str, portable: bool) -> Result<Value> {
+   |        ^^^^^^^^
+
+warning: function `bound_entry` is never used
+   --> src/contract.rs:207:4
+    |
+207 | fn bound_entry(e: &Value) -> Result<Vec<u8>> {
+    |    ^^^^^^^^^^^
+
+warning: function `receipt` is never used
+   --> src/contract.rs:216:8
+    |
+216 | pub fn receipt(m: &Value) -> Result<[u64; 3]> {
+    |        ^^^^^^^
+
+warning: `heaptrack-owner-native` (bin "heaptrack-owner-fixture") generated 4 warnings
+warning: `heaptrack-owner-native` (bin "heaptrack-owner-child") generated 1 warning
+    Finished `release` profile [optimized] target(s) in 1.29s

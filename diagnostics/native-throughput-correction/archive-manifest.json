@@ -1,0 +1,33 @@
+{
+  "archive_sha256": "6896dfe1ffec3628d213949df243e96ece50bb465cc6589b7745401e179a2686",
+  "archive_bytes": 601417,
+  "members": {
+    "baseline/case-0-repeat-0.json": "2ca519d72a4f9e5f41c2b394d3da3b23296d5956a5a971e3c5d128b7f31142ba",
+    "baseline/case-0-repeat-1.json": "1cdd654b1980e7d99f46d0f1dacb215bf605df971acdd0660f30487cc5226507",
+    "baseline/case-0-repeat-2.json": "9509d709f3896d9ef1c7c3093ab614175991186c0ff2e5978d3e623063f3702a",
+    "baseline/case-1-repeat-0.json": "dc2950fc4f323d4fc16919564dbefeb9419de1d755cce3eaaa1d938843435891",
+    "baseline/case-1-repeat-1.json": "da07270e5dedab01de915fe37fe3627d8e985129bfeb5309333411fefca64a27",
+    "baseline/case-1-repeat-2.json": "e5acc448ccc5bd8714e2dd5f4a88c81860a7efb37fd166b0345f8e1cbc57e420",
+    "baseline/case-2-repeat-0.json": "071cdc8963aa3cdc507d09af284e8c4bf7f8029a902c73cf694284dec5a0e7fb",
+    "baseline/case-2-repeat-1.json": "d3cc024c5d68a8bc4859219f7ea736ed325e4a4a4b7abba46ba7bbca6d2a2754",
+    "baseline/case-2-repeat-2.json": "fc5dd1efd18e23e6c5ea822aa755f4bcc2cac6b96b79d8befe9a517db6da7ece",
+    "baseline/freeze.json": "1ac68a2f435ab26c43c30805c826bb6491b968523345ba4836823c76de8bb5da",
+    "baseline/results.json": "c787e013c850bd55d6c892a0f62ccdecdede07521e9cb0ef0d158da4b0d25d50",
+    "candidate/case-0-repeat-0.json": "564a699100b0f53f23daa845d0777ea1c9117b589937796d8fe7b4c8eaddf1d1",
+    "candidate/case-0-repeat-1.json": "fe04419ad1099d385a5c548bcd9b4e5c6359f1979677d4bbacd7e7703be0a7c4",
+    "candidate/case-0-repeat-2.json": "6f6bcc7d669dc65c06dd61efa27d617c48812d40ec62acd08f44541e713dff9b",
+    "candidate/case-1-repeat-0.json": "688c8011a31c7237d453f292c9adbce97b2f997e5da277124c611b080782dcc7",
+    "candidate/case-1-repeat-1.json": "efb05d974dfe5463f3ef7eeb5166bb7fcbeeb583026fe0365005fef661c25655",
+    "candidate/case-1-repeat-2.json": "7f73d298a5814509ceac1d66c9dda899f6e28ad21ee1d1ab155adb6d6c4aaae1",
+    "candidate/case-2-repeat-0.json": "4518d180b310274ab15ce2c98f100f6454b613c38915b52e0d76c9236680cf79",
+    "candidate/case-2-repeat-1.json": "d0cf23813a6ce4b350f291076aead427691b8e042301799e9c37877002d35067",
+    "candidate/case-2-repeat-2.json": "5364e753170e1e8fbd3db9bed27f2cc04aaf3f10cfeaa1df0e7ac7f77f3b9a2e",
+    "candidate/freeze.json": "5ae1e806fc08e299a600b811b7f09617868d33066840ff46a699f330d3f56205",
+    "candidate/results.json": "1dd5c45c9f4ea8242a970c445f40c4ce46985b1da4cd20c40d5eed2d867ae287"
+  },
+  "unchanged_reference_supervisor_source": {
+    "docs/memory/heaptrack_owner_replay.py": "6d7faa8cb70a90330f2df5943551e5841d084808f45c8d2c7e38bae338ed660e",
+    "docs/memory/heaptrack_owner_runner.py": "6263255770ec0ff27022c06b00ad28ee68e48e212dadc6d574206d6da85f74d4",
+    "docs/memory/test_heaptrack_owner_replay.py": "00a683a3a1f7faae0c56692cefb801f1a76a2461d264983e81e38be8f63ab20a"
+  }
+}

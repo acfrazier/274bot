@@ -1,0 +1,90 @@
+[
+  {
+    "case": [
+      1850048,
+      false
+    ],
+    "medians": [
+      [
+        0.028509,
+        0.062281,
+        0.06577599999999999
+      ],
+      [
+        0.028509,
+        0.062281,
+        0.06577599999999999
+      ]
+    ],
+    "cpu_reduction": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "total_cpu_medians": [
+      0.15765,
+      0.15765
+    ],
+    "meaningful": false
+  },
+  {
+    "case": [
+      1850048,
+      true
+    ],
+    "medians": [
+      [
+        0.013142999999999998,
+        0.019583000000000003,
+        0.021880999999999998
+      ],
+      [
+        0.013142999999999998,
+        0.019583000000000003,
+        0.021880999999999998
+      ]
+    ],
+    "cpu_reduction": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "total_cpu_medians": [
+      0.054778999999999994,
+      0.054778999999999994
+    ],
+    "meaningful": false
+  },
+  {
+    "case": [
+      1000,
+      "diversity"
+    ],
+    "medians": [
+      [
+        0.0003439999999999997,
+        0.0008740000000000002,
+        0.014851
+      ],
+      [
+        0.0003439999999999997,
+        0.0008740000000000002,
+        0.014851
+      ]
+    ],
+    "cpu_reduction": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "total_cpu_medians": [
+      0.016069,
+      0.016069
+    ],
+    "meaningful": null
+  }
+]
+Traceback (most recent call last):
+  File "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/native-throughput-correction/recompute.py", line 19, in <module>
+    assert all(r['meaningful'] is not False for r in rows), 'predeclared 10% interpreted CPU reduction not met'
+AssertionError: predeclared 10% interpreted CPU reduction not met

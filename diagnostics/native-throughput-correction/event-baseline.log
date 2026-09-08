@@ -1,0 +1,59 @@
+test_absent_event_is_null (test_event_record.EventRecord) ... FAIL
+test_last_event_survives_marks_and_metadata (test_event_record.EventRecord) ... test_malformed_tail_after_last_event_rejects (test_event_record.EventRecord) ... ok
+
+======================================================================
+FAIL: test_absent_event_is_null (test_event_record.EventRecord)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/heaptrack-owner-native/tests/test_event_record.py", line 10, in test_absent_event_is_null
+    result = pair(entries, 0, outputs=True)
+  File "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/heaptrack-owner-native/tests/test_differential.py", line 44, in pair
+    raise AssertionError((key, a, actual[key]))
+AssertionError: ('first', {'peak': {'line': 0, 'offset': 0, 'timestamp_ms': 0, 'bytes': 0, 'count': 0}, 'last_mark': {'line': 8, 'offset': 56, 'timestamp_ms': 10, 'ordinal': 2, 'bytes': 0, 'count': 0}, 'requested': {'line': 7, 'offset': 52, 'timestamp_ms': 0, 'ordinal': 1, 'bytes': 0, 'count': 0}, 'next_mark': {'line': 8, 'offset': 56, 'timestamp_ms': 10, 'ordinal': 2, 'bytes': 0, 'count': 0}, 'last_event': None, 'eof': {'line': 8, 'offset': 60, 'bytes': 0, 'count': 0}, 'events': 'a005219bbd0b0086a91f08386616dde044f53d5e5262ca638b0feba35650db6e', 'metadata': '6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3', 'trace_digest': '2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032', 'allocations': 0, 'frees': 0, 'temporary': 0, 'max_multiplicity': 0, 'definitions': {'s': 2, 'i': 2, 't': 2}, 'sha256': 'e3047e1b54b36668f6dac262c3147f59b579c18df35307e95f13b949abcc3a19'}, {'peak': {'line': 0, 'offset': 0, 'timestamp_ms': 0, 'bytes': 0, 'count': 0}, 'last_mark': {'line': 8, 'offset': 56, 'timestamp_ms': 10, 'ordinal': 2, 'bytes': 0, 'count': 0}, 'requested': {'line': 7, 'offset': 52, 'timestamp_ms': 0, 'ordinal': 1, 'bytes': 0, 'count': 0}, 'next_mark': {'line': 8, 'offset': 56, 'timestamp_ms': 10, 'ordinal': 2, 'bytes': 0, 'count': 0}, 'last_event': None, 'eof': {'line': 8, 'offset': 60, 'bytes': 0, 'count': 0}, 'events': 'a005219bbd0b0086a91f08386616dde044f53d5e5262ca638b0feba35650db6e', 'metadata': '6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3', 'trace_digest': '2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032', 'allocations': 0, 'frees': 0, 'temporary': 0, 'max_multiplicity': 0, 'definitions': {'s': 2, 'i': 2, 't': 2, 'a': 0}, 'sha256': 'e3047e1b54b36668f6dac262c3147f59b579c18df35307e95f13b949abcc3a19'})
+
+======================================================================
+FAIL: test_last_event_survives_marks_and_metadata (test_event_record.EventRecord) (tail=b'')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/heaptrack-owner-native/tests/test_event_record.py", line 22, in test_last_event_survives_marks_and_metadata
+    self.assertEqual(result['first']['last_event'], dict(
+AssertionError: {'line': 11, 'offset': 70, 'previous_timestamp_ms': 10} != {'line': 11, 'offset': 74, 'previous_timestamp_ms': 10}
+- {'line': 11, 'offset': 70, 'previous_timestamp_ms': 10}
+?                         ^
+
++ {'line': 11, 'offset': 74, 'previous_timestamp_ms': 10}
+?                         ^
+
+
+======================================================================
+FAIL: test_last_event_survives_marks_and_metadata (test_event_record.EventRecord) (tail=b'c b\n')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/heaptrack-owner-native/tests/test_event_record.py", line 22, in test_last_event_survives_marks_and_metadata
+    self.assertEqual(result['first']['last_event'], dict(
+AssertionError: {'line': 11, 'offset': 70, 'previous_timestamp_ms': 10} != {'line': 11, 'offset': 74, 'previous_timestamp_ms': 10}
+- {'line': 11, 'offset': 70, 'previous_timestamp_ms': 10}
+?                         ^
+
++ {'line': 11, 'offset': 74, 'previous_timestamp_ms': 10}
+?                         ^
+
+
+======================================================================
+FAIL: test_last_event_survives_marks_and_metadata (test_event_record.EventRecord) (tail=b'c b\n# tail\nS suppression\n')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/heaptrack-owner-native/tests/test_event_record.py", line 22, in test_last_event_survives_marks_and_metadata
+    self.assertEqual(result['first']['last_event'], dict(
+AssertionError: {'line': 11, 'offset': 70, 'previous_timestamp_ms': 10} != {'line': 11, 'offset': 74, 'previous_timestamp_ms': 10}
+- {'line': 11, 'offset': 70, 'previous_timestamp_ms': 10}
+?                         ^
+
++ {'line': 11, 'offset': 74, 'previous_timestamp_ms': 10}
+?                         ^
+
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.041s
+
+FAILED (failures=4)

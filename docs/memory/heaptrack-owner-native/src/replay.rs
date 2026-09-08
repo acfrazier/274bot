@@ -304,8 +304,10 @@ pub fn interpreted(
     let (mut total, mut count, mut allocations, mut frees, mut temporary, mut last, mut high) =
         (0, 0, 0, 0, 0, 0, 0);
     let mut peak = json!({"line":0,"offset":0,"timestamp_ms":0,"bytes":0,"count":0});
-    let (mut mark, mut requested, mut next, mut last_event) =
-        (Value::Null, Value::Null, Value::Null, Value::Null);
+    let (mut mark, mut requested, mut next) = (Value::Null, Value::Null, Value::Null);
+    // Retain only the final event position, not a fresh allocated JSON object
+    // for every allocation/free. Serialize once at the existing result boundary.
+    let mut last_event: Option<(u64, u64, u64)> = None;
     let mut defs = [0usize; 256];
     for x in [b's', b'i', b't'] {
         defs[x as usize] = 1;
@@ -377,7 +379,7 @@ pub fn interpreted(
                 temporary = add(temporary, (i == last) as u64)?;
                 last = 0;
             }
-            last_event = json!({"line":line,"offset":offset,"previous_timestamp_ms":s.stamp});
+            last_event = Some((line, offset, s.stamp));
             emit(&mut events, op, &[size, trace]);
         } else if op == b'c' {
             mark = json!({"line":line,"offset":offset,"timestamp_ms":s.stamp,"ordinal":s.marks,"bytes":total,"count":count});
@@ -426,6 +428,9 @@ pub fn interpreted(
             definitions.insert((op as char).to_string(), json!(defs[op as usize]));
         }
     }
+    let last_event = last_event.map(
+        |(line, offset, stamp)| json!({"line":line,"offset":offset,"previous_timestamp_ms":stamp}),
+    );
     Ok((
         json!({"peak":peak,"last_mark":mark,"requested":requested,"next_mark":next,"last_event":last_event,"eof":eof,"events":digest(events),"metadata":digest(s.metadata),"trace_digest":digest(th),"allocations":allocations,"frees":frees,"temporary":temporary,"max_multiplicity":high,"definitions":definitions,"sha256":sha}),
         snapshots,
