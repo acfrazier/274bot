@@ -97,7 +97,7 @@ parent-limit preservation and owned reaping are exercised.
 All nine cases and 27 repeats passed semantic comparisons. Simple-case median
 rates in decimal MB/CPU-second ranged raw 64.908–140.640, interpreted
 17.267–17.654, and selected-output pass 11.873–16.493. These exceed the fixed
-necessary gates (11.938945 raw, 3.175 interpreted/selected) on this portable
+necessary gates (11.938945 raw, 4.503128 interpreted/selected) on this portable
 fixture run only. Diversity, long-symbol and near-line-cap rates are not
 substituted for simple-rate gates. They do not establish production capacity.
 The first local probe predates final migration/provenance additions and is not
