@@ -72,7 +72,9 @@ gates and reports unavailable GPU. It is retained, not used to replace the curre
 cohort results. Current local GPU callback diagnostics are available; they do not
 establish hardware scanout or final rendering acceptance.
 
-Independent evidence review is pending. The fixed-window companion stops at this
+Independent evidence review APPROVED at d2bacdf: actual Grok4.5/xai-oauth
+session20260908_111650_a7436a, card t_4af4c884. Independent raw cohort and
+archive recomputation agrees; this approves the stated diagnostic conclusions. The fixed-window companion stops at this
 one pair; missing reference input remains unavailable. Do not rerun this cell to
 obtain a pass. Final absolute budgets, matched regressions, lifecycle/scaling and
 whole-campaign Grok4.6 review remain open under performance-finish-plan.md.

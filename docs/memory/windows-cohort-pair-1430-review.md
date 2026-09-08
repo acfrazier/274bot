@@ -11,7 +11,7 @@ pair at commit `5be5607`. Not whole-branch review and not campaign acceptance.
 | Actual model / provider | `grok-4.5` / `xai-oauth` (no task overrides) |
 | Branch | `codex/memory-diagnostics` |
 | Reviewed evidence HEAD | `5be56077098adba0d262ad94bab51237a40f9dd1` |
-| Checkout HEAD at review | `dc51f53f52659532dae5fb5d8fbd49c85ac879d8` (ancestor of freeze; pair docs byte-identical to `5be5607`) |
+| Checkout HEAD at review | `dc51f53f52659532dae5fb5d8fbd49c85ac879d8` (descendant of freeze; pair docs byte-identical to `5be5607`) |
 | Role heads (protocol) | reference `e25f32806957b1a44c75a598cbdb7ab53afc5383`, candidate `ca56e14371d1edb8c09df1276638ce196d502e36` |
 | UTC | 2026-09-08T15:25:00Z |
 
@@ -145,7 +145,7 @@ the protocol finite cohort tail.
 - Immutable helper SHA `helperSha256` =
   `04822c0e9f5ade2d555e408cc707722c234bc1e7b442676975a16e7efcaebbd1`
   (protocol + both in-tree `invoke-panel-input-stimulus.ps1` copies).
-- Controller source SHA `sourceSha256` =
+- Accounted wrapper source SHA `sourceSha256` =
   `c9743b45f7a8f0c0bfbc4461b94529f316b80d9b2e2ebb713224c3bc738d5695`
   (`run_stimulus_accounted.py`).
 - Helper receipt: durationSeconds 120, cadence 1000 ms, press 80 ms,

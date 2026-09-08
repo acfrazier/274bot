@@ -11,6 +11,28 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 15:25 UTC
+
+- Native1430 evidence APPROVED actual Grok4.5/xai-oauth session
+  20260908_111650_a7436a, t_4af4c884/run762, reportd2bacdf. Reviewer recomputed
+  hashes/cohorts/per-slot bounds/trigger/120pulses/accounting; no material issues.
+  Acceptance remains fixed-window diagnostics only, missing baseline input;
+  no repeat, matched performance, final budgets or whole-campaign approval.
+- Current TUI calibration design t_c2879587 on isolated branch
+  codex/current-tui-calibration-plan producedbf78504; same-card Grok4.5 review
+  is running. Root withholds draft: removing memory-profile-no-alloc/BOT_MEMORY_N
+  removes required automated harness; distinguish compiled harness from runtime
+  hot flags OFF. Root same-card comment also requests current native builder
+  provenance instead of unexamined old Docker envelope. No build/live release.
+- Operator asks whether updating existing public development branch is safe.
+  Root verified remote host codex/memory-diagnostics=e318 and main54cfcf8;
+  primarydc51 was309commits ahead by fast-forward, client gitlink3456 already
+  published on client codex/windows-native-parking; no new gitlink changes.
+  All686 unpublished blob versions scanned,50.9MB total, no credential-pattern
+  hits or individual blobs>10MB. README/DEVELOPMENT already disclose unfinished
+  acceptance. Root answered safe as development snapshot, recommended include
+  pending reviews. No push performed from this question; main/releases untouched.
+
 ## Latest boundary — 2026-09-08 15:14 UTC
 
 - Candidate1430 completed0 with frontend gone and controller stimulus complete.
