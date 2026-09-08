@@ -4,7 +4,7 @@ Status: bounded source/evidence audit. This report does not claim full G1 or G4.
 
 ## Frozen subject and lineage
 
-The captured native subject is the frozen candidate recorded by
+The captured native subject is the candidate recorded by
 `docs/memory/windows-tile-boxed-native-freeze.json`:
 
 - host `fb3589ac28583242b999ac864ea69c4ef8fa5923`
@@ -13,102 +13,98 @@ The captured native subject is the frozen candidate recorded by
 - executable SHA-256
   `a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f`
 
-The 08:30 capture JSON files repeat that executable path and hash. The archive
-manifest reports the burst PNG/JSON files and the initial/post captures, but the
-capture metadata explicitly says `sceneState: "not inferred from capture"`.
-
-This checkout is not the frozen source tree: the current root is host
-`0c1e4388daa536d0d1f7d0b0fd5cf2b496eeb80e`, and its client gitlink is the
-`3456edc` lineage, whereas the frozen candidate is the sibling host commit
-`fb3589a` with client `fd956c9`. The frozen client commit is available in the
-`windows-render-owner-census` checkout and is descended from `3456edc`; source
-behavior below is therefore cited from the exact frozen client commit rather
-than inferred from the current root.
+The 08:30 capture records repeat that path and hash. The current root is not the
+frozen source tree: it is host `0c4b1c6` with client gitlink `3456edc`. The
+frozen host commit is the sibling `windows-render-owner-census` checkout, whose
+client is exactly `fd956c9`; `git merge-base --is-ancestor 3456edc fd956c9`
+passes there. Source behavior below is therefore cited from the frozen client,
+not assumed from the current root.
 
 ## Source-grounded expected behavior
 
 At frozen client `fd956c9`:
 
 - `crates/client/src/client/client.rs:5756-5783` handles
-  `ServerProt::REBUILD_NORMAL`, sets `scene_state = 1`, records the load start,
-  and leaves the loading splash to the renderer.
+  `ServerProt::REBUILD_NORMAL`, sets `scene_state = 1`, records load start, and
+  leaves the loading splash to the renderer.
 - `crates/client/src/client/client.rs:9197-9217` is the simulation half of
-  `check_minimap`. While `scene_state == 1`, it continues checking scene data;
-  on success `check_scene` sets `scene_state = 2` at `:9269-9272`.
+  `check_minimap`; successful `check_scene` sets `scene_state = 2` at
+  `:9269-9272`.
 - `crates/client/src/render/draw.rs:3930-3955` implements
-  `scene_loading_splash`. It does not clear `area_game`; it draws
-  `Loading - please wait.` with `media.p12` when that font exists, then blits
-  the retained `area_game` at `(4, 4)` when `client.draw` is true.
-- `crates/client/src/render/draw.rs:3965-3968` invokes that splash on every
-  draw-only `check_minimap` pass while `scene_state == 1`.
-- `crates/client/src/render/media.rs:194-210` loads `title` from the fixture's
-  cache directory and depacks `p12_full`. A missing/unreadable title jag or
-  missing `p12_full` leaves `media.p12` as `None`; the source intentionally
-  skips the text in that case while still blitting the retained game pixels.
-- `crates/client/src/render/backend/gpu.rs:1191-1203` avoids rebuilding the
-  GPU scene mesh during Game `scene_state == 1`, retains the last scene texture,
-  and still draws scene overlays. At `:1329-1335`, the GPU path composites the
-  `area_game` pixels over that retained scene during the freeze. The predicate
-  at `:1612-1619` is exactly Game plus `scene_state == 1`.
+  `scene_loading_splash`: it leaves `area_game` uncleared, draws
+  `Loading - please wait.` with `media.p12` when present, and blits retained
+  `area_game` at `(4, 4)` when `client.draw` is true.
+- `crates/client/src/render/draw.rs:3965-3968` invokes it on draw-only
+  `check_minimap` passes while `scene_state == 1`.
+- `crates/client/src/render/media.rs:194-210` loads `title` and depacks
+  `p12_full`. Missing/unreadable data leaves `media.p12` as `None`, intentionally
+  suppressing the text while retained game pixels still blit.
+- `crates/client/src/render/backend/gpu.rs:1191-1203` avoids rebuilding the GPU
+  scene mesh and retains the last scene texture during Game `scene_state == 1`.
+  `:1329-1335` composites `area_game` over that texture; `:1612-1619` defines
+  the Game-plus-scene1 freeze predicate.
 
-The source expectation for a valid GPU freeze is therefore: last 3D scene held,
-loading text present only if `p12` is available, minimap/other retained layers
-not blanked, and eligible overlays still composited. It is not an expectation
-that every scene-1 frame must contain visible text when font availability is
+Thus valid GPU freeze behavior is: last 3D scene held, minimap and retained
+layers not blanked, eligible overlays composited, and loading text only when
+runtime `p12` is available. Text is not required when only font availability is
 unknown.
+
+The operator also identified a concrete source discriminator for the bounded
+follow-up: frozen `draw.rs:4222` calls `check_minimap`/`scene_loading_splash`
+before `game_draw`, while frozen `gpu.rs:1068-1076` draws scene overlays, clears
+`overlay_coverage`, and installs coverage tracking for later overlays. The audit
+does not claim this ordering is a bug; it identifies the call/coverage boundary
+to inspect, including whether the splash is re-run and represented in the final
+atlas coverage at `gpu.rs:1350-1390` / `finish`.
 
 ## What the 08:30 evidence establishes
 
-The directly inspected root captures were:
+Root directly inspected the ordered captures:
 
-- frame 32: scene2 Lumbridge baseline;
-- frames 33 and 34: labeled synchronized rebuild burst frames, visually still
-  retaining the Lumbridge 3D view, minimap, and chat/chrome;
-- frame 35: scene2 Varrock result;
-- after-varrock: post-action capture.
+- frame 32: status `scene 2`, Lumbridge at `3222,3222`;
+- frames 33 and 34: status `scene 1`, destination `3213,3423`, while retaining
+  the Lumbridge 3D view, minimap, chat, and panel chrome; neither shows loading
+  text, and their PNG hashes are identical;
+- frame 35: status `scene 2`, Varrock at `3213,3423`;
+- after-varrock: changed Varrock positions, consistent with resumed updates.
 
-No loading splash text was visible in frames 33 or 34. The paired frame JSON
-records the exact capture timestamps and executable hash, but does not record
-`scene_state`, renderer state, font inventory, or a scene-transition event.
-Frames 33 and 34 are identical by PNG hash, which confirms retained pixels for
-those two samples but does not identify whether they were captured during the
-`scene_state == 1` interval. The root observations therefore support a
-qualitative held-scene/retention observation only; they do not prove the G1
-ordered `scene2 -> scene1 -> freeze capture -> scene2` sequence.
+The OCR selector independently reports `scene 2`, `scene 1`, `scene 1`, `scene
+2` for frames 32–35 in
+`diagnostics/windows-visual-proof-nullraster-20260908-0830/root-ocr-selection.jsonl`.
+The capture JSON's `sceneState: "not inferred from capture"` is only a helper
+field; it does not contradict the scene status visible in the PNGs. This run
+therefore establishes the ordered scene2 → scene1 → scene2 transition and a
+qualitative held-scene observation, but not full G1/G4, pixel equality, cadence,
+or modal/IF coverage.
 
-The 08:30 archive contains no p12/font/cache-provenance field. Its capture
-records and archive manifest do not establish that `title`/`p12_full` was
-present in the frozen fixture, nor that it was absent. Earlier visual reports
-also record scene2 modal/minimap/chrome observations but do not record a p12
-availability check. Thus the absent text is not, on this evidence, a confirmed
-splash defect.
+The read-only fixture check at
+`diagnostics/windows-0830-title-provenance/receipt.json` found the exact local
+cache target used by the frozen binary: `title` is 59,855 bytes with SHA-256
+`b7a47dead79c241beb9c4ffbb4cb289bb3099eaf088f51e364cde40f3aa70b55`;
+`p12_full.dat` is 8,956 bytes, its index is 7,521 bytes, all 256 glyphs parse,
+and font height is 12. `p12AvailabilityChecksPassed` is true. The receipt also
+explicitly says `runtimeMediaP12Observed: false`: this proves fixture
+availability, not that the running process retained `Media.p12` at capture time.
 
-The retained Lumbridge view is consistent with the frozen GPU source path, but
-because capture metadata says scene state was not inferred, this run cannot
-separate a true scene1 FBO freeze from a scene2 frame captured before or after
-the rebuild. It is missing evidence, not an established implementation bug.
+Consequently, absent splash text in known scene1 frames is a narrowed rendering
+concern, not yet an established source bug. The fixture is valid, but runtime
+font state and the exact draw/composite path remain unobserved. No redundant
+native repeat is justified merely to recover scene state already visible in the
+PNG/status evidence.
 
 ## Bounded next step
 
-Do not patch the splash from this result. Run one diagnostic-only repeat on the
-same frozen binary with an observable scene transition and readable capture:
-
-1. prove the staged hash and record the fixture/cache provenance, including
-   whether `title` contains `p12_full` (or explicitly record it unavailable);
-2. arm capture before the rebuild and correlate the first capture to a logged
-   `scene_state == 1` transition, then capture after `scene_state == 2`;
-3. inspect the ordered live/freeze/post PNGs for held 3D, minimap continuity,
-   and splash text under the recorded p12 condition.
-
-If p12 is proven available and a scene1-correlated freeze PNG still lacks
-`Loading - please wait.`, then the next fix/audit target is the frozen GPU
-`scene_loading_splash`/`composite_scene` path, not the tile-boxing change. If
-scene1 ordering or p12 provenance remains unavailable, classify the result as
-`inconclusive`/`blocked-missing-capability` rather than changing source.
+Perform read-only/source investigation of the frozen GPU
+`scene_loading_splash` → `composite_scene` → frame draw/finish path, including
+the remaining runtime `Media.p12` availability gap and the draw/coverage ordering
+identified above. Trace whether the splash writes to the same `area_game` pixels
+that `GpuBackend::composite_scene` blits during the freeze, whether GPU finish
+re-runs or records it, and whether atlas coverage can discard it. Do not patch
+from this audit alone. If runtime p12 is proven present while a scene1 freeze
+still omits the text, open a narrowly targeted render-path fix; otherwise
+classify the result as inconclusive.
 
 ## Scope limits
 
-This report does not claim G1 or G4 passed, does not claim a modal/IF freeze
-proof, and does not claim performance acceptance. It records only the observed
-qualitative retention and the source conditions needed for a defensible splash
-verdict.
+This report does not claim G1 or G4 passed, does not claim modal/IF freeze proof,
+and does not claim performance acceptance. Raw 08:30 archives remain preserved.
