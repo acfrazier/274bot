@@ -9,6 +9,30 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 02:41 UTC
+
+- Hyper-V network recovery completed. Native strict SSH verified original pinned
+  host key at new172.27.13.173, builder alias updated with backups. Static MAC01
+  on Default Switch; temporary owned recovery switch removed and relay task
+  disabled. Native x86_64 Rust/Cargo1.98,4vCPU8GiB,no swap; guest available7508MiB.
+  Receipt: hyperv-builder-network-recovery.json. VM must stop before any later
+  clean Windows measurement; currently no Windows frontend work is active.
+- First native VM project build RUNNING, source57d5229/client3456,852 files
+  verified aggregate2ce61b110fe97fb22e8a9dd0ce7b21307c7bfba53c86df1a551df59035a78f5f.
+  Build jobs2; source~/274bot-campaign/source-57d5229, output sibling/output,
+  target~/274bot-campaign/target. Local SSH exec43867; no test/frontend launched.
+  This is builder/source readiness, not a new Linux workload result.
+- Root read Linux evidence de04972 and design5acc187; actual reviews verified
+  Grok4.5/xai-oauth sessions20260907_222806_777c3f and221404_f1c580 respectively.
+- Diagnostic-only tile layout/occupancy probe t_99a0f554 ACTUALLY RUNNING
+  implementer on both named codex/windows-render-owner-census branches.
+  Scope existing owner census fields/qualification JSON and meaningful tests.
+  No boxing/public enum change; directly measure payload layouts, grid capacities,
+  allocation counts, per-field None/Some and variant counts including sprites.
+  Net moved payload/extra allocation cost and public source compatibility remain
+  required before representation implementation. Await same-card Grok review;
+  root owns gitlink and later native build/proof.
+
 ## Latest boundary — 2026-09-08 02:33 UTC
 
 - Linux corrected d4 actual frontend failed once, raw021322Z. Archive25files

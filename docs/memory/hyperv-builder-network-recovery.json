@@ -1,0 +1,32 @@
+{
+  "observed_utc": "2026-09-08T02:41Z",
+  "vm": "274bot-builder",
+  "architecture": "x86_64",
+  "vcpus": 4,
+  "assigned_memory_bytes": 8589934592,
+  "guest_mem_total_mib": 7940,
+  "guest_mem_available_mib_at_check": 7508,
+  "guest_swap_mib": 0,
+  "guest_ipv4": "172.27.13.173",
+  "nic_mac": "00155D00CD01",
+  "switch": "Default Switch",
+  "ssh_alias": "274bot-builder",
+  "ssh_strict_host_key_checking": true,
+  "host_key_source": "Existing pinned 172.30.253.116 key verified at first boot; verified new endpoint with HostKeyAlias before copying mapping",
+  "toolchain": "rustc/cargo 1.98.0",
+  "temporary_recovery_switch_removed": true,
+  "temporary_relay_task_disabled": true,
+  "guest_netplan_backup": "/etc/netplan/50-cloud-init.yaml.before-20260908",
+  "guest_cloud_init_network_regeneration": "disabled",
+  "guest_serial_public_ipv4_report": "274bot-network-report.service",
+  "scope": "Builder recovery and build readiness; no performance acceptance",
+  "source_build_started": {
+    "host_commit": "57d52293f803a9e382d7ecc3d398d04212cd7a65",
+    "client_commit": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+    "source_files": 852,
+    "aggregate_sha256": "2ce61b110fe97fb22e8a9dd0ce7b21307c7bfba53c86df1a551df59035a78f5f",
+    "status": "running",
+    "cargo_build_jobs": 2,
+    "native_output": "~/274bot-campaign/source-57d5229/output"
+  }
+}
