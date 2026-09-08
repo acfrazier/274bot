@@ -9,6 +9,28 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 11:46 UTC
+
+- Reader ef879aa REJECTED actual Grok4.5/xai-oauth session
+  20260908_074229_dc583c, run728. Same-card implementer corrective run729
+  spawned11:45:28 and verified live. First rewrite fixes source-shaped slot
+  mapping, pre-arm generations, per-slot p99 and earlier accounting blockers.
+- Root+Grok independently reproduce six false meets on exact ef879aa SHA
+  d194f08346a4b8ea978419ddc11ebbffdd0cbd259c88076f55a18e2930f73ea1:
+  qualification fine=false; missing observe-end qualification; ended sample;
+  disappearing sample slot; forged sample cursor; changed end-boundary profile.
+  Artifact diagnostics/cohort-reader-r2-provenance-probes.json; same-card
+  corrective brief requires both boundary/settings agreement, complete cohort
+  lifetime/refs/cursor validation and realistic observe/drain fixtures.
+- Root cohort34tests pass0.078s on ef879aa, but do not cover those six holes.
+  Root supplied only two untracked symlinks to existing primary legacy fixtures
+  in reader checkout. Full reference_metrics100PASS0.232s; adapter46run/0fail/
+  1existing skip0.445s; overhead29run/0fail/1existing skip0.011s. No original
+  fixture content changed; do not commit the fixture symlinks.
+- No reader integration/native action or acceptance. Existing prepared role
+  source and local test receipts stand. Combined review still follows corrected
+  reader review; all campaign final acceptance gates remain open.
+
 ## Latest boundary — 2026-09-08 11:38 UTC
 
 - Reader run727 remains live (~15min); complete rewrite and expanded tests
