@@ -18,7 +18,7 @@ $prefix=[IO.Path]::GetFullPath('C:\Users\BotTest\274bot-runs\visual-proof-')
 $controllerReceipt=Join-Path $out ($Label+'.controller.json')
 $stdoutPath=Join-Path $out ($Label+'.helper.stdout.txt')
 $stderrPath=Join-Path $out ($Label+'.helper.stderr.txt')
-$child=$null;$childPid=$null;$childStartUtc=$null;$childHandle=$null;$childStarted=$false;$receiptOwned=$false
+$child=$null;$childPid=$null;$childStartUtc=$null;$childHandle=$null;$childStarted=$false;$childExitedForDispose=$false;$receiptOwned=$false
 $controllerStartUtc=[DateTime]::UtcNow.ToString('o')
 $inputBeforeUtc=$null;$inputDownUtc=$null;$inputUpUtc=$null
 $readyUtc=$null;$firstFrame=$null;$outcome='not-started';$failure=$null;$childExitCode=$null
@@ -190,22 +190,24 @@ try {
  if($childStarted -and $null -ne $child){
   try {
    $child.Refresh()
-   if(-not $child.HasExited){
+   if($child.HasExited){$childExitedForDispose=$true}
+   if(-not $childExitedForDispose){
     if($child.Id -eq $childPid -and $child.StartTime.ToUniversalTime().ToString('o') -eq $childStartUtc){
      $child.Kill();$remainingMs=[Math]::Max(0,60000-[int]$stopwatch.ElapsedMilliseconds)
      if(-not $child.WaitForExit([Math]::Min(5000,$remainingMs))){throw 'Capture helper did not stop within cleanup bound'}
+     $childExitedForDispose=$true
     } else {throw 'Capture helper identity changed; refusing cleanup'}
    }
   } catch {$outcome='failed';$failure=($failure+'; cleanup: '+$_.Exception.Message)}
  }
- if($childStarted -and $null -ne $child){try{if($child.HasExited){$childExitCode=$child.ExitCode}}catch{$outcome='failed';$failure=($failure+'; exitcode: '+$_.Exception.Message)}}
+ if($childStarted -and $null -ne $child){try{if($child.HasExited){$childExitedForDispose=$true;$childExitCode=$child.ExitCode}}catch{$outcome='failed';$failure=($failure+'; exitcode: '+$_.Exception.Message)}}
  $remainingMs=[Math]::Max(0,60000-[int]$stopwatch.ElapsedMilliseconds)
  if($null -ne $stdoutTask){try{if(-not $stdoutTask.Wait($remainingMs)){throw 'Helper stdout drain exceeded controller bound'};[IO.File]::WriteAllText($stdoutPath,$stdoutTask.Result)}catch{$outcome='failed';$failure=($failure+'; stdout: '+$_.Exception.Message)}}
  $remainingMs=[Math]::Max(0,60000-[int]$stopwatch.ElapsedMilliseconds)
  if($null -ne $stderrTask){try{if(-not $stderrTask.Wait($remainingMs)){throw 'Helper stderr drain exceeded controller bound'};[IO.File]::WriteAllText($stderrPath,$stderrTask.Result)}catch{$outcome='failed';$failure=($failure+'; stderr: '+$_.Exception.Message)}}
  $controllerEndUtc=[DateTime]::UtcNow.ToString('o')
  if($receiptOwned){[ordered]@{schema='native-synchronized-rebuild-controller-v1';label=$Label;controllerStartUtc=$controllerStartUtc;controllerEndUtc=$controllerEndUtc;controllerDurationMilliseconds=$stopwatch.ElapsedMilliseconds;panelPid=$PanelPid;expectedStartUtc=$ExpectedStartUtc;sessionId=$sessionId;binary=$expectedBinary;binarySha256=$binaryHash;helperPath=$helperPath;helperSha256=$helperHash;helperPid=$childPid;helperStartUtc=$childStartUtc;helperExitCode=$childExitCode;helperHandleRetained=($null -ne $childHandle);expectedRect=$ExpectedRect;input=$inputIdentity;readyUtc=$readyUtc;firstFrame=$firstFrame;burstOutcome=$burstOutcome;inputBeforeUtc=$inputBeforeUtc;inputDownUtc=$inputDownUtc;inputUpUtc=$inputUpUtc;downSendInputResult=$downSendInputResult;upSendInputResult=$upSendInputResult;clickAttempted=$clickAttempted;chronology=[ordered]@{firstFrameAfterController=($null -ne $firstFrame -and [DateTime]::Parse($firstFrame.captureStartedUtc).ToUniversalTime() -ge [DateTime]::Parse($controllerStartUtc).ToUniversalTime());inputAfterReady=($null -ne $readyUtc -and $null -ne $inputBeforeUtc -and [DateTime]::Parse($inputBeforeUtc).ToUniversalTime() -ge [DateTime]::Parse($readyUtc).ToUniversalTime());inputWhileHelperAlive=$childAliveAtInput;inputInsideAcceptedBurst=($burstIdentityMatch -and $burstOutcome -eq 'completed' -and $null -ne $inputDownUtc -and $null -ne $inputUpUtc -and [DateTime]::Parse($inputDownUtc).ToUniversalTime() -ge [DateTime]::Parse($burst.captureStartedUtc).ToUniversalTime() -and [DateTime]::Parse($inputUpUtc).ToUniversalTime() -le [DateTime]::Parse($burst.captureEndedUtc).ToUniversalTime())};outcome=$outcome;failure=$failure;sceneState='not inferred from capture';performanceAcceptance=$false}|ConvertTo-Json -Depth 12|Set-Content -LiteralPath $controllerReceipt -Encoding UTF8;$receiptWritten=$true}
- if($null -ne $child){$child.Dispose()}
+ if($null -ne $child -and (-not $childStarted -or $childExitedForDispose)){$child.Dispose()}
 }
 if($receiptWritten){Get-Content -LiteralPath $controllerReceipt -Raw}
 if($outcome -eq 'failed'){throw ('Synchronized rebuild controller failed: '+$failure)}
