@@ -9,6 +9,25 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 04:09 UTC
+
+- Native timing controls fec9793 approved actualGrok4.5/xai-oauth session
+  20260908_000520_fa4571. Root verified new wrapper SHA
+  c4d49ed146522b0e57e89a654be5f5345f995894bef085975117b002ad79433e and
+  reviewed base581bf96d match Concord. Actual base parent-refresh branch fixture
+  passes original-spec preservation/current-parent binding/duplicate rejection.
+- Native prepare-only PASSED0, full parser/spec/build/fixture/environment guards
+  verified. One diagnostic launch now RUNNING localexec47284, controller
+  docs/memory/linux-timing-controls/run_timing_native_cell.py in native workspace.
+  Log /private/tmp/274bot-linux-timing-60ca4b7/native-run-fec9793.log.
+  Poll this launch through completion; preserve all raw directories on archive.
+  No rerun or timeout change authorized from a failure. VM remains Off.
+- Tile implementation t_598d9469 actual implementer RUNNING; no review yet.
+  Root predeclared native validation protocol db29feb at
+  tile-boxed-fields-native-protocol.md: background forward/reverse screens,
+  focused regression screen, raw elapsed-alignment and standard stop rule;
+  source integration milestone review required before native comparisons.
+
 ## Latest boundary — 2026-09-08 03:59 UTC
 
 - Native tile probe completed and qualified16/16, native binding passes; archive
