@@ -1,0 +1,28 @@
+{
+  "cell": "baseline-focused-one-cpu-native-20260908-0155",
+  "classification": "partial CPU baseline functional evidence; missing server_configuration; no paired acceptance",
+  "archive_sha256": "40f1b9d536254a9661fa6d524d85bff3b7e6b1a0df8b44e49f2b3f633b2503de",
+  "local_qualification": {
+    "qualified": true,
+    "n": 1,
+    "observation_s": 119.69794850000001,
+    "steal_gain": 7
+  },
+  "captures": [
+    {
+      "path": "diagnostics/windows-tile-cpu-proof-20260908/baseline-focused-one-cpu-native-20260908-0155/raw-run-01/captures/2026-09-08T05-59-12_15088/2026-09-08T05-59-12_nav-1-scene-ready-live3af00_0.png",
+      "sha256": "9cff5a2595b8237c9d2c635f8d87c6c9f7136cb6cde719134a1390a32d4da30a"
+    },
+    {
+      "path": "diagnostics/windows-tile-cpu-proof-20260908/baseline-focused-one-cpu-native-20260908-0155/raw-run-01/captures/2026-09-08T05-59-12_15088/2026-09-08T06-00-53_nav-2-bank-arrival-live3af00_0.png",
+      "sha256": "02675355589115397d677f4fd5ca92e96152b6aa31a3739b14e509ef177f1c5c"
+    },
+    {
+      "path": "diagnostics/windows-tile-cpu-proof-20260908/baseline-focused-one-cpu-native-20260908-0155/raw-run-01/captures/2026-09-08T05-59-12_15088/2026-09-08T06-00-57_nav-3-return-route-start-live3af00_0.png",
+      "sha256": "99cd9deec1ace3891f35f18736c568033b1d3ab488aac74a8508a05b9b15adbb"
+    }
+  ],
+  "visual_observations": "Root inspected all three images during preceding live-proof turn: textured market/guards/minimap/inventory; bank interior and restock; return-route start partly occluded by building geometry. No obvious blank or corrupt scene. Baseline only; not candidate equivalence or scene_state=1 freeze proof.",
+  "candidate_0155_launched": false,
+  "performance_acceptance": false
+}

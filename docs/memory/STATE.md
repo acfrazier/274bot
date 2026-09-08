@@ -9,6 +9,25 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 06:10 UTC
+
+- CPU runtime 2d15282 and controls26426b0 were staged after native no-frontend/
+  VM-Off guard, with all original four runtime files backed up and hashed.
+  Receipt: cpu-proof-runtime-stage-26426b0.json. Restore these originals before
+  any longer GPU comparison; the native runtime currently remains CPU-enabled.
+- Native N1 CPU baseline0155 completed0 and independently locally qualified1/1,
+  119.70s observation, seven steals. Root read all three navigation captures;
+  scene/bank/return rendered. Partial receipt windows-tile-cpu-baseline-partial-0155.json.
+  Native binding lacks server_configuration: preserve original failure and do
+  not classify as complete matched proof. Candidate0155 was never launched.
+- Corrective t_d9ae465b actually running implementer: full server configuration
+  generation and no-launch validation with absent/malformed negative tests.
+  Await same-card Grok review, then stage reviewed controls and fresh CPU IDs.
+- Background e415ade approved actualGrok4.5 session20260908_015337_8f2bcb.
+  Focused e7a450a in actual reviewer run619, not yet approved. Longer focused
+  confirmation recommendation is pending review; none launched. No retention,
+  final budgets, lifecycle/input/freeze proof or final branch acceptance yet.
+
 ## Latest boundary — 2026-09-08 05:50 UTC
 
 - All SIX short GPU cells now nativecompleted0/bound/qualified16 with no

@@ -1,0 +1,49 @@
+{
+  "receipt": {
+    "utc": "2026-09-08T05:56:04.7859928Z",
+    "controls_commit": "26426b0f528e2890fc025ceca7bde71180a25131",
+    "runtime_commit": "2d15282",
+    "controls": "C:/ProgramData/274bot-Test/tile-cpu-controls-26426b0",
+    "runtime": "C:/ProgramData/274bot-Test/tile-cpu-runtime-2d15282",
+    "backup": "C:\\Users\\Austen\\274bot-tools\\cpu-runtime-original-20260908-0155",
+    "files": [
+      {
+        "name": "run_diagnostic.py",
+        "original_path": "C:\\Users\\BotTest\\274bot-workspaces\\3118e96\\host\\docs\\memory\\run_diagnostic.py",
+        "backup_path": "C:\\Users\\Austen\\274bot-tools\\cpu-runtime-original-20260908-0155\\run_diagnostic.py",
+        "original_sha256": "7dccf58cda1f2c11fc139b0848ff90bdcfe83928a835b2b22751b12bfff662a8",
+        "cpu_sha256": "bc13252d460ddd880973f6e4ba58070f041f40539f7b218cf52fa6cdc8e88180"
+      },
+      {
+        "name": "run_managed_cell.py",
+        "original_path": "C:\\Users\\BotTest\\274bot-workspaces\\3118e96\\host\\docs\\memory\\run_managed_cell.py",
+        "backup_path": "C:\\Users\\Austen\\274bot-tools\\cpu-runtime-original-20260908-0155\\run_managed_cell.py",
+        "original_sha256": "1168c5813d7fdb3b50792f5f54bcd5067170e80276f856be4541ae0910b63162",
+        "cpu_sha256": "2cf52030391705e8ff73603982d4a37f26c8c411e7798d9b449823280b59c2f4"
+      },
+      {
+        "name": "reference_metrics.py",
+        "original_path": "C:\\Users\\BotTest\\274bot-workspaces\\3118e96\\host\\docs\\memory\\reference_metrics.py",
+        "backup_path": "C:\\Users\\Austen\\274bot-tools\\cpu-runtime-original-20260908-0155\\reference_metrics.py",
+        "original_sha256": "bda6403316322c98c128d5f8337df5d00bb49309ea80f19b3d297a3957e874dd",
+        "cpu_sha256": "8ec0e48ae54324dc26ea5b07d6a87747a4568018c5f182d206881d05fac4bb17"
+      },
+      {
+        "name": "matched_evidence_adapter.py",
+        "original_path": "C:\\Users\\BotTest\\274bot-workspaces\\3118e96\\host\\docs\\memory\\matched_evidence_adapter.py",
+        "backup_path": "C:\\Users\\Austen\\274bot-tools\\cpu-runtime-original-20260908-0155\\matched_evidence_adapter.py",
+        "original_sha256": "a19ba58fe7f6b54b454ae23994b02403ca1f6de952d432436a9d6fcaee4dab16",
+        "cpu_sha256": "5065fbcdddff640a064efe57a4049418de8b4a8fdec69c241f56cf040463a2f0"
+      }
+    ],
+    "restore_required_before_longer_gpu_comparison": true,
+    "native_frontend_started": false,
+    "performanceAcceptance": false
+  },
+  "local_files": {
+    "original-runtime-manifest.json": "2f96e500e461d506587f16bf7ea0f4426d7eb18346a21f9142f78d64544afeb6",
+    "runtime-staging-receipt.json": "c109ba443ea76c3affcf2fb03928df4d1e35edfbb2c9bbb5f604a3aff7818948"
+  },
+  "restore_before_longer_clean_gpu_comparison": true,
+  "performance_acceptance": false
+}
