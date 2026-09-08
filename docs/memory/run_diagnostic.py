@@ -15,6 +15,8 @@ _WINDOWS_TUI_TERMINAL_UNSUPPORTED = (
     'Do not treat a missing ConPTY as silent headless success.'
 )
 
+_CAPTURE_FRONTEND_MAX_WALL_S = 120 + 600 + 60 + 180
+
 _UNIX_TTY_IMPORT_REQUIRED = (
     'real TUI terminal diagnostic requires Unix pty/fcntl/termios; '
     'modules unavailable. Use panel or tui --headless, or the Windows '
@@ -451,7 +453,19 @@ def main(argv=None):
             child.terminate()
         signal.signal(signal.SIGTERM, stop)
         signal.signal(signal.SIGINT, stop)
-        rc = child.wait()
+        # Keep the frontend lifecycle bound independent from post-exit analysis.
+        if capture:
+            try:
+                rc = child.wait(timeout=_CAPTURE_FRONTEND_MAX_WALL_S)
+            except subprocess.TimeoutExpired:
+                child.terminate()
+                try:
+                    rc = child.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    child.kill()
+                    rc = child.wait(timeout=15)
+        else:
+            rc = child.wait()
         if capture:
             guard_stop.set()
             guard_thread.join(timeout=2)

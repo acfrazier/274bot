@@ -51,6 +51,25 @@ class CurrentTuiCalibrationControls(unittest.TestCase):
         self.assertEqual(runner.diagnostic_argv(pathlib.Path("/bin/tui-play"), pathlib.Path("/tmp/build.json"), "candidate")[1], "16")
         self.assertEqual(runner.clean_environment({})["BOT_MEMORY_N"], "16")
 
+    def test_wall_budget_is_unchanged_without_capture_and_split_with_capture(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            common = dict(
+                output=root / "n.json", n=1, binary=root / "binary", build_manifest=root / "manifest.json",
+                build_role="candidate", server_identity=root / "server.json", host_conditions=root / "conditions.json",
+                nav_pack=root / "nav", nav_flags=root / "flags", catalog=root / "catalog.json", server_pid=42,
+                ssh_parent_pid=7, server_root=root, rs2b0t=root / "rs2b0t", cache_dir=root / "cache",
+                unpack_root=root / "unpack",
+            )
+            ordinary = runner.build_spec(argparse.Namespace(**common), {})
+            self.assertEqual(ordinary["max_wall_s"], 960)
+            self.assertNotIn("live_max_wall_s", ordinary)
+            with mock.patch.object(runner.hc, "verify_preload", return_value={"path": "/lib/libheaptrack_preload.so"}):
+                capture = runner.build_spec(argparse.Namespace(**common, heaptrack_output=root / "raw"), {})
+            self.assertEqual(capture["live_max_wall_s"], 960)
+            self.assertEqual(capture["analysis_windows_s"], [180, 180])
+            self.assertEqual(capture["max_wall_s"], 1320)
+
     def test_invalid_n_fails_before_launch(self):
         with self.assertRaises(SystemExit):
             runner.parser().parse_args(["--n", "2"])

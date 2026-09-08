@@ -10,6 +10,8 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent
 SCRIPT = ROOT / "run_diagnostic.py"
+sys.path.insert(0, str(ROOT))
+import run_diagnostic as rd  # noqa: E402
 
 
 def run_cli(*args: str) -> subprocess.CompletedProcess:
@@ -22,6 +24,9 @@ def run_cli(*args: str) -> subprocess.CompletedProcess:
 
 
 class RunDiagnosticCli(unittest.TestCase):
+    def test_capture_frontend_bound_preserves_960_second_live_budget(self):
+        self.assertEqual(rd._CAPTURE_FRONTEND_MAX_WALL_S, 960)
+
     def test_help_survives_windows_redirected_output_encoding(self):
         proc = subprocess.run(
             [sys.executable, str(SCRIPT), '--help'],

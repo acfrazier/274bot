@@ -217,6 +217,10 @@ def build_spec(args: argparse.Namespace, source: Mapping[str, Any]) -> Dict[str,
     diag = diagnostic_argv(args.binary.resolve(), args.build_manifest.resolve(), args.build_role,
                           n=requested_n(args), heaptrack_output=heaptrack_output)
     launcher = [sys.executable, str(HERE / "run_diagnostic.py"), *diag]
+    timing: Dict[str, Any] = {"max_wall_s": 960}
+    if heaptrack_output is not None:
+        # Preserve the 960-second frontend lifecycle; analysis is post-exit.
+        timing.update(live_max_wall_s=960, analysis_windows_s=[180, 180], max_wall_s=1320)
     return {
         "id": cell_id, "index": 1, "kind": "diagnostic", "frontend": "tui",
         "build_role": args.build_role, "binary": str(args.binary.resolve()),
@@ -229,9 +233,7 @@ def build_spec(args: argparse.Namespace, source: Mapping[str, Any]) -> Dict[str,
         "ambient_helpers": {"ssh_parent": args.ssh_parent_pid},
         "sampler_interval_s": 0.5, "warmup_s": WARMUP_S, "observe_s": OBSERVE_S,
         "teardown_grace_s": TEARDOWN_GRACE_S,
-        "live_max_wall_s": WARMUP_S + OBSERVE_S + TEARDOWN_GRACE_S,
-        "analysis_windows_s": [180, 180],
-        "max_wall_s": WARMUP_S + OBSERVE_S + TEARDOWN_GRACE_S + 180 + 180,
+        **timing,
         "process_backend": "system", "requested_backend": "none",
         "memory_guard": {"metric": "MemAvailable", "limit_bytes": MEM_AVAILABLE_GUARD_BYTES, "poll_interval_s": MEM_GUARD_INTERVAL_S},
         "source": dict(source), "server_root": str(args.server_root.resolve()),
