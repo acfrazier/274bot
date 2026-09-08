@@ -9,6 +9,19 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 08:41 UTC
+
+- Native synchronized0830 complete:300frames, all638 unionfiles/hashverified,
+  controller input insideburst/childexit0, panelnormalexit0. No nativefrontend.
+  Rootdirectlyread32scene2,33/34scene1heldLumbridge/minimap/chat,35scene2Varrock
+  andlatermotion. Corequalitativefreeze/recovery observed, NOTfullG1/G4:
+  no splash visible, optionalmodal/scriptoverlay absent. Report/receipt
+  windows-nullraster-synchronized-0830-*; sourceaudit t_8c2b78ce Luna pending.
+- First0830controller refusednotforeground/noinput; preserved. Rootnewwrapper
+  focusedverifiedtarget+capture thenunchangedcontroller1c694d8 approvedactual
+  Grok4.5/xai-oauth20260908_043001_cd3914. Both rawarchives retained.
+- Fullmemorybudget/latency/calibration/lifecycle/scaling/finalwholeGrokpending.
+
 ## Latest boundary — 2026-09-08 08:30 UTC
 
 - Synchronized controller corrected1c694d8 awaiting same-card review. Root

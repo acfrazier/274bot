@@ -1,0 +1,165 @@
+{
+  "schema": "native-synchronized-visual-root-v1",
+  "session": "0830",
+  "binarySha256": "a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f",
+  "controllerReview": {
+    "task": "t_bfaf7292",
+    "session": "20260908_043001_cd3914",
+    "model": "grok-4.5",
+    "provider": "xai-oauth",
+    "commit": "1c694d8"
+  },
+  "archives": [
+    {
+      "name": "windows-visual-proof-nullraster-20260908-0830-burst.tar.gz",
+      "sha256": "a3a681659c3d39cce6e95a66a7dda2d498c013b822179267e1845ce1df386f2f",
+      "bytes": 263669573
+    },
+    {
+      "name": "windows-visual-proof-nullraster-20260908-0830.tar.gz",
+      "sha256": "a7eccff42365a382ba7a9f082a68f5c0d6f220d7a60715983f2d31ff0210c82f",
+      "bytes": 4062709
+    }
+  ],
+  "manifestSha256": "5a3ba4fe3bc1d67fc6a86ba3957b1e0395cb645cb26b0265adcd7b8025a7eb01",
+  "verifiedUnionFiles": 638,
+  "verifiedFrameHashes": 300,
+  "framesDirectlyInspected": [
+    {
+      "frame": 32,
+      "receipt": "test-varrock-focused-rebuild-frame-0032-20260908T083601019Z.json",
+      "sha256": "02ee6650cfa2c86e3bc4f00f203411bc8df24297deaec9b837d978628bdc2c91",
+      "captureStartedUtc": "2026-09-08T08:36:01.0193152Z",
+      "captureEndedUtc": "2026-09-08T08:36:01.0655159Z",
+      "pngSha256": "d4f179b6687ee8475f2da108c4a6f1c3b5713408076f4e4f50f8ebabe4747032",
+      "rootVisualSceneState": 2
+    },
+    {
+      "frame": 33,
+      "receipt": "test-varrock-focused-rebuild-frame-0033-20260908T083601097Z.json",
+      "sha256": "9540f2a8862010d254d926f13d19465314309553fd329b3ef9f3d7a466a04dc8",
+      "captureStartedUtc": "2026-09-08T08:36:01.1011976Z",
+      "captureEndedUtc": "2026-09-08T08:36:01.1470246Z",
+      "pngSha256": "f207015ed61f12b158c27cb1782bfa1da72038423801c8d7613205c8ac1a7243",
+      "rootVisualSceneState": 1
+    },
+    {
+      "frame": 34,
+      "receipt": "test-varrock-focused-rebuild-frame-0034-20260908T083601175Z.json",
+      "sha256": "04f24f9d8127b81e450ece8d9b69abeffd98e88a7b7cc96fe68d1b97f6f0341a",
+      "captureStartedUtc": "2026-09-08T08:36:01.1791806Z",
+      "captureEndedUtc": "2026-09-08T08:36:01.2282865Z",
+      "pngSha256": "f207015ed61f12b158c27cb1782bfa1da72038423801c8d7613205c8ac1a7243",
+      "rootVisualSceneState": 1
+    },
+    {
+      "frame": 35,
+      "receipt": "test-varrock-focused-rebuild-frame-0035-20260908T083601254Z.json",
+      "sha256": "0d425a1985e16204338060c73520215d7672965ceafa290b71d47ebc817f47c5",
+      "captureStartedUtc": "2026-09-08T08:36:01.2547943Z",
+      "captureEndedUtc": "2026-09-08T08:36:01.3098999Z",
+      "pngSha256": "a1fc7047e6020a4388329984683bb5f9319597061de055f6994b947133280246",
+      "rootVisualSceneState": 2
+    }
+  ],
+  "firstAttempt": {
+    "label": "test-varrock-rebuild",
+    "outcome": "failed",
+    "reason": "Target window is not foreground",
+    "clickAttempted": false
+  },
+  "synchronized": {
+    "schema": "native-synchronized-rebuild-controller-v1",
+    "label": "test-varrock-focused-rebuild",
+    "controllerStartUtc": "2026-09-08T08:35:58.1176957Z",
+    "controllerEndUtc": "2026-09-08T08:36:22.0275339Z",
+    "controllerDurationMilliseconds": 23914,
+    "panelPid": 8748,
+    "expectedStartUtc": "2026-09-08T08:33:38.6938556Z",
+    "sessionId": 2,
+    "binary": "C:\\ProgramData\\274bot-Test\\tile-boxed-fb3589a\\panel-play.exe",
+    "binarySha256": "a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f",
+    "helperPath": "C:\\ProgramData\\274bot-Test\\visual-capture-1c694d8\\capture-panel-burst.ps1",
+    "helperSha256": "c09639cf3f94dcdadb276eb9a4b0256c81e4b988207b8d748d636c9e9b7ba181",
+    "helperPid": 2432,
+    "helperStartUtc": "2026-09-08T08:35:58.3151704Z",
+    "helperExitCode": 0,
+    "helperHandleRetained": true,
+    "expectedRect": [
+      228,
+      228,
+      2326,
+      1154
+    ],
+    "input": {
+      "windowRelativeX": 1760,
+      "windowRelativeY": 693,
+      "screenX": 1988,
+      "screenY": 921,
+      "windowHandle": 13829190,
+      "pid": 8748,
+      "startUtc": "2026-09-08T08:33:38.6938556Z",
+      "rect": [
+        228,
+        228,
+        2326,
+        1154
+      ]
+    },
+    "readyUtc": "2026-09-08T08:35:58.7394604Z",
+    "firstFrame": {
+      "schema": "native-panel-burst-frame-v1",
+      "label": "test-varrock-focused-rebuild",
+      "frame": 1,
+      "pid": 8748,
+      "startUtc": "2026-09-08T08:33:38.6938556Z",
+      "sessionId": 2,
+      "binary": "C:\\ProgramData\\274bot-Test\\tile-boxed-fb3589a\\panel-play.exe",
+      "binarySha256": "a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f",
+      "windowHandle": 13829190,
+      "rect": [
+        228,
+        228,
+        2326,
+        1154
+      ],
+      "captureStartedUtc": "2026-09-08T08:35:58.6598902Z",
+      "captureEndedUtc": "2026-09-08T08:35:58.7235539Z",
+      "captureUtc": "2026-09-08T08:35:58.7235539Z",
+      "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-nullraster-20260908-0830\\test-varrock-focused-rebuild-frame-0001-20260908T083558654Z.png",
+      "pngSha256": "688cf69fd0ad20b04ec31b257ee6fb039c34be9117141048d1b0f91e93775270",
+      "sceneState": "not inferred from capture",
+      "performanceAcceptance": false
+    },
+    "burstOutcome": "completed",
+    "inputBeforeUtc": "2026-09-08T08:35:58.8384327Z",
+    "inputDownUtc": "2026-09-08T08:35:58.8604922Z",
+    "inputUpUtc": "2026-09-08T08:35:58.9629220Z",
+    "downSendInputResult": 1,
+    "upSendInputResult": 1,
+    "clickAttempted": true,
+    "chronology": {
+      "firstFrameAfterController": true,
+      "inputAfterReady": true,
+      "inputWhileHelperAlive": true,
+      "inputInsideAcceptedBurst": true
+    },
+    "outcome": "completed",
+    "failure": null,
+    "sceneState": "not inferred from capture",
+    "performanceAcceptance": false
+  },
+  "panelTerminal": {
+    "utc": "2026-09-08T08:37:26.7143078Z",
+    "exitCode": 0
+  },
+  "scope": {
+    "qualitativeScene2To1To2": true,
+    "heldSceneMinimapChatObserved": true,
+    "loadingSplashObserved": false,
+    "modalDuringFreezeExercised": false,
+    "fullG1G4Accepted": false,
+    "cadenceInputP99Proven": false,
+    "performanceAcceptance": false
+  }
+}
