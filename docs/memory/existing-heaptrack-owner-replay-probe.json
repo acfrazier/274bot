@@ -1,0 +1,94 @@
+{
+  "scope": "saved owned Python fixture only; not production replay",
+  "files": {
+    "alloc.raw": {
+      "bytes": 389215,
+      "sha256": "f0b8bbcff61b7fd0c0ff7257ef40fc3c615365630367849736ff0fa031698146"
+    },
+    "alloc.interpreted": {
+      "bytes": 281592,
+      "sha256": "96d8b258f3bbbdf97deeb4b56691d12a23fa43ac5023cdfc3b53c9f6aa435acb"
+    },
+    "peak-stacks.txt": {
+      "bytes": 1061617,
+      "sha256": "bbfa1a2bdd75ae37fb9c3a58317a43d48ba741643b0e63c1f9b5a59cd364a943"
+    },
+    "peak-analysis.log": {
+      "bytes": 35889,
+      "sha256": "75b26e92eeab52e770757b53c0f53ea6b9ae83cb87115cea42eac3bd9404d240"
+    },
+    "interpret-stderr.txt": {
+      "bytes": 101,
+      "sha256": "6bd12888cdcc6f777f2d4ba9b8096876057c0aed2391e4b5ea1a7540d15e365b"
+    }
+  },
+  "raw_modes": {
+    "v": 1,
+    "x": 1,
+    "X": 1,
+    "I": 1,
+    "m": 42,
+    "t": 13943,
+    "+": 6388,
+    "-": 6356,
+    "c": 105,
+    "R": 105
+  },
+  "interpreted_modes": {
+    "v": 1,
+    "X": 1,
+    "I": 1,
+    "s": 139,
+    "i": 1972,
+    "t": 13943,
+    "a": 3291,
+    "+": 6388,
+    "-": 6354,
+    "c": 105,
+    "R": 105,
+    "": 1,
+    "#": 2
+  },
+  "raw_interpreted_event_sequences_equal": true,
+  "unknown_raw_frees_discarded_by_interpreter": 2,
+  "pointer_reuse_after_free": 1070,
+  "max_live_multiplicity_of_one_info_id": 2048,
+  "allocations": 6388,
+  "frees": 6354,
+  "eof_live_count": 34,
+  "eof_unsuppressed_live_bytes": 407233,
+  "interpreter_temporary": 637,
+  "canonical_analyzer_temporary": 638,
+  "global_peak_bytes": 5730024,
+  "global_peak_line": 27144,
+  "global_peak_previous_timestamp_ms": 50,
+  "known_bytearray_peak_bytes": 4196352,
+  "flamegraph_rows": 2951,
+  "positive_rows": 2212,
+  "first_timestamp": {
+    "line": 8034,
+    "timestamp_ms": 10,
+    "live_bytes": 556040,
+    "live_count": 1388
+  },
+  "last_timestamp": {
+    "line": 32299,
+    "timestamp_ms": 1064,
+    "live_bytes": 407233,
+    "live_count": 34
+  },
+  "timestamp_mark_at_or_before_500ms": {
+    "line": 27231,
+    "timestamp_ms": 497,
+    "live_bytes": 5730024,
+    "live_count": 4962
+  },
+  "bytearray_eof_bytes": 0,
+  "last_record_modes": [
+    "R",
+    "",
+    "#",
+    "#"
+  ],
+  "checks_passed": true
+}
