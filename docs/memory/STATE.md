@@ -9,6 +9,33 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 05:50 UTC
+
+- All SIX short GPU cells now nativecompleted0/bound/qualified16 with no
+  missingmatchkeys; original raw archives preserved/22files eachverified.
+  Focused baseline raw20260908T053154Z, tarD227BBE6AA59B9A009C1CB18814C79BEB93083E92AB5B530C3ED030F28CB675F;
+  focused candidate raw20260908T053947Z, tar211FDFFC60FD9B2DDFD0B01614E0F41D46E9B61797C8E1B5865A2FB08A89CA1A.
+  Both localqualify_control --no-write passed; actual1GPU/16active in boundaries.
+- Focused root descriptive common122.682..232.591s: RSS838475776→822697984B
+  (-1.88%),CPU-.48%; wholeRSS817858560→827674624B(+1.20%). Focused memory
+  conclusion inconclusive, absolute RSS target notpassed. Receipts/screen:
+  windows-tile-boxed-focused-root-receipts.json and -focused-root-screen.json.
+- Background analysis t_5c5fc347 firstf1f9b50 rejected; root/Grok found wrong
+  three tarlabels, missing pairwise windows, copied whole endpointnotes rather
+  than common per-slot recompute. Corrective2b2bb72 also changesrequested in
+  actualGrok4.5 session20260908_014536_c436dc. Await next samecard correction
+  and review. Follow-up focusedanalysis t_303c33ea queued behind its completion;
+  includes independent fine metrics and bounded single longer-stage recommendation.
+- CPU controls final26426b0 approved actualGrok4.5/xai-oauth session
+  20260908_014636_6a7529. Contract staging now copies/hashes actualcontractrunner,
+  preflighttarget separate, real nativeconditionschecked, ASTlocalsinitialized.
+  Root has not staged CPUcontrols or runtime and has not launched CPUfrontends.
+  Next root nativeAST/fullcontract for N1focusedCPU pair using exact reviewed
+  35eab6c/2d15282 runtime after allcleanGPUcells. Preserve original native4Python
+  runtimefiles via hashed backup, restore them exactly before any longer clean
+  confirmation; do not silently change the frozen GPU measurement runtime.
+  Longer stage/retention/CPUvisual/input/lifecycle/finaltargets remain pending.
+
 ## Latest boundary — 2026-09-08 05:34 UTC
 
 - Background ABBA completed: all4 native exit0/IntelVulkan/bound/qualified16,
