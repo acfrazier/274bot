@@ -11,6 +11,23 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 17:46 UTC
+
+- Sole N1 controller/frontend completed0; originalSSH58783 terminal, no rerun.
+  Native82057de bound/qualified; archive2fbbc075 verified101payload files locally.
+  CurrentN1 RSS176.322MiB/CPU0.048993, N16 preserved520.779MiB/0.561746.
+  Single-pair finite difference22.964MiB/0.034184core per added activebot.
+  See current-tui-n1-n16-attribution-report.md/evidence; independent review next.
+  Raw resource provenance gate/overhead remain unavailable; no acceptance.
+- 289 firstactualwindowedclient1700de0 reachedlogin thenT1 packet13length3,
+  returnedtitle(rootreadcapture); objconfig errorsalso present. Originalproof
+  retained isolatedruntime/client-proof-1737; rootterminated71395, exit-15.
+  Luna t_a8c55720 confirmedrunning diagnoses source-backed revision-specific
+  failures offline; no newliveclient until same-card review. Server67696 remains
+  root-supervised15477. Hostintegrationplanning stillparked.
+- FR-vault instructionrefresh completed d7bb692, actualGrok4.5 plus finalGrok4.6
+  approved; localcodex/r377-agent-workflow only, no377service/productchanges.
+
 ## Latest boundary — 2026-09-08 17:31 UTC
 
 - N1 controller e707e2d approved actual Grok4.5 session20260908_132105_d057f0,
