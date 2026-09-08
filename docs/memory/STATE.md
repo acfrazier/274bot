@@ -9,6 +9,41 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 09:55 UTC
+
+- Helper424aed5 native invocation failed before input on PS5 `[ushort]` cast.
+  Rootf64b81d uses `[UInt16]`, APPROVED t_da7383ca actualGrok4.5/xai-oauth
+  20260908_053712_1a699e. Native exact cast/factory proof af56341 passed
+  09:37:17UTC (no input); this extends earlier syntax-only validation.
+- Native0932 N1 active focused-one diagnostic completed normally09:39:44UTC,
+  childexit0, no timeout. Capture helper initially refused latency-directory
+  output; preserved, corrected to separate visual-proof directory. Initial
+  stimulus refused foreground, second refused ushort cast; both sent0 keys.
+  Tar4382677e8fd2609d3f616fbb6eede164e39c7cc6d2ee2e79bf4378a36b45aa45,
+  all38manifestfiles verified in diagnostics/windows-input-smoke-0932-archive.
+- Native0942 repeated with named cast correction only for functional proof:
+  PID11236 start09:41:04.3236437UTC, frozena9b581ba hostfb3589a/clientfd956c9,
+  N1 active focused-one,120s warmup/180s observe, responsiveness+fine on.
+  Root read initialscene2/capture-enabledslot0/afterpulse PNGs; same physical
+  rect228,228,2326,1154, GameImage point628,528. Exactf64b81d helper20/20
+  arrows down/up returned1,9..26ms actualsend lateness,09:43:46..09:44:05UTC.
+  BUT all381rows have input start/complete/pending/cancel/lost/drop/latency0.
+  No host input coverage or p99/performance acceptance. Normalexit0
+  09:47:30UTC; tarc7ab1ae3bcfd3ceb7f373090a1e133e7e1d0dc08d6042641caa8bfc441e52fb6,
+  all29manifestfiles verified, root receipt8025bf2. All Windows frontends idle.
+- Source audit2ed3eab t_39d53553 under Grok review. Root correction: zero
+  published counters does NOT prove seam never called; legacy input admission
+  can lack a live telemetry row. Distinguish event/hover/channel/slot identity
+  with bounded diagnostics; no unmotivated repeat or source behavior fix.
+- Producerf57de35 approved t_844175ba actualGrok4.5/xai-oauth
+  20260908_054713_c70ac9, but root withholds integration: in-window input with
+  missing generation is silently omitted and test blesses empty losses. NEW
+  corrective t_d0facd8d configured implementer running on same isolated ledger
+  branch; add explicit unknown-generation loss while preserving legacy behavior,
+  plus actual incomplete/mismatch tests. No host-play/reader integration yet.
+- Full cohort-native pair, latency, budgets, lifecycle/scaling and final whole
+  Grok remain incomplete. Existing plans and old binary receipts remain intact.
+
 ## Latest boundary — 2026-09-08 09:26 UTC
 
 - Producer c4e142b rejected on t_844175ba by actual Grok4.5/xai-oauth
