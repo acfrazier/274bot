@@ -11,6 +11,34 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 20:30 UTC
+
+- Sole N1capture2003 FAILED raw2GiB guard:2149010072bytes,frontend2096exit-15,
+  launcher/controller1,onlyobserve-start (~455.5s beforefrontendwaitreturn).
+  Noobserve-end/Stop; existingqualifierexit1/unqualified. Interpretation2154
+  andprinter2159 both exit0 withinlimits; allownedcaptureprocesses reaped.
+  No repeatcaptureauthorized. Source/runtime/toolingidentitiesunchanged.
+- Local hashverified46file export diagnostics/owner-capture-evidence-2015
+  (archiveSHA1a73be129f22b2e78a2dc220b8305709aff83e4fe4c046050bd924e95412a9a1).
+  Large raw2149010072 andinterpreted810563095 remainremote withmanifesthashes.
+  Rootrecomputes14903rows194positive,total160842811requestedbytes;91.563%
+  liesunderstartupNavWorld::load_pack. Nativeheader/filesizematchinputbuffer
+  anddecodedarrays; not retainedperbotowneranswer. Resultreport/json eba3f97
+  nowindependentreview t_9d3ae118. No candidate or savings accepted.
+- t_227f43d3 actualAstra/orch audits PRIMARY Heaptrack1.5/dataformat3 capability
+  for offline replay of EXISTING trace only; ownreplaycapabilitydocs, no new
+  capture/productionparser/optimization. Root ownsresultreport/STATE.
+- 289A f3b1a18 APPROVED actualGrok4.5/xai session20260908_161425_cbed97.
+  Rootreleased B t_36cd00a5, Luna running, all21 interfaceops on semantic
+  foundation; remainingC-H/finalwholebranch/live gatesopen. IsolatedMacwork.
+- Operator20:23 asked about Windows restart and offered HyperV memory ifneeded.
+  RootLIVEcheckedWindows and274bot-builder: nofrontend/build/profiler or VM
+  campaignprocesses. WindowsidleNode6728 serves274bot-Test (loopback80/43594/
+  8898), zeroestablishedgameconnections. Toldoperator restartcanproceed and
+  WILL NOT START Windows/HyperVwork untiloperatorconfirmsupdatefinished.
+  No restartorprocessstoprequested/executedbyroot. ExistingworkisonMac;
+  Concordcapturealreadycompleted. Currentcapturefailurewasrawsize,notmemory.
+
 ## Latest boundary — 2026-09-08 20:03 UTC
 
 - Capture instrumentation1fe2161 APPROVED actual Grok4.5/xai session
