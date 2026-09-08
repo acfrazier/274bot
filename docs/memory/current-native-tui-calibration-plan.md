@@ -49,10 +49,11 @@ and prerequisite review. The proposed frozen declaration is:
 | Field | Frozen value or rule |
 |---|---|
 | Frontend | native Linux `tui-play`, TUI mode, no renderer attached; the TUI source forces every spawned profile to `RasterMode::Off` (`crates/tui/src/bin.rs`, lines 525–544) |
-| Scale | N=16 active slots, all 16 required to become ready and make progress |
+| Scale | `BOT_MEMORY_N=16`; all 16 active slots are required to become ready and make progress |
 | Workload | `BOT_MEMORY_WORKLOAD=active`; preserve the existing active fixture, script, server, account population, and cadence. Do not substitute idle, seeded-idle, lifecycle, or an inert fixture |
 | Timing | `BOT_MEMORY_WARMUP_S=120`, `BOT_MEMORY_OBSERVE_S=600`; these are the harness defaults and are explicit in the declaration (`crates/host-play/src/memory.rs`, lines 150–165) |
-| Allocator/build | normal system allocator; no allocator counting and no allocator/native stack logging in the clean screen |
+| Harness/build | Build `tui-play` with `memory-profile-no-alloc` so the reviewed `BOT_MEMORY_N=16` harness, qualification publisher, and `Run` receipt path are present; this selects `System` and disables allocation counting. It is an allocation-unprofiled diagnostic binary, not the ordinary no-feature product binary |
+| Runtime instrumentation | Hot profiling, stack logging, verbose allocator instrumentation, and debug output OFF; external managed process sampling remains required and is separately accounted |
 | Snapshot feature | feature-off production default; do not pass `snapshot-dedup` |
 | Target | existing Concord native Linux host: Ubuntu 24.04.4 x86_64, 2 logical CPUs, 1,967 MiB RAM, no swap. This is below the approved 4 GiB VPS reference and must be reported as a capacity-limited target, not silently called a 4 GiB validation (`concord-native-environment.md`, lines 1–6) |
 | Server | existing qualified co-located fixture/server, sampled as its own role and never added to frontend RSS/CPU |
@@ -61,16 +62,25 @@ and prerequisite review. The proposed frozen declaration is:
 | Source | current root host checkout and its exact client submodule gitlink frozen immediately before build; do not reuse the historical `b4b686f`/`3456edc` artifact |
 | Order/repeats | one attempt only. No baseline/candidate pair, parked-candidate comparison, catch-up input, or favorable retry is included |
 
-The clean executable should be a current-source locked release build of
-`tui-play` with no memory-profile feature. The existing builder evidence gives a
-reusable envelope, not a current artifact: image
-`274bot-memory-ref:1.98.0-bookworm-amd64`, digest
-`sha256:51e9ecf025a9ac89e2ae14be24008827771a25d9792370fa2724c4ae5387d637`,
-Rust/Cargo 1.98.0, Linux amd64, and the prior invocation
-`cargo build --locked --release -p tui --bin tui-play --features
-memory-profile-no-alloc` (`concord-linux-build-report.md`, lines 7–33). The
-current screen must generate a new hash and manifest from the current source;
-the old binary is evidence of the builder, not a permitted executable.
+The executable should be a current-source locked release build of `tui-play`
+with `memory-profile-no-alloc`. This feature is required for the harness and
+publisher, but its `System` allocator means allocation counting is off; it must
+not be mislabeled as the ordinary production binary. Build it on the current
+native Hyper-V Ubuntu 24.04 amd64 builder: the readiness proof records a
+Generation-2 VM with 4 vCPU, 8 GiB static memory, no swap, native Rust/Cargo
+1.98.0, and passing compile/run smoke checks (`hyperv-builder-native-proof-report.md`,
+lines 15–21, 32–59). That is a build environment, not the 2-CPU/1,967-MiB
+Concord runtime target. The older Docker image/digest and its `f00e7fb` binary
+remain historical evidence only (`concord-linux-build-report.md`, lines 7–35);
+do not use them as the current screen artifact. The native builder must produce
+a new hash, source manifest, feature manifest, and ELF receipt.
+
+The managed execution path must reuse `docs/memory/run_managed_cell.py` and its
+reviewed PTY binding, receipt, role sampler, bounded-output, and teardown
+controls. The Rust harness publisher supplies the N16 qualification fields;
+the managed collector supplies external process evidence. Do not replace this
+with a manual product-UI collector or a pipe-only launcher. Any missing proof
+from the reviewed path remains `unavailable` and blocks qualification.
 
 The TUI command must use explicit current cache and vault paths, target host and
 port, and the authorized vault/account fixture. The CLI defaults are derived
@@ -92,26 +102,32 @@ same opt-in shape is present in `crates/host-play/Cargo.toml`, while
 `crates/api/Cargo.toml` explicitly documents feature-off as the original Vec
 storage. Therefore the clean current screen must use feature-off production
 semantics. A future dedup measurement would be a separately approved candidate
-comparison, not this calibration.
+comparison, not this calibration. “Feature-off” here means the production
+snapshot-dedup family is off; the diagnostic harness feature is deliberately
+present so the declared N16 fixture and receipts can actually be produced.
 
-`memory-profile-no-alloc` is also not production behavior. It enables the
-benchmark harness but selects `System` rather than `CountingAllocator`
-(`crates/host-play/src/memory.rs`, lines 23–33). It can be useful for a
-structured diagnostic, but it is still a profile-enabled executable and its
-harness/observer overhead is not automatically zero. The old Linux screen was
+`memory-profile-no-alloc` is not production behavior. It enables the benchmark
+harness and selects `System` rather than `CountingAllocator`
+(`crates/host-play/src/memory.rs`, lines 26–34); `tui/Cargo.toml` forwards it
+through `memory-profile`, which is why the harness/publisher exists. It is the
+coherent executable for this structured diagnostic, but its harness/observer
+overhead is not automatically zero. The old Linux screen was also
 profile-enabled and therefore cannot be treated as an unprofiled baseline.
 
 ### Profiled versus unprofiled metrics
 
-The one released screen is unprofiled for qualification: no `memory-profile`,
-`memory-profile-no-alloc`, `BOT_MEMORY_N`, allocator counters, or allocation
-stack tracing. External managed collection may sample the named frontend,
+The one released screen is unprofiled for allocation attribution, not
+harness-free: it uses `memory-profile-no-alloc` and `BOT_MEMORY_N=16` solely to
+activate the reviewed fixture, fixed phases, and qualification publisher. It
+must not enable `memory-profile` counting semantics, allocator counters,
+allocation stack tracing, hot profiling, or debug output. External managed
+collection may sample the named frontend,
 server, terminal/controller, launcher, and collector roles, but collector
 self-cost and instrumentation overhead must be reported separately. The clean
 screen's resource and cadence values are diagnostic observations, not final
 acceptance until all gates are met.
 
-If root later authorizes a profile-enabled attribution run, it must use the
+If root later authorizes a counting/profile-enabled attribution run, it must use the
 same frozen source, binary manifest, cache, server, geometry, and fixture, and
 must be labeled profiled. Its Rust/V8/snapshot counters can identify ownership
 leads only. They cannot be subtracted from RSS, used as RSS, or converted into
@@ -132,10 +148,11 @@ precondition failure, not a reason to launch and repair the record afterward.
 - Complete source-file manifest/hash set for host crates and client inputs,
   including the current TUI/host/api/script/nav code and any generated source
   consumed by the build.
-- Locked dependency identity and builder image digest, OS/architecture,
+- Locked dependency identity and native-builder state/provenance, OS/architecture,
   compiler/Cargo versions, target triple, release profile, and exact feature
-  list. The feature list must show snapshot-dedup absent and memory-profile
-  absent for this clean screen.
+  list. The feature list must show `snapshot-dedup` absent and
+  `memory-profile-no-alloc` present for this allocation-unprofiled harness
+  screen; it must also show counting/stack/debug switches OFF.
 - Final ELF hash, size, interpreter, architecture, dynamic dependencies, and
   read-only staged path. Do not use the old `f00e7fb` artifact.
 - Required host and client tests/build checks must be completed separately
