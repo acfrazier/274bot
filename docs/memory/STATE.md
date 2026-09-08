@@ -11,6 +11,29 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 15:09 UTC
+
+- Baseline1430 completed normally; all60 archived files verified by hash/length.
+  Original archive retained under diagnostics/windows-cohort-baseline-1430-archive.
+  No input helper spawned because root missed the predeclared trigger window;
+  no retry performed. Operator reported no freeze, black image or missing overlays.
+- Candidate1430 actual frontend14872/start14:54:54.1355755Z remains in its one
+  scheduled run. Fresh root-read scene2/slot0/capture/50fps/selected-only proofs
+  were completed before observe publication1788879542.9392309/mono68666.8570662.
+  Candidate stimulus wrapper completed exit0, exactly one helper spawn; full
+  post-run event/identity/accounting validation remains pending normal teardown.
+  Operator reports camera movement working while bot script continues, no issues.
+- Raw baseline reader initially rejected archive name raw-run-01 as mismatched
+  sidecar provenance. Separate original-run-name symlink to the same immutable
+  raw files resolves the path check without any byte or reader changes. Both
+  reader outputs retained. Decode cohort available:16000 events,16slots,zero
+  losses,p99 fine24..25ms. Input unavailable:declared_population_incomplete.
+- Raw resource metrics remain diagnostic with missing_resource_provenance;
+  prepare native existing managed-receipt binding after candidate teardown.
+  No matched input acceptance, overall performance acceptance or extra live cell.
+  Next: candidate completion/archive, native independent binding, paired evidence
+  report and required independent review; final campaign gates still unresolved.
+
 ## Latest boundary — 2026-09-08 14:47 UTC
 
 - Baseline1430 actual native N16 focused-one is RUNNING: frontend15320,

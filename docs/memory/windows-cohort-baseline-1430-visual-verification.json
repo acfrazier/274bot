@@ -1,0 +1,104 @@
+{
+  "scope": "Qualitative visual inspection only; no frame/latency acceptance",
+  "cellId": "baseline-focused-one-cohort-native-20260908-1430",
+  "rootObserved": {
+    "scene2": true,
+    "slotZeroSelected": true,
+    "captureInputChecked": true,
+    "focused50FpsChecked": true,
+    "onlyRenderSelectedChecked": true,
+    "visibleRunningSlots": 16,
+    "physicalRect": [
+      342,
+      342,
+      2440,
+      1268
+    ]
+  },
+  "operatorObservation": {
+    "question": "During this baseline run, have you noticed any sustained freeze, black game image, or missing overlays? If so, roughly how long did it last?",
+    "answer": "None observed",
+    "timingMeasuredByOperator": false
+  },
+  "captures": [
+    {
+      "label": "initial-scene2",
+      "receipt": {
+        "schema": "native-panel-window-capture-v1",
+        "label": "initial-scene2",
+        "pid": 15320,
+        "startUtc": "2026-09-08T14:37:56.4921342Z",
+        "sessionId": 2,
+        "binary": "C:\\ProgramData\\274bot-Test\\cohort-reference-e25f328\\panel-play.exe",
+        "binarySha256": "2061d0c7ba82c950084523a7c7e89eed27854e2a533377d9f40ed4a53da5f3ce",
+        "windowHandle": 5374996,
+        "rect": [
+          342,
+          342,
+          2440,
+          1268
+        ],
+        "captureStartedUtc": "2026-09-08T14:39:49.6046288Z",
+        "captureEndedUtc": "2026-09-08T14:39:49.6826128Z",
+        "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-cohort-baseline-1430\\initial-scene2.png",
+        "pngSha256": "9c62e0acad70137ea594bd9880e5adce80706567466933227658a6db9cd5373a",
+        "sceneState": "not inferred from capture",
+        "performanceAcceptance": false
+      },
+      "rootInspected": true
+    },
+    {
+      "label": "general-config-1430",
+      "receipt": {
+        "schema": "native-panel-window-capture-v1",
+        "label": "general-config-1430",
+        "pid": 15320,
+        "startUtc": "2026-09-08T14:37:56.4921342Z",
+        "sessionId": 2,
+        "binary": "C:\\ProgramData\\274bot-Test\\cohort-reference-e25f328\\panel-play.exe",
+        "binarySha256": "2061d0c7ba82c950084523a7c7e89eed27854e2a533377d9f40ed4a53da5f3ce",
+        "windowHandle": 5374996,
+        "rect": [
+          342,
+          342,
+          2440,
+          1268
+        ],
+        "captureStartedUtc": "2026-09-08T14:41:31.1697438Z",
+        "captureEndedUtc": "2026-09-08T14:41:31.2400808Z",
+        "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-cohort-baseline-1430\\general-config-1430.png",
+        "pngSha256": "f8d4c7af869417322dcc29b39a6bf33ce9086e5b6b9eb3830572044d3dfab0a1",
+        "sceneState": "not inferred from capture",
+        "performanceAcceptance": false
+      },
+      "rootInspected": true
+    },
+    {
+      "label": "ready-for-input-1430",
+      "receipt": {
+        "schema": "native-panel-window-capture-v1",
+        "label": "ready-for-input-1430",
+        "pid": 15320,
+        "startUtc": "2026-09-08T14:37:56.4921342Z",
+        "sessionId": 2,
+        "binary": "C:\\ProgramData\\274bot-Test\\cohort-reference-e25f328\\panel-play.exe",
+        "binarySha256": "2061d0c7ba82c950084523a7c7e89eed27854e2a533377d9f40ed4a53da5f3ce",
+        "windowHandle": 5374996,
+        "rect": [
+          342,
+          342,
+          2440,
+          1268
+        ],
+        "captureStartedUtc": "2026-09-08T14:42:34.0172446Z",
+        "captureEndedUtc": "2026-09-08T14:42:34.0860635Z",
+        "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-cohort-baseline-1430\\ready-for-input-1430.png",
+        "pngSha256": "c88ce4829aa97ba84e46cb119dd2c5e6a2bfee9565f3ebc4c21838b7dd84d6c6",
+        "sceneState": "not inferred from capture",
+        "performanceAcceptance": false
+      },
+      "rootInspected": true
+    }
+  ],
+  "performanceAcceptance": false
+}
