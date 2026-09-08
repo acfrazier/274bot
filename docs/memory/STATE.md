@@ -11,6 +11,22 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 14:36 UTC
+
+- Combined source1cdc3fb BOUNDED ACCEPT actual Grok4.6/xai-oauth session
+  20260908_102646_1e5923; report commit320bdfb. Final campaign review still open.
+- Native frozen15 files/7 PS parses PASS. Final wrapper inert proof PASS under
+  real BotTest direct pythonw + CREATE_NO_WINDOW transport, two accounted roles,
+  explicit null UTC/available creation FILETIME; no frontend/input actions.
+- Both fresh1430 preflights, BotTest chronological no-launch contracts and
+  privileged prepare receipts PASS. Native archive35/35 files verified locally;
+  SHA8f26d5805599a138df0680e8156d4dfd39737bdf6368f980b95c4fb4b0063be2.
+  windows-cohort-final-no-launch-proof.json binds both exact cells and conditions.
+- Live pair not yet launched at this boundary. Next: one baseline then candidate
+  N16 focused-one cell with fresh root scene2/capture/slot0 binding and exactly
+  one120-pulse sequence60..90s after recorded observation-start receipt. Do not
+  use inert fixtures as input, performance or coverage evidence.
+
 ## Latest boundary — 2026-09-08 14:15 UTC
 
 - Sampler c875105 received Grok4.5 approval (session20260908_100744_aa256d),
