@@ -66,6 +66,10 @@ def _required_binding(manifest: Dict[str, Any]) -> Optional[str]:
         return "stimulus schedule mismatch"
     if manifest.get("triggerWindowSeconds") != [60, 90] or manifest.get("noRetry") is not True:
         return "trigger policy mismatch"
+    for key, maximum in (("sampleIntervalSeconds", 60.0), ("maxHelperLifetimeSeconds", 600.0), ("cleanupBudgetSeconds", 60.0)):
+        invalid = _finite_setting(manifest, key, maximum=maximum)
+        if invalid:
+            return invalid
     pub = manifest["observeStartPublication"]
     if not isinstance(pub.get("monotonicSeconds"), (int, float)):
         return "missing observe-start monotonic publication"
@@ -94,6 +98,32 @@ POWERSHELL_LAUNCH_COMMAND = (
     "if($s.slotZeroFocusVerified){$p.SlotZeroFocusVerified=$true};"
     "& $s.helper @p"
 )
+
+# This is deliberately written as a script file.  PowerShell does not pass a
+# trailing argument to Get-Content when the command itself is supplied through
+# -Command; the root inert probe demonstrated that failure mode.
+POWERSHELL_LAUNCHER = POWERSHELL_LAUNCH_COMMAND + "\n"
+
+
+def _finite_setting(manifest: Dict[str, Any], key: str, *, maximum: float) -> Optional[str]:
+    defaults = {"sampleIntervalSeconds": 1.0, "maxHelperLifetimeSeconds": 135.0, "cleanupBudgetSeconds": 5.0}
+    value = manifest.get(key, defaults[key])
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "invalid " + key
+    value = float(value)
+    if not math.isfinite(value) or value <= 0 or value > maximum:
+        return "invalid " + key
+    return None
+
+
+def _valid_sample(sample: Any) -> bool:
+    if not isinstance(sample, dict) or not isinstance(sample.get("start_identity"), str) or not sample["start_identity"]:
+        return False
+    counters = (sample.get("user_s"), sample.get("system_s"))
+    if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or float(value) < 0 for value in counters):
+        return False
+    rss = sample.get("resident_bytes")
+    return not (isinstance(rss, bool) or not isinstance(rss, (int, float)) or not math.isfinite(float(rss)) or float(rss) < 0)
 
 
 def run(manifest_path: Path, *, clock: Any = time, sampler: Callable[[int], Dict[str, Any]],
@@ -133,7 +163,6 @@ def run(manifest_path: Path, *, clock: Any = time, sampler: Callable[[int], Dict
     out_dir = Path(output["directory"])
     out_dir.mkdir(parents=True, exist_ok=False)
     receipt_path = Path(output["receiptPath"])
-    events_path = Path(output["eventsPath"])
     launch_spec = out_dir / "helper-launch-spec.json"
     launch_spec.write_text(json.dumps({
         "helper": str(helper_path), "panelPid": target["pid"],
@@ -144,9 +173,12 @@ def run(manifest_path: Path, *, clock: Any = time, sampler: Callable[[int], Dict
         "captureEnabledVerified": target["captureEnabled"],
         "slotZeroFocusVerified": target["slotZeroFocus"],
     }, indent=2) + "\n", encoding="utf-8")
-    args = [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
-            POWERSHELL_LAUNCH_COMMAND, str(launch_spec)]
+    launcher_path = out_dir / "invoke-helper-launcher.ps1"
+    launcher_path.write_text(POWERSHELL_LAUNCHER, encoding="utf-8")
+    args = [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+            str(launcher_path), str(launch_spec)]
     started = clock.monotonic()
+    started_unix = clock.time() if hasattr(clock, "time") else time.time()
     try:
         process = popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
     except Exception as exc:
@@ -196,26 +228,34 @@ def run(manifest_path: Path, *, clock: Any = time, sampler: Callable[[int], Dict
         if row["status"] == "available":
             summary["samples"] += 1
             summary["sampleIndexes"].append(index)
-            cpu_parts = [sample.get(key) for key in ("user_s", "system_s")]
-            numeric_cpu = [float(value) for value in cpu_parts if isinstance(value, (int, float)) and math.isfinite(float(value))]
-            if numeric_cpu:
-                summary["cpu_seconds"] = sum(numeric_cpu)
+            if _valid_sample(sample):
+                identity_value = sample["start_identity"]
+                if summary.get("start_identity") not in (None, identity_value):
+                    summary["identityMismatch"] = True
+                elif not summary.get("identityMismatch"):
+                    summary["validSamples"] = summary.get("validSamples", 0) + 1
+                    summary["start_identity"] = identity_value
+                    summary["cpu_seconds"] = float(sample["user_s"]) + float(sample["system_s"])
             rss = sample.get("resident_bytes")
-            if isinstance(rss, (int, float)) and math.isfinite(float(rss)):
+            if _valid_sample(sample) and not summary.get("identityMismatch"):
                 summary["rss_bytes"] = rss
         else:
             summary["unavailableSamples"] += 1
-        if row["status"] == "available" and identity not in seen:
+        if row["status"] == "available" and _valid_sample(sample) and identity not in seen:
             seen.add(identity)
             managed.append({"pid": row["pid"], "startIdentity": sample.get("start_identity"),
                             "process": row["process"]})
     for summary in process_summaries.values():
         summary.setdefault("cpu_seconds", None)
         summary.setdefault("rss_bytes", None)
-        summary["status"] = "available" if summary["samples"] else "unavailable"
-        summary["cpuAvailability"] = "available" if summary["cpu_seconds"] is not None else "unavailable"
-        summary["rssAvailability"] = "available" if summary["rss_bytes"] is not None else "unavailable"
-    for source, destination in ((receipt_path, out_dir / "helper-receipt.json"), (events_path, out_dir / "helper-events.json")):
+        summary["status"] = "available" if summary.get("validSamples", 0) and not summary.get("identityMismatch") else "unavailable"
+        summary["cpuAvailability"] = "available" if summary["status"] == "available" else "unavailable"
+        summary["rssAvailability"] = "available" if summary["status"] == "available" else "unavailable"
+        if summary.get("identityMismatch"):
+            summary["cpu_seconds"] = None
+            summary["rss_bytes"] = None
+            managed = [item for item in managed if item["process"] != summary["process"]]
+    for source, destination in ((receipt_path, out_dir / "helper-receipt.json"),):
         if source.is_file() and source.resolve() != destination.resolve():
             shutil.copyfile(str(source), str(destination))
     helper_receipt_valid = False
@@ -240,16 +280,18 @@ def run(manifest_path: Path, *, clock: Any = time, sampler: Callable[[int], Dict
         except (OSError, TypeError, ValueError) as exc:
             helper_receipt_reason = "malformed helper receipt: " + str(exc)
     files = {}
-    for path in (receipt_path, events_path, out_dir / "helper-receipt.json", out_dir / "helper-events.json"):
+    for path in (receipt_path, out_dir / "helper-receipt.json"):
         if path.is_file():
             files[str(path)] = _sha(path)
     receipt = {"schema": SCHEMA, "cellId": cell_id,
                "helperSha256": HELPER_SHA256, "sourceSha256": manifest["sourceSha256"],
                "cadenceMilliseconds": 1000, "pressMilliseconds": 80, "durationSeconds": 120,
-               "startedUnix": time.time(), "triggerDelaySeconds": delay,
+               "startedUnix": started_unix, "triggerDelaySeconds": delay,
                "targetPid": target["pid"], "targetStartUtc": target["startUtc"],
                "targetStartIdentity": target["startIdentity"], "helperPid": getattr(process, "pid", None),
-               "helperStartUtc": getattr(process, "start_utc", None),
+               "helperStartUtc": next((row.get("sample", {}).get("start_utc") for row in samples
+                                        if row["process"].startswith("input-helper") and row["status"] == "available"
+                                        and row.get("sample", {}).get("start_utc") is not None), None),
                "helperStartIdentity": process_summaries.get("input-helper", {}).get("start_identity"),
                "captureEnabledVerified": target["captureEnabled"], "slotZeroFocusVerified": target["slotZeroFocus"],
                "helperPath": str(helper_path), "helperOutputFiles": files,
@@ -259,13 +301,15 @@ def run(manifest_path: Path, *, clock: Any = time, sampler: Callable[[int], Dict
                "processSummaries": list(process_summaries.values()),
                "sampler": {"label": "root-managed windows_process_sample",
                             "backend": "windows_process_sample.sample_process"},
-               "resourceAccounting": {"status": "available" if any(item["samples"] for item in process_summaries.values()) else "unavailable",
+               "resourceAccounting": {"status": "available" if all(process_summaries.get(role, {}).get("status") == "available" for role in ("input-helper", "wrapper-sampler")) else "unavailable",
                                        "helper": process_summaries.get("input-helper", {"status": "unavailable"}),
                                        "wrapper": process_summaries.get("wrapper-sampler", {"status": "unavailable"}),
                                        "targetIdentity": target["startIdentity"],
                                        "targetExcludedFromManagedTotals": True},
                "samplerOverhead": {"status": "available", "cadenceSeconds": sample_interval,
                                    "sampleCount": len(samples)},
+               "launchArtifacts": {"launcherPath": str(launcher_path), "launcherSha256": _sha(launcher_path),
+                                   "launchSpecPath": str(launch_spec), "launchSpecSha256": _sha(launch_spec)},
                "helperExitCode": process.returncode, "stderr": None,
                "finalProcessSamples": [row for row in samples if row["process"].endswith("-final")],
                "inputCoveragePass": False, "performanceAcceptance": False}

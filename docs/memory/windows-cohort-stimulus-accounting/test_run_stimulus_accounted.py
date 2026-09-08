@@ -16,6 +16,9 @@ class Clock:
     def sleep(self, seconds):
         self.value += seconds
 
+    def time(self):
+        return 1_757_333_000.0 + self.value
+
 
 class Process:
     pid = 4242
@@ -173,11 +176,16 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(result["spawnCount"], 1)
         self.assertEqual(len(captured), 1)
         self.assertIsInstance(captured[0][0], list)
-        self.assertEqual(captured[0][0].count("-Command"), 1)
+        self.assertEqual(captured[0][0].count("-File"), 1)
+        self.assertEqual(captured[0][0][-1], str(self.root / "output" / "helper-launch-spec.json"))
+        self.assertEqual(captured[0][0][-2], str(self.root / "output" / "invoke-helper-launcher.ps1"))
         spec = json.loads((self.root / "output" / "helper-launch-spec.json").read_text())
         self.assertEqual(spec["expectedRect"], [228, 228, 2326, 1154])
         self.assertEqual(spec["gameImagePoint"], [628, 528])
-        self.assertIn("[int[]]$s.expectedRect", captured[0][0][captured[0][0].index("-Command") + 1])
+        launcher = (self.root / "output" / "invoke-helper-launcher.ps1").read_text()
+        self.assertIn("[int[]]$s.expectedRect", launcher)
+        self.assertIn("[int[]]$s.gameImagePoint", launcher)
+        self.assertEqual(result["startedUnix"], 1_757_333_075.0)
 
     def test_hung_helper_hits_bound_and_cleanup_without_respawn(self):
         value = manifest(self.root, maxHelperLifetimeSeconds=2, cleanupBudgetSeconds=1)
@@ -223,6 +231,32 @@ class ControllerTests(unittest.TestCase):
         self.assertIsNone(helper["cpu_seconds"])
         self.assertEqual(helper["cpuAvailability"], "unavailable")
 
+    def test_nonfinite_settings_fail_before_spawn(self):
+        for key, value in (("sampleIntervalSeconds", float("nan")),
+                           ("maxHelperLifetimeSeconds", float("inf")),
+                           ("cleanupBudgetSeconds", 0)):
+            with self.subTest(key=key):
+                value_manifest = manifest(self.root, **{key: value})
+                result = controller.run(self.write_manifest(value_manifest), clock=Clock(), sampler=self.sampler,
+                                        popen=lambda *a, **k: self.fail("must not spawn"))
+                self.assertEqual(result["outcome"], "incomplete")
+                self.assertIn(key, result["incompleteReason"])
+
+    def test_partial_role_sampling_never_claims_available(self):
+        value = manifest(self.root)
+        process = Process(polls=0)
+        def sampler(pid):
+            if pid == 3131:
+                return {"start_identity": "target-start"}
+            if pid == 4242:
+                return {"start_identity": "helper-start", "resident_bytes": 1,
+                        "user_s": 1, "system_s": 1}
+            raise RuntimeError("wrapper missing")
+        result = controller.run(self.write_manifest(value), clock=Clock(), sampler=sampler,
+                                popen=lambda *a, **k: process)
+        self.assertEqual(result["resourceAccounting"]["status"], "unavailable")
+        self.assertEqual(result["resourceAccounting"]["wrapper"]["status"], "unavailable")
+
     def test_helper_failure_and_cleanup_receipt_mismatch_are_incomplete(self):
         value = manifest(self.root)
         process = Process(polls=0)
@@ -240,7 +274,24 @@ class ControllerTests(unittest.TestCase):
         result = controller.run(self.write_manifest(value), clock=Clock(), sampler=self.sampler,
                                 popen=lambda *a, **k: process)
         self.assertIn(str(self.root / "helper-receipt.json"), result["helperOutputFiles"])
-        self.assertTrue((self.root / "output" / "helper-events.json").is_file())
+        self.assertFalse((self.root / "output" / "helper-events.json").is_file())
+
+    def test_identity_change_invalidates_role_accounting(self):
+        value = manifest(self.root)
+        process = Process(polls=1)
+        calls = {4242: 0}
+        def sampler(pid):
+            if pid == 3131:
+                return {"start_identity": "target-start"}
+            calls[pid] = calls.get(pid, 0) + 1
+            identity = "helper-a" if calls[pid] == 1 else "helper-b"
+            return {"start_identity": identity, "resident_bytes": 1, "user_s": 1, "system_s": 1}
+        result = controller.run(self.write_manifest(value), clock=Clock(), sampler=sampler,
+                                popen=lambda *a, **k: process)
+        helper = result["resourceAccounting"]["helper"]
+        self.assertTrue(helper["identityMismatch"])
+        self.assertEqual(helper["status"], "unavailable")
+        self.assertEqual(result["resourceAccounting"]["status"], "unavailable")
 
 
 if __name__ == "__main__":
