@@ -11,6 +11,34 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 16:23 UTC
+
+- Sole native TUI calibration is RUNNING, controller1514/start112599,
+  frontend1543/start114079, server726/start1761. Raw20260908T161704Z_tui_n16_active
+  in frozen VPS workspace-c0709ab/host/docs/memory/diagnostics; managed root
+  /home/acfrazier/274bot-campaign/current-tui-n16-1616. At elapsed378s phase
+  observe, all16ready/active. Warmup120/observe600, no profile/input probes,
+  same frozen c0709ab/client3456 binarya0c6eb0b. Do not launch another cell.
+- Guard correction94675d1 approved actualGrok4.5 session20260908_121357_334dfc,
+  integratedd41fe28. Native17tests PASS; actual managed owned-cleanup2 PASS.
+  Original native failed guard-test log retained. Initial short-child test
+  alone is not process-termination proof; direct managed tests supply that proof.
+- Operator newly authorized Luna isolated Mac289 Engine-TS/Content setup and
+  explicit no collision with377 as well as274. Root prepared fresh
+  /Users/acfrazier/experiments/lostcity-289, control4552b00, pinned upstream289
+  engine0c7cf655/content92649430, allthree repos oncodex/revision-289-engine-env.
+  Luna t_2b8506ea actually running; scoped setup, loopback ports, separate DB/
+  caches/keys/accounts, same-card reviewer. No changes to274/377/client trees.
+- Existing289 client t_95bef768 remains triage: offlinefc5516c/finalGrok4.6
+  accepted with documented caveats, missing verified289 cache/server pair and
+  live login/scene/action/logout proof. Setup task delivers prerequisites to
+  root; server startup alone cannot complete that client card.
+- Root verified274 activePID4719 atServer/engine uses80/43594/8898. 377 static
+  config inFR-vault/vendor/engine uses81/43595/8899, auxiliary43600/45199/43601;
+  no377listeners atcheck. LegacyLC-rs2-r377-2006-05-02 resolvesFR-vault.
+  289 proposed1080/44594(offset1000)/9898; worker must verify collision-free
+  actual listeners and protected config hashes before/after startup.
+
 ## Latest boundary — 2026-09-08 16:12 UTC
 
 - Grok4.5 approved final fixturebca8476 and controllerbf05cb1; both integrated
