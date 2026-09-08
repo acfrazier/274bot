@@ -9,6 +9,31 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 07:34 UTC
+
+- Focused GPUcoverage audit4af1348 APPROVED actualGrok4.5/xai-oauth
+  20260908_032250_1bfde7. Rootisolated .worktrees/focused-gpu-coverage on
+  codex/focused-gpu-coverage base9d75d3c +STATEsetupcd54fe9. t_02027ed2 Luna
+  implementationa4b1483 nowawaiting samecardreview; source/tests/report only.
+  No readerintegration or native runtimechange yet; exclude setupcommit later.
+- Visualplan corrected7f95690 APPROVED actualGrok4.5/xai-oauth
+  20260908_032851_fcd2b8. Existingnull_raster N2temporarytest/test2vault supports
+  unpinnedfocus/Off/GPU; Lumbridgebutton remainsrebuildtrigger. F12gatedinlive,
+  externalwindowcapture needed; memoryN1allowsF12 butpinsfocus/Off, GPUCPU
+  preference is separate. No nativevisualrun yet.
+- Rootcapturehelper ea7fe6f NEW windows-visual-proof-tools/capture-panel-window.ps1
+  andREADME: frozenPID/start/binary/session/foreground guards, PNG+time/hash
+  receipt. Reviewt_fe8a4d2e actualGrok4.5/xai-oauth20260908_033151_6222cc
+  running. NativeAST/C#compile/capturevalidation pending; no input/launch code.
+- Longerindependentreport e87abb1 agrees no sustainedfocusedRSSwin, recommends
+  parkfocusedclaim; t_8bd8b95c actualGrok4.5review20260908_033051_c86bfa running.
+  Rootfound genericanalysis.py/table.json preexisted and were overwritten.
+  Requested samecard correction: restoreboth EXACTe87abb1^ and move newoutputs
+  to windows-tile-boxed-long-screen-analysis.py/-table.json; reportreferences
+  updated. No retention/acceptance decision before correctedreview. Rawpreserved.
+- Bothlongnativecells terminal; original4GPUruntime unchanged. No newfrontend
+  or nativevisualproof. Fullcampaign targets/lifecycle/scaling/wholeGrok pending.
+
 ## Latest boundary — 2026-09-08 07:23 UTC
 
 - SINGLE longer stage bothcells complete0/IntelVulkan/nativebound/qualified16,
