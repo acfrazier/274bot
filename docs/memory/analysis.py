@@ -74,6 +74,39 @@ def safe_range(items):
     return [min(items), max(items)] if items else None
 
 
+def rss_samples(rows):
+    return [{"elapsed_s": r["elapsed_s"], "rss_mib": mib(r["resident_bytes"])}
+            for r in rows if isinstance(r.get("elapsed_s"), (int, float))
+            and isinstance(r.get("resident_bytes"), (int, float))]
+
+
+def aligned_rss(baseline, candidate):
+    """Compare samples at the common harness-elapsed interval."""
+    bs, cs = baseline["rss_samples"], candidate["rss_samples"]
+    start = max(bs[0]["elapsed_s"], cs[0]["elapsed_s"])
+    end = min(bs[-1]["elapsed_s"], cs[-1]["elapsed_s"])
+    b = [x["rss_mib"] for x in bs if start <= x["elapsed_s"] <= end]
+    c = [x["rss_mib"] for x in cs if start <= x["elapsed_s"] <= end]
+    return {
+        "elapsed_s": [start, end],
+        "sample_counts": {"baseline": len(b), "candidate": len(c)},
+        "rss_median_mib": {"baseline": statistics.median(b), "candidate": statistics.median(c),
+                            "delta": statistics.median(c) - statistics.median(b)},
+        "limit": "common harness elapsed since each process start; samples are not simultaneous wall-clock observations",
+    }
+
+
+def relative_bins(cell, width=30.0):
+    start = cell["rss_samples"][0]["elapsed_s"]
+    groups = {}
+    for sample in cell["rss_samples"]:
+        index = int((sample["elapsed_s"] - start) // width)
+        groups.setdefault(index, []).append(sample["rss_mib"])
+    return [{"bin_start_s": index * width, "bin_end_s": (index + 1) * width,
+             "sample_count": len(values), "rss_median_mib": statistics.median(values)}
+            for index, values in sorted(groups.items())]
+
+
 def condition_summary(path):
     obj = json.loads(path.read_text(encoding="utf-8-sig"))
     power = first(obj, "native_preflight", "powerState") or {}
@@ -245,6 +278,7 @@ def main():
             "rss_median_mib": mib(statistics.median(rss)) if rss else None,
             "rss_first_mib": mib(rss[0]) if rss else None, "rss_last_mib": mib(rss[-1]) if rss else None,
             "rss_min_mib": mib(min(rss)) if rss else None, "rss_max_mib": mib(max(rss)) if rss else None,
+            "rss_samples": rss_samples(obs),
             "peak_max_mib": mib(max(vals(raw, "peak_resident_bytes"))) if vals(raw, "peak_resident_bytes") else None,
             "cpu_core_estimate": ((user[-1] - user[0]) + (system[-1] - system[0])) / (elapsed[-1] - elapsed[0]) if len(user) > 1 and len(system) > 1 and len(elapsed) > 1 else None,
             "ready_min_max": safe_range(vals(obs, "ready")), "active_min_max": safe_range(vals(obs, "active")),
@@ -272,7 +306,21 @@ def main():
         spans = [baseline.get("observation_wall_span_unix_s"), candidate.get("observation_wall_span_unix_s")]
         overlap = max(0.0, min(s[1] for s in spans if s) - max(s[0] for s in spans if s)) if all(spans) else None
         relative = {k: {"baseline": baseline.get(k), "candidate": candidate.get(k), "delta": delta(k)} for k in ("rss_first_mib", "rss_last_mib", "rss_min_mib", "rss_max_mib")}
-        table["pairs"][mode].update({"absolute_wall_overlap_s": overlap, "observation_relative": relative, "absolute_elapsed_limit": "sequential cells have no simultaneous wall-clock control; overlap does not remove phase confounding"})
+        table["pairs"][mode].update({
+            "absolute_wall_overlap_s": overlap,
+            "harness_elapsed_common_window": aligned_rss(baseline, candidate),
+            "observation_relative": {
+                "baseline": relative_bins(baseline), "candidate": relative_bins(candidate),
+                "width_s": 30.0,
+                "rss_median_delta_by_bin_mib": [
+                    {"bin_start_s": b["bin_start_s"], "bin_end_s": b["bin_end_s"],
+                     "baseline": b["rss_median_mib"], "candidate": c["rss_median_mib"],
+                     "delta": c["rss_median_mib"] - b["rss_median_mib"]}
+                    for b, c in zip(relative_bins(baseline), relative_bins(candidate))
+                ],
+            },
+            "absolute_elapsed_limit": "sequential cells have no simultaneous wall-clock control; common harness elapsed and relative bins retain startup/phase confounding",
+        })
     names = list(CELLS)
     for field in ("cache", "temperature", "power", "provenance"):
         values = {n: table["cells"][n]["environment"][field] for n in names}

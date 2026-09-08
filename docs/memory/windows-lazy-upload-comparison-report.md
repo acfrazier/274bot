@@ -45,8 +45,8 @@ observation elapsed interval. The short screening windows are approximately
 | role / mode | observation rows / seconds | RSS median | RSS first -> last; min..max | peak max | CPU cores | client ticks/slot/s | tracked GPU max | renderer observations |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | baseline / focused-one | 119 / 119.189 | 921.188 | 1028.434 -> 805.855; 805.855..1083.332 | 1111.875 | 0.565803 | 48.66534 | 17.590 | 1 full-rate slot; 119 rows |
-| candidate / focused-one | 119 / 119.141 | 807.215 | 966.496 -> 753.262; 753.262..966.496 | 1134.590 | 0.515645 | 48.47845 | 17.526 | 1 full-rate slot; 119 rows |
-| baseline / focused-plus-background | 119 / 119.094 | 2190.402 | 2461.598 -> 1567.734; 1567.734..2499.008 | 2510.039 | 0.639874 | 48.69235 | 143.108 | 16 slots; 119 observations each |
+| candidate / focused-one | 119 / 119.268 | 807.215 | 966.496 -> 753.262; 753.262..966.496 | 1134.590 | 0.515645 | 48.47845 | 17.526 | 1 full-rate slot; 119 rows |
+| baseline / focused-plus-background | 119 / 119.140 | 2190.402 | 2461.598 -> 1567.734; 1567.734..2499.008 | 2510.039 | 0.639874 | 48.69235 | 143.108 | 16 slots; 119 observations each |
 | candidate / focused-plus-background | 119 / 119.094 | 2042.781 | 2483.949 -> 1376.762; 1376.316..2483.949 | 2512.039 | 0.647206 | 48.60619 | 143.367 | 16 slots; 119 observations each |
 
 The corresponding candidate-minus-baseline descriptive differences are:
@@ -120,6 +120,16 @@ the 1 GiB target. CPU is below the panel 1-core diagnostic target in all four
 cells. These observations do not satisfy the final matrix: the 1/16 cells are
 single short pairs, not three fresh 600-second observations, and no final
 lifecycle, responsiveness, physical scanout, or target-hardware proof exists.
+
+Harness-elapsed alignment changes the RSS comparison. In the focused pair, the
+common elapsed window is 162.6414489--229.487535 s (67 samples per role), with
+candidate-minus-baseline median RSS -5.011719 MiB. In the focused-plus-
+background pair, the common window is 120.5253208--222.3300242 s (101 samples
+per role), with delta +39.730469 MiB. Thus the whole-window deltas above
+(-113.973 and -147.621 MiB) are phase-sensitive descriptive values, not the
+aligned result. Observation-relative 30-second bins are retained in
+`table.json`; both roles fall across bins, and bin deltas should not be read as
+a plateau or causal decomposition.
 
 ## Per-slot and environment evidence
 
