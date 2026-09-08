@@ -134,7 +134,7 @@ try {
   $pulsePoint=New-Object PanelInputStimulusNative+POINT
   if(-not [PanelInputStimulusNative]::GetCursorPos([ref]$pulsePoint) -or $pulsePoint.X -ne $GameImagePoint[0] -or $pulsePoint.Y -ne $GameImagePoint[1]){throw 'Cursor did not remain at the verified Game Image point before pulse'}
   $vk=if(($i % 2) -eq 0){0x25}else{0x27};$downFlags=0x0001;$upFlags=0x0003
-  $down=[PanelInputStimulusNative]::CreateKeyboardInput([ushort]$vk,$downFlags);$up=[PanelInputStimulusNative]::CreateKeyboardInput([ushort]$vk,$upFlags)
+  $down=[PanelInputStimulusNative]::CreateKeyboardInput([UInt16]$vk,$downFlags);$up=[PanelInputStimulusNative]::CreateKeyboardInput([UInt16]$vk,$upFlags)
   if($down.keyboard.wVk -ne $vk -or $up.keyboard.wVk -ne $vk -or $down.keyboard.dwFlags -ne $downFlags -or $up.keyboard.dwFlags -ne $upFlags){throw 'Arrow INPUT factory fields invalid'}
   $direction=if($vk -eq 0x25){'Left'}else{'Right'}
   $event=[ordered]@{index=$i+1;direction=$direction;virtualKey=$vk;downFlags=$downFlags;upFlags=$upFlags;dueMilliseconds=$due;latenessMilliseconds=$late;actualDownElapsedMilliseconds=$null;actualDownLatenessMilliseconds=$null;requestedUtc=[DateTime]::UtcNow.ToString('o');downUtc=$null;upUtc=$null;downSendInputResult=$null;upSendInputResult=$null;upSendInputException=$null;releaseAttempted=$false;releaseSucceeded=$false}
@@ -163,7 +163,7 @@ try {
  $outcome='failed';if(-not $terminalReason){$terminalReason='guard-or-input-failure'};$failure=$_.Exception.Message
  if($requested -gt $completed){$missed=[Math]::Max($missed,$requested-$completed)}
 } finally {
- if($null -ne $pressedKey){try{$release=[PanelInputStimulusNative]::CreateKeyboardInput([ushort]$pressedKey,0x0003);$releaseResult=[PanelInputStimulusNative]::SendInput(1,@($release),[Runtime.InteropServices.Marshal]::SizeOf($release));if($releaseResult -ne 1){$failure=($failure+'; finally key release failed');$outcome='failed'}else{$pressedKey=$null;$pressedAt=$null}}catch{$failure=($failure+'; finally key release exception: '+$_.Exception.Message);$outcome='failed'}}
+ if($null -ne $pressedKey){try{$release=[PanelInputStimulusNative]::CreateKeyboardInput([UInt16]$pressedKey,0x0003);$releaseResult=[PanelInputStimulusNative]::SendInput(1,@($release),[Runtime.InteropServices.Marshal]::SizeOf($release));if($releaseResult -ne 1){$failure=($failure+'; finally key release failed');$outcome='failed'}else{$pressedKey=$null;$pressedAt=$null}}catch{$failure=($failure+'; finally key release exception: '+$_.Exception.Message);$outcome='failed'}}
  $endedUtc=[DateTime]::UtcNow.ToString('o');if($receiptOwned){Write-Receipt}
 }
 if($receiptOwned){Get-Content -LiteralPath $receipt -Raw}

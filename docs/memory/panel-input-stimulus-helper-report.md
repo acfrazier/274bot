@@ -47,3 +47,7 @@ The new files are intentionally limited to this helper and this report. No nativ
 ## Root timing correction after 3730b40 review
 
 The original native syntax/interop proof is preserved in `windows-input-stimulus-interop-3730b40.json` (no input sent). Subsequent source correction moves deadline/cadence enforcement to the actual pre-send boundary after target guards, checks completion after final release and final hash, removes repeated full-binary hashing from the pulse loop, and avoids printing an old receipt on label refusal. This correction requires its own review and native preflight before physical input smoke. The elapsed-time checks reject delayed outcomes; they cannot preempt a blocking operating-system call.
+
+## Native PowerShell cast correction
+
+The first focused helper invocation on Windows PowerShell 5.1 failed before any key-down with `Unable to find type [ushort]`. The C# factory compiled, but that did not exercise the PowerShell pulse-loop cast. PowerShell casts now use `[UInt16]`; C# retains its valid `ushort` type. The failed runtime receipt is retained in the 0932 functional diagnostic. This correction requires native cast/factory validation and review before another pulse attempt.
