@@ -7,8 +7,9 @@
 
 use api::snapshot::{LocLayer, LocView, SideTabView, WidgetKind, WidgetRoot, WidgetView, WorldTile};
 use api::snapshot_dedup::{
-    account_allocations_arcs, widgets_eq, AllocationAccount, DedupHandle, FamilyCounters,
-    SlotDedupDirectory, SlotDedupInstance, SlotFamilyRegistry,
+    account_allocations_arcs, account_registry_live, widgets_eq, widgets_payload_bytes_vec,
+    AllocationAccount, DedupHandle, FamilyCounters, SlotDedupDirectory, SlotDedupInstance,
+    SlotFamilyRegistry,
 };
 use api::snapshot::GameSnapshot;
 use std::sync::{Arc, Mutex};
@@ -209,7 +210,7 @@ fn allocation_account_counts_headers_and_duplicate_savings() {
         (hit, empty_s, empty_l),
     ];
     let g = reg.lock().unwrap();
-    let acct = account_allocations_arcs(&holders, &g, 0);
+    let acct = account_allocations_arcs(&holders, &g, None);
     assert!(acct.old_per_owner_payload_bytes > 0);
     assert_eq!(acct.unique_body_count, 1);
     assert!(acct.unique_body_payload_bytes > 0);
@@ -219,6 +220,7 @@ fn allocation_account_counts_headers_and_duplicate_savings() {
         acct.duplicate_nested_payload_bytes > 0,
         "expected duplicate savings, got {acct:?}"
     );
+    assert_eq!(acct.scratch_peak_bytes, None);
 }
 
 #[test]
@@ -277,21 +279,34 @@ fn diagnostic_json_reports_cursors_and_accounting_fields() {
 
     let dir = SlotDedupDirectory::new_shared();
     dir.install("cx", inst);
-    let rows = dir.diagnostics(0);
+    // Unmeasured scratch: one census for slots + aggregate (not two samples).
+    let (rows, agg_unmeasured) = dir.census_sample(None);
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].slot_name, "cx");
     assert_eq!(rows[0].live_owner_count, 2);
     assert_eq!(rows[0].unique_body_count, 1);
     assert!(rows[0].duplicate_nested_payload_bytes > 0);
     assert!(rows[0].widgets.equality_hits >= 1);
+    assert_eq!(rows[0].scratch_peak_bytes, None);
+    assert_eq!(agg_unmeasured.scratch_peak_bytes, None);
     let v = serde_json::to_value(&rows).expect("serialize");
     assert!(v[0].get("slot_name").is_some());
     assert!(v[0].get("arc_header_bytes").is_some());
     assert!(v[0].get("unique_body_payload_bytes").is_some());
     assert!(v[0]["widgets"].get("equality_hits").is_some());
-    let agg = dir.aggregate_diagnostic(64);
-    assert_eq!(agg.scratch_peak_bytes, 64);
+    // Honest null, not silent 0.
+    assert!(v[0].get("scratch_peak_bytes").unwrap().is_null());
+    let (rows_m, agg) = dir.census_sample(Some(64));
+    assert_eq!(rows_m[0].scratch_peak_bytes, Some(64));
+    assert_eq!(agg.scratch_peak_bytes, Some(64));
     assert!(agg.duplicate_nested_payload_bytes > 0);
+    assert_eq!(
+        agg.duplicate_nested_payload_bytes,
+        rows_m
+            .iter()
+            .map(|r| r.duplicate_nested_payload_bytes)
+            .sum::<usize>()
+    );
 }
 
 /// CX1: two owners, identical widgets → one unique body, positive savings.
@@ -311,7 +326,7 @@ fn cx1_two_owners_identical_widgets_savings() {
         (b.widgets_arc(), empty_s, empty_l),
     ];
     let g = inst.registry().lock().unwrap();
-    let acct = account_allocations_arcs(&holders, &g, 0);
+    let acct = account_allocations_arcs(&holders, &g, None);
     assert_eq!(acct.unique_body_count, 1);
     assert!(acct.duplicate_nested_payload_bytes > 0);
 }
@@ -403,14 +418,125 @@ fn cx6_account_has_capacity_headers_not_rss_claims() {
         (b.widgets_arc(), empty_s, empty_l),
     ];
     let g = inst.registry().lock().unwrap();
-    let acct: AllocationAccount = account_allocations_arcs(&holders, &g, 128);
+    let acct: AllocationAccount = account_allocations_arcs(&holders, &g, Some(128));
     // Capacity-aware unique payload (widgets_payload_bytes_vec uses capacity).
     assert!(acct.unique_body_payload_bytes >= 3 * std::mem::size_of::<WidgetView>());
     assert!(acct.arc_header_bytes > 0);
-    assert_eq!(acct.scratch_peak_bytes, 128);
+    assert_eq!(acct.scratch_peak_bytes, Some(128));
     let json = serde_json::to_value(&acct).unwrap();
     assert!(json.get("rss").is_none());
     assert!(json.get("unique_body_payload_bytes").is_some());
     assert!(json.get("arc_header_bytes").is_some());
     assert!(json.get("weak_slot_bytes").is_some());
+    assert_eq!(json.get("scratch_peak_bytes").unwrap().as_u64(), Some(128));
+}
+
+/// Two distinct bodies with different capacities → zero duplicate payload.
+#[test]
+fn census_two_distinct_bodies_zero_duplicate_payload() {
+    let inst = SlotDedupInstance::new();
+    let (mut a, mut b) = attach_pair(&inst);
+    let mut body_a = Vec::with_capacity(8);
+    body_a.push(w(1));
+    let mut body_b = Vec::with_capacity(64);
+    body_b.push(w(2));
+    put_widgets(&mut a, body_a);
+    put_widgets(&mut b, body_b);
+    a.intern_widgets_for_test();
+    b.intern_widgets_for_test();
+    assert!(!Arc::ptr_eq(&a.widgets_arc(), &b.widgets_arc()));
+
+    let g = inst.registry().lock().unwrap();
+    let acct = account_registry_live(&g, None, Some(g.counters()));
+    let p_a = widgets_payload_bytes_vec(a.widgets_arc().as_ref());
+    let p_b = widgets_payload_bytes_vec(b.widgets_arc().as_ref());
+    assert_ne!(p_a, p_b, "fixture requires asymmetric capacities");
+    // Only widgets published: two unique widget bodies.
+    assert_eq!(g.unique_widget_bodies().len(), 2);
+    assert_eq!(acct.unique_body_count, 2);
+    assert_eq!(acct.unique_body_payload_bytes, p_a + p_b);
+    assert_eq!(acct.old_per_owner_payload_bytes, p_a + p_b);
+    assert_eq!(acct.duplicate_nested_payload_bytes, 0);
+    assert_eq!(acct.live_owner_count, 2);
+    assert_eq!(acct.scratch_peak_bytes, None);
+}
+
+/// Shared + distinct three-owner case: exact private / unique / duplicate math.
+#[test]
+fn census_three_owners_shared_plus_distinct_exact() {
+    let inst = SlotDedupInstance::new();
+    let mut a = GameSnapshot::new();
+    let mut b = GameSnapshot::new();
+    let mut c = GameSnapshot::new();
+    a.attach_dedup(inst.attach());
+    b.attach_dedup(inst.attach());
+    c.attach_dedup(inst.attach());
+    let shared = vec![w(1), w(2)];
+    put_widgets(&mut a, shared.clone());
+    put_widgets(&mut b, shared);
+    put_widgets(&mut c, vec![w(9)]);
+    a.intern_widgets_for_test();
+    b.intern_widgets_for_test();
+    c.intern_widgets_for_test();
+    assert!(Arc::ptr_eq(&a.widgets_arc(), &b.widgets_arc()));
+    assert!(!Arc::ptr_eq(&a.widgets_arc(), &c.widgets_arc()));
+
+    let p_shared = widgets_payload_bytes_vec(a.widgets_arc().as_ref());
+    let p_div = widgets_payload_bytes_vec(c.widgets_arc().as_ref());
+    let g = inst.registry().lock().unwrap();
+    let acct = account_registry_live(&g, Some(32), Some(g.counters()));
+    assert_eq!(acct.live_owner_count, 3);
+    assert_eq!(acct.unique_body_count, 2);
+    assert_eq!(acct.unique_body_payload_bytes, p_shared + p_div);
+    // Private counterfactual: shared body × 2 owners + distinct × 1.
+    assert_eq!(acct.old_per_owner_payload_bytes, p_shared * 2 + p_div);
+    assert_eq!(acct.duplicate_nested_payload_bytes, p_shared);
+    assert_eq!(acct.scratch_peak_bytes, Some(32));
+}
+
+/// Dropped cursor / dead weak cleanup: census follows real remaining owners only.
+#[test]
+fn census_dropped_cursor_and_dead_weak_cleanup() {
+    let inst = SlotDedupInstance::new();
+    let mut a = GameSnapshot::new();
+    let mut b = GameSnapshot::new();
+    a.attach_dedup(inst.attach());
+    b.attach_dedup(inst.attach());
+    put_widgets(&mut a, vec![w(1); 4]);
+    put_widgets(&mut b, vec![w(1); 4]);
+    a.intern_widgets_for_test();
+    b.intern_widgets_for_test();
+    assert!(Arc::ptr_eq(&a.widgets_arc(), &b.widgets_arc()));
+    let p = widgets_payload_bytes_vec(a.widgets_arc().as_ref());
+    {
+        let g = inst.registry().lock().unwrap();
+        let before = account_registry_live(&g, None, None);
+        assert_eq!(before.live_owner_count, 2);
+        assert_eq!(before.unique_body_count, 1);
+        assert_eq!(before.old_per_owner_payload_bytes, p * 2);
+        assert_eq!(before.duplicate_nested_payload_bytes, p);
+    }
+    // Drop owner a (cursor unregister on GameSnapshot drop).
+    drop(a);
+    {
+        let g = inst.registry().lock().unwrap();
+        let after = account_registry_live(&g, None, None);
+        assert_eq!(after.live_owner_count, 1);
+        assert_eq!(after.unique_body_count, 1);
+        assert_eq!(after.unique_body_payload_bytes, p);
+        assert_eq!(after.old_per_owner_payload_bytes, p);
+        assert_eq!(after.duplicate_nested_payload_bytes, 0);
+    }
+    // Drop last owner body: dead weaks must not invent owners or payload.
+    drop(b);
+    {
+        let g = inst.registry().lock().unwrap();
+        let empty = account_registry_live(&g, None, None);
+        assert_eq!(empty.live_owner_count, 0);
+        assert_eq!(empty.unique_body_count, 0);
+        assert_eq!(empty.unique_body_payload_bytes, 0);
+        assert_eq!(empty.old_per_owner_payload_bytes, 0);
+        assert_eq!(empty.duplicate_nested_payload_bytes, 0);
+        assert!(g.unique_widget_bodies().is_empty());
+    }
 }

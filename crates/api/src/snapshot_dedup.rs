@@ -69,13 +69,16 @@ impl DedupCounters {
 /// Arc header uses the real `ArcInner` layout estimate (strong + weak + data).
 /// Weak slots are counted once per live cursor registration, not double-counted
 /// against payload.
+///
+/// `scratch_peak_bytes` is `None` when unmeasured — never a silent `0` stand-in.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 pub struct AllocationAccount {
     pub old_per_owner_payload_bytes: usize,
     pub unique_body_payload_bytes: usize,
     /// Sum of unique payloads replicated once per holder that would own a private copy.
     pub duplicate_nested_payload_bytes: usize,
-    pub scratch_peak_bytes: usize,
+    /// `None` serializes as JSON null (unmeasured — never a silent 0).
+    pub scratch_peak_bytes: Option<usize>,
     pub registry_metadata_bytes: usize,
     pub live_owner_count: usize,
     pub unique_body_count: usize,
@@ -600,7 +603,7 @@ pub fn account_allocations_arcs(
         Arc<Vec<LocView>>,
     )],
     reg: &SlotFamilyRegistry,
-    scratch_peak_bytes: usize,
+    scratch_peak_bytes: Option<usize>,
 ) -> AllocationAccount {
     account_allocations_arcs_with_counters(holders, reg, scratch_peak_bytes, None)
 }
@@ -613,7 +616,7 @@ pub fn account_allocations_arcs_with_counters(
         Arc<Vec<LocView>>,
     )],
     reg: &SlotFamilyRegistry,
-    scratch_peak_bytes: usize,
+    scratch_peak_bytes: Option<usize>,
     counters: Option<&DedupCounters>,
 ) -> AllocationAccount {
     let mut old_private = 0usize;
@@ -685,49 +688,118 @@ pub fn account_allocations_arcs_with_counters(
     acct
 }
 
-/// Account live unique bodies from a registry without holder arcs (uses
-/// strong_count on each unique body as the would-be private replication factor).
+/// Account from one locked registry snapshot of **real registered owners**.
+///
+/// Upgrades each cursor's family weaks once, counts unique payload once per
+/// distinct body identity, and applies the private counterfactual once per
+/// registered owner that currently holds that identity. Does **not** invent
+/// owner rows from `Arc::strong_count` (measurement clones must not fabricate
+/// overlap).
 pub fn account_registry_live(
     reg: &SlotFamilyRegistry,
-    scratch_peak_bytes: usize,
+    scratch_peak_bytes: Option<usize>,
     counters: Option<&DedupCounters>,
 ) -> AllocationAccount {
-    let mut holders: Vec<(
-        Arc<Vec<WidgetView>>,
-        Arc<Vec<SideTabView>>,
-        Arc<Vec<LocView>>,
-    )> = Vec::new();
-    let empty_w = Arc::new(Vec::new());
-    let empty_s = Arc::new(Vec::new());
-    let empty_l = Arc::new(Vec::new());
-    // Synthesize holder rows from unique bodies × strong_count so old_private
-    // reflects live Arc clones without requiring external owner lists.
-    let w_bodies = reg.unique_widget_bodies();
-    let s_bodies = reg.unique_side_tab_bodies();
-    let l_bodies = reg.unique_loc_bodies();
-    let max_n = reg.live_owner_count().max(1);
-    for i in 0..max_n {
-        let w = w_bodies
-            .iter()
-            .find(|b| Arc::strong_count(b) > i)
-            .cloned()
-            .unwrap_or_else(|| Arc::clone(&empty_w));
-        let s = s_bodies
-            .iter()
-            .find(|b| Arc::strong_count(b) > i)
-            .cloned()
-            .unwrap_or_else(|| Arc::clone(&empty_s));
-        let l = l_bodies
-            .iter()
-            .find(|b| Arc::strong_count(b) > i)
-            .cloned()
-            .unwrap_or_else(|| Arc::clone(&empty_l));
-        holders.push((w, s, l));
+    // One snapshot: upgrade each registered cursor's weaks exactly once.
+    let mut owner_w: Vec<Option<Arc<Vec<WidgetView>>>> = Vec::with_capacity(reg.cursors.len());
+    let mut owner_s: Vec<Option<Arc<Vec<SideTabView>>>> = Vec::with_capacity(reg.cursors.len());
+    let mut owner_l: Vec<Option<Arc<Vec<LocView>>>> = Vec::with_capacity(reg.cursors.len());
+    for c in &reg.cursors {
+        owner_w.push(c.widgets.as_ref().and_then(Weak::upgrade));
+        owner_s.push(c.side_tabs.as_ref().and_then(Weak::upgrade));
+        owner_l.push(c.loc.as_ref().and_then(Weak::upgrade));
     }
-    if holders.is_empty() {
-        holders.push((empty_w, empty_s, empty_l));
+
+    let mut old_private = 0usize;
+    let mut unique = 0usize;
+    let mut unique_arc_count = 0usize;
+
+    let mut seen_w: Vec<Arc<Vec<WidgetView>>> = Vec::new();
+    for opt in &owner_w {
+        if let Some(body) = opt {
+            if !seen_w.iter().any(|e| Arc::ptr_eq(e, body)) {
+                seen_w.push(Arc::clone(body));
+            }
+        }
     }
-    account_allocations_arcs_with_counters(&holders, reg, scratch_peak_bytes, counters)
+    for body in &seen_w {
+        let payload = widgets_payload_bytes_vec(body.as_ref());
+        unique += payload;
+        unique_arc_count += 1;
+        let n = owner_w
+            .iter()
+            .filter(|o| o.as_ref().is_some_and(|a| Arc::ptr_eq(a, body)))
+            .count();
+        debug_assert!(n >= 1);
+        old_private += payload * n;
+    }
+
+    let mut seen_s: Vec<Arc<Vec<SideTabView>>> = Vec::new();
+    for opt in &owner_s {
+        if let Some(body) = opt {
+            if !seen_s.iter().any(|e| Arc::ptr_eq(e, body)) {
+                seen_s.push(Arc::clone(body));
+            }
+        }
+    }
+    for body in &seen_s {
+        let payload = side_tabs_payload_bytes_vec(body.as_ref());
+        unique += payload;
+        unique_arc_count += 1;
+        let n = owner_s
+            .iter()
+            .filter(|o| o.as_ref().is_some_and(|a| Arc::ptr_eq(a, body)))
+            .count();
+        debug_assert!(n >= 1);
+        old_private += payload * n;
+    }
+
+    let mut seen_l: Vec<Arc<Vec<LocView>>> = Vec::new();
+    for opt in &owner_l {
+        if let Some(body) = opt {
+            if !seen_l.iter().any(|e| Arc::ptr_eq(e, body)) {
+                seen_l.push(Arc::clone(body));
+            }
+        }
+    }
+    for body in &seen_l {
+        let payload = locs_payload_bytes_vec(body.as_ref());
+        unique += payload;
+        unique_arc_count += 1;
+        let n = owner_l
+            .iter()
+            .filter(|o| o.as_ref().is_some_and(|a| Arc::ptr_eq(a, body)))
+            .count();
+        debug_assert!(n >= 1);
+        old_private += payload * n;
+    }
+
+    let live = reg.live_owner_count();
+    let arc_header = unique_arc_count * arc_inner_header_bytes();
+    let weak_slot = live * 3 * std::mem::size_of::<Option<Weak<Vec<()>>>>();
+
+    let mut acct = AllocationAccount {
+        old_per_owner_payload_bytes: old_private,
+        unique_body_payload_bytes: unique,
+        duplicate_nested_payload_bytes: old_private.saturating_sub(unique),
+        scratch_peak_bytes,
+        registry_metadata_bytes: reg.metadata_bytes(),
+        live_owner_count: live,
+        unique_body_count: unique_arc_count,
+        arc_header_bytes: arc_header,
+        weak_slot_bytes: weak_slot,
+        ..AllocationAccount::default()
+    };
+    if let Some(c) = counters {
+        acct.equality_comparisons = c.equality_comparisons();
+        acct.equality_hits = c.equality_hits();
+        acct.equality_misses = c.equality_misses();
+        acct.walks = c.walks();
+        acct.quiet_skips = c.widgets.quiet_skips + c.side_tabs.quiet_skips + c.loc.quiet_skips;
+        acct.publishes =
+            c.widgets.publishes + c.side_tabs.publishes + c.loc.publishes;
+    }
+    acct
 }
 
 /// Serde-friendly family counter bag for memory-profile JSON.
@@ -763,7 +835,8 @@ pub struct SlotDedupDiagnostic {
     pub unique_body_payload_bytes: usize,
     pub duplicate_nested_payload_bytes: usize,
     pub old_per_owner_payload_bytes: usize,
-    pub scratch_peak_bytes: usize,
+    /// `None` serializes as JSON null when scratch peak was not measured.
+    pub scratch_peak_bytes: Option<usize>,
     pub registry_metadata_bytes: usize,
     pub arc_header_bytes: usize,
     pub weak_slot_bytes: usize,
@@ -779,8 +852,12 @@ pub struct SlotDedupDiagnostic {
 }
 
 impl SlotDedupInstance {
-    /// Bounded diagnostic sample for this instance (unique-body accounting only).
-    pub fn diagnostic(&self, slot_name: &str, scratch_peak_bytes: usize) -> SlotDedupDiagnostic {
+    /// Bounded diagnostic sample for this instance from one locked census.
+    pub fn diagnostic(
+        &self,
+        slot_name: &str,
+        scratch_peak_bytes: Option<usize>,
+    ) -> SlotDedupDiagnostic {
         let reg = self.registry.lock().unwrap();
         let acct = account_registry_live(&reg, scratch_peak_bytes, Some(reg.counters()));
         SlotDedupDiagnostic {
@@ -807,36 +884,63 @@ impl SlotDedupInstance {
     }
 }
 
+/// Fold diagnostic rows into one aggregate account (same census sample).
+pub fn aggregate_from_diagnostics(rows: &[SlotDedupDiagnostic]) -> AllocationAccount {
+    let mut agg = AllocationAccount::default();
+    let mut scratch_peak: Option<usize> = None;
+    for r in rows {
+        agg.old_per_owner_payload_bytes += r.old_per_owner_payload_bytes;
+        agg.unique_body_payload_bytes += r.unique_body_payload_bytes;
+        agg.duplicate_nested_payload_bytes += r.duplicate_nested_payload_bytes;
+        if let Some(s) = r.scratch_peak_bytes {
+            scratch_peak = Some(scratch_peak.map_or(s, |p| p.max(s)));
+        }
+        agg.registry_metadata_bytes += r.registry_metadata_bytes;
+        agg.live_owner_count += r.live_owner_count;
+        agg.unique_body_count += r.unique_body_count;
+        agg.arc_header_bytes += r.arc_header_bytes;
+        agg.weak_slot_bytes += r.weak_slot_bytes;
+        agg.equality_comparisons += r.equality_comparisons;
+        agg.equality_hits += r.equality_hits;
+        agg.equality_misses += r.equality_misses;
+        agg.walks += r.walks;
+        agg.quiet_skips += r.quiet_skips;
+        agg.publishes += r.publishes;
+    }
+    agg.scratch_peak_bytes = scratch_peak;
+    agg
+}
+
 impl SlotDedupDirectory {
     /// All live instances as diagnostic rows (memory-profile path).
-    pub fn diagnostics(&self, scratch_peak_bytes: usize) -> Vec<SlotDedupDiagnostic> {
+    ///
+    /// `scratch_peak_bytes`: pass a measured peak, or `None` when unmeasured
+    /// (published as omitted/null — never a silent zero).
+    pub fn diagnostics(&self, scratch_peak_bytes: Option<usize>) -> Vec<SlotDedupDiagnostic> {
         self.instances()
             .into_iter()
             .map(|(name, inst)| inst.diagnostic(&name, scratch_peak_bytes))
             .collect()
     }
 
-    /// Aggregate across the play-local directory for one sample line.
-    pub fn aggregate_diagnostic(&self, scratch_peak_bytes: usize) -> AllocationAccount {
+    /// Single census: slot rows + aggregate derived from those same rows.
+    ///
+    /// Prefer this over calling [`Self::diagnostics`] and
+    /// [`Self::aggregate_diagnostic`] separately (two independent samples).
+    pub fn census_sample(
+        &self,
+        scratch_peak_bytes: Option<usize>,
+    ) -> (Vec<SlotDedupDiagnostic>, AllocationAccount) {
         let rows = self.diagnostics(scratch_peak_bytes);
-        let mut agg = AllocationAccount::default();
-        for r in &rows {
-            agg.old_per_owner_payload_bytes += r.old_per_owner_payload_bytes;
-            agg.unique_body_payload_bytes += r.unique_body_payload_bytes;
-            agg.duplicate_nested_payload_bytes += r.duplicate_nested_payload_bytes;
-            agg.scratch_peak_bytes = agg.scratch_peak_bytes.max(r.scratch_peak_bytes);
-            agg.registry_metadata_bytes += r.registry_metadata_bytes;
-            agg.live_owner_count += r.live_owner_count;
-            agg.unique_body_count += r.unique_body_count;
-            agg.arc_header_bytes += r.arc_header_bytes;
-            agg.weak_slot_bytes += r.weak_slot_bytes;
-            agg.equality_comparisons += r.equality_comparisons;
-            agg.equality_hits += r.equality_hits;
-            agg.equality_misses += r.equality_misses;
-            agg.walks += r.walks;
-            agg.quiet_skips += r.quiet_skips;
-            agg.publishes += r.publishes;
-        }
-        agg
+        let agg = aggregate_from_diagnostics(&rows);
+        (rows, agg)
+    }
+
+    /// Aggregate across the play-local directory for one sample line.
+    ///
+    /// Re-samples the directory. Prefer [`Self::census_sample`] when slots and
+    /// aggregate must share one census.
+    pub fn aggregate_diagnostic(&self, scratch_peak_bytes: Option<usize>) -> AllocationAccount {
+        aggregate_from_diagnostics(&self.diagnostics(scratch_peak_bytes))
     }
 }

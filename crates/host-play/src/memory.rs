@@ -1100,9 +1100,11 @@ impl Run {
             {
                 // Bounded allocation-style diagnostics (not RSS). Play-local
                 // directory only — no process-global username table walk.
-                let slots = play.dedup_directory().diagnostics(0);
-                let aggregate = play.dedup_directory().aggregate_diagnostic(0);
+                // One census sample for both slots and aggregate. Scratch peak
+                // is unmeasured here: publish null + availability flag, not 0.
+                let (slots, aggregate) = play.dedup_directory().census_sample(None);
                 value["snapshot_dedup"] = serde_json::json!({
+                    "scratch_peak_available": false,
                     "slots": slots,
                     "aggregate": aggregate,
                 });
