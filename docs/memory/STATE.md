@@ -9,6 +9,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 04:57 UTC
+
+- Clean controls bbf26a0 passed local 6 tests and actual Grok 4.5 review
+  session 20260908_005228_fb5bd1. Root staged exact archive with all 11 file
+  hashes; native PowerShell AST and four role/mode privileged preflights passed.
+- Actual BotTest contract failed before any frontend launch: Copy-Item cannot
+  write runner into protected binary stage. Preserve that ACL boundary. New
+  corrective task t_44aafe61 gives privileged setup ownership of runner staging;
+  BotTest verifies staged hash. Also require prepare receipt identity checks.
+  Await implementation and same-card review before new native contract IDs.
+  Failure/preflight/transfer receipts: diagnostics/windows-tile-boxed-contract-bbf26a0.
+- CPU metadata correction t_8d302a38 actual implementer running; 137d2f9 remains
+  unintegrated pending correction and review. No Rust/native binary changes.
+  Clean comparison cells remain unlaunched; native contract task terminal exit1.
+
 ## Latest boundary — 2026-09-08 04:50 UTC
 
 - Clean controls t_10e7c701 secondreview rejected eee9087 receipt-path mismatch.
