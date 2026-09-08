@@ -11,6 +11,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 14:47 UTC
+
+- Baseline1430 actual native N16 focused-one is RUNNING: frontend15320,
+  start2026-09-08T14:37:56.4921342Z, scene2/slot0/capture-enabled verified in
+  fresh root-read PNGs;16running visible. Physical rect342,342,2440,1268.
+- Controller observe-start publication recordedUnix1788878471.963363,
+  mono67595.8889176. Root missed60..90s input window during UI setup/receipt
+  retrieval. Do not rerun or send catch-up input. Actual reviewed wrapper
+  fail-closed: zero helper spawns, explicit incomplete receipt, task exit1.
+  Native stimulus wrapper11816 completed; sourcehashc9743b45 unchanged.
+- Baseline remains running for scheduled decode/resource evidence. Input is
+  unavailable for this role; no matched input acceptance possible from this pair.
+  Preserve full run/failed-stimulus artifacts and execute predeclared candidate
+  once after baseline teardown, with input setup prepared earlier.
+- Operator is watching Windows machine and can provide qualitative visual
+  observations. Asked about sustained freeze/black/missing overlays; timing and
+  numerical acceptance remain instrument-derived. No new operator restrictions.
+
 ## Latest boundary — 2026-09-08 14:36 UTC
 
 - Combined source1cdc3fb BOUNDED ACCEPT actual Grok4.6/xai-oauth session
