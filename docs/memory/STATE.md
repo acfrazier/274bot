@@ -11,6 +11,25 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 19:51 UTC
+
+- Capture c94ed59 fixes ordinary960/capture1320 declarations and adds
+  child.wait(timeout960), but actual Grok4.5/xai session
+  20260908_154722_ef8db4 run856 REJECTED: timeout then graceful child exit0
+  can still pass. Root production-main offline mock probe reproduces exit0;
+  diagnostics/heaptrack-seam-root-review-c94ed59 preserves code/result.
+  Same-card t_314f3b20 seventh run is Luna corrective, live19:50. Require
+  timeout metadata and unconditional failure plus production-flow tests.
+- 289 sectionA203f176 REJECTED actual Grok4.5/xai session
+  20260908_154421_1182fe: primary welcome650/655 condition reversed,
+  component.id versus layer_id, report-state conditional mismatch, missing
+  decode/apply/publication result. Root confirmed primaryJava3159-3183;
+  t_358c02ad same-card Luna correction live19:47. No later sections/live.
+- Root prepared run-owner-capture.py under /tmp/274bot-tui-calibration-c0709ab;
+  it gates reviewed manifest/native-smoke/tests, frozen hashes, fresh server,
+  exact960+360 spec, unique output and sole attempt. Root scripts py_compile
+  PASS. No tooling overlay or game capture has occurred.
+
 ## Latest boundary — 2026-09-08 19:40 UTC
 
 - Capture correction4aae8cd is in actual Grok4.5/xai review, session
