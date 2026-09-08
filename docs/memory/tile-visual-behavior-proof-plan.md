@@ -86,11 +86,21 @@ selects `run.focus_index()` and immediately reapplies
 `memory_draw_policy` (`crates/panel/src/session.rs` ~1411–1420). The policy
 also writes `renderer=true` and the selected/per-slot draw bits
 (`crates/panel/src/focus.rs` ~88–140). Consequently, launching
-`run_diagnostic.py ... --focused-one` and then clicking another rail slot, or
-unchecking the renderer, is not a valid G2/G3 procedure: the next UI frame can
-select slot 0 and restore the requested policy. The raster buttons are real
-controls (`app.rs` ~3127–3140), but they are not durable against this memory
-loop.
+`run_diagnostic.py ... --focused-one` and then clicking another rail slot is not
+a valid G2/G3 procedure: the next UI frame can select slot 0 and restore the
+requested focus/draw policy. The raster controls need a more precise split.
+Raster `Off` calls `set_renderer(false)` through `set_focused_raster`
+(`crates/panel/src/session.rs` ~2271–2289, ~2704–2721), but
+`memory_draw_policy` writes `f.renderer=true` and the per-slot renderer bits
+every frame (`crates/panel/src/focus.rs` ~93–140), so an Off/checkbox draw
+change is undone by the memory loop. In contrast, Raster `Gpu`/`Cpu` also set
+the focused slot's `prefer_cpu` latch (`session.rs` ~2718–2721); the shown
+`memory_focus`/`memory_draw_policy` path does not rewrite that latch, so the
+backend preference may persist. That persistence does not make a manual focus
+switch or draw-policy override valid: `memory_focus` still reselects
+`run.focus_index()` and reapplies the policy each frame. The raster buttons are
+real controls (`app.rs` ~3127–3140), but only this source-grounded distinction
+should be used when explaining why memory `focused-one` is not a G2/G3 harness.
 
 There is one existing non-memory N=2 path that does not call `memory_focus`:
 the headed `null_raster` harness. Its exact setup is
