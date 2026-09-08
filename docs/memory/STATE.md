@@ -11,6 +11,30 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 21:25 UTC
+
+- Grok 4.5 approved `378e634` on task `t_2aba75a5`, actual session
+  `20260908_170931_3239c3`. Root staged the exact hash-verified tooling on Concord.
+  All 21 native tests passed, including Linux RSS/AS tests; persistent native
+  saved-smoke receipts and every output hash also verified.
+- The sole production replay then FAILED at the unchanged 180-second CPU guard
+  in raw pass 1. Child 2326 peak RSS was 90357760 bytes. Runner2325 returned1,
+  killed/reaped the child, and both were verified absent. Only `failure.json`
+  remains; no owner ranking or full raw hash/equivalence verification completed.
+  This was parser CPU exhaustion, not a memory shortage. No retry or cap increase.
+- Result/report JSON at `6bee87a`:
+  `heaptrack-owner-replay-native-result.md` and `.json`. The 41-file hash-verified
+  native export is in `diagnostics/replay-native-stage-378e634-preparation/native-evidence`.
+  The original capture still failed its raw-size guard; no new capture occurred.
+- Released `t_491f8993` to configured Astra/orch for small-local-fixture throughput
+  diagnosis and a concrete bounded fix design, followed by same-card Grok review.
+  It must measure the actual guarded parser, preserve every correctness/resource
+  invariant, audit the failure evidence and distinguish local timing from native
+  capacity. No production retry, remote work or replacement implementation yet.
+  Root releases further implementation only after the design review.
+- All broader memory-campaign acceptance gates remain open. Windows is available,
+  with Sunshine newly running; this replay did not use Windows/Hyper-V.
+
 ## Latest boundary — 2026-09-08 21:10 UTC
 
 - Formal saved-trace replay is implemented at `378e634b103d525aef33b86d22e8238fa1bddc79`.
