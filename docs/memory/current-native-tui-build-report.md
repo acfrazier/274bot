@@ -31,20 +31,39 @@ boot `08c031f9-c44f-42e5-ac32-821bbdec7759`, no pending reboot marker, SSH on
 22111, and Concord PID 726/start `linux_proc_start_ticks:1761`. All 688 fixture
 files match the retained manifest. Loopback ports 80/43594/8898 listen; HTTP
 CRC returns the same 40 bytes as before reboot. Old PID 152004 is historical.
-Native ldd resolves every staged executable dependency. No bot cell has run.
+Native ldd resolves every staged executable dependency. The sole calibration
+cell subsequently completed as recorded below.
 
 Controller bf05cb1 passed Grok 4.5/xai-oauth session
 `20260908_120556_cf96a2`, but its native Python suite subsequently failed one
 of 17 tests: the guard test patched a module function after the constructor
 had captured it as a default parameter. The Mac pass depended on missing
 /proc, so it did not establish deterministic guard cancellation. Corrective
-card t_31bad671 owns that test proof; live release remains held pending review
-and native rerun. The actual no-launch controller preflight passes on the VPS.
+card t_31bad671 delivered correction 94675d1, approved by actual Grok 4.5
+session `20260908_121357_334dfc` and integrated as d41fe28. The native suite
+then passed all 17 tests. Two direct managed cleanup tests separately passed
+on the VPS, establishing owned process termination. The original failed log
+remains preserved; the early short-child test alone is not termination proof.
 
 Raw artifacts are retained under primary `diagnostics/current-tui-calibration-build-c0709ab/`:
 29-file verified original build archive, fixture-bca8476-proof, the initial
 failed controller test log, and VPS staging receipt. VPS preparations are in
 `/home/acfrazier/274bot-campaign/calibration-c0709ab-incoming/`; frozen checkout
-is `workspace-c0709ab/host`. Build manifest explicitly retains pending test
-qualification. No saving, absolute budget, lifecycle, or final campaign gate
-is accepted by this report.
+is `workspace-c0709ab/host`. The retained original build manifest predates
+completed test qualification; subsequent native logs supply the results above.
+
+The sole TUI N16 calibration `current-tui-n16-1616` completed with frontend
+and controller exit 0, all 16 slots qualified at both phase boundaries, and
+49–82 successful steal gains per slot. The observed phase lasted 600.043 s;
+580 resource samples bracket 598.912 s. Raw steady median RSS was 520.779 MiB,
+native peak RSS 597.957 MiB, and mean CPU 0.561746 cores. Steady RSS and CPU
+exceed the respective 512 MiB and 0.5-core working budgets.
+
+The verified 93-file archive is preserved under
+`diagnostics/current-tui-n16-1616/current-tui-n16-1616-final`, SHA256
+`7612191cfe88f61303e1d0409952032a552c53ff87370f90b03fd4d17a2941c4`.
+The original native reader rejected the explicit empty frontend-process
+observation; correction t_17321283 is under review and will be replayed against
+these same artifacts. Raw files and original rejected outputs remain unchanged.
+No matched saving, absolute budget, lifecycle, or final campaign gate is accepted.
+Profile-off cadence/latency and instrumentation overhead remain unmeasured.
