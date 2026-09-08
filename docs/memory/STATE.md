@@ -11,6 +11,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 13:55 UTC
+
+- Controller a522e02 corrects the receipt ordering and is under same-card
+  Grok4.5 review; not integrated yet. The first contract check no longer needs
+  a fabricated prepare receipt.
+- Sampler46fbd53 rejected by Grok4.5 for fabricated missing CPU values,
+  first-sample summaries, omitted visual binding gates, vacuous loss test,
+  pipe deadlock risk and envelope mismatch. Corrective Luna run3 active.
+- Root independently reproduced Windows -File array binding loss with an inert
+  stub (rect received one element, point one element) and pipe-drain liveness
+  failure with an inert subprocess. No frontend/input execution. Evidence in
+  diagnostics/windows-cohort-stimulus-root-probes; same-card comment records
+  these plus required bounded cleanup and failure artifact preservation.
+- All native build/provenance proof remains valid. No matched run launched.
+
 ## Latest boundary — 2026-09-08 13:50 UTC
 
 - Grok4.5 rejected controls1c2d8bd, independently confirming the circular
