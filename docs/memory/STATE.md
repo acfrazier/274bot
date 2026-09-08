@@ -9,6 +9,25 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 10:14 UTC
+
+- Publisher t_5992fd7a first draft reclaimed by root after live source review:
+  begin_armed sampled START before OPT_IN=true and its test explicitly expected
+  disabled-at-START. The producer fast path returns before locking, so the
+  claimed lock protection did not close the activation gap. Dirty work preserved;
+  same-card correction specifies enable-before-sample under lock, safe rollback,
+  and real concurrent producer/barrier regression. No integration or approval.
+- NEW bounded input trace t_fedf29c8 actual implementer run started10:13 UTC,
+  isolated .worktrees/panel-input-seam-trace branch codex/panel-input-seam-trace,
+  basee11c70c plus root-only STATE16bf32e; client3456edc. Observe native arrow,
+  ImGui/hover/capture/channel/drain, actual metric identity/admission/bind/present
+  under existing BOT_DEBUG opt-in, bounded records and explicit saturation.
+  Source diagnostic only, no guessed behavior fix or native launch. Same-card
+  Grok review and root integration/native proof remain prerequisites.
+- Windows remains idle; input0942 zero coverage remains unresolved. Cohort
+  reader waits for a frozen reviewed publisher schema. Full budgets, latency,
+  lifecycle/scaling/final matrix and whole-branch Grok remain incomplete.
+
 ## Latest boundary — 2026-09-08 10:08 UTC
 
 - Missing-generation correction9aa3e38 APPROVED t_d0facd8d actualGrok4.5/
