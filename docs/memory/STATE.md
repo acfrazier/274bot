@@ -9,6 +9,36 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 08:10 UTC
+
+- Visual0742 session normally closed; no native frontend. Root verified all78
+  archive files, wrote38693c6 report/receipt; t_da614000 actual reviewer running.
+  Sixteen PNGs directly read. Distinct Test Lumbridge vs Test2 tutorial scenes
+  restore on focus switch; none/GPU/CPU UI round trips restore scene/minimap.
+  Scope is qualitative, not full cadence/counter/lifecycle/G1 acceptance.
+  Child exit code0742 was null; supervisor0 does not replace it. Preserved.
+- Burst helper a6b3632 APPROVED actual Grok4.5/xai-oauth
+  20260908_035655_c2d328, then native PS5.1 AST0/C#compile passed, hashc09639cf.
+  Corrected List.ToArray, frame start/end times, label collision and postcopy
+  identity/bounds/foreground guards. Native run succeeded as a capture tool.
+- NEW0800 null_raster PID10036 start08:01:35.5849899UTC, retained process handle,
+  normal close08:06:00.3101890UTC with childexit0; final nofrontends/builderOff0.
+  Burst250frames08:03:48.6900835..08:04:08.0833567UTC; native trigger task
+  actually started08:04:12UTC. FAILED synchronization: no G1 freeze proof.
+  Do not infer it from capture completion, OCR or later teleport screenshot.
+  Native task LastRunTime separately verified08:09:51UTC. Next control must
+  pre-arm trigger inside Windows to wait on fresh ready marker, not rely on
+  a second root tool call within short burst. No corrected attempt launched.
+- Both0800 archives preserved and all528 union manifest files/250 frame hashes
+  verified. Session tarb7c68f10, burst tar043b7cfb, manifest5fad8d36. Local
+  diagnostics/windows-visual-proof-nullraster-20260908-0800 plus -burst.tar.gz.
+  windows-nullraster-burst-0800-attempt.json records exact failure and limits.
+- Reader t_02027ed2 e852262 rejected round3 (headless malformed/epoch checks,
+  pending type, old/new archive comparison); same-card Luna correction active.
+  No reader integration. Root focused RSS claim remains parked (ad5babf).
+  G1/G4 duringfreeze, remaining fullvisual/cadence, fine/input/calibration,
+  lifecycle/scaling/absolute targets and final whole-Grok still pending.
+
 ## Latest boundary — 2026-09-08 07:52 UTC
 
 - Longer focused analysis 37aca9a APPROVED actual Grok4.5/xai-oauth session

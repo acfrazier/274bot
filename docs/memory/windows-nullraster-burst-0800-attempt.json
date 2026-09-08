@@ -1,0 +1,44 @@
+{
+  "schema": "native-nullraster-burst-attempt-root-v1",
+  "status": "failed_trigger_capture_synchronization",
+  "capture_helper_commit": "a6b363257bc5ebcbf729f947885403a0ac28b0e2",
+  "capture_helper_native_sha256": "c09639cf3f94dcdadb276eb9a4b0256c81e4b988207b8d748d636c9e9b7ba181",
+  "native_ps_version": "5.1.26100.9168",
+  "native_ast_errors": 0,
+  "native_csharp_compiled": true,
+  "review_session": "20260908_035655_c2d328",
+  "actual_review_model": "grok-4.5",
+  "actual_review_provider": "xai-oauth",
+  "session_archive_sha256": "b7c68f10fc32ce5e50d1113a49a5b3966d4e90d399569e4ac8337bd91323241e",
+  "burst_archive_sha256": "043b7cfb118785fe83b3266e59f54f73a45b89be2258a7e9f7b2e799add3b210",
+  "manifest_sha256": "5fad8d36e2577c5e84527d6caad19a2f7d82094f06c74e7a43d1dc3ba23195e2",
+  "verified_union_manifest_files": 528,
+  "verified_frame_hashes": 250,
+  "burst_start_utc": "2026-09-08T08:03:48.6900835Z",
+  "burst_end_utc": "2026-09-08T08:04:08.0833567Z",
+  "actual_capture_duration_ms": 19393.2732,
+  "trigger_task_last_run_utc": "2026-09-08T08:04:12.0000000Z",
+  "trigger_task_result": 0,
+  "trigger_task_info_observed_utc": "2026-09-08T08:09:51.2728527Z",
+  "child_terminal": {
+    "utc": "2026-09-08T08:06:00.3101890Z",
+    "exitCode": 0
+  },
+  "final_frontends": [],
+  "final_builder": {
+    "Name": "274bot-builder",
+    "State": 3,
+    "MemoryAssigned": 0
+  },
+  "root_directly_inspected": [
+    "initial-scene2-0800.png",
+    "test2-before-rebuild.png",
+    "test2-rebuild-frame-0001-20260908T080348701Z.png",
+    "trigger-test2-lumbridge.png"
+  ],
+  "ocr_scanned_frames": 250,
+  "ocr_role": "selection aid only, not visual gate proof",
+  "scene1_freeze_proven": false,
+  "performance_acceptance": false,
+  "next_control_change": "Pre-arm a bounded native trigger task to wait for a unique fresh burst-ready marker, then click the screenshot-verified target while capture remains active; record actual before/after input timestamps. Do not rely on a second orchestrator tool call inside the burst duration."
+}
