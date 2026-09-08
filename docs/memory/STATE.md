@@ -11,6 +11,30 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 21:44 UTC
+
+- Throughput diagnosis/design `faf6985` is approved by actual Grok 4.5 / xai-oauth,
+  session `20260908_173835_879f77`, task `t_491f8993`. Local guarded measurements
+  found Python guard/numeric changes insufficient to justify a production retry.
+  A compiled Rust child is a reviewed proposal, not yet a measured fast parser.
+- Root released `t_98f58617` to configured Astra/orch for the complete native
+  implementation, Python supervisor integration, all 21-test differential parity,
+  migration tests and a fixture-only qualification driver. Own isolated diagnostic
+  package only; no host/client code or production trace reads. Same-card review
+  is required before Linux build/qualification and any separately decided retry.
+  All limits and the failed capture/replay evidence remain unchanged.
+- Native build prerequisite remains open: Concord has C/C++ but no Rust toolchain.
+  Root will select a compatible Linux builder or toolchain stage and verify source,
+  lockfile, compiler and executable provenance; no Mac binary is a Linux artifact.
+  Windows/Hyper-V are available but have not been started for this work.
+- Root saved a fresh post-failure observation at 21:39 UTC in
+  `diagnostics/replay-native-stage-378e634-preparation/native-post-failure-readback.json`:
+  both old processes absent, only unchanged `failure.json` retained. This is a new
+  observation, not a backdated termination receipt or a rewritten original export.
+- Separate 289 C `4a2f5aa` passed actual Grok 4.5 review. Actor section D is running
+  as `t_115f2843` under Astra; its complete-frame staging and actor-mask tests
+  precede remaining sections E-H and final live/whole-branch verification.
+
 ## Latest boundary — 2026-09-08 21:25 UTC
 
 - Grok 4.5 approved `378e634` on task `t_2aba75a5`, actual session
