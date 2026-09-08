@@ -9,6 +9,28 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 00:51 UTC
+
+- cdf65b3 provenance correction approved actual Grok4.5 t_92c98e27. Root
+  transferred/staged seven hashverified controls at00:48:46, archive SHA256
+  bdc98cdb96a3fcc333b9e254f0e8e89e60943eb7e16b850205f842f40d509467.
+- First fresh baseline-focused-one-20260908-0049 launched controller00:49:23,
+  FAILED exit3 BEFORE any bot launched: spec.index missing. Native polling
+  script also has an extra parenthesis syntax error. Shape readiness passed
+  earlier but did not exercise complete managed spec; no memory sample exists.
+  Failed archive preserved native ProgramData/274bot-Test/lazy-upload-raw and
+  copied locally docs/memory/diagnostics/windows-lazy-upload-20260908, all listed
+  hashes verified. Native runtime95-test receipts also copied there.
+- Corrective t_682585b8 Luna run524 is active. Requires complete actual spec
+  validation for all four cells, real parser/build checks and native PowerShell
+  ParseFile check script for all controls. Await same-card Grok review then
+  root native no-launch contract check before new uniquely named cell. No
+  unchanged retry; old staged controls and failed cell stay immutable.
+- Real-frame tests a7e96dd failed Grok4.5 review t_d5a87488: absent cross-feature
+  transcript comparison and side-tab/loc mutation/stale histories; report
+  overclaimed closure. Source helper extractions judged behavior-preserving.
+  Same-card Composer correction run523 active, no integration accepted yet.
+
 ## Latest boundary — 2026-09-08 00:47 UTC
 
 - Root restored omitted strict-reader producer fields in cdf65b3: conditions
