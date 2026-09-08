@@ -8,13 +8,17 @@ assert os.environ["USERNAME"] == "BotTest"
 root = pathlib.Path(os.environ["TILE_CPU_HOST_ROOT"])
 sys.path.insert(0, str(root / "docs/memory"))
 import run_managed_cell as rmc
+import matched_evidence_adapter as mea
 contract_id = os.environ["TILE_CPU_CONTRACT_ID"]
 role = os.environ["TILE_CPU_BUILD_ROLE"]
 mode = os.environ["TILE_CPU_MODE"]
 target = os.environ["TILE_CPU_TARGET_CELL_ID"]
 assert contract_id == target + "-contractcheck"
 assert os.environ["TILE_CPU_CELL_ID"] == contract_id
-stage = pathlib.Path(r"C:/ProgramData/274bot-Test/renderer-owner-census-9268890" if role == "baseline" else r"C:/ProgramData/274bot-Test/tile-boxed-fb3589a")
+preflight_cell_id = os.environ["TILE_CPU_PREFLIGHT_CELL_ID"]
+assert preflight_cell_id == target
+default_stage = r"C:/ProgramData/274bot-Test/renderer-owner-census-9268890" if role == "baseline" else r"C:/ProgramData/274bot-Test/tile-boxed-fb3589a"
+stage = pathlib.Path(os.environ.get("TILE_CPU_STAGE_ROOT", default_stage))
 runner = stage / ("run-" + contract_id + ".py")
 checks = []
 def no_launch(argv):
@@ -30,6 +34,7 @@ def no_launch(argv):
     conditions = json.loads(pathlib.Path(spec["host_conditions_path"]).read_text())
     assert preflight["server_pid"] == spec["game_server_pid"]
     assert conditions["backend"] == "cpu_fallback"
+    assert mea._native_windows_conditions_complete(conditions), "Incomplete native conditions"
     checks.append({"id": target, "contract_cell_id": contract_id, "checked": True, "launched": False, "client_started": False, "cpu_intent": True, "gpu_completion": False, "server_pid": preflight["server_pid"], "native_conditions_complete": True})
     return 0
 rmc.main = no_launch
@@ -37,6 +42,8 @@ try:
     runpy.run_path(str(runner), run_name="__main__")
 except SystemExit as exc:
     assert exc.code == 0, exc.code
-out = pathlib.Path.home() / "274bot-runs" / ("tile-cpu-contract-" + contract_id + ".json")
+out_root = pathlib.Path(os.environ.get("TILE_CPU_RUNS_ROOT", pathlib.Path.home() / "274bot-runs"))
+out_root.mkdir(parents=True, exist_ok=True)
+out = out_root / ("tile-cpu-contract-" + contract_id + ".json")
 out.write_text(json.dumps({"kind":"no-launch CPU functional contract", "cell_id":target, "contract_id":contract_id, "checks":checks, "performance_acceptance":False, "functional_only":True}, indent=2))
 print(out.read_text())

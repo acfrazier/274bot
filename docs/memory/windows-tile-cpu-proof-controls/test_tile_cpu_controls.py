@@ -3,6 +3,9 @@ import pathlib
 import types
 import unittest
 import tempfile
+import json
+import os
+import runpy
 HERE = pathlib.Path(__file__).parent
 CONTROLLER = HERE / "run-tile-cpu-focused-one.py"
 class CpuControls(unittest.TestCase):
@@ -50,6 +53,88 @@ class CpuControls(unittest.TestCase):
         self.assertIn("rmc.require_argv_consistent_with_spec", source)
         self.assertIn("launched\": False", source)
         self.assertIn("except SystemExit as exc", source)
+        self.assertIn("_native_windows_conditions_complete", source)
+        self.assertIn("TILE_CPU_PREFLIGHT_CELL_ID", source)
+
+    def test_contract_execution_path_writes_distinct_receipt(self):
+        source = (HERE / "check-tile-cpu-contract.py").read_text()
+        stage = (HERE / "stage-contract-tile-cpu.ps1").read_text()
+        runner = (HERE / "run-contractcheck-tile-cpu.ps1").read_text()
+        self.assertIn("runpy.run_path", source)
+        self.assertIn("out.write_text", source)
+        self.assertIn('"launched": False', source)
+        self.assertIn('"functional_only":True', source)
+        self.assertIn("Copy-Item $source $destination", stage)
+        self.assertIn("Get-FileHash $checker", runner)
+        self.assertIn("$env:TILE_CPU_PREFLIGHT_CELL_ID=$CellId", runner)
+
+    def test_contract_executes_no_launch_and_writes_receipt(self):
+        import sys
+        sys.path.insert(0, str(HERE.parent))
+        import run_managed_cell as rmc
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            stage = root / "stage"
+            stage.mkdir()
+            runs = root / "runs"
+            spec_path = root / "spec.json"
+            conditions = {
+                "purpose": "CPU contract test", "platform": "Windows test", "user": "BotTest",
+                "builds_stopped_before_run": True, "terminal_transport_expected": False,
+                "panel_render_attribution": True, "backend": "cpu_fallback", "performance_acceptance": False,
+                "native_preflight": {"adapter": "test", "utc": "now", "consoleSessionId": 1,
+                    "vm": {"Name": "test", "State": "Off", "MemoryAssigned": 0},
+                    "quietServices": [{"Name": "test", "Status": "Stopped"}],
+                    "drivers": [{"Name": "test", "DriverVersion": "1", "PNPDeviceID": "test"}],
+                    "sessions": ["session"], "processes": [{"ProcessId": 1, "ParentProcessId": 2,
+                        "Name": "test", "SessionId": 1, "CreationDate": "now", "CommandLine": "test"}],
+                    "processLasso": {"running": False, "processes": []},
+                    "dxdiag": [{"cardName": "test", "driverVersion": "1"}],
+                    "server": {"ProcessId": 101, "Name": "node.exe", "CreationDate": "now"},
+                    "performanceAcceptance": False},
+            }
+            for name in ("binary", "manifest", "server", "nav", "flags", "catalog"):
+                (root / name).write_text("{}\n")
+            diag = ["panel", "1", "active", "--binary", str(root / "binary"), "--build-manifest", str(root / "manifest"),
+                    "--build-role", "reference", "--sustain", "--warmup", "30", "--observe", "120", "--focused-one",
+                    "--cpu-fallback", "--nav-captures", "--failure-capture", "--no-diagnostics", "--render-profile",
+                    "--scheduling-profile", "--responsiveness-profile", "--responsiveness-fine"]
+            spec = {"id": "baseline-focused-one-contractcheck", "index": 1, "kind": "diagnostic", "frontend": "panel",
+                    "binary": str(root / "binary"), "build_manifest": str(root / "manifest"),
+                    "server_identity_path": str(root / "server"), "host_conditions_path": str(root / "conditions"),
+                    "nav_pack": str(root / "nav"), "nav_flags": str(root / "flags"), "catalog_path": str(root / "catalog"),
+                    "build_role": "reference", "launcher_argv": [sys.executable, str(HERE.parent / "run_diagnostic.py"), *diag],
+                    "diagnostic_argv": diag, "game_server_pid": 101, "ambient_helpers": {"bootstrap": 202},
+                    "sampler_interval_s": 0.5, "max_wall_s": 900, "observe_s": 120, "warmup_s": 30,
+                    "teardown_grace_s": 60, "requested_backend": "cpu_fallback", "cpu_fallback": True,
+                    "cache_dir": str(root / "cache"), "unpack_root": str(root / "unpack")}
+            (root / "conditions").write_text(json.dumps(conditions))
+            (root / "cache").mkdir(); (root / "unpack").mkdir(); spec_path.write_text(json.dumps(spec))
+            (stage / "run-baseline-focused-one-contractcheck.py").write_text(
+                "import run_managed_cell as rmc, sys\nsys.exit(rmc.main([r'" + str(spec_path) + "']))\n")
+            env = {"USERNAME": "BotTest", "TILE_CPU_CONTRACT_ID": "baseline-focused-one-contractcheck",
+                   "TILE_CPU_TARGET_CELL_ID": "baseline-focused-one", "TILE_CPU_PREFLIGHT_CELL_ID": "baseline-focused-one",
+                   "TILE_CPU_BUILD_ROLE": "baseline", "TILE_CPU_MODE": "focused-one",
+                   "TILE_CPU_CELL_ID": "baseline-focused-one-contractcheck", "TILE_CPU_HOST_ROOT": str(HERE.parents[2]),
+                   "TILE_CPU_STAGE_ROOT": str(stage), "TILE_CPU_RUNS_ROOT": str(runs)}
+            old_env = os.environ.copy(); old_preflight = rmc.preflight
+            os.environ.update(env); rmc.preflight = lambda actual_spec, actual_args: {"server_pid": 101}
+            try:
+                runpy.run_path(str(HERE / "check-tile-cpu-contract.py"), run_name="__main__")
+            finally:
+                rmc.preflight = old_preflight; os.environ.clear(); os.environ.update(old_env)
+            receipt = json.loads((runs / "tile-cpu-contract-baseline-focused-one-contractcheck.json").read_text())
+            self.assertFalse(receipt["checks"][0]["launched"])
+            self.assertTrue(receipt["functional_only"])
+
+    def test_native_shape_is_fail_closed_and_cpu_attributed(self):
+        source = (HERE / "run-tile-cpu-focused-one.py").read_text()
+        preflight = (HERE / "preflight-tile-cpu.ps1").read_text()
+        contract = (HERE / "check-tile-cpu-contract.py").read_text()
+        for field in ("panel_render_attribution", "native_preflight", "processLasso", "dxdiag", "consoleSessionId", "quietServices", "drivers", "processes"):
+            self.assertIn(field, source + preflight)
+        self.assertIn("mea._native_windows_conditions_complete(conditions)", contract)
+        self.assertIn('conditions["backend"] == "cpu_fallback"', contract)
 
     def test_real_validate_spec_and_preflight_seam(self):
         import sys

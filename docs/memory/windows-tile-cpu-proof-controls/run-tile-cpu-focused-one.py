@@ -67,7 +67,9 @@ public = json.loads((server / "server-login-public.json").read_text(encoding="ut
 os.environ.update({"LIVE": "1", "BOT_TARGET": "local", "ENGINE_DIR": str(server), "LOGIN_RSAN": public["modulus_decimal"], "LOGIN_RSAE": public["exponent_decimal"], "RS2B0T": str(home / "274bot-workspaces/b4b686f/rs2b0t"), "NAV_PACK": str(home / ".274bot/274bot.navpack"), "NAV_FLAGS": str(home / ".274bot/274bot.navflags")})
 catalog = home / ".274bot/js-scripts.json"
 assert json.loads(catalog.read_text()) == [{"name": "trade_bot", "path": str(home / "274bot-workspaces/b4b686f/host/crates/script/tests/fixtures/trade_bot.ts")}]
-preflight = pathlib.Path(r"C:\ProgramData\274bot-Test\renderer-owner-census-9268890") / ("preflight-tile-cpu-" + cell_id + ".json")
+preflight_cell_id = os.environ.get("TILE_CPU_PREFLIGHT_CELL_ID", cell_id)
+assert preflight_cell_id.startswith(role + "-" + mode + "-")
+preflight = pathlib.Path(r"C:\ProgramData\274bot-Test\renderer-owner-census-9268890") / ("preflight-tile-cpu-" + preflight_cell_id + ".json")
 assert preflight.is_file(), "run paired CPU preflight first"
 preflight_record = json.loads(preflight.read_text(encoding="utf-8-sig"))
 manifest = out / "build-manifest.json"
@@ -77,7 +79,7 @@ side = {"commit": role_info["host_commit"], "branch": role_info["branch"], "buil
 dump(manifest, {role_info["manifest_side"]: side, "features": {"requested": "memory-profile-no-alloc", "locked": True, "allocation_counting": False, "allocator": "std::alloc::System"}, "binaries": {role_info["manifest_side"] + "_panel_play": {"path": str(binary), "sha256": sha(binary)}}, "nav": {"nav_pack": os.environ["NAV_PACK"], "nav_flags": os.environ["NAV_FLAGS"], "nav_pack_sha256": sha(os.environ["NAV_PACK"]), "nav_flags_sha256": sha(os.environ["NAV_FLAGS"])}, "catalog": {"js_scripts_json": str(catalog), "js_scripts_json_sha256": sha(catalog)}, "performance_acceptance": False, "functional_only": True})
 dump(server_id, {"pid": pid, "start_identity": sample["start_identity"], "launch": launch, "server_commit": "4c95f87efe00b068cadbd229d94736626907bd1a", "port_listen": 43594})
 fixture = {"world": "configured native active fixture", "loadout": "trade_bot catalog entry", "nav_pack": os.environ["NAV_PACK"], "nav_flags": os.environ["NAV_FLAGS"], "catalog_path": str(catalog), "cache_dir": str(server / "data/pack/client"), "unpack_root": str(home / ".274bot/unpack")}
-dump(conditions, {"purpose": "Native N1 CPU-fallback functional proof", "terminal_transport_expected": False, "platform": platform.platform(), "user": os.environ["USERNAME"], "role": role, "mode": mode, "cell_id": cell_id, "fixture": fixture, "backend": "cpu_fallback", "requested_backend": "cpu_fallback", "cpu_renderer_cadence": "configured/default", "performance_acceptance": False, "builds_stopped_before_run": True, "native_preflight": preflight_record, "checked_server": preflight_record["server"], "owner_census": False, "debug": False, "stack_logging": False, "counting": False})
+dump(conditions, {"purpose": "Native N1 CPU-fallback functional proof", "terminal_transport_expected": False, "panel_render_attribution": True, "platform": platform.platform(), "user": os.environ["USERNAME"], "role": role, "mode": mode, "cell_id": cell_id, "fixture": fixture, "backend": "cpu_fallback", "requested_backend": "cpu_fallback", "cpu_renderer_cadence": "configured/default", "performance_acceptance": False, "builds_stopped_before_run": True, "native_preflight": preflight_record, "checked_server": preflight_record["server"], "process_lasso": preflight_record["processLasso"], "dxdiag": preflight_record["dxdiag"], "owner_census": False, "debug": False, "stack_logging": False, "counting": False})
 diag = diagnostic_argv(binary, manifest, role_info["manifest_role"], mode)
 # Exercise the real parser seam, not a string-only assertion.
 args = rmc.parse_diagnostic_argv(diag)
