@@ -207,7 +207,11 @@ def _win_path(run_name: str, leaf: str = "samples.cohort.jsonl") -> str:
 class CohortReaderTests(unittest.TestCase):
     def _materialize(self, meta, records, *, n=None, generations=None):
         """Write a complete archived run. ``records[0].sidecar_path`` is rewritten
-        to a native Windows path ending in this run directory name."""
+        to a native Windows path ending in this run directory name.
+
+        Positive fixtures use a source-faithful observe + drain multi-sample
+        sequence with harness elapsed inside the qualification interval.
+        """
         td = tempfile.TemporaryDirectory()
         run = pathlib.Path(td.name)
         n = int(n if n is not None else meta.get("n", 1))
@@ -223,11 +227,15 @@ class CohortReaderTests(unittest.TestCase):
         )
 
         b = records[0]["boundaries"]
+        final_cursor = 0
+        for rec in records:
+            if isinstance(rec, dict) and rec.get("record") == "cohort-batch":
+                final_cursor = rec.get("next_cursor", final_cursor)
         ref_sample = {
             "present": True,
             "schema_version": 1,
             "sidecar_path": claimed,
-            "cursor": records[1].get("next_cursor", 0) if len(records) > 1 else 0,
+            "cursor": final_cursor,
             "tail_name": "DEFAULT_TAIL_NS",
             "boundaries": b,
             "terminal": None,
@@ -246,18 +254,29 @@ class CohortReaderTests(unittest.TestCase):
         ref_qual_end["phase_tag"] = "observe-end"
         ref_qual_end["observe_end_elapsed_s"] = 720.0
 
+        profile_rows = [
+            {"slot_id": sid, "generation": gens[sid], "ended": False}
+            for sid in ids
+        ]
+        # Observe mid-window sample + drain sample after observe-end mark.
+        # Both carry cohort refs; cursor matches emitted batch HWM.
         samples = [
             {
                 "phase": "observe",
-                "elapsed_s": 1.0,
+                "elapsed_s": 200.0,
                 "frontend": meta.get("frontend"),
                 "n": n,
-                "responsiveness_profile": [
-                    {"slot_id": sid, "generation": gens[sid], "ended": False}
-                    for sid in ids
-                ],
-                "cohort": ref_sample,
-            }
+                "responsiveness_profile": json.loads(json.dumps(profile_rows)),
+                "cohort": dict(ref_sample),
+            },
+            {
+                "phase": "drain",
+                "elapsed_s": 725.0,
+                "frontend": meta.get("frontend"),
+                "n": n,
+                "responsiveness_profile": json.loads(json.dumps(profile_rows)),
+                "cohort": dict(ref_sample),
+            },
         ]
         (run / "samples.jsonl").write_text(
             "\n".join(json.dumps(x) for x in samples) + "\n", encoding="utf-8"
@@ -636,13 +655,36 @@ class CohortReaderTests(unittest.TestCase):
         records = _build_records("PLACEHOLDER", n=n)
         td, run, samples = self._materialize(meta, records, n=n)
         try:
+            # Cohort-bearing profiles present but generation field stripped →
+            # not invented; empty profiles are separately sample_slot_disappeared.
+            for s in samples:
+                for row in s["responsiveness_profile"]:
+                    del row["generation"]
+            (run / "samples.jsonl").write_text(
+                "\n".join(json.dumps(x) for x in samples) + "\n"
+            )
+            result = cr.read_cohort(run, meta, samples, "decode")
+            self.assertEqual(result["reason"], "sample_slot_generation_malformed")
+        finally:
+            td.cleanup()
+
+    def test_empty_profile_all_samples_disappeared(self):
+        n = 1
+        meta = _meta(n=n)
+        records = _build_records("PLACEHOLDER", n=n)
+        td, run, samples = self._materialize(meta, records, n=n)
+        try:
             for s in samples:
                 s["responsiveness_profile"] = []
             (run / "samples.jsonl").write_text(
                 "\n".join(json.dumps(x) for x in samples) + "\n"
             )
             result = cr.read_cohort(run, meta, samples, "decode")
-            self.assertEqual(result["reason"], "sample_generations_missing")
+            self.assertEqual(result["status"], "unavailable")
+            self.assertIn(
+                result["reason"],
+                ("sample_slot_disappeared", "sample_generations_missing"),
+            )
         finally:
             td.cleanup()
 
@@ -952,6 +994,153 @@ class CohortReaderTests(unittest.TestCase):
             self.assertNotEqual(result.get("target_verdict"), "meet")
             self.assertEqual(result["status"], "unavailable")
             self.assertIn(result.get("reason"), ("overflow_bucket", "slot_p99_unavailable"))
+        finally:
+            td.cleanup()
+
+    # --- R2 provenance false-meet probes (must stay unavailable) ---
+
+    def test_r2_qual_fine_false_while_meta_true(self):
+        n = 1
+        meta = _meta(n=n)
+        records = _build_records("PLACEHOLDER", n=n)
+        td, run, samples = self._materialize(meta, records, n=n)
+        try:
+            qual_path = run / "samples.qualification.jsonl"
+            rows = [json.loads(line) for line in qual_path.read_text().splitlines() if line.strip()]
+            for row in rows:
+                row["settings"]["responsiveness_fine_enabled"] = False
+            qual_path.write_text("\n".join(json.dumps(x) for x in rows) + "\n")
+            result = cr.read_cohort(run, meta, samples, "decode")
+            self.assertEqual(result["status"], "unavailable")
+            self.assertEqual(result["reason"], "qualification_fine_disabled")
+            self.assertNotEqual(result.get("target_verdict"), "meet")
+        finally:
+            td.cleanup()
+
+    def test_r2_observe_end_qualification_missing(self):
+        n = 1
+        meta = _meta(n=n)
+        records = _build_records("PLACEHOLDER", n=n)
+        td, run, samples = self._materialize(meta, records, n=n)
+        try:
+            qual_path = run / "samples.qualification.jsonl"
+            rows = [json.loads(line) for line in qual_path.read_text().splitlines() if line.strip()]
+            rows = [r for r in rows if r.get("phase") != "observe-end"]
+            qual_path.write_text("\n".join(json.dumps(x) for x in rows) + "\n")
+            result = cr.read_cohort(run, meta, samples, "decode")
+            self.assertEqual(result["status"], "unavailable")
+            self.assertEqual(result["reason"], "qualification_observe_end_missing")
+            self.assertNotEqual(result.get("target_verdict"), "meet")
+        finally:
+            td.cleanup()
+
+    def test_r2_cohort_bearing_sample_ended_true(self):
+        n = 1
+        meta = _meta(n=n)
+        records = _build_records("PLACEHOLDER", n=n)
+        td, run, samples = self._materialize(meta, records, n=n)
+        try:
+            samples = json.loads(json.dumps(samples))
+            samples[0]["responsiveness_profile"][0]["ended"] = True
+            (run / "samples.jsonl").write_text(
+                "\n".join(json.dumps(x) for x in samples) + "\n"
+            )
+            result = cr.read_cohort(run, meta, samples, "decode")
+            self.assertEqual(result["status"], "unavailable")
+            self.assertEqual(result["reason"], "sample_slot_ended")
+            self.assertNotEqual(result.get("target_verdict"), "meet")
+        finally:
+            td.cleanup()
+
+    def test_r2_slot_disappearance_empty_profile(self):
+        n = 1
+        meta = _meta(n=n)
+        records = _build_records("PLACEHOLDER", n=n)
+        td, run, samples = self._materialize(meta, records, n=n)
+        try:
+            samples = json.loads(json.dumps(samples))
+            # Append another cohort-bearing sample with empty profile (disappearance).
+            extra = json.loads(json.dumps(samples[0]))
+            extra["elapsed_s"] = 300.0
+            extra["responsiveness_profile"] = []
+            full = samples + [extra]
+            (run / "samples.jsonl").write_text(
+                "\n".join(json.dumps(x) for x in full) + "\n"
+            )
+            result = cr.read_cohort(run, meta, full, "decode")
+            self.assertEqual(result["status"], "unavailable")
+            self.assertEqual(result["reason"], "sample_slot_disappeared")
+            self.assertNotEqual(result.get("target_verdict"), "meet")
+        finally:
+            td.cleanup()
+
+    def test_r2_forged_sample_cohort_cursor(self):
+        n = 1
+        meta = _meta(n=n)
+        records = _build_records("PLACEHOLDER", n=n)
+        td, run, samples = self._materialize(meta, records, n=n)
+        try:
+            samples = json.loads(json.dumps(samples))
+            samples[0]["cohort"]["cursor"] = 99999
+            (run / "samples.jsonl").write_text(
+                "\n".join(json.dumps(x) for x in samples) + "\n"
+            )
+            result = cr.read_cohort(run, meta, samples, "decode")
+            self.assertEqual(result["status"], "unavailable")
+            self.assertIn(
+                result["reason"],
+                ("sample_cursor_mismatch", "sample_cursor_hwm_mismatch"),
+            )
+            self.assertNotEqual(result.get("target_verdict"), "meet")
+        finally:
+            td.cleanup()
+
+    def test_r2_observe_end_profile_disabled(self):
+        n = 1
+        meta = _meta(n=n)
+        records = _build_records("PLACEHOLDER", n=n)
+        td, run, samples = self._materialize(meta, records, n=n)
+        try:
+            qual_path = run / "samples.qualification.jsonl"
+            rows = [json.loads(line) for line in qual_path.read_text().splitlines() if line.strip()]
+            for row in rows:
+                if row.get("phase") == "observe-end":
+                    row["settings"]["responsiveness_profile_enabled"] = False
+            qual_path.write_text("\n".join(json.dumps(x) for x in rows) + "\n")
+            result = cr.read_cohort(run, meta, samples, "decode")
+            self.assertEqual(result["status"], "unavailable")
+            # Settings disagree across boundaries, or explicit profile disabled.
+            self.assertIn(
+                result["reason"],
+                ("qualification_settings_disagree", "qualification_profile_disabled"),
+            )
+            self.assertNotEqual(result.get("target_verdict"), "meet")
+        finally:
+            td.cleanup()
+
+    def test_r2_interior_observe_missing_cohort_ref(self):
+        """Missing cohort on an interior observe row must not hide lifetime faults."""
+        n = 1
+        meta = _meta(n=n)
+        records = _build_records("PLACEHOLDER", n=n)
+        td, run, samples = self._materialize(meta, records, n=n)
+        try:
+            samples = json.loads(json.dumps(samples))
+            # Insert observe sample without cohort between good samples.
+            bare = {
+                "phase": "observe",
+                "elapsed_s": 400.0,
+                "frontend": meta.get("frontend"),
+                "n": n,
+                "responsiveness_profile": [],
+            }
+            full = [samples[0], bare, samples[1]]
+            (run / "samples.jsonl").write_text(
+                "\n".join(json.dumps(x) for x in full) + "\n"
+            )
+            result = cr.read_cohort(run, meta, full, "decode")
+            self.assertEqual(result["status"], "unavailable")
+            self.assertEqual(result["reason"], "cohort_sample_ref_missing_interior")
         finally:
             td.cleanup()
 

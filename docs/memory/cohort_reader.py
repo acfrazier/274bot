@@ -250,12 +250,34 @@ def _load_qualification(run_dir: pathlib.Path) -> tuple[Optional[list[dict]], Op
     return rows, None  # type: ignore[return-value]
 
 
-def _qual_settings(rows: list[dict]) -> Optional[dict]:
+def _qual_settings_list(rows: list[dict]) -> tuple[Optional[list[dict]], Optional[str]]:
+    """Collect every qualification settings object; require critical-key agreement."""
+    settings_list: list[dict] = []
     for row in rows:
+        if not isinstance(row, dict):
+            return None, "qualification_malformed"
         settings = row.get("settings")
-        if isinstance(settings, dict):
-            return settings
-    return None
+        if settings is None:
+            continue
+        if not isinstance(settings, dict):
+            return None, "qualification_settings_malformed"
+        settings_list.append(settings)
+    if not settings_list:
+        return None, "qualification_settings_missing"
+    agree_keys = (
+        "responsiveness_profile_enabled",
+        "responsiveness_fine_enabled",
+        "frontend",
+        "n",
+        "render_policy_requested",
+        "workload",
+    )
+    first = settings_list[0]
+    for other in settings_list[1:]:
+        for key in agree_keys:
+            if first.get(key) != other.get(key):
+                return None, "qualification_settings_disagree"
+    return settings_list, None
 
 
 def _qual_slot_table(rows: list[dict]) -> tuple[Optional[list[dict]], Optional[str]]:
@@ -297,6 +319,55 @@ def _qual_slot_table(rows: list[dict]) -> tuple[Optional[list[dict]], Optional[s
     return first, None
 
 
+def _qual_boundary_pair(
+    rows: list[dict],
+) -> tuple[Optional[dict], Optional[dict], Optional[str]]:
+    """Require observe-start + observe-end qualification boundaries with refs."""
+    starts: list[dict] = []
+    ends: list[dict] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            return None, None, "qualification_malformed"
+        phase = row.get("phase")
+        cohort = row.get("cohort")
+        phase_tag = cohort.get("phase_tag") if isinstance(cohort, dict) else None
+        tag = phase if isinstance(phase, str) else phase_tag
+        if tag == "observe-start":
+            starts.append(row)
+        elif tag == "observe-end":
+            ends.append(row)
+    if not starts:
+        return None, None, "qualification_observe_start_missing"
+    if not ends:
+        return None, None, "qualification_observe_end_missing"
+    if len(starts) != 1 or len(ends) != 1:
+        return None, None, "qualification_boundary_duplicate"
+    start_row, end_row = starts[0], ends[0]
+    for label, row in (("start", start_row), ("end", end_row)):
+        if "cohort" not in row or not isinstance(row.get("cohort"), dict):
+            return None, None, f"qualification_{label}_ref_missing"
+        if not isinstance(row.get("settings"), dict):
+            return None, None, f"qualification_{label}_settings_missing"
+        if not _finite(row.get("elapsed_s")):
+            return None, None, f"qualification_{label}_elapsed_malformed"
+    start_elapsed = float(start_row["elapsed_s"])
+    end_elapsed = float(end_row["elapsed_s"])
+    if not (end_elapsed > start_elapsed):
+        return None, None, "qualification_elapsed_order"
+    # Cohort ref phase tags must match boundary roles when present.
+    sc, ec = start_row["cohort"], end_row["cohort"]
+    if sc.get("phase_tag") not in (None, "observe-start"):
+        return None, None, "qualification_start_phase_tag"
+    if ec.get("phase_tag") not in (None, "observe-end"):
+        return None, None, "qualification_end_phase_tag"
+    oee = ec.get("observe_end_elapsed_s")
+    if oee is not None and _finite(oee) and float(oee) != end_elapsed:
+        # Harness clock self-consistency: end boundary elapsed vs declared end mark.
+        if abs(float(oee) - end_elapsed) > 1e-9:
+            return None, None, "qualification_observe_end_elapsed_mismatch"
+    return start_row, end_row, None
+
+
 def _sample_generations(samples: list[dict]) -> tuple[Optional[dict[int, int]], Optional[str]]:
     """Map responsiveness slot_id → single generation from cohort-bearing samples.
 
@@ -304,25 +375,37 @@ def _sample_generations(samples: list[dict]) -> tuple[Optional[dict[int, int]], 
     generations (outside the publisher-declared cohort span) are ignored — a
     legitimate seed restart before observe must not look like an in-cohort reset.
     Multiple generations per slot *within* the cohort-bearing span fail closed.
-    Missing generation is not invented.
+    Missing generation is not invented. ``ended=True`` or empty/disappeared
+    profiles on a cohort-bearing sample fail closed. Interior observe/drain rows
+    without a present cohort ref cannot hide a reset by exclusion.
     """
     seen: dict[int, set[int]] = {}
     found_any = False
+    slot_sets: list[set[int]] = []
     for sample in samples:
         if not isinstance(sample, dict):
             continue
+        phase = sample.get("phase")
         cohort = sample.get("cohort")
-        if not isinstance(cohort, dict) or cohort.get("present") is not True:
+        cohort_present = isinstance(cohort, dict) and cohort.get("present") is True
+        # Once armed, observe/drain rows must carry cohort refs — missing refs
+        # must not exclude a row that would reveal disappearance/reset.
+        if phase in ("observe", "drain") and not cohort_present:
+            return None, "cohort_sample_ref_missing_interior"
+        if not cohort_present:
             # Outside publisher cohort span (seed/warmup/teardown without attach).
             continue
         rows = sample.get("responsiveness_profile")
-        if rows is None:
-            continue
+        if rows is None or (isinstance(rows, list) and len(rows) == 0):
+            return None, "sample_slot_disappeared"
         if not isinstance(rows, list):
             return None, "sample_responsiveness_malformed"
+        present_ids: set[int] = set()
         for row in rows:
             if not isinstance(row, dict):
                 return None, "sample_responsiveness_malformed"
+            if row.get("ended") is True:
+                return None, "sample_slot_ended"
             sid = row.get("slot_id")
             gen = row.get("generation")
             if not _uint(sid) or not _uint(gen):
@@ -330,9 +413,19 @@ def _sample_generations(samples: list[dict]) -> tuple[Optional[dict[int, int]], 
             found_any = True
             sid_i = int(sid)
             gen_i = int(gen)
+            if sid_i in present_ids:
+                return None, "sample_duplicate_slot_identity"
+            present_ids.add(sid_i)
             seen.setdefault(sid_i, set()).add(gen_i)
+        slot_sets.append(present_ids)
     if not found_any:
         return None, "sample_generations_missing"
+    # Lifetime: every cohort-bearing sample must expose the same slot set.
+    # One good sample cannot prove population lifetime alone.
+    base = slot_sets[0]
+    for other in slot_sets[1:]:
+        if other != base:
+            return None, "sample_slot_disappeared"
     out: dict[int, int] = {}
     for sid, gens in seen.items():
         if len(gens) != 1:
@@ -384,22 +477,29 @@ def _surface_for_gate(gate: str, frontend: str) -> str:
     return "Panel"
 
 
-def _meta_profile_ok(meta: dict, settings: Optional[dict], header_frontend: str) -> Optional[str]:
+def _meta_profile_ok(
+    meta: dict,
+    settings_list: list[dict],
+    header_frontend: str,
+) -> Optional[str]:
+    """Require profile/fine/frontend/N agreement across meta and EVERY qual settings."""
     if meta.get("frontend") != header_frontend:
         return "cohort_frontend_mismatch"
     if meta.get("responsiveness_profile") is not True:
         return "responsiveness_profile_disabled"
-    # Fine buckets drive the <=100ms cohort verdict; require fine enabled.
-    fine_meta = meta.get("responsiveness_fine")
-    if fine_meta is None and isinstance(settings, dict):
-        fine_meta = settings.get("responsiveness_fine_enabled")
-    if fine_meta is not True:
+    # Fine buckets drive the <=100ms cohort verdict; meta alone is not enough —
+    # every qualification settings object must also enable fine (no meta-True
+    # override of silent qual False).
+    if meta.get("responsiveness_fine") is not True:
         return "responsiveness_fine_disabled"
-    if isinstance(settings, dict):
-        if settings.get("frontend") not in (None, header_frontend) and settings.get("frontend") != header_frontend:
-            return "qualification_frontend_mismatch"
-        if settings.get("responsiveness_profile_enabled") is False:
+    for settings in settings_list:
+        if settings.get("responsiveness_profile_enabled") is not True:
             return "qualification_profile_disabled"
+        if settings.get("responsiveness_fine_enabled") is not True:
+            return "qualification_fine_disabled"
+        frontend = settings.get("frontend")
+        if frontend is not None and frontend != header_frontend:
+            return "qualification_frontend_mismatch"
         n_set = settings.get("n")
         if n_set is not None and n_set != meta.get("n"):
             return "qualification_n_mismatch"
@@ -563,8 +663,21 @@ def _read_cohort_impl(run_dir: pathlib.Path, meta: dict, samples: list[dict], ga
     if qerr:
         return unavailable(qerr, gate=gate)
     assert qualification is not None
-    settings = _qual_settings(qualification)
-    profile_err = _meta_profile_ok(meta, settings, header["frontend"])
+
+    start_qual, end_qual, berr = _qual_boundary_pair(qualification)
+    if berr:
+        return unavailable(berr, gate=gate)
+    assert start_qual is not None and end_qual is not None
+    harness_start_elapsed = float(start_qual["elapsed_s"])
+    harness_end_elapsed = float(end_qual["elapsed_s"])
+
+    settings_list, serr = _qual_settings_list(qualification)
+    if serr:
+        return unavailable(serr, gate=gate)
+    assert settings_list is not None
+    settings = settings_list[0]
+
+    profile_err = _meta_profile_ok(meta, settings_list, header["frontend"])
     if profile_err:
         return unavailable(profile_err, gate=gate)
 
@@ -585,11 +698,48 @@ def _read_cohort_impl(run_dir: pathlib.Path, meta: dict, samples: list[dict], ga
         return unavailable(pop_err, gate=gate)
     assert expected is not None
 
+    # Declared population identities must appear in every cohort-bearing sample.
+    expected_sids = {sid for sid, _gen in expected}
+    for sample in samples:
+        if not isinstance(sample, dict):
+            continue
+        cohort = sample.get("cohort")
+        if not (isinstance(cohort, dict) and cohort.get("present") is True):
+            continue
+        rows = sample.get("responsiveness_profile")
+        if not isinstance(rows, list):
+            return unavailable("sample_responsiveness_malformed", gate=gate)
+        present = set()
+        for row in rows:
+            if not isinstance(row, dict) or not _uint(row.get("slot_id")):
+                return unavailable("sample_responsiveness_malformed", gate=gate)
+            present.add(int(row["slot_id"]))
+        if not expected_sids.issubset(present):
+            return unavailable("sample_population_incomplete", gate=gate)
+
     # Provenance refs on samples + qualification must agree with sidecar.
     sample_refs = []
+    sample_cursors: list[int] = []
     for sample in samples:
-        if isinstance(sample, dict) and "cohort" in sample:
-            sample_refs.append(sample["cohort"])
+        if not isinstance(sample, dict) or "cohort" not in sample:
+            continue
+        ref = sample["cohort"]
+        sample_refs.append(ref)
+        if isinstance(ref, dict) and ref.get("present") is True:
+            # Harness elapsed on cohort-bearing samples must sit in the
+            # qualification observe interval (distinct clock, self-consistent).
+            elapsed = sample.get("elapsed_s")
+            if elapsed is not None:
+                if not _finite(elapsed):
+                    return unavailable("sample_elapsed_malformed", gate=gate)
+                ev = float(elapsed)
+                # Drain may land at/after observe-end mark; reject before start.
+                if ev < harness_start_elapsed:
+                    return unavailable("sample_elapsed_before_observe", gate=gate)
+            cur = ref.get("cursor")
+            if not _uint(cur):
+                return unavailable("sample_cursor_malformed", gate=gate)
+            sample_cursors.append(int(cur))
     qual_refs = []
     for row in qualification:
         if "cohort" in row:
@@ -622,6 +772,7 @@ def _read_cohort_impl(run_dir: pathlib.Path, meta: dict, samples: list[dict], ga
     last_batch_complete = False
     seen_sequences: set[tuple[Any, ...]] = set()
     batch_count = 0
+    emitted_cursors: set[int] = {0}
 
     for obj in objects[1:]:
         if not isinstance(obj, dict):
@@ -690,6 +841,7 @@ def _read_cohort_impl(run_dir: pathlib.Path, meta: dict, samples: list[dict], ga
             # Unlocalizable capacity/publication gap — fail at terminal accounting.
 
             cursor = next_cursor
+            emitted_cursors.add(cursor)
             last_loss = loss_count
             last_overflow = overflow_n
             last_batch_complete = obj["complete"] is True
@@ -715,8 +867,20 @@ def _read_cohort_impl(run_dir: pathlib.Path, meta: dict, samples: list[dict], ga
     oee = terminal.get("observe_end_elapsed_s")
     if not _finite(oee):
         return unavailable("observe_end_elapsed_missing", gate=gate)
+    # Terminal harness end mark must agree with qualification observe-end.
+    if abs(float(oee) - harness_end_elapsed) > 1e-9:
+        return unavailable("observe_end_elapsed_mismatch", gate=gate)
     if batch_count == 0 or not last_batch_complete:
         return unavailable("final_batch_incomplete", gate=gate)
+
+    # Sample cohort.cursor must match emitted batch progress (publisher HWM).
+    if not sample_cursors:
+        return unavailable("sample_cursor_missing", gate=gate)
+    for sc in sample_cursors:
+        if sc not in emitted_cursors:
+            return unavailable("sample_cursor_mismatch", gate=gate)
+    if max(sample_cursors) != cursor:
+        return unavailable("sample_cursor_hwm_mismatch", gate=gate)
 
     if not all(_uint(terminal.get(k)) for k in ("records_n", "losses_n", "pending_n")):
         return unavailable("malformed_terminal_counts", gate=gate)
