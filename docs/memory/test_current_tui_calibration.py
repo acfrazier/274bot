@@ -55,6 +55,14 @@ class CurrentTuiCalibrationControls(unittest.TestCase):
         with self.assertRaises(SystemExit):
             runner.parser().parse_args(["--n", "2"])
 
+    def test_invalid_programmatic_n_fails_closed_before_launch(self):
+        for value in (2, True, False, "1", 1.0, None):
+            with self.subTest(value=value), self.assertRaises(runner.CalibrationError):
+                runner.requested_n(argparse.Namespace(n=value))
+
+    def test_missing_programmatic_n_keeps_default(self):
+        self.assertEqual(runner.requested_n(argparse.Namespace()), 16)
+
     def test_clean_environment_forces_all_hot_flags_off(self):
         env = {key: "1" for key in ("BOT_DEBUG", "BOT_CPU", "BOT_SCHEDULING_PROFILE", "BOT_RENDER_PROFILE", "BOT_RESPONSIVENESS_PROFILE", "MallocStackLogging")}
         clean = runner.clean_environment(env)
@@ -146,7 +154,7 @@ class CurrentTuiCalibrationControls(unittest.TestCase):
 
     def test_preflight_only_has_no_launch_or_output_reservation(self):
         with tempfile.TemporaryDirectory() as tmp:
-            args = mock.Mock(output=pathlib.Path(tmp) / "future.json")
+            args = mock.Mock(output=pathlib.Path(tmp) / "future.json", n=16)
             fake_spec = {"id": "future", "launcher_argv": ["never"]}
             with mock.patch.object(runner, "validate_inputs", return_value={"host_commit": runner.EXPECTED_HOST}), \
                  mock.patch.object(runner, "build_spec", return_value=fake_spec), \
@@ -161,7 +169,7 @@ class CurrentTuiCalibrationControls(unittest.TestCase):
     def test_incomplete_managed_state_is_failed_and_never_accepted(self):
         with tempfile.TemporaryDirectory() as tmp:
             output = pathlib.Path(tmp) / "result.json"
-            args = mock.Mock(output=output)
+            args = mock.Mock(output=output, n=16)
             spec = {"id": "result"}
             with mock.patch.object(runner, "launch_environment", return_value={}), \
                  mock.patch.object(runner.rmc, "run_managed_cell", return_value={"status": "failed_or_unavailable", "launched": True, "attempts": 1}):
@@ -175,14 +183,14 @@ class CurrentTuiCalibrationControls(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             output = pathlib.Path(tmp) / "result.json"
             output.write_text("existing")
-            args = mock.Mock(output=output)
+            args = mock.Mock(output=output, n=16)
             with self.assertRaisesRegex(runner.CalibrationError, "existing output"):
                 runner.run(args, {"id": "result"})
 
     def test_run_passes_preserved_context_to_managed_runner(self):
         with tempfile.TemporaryDirectory() as tmp:
             output = pathlib.Path(tmp) / "result.json"
-            args = mock.Mock(output=output, host_checkout=pathlib.Path(tmp))
+            args = mock.Mock(output=output, host_checkout=pathlib.Path(tmp), n=16)
             captured = {}
             def managed(*_args, **_kwargs):
                 captured.update({key: os.environ.get(key) for key in ("PATH", "HOME", "TERM", "BOT_DEBUG")})
@@ -199,7 +207,7 @@ class CurrentTuiCalibrationControls(unittest.TestCase):
     def test_managed_exception_does_not_claim_no_launch(self):
         with tempfile.TemporaryDirectory() as tmp:
             output = pathlib.Path(tmp) / "result.json"
-            args = mock.Mock(output=output, host_checkout=pathlib.Path(tmp))
+            args = mock.Mock(output=output, host_checkout=pathlib.Path(tmp), n=16)
             with mock.patch.object(runner, "launch_environment", return_value={}), \
                  mock.patch.object(runner.rmc, "run_managed_cell", side_effect=RuntimeError("cancelled after launch")):
                 self.assertEqual(runner.run(args, {"id": "result"}), 1)
@@ -230,7 +238,7 @@ class CurrentTuiCalibrationControls(unittest.TestCase):
             output = pathlib.Path(tmp) / "result.json"
             child = []
             managed_finished = threading.Event()
-            args = mock.Mock(output=output, host_checkout=pathlib.Path(tmp),
+            args = mock.Mock(output=output, host_checkout=pathlib.Path(tmp), n=16,
                              rs2b0t=pathlib.Path(tmp), nav_pack=pathlib.Path(tmp),
                              nav_flags=pathlib.Path(tmp), server_root=pathlib.Path(tmp))
             def managed(*_args, **_kwargs):

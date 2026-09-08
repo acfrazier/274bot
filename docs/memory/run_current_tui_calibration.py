@@ -45,7 +45,9 @@ class CalibrationError(RuntimeError):
 
 def requested_n(args: argparse.Namespace) -> int:
     value = getattr(args, "n", 16)
-    return value if isinstance(value, int) else 16
+    if type(value) is not int or value not in SUPPORTED_N:
+        raise CalibrationError(f"n must be an exact integer in {SUPPORTED_N}; got {value!r}")
+    return value
 
 
 def sha256(path: pathlib.Path) -> str:

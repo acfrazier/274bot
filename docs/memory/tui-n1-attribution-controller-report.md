@@ -24,7 +24,7 @@ Preserved controls
 Verification
 
 `python3 -m unittest docs/memory/test_current_tui_calibration.py -v` passed:
-20 tests. The tests cover N1 CLI/environment agreement, default N16 behavior,
+23 tests. The tests cover N1 CLI/environment agreement, default N16 behavior,
 invalid-N rejection before launch, and the existing guard/cleanup/no-launch
 controls. `python3 -m py_compile docs/memory/run_current_tui_calibration.py
 docs/memory/test_current_tui_calibration.py` passed.
