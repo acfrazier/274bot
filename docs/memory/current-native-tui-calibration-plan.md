@@ -53,7 +53,7 @@ and prerequisite review. The proposed frozen declaration is:
 | Workload | `BOT_MEMORY_WORKLOAD=active`; preserve the existing active fixture, script, server, account population, and cadence. Do not substitute idle, seeded-idle, lifecycle, or an inert fixture |
 | Timing | `BOT_MEMORY_WARMUP_S=120`, `BOT_MEMORY_OBSERVE_S=600`; these are the harness defaults and are explicit in the declaration (`crates/host-play/src/memory.rs`, lines 150–165) |
 | Harness/build | Build `tui-play` with `memory-profile-no-alloc` so the reviewed `BOT_MEMORY_N=16` harness, qualification publisher, and `Run` receipt path are present; this selects `System` and disables allocation counting. It is an allocation-unprofiled diagnostic binary, not the ordinary no-feature product binary |
-| Runtime instrumentation | Hot profiling, stack logging, verbose allocator instrumentation, and debug output OFF; external managed process sampling remains required and is separately accounted |
+| Runtime instrumentation | `BOT_SCHEDULING_PROFILE=0`, `BOT_RESPONSIVENESS_PROFILE=0`, `BOT_RESPONSIVENESS_FINE=0`, `BOT_RENDER_PROFILE=0`, and `BOT_GPU_COMPLETION_PROFILE=0`; hot profiling, stack logging, verbose allocator instrumentation, and debug output OFF. External managed process sampling remains required and is separately accounted |
 | Snapshot feature | feature-off production default; do not pass `snapshot-dedup` |
 | Target | existing Concord native Linux host: Ubuntu 24.04.4 x86_64, 2 logical CPUs, 1,967 MiB RAM, no swap. This is below the approved 4 GiB VPS reference and must be reported as a capacity-limited target, not silently called a 4 GiB validation (`concord-native-environment.md`, lines 1–6) |
 | Server | existing qualified co-located fixture/server, sampled as its own role and never added to frontend RSS/CPU |
@@ -79,8 +79,11 @@ The managed execution path must reuse `docs/memory/run_managed_cell.py` and its
 reviewed PTY binding, receipt, role sampler, bounded-output, and teardown
 controls. The Rust harness publisher supplies the N16 qualification fields;
 the managed collector supplies external process evidence. Do not replace this
-with a manual product-UI collector or a pipe-only launcher. Any missing proof
-from the reviewed path remains `unavailable` and blocks qualification.
+with a manual product-UI collector or a pipe-only launcher. Missing required
+source, binary, population, identity, receipt, or role-accounting proof remains
+`unavailable` and blocks qualification. Collector self-cost is different:
+record it as measured or `unmeasured`; `unmeasured` is a declared diagnostic
+limitation and does not by itself block resource-only qualification.
 
 The TUI command must use explicit current cache and vault paths, target host and
 port, and the authorized vault/account fixture. The CLI defaults are derived
@@ -212,9 +215,12 @@ The screen records frontend-only and separately owned values:
 
 - steady median RSS and observed lifetime peak RSS;
 - frontend CPU as CPU seconds divided by wall seconds, with interval brackets;
-- ready/active counts, client iterations per slot per second, p99 start interval,
-  decode-to-dispatch latency if complete, and terminal input-to-visible
-  acknowledgement only if a real TUI receipt covers it;
+- ready/active counts and client iterations per slot per second; with the frozen
+  `BOT_SCHEDULING_PROFILE=0`, scheduling cadence, p99 start interval, and
+  responsiveness/latency fields are explicitly `unavailable` (never zero), and
+  do not gate resource-only qualification. Decode-to-dispatch latency and
+  terminal input-to-visible acknowledgement are recorded only if a real TUI
+  receipt covers them;
 - server RSS/CPU, terminal/controller/collector RSS/CPU, and pressure/swap state
   as separate roles;
 - per-slot progress, navigation state, script actions, and error/loss counts;
@@ -249,14 +255,23 @@ catch-up input, or change the fixture.
 After readiness, observe exactly the declared active window once. Stop and
 classify the attempt as diagnostic-only/incomplete if any slot loses progress,
 terminal records are incomplete, role identity changes, the server is not
-separately accounted, the observation span is shorter than configured, or
-resource provenance/collector overhead is unavailable. A clean process exit is
-not a pass. A missing metric is `unavailable`, never zero.
+separately accounted, or the observation span is shorter than configured.
+Required resource provenance and role accounting must still bind within their
+declared limits. Collector overhead may be measured or marked `unmeasured`;
+that limitation alone is not a stop condition and does not prevent
+resource-only qualification. With runtime scheduling profiling disabled,
+cadence/p99/responsiveness remain `unavailable` and are not qualification gates.
+A clean process exit is not a pass. A missing metric is `unavailable`, never
+zero.
 
 Qualify the screen only as `current-source-calibrated-diagnostic` when all 16
 slots remain active with complete progress/terminal receipts, the source and
 binary manifest binds, cache/nav/server/settings/geometry bind, role accounting
 is complete within its declared limits, and the observation window is complete.
+An `unmeasured` collector-overhead field is retained as a limitation and does
+not disqualify an otherwise complete resource receipt. Profiled
+cadence/p99/responsiveness fields remain unavailable by design and are not
+required for this resource-only qualification.
 Even then, report it as diagnostic evidence, not final performance acceptance:
 no absolute budget pass, incremental saving, candidate retention, final matrix,
 32-slot lifecycle, or capacity claim follows from this one screen.
