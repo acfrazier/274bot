@@ -888,21 +888,33 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
         self.assertFalse(mea._host_conditions_complete(invalid))
 
     def test_linux_host_conditions_allow_explicit_empty_frontend_observation(self):
-        observed = dict(HOST_CONDITIONS, frontend_processes=[])
+        observed = dict(HOST_CONDITIONS, platform="Linux-6.8.0-139-generic-x86_64-with-glibc2.39",
+                        frontend_processes=[])
         self.assertTrue(mea._host_conditions_complete(observed))
         self.assertFalse(mea._host_conditions_complete(dict(HOST_CONDITIONS, arbitrary=[])))
+        self.assertFalse(mea._host_conditions_complete(dict(HOST_CONDITIONS, frontend_processes=[])))
+        self.assertFalse(mea._host_conditions_complete(dict(HOST_CONDITIONS, platform="Darwin-24",
+                                                            frontend_processes=[])))
+        self.assertTrue(mea._host_conditions_complete(
+            dict(HOST_CONDITIONS, platform="Linux-6.8.0-139-generic-x86_64-with-glibc2.39",
+                 frontend_processes=[{"pid": 1, "name": "frontend"}])
+        ))
 
     def test_linux_frontend_observation_rejects_malformed_records(self):
-        for processes in (None, {}, [None], [{}], [{"pid": None}],
+        for processes in (None, {}, [None], [{}], [{"pid": None}], [{"pid": 1}],
+                          [{"pid": 1, "name": ""}],
+                          [{"pid": 1, "name": "a"}, {"pid": 1, "name": "b"}],
                           [{"pid": 1, "usage": {"rss": float("nan")}}]):
             with self.subTest(processes=processes):
-                observed = dict(HOST_CONDITIONS, frontend_processes=processes)
+                observed = dict(HOST_CONDITIONS, platform="Linux-6.8.0-139-generic-x86_64-with-glibc2.39",
+                                frontend_processes=processes)
                 self.assertFalse(mea._host_conditions_complete(observed))
 
     def test_linux_empty_frontend_observation_binds_exact_sidecar(self):
         ref, _, manifest, server = self._positive_pair()
         host = self.root / "host.json"
-        observed = dict(HOST_CONDITIONS, frontend_processes=[])
+        observed = dict(HOST_CONDITIONS, platform="Linux-6.8.0-139-generic-x86_64-with-glibc2.39",
+                        frontend_processes=[])
         _write_json(host, observed)
         receipt = json.loads(ref["receipt_path"].read_text())
         receipt.update(host_conditions_path=str(host), host_conditions_sha256=mea.sha256_file(host))

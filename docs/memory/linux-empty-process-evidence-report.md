@@ -6,11 +6,11 @@ This is a narrow provenance-reader repair for an explicitly observed Linux host-
 
 Finding
 
-The legacy host-condition validator recursively classified every empty list as missing. That is too broad for the observed Linux preflight field `frontend_processes`: an empty list can be a valid observation that no conflicting frontend processes were found. Empty arbitrary fields remain invalid, and a host document that omits required metadata still fails the legacy validator.
+The legacy host-condition validator recursively classified every empty list as missing. That is too broad for the explicitly Linux-tagged preflight field `frontend_processes`: an empty list can be a valid observation that no conflicting frontend processes were found. Empty arbitrary fields remain invalid. The legacy path retains its existing missing-leaf checks; it does not define a required-key schema for otherwise absent metadata.
 
 Repair
 
-`matched_evidence_adapter.py` now recognizes only a top-level `frontend_processes` observation. Its value must be a list; an empty list is accepted as an explicit zero-result observation. Non-empty entries must be non-empty objects with a positive integer `pid`, and all nested floating-point values must be finite. Missing, null, empty, wrong-type, malformed, non-positive PID, and non-finite process records are rejected. The field is removed only for the legacy recursive check of the remaining document, so arbitrary empty unknown fields are still rejected.
+`matched_evidence_adapter.py` now recognizes only a top-level `frontend_processes` observation paired with an explicit platform string beginning with `Linux`. Its value must be a list; an empty list is accepted as an explicit zero-result observation. Non-empty entries must be non-empty objects with a positive, unique integer `pid` and a non-empty string `name`, and all nested floating-point values must be finite. Missing, null, empty, wrong-type, malformed, non-positive PID, duplicate PID, and non-finite process records are rejected. The field is removed only for the legacy recursive check of the remaining document, so arbitrary empty unknown fields and non-Linux empty observations remain rejected.
 
 Windows native observations retain their existing recognized-schema validator, including optional null fields, process/PID typing, contradictory duplicate checks, path/hash checks, and fail-closed required records. Sidecar path binding, recorded SHA-256 verification, raw-file rechecks, manifest/build provenance, and pair eligibility are unchanged. The raw Linux artifact is not rewritten or normalized, and no performance conclusion is made.
 

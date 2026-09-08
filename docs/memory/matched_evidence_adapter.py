@@ -202,15 +202,25 @@ def _linux_frontend_processes_complete(value: Any) -> bool:
     """Validate the one Linux observation whose population may be empty."""
     if not isinstance(value, dict) or "frontend_processes" not in value:
         return False
+    platform = value.get("platform")
+    if type(platform) is not str or not platform.startswith("Linux"):
+        return False
     processes = value["frontend_processes"]
     if not isinstance(processes, list):
         return False
+    pids = set()
     for process in processes:
         if not isinstance(process, dict) or _deep_missing(process):
             return False
         pid = process.get("pid")
         if type(pid) is not int or pid <= 0:
             return False
+        name = process.get("name")
+        if type(name) is not str or not name:
+            return False
+        if pid in pids:
+            return False
+        pids.add(pid)
         def finite(item: Any) -> bool:
             if isinstance(item, float):
                 return math.isfinite(item)
@@ -360,7 +370,12 @@ def _host_conditions_complete(value: Any) -> bool:
     """Validate native observations by schema; retain strict legacy behavior."""
     if _native_windows_conditions_recognized(value):
         return _native_windows_conditions_complete(value)
-    if isinstance(value, dict) and "frontend_processes" in value:
+    if (
+        isinstance(value, dict)
+        and "frontend_processes" in value
+        and type(value.get("platform")) is str
+        and value["platform"].startswith("Linux")
+    ):
         return _linux_frontend_processes_complete(value)
     return isinstance(value, dict) and not _deep_missing(value)
 
