@@ -1,10 +1,44 @@
 # Current finish-line gap audit
 
-Date: 2026-09-08 08:22 UTC. Branch `codex/memory-diagnostics`.
-This is a bounded evidence synthesis, not a new acceptance or target change. The
-approved budgets are from `performance-finish-plan.md` §1, §3, §4, §5 and §6
-(approved at `530b83e`); current boundary is `STATE.md` lines 12–30 (2026-09-08
-08:22 UTC).
+Updated: 2026-09-08 15:19 UTC. Branch `codex/memory-diagnostics`.
+This is a bounded evidence synthesis, not acceptance or a target change. Approved
+budgets remain performance-finish-plan.md. STATE.md is the execution authority.
+
+## Current boundary
+
+The1430 fixed-window Windows N16 focused-one pair is complete. Root results in
+windows-cohort-pair-1430-report.md/evidence.json are under independent review
+(t_4af4c884, actual Grok4.5 run762). Both roles qualify16/16 and close16000 decode
+events without losses; aggregate fine p99 is24–25ms each. Candidate slot0 closes
+120 input events without losses, fine p9941–42ms. Baseline input is unavailable:
+root missed the predeclared60–90s trigger window, spawned no input and did not
+repeat. No matched input or overall latency acceptance follows.
+
+Current profiled frontend medians are662515712/687902720 bytes (reference/
+candidate), lifetime peaks1062477824/986865664 bytes and CPU0.525871/0.526170
+cores. They are diagnostics, not clean matched savings or final budgets:
+stimulation is asymmetric, baseline UI inspection overlaps observation, overhead
+is unmeasured and the generic match keys differ. Native receipt/build/cache/
+runtime/process accounting binds independently; raw resource gate stays
+unavailable. See the pair report for exact endpoints, source versions and hashes.
+
+The earlier synchronized0830 visual proof is reviewed qualitative held-scene/
+minimap/chat and2→1→2 recovery evidence (0c1e438+b1dd88f, t_9b57233d). It does not
+close fullG1/G4, splash/modal/cadence or physical input timing requirements.
+
+The low-end Linux TUI figures below still use old b4/f00e7fb source lineage.
+Current source has changed materially since those cells. Task t_c2879587 is a
+bounded design/provenance audit for one current-source native TUI N16 calibration
+screen, followed by same-card review. No new build or live run is released yet.
+This addresses stale source lineage; it does not reopen parked comparisons or
+make their source performance-qualified. Final36-cell matrix,32/lifecycle,
+gated128 and whole-campaign Grok4.6 requirements remain unresolved.
+
+## Historical requirement inventory — 2026-09-08 08:22 UTC
+
+The inventory below is retained as an evidence snapshot. The current boundary
+above supersedes its Windows cohort and synchronized-controller next actions;
+older native hardware numbers are not current source measurements.
 
 Status vocabulary: `observed` means a real number exists but is not acceptance;
 `diagnostic meet` means the contained reader bound is compatible with a target;
@@ -71,13 +105,10 @@ Status vocabulary: `observed` means a real number exists but is not acceptance;
 
 ## Nearest bounded next work
 
-The nearest actual blocker is the reviewed synchronized native controller
-`t_bfaf7292`: after review, run one corrected burst with fresh-ready/first-frame
-synchronization and timestamped input. That bounded run advances G1/G4
-during-freeze and focused input timing; it does not turn capture completion into
-proof. Next, use the already integrated `8100b8f` reader in a matched latency
-companion to close decode/input boundary coverage, then root owner chooses one
-measured ownership optimization or calibration/workload correction for the large
-N16 RSS gaps. These steps do not waive absolute RSS/CPU, calibration, final 1/16,
-32/one-hour, or gated-128 requirements, and do not justify indefinite reruns or
-another focused-tile stage.
+Complete independent review of the1430 archived cohort results and resolve any
+material reporting findings. Do not rerun the pair for missing baseline input.
+Complete t_c2879587 current-source native TUI calibration design/provenance audit
+and its reviewer handoff. Root will release only concrete verified prerequisites
+and the bounded declared screen after review; use its actual result to choose
+further ownership work. No current result waives absolute or incremental memory,
+CPU, latency, calibration, lifecycle, final matrix or whole-branch requirements.
