@@ -1,0 +1,21 @@
+{
+  "host_commit": "9268890217d968cfeb7c66ebb11dd5c3dd2c084f",
+  "client_commit": "abb811bd0afa1acd99319ccd5bc36bfb241080f9",
+  "binary_sha256": "e2deb1db371366f674c18e39d04f7309480310072ade224ffa1433c84d4559b5",
+  "source_file_count": 871,
+  "source_aggregate": "84054d9c02394d959cd84681dd85f3589d3a559b94bb37856c6f87cb0629269a",
+  "client_file_count": 183,
+  "client_sources_sha256": "ea6402702a56dc29359bf4effd9ca87407734fc9d940bfabdefb92cec8bf41ee",
+  "native_stage": "C:/ProgramData/274bot-Test/renderer-owner-census-9268890",
+  "source_archive_manifest": "/private/tmp/274bot-windows-setup-20260907/windows-panel-9268890-source-manifest.json",
+  "client_archive": "/private/tmp/274bot-windows-setup-20260907/client-abb811b.tar.gz",
+  "build_evidence": "docs/memory/diagnostics/windows-tile-probe-build-9268890",
+  "review": {
+    "task": "t_99a0f554",
+    "model": "grok-4.5",
+    "provider": "xai-oauth",
+    "session": "20260907_225410_003242",
+    "verdict": "approved"
+  },
+  "performance_acceptance": false
+}
