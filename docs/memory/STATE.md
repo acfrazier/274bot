@@ -9,6 +9,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 08:27 UTC
+
+- Root native no-input dry interop probe of EXACT02fccce confirms AST0/C#compile
+  but nested INPUT.mouse.dwFlags assignments yield0/0 instead of2/4 (40-byte
+  struct). Controller would not click despite SendInput success. Preserved in
+  windows-synchronized-input-interop-02fccce.json; no controller/input launched.
+  Same-card root comment requires whole MOUSEINPUT assignment or C# factory,
+  then native field/layout revalidation. Existing script also rejected for
+  stream-drain bounds, early-start cleanup, failure outcome and10ms sampling.
+- t_bfaf7292 awaits next Luna correction/review; t_59c539d3 Luna correcting
+  stale gap-audit sources and final36-run matrix. Reader integration remains
+  verified175tests and correct original-primary sixarchive comparison.
+  Native quiet; locally prepared0830 wrappers are NOT launched. No new G1.
+
 ## Latest boundary — 2026-09-08 08:22 UTC
 
 - Focused GPU reader8100b8f APPROVED actualGrok4.5/xai-oauth

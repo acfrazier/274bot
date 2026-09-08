@@ -1,0 +1,16 @@
+{
+  "schema": "native-no-input-interop-probe-v1",
+  "source_commit": "02fcccee5b744f0905a83c52e47ba8167c71e098",
+  "native_utc": "2026-09-08T08:26:03.8332221Z",
+  "powerShell": "5.1.26100.9168",
+  "ast_errors": 0,
+  "csharp_compiled": true,
+  "input_struct_bytes": 40,
+  "assignment": "$down.mouse.dwFlags=2; $up.mouse.dwFlags=4",
+  "observed_down_flags": 0,
+  "observed_up_flags": 0,
+  "input_injected": false,
+  "native_controller_executed": false,
+  "verdict": "invalid_event_flags",
+  "next_action": "Construct the nested MOUSEINPUT value separately and assign the whole value, or use a C# factory. Re-run dry field/layout validation on the corrected exact commit before native input."
+}
