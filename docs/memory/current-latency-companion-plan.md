@@ -9,7 +9,7 @@ Owned artifact: this file only.
 The approved budgets in `performance-finish-plan.md` §1 and §5 remain unchanged:
 
 - decode update → script dispatch, p99 `<=100 ms`, with complete closed accounting;
-- focused physical UI acknowledgement → visible UI acknowledgement, p99 `<=100 ms`, with complete closed accounting.
+- focused physical UI input → visible UI acknowledgement, p99 `<=100 ms`, with complete closed accounting.
 
 These are separate populations. The panel endpoint is a newer mailbox generation presented to the focused Game Image / wall-tile texture. It is a host texture bind/upload and `GameView::present` boundary, not display scanout, compositor presentation, swapchain completion, or a GPU hardware completion timestamp. The TUI endpoint is a successful `terminal.draw` flush, not terminal-emulator paint or scanout. Never merge TUI flush and panel texture presentation into one latency result or call them equivalent visibility.
 
@@ -52,7 +52,7 @@ Do not relax or reinterpret any of these rules. In particular, preserve pending 
 
 ## 4. Frozen current Windows panel lineage and first cell
 
-The first companion cell is the current Windows panel matched pair, `focused-one`, N=16 active workload. It must use the existing frozen native lineage, not the older Mac/TUI manifest `diagnostics/matched-instrumented-build-20260907T101400Z/build-manifest.json`:
+The first companion cell is the current Windows panel matched pair, `focused-one`, N=16 active workload. These immutable hashes identify the parent lineages for a new identically instrumented matched build, not binaries capable of emitting the proposed cohort schema. Use these native parent lineages, not the older Mac/TUI manifest `diagnostics/matched-instrumented-build-20260907T101400Z/build-manifest.json`:
 
 | Side | Host | Client | Panel binary | Staged panel |
 |---|---|---|---|---|
@@ -61,13 +61,13 @@ The first companion cell is the current Windows panel matched pair, `focused-one
 
 The current candidate host source aggregate is recorded as `189dac149beb6f258f5a79bdf09de43818556a5f06ffa783a608f0113a64d8a4`; its client source aggregate is `fad2e79248c8d62cff2ceba5c757ef555705e85d3dc6797586c9841d9dbfb53e`. The baseline/native freeze receipt remains authoritative for the full baseline provenance. Bind both sides to the same cache/catalog/nav/settings/server/geometry and renderer policy, and record literal source/binary hashes, OS/CPU/RAM/GPU/backend, N, workload, focus policy, ready/active/rendering counts, and actual endpoint settings. Do not compare these Windows binaries with the older Mac/TUI binaries or with a different client/cache/server state.
 
-For this `focused-one` panel cell, the declared input population is exactly `{slot 0}`: `focus_index()` pins slot zero and only that tile is in scope for focused physical UI stimulation. The other 15 active slots remain in the decode population and resource workload, but their `no_input_samples` are outside the panel input population—not fleet failures and not latency passes. The stimulation must use the existing focused actionable panel mouse/key probe against slot zero, with focus and readiness recorded in the receipt; do not claim input coverage for any slot not actually stimulated and focused. Decode remains a separate N=16 population and is reported independently for reference and candidate.
+For this `focused-one` panel cell, the declared input population is exactly `{slot 0}`: `focus_index()` pins slot zero and only that tile is in scope for focused physical UI stimulation. The other 15 active slots remain in the decode population and resource workload, but their `no_input_samples` are outside the panel input population—not fleet failures and not latency passes. A reusable panel latency stimulation helper has not been established. The reviewed `windows-visual-proof-tools/invoke-rebuild-capture.ps1` performs one guarded click for visual diagnostics; the Teles click is panel chrome and does not exercise `stream_capture_for` into the Game Image. Before a panel input companion, a separate bounded helper must deliver ordinary actionable input through the actual focused Game Image capture path, verify capture enabled and slot-zero focus, and record event cadence plus PID/start/window identity. Source route: `crates/panel/src/session.rs` `stream_capture_for`/`note_panel_input_start`; capture disabled is a no-op. Choose stimulus that preserves the active fixture and verify resulting start/bind/present accounting. Do not call the visual teleport controller an existing latency probe or claim input coverage before this prerequisite is reviewed and functionally proven. Decode remains a separate N=16 population and is reported independently for reference and candidate.
 
 ## 5. Predeclared complete accounting protocol
 
 This protocol must be agreed before reading either result. It is a measurement design, not an acceptance waiver.
 
-1. Run exactly one reference/candidate pair on the frozen Windows `focused-one`, N=16 active cell. Use the existing 120-second warmup and 600-second observe defaults unless the frozen receipt explicitly records another fixed duration. Keep responsiveness and fine profiles identical on both sides; retain all one-second observe rows, including first and last.
+1. After the common cohort instrumentation and panel stimulation prerequisite pass review, rebuild and freeze both native parent roles with identical diagnostic source changes and new source/binary hashes. Run exactly one new reference/candidate pair on the Windows `focused-one`, N=16 active cell. Use the existing 120-second warmup and 600-second observe defaults unless the frozen receipt explicitly records another fixed duration. Keep responsiveness and fine profiles identical on both sides; retain all one-second observe rows, including first and last.
 2. Define fixed monotonic boundaries from the existing qualification records: `T_start` is the observe-start boundary and `T_end` is the observe-end boundary. The performance cohort is defined by event start time, not by the sample in which a counter becomes visible:
    - include an event iff `T_start <= event.start_mono_ns < T_end`;
    - exclude every event started before `T_start`, even if it completes during observe;
@@ -93,7 +93,7 @@ The next implementation is limited to the existing host-play sampling/window lif
 
 ## 7. Executable proof and stopping rule
 
-After the bounded source change, run the affected host/host-play tests and Python reader/fixture tests. Then execute the already frozen Windows reference/candidate `focused-one` pair once, archive all raw JSONL, receipts, phase/cohort records, and provenance, and independently recompute each side. Verify that every excluded or unavailable member is reproducible from raw evidence and that no post-end start entered the cohort. Report reference and candidate independently, then the paired difference/non-regression result; no complete population means no acceptance claim.
+After the bounded source change, run the affected host/host-play tests and Python reader/fixture tests. Apply the same reviewed instrumentation to both named native parent roles, build and freeze new binaries with new hashes, verify source/provenance symmetry and affected native tests, and obtain the required combined integration review before native comparison. Preserve all old source/binary receipts unchanged; the old executables cannot emit the new cohort schema. After the separately reviewed Game Image stimulation helper is functionally proven, execute the newly frozen Windows reference/candidate `focused-one` pair once, archive all raw JSONL, receipts, phase/cohort records, and provenance, and independently recompute each side. Verify that every excluded or unavailable member is reproducible from raw evidence and that no post-end start entered the cohort. Report reference and candidate independently, then the paired difference/non-regression result; no complete population means no acceptance claim.
 
 If panel input is incomplete for the declared `{slot 0}` population, report that exact reason. Do not relabel the other 15 slots as failures or passes. A separately named TUI diagnostic may be run only as an endpoint-specific follow-up in the existing campaign scope; report its flush result separately and do not use it as panel evidence. Do not run another parked tile/appearance/resource stage, change unrelated renderer flags, or rerun without a named provenance or source confounder.
 
