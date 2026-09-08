@@ -1,0 +1,19 @@
+{
+  "source": "frozen fd956c9 JagFile/PixFont depack availability conditions, independently mirrored read-only in Python",
+  "nativeReadUtc": "2026-09-08T08:46:41.5753899Z",
+  "nativePath": "C:/Users/BotTest/274bot-server-4c95f87/data/pack/client/title",
+  "nativeLastWriteUtc": "2026-07-28T17:18:59.0963340Z",
+  "titleSha256": "b7a47dead79c241beb9c4ffbb4cb289bb3099eaf088f51e364cde40f3aa70b55",
+  "titleBytes": 59855,
+  "wholeCompressed": false,
+  "jagFiles": 10,
+  "p12DatBytes": 8956,
+  "p12DatSha256": "a679883666ca8630e84dd0e2c87169aafc8c28a7bbb8bc04cbeef08e83cd093a",
+  "indexBytes": 7521,
+  "indexSha256": "d6d698cf11f1601e3b893908350eb9e41a43028af667fb5d4aa91ac1952f76f7",
+  "p12AvailabilityChecksPassed": true,
+  "glyphsParsed": 256,
+  "fontHeight": 12,
+  "runtimeMediaP12Observed": false,
+  "scope": "fixture current bytes validated, not runtime memory introspection or splash rendering proof"
+}

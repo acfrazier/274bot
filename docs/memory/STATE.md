@@ -9,6 +9,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 08:49 UTC
+
+- Synchronized visual report 0c1e438+b1dd88f APPROVED t_9b57233d, actual
+  Grok4.5/xai-oauth session20260908_044303_d70e80. Reviewer independently
+  verified638unionfiles/300frames and vision-read32/33/34/35/after-varrock.
+  Core held-scene/minimap/chat and2→1→2 recovery accepted qualitatively only;
+  fullG1/G4/splash/modal/cadence/input/metrics remain separate.
+- Root read-only native title check08:46:41UTC:59855bytes SHAb7a47dead7,
+  valid p12_full.dat/index,256glyphs,height12. Currentfixturefont validated,
+  not runtimeMedia.p12 introspection. windows-0830-title-provenance.json plus
+  diagnostic title/parser. Splash audit da7e6c6 rejected by root for ignoring
+  visible scene1 status; same-card review t_8c2b78ce correcting this boundary.
+- NEW t_bceae2a5 latency companion plan under review; root rejects staleMac
+  lineage asWindows and enddrain-only protocol that cannot close fixedwindow
+  start/end accounting. Need concrete eventcohort membership/identity bounded
+  tail design, no quiet-window selection or extra permission flow. No source
+  implementation/native retry authorized from rejected draft. Windows idle.
+
 ## Latest boundary — 2026-09-08 08:41 UTC
 
 - Native synchronized0830 complete:300frames, all638 unionfiles/hashverified,
