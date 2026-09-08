@@ -9,6 +9,17 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 11:17 UTC
+
+- Reader a84a2b4 REJECTED by actual Grok4.5/xai-oauth reviewer session
+  20260908_071025_662251, run725. Review confirmed root blockers and missing
+  qualification/profile/population/cursor/strict-schema contract. Same-card
+  corrective luna run726 already spawned11:16:25 UTC and verified running.
+- Root raw adversarial fixture reproduction preserved in
+  diagnostics/cohort-reader-a84a2b4-root-probes.json. No reader integration.
+  New symmetric Windows source roles/archives remain preparation only;
+  no native actions. Required combined review and all campaign gates open.
+
 ## Latest boundary — 2026-09-08 11:13 UTC
 
 - Reader t_829c6804 first draft a84a2b4 submitted by luna; actual reviewer
