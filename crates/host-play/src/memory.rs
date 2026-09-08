@@ -1055,12 +1055,17 @@ impl Run {
                 observing.elapsed() >= self.config.observe
             };
             if observe_window_done && self.drain.is_none() && self.teardown.is_none() {
-                self.write_qualification(play, "observe-end")?;
+                // Stamp harness observe-end elapsed on the publisher BEFORE the
+                // qualification write so cohort.observe_end_elapsed_s is not null
+                // on the observe-end row (attach reads this field).
                 if self.cohort.is_some() {
                     let elapsed = self.started.elapsed().as_secs_f64();
                     if let Some(c) = self.cohort.as_mut() {
                         c.observe_end_elapsed_s = Some(elapsed);
                     }
+                }
+                self.write_qualification(play, "observe-end")?;
+                if self.cohort.is_some() {
                     // Keep ordinary runtime for the finite tail; scripts stay up
                     // through this sample, then drain begins after the write.
                     enter_drain_after_sample = true;
@@ -3386,6 +3391,88 @@ mod tests {
             side_final.contains("\"record\":\"cohort-terminal\"")
                 || side_final.contains("\"record\": \"cohort-terminal\""),
             "terminal row missing: {side_final}"
+        );
+
+        host::responsiveness_cohort::harness_test_reset();
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn observe_end_qualification_meta_includes_elapsed_when_stamped_before_write() {
+        // Production poll stamps observe_end_elapsed_s on CohortPublisher before
+        // write_qualification("observe-end"). attach_cohort_qualification_meta
+        // reads that field — stamp-after-write left cohort meta null.
+        let _env = env_lock();
+        host::responsiveness_cohort::harness_test_reset();
+        host::responsiveness_profile::enable();
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("274bot-cohort-obs-end-{stamp}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let qpath = dir.join("q.jsonl");
+        let qfile = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&qpath)
+            .unwrap();
+        let samples_path = dir.join("samples.jsonl");
+        let samples = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&samples_path)
+            .unwrap();
+
+        let mut run = harness_stub(false, false, qfile);
+        run.output = samples;
+        run.output_path = samples_path;
+        run.config.observe = Duration::from_millis(5);
+        run.arm_cohort_at_observe_start().expect("arm");
+
+        // Mirror production order at observe-end boundary.
+        let elapsed = run.started.elapsed().as_secs_f64();
+        if let Some(c) = run.cohort.as_mut() {
+            c.observe_end_elapsed_s = Some(elapsed);
+        }
+        let play = crate::run_channels(
+            &crate::PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: dir.to_string_lossy().into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            0,
+        );
+        run.write_qualification(&play, "observe-end")
+            .expect("observe-end qualification");
+
+        let text = std::fs::read_to_string(&qpath).unwrap();
+        let row: serde_json::Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+        assert_eq!(row["phase"], "observe-end");
+        let meta = row.get("cohort").expect("cohort meta on observe-end row");
+        assert!(
+            meta["observe_end_elapsed_s"].as_f64().is_some(),
+            "observe_end_elapsed_s must be non-null when stamped before write: {row}"
+        );
+        assert!(
+            meta["observe_end_elapsed_s"].as_f64().unwrap() >= 0.0,
+            "{row}"
+        );
+
+        // Without stamp, production attach would serialize null — prove the field
+        // is read from publisher state (not invented at attach time).
+        if let Some(c) = run.cohort.as_mut() {
+            c.observe_end_elapsed_s = None;
+        }
+        let mut bare = serde_json::json!({"phase": "observe-end"});
+        run.attach_cohort_qualification_meta(&mut bare, "observe-end");
+        assert!(
+            bare["cohort"]["observe_end_elapsed_s"].is_null(),
+            "unstamped publisher must yield null meta: {bare}"
         );
 
         host::responsiveness_cohort::harness_test_reset();
