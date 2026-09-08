@@ -9,6 +9,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 10:52 UTC
+
+- Publisher216f676 t_5992fd7a round2 REJECTED actual Grok4.5/xai-oauth
+  20260908_065023_821a44: source-backed envelope semantics must be corrected
+  (complete means finalized; cursor is inclusive; terminal pending is after
+  draining incomplete losses; records count all outcomes; exact tail endpoint).
+  Actual poll regression must assert emitted observe-end qualification metadata,
+  rather than manually pre-stamping a helper fixture. No new source semantic
+  change requested. Corrective implementer run721 started10:52, verified live.
+- Source metadata ordering is fixed in216f676, focused review checks pass, but
+  no publisher integration or frozen reader handoff is accepted yet. Existing
+  primary trace integration/tests and inherited whole-suite collision evidence
+  stand. Windows remains idle; full campaign acceptance gates stay open.
+
 ## Latest boundary — 2026-09-08 10:47 UTC
 
 - Publisher bf614b9 t_5992fd7a round1 REJECTED actual Grok4.5/xai-oauth
