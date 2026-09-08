@@ -60,11 +60,16 @@ must remain `--no-diagnostics --sustain`, with scheduling, responsiveness,
 render, GPU-completion, input-probe, allocation-counting, and snapshot-dedup
 features off. Do not attach to an already running frontend.
 
-The missing runner integration is a small reviewed launch seam: add one
-explicit Heaptrack prefix/output option to `run_diagnostic.py` (and the
-controller's manifest/metadata), so only the frontend `binary` invocation is
-started as the Heaptrack debuggee. The effective child command must be
-conceptually:
+The missing runner integration is a small reviewed launch seam in
+`docs/memory/run_diagnostic.py`: add an explicit `--heaptrack-output` option
+accepted only with the N1 TUI diagnostic, thread it through
+`build_child_env()`/`main()`, and launch the binary at the existing
+`subprocess.Popen` sites (Unix PTY lines 373-381 and non-PTY lines 403-404)
+through the profiler prefix. The controller seam is
+`run_current_tui_calibration.py:diagnostic_argv` and `build_spec` (lines
+170-220): it must pass the unique output path and record the same argv in the
+spec before `run_managed_cell.run_managed_cell` is called at lines 304-306.
+The effective child command must be:
 
     /usr/bin/heaptrack -o <capture-dir>/alloc /home/acfrazier/274bot-campaign/calibration-c0709ab-incoming/tui-play
 
@@ -122,30 +127,49 @@ resources, and page retention may be absent or incomplete.
 
 ## What to classify and what remains unknown
 
-Analyze the preserved artifact with `heaptrack_print --merge-backtraces=0`
-(and an explicitly recorded peak/common-time or time-resolved mode); the default
+Analyze the preserved artifact with the exact Heaptrack 1.5 command proven by
+the owned smoke:
+
+    heaptrack_print --merge-backtraces=0 --flamegraph-cost-type=peak --print-flamegraph <capture-dir>/alloc.zst > <capture-dir>/peak-stacks.txt
+
+Parse the flamegraph rows as one common-time global-peak population; retain
+the raw text, row count, positive-row count, and the sum of positive costs.
+The smoke produced 2,617 rows, 2,087 positive rows, a 5,435,240-byte sum, and
+the printed 5.44M global peak; the largest 4,196,352-byte family resolved to
+`PyByteArray_Resize` and matched its known request calculation. The default
 merged-backtrace peak is not valid for ranking because merged independent peaks
 are not a common-time population. Never sum independent per-stack peak bytes.
-For each top live/peak family, retain symbolized stack, allocation count,
-requested live bytes, peak bytes, phase, PID/role, and whether the first useful
-symbol is a frozen Rust function, a dependency, libc allocator, V8/native code,
-or unresolved. Map Rust families only to the ledger domains already established:
+
+Do not invent an observe-end or after-Stop Heaptrack slice. Heaptrack 1.5's
+available printer modes (`--print-flamegraph`, `--print-massif`, peaks,
+allocators, and leaks) do not expose a lifecycle-bound live-set API. The
+continuous capture records external controller timestamps for warmup end,
+observe end, `script_stop` invocation, and teardown end, but those timestamps
+are metadata only and are not join keys for a per-phase allocation population.
+`--print-massif` may be retained as an aggregate time-series diagnostic, not as
+an owner tree at either boundary. Therefore this one procedure ranks only
+families in the proven common-time global peak. It can select a material
+source-mappable private candidate; temporal retention at observe end or after
+script Stop, snapshot equality, and post-join state remain unknown.
+For each top peak family, retain symbolized stack, allocation count, requested
+live bytes, peak bytes, the external lifecycle labels (without claiming a
+phase-specific population), PID/role, and whether the first useful symbol is a
+frozen Rust function, a dependency, libc allocator, V8/native code, or
+unresolved. Map Rust families only to the ledger domains already established:
 shared cache/interface template, per-client Client/World/entity storage,
 GameSnapshot and its family vectors, nav snapshot/publication shell, script
 isolate/fingerprint/encoded buffers, or nav/status queues. A family that cannot
 be source-mapped stays `unresolved`; do not guess from a serialized snapshot or
 identical stack.
 
-The covered question is whether a material stack family has live bytes at
-observe end and/or after script Stop, whether it is shared or per-bot by source,
-and whether the two publication-epoch shells overlap in the actual process. A
-material per-bot family that survives the actual lifecycle boundary can select a
-specific candidate for a later reviewed ownership change. A material duplicated
-snapshot family selects the existing snapshot-retention/dedup investigation
-only if runtime coexistence and identity are observed; stacks alone cannot prove
-snapshot equality. If no family is both symbolized and source-mappable, or if
-Heaptrack coverage is materially incomplete, ownership/RSS causality remains
-unresolved.
+The supported question is whether a material stack family occurs in the
+common-time global peak and is source-mappable to a shared or per-bot owner. A
+material private family can select a specific candidate for a later reviewed
+ownership change, but does not prove that it survives either lifecycle
+boundary. The two publication-epoch shells and snapshot equality remain
+unknown: stacks alone cannot prove equality or coexistence. If no family is
+both symbolized and source-mappable, or if Heaptrack coverage is materially
+incomplete, ownership/RSS causality remains unresolved.
 
 Not covered by this capture: V8 heap totals, V8/native allocations not seen by
 Heaptrack, mmap/GPU allocations, allocator page retention, RSS causality,
@@ -155,14 +179,27 @@ remain explicit unknowns. CPU attribution is a separate future design step.
 
 ## Bounds, provenance recheck, and failure rule
 
-Before launch, require at least 128 MiB `MemAvailable` headroom (the existing
-controller guard), a fresh disk check with enough space for the compressed
-profile plus report, and an empty unique output directory. Bound the attempt to
-one 120s warmup + 600s observe + 60s teardown, plus the controller's existing
-180s launch/cleanup allowance. Bound profiler output with a predeclared 4 GiB
-filesystem quota for the attempt; if the quota or memory guard triggers, stop
-cleanly and mark the capture failed. Do not weaken the guard or retry with a
-smaller window. Keep profiler/helper process accounting at 0.5-second sampling.
+Before launch, require a fresh `/proc/meminfo` and server sample. The existing
+server is about 630 MiB RSS and the unprofiled N1 frontend peak is about 177
+MiB. Capture admission is **MemAvailable >= 768 MiB**, which reserves the
+known frontend peak plus a predeclared 256 MiB profiler/helper allowance and
+an additional safety margin; it is separate from the server's already-used
+RSS. Record the measured value and the rationale in the manifest and fail
+closed below it. The expected profiler/helper overhead is bounded separately
+at 256 MiB for admission; exceeding that budget is a failed diagnostic, not a
+performance result. During the run retain the existing 128 MiB
+`MEM_AVAILABLE_GUARD_BYTES` as a last-ditch runtime abort, not as admission.
+
+Also require fresh free disk >= 4 GiB and an empty unique owned capture
+directory. Poll `du -sk` for the directory (allocation artifact and temps)
+every 0.5 s: 2 GiB is a soft limit that requests orderly frontend/profiler
+stop and marks the attempt failed; 3 GiB is a hard limit that terminates the
+owned profiler/frontend process group, then waits for all children. These are
+owned-runner checks, not a filesystem quota or privileged configuration. Bound
+the attempt to one 120s warmup + 600s observe + 60s teardown, plus the
+controller's existing 180s launch/cleanup allowance. Preserve partial output
+and logs on either bound breach, and never retry or shorten the window.
+Keep profiler/helper process accounting at 0.5-second sampling.
 
 The source/build/cache/server provenance must be rechecked immediately before
 launch and recorded in the capture manifest. The fresh Concord receipt is
@@ -193,6 +230,8 @@ Those smokes establish tool collection and cleanup only; they are not client
 allocation or CPU evidence. Heaptrack's own help explicitly warns that runtime
 attach is unstable, so the capture is launch-wrapped, not attached.
 
-This document is the complete next executable diagnostic design. It does not
-execute the capture, release a new live cell, or authorize instrumentation before
-review.
+This document is the reviewed-scope candidate for the next executable
+diagnostic design. Root must first verify the launch seam, output paths,
+process-role discovery, and bound enforcement on Concord; this card does not
+execute the capture, release a new live cell, or authorize instrumentation
+before review.
