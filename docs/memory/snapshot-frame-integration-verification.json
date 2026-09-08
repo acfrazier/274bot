@@ -1,0 +1,46 @@
+{
+  "source_commits": [
+    "a7e96dd",
+    "3dd0792"
+  ],
+  "integrated_commits": [
+    "6f46907",
+    "edd16a7"
+  ],
+  "review_session": "20260907_205655_85aa99",
+  "actual_review_model": "grok-4.5",
+  "actual_review_provider": "xai-oauth",
+  "cross_feature_transcripts_equal": true,
+  "transcript_sha256": "783a7d5077829887147240a17545b69351ad2938c7304785489c899fb2dd81d4",
+  "checks": {
+    "integration-off": {
+      "sha256": "4c9e11d9dedd0a672f88116bcc70489fe14189b5c3738209fd2eb58c31e03392",
+      "result": [
+        "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s"
+      ]
+    },
+    "integration-on": {
+      "sha256": "a057a76570839818b835ff283fdd9faa8a977088246cafec481846f855621856",
+      "result": [
+        "test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s"
+      ]
+    },
+    "panel-off": {
+      "sha256": "85a50028a45b98418c448ec93fa9b55f80cab7d8b528a9b6dcf1634602024619",
+      "result": [
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 374 filtered out; finished in 0.08s"
+      ]
+    },
+    "panel-on": {
+      "sha256": "5d14b4f9319e5849c62ece40c4dad26bb32af66849947b226622f0eab6111d88",
+      "result": [
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 374 filtered out; finished in 0.07s"
+      ]
+    }
+  },
+  "native_or_memory_savings_claim": false,
+  "remaining_scope_limits": [
+    "multi-thread Play loop not driven",
+    "GameView render owner not covered"
+  ]
+}
