@@ -61,8 +61,10 @@ qualification results were:
 | candidate | 43.9736540 → 163.9907355 | 118.6684865 | 48.9262 | 8 (`live130c0_0`) |
 
 The steal values above are the qualification observation values. They must not be
-confused with the later navigation screenshot captions: those later captures show
-24 baseline steals and 13 candidate steals after additional navigation/progress.
+confused with the later navigation PNG captions: the baseline later-navigation
+capture shows 24 steals, while the candidate bank and return-route captures show
+12. A later candidate observe-end paint records 13, but that is not the caption in
+those PNG captures.
 
 ## Server, cache, source, and binary provenance
 
