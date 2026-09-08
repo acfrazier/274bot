@@ -63,26 +63,35 @@ features off. Do not attach to an already running frontend.
 The missing runner integration is a small reviewed launch seam in
 `docs/memory/run_diagnostic.py`: add an explicit `--heaptrack-output` option
 accepted only with the N1 TUI diagnostic, thread it through
-`build_child_env()`/`main()`, and launch the binary at the existing
-`subprocess.Popen` sites (Unix PTY lines 373-381 and non-PTY lines 403-404)
-through the profiler prefix. The controller seam is
-`run_current_tui_calibration.py:diagnostic_argv` and `build_spec` (lines
-170-220): it must pass the unique output path and record the same argv in the
-spec before `run_managed_cell.run_managed_cell` is called at lines 304-306.
-The effective child command must be:
+`build_child_env()`/`main()`, and set these variables only in the frontend child
+environment at the existing `subprocess.Popen` sites (Unix PTY lines 373-381
+and non-PTY lines 403-404):
 
-    /usr/bin/heaptrack -o <capture-dir>/alloc /home/acfrazier/274bot-campaign/calibration-c0709ab-incoming/tui-play
+    LD_PRELOAD=/usr/lib/heaptrack/libheaptrack_preload.so
+    DUMP_HEAPTRACK_OUTPUT=<unique-0700-capture-dir>/alloc.raw
 
-with the existing PTY, cwd, and validated child environment passed through. The
-real frontend ELF remains the debuggee; do not replace it with the Python
-controller, a shell wrapper, or a copied profiler binary. The installed
-Heaptrack 1.5 script uses per-process `LD_PRELOAD` and an output FIFO, then
-creates interpreter and compressor children. Its documented direct-attach path
-is unstable and is prohibited here. The launch seam must record, separately,
-the Heaptrack wrapper PID, real frontend PID, interpreter PID, compressor PID,
-controller PID, and game-server PID/start identity. Existing process accounting
-must include the profiler/helper roles for the full run and cleanup; it must not
-label the profiler wrapper as the frontend or omit its overhead.
+The controller seam is `run_current_tui_calibration.py:diagnostic_argv` and
+`build_spec` (lines 170-220): it must pass the unique output path and record the
+same argv and direct-preload metadata in the spec before
+`run_managed_cell.run_managed_cell` is called at lines 304-306. The effective
+debuggee command remains the real binary, with the existing PTY, cwd, and
+validated child environment passed through; there is no `/usr/bin/heaptrack`
+wrapper, shell, FIFO, copied binary, or attach operation. This preserves the
+frontend's real PID and binary identity. Record the exact installed preload
+library, version, and SHA-256 (verified Concord path:
+`/usr/lib/heaptrack/libheaptrack_preload.so`, Heaptrack 1.5.0).
+
+After the frontend exits, and only then, interpret the raw artifact with:
+
+    /usr/lib/heaptrack/libexec/heaptrack_interpret < <capture-dir>/alloc.raw > <capture-dir>/alloc.interpreted
+
+Then run the proven `heaptrack_print` command below against the interpreted
+artifact. Direct raw mode has no profiler wrapper, interpreter, or compressor
+child during collection. Account for the controller, real frontend, game
+server, and SSH parent separately; record the frontend PID/start identity, and
+record the post-exit interpreter PID/exit status as analysis metadata rather
+than as captured frontend ownership. The raw artifact is unique, owned, mode
+0700, and never reused or symlinked.
 
 This seam is instrumentation-only and needs its own reviewed behavior contract
 before launch. No change to the Rust/client behavior or to account/cache/server
@@ -108,19 +117,17 @@ capture.
    barriers only, not an after-Stop allocation population. If the managed
    lifecycle reaches a slot join before teardown ends, record that fact as
    metadata; do not manufacture a post-join sample from process exit.
-5. Cleanup: stop the frontend through the existing managed path, wait for the
-   frontend and every Heaptrack interpreter/compressor child, close and analyze
-   the FIFO, verify output completeness, remove only per-attempt temporary FIFO
-   and process files, and preserve the compressed allocation artifact and report.
-   A surviving profiler/helper after the frontend exits is a failure, not a
-   successful cleanup.
+5. Cleanup: stop the frontend through the existing managed path, close the raw
+   artifact, run the interpreter and analysis commands, verify output
+   completeness, remove only per-attempt process files, and preserve the
+   raw/interpreted allocation artifacts and report. An interpreter or analysis
+   failure is a failed attempt, not a successful cleanup.
 
-The capture population is the owned frontend plus its Heaptrack helper process
-family. The game server, SSH parent, controller, and unrelated services are
-outside the allocation population and are only separately accounted roles.
-Heaptrack's interpreter/compressor bytes are helper overhead and must be
-reported, not attributed to a Rust owner. Heaptrack observes ordinary malloc/
-new-family allocations; custom pools, mmap, V8-native allocations, GPU
+The capture population is the owned frontend process only. The game server, SSH
+parent, controller, and unrelated services are outside the allocation population
+and are separately accounted roles. The post-exit interpreter's memory and CPU
+are analysis overhead, not frontend ownership. Heaptrack observes ordinary
+malloc/new-family allocations; custom pools, mmap, V8-native allocations, GPU
 resources, and page retention may be absent or incomplete.
 
 ## What to classify and what remains unknown
@@ -128,7 +135,7 @@ resources, and page retention may be absent or incomplete.
 Analyze the preserved artifact with the exact Heaptrack 1.5 command proven by
 the owned smoke:
 
-    heaptrack_print --merge-backtraces=0 --flamegraph-cost-type=peak --print-flamegraph <capture-dir>/alloc.zst > <capture-dir>/peak-stacks.txt
+    heaptrack_print --merge-backtraces=0 --flamegraph-cost-type=peak --print-flamegraph <capture-dir>/alloc.interpreted > <capture-dir>/peak-stacks.txt
 
 Parse the flamegraph rows as one common-time global-peak population; retain
 the raw text, row count, positive-row count, and the sum of positive costs.
@@ -189,15 +196,16 @@ performance result. During the run retain the existing 128 MiB
 `MEM_AVAILABLE_GUARD_BYTES` as a last-ditch runtime abort, not as admission.
 
 Also require fresh free disk >= 4 GiB and an empty unique owned capture
-directory. Poll `du -sk` for the directory (allocation artifact and temps)
-every 0.5 s: 2 GiB is a soft limit that requests orderly frontend/profiler
-stop and marks the attempt failed; 3 GiB is a hard limit that terminates the
-owned profiler/frontend process group, then waits for all children. These are
-owned-runner checks, not a filesystem quota or privileged configuration. Bound
-the attempt to one 120s warmup + 600s observe + 60s teardown, plus the
-controller's existing 180s launch/cleanup allowance. Preserve partial output
-and logs on either bound breach, and never retry or shorten the window.
-Keep profiler/helper process accounting at 0.5-second sampling.
+directory. Poll `du -sk` for the directory (raw artifact and temps) every 0.5 s:
+2 GiB is a soft limit that requests orderly frontend stop and marks the attempt
+failed; 3 GiB is a hard limit that terminates only the owned frontend process,
+then waits for it. These are owned-runner checks, not a filesystem quota or
+privileged configuration. Bound the attempt to one 120s warmup + 600s observe +
+60s teardown, plus the controller's existing 180s launch/cleanup allowance.
+Bound post-exit interpretation separately with the existing controller cleanup
+allowance; preserve partial output and logs on either bound breach, and never
+retry or shorten the window. Sample frontend/server/controller roles at 0.5 s;
+the post-exit interpreter is not part of the live-process sample.
 
 The source/build/cache/server provenance must be rechecked immediately before
 launch and recorded in the capture manifest. The fresh Concord receipt is
@@ -210,8 +218,9 @@ artifact sizes and hashes, and the post-cleanup process check.
 
 One attempt only. Failure means any provenance mismatch, stale/reused server
 identity, wrong binary/feature/cache/account, missing direct frontend identity,
-missing helper accounting, memory/disk bound breach, FIFO/interpreter/compressor
-failure, incomplete/corrupt output, abnormal frontend exit, or cleanup leak.
+wrong preload library or output ownership, memory/disk bound breach, raw
+interpretation failure, incomplete/corrupt output, abnormal frontend exit, or
+cleanup leak.
 Preserve partial artifacts and logs with a failed receipt; do not rerun, change
 N, shorten the observation, switch profiler mode, or reinterpret a failed run
 as evidence. A failed attempt leaves the discriminator unresolved and requires a
@@ -226,7 +235,8 @@ report exit 0, 5,902 allocation calls, expected `PyByteArray_Resize` stack), the
 fresh Concord post-update receipt, and the existing N1 managed launch contract.
 Those smokes establish tool collection and cleanup only; they are not client
 allocation or CPU evidence. Heaptrack's own help explicitly warns that runtime
-attach is unstable, so the capture is launch-wrapped, not attached.
+attach is unstable, so the capture uses direct preload in the frontend
+environment, not attach or the Heaptrack wrapper script.
 
 This document is the reviewed-scope candidate for the next executable
 diagnostic design. Root must first verify the launch seam, output paths,
