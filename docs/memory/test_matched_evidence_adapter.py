@@ -1322,6 +1322,49 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
         self.assertEqual(pair["reason"], "match_key_mismatch")
         self.assertIn("sustain", pair.get("differing_keys") or [])
 
+    def test_cpu_fallback_requested_backend_match_keys(self):
+        """CPU proof cannot silently match a GPU control via missing backend keys."""
+        # Legacy TUI meta defaults to none/false.
+        keys = mea.construct_match_keys({"frontend": "tui", "n": 1, "workload": "active"})
+        self.assertFalse(keys["cpu_fallback"])
+        self.assertEqual(keys["requested_backend"], "none")
+        # Panel legacy defaults to gpu.
+        panel_keys = mea.construct_match_keys({"frontend": "panel", "n": 1, "workload": "idle"})
+        self.assertFalse(panel_keys["cpu_fallback"])
+        self.assertEqual(panel_keys["requested_backend"], "gpu")
+        # Explicit CPU is recorded and differs from GPU.
+        cpu_keys = mea.construct_match_keys({
+            "frontend": "panel", "n": 1, "workload": "idle",
+            "cpu_fallback": True, "requested_backend": "cpu_fallback",
+        })
+        self.assertTrue(cpu_keys["cpu_fallback"])
+        self.assertEqual(cpu_keys["requested_backend"], "cpu_fallback")
+        self.assertNotEqual(panel_keys["requested_backend"], cpu_keys["requested_backend"])
+
+        ref, cand, manifest, server = self._positive_pair()
+        ref_b = mea.bind_side(
+            ref["receipt_path"], role="reference", manifest_path=manifest,
+            server_identity_path=server, cell_dir=ref["cell"],
+        )
+        cand_b = mea.bind_side(
+            cand["receipt_path"], role="candidate", manifest_path=manifest,
+            server_identity_path=server, cell_dir=cand["cell"],
+        )
+        self.assertTrue(ref_b.get("binding_ok"), ref_b)
+        self.assertTrue(cand_b.get("binding_ok"), cand_b)
+        # Mutate candidate match keys to CPU — pair must refuse GPU/CPU mix.
+        cand_b = dict(cand_b)
+        cand_b["match_keys"] = dict(cand_b["match_keys"])
+        cand_b["match_keys"]["cpu_fallback"] = True
+        cand_b["match_keys"]["requested_backend"] = "cpu_fallback"
+        pair = mea.bind_pair(reference=ref_b, candidate=cand_b)
+        self.assertEqual(pair["reason"], "match_key_mismatch")
+        diff = pair.get("differing_keys") or []
+        self.assertTrue(
+            "requested_backend" in diff or "cpu_fallback" in diff,
+            diff,
+        )
+
     def test_failure_capture_mismatch_not_dropped_by_whitelist(self):
         """compare_matched_runs must not drop instrumentation flags from equality."""
         base = {

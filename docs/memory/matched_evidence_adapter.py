@@ -66,6 +66,8 @@ MATCH_KEY_FIELDS = (
     "client_sources_sha256",
     "failure_capture",
     "nav_captures",
+    "cpu_fallback",
+    "requested_backend",
     "server_start_identity",
     "server_port_listen",
     "server_configuration",
@@ -458,6 +460,20 @@ def construct_match_keys(meta: dict, *, extras: Optional[dict] = None) -> dict:
     out: dict[str, Any] = {}
     # Legacy launcher lacked this opt-in flag; its validated CLI proves off.
     out['tui_input_probes'] = meta.get('tui_input_probes', False)
+    # Legacy launcher lacked explicit backend request; default from frontend.
+    cpu_fb = meta.get('cpu_fallback', False)
+    if type(cpu_fb) is not bool:
+        cpu_fb = False
+    out['cpu_fallback'] = cpu_fb
+    rb = meta.get('requested_backend')
+    if rb is None:
+        if cpu_fb:
+            rb = 'cpu_fallback'
+        elif meta.get('frontend') == 'panel':
+            rb = 'gpu'
+        else:
+            rb = 'none'
+    out['requested_backend'] = rb
     for key in MATCH_KEY_FIELDS:
         if key in (
             "server_start_identity",
@@ -467,6 +483,8 @@ def construct_match_keys(meta: dict, *, extras: Optional[dict] = None) -> dict:
             "sampler_duration_mode",
             "sampler_duration_s_requested",
             "host_conditions",
+            "cpu_fallback",
+            "requested_backend",
         ):
             continue
         out[key] = meta.get(key)
@@ -619,6 +637,19 @@ def _validate_effective_cli(receipt: dict, meta: dict) -> Optional[str]:
     probe_flag = meta.get('tui_input_probes', False)
     if type(probe_flag) is not bool or probe_flag != args.tui_input_probes:
         return 'receipt_cli_metadata_mismatch:tui_input_probes'
+    # Legacy launcher omitted cpu_fallback/requested_backend; CLI default proves GPU/none.
+    cpu_flag = bool(getattr(args, 'cpu_fallback', False))
+    meta_cpu = meta.get('cpu_fallback', False)
+    if type(meta_cpu) is not bool or meta_cpu != cpu_flag:
+        return 'receipt_cli_metadata_mismatch:cpu_fallback'
+    expected_backend = rd.requested_backend(args)
+    meta_backend = meta.get('requested_backend')
+    if meta_backend is None:
+        if cpu_flag:
+            return 'receipt_cli_metadata_mismatch:requested_backend'
+        meta_backend = expected_backend
+    if meta_backend != expected_backend:
+        return 'receipt_cli_metadata_mismatch:requested_backend'
     if args.build_manifest is not None:
         if canonical_path(args.build_manifest) != canonical_path(receipt.get('manifest_path')):
             return 'receipt_cli_manifest_mismatch'

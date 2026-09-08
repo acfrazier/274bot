@@ -385,6 +385,76 @@ print("ok")
             self.assertTrue("conpty" in msg or "windows" in msg)
             self.assertTrue("headless" in msg or "panel" in msg)
 
+    def test_cpu_fallback_flag_panel_only_and_metadata_names(self):
+        import run_diagnostic as rd
+
+        p = rd.build_parser()
+        help_proc = run_cli("--help")
+        self.assertIn("--cpu-fallback", help_proc.stdout)
+
+        default = p.parse_args(["panel", "1", "idle"])
+        rd.validate_args(default, p)
+        self.assertFalse(default.cpu_fallback)
+        self.assertEqual(rd.requested_backend(default), "gpu")
+
+        on = p.parse_args(["panel", "16", "idle", "--cpu-fallback", "--focused-one"])
+        rd.validate_args(on, p)
+        self.assertTrue(on.cpu_fallback)
+        self.assertEqual(rd.requested_backend(on), "cpu_fallback")
+        self.assertEqual(rd.requested_render_policy(on), "focused-one")
+
+        tui = p.parse_args(["tui", "1", "idle"])
+        rd.validate_args(tui, p)
+        self.assertEqual(rd.requested_backend(tui), "none")
+
+        bad_tui = run_cli("tui", "1", "idle", "--cpu-fallback")
+        self.assertNotEqual(bad_tui.returncode, 0)
+        self.assertIn("panel", (bad_tui.stderr + bad_tui.stdout).lower())
+
+        bad_gpu = run_cli(
+            "panel", "1", "idle",
+            "--render-profile", "--gpu-completion-profile", "--cpu-fallback",
+        )
+        self.assertNotEqual(bad_gpu.returncode, 0)
+        err = (bad_gpu.stderr + bad_gpu.stdout).lower()
+        self.assertTrue("cpu-fallback" in err or "gpu-completion" in err, err)
+
+        # Nav captures + focused-one still legal with CPU fallback.
+        nav = p.parse_args(
+            ["panel", "16", "idle", "--nav-captures", "--focused-one", "--cpu-fallback"]
+        )
+        rd.validate_args(nav, p)
+        self.assertTrue(nav.cpu_fallback)
+        self.assertTrue(nav.nav_captures)
+
+    def test_cpu_fallback_env_scrub_default_and_explicit_set(self):
+        """Inherited BOT_CPU is scrubbed; BOT_CPU=1 only when --cpu-fallback."""
+        import run_diagnostic as rd
+
+        p = rd.build_parser()
+        a_off = p.parse_args(["panel", "1", "idle"])
+        rd.validate_args(a_off, p)
+        a_on = p.parse_args(["panel", "1", "idle", "--cpu-fallback"])
+        rd.validate_args(a_on, p)
+        polluted = {
+            "BOT_CPU": "1",
+            "BOT_DEBUG": "1",
+            "PATH": "/usr/bin",
+            "HOME": "/tmp",
+        }
+        env_off = rd.build_child_env(a_off, "/tmp/cpu-off-run", base_env=polluted)
+        self.assertNotIn("BOT_CPU", env_off)
+        self.assertNotIn("BOT_DEBUG", env_off)
+        env_on = rd.build_child_env(a_on, "/tmp/cpu-on-run", base_env=polluted)
+        self.assertEqual(env_on.get("BOT_CPU"), "1")
+        self.assertNotIn("BOT_DEBUG", env_on)
+        # Explicit flag still sets after scrub even when parent lacked BOT_CPU.
+        clean = {"PATH": "/usr/bin", "HOME": "/tmp"}
+        env_clean_on = rd.build_child_env(a_on, "/tmp/cpu-clean-on", base_env=clean)
+        self.assertEqual(env_clean_on.get("BOT_CPU"), "1")
+        env_clean_off = rd.build_child_env(a_off, "/tmp/cpu-clean-off", base_env=clean)
+        self.assertNotIn("BOT_CPU", env_clean_off)
+
 
 if __name__ == "__main__":
     unittest.main()

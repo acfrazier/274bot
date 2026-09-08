@@ -2570,6 +2570,7 @@ RESOURCE_MATCH_KEY_FIELDS = (
     "nav_pack_sha256", "nav_flags_sha256", "renderer_settings",
     "cache_settings", "catalog_sha256", "feature_flags", "allocator_provenance",
     "client_sources_sha256", "failure_capture", "nav_captures",
+    "cpu_fallback", "requested_backend",
 )
 
 RESOURCE_SIDE_PROVENANCE_FIELDS = (
@@ -2589,7 +2590,22 @@ def resource_match_keys_from_meta(meta: dict) -> dict:
 
     Never default TUI null render_policy to \"none\" — absent stays None/unavailable.
     """
-    return {key: meta.get(key) for key in RESOURCE_MATCH_KEY_FIELDS}
+    out = {key: meta.get(key) for key in RESOURCE_MATCH_KEY_FIELDS}
+    # Legacy launcher omitted explicit backend request fields.
+    cpu_fb = out.get('cpu_fallback')
+    if type(cpu_fb) is not bool:
+        cpu_fb = False
+    out['cpu_fallback'] = cpu_fb
+    rb = out.get('requested_backend')
+    if rb is None:
+        if cpu_fb:
+            rb = 'cpu_fallback'
+        elif meta.get('frontend') == 'panel':
+            rb = 'gpu'
+        else:
+            rb = 'none'
+    out['requested_backend'] = rb
+    return out
 
 
 def resource_side_provenance_from_meta(meta: dict) -> dict:

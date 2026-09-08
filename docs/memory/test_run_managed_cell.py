@@ -692,6 +692,44 @@ class ManagedCellTests(unittest.TestCase):
         report = self._run(spec)
         self.assertEqual(report["status"], "preflight_failed")
 
+    def test_requested_backend_spec_matches_diagnostic_argv(self):
+        """spec.requested_backend must agree with diagnostic --cpu-fallback."""
+        # Default tui: requested_backend none (implicit) is fine.
+        ok = rmc.validate_spec(self.fx.base_spec() | {"requested_backend": "none"})
+        self.assertEqual(ok["requested_backend"], "none")
+        with self.assertRaises(rmc.CellError):
+            rmc.validate_spec(self.fx.base_spec() | {"requested_backend": "vulkan"})
+
+        # Panel CPU argv vs GPU label is rejected at argv consistency.
+        panel_cpu = self.fx.base_spec(cell_id="cpu_mismatch")
+        panel_cpu["frontend"] = "panel"
+        panel_cpu["diagnostic_argv"] = [
+            "panel", "1", "idle",
+            "--binary", str(self.fx.binary),
+            "--build-manifest", str(self.fx.manifest),
+            "--build-role", "candidate",
+            "--observe", "1", "--warmup", "0",
+            "--cpu-fallback",
+        ]
+        panel_cpu["requested_backend"] = "gpu"
+        report = self._run(panel_cpu)
+        self.assertEqual(report["status"], "preflight_failed", report)
+        self.assertTrue(
+            "requested_backend" in str(report.get("error", "")).lower()
+            or "cpu" in str(report.get("error", "")).lower()
+            or "preflight" in report["status"],
+            report,
+        )
+
+        # Matching cpu_fallback label is accepted by validate + argv check (preflight
+        # may still fail later on fixtures; we only assert consistency path).
+        panel_ok = dict(panel_cpu)
+        panel_ok["id"] = "cpu_ok_argv"
+        panel_ok["requested_backend"] = "cpu_fallback"
+        args = rmc.parse_diagnostic_argv(panel_ok["diagnostic_argv"])
+        rmc.require_argv_consistent_with_spec(panel_ok, args, _test_launcher=True)
+        self.assertEqual(rd.requested_backend(args), "cpu_fallback")
+
     def test_receipt_hashes_and_frontend_launcher_distinction(self):
         spec = self.fx.base_spec(cell_id="hash", observe=0.5, teardown=0.8)
         report = self._run(spec)

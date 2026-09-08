@@ -34,6 +34,7 @@ def build_parser():
     p.add_argument('--single-renderer', action='store_true', help='Panel legacy: fixed slot zero draws; other slots simulate only (BOT_MEMORY_SINGLE_RENDERER)')
     p.add_argument('--focused-one', action='store_true', help='Panel: fixed slot0 full-rate GPU; others simulation-only (deterministic prefs)')
     p.add_argument('--focused-background', action='store_true', help='Panel: fixed slot0 full-rate; other slots draw at 1 fps skip-paint')
+    p.add_argument('--cpu-fallback', action='store_true', help='Panel only: force CpuPix3D via BOT_CPU=1 after scrubbing inherited BOT_CPU; records requested_backend=cpu_fallback (not a GPU target)')
     p.add_argument('--headless', action='store_true', help='TUI diagnostic only: skip terminal drawing')
     p.add_argument('--tui-input-probes', action='store_true', help='TUI PTY: toggle settings overlay once per second during observation; writes alone are not latency evidence')
     p.add_argument('--debug', action='store_true')
@@ -68,6 +69,8 @@ def validate_args(a, parser):
         parser.error('--single-renderer, --focused-one, and --focused-background are mutually exclusive')
     if a.frontend != 'panel' and any(panel_modes):
         parser.error('panel render flags require frontend panel')
+    if a.cpu_fallback and a.frontend != 'panel':
+        parser.error('--cpu-fallback requires frontend panel')
     one_draw = a.single_renderer or a.focused_one
     if a.nav_captures and a.frontend == 'panel' and not one_draw:
         parser.error('--nav-captures on panel requires --single-renderer or --focused-one')
@@ -77,6 +80,8 @@ def validate_args(a, parser):
             parser.error('--gpu-completion-profile requires frontend panel')
         if not a.render_profile:
             parser.error('--gpu-completion-profile requires --render-profile')
+        if a.cpu_fallback:
+            parser.error('--gpu-completion-profile is incompatible with --cpu-fallback')
     if a.responsiveness_fine and not a.responsiveness_profile:
         parser.error('--responsiveness-fine requires --responsiveness-profile')
 
@@ -90,6 +95,18 @@ def requested_render_policy(a):
     if a.focused_background:
         return 'focused-plus-background'
     return 'rotating-all'
+
+def requested_backend(a):
+    """Explicit render-backend intent for metadata/match keys.
+
+    CPU fallback is never implied by inherited env; only --cpu-fallback selects
+    cpu_fallback. Panel default remains gpu. TUI has no panel renderer target.
+    """
+    if getattr(a, 'cpu_fallback', False):
+        return 'cpu_fallback'
+    if a.frontend == 'panel':
+        return 'gpu'
+    return 'none'
 
 # Keys always scrubbed from the child env so parent shell pollution cannot leak.
 _SCRUB_CHILD_ENV = (
@@ -166,6 +183,9 @@ def build_child_env(a, run_dir, base_env=None, *, platform=None):
         env['BOT_MEMORY_FAILURE_CAPTURE'] = '1'
     if a.debug:
         env['BOT_DEBUG'] = '1'
+    # BOT_CPU is always scrubbed above; set only on explicit --cpu-fallback.
+    if a.cpu_fallback:
+        env['BOT_CPU'] = '1'
     if a.nav_captures:
         env['BOT_NAV_CAPTURES'] = '1'
         env['274BOT_SMOKE_DIR'] = str(run / 'captures')
@@ -284,9 +304,10 @@ def main(argv=None):
             p.error(str(error))
     run.mkdir(parents=True, exist_ok=False)
     render_policy = requested_render_policy(a)
+    backend = requested_backend(a)
     meta = dict(stack_logging_mode='lite' if a.stack_logging_lite else ('1' if a.stack_logging else None),host_sources_sha256=source_digest(root),client_sources_sha256=source_digest(root/'vendor/fr-client-rust'),frontend=a.frontend,n=a.n,workload=a.workload,warmup_s=a.warmup,observe_s=a.observe,
                 nav_pack=str(nav_pack),nav_pack_sha256=hashlib.sha256(nav_pack.read_bytes()).hexdigest() if nav_pack.is_file() else None,nav_flags=str(nav_flags),
-                diagnostic_only=True,scheduling_profile=a.scheduling_profile,render_profile=a.render_profile,gpu_completion_profile=a.gpu_completion_profile,responsiveness_profile=a.responsiveness_profile,responsiveness_fine=a.responsiveness_fine,diagnostic_sidecar=not a.no_diagnostics,failure_capture=a.failure_capture,nav_captures=a.nav_captures,single_renderer=a.single_renderer,render_policy=render_policy,render_policy_requested=True,terminal=terminal,terminal_size=[120,40] if terminal else None,debug=a.debug,sustain=a.sustain,stack_logging=a.stack_logging or a.stack_logging_lite,binary=str(binary),
+                diagnostic_only=True,scheduling_profile=a.scheduling_profile,render_profile=a.render_profile,gpu_completion_profile=a.gpu_completion_profile,responsiveness_profile=a.responsiveness_profile,responsiveness_fine=a.responsiveness_fine,diagnostic_sidecar=not a.no_diagnostics,failure_capture=a.failure_capture,nav_captures=a.nav_captures,single_renderer=a.single_renderer,render_policy=render_policy,render_policy_requested=True,cpu_fallback=a.cpu_fallback,requested_backend=backend,terminal=terminal,terminal_size=[120,40] if terminal else None,debug=a.debug,sustain=a.sustain,stack_logging=a.stack_logging or a.stack_logging_lite,binary=str(binary),
                 binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
                 host_commit=git('rev-parse','HEAD'),client_commit=git('-C','vendor/fr-client-rust','rev-parse','HEAD'),
                 host_diff_sha256=hashlib.sha256(git('diff','HEAD').encode()).hexdigest(),

@@ -131,6 +131,9 @@ def validate_spec(spec: Mapping[str, Any]) -> Dict[str, Any]:
     out.setdefault('process_backend', 'system')
     if out['process_backend'] not in ('system', 'libproc'):
         raise CellError('invalid process_backend')
+    if 'requested_backend' in out and out['requested_backend'] is not None:
+        if out['requested_backend'] not in ('gpu', 'cpu_fallback', 'none'):
+            raise CellError('spec.requested_backend must be gpu|cpu_fallback|none')
     has_cache = 'cache_dir' in out and out['cache_dir'] is not None
     has_unpack = 'unpack_root' in out and out['unpack_root'] is not None
     if has_cache ^ has_unpack:
@@ -192,6 +195,13 @@ def require_argv_consistent_with_spec(spec: Mapping[str, Any], args: argparse.Na
         raise CellError("diagnostic --build-role does not match spec.build_role")
     if args.frontend != spec["frontend"]:
         raise CellError("diagnostic frontend does not match spec.frontend")
+    expected_backend = rd.requested_backend(args)
+    if 'requested_backend' in spec and spec['requested_backend'] is not None:
+        if spec['requested_backend'] != expected_backend:
+            raise CellError('spec.requested_backend does not match diagnostic argv')
+    # CPU fallback cells cannot be declared as GPU targets via a mismatched field.
+    if expected_backend == 'cpu_fallback' and spec.get('requested_backend') == 'gpu':
+        raise CellError('cpu_fallback diagnostic cannot pair as gpu requested_backend')
     if not _test_launcher:
         argv = spec['launcher_argv']
         if (len(argv) < 3 or pathlib.Path(argv[0]).resolve() != pathlib.Path(sys.executable).resolve()
