@@ -1,0 +1,115 @@
+{
+  "mapping_count": 21,
+  "core_count": 16,
+  "native_python_count": 36,
+  "all_mapping_targets_exist": true,
+  "migration_repetitions": [
+    {
+      "exit_code": 0,
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "exit_code": 0,
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "exit_code": 0,
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "exit_code": 0,
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "exit_code": 0,
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "exit_code": 0,
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "exit_code": 0,
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "exit_code": 0,
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "exit_code": 0,
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "exit_code": 0,
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "exit_code": 0,
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "exit_code": 0,
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "exit_code": 0,
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "exit_code": 0,
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "exit_code": 0,
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "exit_code": 0,
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "exit_code": 0,
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "exit_code": 0,
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "exit_code": 0,
+      "passed": 9,
+      "failed": 0
+    },
+    {
+      "exit_code": 0,
+      "passed": 9,
+      "failed": 0
+    }
+  ],
+  "reference": {
+    "buffered_simulated_equal_metadata": "pass",
+    "unread_simulated_equal_metadata": "pass",
+    "real_metadata_change": "pass"
+  },
+  "linux_qualification": false,
+  "production_retry_authorized": false
+}

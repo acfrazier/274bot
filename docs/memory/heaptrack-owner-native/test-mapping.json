@@ -8,7 +8,7 @@
   "time_rejections_and_unbounded_event_tail": ["OriginalFixtures.test_time_rejections_and_unbounded_event_tail"],
   "record_adversaries": ["NativeSeams.test_all_record_adversaries"],
   "reference_and_session_adversaries": ["OriginalFixtures.test_reference_and_session_adversaries"],
-  "conversion_hash_suffix_and_canonical_not_sum": ["OriginalFixtures.test_conversion_hash_suffix_and_canonical_not_sum", "core::migration_tests::frozen_identity_hash_suffix_and_midpass_mutation", "core::migration_tests::interpreted_mutation_between_passes"],
+  "conversion_hash_suffix_and_canonical_not_sum": ["OriginalFixtures.test_conversion_hash_suffix_and_canonical_not_sum", "core::migration_tests::frozen_expected_hash_rejected", "core::migration_tests::frozen_suffix_size_rejected", "core::migration_tests::midpass_metadata_change_rejected", "core::migration_tests::same_size_content_change_rejected_by_hash", "core::migration_tests::buffered_write_with_simulated_equal_metadata_keeps_consumed_hash", "core::migration_tests::unread_write_with_simulated_equal_metadata_rejected_by_hash", "core::migration_tests::interpreted_mutation_between_passes"],
   "each_table_numeric_input_and_depth_cap": ["OriginalFixtures.test_each_table_numeric_input_and_depth_cap", "NativeSeams.test_zero_and_depth", "core::tests::checked_numeric_limits"],
   "suppression_does_not_change_population": ["OriginalFixtures.test_suppression_does_not_change_population"],
   "normalization_collisions_new_stop_inline_unresolved": ["NativeSeams.test_original_normalization", "NativeSeams.test_zero_and_depth"],

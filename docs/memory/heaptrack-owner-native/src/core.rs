@@ -8,11 +8,10 @@ mod migration_tests;
 #[path = "core_tests.rs"]
 mod tests;
 #[cfg(test)]
-static OPEN_COUNTS: [AtomicUsize; 3] = [
-    AtomicUsize::new(0),
-    AtomicUsize::new(0),
-    AtomicUsize::new(0),
-];
+thread_local! {
+    // Replay is single-threaded; isolate counters between parallel test cases.
+    static OPEN_COUNTS: std::cell::Cell<[usize; 3]> = const { std::cell::Cell::new([0; 3]) };
+}
 pub use batched::BufferedDigest;
 #[path = "sort.rs"]
 mod sort;
@@ -438,7 +437,11 @@ impl Input {
         #[cfg(test)]
         for (index, name) in ["raw", "interpreted", "peak"].iter().enumerate() {
             if Path::new(p).file_name().is_some_and(|s| s == *name) {
-                OPEN_COUNTS[index].fetch_add(1, Ordering::SeqCst);
+                OPEN_COUNTS.with(|counts| {
+                    let mut value = counts.get();
+                    value[index] += 1;
+                    counts.set(value);
+                });
             }
         }
         let f = OpenOptions::new()
@@ -502,6 +505,9 @@ impl Input {
     }
     pub fn finish(self, g: &mut Guard) -> Result<String> {
         g.check()?;
+        // Metadata checks supplement the consumed-byte hash, not an immutable
+        // snapshot: same-size writes may share filesystem timestamps. A write
+        // to already buffered bytes need not affect this pass's consumed stream.
         let after = self.reader.get_ref().metadata().map_err(|_| "input stat")?;
         need(
             identity(&self.before) == identity(&after),
