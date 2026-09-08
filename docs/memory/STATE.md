@@ -11,6 +11,23 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 13:23 UTC
+
+- Independent native b raw check: 320 unique fixed-window identities,
+  300 Decode/20 Panel, all completed, no loss receipts. Direct structural
+  reader accepts both populations. Report native-cohort-input-followup-report.md
+  committed5d2233f. No canonical metadata or matched performance acceptance.
+- Grok4.6 follow-up t_5b03b1fe is running; actual session
+  20260908_091838_92549b, grok-4.6/xai-oauth. Review report is scoped to
+  cohort-correction-grok46-review.md; no native execution by reviewer.
+- Final referencee25f328 native build running, cargo18176, source prehash
+  1f2289839d4359f6316cc3c27e3740efa18bcf0691d2a5621aae080fb226013b,
+  877 verified files. Candidateca56e14 archive prepared/uploaded; not started.
+  Final role native builds/tests remain required before comparison.
+- New Luna t_5bb0cbaf prepares source-only matched N16 controls in isolated
+  windows-cohort-pair-controls. Same-card Grok4.5 review required. Root owns
+  source/binary/fixture binding, native no-launch proof, and final pair launch.
+
 ## Latest boundary — 2026-09-08 13:15 UTC
 
 - Capture-corrected native N1 diagnostic b exited 0 at 13:12:17 UTC, no
