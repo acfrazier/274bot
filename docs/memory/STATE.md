@@ -9,6 +9,29 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 03:00 UTC
+
+- Tile probe final correction b9c5e74/clientabb811b APPROVED actual Grok4.5
+  session20260907_225410_003242 (samecardt_99a0f554); rootgitlink9268890.
+  Report explicitly measures +680B OwnerCensus per host profile row and labels
+  layout units bytes; added host type-size diagnostic test. No representation
+  change. Old57361ec staged source packages never built/run and are superseded.
+- Native Windows9268890 build PASSED0 32.90s at02:56:20;871 source files pre/post
+  aggregate84054d9c02394d959cd84681dd85f3589d3a559b94bb37856c6f87cb0629269a.
+  Binarye2deb1db371366f674c18e39d04f7309480310072ade224ffa1433c84d4559b5
+  staged/verified ProgramData/274bot-Test/renderer-owner-census-9268890 at02:57:38.
+  Client183files aggregateea6402702a56dc29359bf4effd9ca87407734fc9d940bfabdefb92cec8bf41ee.
+  Six native receipts copied docs/memory/diagnostics/windows-tile-probe-build-9268890.
+  Frozen record windows-tile-probe-native-freeze.json commit8ec8711.
+- Native single fresh occupancy-control preparation t_faca482f ACTUALLY RUNNING
+  Luna in primary campaign, scoped windows-tile-probe-controls/ and report.
+  Exact d89c4a7 old controls as base, current binary identities, same runtime3118
+  tools48/server/cache/catalog, full BotTest no-launch validators and raw-run
+  archival included. Await same-card review then native contract preflight;
+  root owns one diagnostic launch/archive. No native frontend launched yet.
+- Native Linux project build and46 script-lib tests complete; VM Off and all
+  build/test sessions drained. No current root native process/tool handle.
+
 ## Latest boundary — 2026-09-08 02:51 UTC
 
 - Native Hyper-V script tests PASSED: focused attribution4/4, full script lib46/46
