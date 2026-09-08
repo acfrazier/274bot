@@ -280,6 +280,7 @@ def run(args: argparse.Namespace, spec: Dict[str, Any]) -> int:
     output = args.output.resolve()
     spec_path = output.with_suffix(output.suffix + ".spec.json")
     cells_root = output.with_suffix(output.suffix + ".cells")
+    n = requested_n(args)
     if output.exists() or spec_path.exists() or cells_root.exists():
         raise CalibrationError("refusing existing output/spec/cell path; choose a unique output")
     _exclusive_json(spec_path, spec)
@@ -289,7 +290,7 @@ def run(args: argparse.Namespace, spec: Dict[str, Any]) -> int:
         if hasattr(signal, "SIGUSR1"):
             os.kill(os.getpid(), signal.SIGUSR1)
     guard = MemoryGuard(cleanup)
-    report: Dict[str, Any] = {"status": "failed_or_unavailable", "launched": "unknown", "n": requested_n(args),
+    report: Dict[str, Any] = {"status": "failed_or_unavailable", "launched": "unknown", "n": n,
                               "attempts": 1, "execution_attempted": True}
     previous_handler = signal.getsignal(signal.SIGUSR1) if hasattr(signal, "SIGUSR1") else None
     def abort_from_guard(signum: int, frame: Any) -> None:
@@ -316,6 +317,7 @@ def run(args: argparse.Namespace, spec: Dict[str, Any]) -> int:
         report["memory_guard"] = {"status": "triggered", "reason": triggered["reason"], "cleanup": "owned runner cleanup requested"}
     else:
         report["memory_guard"] = {"status": "not_triggered", "limit_bytes": MEM_AVAILABLE_GUARD_BYTES, "poll_interval_s": MEM_GUARD_INTERVAL_S}
+    report["n"] = n
     report["performance_acceptance"] = False
     _exclusive_json(output, report)
     return 0 if report.get("status") == "completed" and not triggered else 1

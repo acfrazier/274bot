@@ -179,6 +179,18 @@ class CurrentTuiCalibrationControls(unittest.TestCase):
             self.assertFalse(report["performance_acceptance"])
             self.assertEqual(report["memory_guard"]["status"], "not_triggered")
 
+    def test_run_receipt_retains_selected_n_after_managed_runner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            output = root / "result.json"
+            args = argparse.Namespace(output=output, host_checkout=root, n=1)
+            managed_report = {"status": "failed_or_unavailable", "launched": False, "attempts": 1}
+            with mock.patch.object(runner, "launch_environment", return_value={}), \
+                 mock.patch.object(runner.rmc, "run_managed_cell", return_value=managed_report):
+                self.assertEqual(runner.run(args, {"id": "result"}), 1)
+            report = json.loads(output.read_text())
+            self.assertEqual(report["n"], 1)
+
     def test_existing_output_is_refused_before_managed_launch(self):
         with tempfile.TemporaryDirectory() as tmp:
             output = pathlib.Path(tmp) / "result.json"
