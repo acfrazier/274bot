@@ -9,6 +9,28 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 06:51 UTC
+
+- CPU proof t_7e5149d2 correctedcbb3134 APPROVED actualGrok4.5/xai-oauth
+  20260908_024444_486499 after tar/restore/caption corrections. See
+  windows-tile-cpu-paired-proof-report.md and reproducible checker.
+- Visual behavior plan475c697 APPROVED actualGrok4.5/xai-oauth
+  20260908_023843_3042e3 t_9684b365. Plan only; actual G1–G4 gates unrun.
+- Longer controls initialcbdad70 rejected for original parser helper dependency/
+  malformed digests. Corrective7a9eb03 approved actualGrok4.5/xai-oauth
+  20260908_024644_bc7016. Native11file package3e3c22235e23d458a934560cd466c6575b57e7a1dd9a77a60c8836d165a7bf0b
+  verified, original4runtimehashes verified unchanged,7PowerShellASTpassed,
+  both fresh0250 preflight/stagedcontract/limitedBotTest no-launch passed0.
+  Receipts windows-tile-boxed-long-contract-native-7a9eb03.json.
+- SINGLE LONGER STAGE STARTED baseline-focused-one-long-native-20260908-0250
+  at06:50:12UTC, native raw20260908T065013Z_panel_n16_active PID2432. Await
+  actual600s observation/completion/binding/qualification/archive before candidate
+  same0250 ID. Candidate unlaunched. Root helper prefix managed-tile-boxed-long-.
+  Controls C:/ProgramData/274bot-Test/tile-boxed-long-controls-7a9eb03;
+  controller21e2f400afefd10dec1f2c86da16a4ab4bbd2faedb8b15f112474cdc441f70b5.
+  No new builds or native profiling/captures; original clean runtime unchanged.
+  Missing fine/input/calibration and finaltarget/lifecycle/scaling remainpending.
+
 ## Latest boundary — 2026-09-08 06:32 UTC
 
 - t_7e5149d2 actualLuna running: independent CPU0215 archives/provenance/

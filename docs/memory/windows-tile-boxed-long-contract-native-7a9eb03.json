@@ -1,0 +1,82 @@
+{
+  "controls_commit": "7a9eb03a71c460c294798ba3e1924300a8766e18",
+  "review_session": "20260908_024644_bc7016",
+  "review_model": "grok-4.5",
+  "review_provider": "xai-oauth",
+  "receipts": [
+    {
+      "path": "docs/memory/diagnostics/windows-tile-boxed-long-contract-7a9eb03/root-staging-receipt.json",
+      "sha256": "56316d606ddb134f632589f905ace305d90ee1f3914e7855d764ec5e84e693cf",
+      "receipt": {
+        "utc": "2026-09-08T06:49:18.3959385Z",
+        "controlsCommit": "7a9eb03a71c460c294798ba3e1924300a8766e18",
+        "archiveSha256": "3e3c22235e23d458a934560cd466c6575b57e7a1dd9a77a60c8836d165a7bf0b",
+        "originalGpuRuntimeVerified": true,
+        "files": {
+          "archive-tile-boxed.ps1": "ea77fce474ff37ca191a747fbb971ec1262073d8a9dc66a705f0c52c701c86d8",
+          "check-tile-probe-contract.py": "59bb78bee5158820d4dee96a122e0241bf05398c2d7b2e3811dd422ac7e92fa5",
+          "launch-tile-boxed.ps1": "9387f71c25977c1da24dc26108d2076592cd5520aafca9f37f2a97ce0641a31e",
+          "poll-tile-boxed.ps1": "bf61e959d2a80ceb3a53c46525338859b33bc8745971044c94ba7c593d9d7855",
+          "preflight-tile-boxed.ps1": "228c06d3e2516056dfdada1b9372d68911a43d587504e1627cc7a1bb6543acef",
+          "prepare-tile-probe.ps1": "43c3c710e059b05c881e64853e4c6cfaec9b3d11e5c1909a48d43a8d03cd1952",
+          "run-contractcheck-tile-probe.ps1": "572e34d476e9a425fe1912bb0be6a6f22572da6b993d8e79778c5707392ab22d",
+          "run-tile-boxed-focused-one.py": "21e2f400afefd10dec1f2c86da16a4ab4bbd2faedb8b15f112474cdc441f70b5",
+          "stage-contract-tile-probe.ps1": "9a3f993c4823755a54d86317eb88aa0d98939bf7f80ca05f7da82c92ca0fa688",
+          "test_tile_boxed_long_controls.py": "3c62763647574ec1f20d8d88f10aaf5f6902727dfd398291e5190fb30491e75e",
+          "validate-tile-boxed-ast.ps1": "5a42f3573823e8f5a2779e45bd48330921a1042c476d75a02e341ffc47219e49"
+        },
+        "frontendStarted": false,
+        "performanceAcceptance": false
+      }
+    },
+    {
+      "path": "docs/memory/diagnostics/windows-tile-boxed-long-contract-7a9eb03/tile-boxed-long-contract-baseline-focused-one-long-native-20260908-0250-long-contractcheck.json",
+      "sha256": "d8a4233af012dd88085d71be722a8c2ba2452520095f06c97ccaa9d8249e7cba",
+      "receipt": {
+        "kind": "no-launch contract test",
+        "cell_id": "baseline-focused-one-long-native-20260908-0250",
+        "check_id": "baseline-focused-one-long-native-20260908-0250",
+        "contract_id": "baseline-focused-one-long-native-20260908-0250-long-contractcheck",
+        "checks": [
+          {
+            "id": "baseline-focused-one-long-native-20260908-0250",
+            "contract_cell_id": "baseline-focused-one-long-native-20260908-0250-long-contractcheck",
+            "checked": true,
+            "launched": false,
+            "client_started": false,
+            "server_pid": 6728,
+            "native_conditions_complete": true,
+            "owner_census_opt_in": false
+          }
+        ],
+        "performance_acceptance": false
+      }
+    },
+    {
+      "path": "docs/memory/diagnostics/windows-tile-boxed-long-contract-7a9eb03/tile-boxed-long-contract-candidate-focused-one-long-native-20260908-0250-long-contractcheck.json",
+      "sha256": "5ee4951376b1c0782b0ebc99e0d214d42f202a728e635c2911848f59da0232ad",
+      "receipt": {
+        "kind": "no-launch contract test",
+        "cell_id": "candidate-focused-one-long-native-20260908-0250",
+        "check_id": "candidate-focused-one-long-native-20260908-0250",
+        "contract_id": "candidate-focused-one-long-native-20260908-0250-long-contractcheck",
+        "checks": [
+          {
+            "id": "candidate-focused-one-long-native-20260908-0250",
+            "contract_cell_id": "candidate-focused-one-long-native-20260908-0250-long-contractcheck",
+            "checked": true,
+            "launched": false,
+            "client_started": false,
+            "server_pid": 6728,
+            "native_conditions_complete": true,
+            "owner_census_opt_in": false
+          }
+        ],
+        "performance_acceptance": false
+      }
+    }
+  ],
+  "baseline_launch_utc": "2026-09-08T06:50:12.4988748Z",
+  "candidate_launched": false,
+  "performance_acceptance": false
+}
