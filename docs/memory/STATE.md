@@ -11,6 +11,28 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 17:31 UTC
+
+- N1 controller e707e2d approved actual Grok4.5 session20260908_132105_d057f0,
+  integrated5c11a5d. Root Mac24tests and nativeVPS24tests PASS. All1113frozenfiles
+  verified unchanged before/after installing only two untracked controller tools;
+  original toolbytes and installmanifest retained in n1-controller-e707e2d onVPS.
+- Sole N1 attribution cell current-tui-n1-1727 RUNNING: controller1882/start533699,
+  frontend1904, original server726/start1761; raw20260908T172715Z_tui_n1_active.
+  At elapsed228s observe, active1 ready1. Samefrozenbinarya0c6eb0b, profileoff,
+  System allocator,120warmup600observe. Do not launch another cell or rerunN16.
+  Complete/archive/qualify/nativebind/recompute this cell, then estimate N1/N16
+  fixed/incremental CPU and RSS with explicit single-pair uncertainty.
+- 289setup c236b0e approved; root persistent supervisor nowholds server67696,
+  loopback1080/44594/9898 andHTTPreadinessPASS; protected274/377hashes unchanged.
+  First short-lived rootlaunch/status failure retained under isolated289runtime.
+  CLI revision dd66723 and unpackoverride1700de0 eachpassed actualGrok4.5;
+  rootwindowedbuild nowrunning in isolatedFR-client-289. Liveclientnotyetlaunched.
+  Private disposable local profile and separateunpackdir are isolated under289runtime.
+- Operator-authorized separate377instructionrefresh running onfr-r377board,
+  onlyvaultdocs changed, rootAGENTS approvedGrok4.5; combinedthree-docs d7bb692
+  underfinalGrok4.6 t_343b6b62. No377services/configs/productchanges.
+
 ## Latest boundary — 2026-09-08 17:10 UTC
 
 - Independent Grok4.5 evidence review t_d6305d97 completed; report commitdeae538
