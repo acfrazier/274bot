@@ -455,6 +455,33 @@ print("ok")
         env_clean_off = rd.build_child_env(a_off, "/tmp/cpu-clean-off", base_env=clean)
         self.assertNotIn("BOT_CPU", env_clean_off)
 
+    def test_heaptrack_option_is_n1_tui_only_and_child_env_is_explicit(self):
+        import run_diagnostic as rd
+        p = rd.build_parser()
+        valid = p.parse_args(["tui", "1", "active", "--no-diagnostics", "--sustain",
+                              "--heaptrack-output", "/tmp/capture"])
+        rd.validate_args(valid, p)
+        valid.heaptrack_capture = {
+            "output": {"raw": "/tmp/capture/alloc.raw"},
+            "preload": {"path": "/usr/lib/heaptrack/libheaptrack_preload.so"},
+        }
+        env = rd.build_child_env(valid, "/tmp/run", base_env={"PATH": "/usr/bin"})
+        self.assertEqual(env["LD_PRELOAD"], "/usr/lib/heaptrack/libheaptrack_preload.so")
+        self.assertEqual(env["DUMP_HEAPTRACK_OUTPUT"], "/tmp/capture/alloc.raw")
+        for args in (("tui", "16", "active"), ("panel", "1", "active"),
+                     ("tui", "1", "idle")):
+            bad = p.parse_args([*args, "--no-diagnostics", "--sustain", "--heaptrack-output", "/tmp/c"])
+            with self.assertRaises(SystemExit):
+                rd.validate_args(bad, p)
+
+    def test_heaptrack_option_rejects_other_probes(self):
+        import run_diagnostic as rd
+        p = rd.build_parser()
+        bad = p.parse_args(["tui", "1", "active", "--no-diagnostics", "--sustain",
+                            "--heaptrack-output", "/tmp/c", "--stack-logging"])
+        with self.assertRaises(SystemExit):
+            rd.validate_args(bad, p)
+
 
 if __name__ == "__main__":
     unittest.main()

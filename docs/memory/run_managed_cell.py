@@ -143,6 +143,12 @@ def validate_spec(spec: Mapping[str, Any]) -> Dict[str, Any]:
             raise CellError('spec.cache_dir must be a non-empty path string')
         if not isinstance(out.get('unpack_root'), str) or not out['unpack_root']:
             raise CellError('spec.unpack_root must be a non-empty path string')
+    heaptrack = out.get('heaptrack')
+    if heaptrack is not None:
+        if not isinstance(heaptrack, dict) or not isinstance(heaptrack.get('output'), str) or not heaptrack['output']:
+            raise CellError('spec.heaptrack must declare an output path')
+        if not isinstance(heaptrack.get('preload'), dict) or not heaptrack['preload'].get('path'):
+            raise CellError('spec.heaptrack must declare preload metadata')
     pids = [gs, os.getpid(), *cleaned_ambient.values()]
     if len(pids) != len(set(pids)):
         raise CellError('duplicate process role PID')
@@ -794,6 +800,7 @@ def run_managed_cell(
     accounting_script: Optional[pathlib.Path] = None,
     cwd: Optional[pathlib.Path] = None,
     _test_launcher: bool = False,
+    environment: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, Any]:
     """Run exactly one managed cell. Never retries. Never signals server/ambient."""
     # Children use different working directories. Resolve caller paths once so
@@ -956,7 +963,7 @@ def run_managed_cell(
         report["launch_started_utc"] = launch_rec["started_utc"]
 
         launcher_log = cell_dir / "logs" / "launcher.log"
-        env = os.environ.copy()
+        env = dict(environment) if environment is not None else os.environ.copy()
         if _test_launcher:
             env["FIXTURE_BINARY"] = pf["binary"]
             env["FIXTURE_EFFECTIVE_CLI"] = json.dumps(effective_cli)

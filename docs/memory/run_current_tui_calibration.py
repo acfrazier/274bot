@@ -27,6 +27,7 @@ if str(HERE) not in sys.path:
 import build_provenance as bp  # noqa: E402
 import run_managed_cell as rmc  # noqa: E402
 import server_resources as sr  # noqa: E402
+import heaptrack_capture as hc  # noqa: E402
 
 EXPECTED_HOST = "c0709aba2f8b45e42193225cf8f4e7325b5ca9bf"
 EXPECTED_CLIENT = "3456edc8dabf7b25ada78110ffa56327af9f67a4"
@@ -167,8 +168,9 @@ def validate_live_server(args: argparse.Namespace) -> Dict[str, Any]:
     return sample
 
 
-def diagnostic_argv(binary: pathlib.Path, manifest: pathlib.Path, role: str, n: int = 16) -> list[str]:
-    return [
+def diagnostic_argv(binary: pathlib.Path, manifest: pathlib.Path, role: str, n: int = 16,
+                    heaptrack_output: Optional[pathlib.Path] = None) -> list[str]:
+    argv = [
         "tui", str(n), "active",
         "--binary", str(binary),
         "--build-manifest", str(manifest),
@@ -176,6 +178,9 @@ def diagnostic_argv(binary: pathlib.Path, manifest: pathlib.Path, role: str, n: 
         "--no-diagnostics", "--sustain",
         "--warmup", str(WARMUP_S), "--observe", str(OBSERVE_S),
     ]
+    if heaptrack_output is not None:
+        argv.extend(["--heaptrack-output", str(heaptrack_output.resolve())])
+    return argv
 
 
 def clean_environment(base: Optional[Mapping[str, str]] = None, n: int = 16) -> Dict[str, str]:
@@ -201,7 +206,16 @@ def build_spec(args: argparse.Namespace, source: Mapping[str, Any]) -> Dict[str,
     cell_id = output.stem
     if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", cell_id) is None:
         raise CalibrationError("output basename must produce a safe cell id")
-    diag = diagnostic_argv(args.binary.resolve(), args.build_manifest.resolve(), args.build_role, n=requested_n(args))
+    heaptrack_output = getattr(args, "heaptrack_output", None)
+    if heaptrack_output is not None:
+        if requested_n(args) != 1:
+            raise CalibrationError("Heaptrack capture requires N1")
+        hc.verify_preload()
+        heaptrack_output = pathlib.Path(heaptrack_output).resolve()
+        if heaptrack_output.exists() or heaptrack_output.is_symlink():
+            raise CalibrationError("Heaptrack output must be a unique unused path")
+    diag = diagnostic_argv(args.binary.resolve(), args.build_manifest.resolve(), args.build_role,
+                          n=requested_n(args), heaptrack_output=heaptrack_output)
     launcher = [sys.executable, str(HERE / "run_diagnostic.py"), *diag]
     return {
         "id": cell_id, "index": 1, "kind": "diagnostic", "frontend": "tui",
@@ -220,6 +234,8 @@ def build_spec(args: argparse.Namespace, source: Mapping[str, Any]) -> Dict[str,
         "source": dict(source), "server_root": str(args.server_root.resolve()),
  "rs2b0t": str(args.rs2b0t.resolve()), "performance_acceptance": False,
  "cache_dir": str(args.cache_dir.resolve()), "unpack_root": str(args.unpack_root.resolve()),
+ "heaptrack": ({"output": str(heaptrack_output), "preload": hc.verify_preload()}
+               if heaptrack_output is not None else None),
     }
 
 
@@ -232,6 +248,8 @@ def validate_inputs(args: argparse.Namespace) -> Dict[str, Any]:
     # This is the same reviewed manifest verifier used by run_managed_cell.
     bp.verify_build(args.build_manifest, args.build_role, "tui", args.binary, args.nav_pack, args.nav_flags, args.catalog)
     validate_feature_contract(args.build_manifest)
+    if getattr(args, "heaptrack_output", None) is not None:
+        hc.verify_preload()
     declared_identity = validate_server_identity(args.server_identity, args.server_pid, args.server_start_identity)
     validate_server_artifact_hashes(args.server_root, declared_identity)
     return source
@@ -297,19 +315,15 @@ def run(args: argparse.Namespace, spec: Dict[str, Any]) -> int:
         raise RuntimeError("predeclared host memory guard: owned managed cell cancelled")
     if hasattr(signal, "SIGUSR1"):
         signal.signal(signal.SIGUSR1, abort_from_guard)
-    previous_env = os.environ.copy()
-    launch_env = launch_environment(args, base=previous_env)
-    os.environ.clear()
-    os.environ.update(launch_env)
+    launch_env = launch_environment(args, base=os.environ.copy())
     guard.start()
     try:
-        report = rmc.run_managed_cell(spec_path, cells_root, cwd=args.host_checkout)
+        report = rmc.run_managed_cell(spec_path, cells_root, cwd=args.host_checkout,
+                                      environment=launch_env)
     except Exception as exc:  # preserve a durable failed artifact and honest attempt state
         report["error"] = str(exc)
     finally:
         guard.close()
-        os.environ.clear()
-        os.environ.update(previous_env)
         if hasattr(signal, "SIGUSR1"):
             signal.signal(signal.SIGUSR1, previous_handler)
     if triggered:
@@ -345,6 +359,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--expected-host-commit", default=EXPECTED_HOST)
     p.add_argument("--expected-client-commit", default=EXPECTED_CLIENT)
     p.add_argument("--output", type=pathlib.Path, required=True)
+    p.add_argument("--heaptrack-output", type=pathlib.Path,
+                   help="unique direct Heaptrack output directory for N1")
     p.add_argument("--preflight-only", action="store_true")
     return p
 

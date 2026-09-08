@@ -4,6 +4,7 @@ import argparse, hashlib, json, os, pathlib, signal, subprocess, sys, time
 import errno, struct, threading
 from build_provenance import file_sha256, verify_build, recheck_files
 from operator_home import bot_home_path
+import heaptrack_capture as hc
 
 # Historical Mac checkout default for rs2b0t provenance. Never applied on win32.
 _DEFAULT_RS2B0T_MAC = '/Users/acfrazier/experiments/rs2b0t'
@@ -54,6 +55,8 @@ def build_parser():
     p.add_argument('--responsiveness-fine', action='store_true', help='With --responsiveness-profile: also collect <=1ms fine latency histograms (recorded in metadata)')
     p.add_argument('--observe', type=int, default=600)
     p.add_argument('--warmup', type=int, default=120)
+    p.add_argument('--heaptrack-output', type=pathlib.Path,
+                   help='Linux N1 TUI direct Heaptrack capture directory')
     return p
 
 def validate_args(a, parser):
@@ -84,6 +87,15 @@ def validate_args(a, parser):
             parser.error('--gpu-completion-profile is incompatible with --cpu-fallback')
     if a.responsiveness_fine and not a.responsiveness_profile:
         parser.error('--responsiveness-fine requires --responsiveness-profile')
+    if getattr(a, 'heaptrack_output', None):
+        if (a.frontend, a.n, a.workload) != ('tui', 1, 'active'):
+            parser.error('--heaptrack-output requires the N1 TUI active diagnostic')
+        if not a.no_diagnostics or not a.sustain or a.headless:
+            parser.error('--heaptrack-output requires --no-diagnostics --sustain and real TUI')
+        if any((a.stack_logging, a.stack_logging_lite, a.scheduling_profile,
+                a.render_profile, a.gpu_completion_profile, a.responsiveness_profile,
+                a.tui_input_probes, a.nav_captures)):
+            parser.error('--heaptrack-output is incompatible with other diagnostic probes')
 
 def requested_render_policy(a):
     if a.frontend != 'panel':
@@ -211,6 +223,9 @@ def build_child_env(a, run_dir, base_env=None, *, platform=None):
         env['BOT_RESPONSIVENESS_PROFILE'] = '1'
     if a.responsiveness_fine:
         env['BOT_RESPONSIVENESS_FINE'] = '1'
+    capture = getattr(a, 'heaptrack_capture', None)
+    if capture:
+        env = hc.child_env(env, capture['output'], capture['preload'])
     return env
 
 def catalog_path_for_env(env, *, windows=None):
@@ -271,6 +286,14 @@ def main(argv=None):
     root = pathlib.Path(__file__).resolve().parents[2]
     binary = a.binary.resolve() if a.binary else root / 'target/release' / (a.frontend+'-play')
     run = root / 'docs/memory/diagnostics' / (time.strftime('%Y%m%dT%H%M%SZ',time.gmtime())+'_'+a.frontend+f'_n{a.n}_{a.workload}')
+    capture = None
+    if a.heaptrack_output:
+        try:
+            preload = hc.verify_preload()
+            capture = {'output': hc.prepare_output(a.heaptrack_output), 'preload': preload}
+            a.heaptrack_capture = capture
+        except (hc.CaptureError, OSError) as error:
+            p.error(f'heaptrack capture: {error}')
     env = build_child_env(a, run)
     def git(*args):
         return subprocess.check_output(['git',*args],cwd=root,text=True).strip()
@@ -313,6 +336,9 @@ def main(argv=None):
                 host_diff_sha256=hashlib.sha256(git('diff','HEAD').encode()).hexdigest(),
                 rs2b0t_commit=rs2b0t_commit,
                 run_dir=str(run),started_unix=time.time())
+    if capture:
+        meta['heaptrack'] = {'output': capture['output'], 'preload': capture['preload'],
+                             'analysis': None}
     # Legacy source/commit fields above describe this checkout, not the saved
     # binary. Build claims stay in an independently verified nested object.
     meta.update(build_provenance=provenance,
@@ -370,6 +396,10 @@ def main(argv=None):
                 def terminal_session():
                     os.setsid()
                     fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+                def child_setup():
+                    terminal_session()
+                    if capture:
+                        hc.child_preexec()()
                 child = subprocess.Popen(
                     [str(binary)],
                     cwd=root,
@@ -377,7 +407,7 @@ def main(argv=None):
                     stdin=slave,
                     stdout=slave,
                     stderr=slave,
-                    preexec_fn=terminal_session,
+                    preexec_fn=child_setup,
                 )
                 os.close(slave)
                 meta['terminal_transport'] = 'unix-pty'
@@ -401,17 +431,29 @@ def main(argv=None):
                 reader = threading.Thread(target=drain_terminal, name='unix-pty-drain')
                 reader.start()
         else:
-            child = subprocess.Popen([str(binary)], cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT)
+            kwargs = dict(cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT)
+            if capture:
+                kwargs['preexec_fn'] = hc.child_preexec()
+            child = subprocess.Popen([str(binary)], **kwargs)
         meta['pid'] = child.pid
         (run / 'metadata.json').write_text(json.dumps(meta, indent=2) + '\n')
         print(json.dumps(meta), flush=True)
         if probe:
             probe.start()
+        capture_guard = False
+        if capture:
+            guard_stop, guard_thread, guard_state = hc.start_guard(
+                child.pid, pathlib.Path(capture['output']['directory']), lambda _reason: child.terminate())
+            capture_guard = True
         def stop(sig, frame):
             child.terminate()
         signal.signal(signal.SIGTERM, stop)
         signal.signal(signal.SIGINT, stop)
         rc = child.wait()
+        if capture_guard is not None:
+            guard_stop.set()
+            guard_thread.join(timeout=2)
+            meta['heaptrack']['guard'] = guard_state
         if probe:
             probe.close()
         # ClosePseudoConsole after wait so drain observes EOF (avoids deadlock).
@@ -422,6 +464,11 @@ def main(argv=None):
         if conpty_session is not None:
             conpty_session.close()
     meta.update(exit_code=rc, ended_unix=time.time())
+    if capture:
+        try:
+            meta['heaptrack']['analysis'] = hc.analyze(pathlib.Path(capture['output']['directory']))
+        except (hc.CaptureError, OSError) as error:
+            meta['heaptrack']['analysis'] = {'status': 'failed', 'error': str(error)}
     if probe:
         probe_path = run / 'input-probes.jsonl'
         meta['input_probe_result'] = dict(
@@ -446,6 +493,8 @@ def main(argv=None):
         sys.exit(1)
     if probe and probe.error:
         print(f'FAIL: input probe: {probe.error}', file=sys.stderr)
+        sys.exit(1)
+    if capture and meta['heaptrack']['analysis'].get('status') == 'failed':
         sys.exit(1)
     sys.exit(rc if rc >= 0 else 128-rc)
 

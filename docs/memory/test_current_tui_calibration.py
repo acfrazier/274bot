@@ -214,7 +214,9 @@ class CurrentTuiCalibrationControls(unittest.TestCase):
             self.assertEqual(captured["PATH"], "/operator/bin")
             self.assertEqual(captured["HOME"], "/operator")
             self.assertEqual(captured["TERM"], "xterm")
-            self.assertIsNone(captured["BOT_DEBUG"])
+            # The controller passes a child-only environment; it must not
+            # mutate the controller's inherited environment.
+            self.assertEqual(captured["BOT_DEBUG"], "1")
 
     def test_managed_exception_does_not_claim_no_launch(self):
         with tempfile.TemporaryDirectory() as tmp:
