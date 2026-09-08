@@ -11,6 +11,25 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 17:57 UTC
+
+- N1/N16 report8b786b9 independently APPROVED actualGrok4.5/xai-oauth,
+  session20260908_135008_08321e (t_2a69012e); reviewde0a165. All101/93payload
+  files and primary/process-accounting numbers reproduced. Diagnostic only;
+  missingrawresourceprovenance, unknownoverhead, singlepair andtailgates remain.
+- Bounded ownerdesign t_1bb2dfd4 nowactuallyrunning implementer(profiledefaults
+  Composer2.5fast/xai). Exactsource/default audit required: snapshot-dedup OFF
+  in measuredruntime despite codepresent. Plan/report only; samecardreview,
+  no newlivecell/optimization released before reviewedconcreteproposal.
+- 289 cdf49b7 approvedactualGrok4.5 session20260908_134307_c1e0d1. Secondlive
+  rootclient75146 removedconfigerrors butsameT1 packet13length3 afterlogin;
+  rootreadcapture confirmsreturnedtitle. Stoppedownedclient, waitexit-15;
+  isolatedruntime/client-proof-1751 preservesproof. Sourceengine identifies
+  CHAT_FILTER_SETTINGS13/3. Luna t_82d212a4 actuallyrunning fullsource-backed
+  startupdispatch audit/correction offline; samecardreview required thenrootlive.
+  289server67696/statusPASS, supervisor15477; protected274/377configshashes
+  verifiedunchangedafterattempts. Hostintegrationplanning remainsparked.
+
 ## Latest boundary — 2026-09-08 17:46 UTC
 
 - Sole N1 controller/frontend completed0; originalSSH58783 terminal, no rerun.
