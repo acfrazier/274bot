@@ -1,0 +1,18 @@
+{
+  "schema": "owner-native-qualification-completion/v1",
+  "host": "concord",
+  "start_utc": "2026-09-08T23:01:03Z",
+  "end_utc": "2026-09-08T23:01:05Z",
+  "start_unix": 1788908463.771859385,
+  "end_unix": 1788908465.195731433,
+  "wrapper_wall_seconds": 1.42387,
+  "driver_wall_seconds": 1.1421050770004513,
+  "exit_code": 1,
+  "status": "failed",
+  "failure": "RuntimeError: qualification native core test gate",
+  "owned_child_processes_absent_after": true,
+  "qualification_process_absent_after": true,
+  "remote_output": "qualification-1/qualification.json",
+  "remote_output_sha256": "47ab6b8515b244b82d3fbda7bd2e4365090abc27cb216f9d811a11d0da9e7f74",
+  "remote_output_bytes": 2220
+}

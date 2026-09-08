@@ -1,0 +1,13 @@
+{
+  "schema": "owner-native-qualification-admission/v1",
+  "observed_utc": "2026-09-08T23:01:03Z",
+  "host": "concord",
+  "os": "Ubuntu 24.04",
+  "arch": "x86_64",
+  "mem_available_bytes": 1001304064,
+  "disk_free_bytes": 11827228672,
+  "conflicts": [],
+  "output_path": "/home/acfrazier/owner-native-f097fdc/qualification-1",
+  "output_absent_before_launch": true,
+  "qualification_started": true
+}

@@ -1,0 +1,14 @@
+{
+  "schema": "owner-native-qualification-identity/v1",
+  "source_commit": "f097fdcd6e0565dd332b3d68940317d48b3a3664",
+  "stage_manifest_sha256": "56025edaa3d7d958ab4a00692c80f3480a3a9aaa289c6228453688bdb717be9b",
+  "remote_stage": "/home/acfrazier/owner-native-f097fdc",
+  "driver": "docs/memory/heaptrack-owner-native/qualify.py",
+  "portable_probe": false,
+  "executables": {
+    "child": "12eb47064705221514b2c638211c77cefb2a14fb89d2df7c61210ad787469221",
+    "fixture": "6822a2beaca8ab6c74152c3a1d96bd6e78e1ab978b238c5901edae4eddaee19d",
+    "core_tests": "b76b840233cd19adf6c42cb91a377c861418e39ea5b940af7d7cbb691db10559"
+  },
+  "invocation_sha256_arguments_verified": true
+}

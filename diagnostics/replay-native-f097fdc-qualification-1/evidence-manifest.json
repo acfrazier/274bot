@@ -1,0 +1,12 @@
+{
+  "schema": "owner-native-qualification-evidence-manifest/v1",
+  "source_commit": "f097fdcd6e0565dd332b3d68940317d48b3a3664",
+  "files": [
+    {"path": "diagnostics/replay-native-f097fdc-qualification-1/qualification.json", "bytes": 2220, "sha256": "47ab6b8515b244b82d3fbda7bd2e4365090abc27cb216f9d811a11d0da9e7f74"},
+    {"path": "diagnostics/replay-native-f097fdc-qualification-1/admission.json", "bytes": 400, "sha256": "9878b216ded09993ad465291677a0966d108bfb646d91a04ff4980803f896dd4"},
+    {"path": "diagnostics/replay-native-f097fdc-qualification-1/identity.json", "bytes": 682, "sha256": "870b1b71d3c6cd88d6f5db081cdbacac1d2d0f11e7b89b4a055c0869c1540734"},
+    {"path": "diagnostics/replay-native-f097fdc-qualification-1/completion.json", "bytes": 690, "sha256": "2bdc6faee2934060fc5310f470a7dd5f1618a4d46bf29fe67351cab05b9fcbf1"},
+    {"path": "docs/memory/heaptrack-owner-native-qualification.md", "bytes": 3621, "sha256": "6d3e9b2b11037a5c7c75f22a4b56f8b78b106be705368f71968cfa521fbe97f8"},
+    {"path": "docs/memory/heaptrack-owner-native-qualification.json", "bytes": 3350, "sha256": "56a9a19b88067540a65fb04fd2cb667bcf3d68325e281c3ca7c96ab4ca6a6adc"}
+  ]
+}

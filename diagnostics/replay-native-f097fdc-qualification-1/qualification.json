@@ -1,0 +1,20 @@
+{
+  "status": "failed",
+  "production_read": false,
+  "production_retry_authorized": false,
+  "portable_probe": false,
+  "cases": [],
+  "required_bytes_per_cpu_s": [
+    11938945,
+    4503128,
+    4503128
+  ],
+  "executable_sha256": {
+    "child": "12eb47064705221514b2c638211c77cefb2a14fb89d2df7c61210ad787469221",
+    "fixture": "6822a2beaca8ab6c74152c3a1d96bd6e78e1ab978b238c5901edae4eddaee19d",
+    "core_tests": "b76b840233cd19adf6c42cb91a377c861418e39ea5b940af7d7cbb691db10559"
+  },
+  "core_tests": "\nrunning 11 tests\ntest core::migration_tests::actual_stream_open_counts ... ok\ntest core::migration_tests::frozen_identity_hash_suffix_and_midpass_mutation ... FAILED\ntest core::migration_tests::interpreted_mutation_between_passes ... FAILED\ntest core::migration_tests::normalized_batching_exact_bytes ... ok\ntest core::tests::capacity_accounts_for_transient_buffers ... ok\ntest core::tests::checked_numeric_limits ... ok\ntest core::tests::hard_collision_probe_bound ... ok\ntest core::tests::inner_work_pulse_observes_expiry ... ok\ntest core::tests::phase_end_must_check_before_reset ... ok\ntest core::tests::rehash_tombstones_and_seeded_churn ... ok\ntest core::tests::render_and_sort_stalls_fail_closed ... ok\n\nfailures:\n\n---- core::migration_tests::frozen_identity_hash_suffix_and_midpass_mutation stdout ----\n\nthread 'core::migration_tests::frozen_identity_hash_suffix_and_midpass_mutation' (2569) panicked at src/migration_tests.rs:68:5:\nassertion failed: stream.finish(&mut g).is_err()\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n---- core::migration_tests::interpreted_mutation_between_passes stdout ----\n\nthread 'core::migration_tests::interpreted_mutation_between_passes' (2570) panicked at src/migration_tests.rs:75:31:\ncalled `Result::unwrap()` on an `Err` value: PoisonError { .. }\n\n\nfailures:\n    core::migration_tests::frozen_identity_hash_suffix_and_midpass_mutation\n    core::migration_tests::interpreted_mutation_between_passes\n\ntest result: FAILED. 9 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.12s\n\n",
+  "reason": "RuntimeError: qualification native core test gate",
+  "wall_s": 1.1421050770004513
+}
