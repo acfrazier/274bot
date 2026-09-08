@@ -11,6 +11,22 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 15:14 UTC
+
+- Candidate1430 completed0 with frontend gone and controller stimulus complete.
+  Exactly one120-pulse sequence at74.909939s. Both roles now archived and verified:
+  baseline60files/candidate64files. No further live cell launched.
+- Current reader: both16-slot decode cohorts16000events/zero losses/finep99 24..25ms;
+  candidate slot0 input120events/zero losses/finep99 41..42ms; baseline input
+  declared_population_incomplete from missed trigger. No matched input acceptance.
+- Native existing managed adapter binds both builds/cache/settings/process roles;
+  55-file reader/source archive verified. Its legacy latency/GPU analysis is not
+  the current cohort reader. Raw resource gates still unavailable, no overhead
+  measurement and asymmetric stimulus/UI inspection prevent acceptance claims.
+- Root report windows-cohort-pair-1430-report.md and evidence/visual JSONs ready
+  for independent review. No raw bytes changed; original-name symlink solves
+  archive path mismatch and original failed read is retained. Final campaign open.
+
 ## Latest boundary — 2026-09-08 15:09 UTC
 
 - Baseline1430 completed normally; all60 archived files verified by hash/length.

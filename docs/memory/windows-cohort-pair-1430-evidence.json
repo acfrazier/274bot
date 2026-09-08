@@ -1,0 +1,742 @@
+{
+  "schema": "native-cohort-pair-root-evidence-v1",
+  "performanceAcceptance": false,
+  "matchedInputAvailable": false,
+  "reason": "baseline missed predeclared trigger; no retry",
+  "roles": {
+    "baseline": {
+      "exit_code": 0,
+      "ended_unix": 1788879138.6468055,
+      "stimulus_status": {
+        "status": "incomplete",
+        "reason": "stimulus receipt run identity/outcome mismatch"
+      },
+      "archive": {
+        "role": "baseline",
+        "archive": {
+          "cellId": "baseline-focused-one-cohort-native-20260908-1430",
+          "archive": "C:\\Users\\Austen\\274bot-tools\\cohort-final-1cdc3fb\\baseline-focused-one-cohort-native-20260908-1430.tar.gz",
+          "bytes": 10682686,
+          "sha256": "6583d20fe29c233ecc79db6cbf0e2a185cd3fcd2d2617fd11ec178ddd66996d8",
+          "files": 60,
+          "performanceAcceptance": false
+        },
+        "verifiedFiles": 60,
+        "verified": true,
+        "performanceAcceptance": false
+      },
+      "qualified": true,
+      "cohorts": {
+        "decode_cohort": {
+          "status": "available",
+          "reason": null,
+          "event_n": 16000,
+          "population_n": 16,
+          "losses_n": 0,
+          "boundaries": {
+            "end_mono_ns": 794334466000,
+            "start_mono_ns": 194334466000,
+            "tail_ns": 5000000000
+          },
+          "fineP99Ms": [
+            24,
+            25
+          ],
+          "slots": [
+            {
+              "slot_id": 5459567569487873826,
+              "generation": 31,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 5459568668999502037,
+              "generation": 25,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 5459569768511130248,
+              "generation": 28,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 5459570868022758459,
+              "generation": 26,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 5459571967534386670,
+              "generation": 20,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 5459573067046014881,
+              "generation": 19,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 5459574166557643092,
+              "generation": 21,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 5459575266069271303,
+              "generation": 22,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 5459576365580899514,
+              "generation": 24,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 5459577465092527725,
+              "generation": 17,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 19,
+                "upper_ms": 20
+              }
+            },
+            {
+              "slot_id": 5757878086283731736,
+              "generation": 27,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 5757879185795359947,
+              "generation": 30,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 5757880285306988158,
+              "generation": 18,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 5757881384818616369,
+              "generation": 32,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 5757884683353501002,
+              "generation": 29,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 5757885782865129213,
+              "generation": 23,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            }
+          ]
+        },
+        "input_cohort": {
+          "status": "unavailable",
+          "reason": "declared_population_incomplete",
+          "expected_n": 1,
+          "missing_n": 1,
+          "slots": []
+        }
+      },
+      "rawFrontendResources": {
+        "status": "unavailable",
+        "reason": "missing_resource_provenance",
+        "cpu_cores": 0.5258711136248047,
+        "cpu_seconds": 315.296875,
+        "resident_median_bytes": 662515712.0,
+        "peak_resident_bytes": 1062477824,
+        "observation_s": 599.5706302000001
+      },
+      "nativeBinding": {
+        "status": "bound",
+        "binding_ok": true,
+        "qualified": true,
+        "match_keys_missing": null
+      },
+      "managedResources": {
+        "status": "available",
+        "instrumentationOverheadMeasured": false,
+        "roles": {
+          "game_server": {
+            "pid": 6728,
+            "start_identity": "windows_creation_filetime:134332846721025908",
+            "resident_median_bytes": 485552128.0,
+            "resident_sample_count": 1200,
+            "sampled_resident_peak_bytes": 496054272.0,
+            "cpu_s_enclosing_observation": 15.84375,
+            "cpu_cores_interval": [
+              0.02638427644461179,
+              0.026384278896308015
+            ],
+            "cpu_duration_interval_s": [
+              600.4996408000006,
+              600.4996966000035
+            ],
+            "cpu_wall_envelope": [
+              1788878471.568079,
+              1788879072.072607
+            ],
+            "cpu_endpoint_excess_s": [
+              0.320676326751709,
+              0.17792677879333496
+            ]
+          },
+          "controller": {
+            "pid": 12772,
+            "start_identity": "windows_creation_filetime:134333518720754153",
+            "resident_median_bytes": 30846976.0,
+            "resident_sample_count": 1200,
+            "sampled_resident_peak_bytes": 30990336.0,
+            "cpu_s_enclosing_observation": 2.9375,
+            "cpu_cores_interval": [
+              0.00489175937340032,
+              0.0048917597717469405
+            ],
+            "cpu_duration_interval_s": [
+              600.4996436999936,
+              600.4996925999876
+            ],
+            "cpu_wall_envelope": [
+              1788878471.568079,
+              1788879072.072607
+            ],
+            "cpu_endpoint_excess_s": [
+              0.320676326751709,
+              0.17792677879333496
+            ]
+          },
+          "bootstrap": {
+            "pid": 6340,
+            "start_identity": "windows_creation_filetime:134333518719051637",
+            "resident_median_bytes": 39798784.0,
+            "resident_sample_count": 1200,
+            "sampled_resident_peak_bytes": 76537856.0,
+            "cpu_s_enclosing_observation": 0.0,
+            "cpu_cores_interval": [
+              0.0,
+              0.0
+            ],
+            "cpu_duration_interval_s": [
+              600.4995602999988,
+              600.4997714999918
+            ],
+            "cpu_wall_envelope": [
+              1788878471.568079,
+              1788879072.072607
+            ],
+            "cpu_endpoint_excess_s": [
+              0.320676326751709,
+              0.17792677879333496
+            ]
+          },
+          "launcher": {
+            "pid": 3132,
+            "start_identity": "windows_creation_filetime:134333518728071189",
+            "resident_median_bytes": 23609344.0,
+            "resident_sample_count": 1200,
+            "sampled_resident_peak_bytes": 23642112.0,
+            "cpu_s_enclosing_observation": 0.0,
+            "cpu_cores_interval": [
+              0.0,
+              0.0
+            ],
+            "cpu_duration_interval_s": [
+              600.4994125000085,
+              600.4999698999891
+            ],
+            "cpu_wall_envelope": [
+              1788878471.568079,
+              1788879072.072607
+            ],
+            "cpu_endpoint_excess_s": [
+              0.320676326751709,
+              0.17792677879333496
+            ]
+          },
+          "collector": {
+            "pid": 17168,
+            "start_identity": "windows_creation_filetime:134333518765169404",
+            "resident_median_bytes": 24018944.0,
+            "resident_sample_count": 1200,
+            "sampled_resident_peak_bytes": 24072192.0,
+            "cpu_s_enclosing_observation": 0.71875,
+            "cpu_cores_interval": [
+              0.001196919844291162,
+              0.0011969199475392956
+            ],
+            "cpu_duration_interval_s": [
+              600.4996419999952,
+              600.4996938000113
+            ],
+            "cpu_wall_envelope": [
+              1788878471.568079,
+              1788879072.072607
+            ],
+            "cpu_endpoint_excess_s": [
+              0.320676326751709,
+              0.17792677879333496
+            ]
+          }
+        }
+      }
+    },
+    "candidate": {
+      "exit_code": 0,
+      "ended_unix": 1788880209.4241195,
+      "stimulus_status": {
+        "status": "complete",
+        "reason": null
+      },
+      "archive": {
+        "role": "candidate",
+        "archive": {
+          "cellId": "candidate-focused-one-cohort-native-20260908-1430",
+          "archive": "C:\\Users\\Austen\\274bot-tools\\cohort-final-1cdc3fb\\candidate-focused-one-cohort-native-20260908-1430.tar.gz",
+          "bytes": 11294364,
+          "sha256": "502d9eb13df31674148956ba9b5c5eeb2532cfe92f848392cdfd286f5019357d",
+          "files": 64,
+          "performanceAcceptance": false
+        },
+        "verifiedFiles": 64,
+        "verified": true,
+        "performanceAcceptance": false
+      },
+      "qualified": true,
+      "cohorts": {
+        "decode_cohort": {
+          "status": "available",
+          "reason": null,
+          "event_n": 16000,
+          "population_n": 16,
+          "losses_n": 0,
+          "boundaries": {
+            "end_mono_ns": 847676235700,
+            "start_mono_ns": 247676235700,
+            "tail_ns": 5000000000
+          },
+          "fineP99Ms": [
+            24,
+            25
+          ],
+          "slots": [
+            {
+              "slot_id": 4211554505411811760,
+              "generation": 28,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 4211555604923439971,
+              "generation": 23,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 4211556704435068182,
+              "generation": 30,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 4211557803946696393,
+              "generation": 32,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 4211558903458324604,
+              "generation": 21,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 4211560002969952815,
+              "generation": 26,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 4211561102481581026,
+              "generation": 27,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 4211562201993209237,
+              "generation": 17,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 19,
+                "upper_ms": 20
+              }
+            },
+            {
+              "slot_id": 4211569898574606714,
+              "generation": 19,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 4211570998086234925,
+              "generation": 18,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 10729427397934160496,
+              "generation": 24,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 10729428497445788707,
+              "generation": 29,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 10729429596957416918,
+              "generation": 31,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 10729430696469045129,
+              "generation": 20,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 10729433995003929762,
+              "generation": 25,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            },
+            {
+              "slot_id": 10729435094515557973,
+              "generation": 22,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 24,
+                "upper_ms": 25
+              }
+            }
+          ]
+        },
+        "input_cohort": {
+          "status": "available",
+          "reason": null,
+          "event_n": 120,
+          "population_n": 1,
+          "losses_n": 0,
+          "boundaries": {
+            "end_mono_ns": 847676235700,
+            "start_mono_ns": 247676235700,
+            "tail_ns": 5000000000
+          },
+          "fineP99Ms": [
+            41,
+            42
+          ],
+          "slots": [
+            {
+              "slot_id": 4211562201993209237,
+              "generation": 17,
+              "target_verdict": "meet",
+              "fineP99": {
+                "lower_ms": 41,
+                "upper_ms": 42
+              }
+            }
+          ]
+        }
+      },
+      "rawFrontendResources": {
+        "status": "unavailable",
+        "reason": "missing_resource_provenance",
+        "cpu_cores": 0.5261695809039485,
+        "cpu_seconds": 315.609375,
+        "resident_median_bytes": 687902720.0,
+        "peak_resident_bytes": 986865664,
+        "observation_s": 599.8244415
+      },
+      "nativeBinding": {
+        "status": "bound",
+        "binding_ok": true,
+        "qualified": true,
+        "match_keys_missing": null
+      },
+      "managedResources": {
+        "status": "available",
+        "instrumentationOverheadMeasured": false,
+        "roles": {
+          "game_server": {
+            "pid": 6728,
+            "start_identity": "windows_creation_filetime:134332846721025908",
+            "resident_median_bytes": 485527552.0,
+            "resident_sample_count": 1200,
+            "sampled_resident_peak_bytes": 491360256.0,
+            "cpu_s_enclosing_observation": 15.890625,
+            "cpu_cores_interval": [
+              0.026462322848184488,
+              0.0264623250912023
+            ],
+            "cpu_duration_interval_s": [
+              600.499953999999,
+              600.5000048999937
+            ],
+            "cpu_wall_envelope": [
+              1788879542.740282,
+              1788880143.244817
+            ],
+            "cpu_endpoint_excess_s": [
+              0.14327740669250488,
+              0.3428471088409424
+            ]
+          },
+          "controller": {
+            "pid": 15364,
+            "start_identity": "windows_creation_filetime:134333528925640531",
+            "resident_median_bytes": 28254208.0,
+            "resident_sample_count": 1200,
+            "sampled_resident_peak_bytes": 31006720.0,
+            "cpu_s_enclosing_observation": 3.28125,
+            "cpu_cores_interval": [
+              0.005464196522932964,
+              0.0054641969123877185
+            ],
+            "cpu_duration_interval_s": [
+              600.4999550000066,
+              600.4999977999978
+            ],
+            "cpu_wall_envelope": [
+              1788879542.740282,
+              1788880143.244817
+            ],
+            "cpu_endpoint_excess_s": [
+              0.14327740669250488,
+              0.3428471088409424
+            ]
+          },
+          "bootstrap": {
+            "pid": 5596,
+            "start_identity": "windows_creation_filetime:134333528923937146",
+            "resident_median_bytes": 24055808.0,
+            "resident_sample_count": 1200,
+            "sampled_resident_peak_bytes": 76783616.0,
+            "cpu_s_enclosing_observation": 0.0,
+            "cpu_cores_interval": [
+              0.0,
+              0.0
+            ],
+            "cpu_duration_interval_s": [
+              600.4998709999927,
+              600.5000692999893
+            ],
+            "cpu_wall_envelope": [
+              1788879542.740282,
+              1788880143.244817
+            ],
+            "cpu_endpoint_excess_s": [
+              0.14327740669250488,
+              0.3428471088409424
+            ]
+          },
+          "launcher": {
+            "pid": 10768,
+            "start_identity": "windows_creation_filetime:134333528932643117",
+            "resident_median_bytes": 21389312.0,
+            "resident_sample_count": 1200,
+            "sampled_resident_peak_bytes": 24383488.0,
+            "cpu_s_enclosing_observation": 0.015625,
+            "cpu_cores_interval": [
+              2.601998317388848e-05,
+              2.6019992962258918e-05
+            ],
+            "cpu_duration_interval_s": [
+              600.4997780999984,
+              600.5000040000014
+            ],
+            "cpu_wall_envelope": [
+              1788879542.740282,
+              1788880143.244817
+            ],
+            "cpu_endpoint_excess_s": [
+              0.14327740669250488,
+              0.3428471088409424
+            ]
+          },
+          "collector": {
+            "pid": 15144,
+            "start_identity": "windows_creation_filetime:134333528941891295",
+            "resident_median_bytes": 21893120.0,
+            "resident_sample_count": 1200,
+            "sampled_resident_peak_bytes": 24162304.0,
+            "cpu_s_enclosing_observation": 0.640625,
+            "cpu_cores_interval": [
+              0.0010668193241641897,
+              0.001066819404997296
+            ],
+            "cpu_duration_interval_s": [
+              600.4999506000022,
+              600.4999960999994
+            ],
+            "cpu_wall_envelope": [
+              1788879542.740282,
+              1788880143.244817
+            ],
+            "cpu_endpoint_excess_s": [
+              0.14327740669250488,
+              0.3428471088409424
+            ]
+          }
+        }
+      },
+      "stimulus": {
+        "outcome": "completed",
+        "spawnCount": 1,
+        "triggerDelaySeconds": 74.90993900000467,
+        "helperPid": 15100,
+        "helperStartIdentity": "windows_creation_filetime:134333532178500638",
+        "targetPid": 14872,
+        "targetStartIdentity": "windows_creation_filetime:134333528941355755",
+        "helperExitCode": 0,
+        "inputCoveragePass": false,
+        "processSummaries": [
+          {
+            "process": "wrapper-sampler",
+            "pid": 2460,
+            "start_identity": "windows_creation_filetime:134333532174102435",
+            "samples": 121,
+            "unavailableSamples": 0,
+            "validSamples": 121,
+            "cpu_seconds": 0.109375,
+            "rss_bytes": 39120896,
+            "status": "available",
+            "cpuAvailability": "available",
+            "rssAvailability": "available"
+          },
+          {
+            "process": "input-helper",
+            "pid": 15100,
+            "start_identity": "windows_creation_filetime:134333532178500638",
+            "samples": 120,
+            "unavailableSamples": 1,
+            "validSamples": 120,
+            "cpu_seconds": 2.46875,
+            "rss_bytes": 99172352,
+            "status": "available",
+            "cpuAvailability": "available",
+            "rssAvailability": "available"
+          }
+        ]
+      }
+    }
+  },
+  "readerSources": {
+    "reference_metrics.py": "4913d232e6a637a55d0c62d8faffce9d6667d9f3b1c22457b6dff43576d3297e",
+    "cohort_reader.py": "cd383fc3c9ced01efd12c5bd077d74b20d70db2feb4b7001e0757e4c84603d40",
+    "qualify_control.py": "0dbc6775356acd4d967b70d42f575a72b05d3f063d1ca2ddd659605b6705fbb5"
+  }
+}

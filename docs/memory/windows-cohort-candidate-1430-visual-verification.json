@@ -1,0 +1,105 @@
+{
+  "scope": "Qualitative visual inspection only; no frame/latency acceptance",
+  "cellId": "candidate-focused-one-cohort-native-20260908-1430",
+  "rootObserved": {
+    "scene2": true,
+    "slotZeroSelected": true,
+    "captureInputChecked": true,
+    "focused50FpsChecked": true,
+    "onlyRenderSelectedChecked": true,
+    "visibleRunningSlotsAtReadyCapture": 16,
+    "visibleRunningSlotsAtInitialCapture": 14,
+    "physicalRect": [
+      342,
+      342,
+      2440,
+      1268
+    ]
+  },
+  "operatorObservation": {
+    "statement": "Camera movement is working, no issues observed so far, bot script is still working while camera is being moved",
+    "receivedUtc": "2026-09-08T15:02:57.462171Z",
+    "timingMeasuredByOperator": false
+  },
+  "captures": [
+    {
+      "label": "initial-scene2",
+      "receipt": {
+        "schema": "native-panel-window-capture-v1",
+        "label": "initial-scene2",
+        "pid": 14872,
+        "startUtc": "2026-09-08T14:54:54.1355755Z",
+        "sessionId": 2,
+        "binary": "C:\\ProgramData\\274bot-Test\\cohort-candidate-ca56e14\\panel-play.exe",
+        "binarySha256": "3d0037010e21b345daab8d23435f158a79f42b9a46f3c4b2d720f39946edb81b",
+        "windowHandle": 4981794,
+        "rect": [
+          342,
+          342,
+          2440,
+          1268
+        ],
+        "captureStartedUtc": "2026-09-08T14:55:39.2472532Z",
+        "captureEndedUtc": "2026-09-08T14:55:39.3222323Z",
+        "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-cohort-candidate-1430\\initial-scene2.png",
+        "pngSha256": "cbcebf8abf34c414978217216d4d0aaed60c90af66920b74d6f15e146d6a94f7",
+        "sceneState": "not inferred from capture",
+        "performanceAcceptance": false
+      },
+      "rootInspected": true
+    },
+    {
+      "label": "general-config-1430",
+      "receipt": {
+        "schema": "native-panel-window-capture-v1",
+        "label": "general-config-1430",
+        "pid": 14872,
+        "startUtc": "2026-09-08T14:54:54.1355755Z",
+        "sessionId": 2,
+        "binary": "C:\\ProgramData\\274bot-Test\\cohort-candidate-ca56e14\\panel-play.exe",
+        "binarySha256": "3d0037010e21b345daab8d23435f158a79f42b9a46f3c4b2d720f39946edb81b",
+        "windowHandle": 4981794,
+        "rect": [
+          342,
+          342,
+          2440,
+          1268
+        ],
+        "captureStartedUtc": "2026-09-08T14:56:30.3254701Z",
+        "captureEndedUtc": "2026-09-08T14:56:30.3968046Z",
+        "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-cohort-candidate-1430\\general-config-1430.png",
+        "pngSha256": "70de253f7c1761ba2874629d0e548e87e2aca6ac70c6086b25b003902486438c",
+        "sceneState": "not inferred from capture",
+        "performanceAcceptance": false
+      },
+      "rootInspected": true
+    },
+    {
+      "label": "ready-for-input-1430",
+      "receipt": {
+        "schema": "native-panel-window-capture-v1",
+        "label": "ready-for-input-1430",
+        "pid": 14872,
+        "startUtc": "2026-09-08T14:54:54.1355755Z",
+        "sessionId": 2,
+        "binary": "C:\\ProgramData\\274bot-Test\\cohort-candidate-ca56e14\\panel-play.exe",
+        "binarySha256": "3d0037010e21b345daab8d23435f158a79f42b9a46f3c4b2d720f39946edb81b",
+        "windowHandle": 4981794,
+        "rect": [
+          342,
+          342,
+          2440,
+          1268
+        ],
+        "captureStartedUtc": "2026-09-08T14:57:18.1887554Z",
+        "captureEndedUtc": "2026-09-08T14:57:18.2613647Z",
+        "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-cohort-candidate-1430\\ready-for-input-1430.png",
+        "pngSha256": "ded4accdddd84037dda33edb30305ffbd8f0c91012fcd4abc95c19a2f652677e",
+        "sceneState": "not inferred from capture",
+        "performanceAcceptance": false
+      },
+      "rootInspected": true
+    }
+  ],
+  "performanceAcceptance": false
+}
