@@ -1,38 +1,53 @@
 # Current finish-line gap audit
 
-Updated: 2026-09-08 15:19 UTC. Branch `codex/memory-diagnostics`.
+Updated: 2026-09-08 18:10 UTC. Branch `codex/memory-diagnostics`.
 This is a bounded evidence synthesis, not acceptance or a target change. Approved
 budgets remain performance-finish-plan.md. STATE.md is the execution authority.
 
 ## Current boundary
 
-The1430 fixed-window Windows N16 focused-one pair is complete. Root results in
-windows-cohort-pair-1430-report.md/evidence.json are under independent review
-(t_4af4c884, actual Grok4.5 run762). Both roles qualify16/16 and close16000 decode
-events without losses; aggregate fine p99 is24–25ms each. Candidate slot0 closes
-120 input events without losses, fine p9941–42ms. Baseline input is unavailable:
-root missed the predeclared60–90s trigger window, spawned no input and did not
-repeat. No matched input or overall latency acceptance follows.
+The current-source native Linux TUI N16 calibration and sole same-binary N1
+attribution are complete, archived, bound and workload-qualified. Independent
+Grok4.5 review t_2a69012e approved report8b786b9 and committed reviewde0a165;
+actual session20260908_135008_08321e is verified. See
+current-tui-n1-n16-attribution-report.md/evidence.json/review.md.
 
-Current profiled frontend medians are662515712/687902720 bytes (reference/
-candidate), lifetime peaks1062477824/986865664 bytes and CPU0.525871/0.526170
-cores. They are diagnostics, not clean matched savings or final budgets:
-stimulation is asymmetric, baseline UI inspection overlaps observation, overhead
-is unmeasured and the generic match keys differ. Native receipt/build/cache/
-runtime/process accounting binds independently; raw resource gate stays
-unavailable. See the pair report for exact endpoints, source versions and hashes.
+| Current TUI diagnostic | N1 | N16 | Target / interpretation |
+|---|---:|---:|---|
+| Steady median RSS | 176.322 MiB | 520.779 MiB | <=256 / <=512 MiB; N16 misses8.779MiB |
+| Native process lifetime peak | 176.902 MiB | 597.957 MiB | <=384 / <=768 MiB; observed below, not final matrix |
+| Mean CPU | 0.048993 cores | 0.561746 cores | N16 <=0.5; misses0.061746core |
+| Mean client iterations per slot per second | 49.669 | 49.479 | floor40 observed; p99 unavailable in these cells |
+| Active finite difference | — | 22.964 MiB per added bot | <=16; descriptive miss6.964MiB, one pair only |
 
-The earlier synchronized0830 visual proof is reviewed qualitative held-scene/
-minimap/chat and2→1→2 recovery evidence (0c1e438+b1dd88f, t_9b57233d). It does not
-close fullG1/G4, splash/modal/cadence or physical input timing requirements.
+These replace the old b4/f00e7fb TUI figures as the current diagnostic baseline.
+They do not close final acceptance: N16 total/incremental RSS and CPU still miss,
+raw resource/shaped gates report missing_resource_provenance, overhead is
+unmeasured, and no repeated or profiled-tail result is supplied. Managed-resource
+binding is separately available. The single-pair linear intercept is not measured
+idle or fixed ownership. Accounts/order/host snapshots differ as documented.
 
-The low-end Linux TUI figures below still use old b4/f00e7fb source lineage.
-Current source has changed materially since those cells. Task t_c2879587 is a
-bounded design/provenance audit for one current-source native TUI N16 calibration
-screen, followed by same-card review. No new build or live run is released yet.
-This addresses stale source lineage; it does not reopen parked comparisons or
-make their source performance-qualified. Final36-cell matrix,32/lifecycle,
-gated128 and whole-campaign Grok4.6 requirements remain unresolved.
+Post script Stop samples retain ready=N clients; only scripts/V8/inflight logical
+owners are confirmed clear. The profile-off harness does not stop_slot/join before
+those rows. Retained RSS is not post-join allocator attribution. Root rejected
+that interpretation in owner-plan8764d4a; t_1bb2dfd4 is correcting its design before
+same-card review. No new optimization or live attribution cell is released.
+
+The1430 fixed-window Windows N16 focused-one pair is independently reviewed:
+t_4af4c884 completed with actualGrok4.5 as recorded in STATE. Both roles qualify
+16/16 and close16000 decode events without losses; aggregate finep99 is24–25ms.
+Candidate slot0 closes120 input events, finep9941–42ms. Baseline input remains
+unavailable because the predeclared trigger was missed; no rerun, matched input
+or overall latency acceptance. See windows-cohort-pair-1430-report.md/evidence.json.
+Its resource observations remain profiled diagnostics with asymmetric stimulus,
+UI-inspection overlap and unknown overhead, not final budgets or matched savings.
+
+The synchronized0830 visual proof remains reviewed qualitative held-scene/minimap/
+chat and2→1→2 recovery evidence (0c1e438+b1dd88f, t_9b57233d). It does not close
+fullG1/G4, splash/modal/cadence or physical input timing requirements.
+
+Final36-cell matrix, repeated32/lifecycle, gated128 and whole-campaignGrok4.6
+requirements remain unresolved. Existing diagnostics are not substitutes.
 
 ## Historical requirement inventory — 2026-09-08 08:22 UTC
 
@@ -105,10 +120,10 @@ Status vocabulary: `observed` means a real number exists but is not acceptance;
 
 ## Nearest bounded next work
 
-Complete independent review of the1430 archived cohort results and resolve any
-material reporting findings. Do not rerun the pair for missing baseline input.
-Complete t_c2879587 current-source native TUI calibration design/provenance audit
-and its reviewer handoff. Root will release only concrete verified prerequisites
-and the bounded declared screen after review; use its actual result to choose
-further ownership work. No current result waives absolute or incremental memory,
-CPU, latency, calibration, lifecycle, final matrix or whole-branch requirements.
+Complete corrected t_1bb2dfd4 owner design and same-card review. Reuse the current
+N1/N16 evidence and actual source ownership; keep script Stop distinct from client
+join, and logical payload/heap domains distinct from RSS and processCPU. Release
+only a concrete reviewed attribution procedure justified by the missing owner
+coverage. Do not repeat the calibration merely to seek better numbers. Absolute
+and incremental memory, CPU, latency, calibration, lifecycle, final matrix and
+whole-branch requirements remain unchanged.
