@@ -9,6 +9,33 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 02:14 UTC
+
+- Four-cell lazy report bc6a101 approved actual Grok4.5 after third review.
+  Root independently recomputed same harness-elapsed overlap: focused delta
+  -5.011719MiB (67samples each), background +39.730469MiB (101each), versus
+  whole-observation -114/-148MiB. Readiness/falling-RSS confounder matters;
+  no accepted savings or plateau. Root artifact5c1fafe preserves method/hashes.
+- Census report06a79dd approved actualGrok4.5 session220803_d125f2. Corrected
+  source provenance, per-slot range, timestamps and duration fields. Tile
+  containers790201600B across16 in this scene; logical capacity not RSS.
+  Parent-gated design t_6117c619 Composer actually running02:11, docs-only
+  bounded TileModels/SceneModel layout proposal, no implementation yet.
+- Linux2f5f3f6 native prepare-only passed. Separate launch preflight failed
+  before frontend because prepared SSH parent154234 had exited. Preserved log
+  native-run-2f5f3f6.log; no gameplay-failure reproduction occurred. Rootd4a3ed5
+  retains original spec, writes exclusive live-spec with current SSH parent;
+  actual-branch test verified refresh/preservation/duplicate refusal. Corrective
+  t_fd37ff62 approved actualGrok4.5 session221004_d59e5c.
+  Corrected native diagnostic NOW RUNNING, local exec34215. Poll02:14 actual
+  controller154263, launcher154266, collector154267, frontend154275. One actual
+  frontend launch, same binarye451/source57, guards unchanged. Do not restart.
+- Hyper-V builder resumed4vCPU/8GiB after all Windows frontend work ended.
+  VM heartbeat active, SSH old172.30 address times out. Default Switch now
+ 172.27.0.0/20; no reported KVP IP. Reconnected ONLY ownedVM NIC02:12;
+  other network untouched. Guest console/address diagnosis pending; no build
+  or performance run in VM. Stop VM before future Windows comparison cells.
+
 ## Latest boundary — 2026-09-08 01:56 UTC
 
 - Native owner census0150 completed0; Intel/Vulkan selected/requested matches.
