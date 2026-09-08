@@ -11,6 +11,22 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 13:47 UTC
+
+- Native canonical manifest verification passed for both final roles using the
+  installed build_provenance checker; report windows-cohort-native-provenance-
+  verification.json. Manifest staged under cohort-pair-provenance-ec0adc4,
+  SHA75e7d48c805f931b8a327a2f1d920b88011f35645010dd2e7338c29e1c0404f6.
+- Controls63bfed6 rejected by actual Grok4.5 for missing chronological tests,
+  sampler evidence and contract path bindings. Corrective1c2d8bd now in review.
+  Root additionally identified a circular prepare/contract receipt dependency
+  in1c2d8bd and withheld integration; same-card corrective comment recorded.
+- Separate Luna t_7394914d is implementing bounded helper/sampler accounting in
+  isolated cohort-stimulus-accounting checkout, followed by same-card review.
+- Final executable-bound capture helpers prepared and native PowerShell AST
+  checked with zero errors; no captures/input/workloads run during preparation.
+  Native workload remains idle; no matched N16 evidence or acceptance yet.
+
 ## Latest boundary — 2026-09-08 13:40 UTC
 
 - Both final native roles built/tested/staged. Candidate ca56e14 checks match
