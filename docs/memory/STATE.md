@@ -11,6 +11,22 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 14:15 UTC
+
+- Sampler c875105 received Grok4.5 approval (session20260908_100744_aa256d),
+  but root native inert execution disproved its PowerShell -Command argument
+  binding. Integration withheld. Actual -File static-launcher replacement probe
+  passed with full typed arrays; both raw probe receipts remain in diagnostics.
+- Closed-card CLI cannot reopen done work; corrective successor t_b5232afd is
+  running Luna on the same isolated branch, followed by same-card reviewer.
+  Scope includes launcher correction, real process identity and accounting gaps.
+- Root controller fractional trigger correction committed0a14ce0: finite inclusive
+  60..90 seconds, no rounding; bool/nonfinite/outside values rejected. Root8 tests
+  PASS. Receipt schema alignment and integration review still pending.
+- Existing native31-file no-launch proof remains evidence for prior a522 controls,
+  not the changed controller. Refresh staged controls and contract proof after
+  reviewed integration. No actual matched cell has launched.
+
 ## Latest boundary — 2026-09-08 14:05 UTC
 
 - Controls a522e02 approved actual Grok4.5 session20260908_095342_8f94d2;
