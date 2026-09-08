@@ -198,6 +198,34 @@ def _deep_missing(value: Any) -> bool:
     return False
 
 
+def _linux_frontend_processes_complete(value: Any) -> bool:
+    """Validate the one Linux observation whose population may be empty."""
+    if not isinstance(value, dict) or "frontend_processes" not in value:
+        return False
+    processes = value["frontend_processes"]
+    if not isinstance(processes, list):
+        return False
+    for process in processes:
+        if not isinstance(process, dict) or _deep_missing(process):
+            return False
+        pid = process.get("pid")
+        if type(pid) is not int or pid <= 0:
+            return False
+        def finite(item: Any) -> bool:
+            if isinstance(item, float):
+                return math.isfinite(item)
+            if isinstance(item, dict):
+                return all(finite(child) for child in item.values())
+            if isinstance(item, list):
+                return all(finite(child) for child in item)
+            return True
+        if not finite(process):
+            return False
+    remainder = dict(value)
+    del remainder["frontend_processes"]
+    return not _deep_missing(remainder)
+
+
 def _native_windows_conditions_recognized(value: Any) -> bool:
     """Treat the native marker as a distinct, fail-closed schema."""
     return isinstance(value, dict) and "native_preflight" in value
@@ -332,6 +360,8 @@ def _host_conditions_complete(value: Any) -> bool:
     """Validate native observations by schema; retain strict legacy behavior."""
     if _native_windows_conditions_recognized(value):
         return _native_windows_conditions_complete(value)
+    if isinstance(value, dict) and "frontend_processes" in value:
+        return _linux_frontend_processes_complete(value)
     return isinstance(value, dict) and not _deep_missing(value)
 
 

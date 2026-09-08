@@ -887,6 +887,32 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
         invalid["nested"] = {"required": None}
         self.assertFalse(mea._host_conditions_complete(invalid))
 
+    def test_linux_host_conditions_allow_explicit_empty_frontend_observation(self):
+        observed = dict(HOST_CONDITIONS, frontend_processes=[])
+        self.assertTrue(mea._host_conditions_complete(observed))
+        self.assertFalse(mea._host_conditions_complete(dict(HOST_CONDITIONS, arbitrary=[])))
+
+    def test_linux_frontend_observation_rejects_malformed_records(self):
+        for processes in (None, {}, [None], [{}], [{"pid": None}],
+                          [{"pid": 1, "usage": {"rss": float("nan")}}]):
+            with self.subTest(processes=processes):
+                observed = dict(HOST_CONDITIONS, frontend_processes=processes)
+                self.assertFalse(mea._host_conditions_complete(observed))
+
+    def test_linux_empty_frontend_observation_binds_exact_sidecar(self):
+        ref, _, manifest, server = self._positive_pair()
+        host = self.root / "host.json"
+        observed = dict(HOST_CONDITIONS, frontend_processes=[])
+        _write_json(host, observed)
+        receipt = json.loads(ref["receipt_path"].read_text())
+        receipt.update(host_conditions_path=str(host), host_conditions_sha256=mea.sha256_file(host))
+        _write_json(ref["receipt_path"], receipt)
+        bound = mea.bind_side(ref["receipt_path"], role="reference", manifest_path=manifest,
+                              server_identity_path=server, host_conditions_path=host)
+        self.assertTrue(bound["binding_ok"], bound)
+        self.assertEqual(bound["match_keys"]["host_conditions"], observed)
+        self.assertEqual(json.loads(host.read_text()), observed)
+
     def test_positive_binding_and_qualification_overhead_unavailable(self):
         ref, cand, manifest, server = self._positive_pair()
         ref_b = mea.bind_side(
