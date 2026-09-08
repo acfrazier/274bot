@@ -4314,7 +4314,8 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
         }
         if !state.nav_captures.busy() {state.session.memory_focus(run);}
         if !state.nav_captures.has_terminal() {
-            if let Some(play) = state.session.play.as_ref() {
+            // as_mut: poll may stop_slot/join producers before process::exit.
+            if let Some(play) = state.session.play.as_mut() {
                 match run.poll(play) {
                     Ok(true) if !state.nav_captures.busy() => {eprintln!("PASS: memory panel observation complete");std::process::exit(0);}
                     Ok(_) => {}

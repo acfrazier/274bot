@@ -602,6 +602,26 @@ type ScriptCard = (
     Vec<(String, String)>,
 );
 
+/// Additive fixed-window cohort journal publisher (process-local sidecar).
+/// Active only when the existing responsiveness profile is already enabled at
+/// observe-start — no new CLI/env flags.
+struct CohortPublisher {
+    boundaries: host::responsiveness_cohort::Boundaries,
+    cursor: u64,
+    /// Last published loss_count / journal_overflow_n so counter-only batches
+    /// still emit when capacity prevented a receipt (empty vectors).
+    last_loss_count: u64,
+    last_journal_overflow_n: u64,
+    sidecar: std::fs::File,
+    sidecar_path: PathBuf,
+    /// Harness `elapsed_s` of the observe-end qualification row (distinct from
+    /// process-mono cohort boundaries).
+    observe_end_elapsed_s: Option<f64>,
+    terminal: Option<host::responsiveness_cohort::TerminalSummary>,
+    /// True after slot/seed producers were stop_slot-joined and the barrier set.
+    producers_joined: bool,
+}
+
 /// Prepared memory-benchmark run shared by panel-play and tui-play.
 pub struct Run {
     pub config: Config,
@@ -615,9 +635,13 @@ pub struct Run {
     last_sample: Option<Instant>,
     lifecycle_cycle: u64,
     stopped: bool,
+    /// Finite cohort drain after observe-end (cohort-on only). Scripts stay up.
+    drain: Option<Instant>,
     teardown: Option<Instant>,
     card: Option<ScriptCard>,
     output: std::fs::File,
+    /// Samples path used to derive the cohort sidecar name.
+    output_path: PathBuf,
     diagnostics: bool,
     /// `BOT_MEMORY_FAILURE_CAPTURE=1`: one failure-boundary qualification row +
     /// isolate stop-reason cache, without the periodic diagnostic sidecar.
@@ -630,6 +654,7 @@ pub struct Run {
     pub render_policy: RenderPolicy,
     diagnostic_output: Option<std::fs::File>,
     qualification_output: std::fs::File,
+    cohort: Option<CohortPublisher>,
 }
 
 /// Where non-idle seed runners get their [`nav::world::NavWorld`].
@@ -807,9 +832,11 @@ impl Run {
             last_sample: None,
             lifecycle_cycle: 0,
             stopped: false,
+            drain: None,
             teardown: None,
             card,
             output,
+            output_path,
             diagnostics,
             failure_capture,
             failure_boundary_attempted: false,
@@ -817,6 +844,7 @@ impl Run {
             qualification_output,
             single_renderer,
             render_policy,
+            cohort: None,
         })
     }
 
@@ -886,7 +914,7 @@ impl Run {
     }
 
     /// Drive warmup/observe/lifecycle. `Ok(true)` when teardown finished.
-    pub fn poll(&mut self, play: &Play) -> Result<bool, String> {
+    pub fn poll(&mut self, play: &mut Play) -> Result<bool, String> {
         let now = Instant::now();
         let statuses = play.statuses();
         let ready = statuses
@@ -983,16 +1011,28 @@ impl Run {
                 self.config.n
             ));
         }
+        // Defer drain entry until after this tick's sample so the final observe
+        // row keeps phase "observe" (operator: retain observe-end row before drain).
+        // When the boundary fires, force a sample even if last_sample was <1s ago —
+        // otherwise drain would flip with no final observe row on disk.
+        let mut enter_drain_after_sample = false;
         if self.observing.is_none() && self.warm.is_some_and(|t| t.elapsed() >= self.config.warmup)
         {
             if !established {
                 return Err("workload did not remain ready through warmup".into());
             }
+            // Arm first so immutable START matches this observe-start boundary.
+            self.arm_cohort_at_observe_start()?;
             self.write_qualification(play, "observe-start")?;
-            self.observing = Some(now);
+            // Prefer the Instant used for mono START when cohort-on so wall
+            // observe duration tracks the same immutable window.
+            self.observing = Some(self.cohort.as_ref().map(|_| Instant::now()).unwrap_or(now));
         }
         if let Some(observing) = self.observing {
-            if self.config.workload == Workload::Lifecycle && self.teardown.is_none() {
+            if self.config.workload == Workload::Lifecycle
+                && self.teardown.is_none()
+                && self.drain.is_none()
+            {
                 let cycle = observing.elapsed().as_secs() / 60;
                 let should_stop = cycle % 2 == 1;
                 if cycle != self.lifecycle_cycle {
@@ -1007,8 +1047,44 @@ impl Run {
                     self.lifecycle_cycle = cycle;
                 }
             }
-            if observing.elapsed() >= self.config.observe && self.teardown.is_none() {
+            // Cohort-on: observe-end is the immutable mono END, not a drifted
+            // Instant duration relative to a different poll clock.
+            let observe_window_done = if let Some(c) = self.cohort.as_ref() {
+                host::responsiveness_profile::mono_ns(Instant::now()) >= c.boundaries.end_mono_ns
+            } else {
+                observing.elapsed() >= self.config.observe
+            };
+            if observe_window_done && self.drain.is_none() && self.teardown.is_none() {
                 self.write_qualification(play, "observe-end")?;
+                if self.cohort.is_some() {
+                    let elapsed = self.started.elapsed().as_secs_f64();
+                    if let Some(c) = self.cohort.as_mut() {
+                        c.observe_end_elapsed_s = Some(elapsed);
+                    }
+                    // Keep ordinary runtime for the finite tail; scripts stay up
+                    // through this sample, then drain begins after the write.
+                    enter_drain_after_sample = true;
+                } else {
+                    for name in &self.names {
+                        play.script_stop(name);
+                    }
+                    self.stopped = true;
+                    self.teardown = Some(now);
+                }
+            }
+        }
+        // Cohort drain ends at absolute END+tail (process mono), never a
+        // poll-relative extension of drain_at.elapsed().
+        if self.drain.is_some() && self.teardown.is_none() {
+            let tail_done = if let Some(c) = self.cohort.as_ref() {
+                Self::cohort_tail_complete(
+                    &c.boundaries,
+                    host::responsiveness_profile::mono_ns(Instant::now()),
+                )
+            } else {
+                false
+            };
+            if tail_done {
                 for name in &self.names {
                     play.script_stop(name);
                 }
@@ -1017,9 +1093,14 @@ impl Run {
             }
         }
 
-        if self
-            .last_sample
-            .is_none_or(|t| t.elapsed() >= Duration::from_secs(1))
+        // Force a sample on observe→drain boundary even when last_sample is
+        // recent (<1s). Without this, END can flip drain with no final observe
+        // row if the previous 1 Hz tick landed just before mono END.
+        let sample_due = enter_drain_after_sample
+            || self
+                .last_sample
+                .is_none_or(|t| t.elapsed() >= Duration::from_secs(1));
+        if sample_due
         {
             let (allocs, alloc_bytes, live_bytes) = rust_allocator_counts();
             let metrics = script::memory_profile::snapshots();
@@ -1046,15 +1127,7 @@ impl Run {
                 n: self.config.n,
                 workload: self.config.workload,
                 elapsed_s,
-                phase: if self.teardown.is_some() {
-                    "teardown".into()
-                } else if self.observing.is_some() {
-                    "observe".into()
-                } else if self.warm.is_some() {
-                    "warmup".into()
-                } else {
-                    "seed".into()
-                },
+                phase: self.sample_phase_label().into(),
                 ready,
                 active,
                 resident_bytes: crate::current_resident_bytes(),
@@ -1478,16 +1551,31 @@ impl Run {
                     value["responsiveness_clock"] = serde_json::Value::Null;
                     serde_json::Value::Null
                 });
-            writeln!(self.output, "{value}").map_err(|e| e.to_string())?;
+            // Drain journal then attach refs *before* the durable sample write so
+            // sidecar cursor/path land in the same JSONL row.
+            self.durable_write_sample_line(&mut value)?;
             if self.diagnostics {
                 self.write_diagnostics(play, None)?;
             }
             self.last_sample = Some(now);
         }
 
-        Ok(self
+        if enter_drain_after_sample {
+            self.drain = Some(Instant::now());
+        }
+
+        // Teardown wait remains 60s for logout/script settle (cohort-off and
+        // cohort-on). Finite cohort tail is END+tail above — not this 60s.
+        if self
             .teardown
-            .is_some_and(|t| t.elapsed() >= Duration::from_secs(60)))
+            .is_some_and(|t| t.elapsed() >= Duration::from_secs(60))
+        {
+            // Before returning true (panel/TUI process::exit), prove producer
+            // stop/join and emit terminal cohort summary when cohort-on.
+            self.finish_cohort_shutdown(play)?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     // Two boundary reads preserve script progress evidence when verbose
@@ -1554,6 +1642,7 @@ impl Run {
             "after_unix_s": wall_after,
             "meaning": "SystemTime reads bracketing this row's harness elapsed Instant read",
         });
+        self.attach_cohort_qualification_meta(&mut value, phase);
         writeln!(self.qualification_output, "{value}").map_err(|e| e.to_string())
     }
 
@@ -1634,6 +1723,317 @@ impl Run {
         }
         let n = self.names.len().max(1);
         (self.started.elapsed().as_secs() / 30) as usize % n
+    }
+
+    /// Arm the fixed-window cohort only when the existing responsiveness
+    /// profile is already enabled. No new flags. Uses race-safe `begin_armed`
+    /// so OPT_IN is true before immutable START is sampled.
+    fn arm_cohort_at_observe_start(&mut self) -> Result<(), String> {
+        if !host::responsiveness_profile::enabled() {
+            return Ok(());
+        }
+        if self.cohort.is_some() {
+            return Ok(());
+        }
+        let observe_ns = u64::try_from(self.config.observe.as_nanos())
+            .map_err(|_| "observe duration exceeds u64 nanos".to_string())?;
+        if observe_ns == 0 {
+            return Err("cohort observe duration must be non-zero".into());
+        }
+        let tail_ns = host::responsiveness_cohort::DEFAULT_TAIL_NS;
+        let capacity = host::responsiveness_cohort::DEFAULT_CAPACITY;
+        let boundaries = host::responsiveness_cohort::begin_armed(
+            observe_ns,
+            tail_ns,
+            capacity,
+            || host::responsiveness_profile::mono_ns(Instant::now()),
+        )
+        .map_err(|e| format!("cohort begin_armed failed: {e:?}"))?;
+        let sidecar_path = self
+            .output_path
+            .with_extension("cohort.jsonl");
+        let mut sidecar = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&sidecar_path)
+            .map_err(|e| format!("cohort sidecar {}: {e}", sidecar_path.display()))?;
+        let header = serde_json::json!({
+            "record": "cohort-header",
+            "schema_version": host::responsiveness_cohort::SCHEMA_VERSION,
+            "tail_name": host::responsiveness_cohort::DEFAULT_TAIL_NAME,
+            "tail_ns": tail_ns,
+            "observe_ns": observe_ns,
+            "capacity": capacity,
+            "frontend": self.frontend,
+            "input_population": if self.frontend == "panel" && self.render_policy.pins_focus() {
+                serde_json::json!({"kind": "focused-one", "slots": [0]})
+            } else if self.frontend == "tui" {
+                serde_json::json!({"kind": "tui-endpoint", "note": "TUI flush endpoint; not panel texture present"})
+            } else {
+                serde_json::json!({"kind": "all-run-slots", "n": self.names.len()})
+            },
+            "decode_population": {"kind": "all-run-slots", "n": self.names.len()},
+            "boundaries": {
+                "start_mono_ns": boundaries.start_mono_ns,
+                "end_mono_ns": boundaries.end_mono_ns,
+                "tail_ns": boundaries.tail_ns,
+            },
+            "clock_domain": host::responsiveness_profile::CLOCK_DOMAIN,
+            "sidecar_path": sidecar_path.display().to_string(),
+        });
+        writeln!(sidecar, "{header}").map_err(|e| e.to_string())?;
+        sidecar.sync_all().map_err(|e| e.to_string())?;
+        self.cohort = Some(CohortPublisher {
+            boundaries,
+            cursor: 0,
+            last_loss_count: 0,
+            last_journal_overflow_n: 0,
+            sidecar,
+            sidecar_path,
+            observe_end_elapsed_s: None,
+            terminal: None,
+            producers_joined: false,
+        });
+        Ok(())
+    }
+
+    /// Production phase label used by sample rows (single source of truth).
+    fn sample_phase_label(&self) -> &'static str {
+        if self.teardown.is_some() {
+            "teardown"
+        } else if self.drain.is_some() {
+            "drain"
+        } else if self.observing.is_some() {
+            "observe"
+        } else if self.warm.is_some() {
+            "warmup"
+        } else {
+            "seed"
+        }
+    }
+
+    /// Production durable sample write: drain journal, attach cohort refs, then
+    /// writeln. Callers must not attach refs after this write.
+    fn durable_write_sample_line(&mut self, value: &mut serde_json::Value) -> Result<(), String> {
+        self.drain_cohort_journal()?;
+        self.attach_cohort_sample_refs(value);
+        writeln!(self.output, "{value}").map_err(|e| e.to_string())
+    }
+
+    fn attach_cohort_qualification_meta(&self, value: &mut serde_json::Value, phase: &str) {
+        let Some(c) = self.cohort.as_ref() else {
+            return;
+        };
+        value["cohort"] = serde_json::json!({
+            "schema_version": host::responsiveness_cohort::SCHEMA_VERSION,
+            "present": true,
+            "phase_tag": phase,
+            "sidecar_path": c.sidecar_path.display().to_string(),
+            "boundaries": {
+                "start_mono_ns": c.boundaries.start_mono_ns,
+                "end_mono_ns": c.boundaries.end_mono_ns,
+                "tail_ns": c.boundaries.tail_ns,
+            },
+            "tail_name": host::responsiveness_cohort::DEFAULT_TAIL_NAME,
+            "observe_end_elapsed_s": c.observe_end_elapsed_s,
+            "qualification_elapsed_s_is_harness_not_cohort_mono": true,
+        });
+    }
+
+    fn attach_cohort_sample_refs(&self, value: &mut serde_json::Value) {
+        let Some(c) = self.cohort.as_ref() else {
+            return;
+        };
+        value["cohort"] = serde_json::json!({
+            "schema_version": host::responsiveness_cohort::SCHEMA_VERSION,
+            "present": true,
+            "sidecar_path": c.sidecar_path.display().to_string(),
+            "cursor": c.cursor,
+            "boundaries": {
+                "start_mono_ns": c.boundaries.start_mono_ns,
+                "end_mono_ns": c.boundaries.end_mono_ns,
+                "tail_ns": c.boundaries.tail_ns,
+            },
+            "tail_name": host::responsiveness_cohort::DEFAULT_TAIL_NAME,
+            "terminal": c.terminal.as_ref().map(|t| serde_json::json!({
+                "available": t.available,
+                "records_n": t.records_n,
+                "losses_n": t.losses_n,
+                "pending_n": t.pending_n,
+            })),
+        });
+    }
+
+    /// Absolute END+tail gate (process mono). Not Instant drain_at.elapsed().
+    fn cohort_tail_complete(boundaries: &host::responsiveness_cohort::Boundaries, now_mono: u64) -> bool {
+        now_mono >= boundaries.end_mono_ns.saturating_add(boundaries.tail_ns)
+    }
+
+    /// Bounded periodic journal drain (1 Hz sample cadence). Durable write;
+    /// advances exact returned cursor. Fail-closed on extract/write errors.
+    /// Emits counter-only batches when loss_count / journal_overflow_n move
+    /// even if records and losses vectors are empty (capacity prevented receipt).
+    fn drain_cohort_journal(&mut self) -> Result<(), String> {
+        let Some(c) = self.cohort.as_mut() else {
+            return Ok(());
+        };
+        if c.terminal.is_some() {
+            return Ok(());
+        }
+        let batch = host::responsiveness_cohort::extract_since(c.cursor)
+            .map_err(|e| format!("cohort extract_since({}): {e:?}", c.cursor))?;
+        c.cursor = batch.next_cursor;
+        let counters_moved = batch.loss_count != c.last_loss_count
+            || batch.journal_overflow_n != c.last_journal_overflow_n;
+        let should_emit = !batch.records.is_empty()
+            || !batch.losses.is_empty()
+            || batch.complete
+            || counters_moved;
+        if !should_emit {
+            return Ok(());
+        }
+        c.last_loss_count = batch.loss_count;
+        c.last_journal_overflow_n = batch.journal_overflow_n;
+        let mut row = serde_json::json!({
+            "record": "cohort-batch",
+            "schema_version": batch.schema_version,
+            "boundaries": batch.boundaries,
+            "records": batch.records,
+            "losses": batch.losses,
+            "next_cursor": batch.next_cursor,
+            "complete": batch.complete,
+            "loss_count": batch.loss_count,
+            "journal_overflow_n": batch.journal_overflow_n,
+        });
+        // Retain unavailable reason when capacity prevented a receipt even if
+        // the journal vectors are empty for this drain tick.
+        if batch.journal_overflow_n > 0 {
+            row["unavailable_reason"] = serde_json::json!("journal_overflow");
+            row["available"] = serde_json::json!(false);
+        }
+        writeln!(c.sidecar, "{row}").map_err(|e| format!("cohort sidecar write: {e}"))?;
+        c.sidecar
+            .sync_all()
+            .map_err(|e| format!("cohort sidecar sync: {e}"))?;
+        if batch.journal_overflow_n > 0 {
+            return Err(format!(
+                "cohort journal overflow detected: {}",
+                batch.journal_overflow_n
+            ));
+        }
+        Ok(())
+    }
+
+    /// Finalize journal after producers are proven closed. Used by
+    /// `finish_cohort_shutdown` and by unit tests that set the barrier without
+    /// a live Play.
+    fn finish_cohort_journal_after_barrier(&mut self) -> Result<(), String> {
+        let Some(c) = self.cohort.as_mut() else {
+            return Ok(());
+        };
+        if c.terminal.is_some() {
+            return Ok(());
+        }
+        let mut now_mono = host::responsiveness_profile::mono_ns(Instant::now());
+        let need = c
+            .boundaries
+            .end_mono_ns
+            .saturating_add(c.boundaries.tail_ns);
+        if now_mono < need {
+            return Err(format!(
+                "cohort finalize before END+tail: now={now_mono} need={need}"
+            ));
+        }
+        now_mono = host::responsiveness_profile::mono_ns(Instant::now()).max(need);
+        let summary = host::responsiveness_cohort::finalize(now_mono)
+            .map_err(|e| format!("cohort finalize: {e:?}"))?;
+
+        let batch = host::responsiveness_cohort::extract_since(c.cursor)
+            .map_err(|e| format!("cohort final extract_since({}): {e:?}", c.cursor))?;
+        c.cursor = batch.next_cursor;
+        c.last_loss_count = batch.loss_count;
+        c.last_journal_overflow_n = batch.journal_overflow_n;
+        let mut batch_row = serde_json::json!({
+            "record": "cohort-batch",
+            "schema_version": batch.schema_version,
+            "boundaries": batch.boundaries,
+            "records": batch.records,
+            "losses": batch.losses,
+            "next_cursor": batch.next_cursor,
+            "complete": batch.complete,
+            "loss_count": batch.loss_count,
+            "journal_overflow_n": batch.journal_overflow_n,
+        });
+        if batch.journal_overflow_n > 0 {
+            batch_row["unavailable_reason"] = serde_json::json!("journal_overflow");
+            batch_row["available"] = serde_json::json!(false);
+        }
+        writeln!(c.sidecar, "{batch_row}").map_err(|e| e.to_string())?;
+
+        let terminal_row = serde_json::json!({
+            "record": "cohort-terminal",
+            "schema_version": summary.schema_version,
+            "boundaries": summary.boundaries,
+            "terminal": summary.terminal,
+            "available": summary.available,
+            "records_n": summary.records_n,
+            "losses_n": summary.losses_n,
+            "pending_n": summary.pending_n,
+            "tail_name": host::responsiveness_cohort::DEFAULT_TAIL_NAME,
+            "producers_joined": c.producers_joined,
+            "observe_end_elapsed_s": c.observe_end_elapsed_s,
+            "frontend": self.frontend,
+        });
+        writeln!(c.sidecar, "{terminal_row}").map_err(|e| e.to_string())?;
+        c.sidecar.sync_all().map_err(|e| e.to_string())?;
+        c.terminal = Some(summary.clone());
+
+        if !summary.available {
+            return Err(format!(
+                "cohort terminal unavailable: records_n={} losses_n={} pending_n={}",
+                summary.records_n, summary.losses_n, summary.pending_n
+            ));
+        }
+        if batch.journal_overflow_n > 0 {
+            return Err(format!(
+                "cohort terminal journal overflow: {}",
+                batch.journal_overflow_n
+            ));
+        }
+        Ok(())
+    }
+
+    /// Stop/join every publishing slot producer, set the producer barrier,
+    /// finalize at absolute END+tail, drain remaining journal, write terminal
+    /// summary. Must run before panel/TUI `process::exit` on poll(true).
+    /// Does not treat script_stop or poll-true alone as producer closure.
+    pub fn finish_cohort_shutdown(&mut self, play: &mut Play) -> Result<(), String> {
+        if self.cohort.is_none() {
+            return Ok(());
+        }
+        if self
+            .cohort
+            .as_ref()
+            .is_some_and(|c| c.terminal.is_some())
+        {
+            return Ok(());
+        }
+        // Join all run slots that can still publish. stop_slot is the proven
+        // path; Play::join alone waits forever on unstopped threads.
+        let names: Vec<String> = self.names.clone();
+        for name in &names {
+            play.script_stop(name);
+            play.stop_slot(name);
+        }
+        *SEEDS.lock().unwrap() = Some(HashMap::new());
+        if let Some(c) = self.cohort.as_mut() {
+            c.producers_joined = true;
+        }
+
+        host::responsiveness_cohort::acknowledge_producers_closed()
+            .map_err(|e| format!("cohort acknowledge_producers_closed: {e:?}"))?;
+
+        self.finish_cohort_journal_after_barrier()
     }
 }
 
@@ -2249,9 +2649,11 @@ mod tests {
             last_sample: None,
             lifecycle_cycle: 0,
             stopped: false,
+            drain: None,
             teardown: None,
             card: None,
             output: sink.try_clone().expect("clone sink"),
+            output_path: PathBuf::from("/tmp/274bot-fc-stub-samples-unused.jsonl"),
             diagnostics,
             failure_capture,
             failure_boundary_attempted: false,
@@ -2259,6 +2661,7 @@ mod tests {
             render_policy: RenderPolicy::RotatingAll,
             diagnostic_output: diagnostics.then(|| sink.try_clone().expect("diag sink")),
             qualification_output,
+            cohort: None,
         }
     }
 
@@ -2750,5 +3153,428 @@ mod tests {
         assert_eq!(v["renderer_present"], true);
         // Wrong name → no match.
         assert!(renderer_evidence_for("bob", Some(&[obs])).is_none());
+    }
+
+    #[test]
+    fn cohort_publisher_skips_when_responsiveness_profile_off() {
+        // Profile is off by default in a fresh process; arm must be a no-op so
+        // cohort-off harness behavior is preserved without new flags.
+        // Subprocess isolation: profile enable is sticky process-global, and
+        // RUST_TEST does NOT select the filter — pass explicit cargo/libtest
+        // args with --exact.
+        if std::env::var_os("HERMES_COHORT_OFF_CHILD").is_some() {
+            assert!(
+                !host::responsiveness_profile::enabled(),
+                "fresh child must start with profile off"
+            );
+            host::responsiveness_cohort::harness_test_reset();
+            let qdir = std::env::temp_dir().join(format!(
+                "274bot-cohort-off-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&qdir).unwrap();
+            let qpath = qdir.join("q.jsonl");
+            let qfile = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&qpath)
+                .unwrap();
+            let mut run = harness_stub(false, false, qfile);
+            run.output_path = qdir.join("samples.jsonl");
+            run.arm_cohort_at_observe_start().expect("arm off path");
+            assert!(run.cohort.is_none());
+            let mut value = serde_json::json!({"phase": "observe"});
+            run.attach_cohort_sample_refs(&mut value);
+            assert!(value.get("cohort").is_none());
+            run.attach_cohort_qualification_meta(&mut value, "observe-start");
+            assert!(value.get("cohort").is_none());
+            run.drain_cohort_journal().expect("drain off");
+            run.finish_cohort_journal_after_barrier()
+                .expect("finish off");
+            let _ = std::fs::remove_dir_all(qdir);
+            return;
+        }
+        let exe = std::env::current_exe().expect("test exe");
+        let status = std::process::Command::new(&exe)
+            .args([
+                "memory::tests::cohort_publisher_skips_when_responsiveness_profile_off",
+                "--exact",
+                "--test-threads=1",
+            ])
+            .env("HERMES_COHORT_OFF_CHILD", "1")
+            // Clear cargo/libtest inheritance that could expand the filter.
+            .env_remove("RUST_TEST")
+            .env_remove("CARGO_TARGET_TMPDIR")
+            .status()
+            .expect("spawn cohort-off child");
+        assert!(status.success(), "cohort-off child failed: {status}");
+    }
+
+    #[test]
+    fn cohort_tail_complete_uses_absolute_end_plus_tail_not_relative() {
+        let b = host::responsiveness_cohort::Boundaries {
+            start_mono_ns: 1_000,
+            end_mono_ns: 11_000,
+            tail_ns: 5_000,
+        };
+        // END+tail = 16_000. Instant-relative drain clocks must not matter.
+        assert!(!Run::cohort_tail_complete(&b, 15_999));
+        assert!(Run::cohort_tail_complete(&b, 16_000));
+        assert!(Run::cohort_tail_complete(&b, 20_000));
+        // Pre-END mono is never complete even if a drain Instant already elapsed.
+        assert!(!Run::cohort_tail_complete(&b, 11_000));
+    }
+
+    #[test]
+    fn cohort_publisher_production_lifecycle_cursor_drain_finalize() {
+        // Production path: arm → producer start@START complete@tail →
+        // durable_write (refs before writeln) → observe-end row before drain →
+        // barrier → finalize. Uses real producer APIs + durable_write_sample_line.
+        let _env = env_lock();
+        host::responsiveness_cohort::harness_test_reset();
+        host::responsiveness_profile::enable();
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("274bot-cohort-life-{stamp}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let samples_path = dir.join("samples.jsonl");
+        let samples = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&samples_path)
+            .unwrap();
+        let qpath = dir.join("q.jsonl");
+        let qfile = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&qpath)
+            .unwrap();
+
+        let mut run = harness_stub(false, false, qfile);
+        run.output = samples;
+        run.output_path = samples_path.clone();
+        // Short observe so finalize wait is tiny; tail stays DEFAULT_TAIL_NS —
+        // tests complete the event inside a short synthetic tail by using
+        // begin_armed with custom windows via arm (observe from config).
+        run.config.observe = Duration::from_millis(5);
+
+        run.arm_cohort_at_observe_start().expect("arm on");
+        let c = run.cohort.as_ref().expect("cohort armed");
+        let start = c.boundaries.start_mono_ns;
+        let end = c.boundaries.end_mono_ns;
+        let tail = c.boundaries.tail_ns;
+        assert!(end > start);
+        assert_eq!(tail, host::responsiveness_cohort::DEFAULT_TAIL_NS);
+        let sidecar_path = c.sidecar_path.clone();
+
+        // Included-start at START mono; complete inside the finite tail window.
+        let id = host::responsiveness_cohort::start(
+            1,
+            1,
+            start,
+            host::responsiveness_cohort::Surface::Decode,
+        )
+        .expect("start at START");
+        let complete_at = end + tail / 2;
+        host::responsiveness_cohort::complete(id, complete_at);
+
+        // Observing so sample_phase_label is observe before drain entry.
+        run.observing = Some(Instant::now());
+        assert_eq!(run.sample_phase_label(), "observe");
+
+        let mut row = serde_json::json!({
+            "phase": run.sample_phase_label(),
+            "elapsed_s": 0.001,
+        });
+        // Production write path — must embed cohort cursor/path in the file.
+        run.durable_write_sample_line(&mut row)
+            .expect("durable observe sample");
+        assert!(row.get("cohort").is_some(), "refs attached before write");
+        assert_eq!(row["phase"], "observe");
+
+        let sample_text = std::fs::read_to_string(&samples_path).unwrap();
+        let sample_line = sample_text.lines().next().expect("sample line");
+        let sample_json: serde_json::Value = serde_json::from_str(sample_line).unwrap();
+        assert_eq!(sample_json["phase"], "observe");
+        assert!(
+            sample_json.get("cohort").is_some(),
+            "serialized sample must include cohort refs (attach before writeln)"
+        );
+        assert!(
+            sample_json["cohort"]["sidecar_path"]
+                .as_str()
+                .unwrap()
+                .contains("cohort.jsonl"),
+            "{sample_json}"
+        );
+
+        // Sidecar must have header + batch with the completed record.
+        let side_text = std::fs::read_to_string(&sidecar_path).unwrap();
+        let side_lines: Vec<&str> = side_text.lines().collect();
+        assert!(
+            side_lines.len() >= 2,
+            "header + batch expected, got: {side_text}"
+        );
+        let header: serde_json::Value = serde_json::from_str(side_lines[0]).unwrap();
+        assert_eq!(header["record"], "cohort-header");
+        let batch: serde_json::Value = serde_json::from_str(side_lines[1]).unwrap();
+        assert_eq!(batch["record"], "cohort-batch");
+        assert!(
+            batch["records"].as_array().map(|a| !a.is_empty()).unwrap_or(false),
+            "completed start@START must appear in drained batch: {batch}"
+        );
+        let cursor_after = run.cohort.as_ref().unwrap().cursor;
+        assert!(cursor_after > 0, "cursor must advance after drain");
+
+        // Observe-end final row still phase observe; drain starts after.
+        if let Some(c) = run.cohort.as_mut() {
+            c.observe_end_elapsed_s = Some(0.005);
+        }
+        let mut observe_end_row = serde_json::json!({
+            "phase": run.sample_phase_label(),
+            "elapsed_s": 0.005,
+            "boundary": "observe-end",
+        });
+        assert_eq!(observe_end_row["phase"], "observe");
+        run.durable_write_sample_line(&mut observe_end_row)
+            .expect("observe-end sample");
+        run.drain = Some(Instant::now());
+        assert_eq!(run.sample_phase_label(), "drain");
+        let mut drain_row = serde_json::json!({
+            "phase": run.sample_phase_label(),
+            "elapsed_s": 0.006,
+        });
+        run.durable_write_sample_line(&mut drain_row)
+            .expect("drain sample");
+        assert_eq!(drain_row["phase"], "drain");
+
+        // Wait absolute END+tail, barrier, finalize journal (no Play slots).
+        let need = end.saturating_add(tail);
+        loop {
+            let now = host::responsiveness_profile::mono_ns(Instant::now());
+            if now >= need {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(Run::cohort_tail_complete(
+            &run.cohort.as_ref().unwrap().boundaries,
+            host::responsiveness_profile::mono_ns(Instant::now())
+        ));
+        host::responsiveness_cohort::acknowledge_producers_closed()
+            .expect("barrier after producers done");
+        if let Some(c) = run.cohort.as_mut() {
+            c.producers_joined = true;
+        }
+        run.finish_cohort_journal_after_barrier()
+            .expect("finalize after END+tail + barrier");
+        let term = run.cohort.as_ref().unwrap().terminal.as_ref().unwrap();
+        assert!(term.available, "terminal must be available: {term:?}");
+        assert!(
+            term.records_n >= 1,
+            "included completion must count: {term:?}"
+        );
+
+        let side_final = std::fs::read_to_string(&sidecar_path).unwrap();
+        assert!(
+            side_final.contains("\"record\":\"cohort-terminal\"")
+                || side_final.contains("\"record\": \"cohort-terminal\""),
+            "terminal row missing: {side_final}"
+        );
+
+        host::responsiveness_cohort::harness_test_reset();
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn finish_cohort_shutdown_joins_slot_before_terminal() {
+        // Production finish_cohort_shutdown must stop_slot/join publishers
+        // before finalize — not script_stop alone.
+        let _env = env_lock();
+        host::responsiveness_cohort::harness_test_reset();
+        host::responsiveness_profile::enable();
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("274bot-cohort-join-{stamp}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let samples_path = dir.join("samples.jsonl");
+        let samples = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&samples_path)
+            .unwrap();
+        let qfile = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(dir.join("q.jsonl"))
+            .unwrap();
+
+        let mut run = harness_stub(false, false, qfile);
+        run.output = samples;
+        run.output_path = samples_path;
+        run.config.observe = Duration::from_millis(5);
+        run.names = vec!["cohort_slot".into()];
+        run.arm_cohort_at_observe_start().expect("arm");
+
+        let start = run.cohort.as_ref().unwrap().boundaries.start_mono_ns;
+        let end = run.cohort.as_ref().unwrap().boundaries.end_mono_ns;
+        let tail = run.cohort.as_ref().unwrap().boundaries.tail_ns;
+        let id = host::responsiveness_cohort::start(
+            2,
+            1,
+            start,
+            host::responsiveness_cohort::Surface::Decode,
+        )
+        .unwrap();
+        host::responsiveness_cohort::complete(id, end + tail / 2);
+
+        // Empty Play with a named stoppable slot so finish_cohort_shutdown
+        // must stop_slot/join before terminal.
+        let mut play = crate::run_channels(
+            &crate::PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: dir.to_string_lossy().into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            0,
+        );
+        let stop = play.test_install_stoppable_slot("cohort_slot");
+        assert!(play.slot_running("cohort_slot"));
+        assert!(!stop.load(std::sync::atomic::Ordering::Relaxed));
+
+        // Wait END+tail then finish (joins slot, barrier, terminal).
+        let need = end.saturating_add(tail);
+        while host::responsiveness_profile::mono_ns(Instant::now()) < need {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        run.finish_cohort_shutdown(&mut play)
+            .expect("finish joins + terminal");
+        assert!(
+            run.cohort.as_ref().unwrap().producers_joined,
+            "producers_joined after stop_slot path"
+        );
+        assert!(
+            run.cohort.as_ref().unwrap().terminal.is_some(),
+            "terminal after join"
+        );
+        assert!(
+            !play.slot_running("cohort_slot"),
+            "slot handle must be joined/removed after stop_slot"
+        );
+        assert!(
+            stop.load(std::sync::atomic::Ordering::Relaxed),
+            "stop flag must be set by stop_slot before join returns"
+        );
+
+        host::responsiveness_cohort::harness_test_reset();
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Production poll scheduling: if last_sample was <1s before mono END,
+    /// poll must still write a final phase=observe row before entering drain.
+    /// Manual durable_write fixtures cannot catch this gate.
+    #[test]
+    fn poll_forces_final_observe_sample_when_last_sample_recent_at_end() {
+        let _env = env_lock();
+        host::responsiveness_cohort::harness_test_reset();
+        host::responsiveness_profile::enable();
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("274bot-cohort-poll-end-{stamp}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let samples_path = dir.join("samples.jsonl");
+        let samples = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&samples_path)
+            .unwrap();
+        let qpath = dir.join("q.jsonl");
+        let qfile = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&qpath)
+            .unwrap();
+
+        let mut run = harness_stub(false, false, qfile);
+        // Idle path: no seeds; empty play has ready=0 so stay past warm/observe
+        // setup by pre-arming state (do not re-enter warmup arm).
+        run.names.clear();
+        run.config.n = 0;
+        run.output = samples;
+        run.output_path = samples_path.clone();
+        run.config.observe = Duration::from_millis(5);
+        run.warm = Some(Instant::now() - Duration::from_secs(10));
+        run.observing = Some(Instant::now() - Duration::from_secs(1));
+        // Recent sample would block the ordinary 1 Hz gate without force.
+        run.last_sample = Some(Instant::now());
+
+        run.arm_cohort_at_observe_start().expect("arm");
+        let end = run.cohort.as_ref().unwrap().boundaries.end_mono_ns;
+        // Spin until mono is past END so observe_window_done is true.
+        while host::responsiveness_profile::mono_ns(Instant::now()) < end {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        let before = std::fs::read_to_string(&samples_path).unwrap_or_default();
+        let before_lines = before.lines().count();
+
+        let mut play = crate::run_channels(
+            &crate::PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: dir.to_string_lossy().into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            0,
+        );
+        run.poll(&mut play).expect("poll at END with recent last_sample");
+
+        let after = std::fs::read_to_string(&samples_path).unwrap();
+        let after_lines: Vec<&str> = after.lines().collect();
+        assert!(
+            after_lines.len() > before_lines,
+            "poll must force a final observe sample despite recent last_sample; before={before_lines} after={}" ,
+            after_lines.len()
+        );
+        let last: serde_json::Value =
+            serde_json::from_str(after_lines.last().unwrap()).expect("sample json");
+        assert_eq!(
+            last["phase"], "observe",
+            "forced boundary sample must still be phase observe before drain: {last}"
+        );
+        assert!(
+            last.get("cohort").is_some(),
+            "forced sample must carry cohort refs: {last}"
+        );
+        assert!(
+            run.drain.is_some(),
+            "drain must enter only after the forced final observe write"
+        );
+        assert_eq!(
+            run.sample_phase_label(),
+            "drain",
+            "after forced write, phase is drain"
+        );
+
+        host::responsiveness_cohort::harness_test_reset();
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -3470,6 +3470,36 @@ impl Play {
         }
     }
 
+    /// Test-only: install a stoppable dummy slot thread (no client) so
+    /// `stop_slot` / harness finish_cohort_shutdown can prove join-before-terminal.
+    #[cfg(any(test, feature = "memory-profile"))]
+    pub fn test_install_stoppable_slot(&mut self, name: &str) -> Arc<std::sync::atomic::AtomicBool> {
+        let arm = SlotArm::new(1, false);
+        let stop = Arc::clone(&arm.stop);
+        self.arms.insert(name.to_owned(), Arc::clone(&arm));
+        self.spawned.insert(name.to_owned());
+        let handle = {
+            let arm = Arc::clone(&arm);
+            thread::spawn(move || {
+                while !arm.stop.load(Ordering::Relaxed) {
+                    thread::sleep(Duration::from_millis(1));
+                }
+            })
+        };
+        self.handles.insert(name.to_owned(), handle);
+        stop
+    }
+
+    /// Names currently tracked as spawned slots (harness/test inspection).
+    pub fn slot_names(&self) -> Vec<String> {
+        self.spawned.iter().cloned().collect()
+    }
+
+    /// True if a named slot still has a live join handle.
+    pub fn slot_running(&self, name: &str) -> bool {
+        self.handles.contains_key(name)
+    }
+
     /// Register a control arm without spawning a slot thread (panel unit
     /// tests that drive login/logout flags through [`Play::arm`]).
     pub fn attach_arm(&mut self, name: &str, arm: Arc<SlotArm>) {

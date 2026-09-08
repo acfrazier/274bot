@@ -200,6 +200,76 @@ pub fn begin_default(boundaries: Boundaries) -> Result<(), CohortError> {
     begin(boundaries, DEFAULT_CAPACITY)
 }
 
+/// Named default finite tail (5s). Recorded in publisher envelopes before results.
+pub const DEFAULT_TAIL_NAME: &str = "DEFAULT_TAIL_NS";
+
+/// Race-safe activation: under the ledger lock, arm `OPT_IN` **before** sampling
+/// immutable START via `now`, then freeze half-open `[START, START+observe_ns)`.
+///
+/// Ordering is load-bearing. Producer fast paths (`start` / `dropped_start` /
+/// `missing_generation_start`) return before taking the ledger lock when
+/// `enabled()` is false. Sampling START while still disabled lets another
+/// thread stamp `t >= START`, observe `!enabled()`, and omit an in-window
+/// start. Arming first means concurrent publishers either:
+/// - still saw `!enabled()` with a stamp that is strictly before START, or
+/// - pass `enabled()`, block on this lock, and after release filter by their
+///   real timestamp against the installed boundaries.
+///
+/// `now` must not call lock-taking helpers such as [`boundaries`]. On
+/// validation failure after arming, `OPT_IN` is rolled back before unlock.
+/// Does not backdate, trim, or skip activation-gap events.
+pub fn begin_armed(
+    observe_ns: u64,
+    tail_ns: u64,
+    capacity: usize,
+    now: impl FnOnce() -> u64,
+) -> Result<Boundaries, CohortError> {
+    if observe_ns == 0 || capacity == 0 || tail_ns == 0 {
+        return Err(CohortError::MalformedBoundaries);
+    }
+    let mut s = state().lock().unwrap();
+    if s.finalized {
+        return Err(CohortError::AlreadyFinalized);
+    }
+    if s.boundaries.is_some() {
+        return Err(CohortError::AlreadyActive);
+    }
+    // Arm under the lock before sampling START. Rollback OPT_IN if bounds fail.
+    OPT_IN.store(true, Ordering::Release);
+    let start_mono_ns = now();
+    let end_mono_ns = match start_mono_ns.checked_add(observe_ns) {
+        Some(v) => v,
+        None => {
+            OPT_IN.store(false, Ordering::Release);
+            return Err(CohortError::MalformedBoundaries);
+        }
+    };
+    let boundaries = Boundaries {
+        start_mono_ns,
+        end_mono_ns,
+        tail_ns,
+    };
+    if let Err(e) = boundaries.validate() {
+        OPT_IN.store(false, Ordering::Release);
+        return Err(e);
+    }
+    if s.last_end.is_some_and(|end| boundaries.start_mono_ns < end) {
+        OPT_IN.store(false, Ordering::Release);
+        return Err(CohortError::StaleOrOverlappingBoundaries);
+    }
+    s.boundaries = Some(boundaries);
+    s.capacity = capacity;
+    s.available = true;
+    s.producers_closed = false;
+    Ok(boundaries)
+}
+
+/// Frozen boundaries of the active cohort, if any. Takes the ledger lock —
+/// must not be called from a `begin_armed` `now` callback.
+pub fn boundaries() -> Option<Boundaries> {
+    state().lock().unwrap().boundaries
+}
+
 /// Establish the producer synchronization barrier. The caller must invoke
 /// this only after all producer threads/slot generations have stopped
 /// publishing starts and terminal outcomes. It never blocks gameplay.
@@ -568,6 +638,15 @@ pub fn finalize(now_mono_ns: u64) -> Result<TerminalSummary, CohortError> {
 
 #[cfg(test)]
 pub(crate) fn test_reset() {
+    *state().lock().unwrap() = State::default();
+    OPT_IN.store(false, Ordering::Release);
+}
+
+/// Process-global cohort ledger reset for harness publisher tests in other
+/// crates. Serialise callers; does not clear the responsiveness profile enable
+/// latch (one-way). Prefer a dedicated child process when testing profile-off.
+#[doc(hidden)]
+pub fn harness_test_reset() {
     *state().lock().unwrap() = State::default();
     OPT_IN.store(false, Ordering::Release);
 }
@@ -1206,6 +1285,125 @@ mod tests {
         assert!(batch.records.is_empty());
         assert!(batch.losses.is_empty());
         silence_local_drop(&mut local);
+        test_reset();
+    }
+
+    #[test]
+    fn begin_armed_enables_before_start_sample() {
+        let _g = isolate();
+        let mut samples = 0u64;
+        let b = begin_armed(100, 10, 8, || {
+            samples += 1;
+            // OPT_IN must already be true while START is sampled.
+            assert!(enabled());
+            1_000
+        })
+        .unwrap();
+        assert_eq!(samples, 1);
+        assert_eq!(b.start_mono_ns, 1_000);
+        assert_eq!(b.end_mono_ns, 1_100);
+        assert_eq!(b.tail_ns, 10);
+        assert!(enabled());
+        assert_eq!(boundaries(), Some(b));
+        let id = start(1, 1, 1_050, Surface::Decode).unwrap();
+        complete(id, 1_090);
+        acknowledge_producers_closed().unwrap();
+        let summary = finalize(1_110).unwrap();
+        assert!(summary.available);
+        assert_eq!(summary.records_n, 1);
+        test_reset();
+    }
+
+    #[test]
+    fn begin_armed_rejects_zero_observe_or_tail() {
+        let _g = isolate();
+        assert_eq!(
+            begin_armed(0, 10, 8, || 1),
+            Err(CohortError::MalformedBoundaries)
+        );
+        assert_eq!(
+            begin_armed(10, 0, 8, || 1),
+            Err(CohortError::MalformedBoundaries)
+        );
+        assert!(!enabled());
+        test_reset();
+    }
+
+    #[test]
+    fn begin_armed_rolls_back_opt_in_on_overflow_end() {
+        let _g = isolate();
+        assert_eq!(
+            begin_armed(u64::MAX, 10, 8, || 1),
+            Err(CohortError::MalformedBoundaries)
+        );
+        assert!(!enabled());
+        assert!(boundaries().is_none());
+        test_reset();
+    }
+
+    /// Real concurrency: producer observes `enabled()` while activation still
+    /// holds the ledger lock (inside `now`), then calls `start` with an
+    /// in-window stamp. Must not omit. Pre-start stamp is excluded.
+    #[test]
+    fn begin_armed_concurrent_producer_during_arm_retains_in_window() {
+        let _g = isolate();
+        let (armed_tx, armed_rx) = std::sync::mpsc::sync_channel::<()>(0);
+        let (saw_tx, saw_rx) = std::sync::mpsc::sync_channel::<()>(0);
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<Option<EventId>>();
+        let producer = std::thread::spawn(move || {
+            // Blocked until `now` proves OPT_IN under the ledger lock.
+            armed_rx.recv().expect("armed");
+            assert!(enabled(), "producer must see enabled before START returns");
+            // Signal without taking the ledger lock, then enter start() which
+            // blocks on the lock until activation installs boundaries.
+            saw_tx.send(()).expect("saw");
+            let in_window = start(3, 7, 1_000, Surface::Decode);
+            let pre_start = start(3, 7, 999, Surface::Decode);
+            done_tx
+                .send(in_window)
+                .expect("done");
+            // pre_start result checked on join path via side channel would
+            // need another channel; assert locally.
+            assert!(
+                pre_start.is_none(),
+                "timestamp strictly before START must be excluded"
+            );
+        });
+        let b = begin_armed(100, 10, 8, || {
+            assert!(enabled(), "OPT_IN armed before sampling START");
+            // Do not call boundaries() here — it takes the same lock.
+            armed_tx.send(()).expect("signal armed");
+            // Wait until the producer has observed enabled and is entering start.
+            // Do not join the producer while holding the ledger lock.
+            saw_rx.recv().expect("producer saw enabled");
+            // Give the producer time to block on the ledger mutex.
+            std::thread::sleep(Duration::from_millis(20));
+            1_000
+        })
+        .unwrap();
+        assert_eq!(b.start_mono_ns, 1_000);
+        assert_eq!(b.end_mono_ns, 1_100);
+        let id = done_rx.recv().expect("producer id");
+        producer.join().expect("producer join");
+        let id = id.expect("in-window start during arm must not be omitted");
+        complete(id, 1_050);
+        acknowledge_producers_closed().unwrap();
+        let summary = finalize(1_110).unwrap();
+        assert!(summary.available);
+        assert_eq!(summary.records_n, 1);
+        test_reset();
+    }
+
+    #[test]
+    fn begin_armed_start_equals_start_included_end_excluded() {
+        let _g = isolate();
+        let b = begin_armed(50, 5, 8, || 500).unwrap();
+        assert_eq!(b.start_mono_ns, 500);
+        let id = start(2, 9, 500, Surface::Panel).unwrap();
+        complete(id, 501);
+        assert!(start(2, 9, 550, Surface::Panel).is_none());
+        acknowledge_producers_closed().unwrap();
+        assert_eq!(finalize(555).unwrap().records_n, 1);
         test_reset();
     }
 }
