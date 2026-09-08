@@ -9,6 +9,29 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 10:47 UTC
+
+- Publisher bf614b9 t_5992fd7a round1 REJECTED actual Grok4.5/xai-oauth
+  20260908_064222_0ea9c5: concrete JSON reader envelope missing; observe-end
+  cohort elapsed metadata set after qualification write (null); report wrongly
+  listed TUI file changed. Corrective implementer run719 started10:46 and is
+  verified live. Core activation/drain/final-row/join/off-path focused evidence
+  accepted by that review, but publisher not approved/integrated.
+- Root verified corrected actual poll regression: final observe row forced at
+  END with recent last_sample,1pass; four cohort fixtures pass after real child
+  --exact filter fixed (earlier failed child/full-suite output preserved).
+- Root full host-play memory-profile suite on bf614b9:177pass/4fail; primary
+  pre-publisher9bcc86c:172pass/same4fail. All four are inherited mint_live_names
+  PID+serial-prefix truncation collisions, not publisher regressions. Example
+  five-hex PID plus serial1 and0x10 both produce the same six-character token.
+  Each affected prepare_* test passes separately on bf614b9 (four fresh test
+  processes). Do not relabel either full suite green or change naming behavior
+  in the publisher card; future native freshness still needs actual validation.
+- Input trace remains integrated188e168 and tested205host/15panel. No new native
+  trace run or binary. Reader awaits corrected frozen publisher envelope and
+  review. All full campaign target/matrix/lifecycle/scaling/whole-Grok gates
+  remain open.
+
 ## Latest boundary — 2026-09-08 10:33 UTC
 
 - Input trace0627dc0 APPROVED t_fedf29c8 actual Grok4.5/xai-oauth session
