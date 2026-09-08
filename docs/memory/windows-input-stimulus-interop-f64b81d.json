@@ -1,0 +1,17 @@
+{
+    "utc":  "2026-09-08T09:37:17.9661339Z",
+    "sourceSha256":  "04822c0e9f5ade2d555e408cc707722c234bc1e7b442676975a16e7efcaebbd1",
+    "psVersion":  "5.1.26100.9168",
+    "pointerBytes":  8,
+    "astErrors":  0,
+    "compiled":  true,
+    "inputBytes":  40,
+    "leftVk":  37,
+    "rightVk":  39,
+    "downFlags":  1,
+    "upFlags":  3,
+    "inputType":  1,
+    "powershellUInt16CastsExercised":  true,
+    "inputSent":  false,
+    "controllerExecuted":  false
+}
