@@ -11,6 +11,15 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Operator sequencing — 2026-09-08 16:57 UTC
+
+Continue standalone289 server/client verification as the authorized sidebar.
+After the289 game client works, preparation/planning for integration with this
+stack stays parked until the operator is satisfied the memory campaign is
+finished or that stopping is reasonable based on evidence. Individual diagnostic
+wins do not establish completion; retain workload and verification boundaries.
+No289 integration design or implementation is released by this sequencing note.
+
 ## Latest boundary — 2026-09-08 16:50 UTC
 
 - Reader 82057de approved actual Grok4.5 session20260908_124352_8900f2,
