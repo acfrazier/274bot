@@ -1,0 +1,225 @@
+{
+  "schema": "root-harness-elapsed-alignment-v1",
+  "performance_acceptance": false,
+  "sources_sha256": {
+    "diagnostics/windows-lazy-upload-20260908/candidate-focused-plus-background-20260908-0126/raw-run-01/samples.qualification.jsonl": "971b1e793098a0790f8a506106928755c19f80645b5745ec1946a09048cf2f14",
+    "diagnostics/windows-lazy-upload-20260908/candidate-focused-plus-background-20260908-0126/raw-run-01/samples.jsonl": "0be8f59fc2b212fd7ca53fa609cb583cd22892ce832e75fca1488e32eb7853a2",
+    "diagnostics/windows-lazy-upload-20260908/candidate-focused-plus-background-20260908-0126/raw-run-01/samples.diagnostics.jsonl": "0454d1f5fb7160424888bba6d1900ad45480f1733827ac47900b4978cad20744",
+    "diagnostics/windows-lazy-upload-20260908/candidate-focused-one-20260908-0118/raw-run-01/samples.qualification.jsonl": "df6551b461d77ae477c7016be10db6fa25006ce3e0d4f928dd08b65d8260dd5c",
+    "diagnostics/windows-lazy-upload-20260908/candidate-focused-one-20260908-0118/raw-run-01/samples.jsonl": "6cfe34321a155d68282d657f5d47f7b648ef9aa987a561b400b8ae3981145c00",
+    "diagnostics/windows-lazy-upload-20260908/candidate-focused-one-20260908-0118/raw-run-01/samples.diagnostics.jsonl": "c075ffb466d125c20858d952519bd71e2386f9b075b9ab8feb3a2d48c9afa1ec",
+    "diagnostics/windows-lazy-upload-20260908/baseline-focused-plus-background-20260908-0111/raw-run-01/samples.qualification.jsonl": "0102961c3efe02079c3561ab7ba23b4b0b52d65c01d357a0ee0de55043f79090",
+    "diagnostics/windows-lazy-upload-20260908/baseline-focused-plus-background-20260908-0111/raw-run-01/samples.jsonl": "14b659d7f6192afa595b8d401c84b1082b6f4d4a56f70066917ca34f5eebfe2c",
+    "diagnostics/windows-lazy-upload-20260908/baseline-focused-plus-background-20260908-0111/raw-run-01/samples.diagnostics.jsonl": "0e2c02d855eee5011b65a1d73f20c2d03e8fe3ecf84381f30a5a1c6c2d35c7f3",
+    "diagnostics/windows-lazy-upload-20260908/baseline-focused-one-20260908-0102/raw-run-01/samples.qualification.jsonl": "40fee8314b737f0d92247405b8e80eea949d99f36978c3fd3aacce9e912a205f",
+    "diagnostics/windows-lazy-upload-20260908/baseline-focused-one-20260908-0102/raw-run-01/samples.jsonl": "67f4992f8f355ce6c7581d0814239faeb29d3e38b47d046c4f1b04850d1ba737",
+    "diagnostics/windows-lazy-upload-20260908/baseline-focused-one-20260908-0102/raw-run-01/samples.diagnostics.jsonl": "0f705ddc40b944573af8fd765c3f95c5ed2daad1f22a0595943b910af46a3a55"
+  },
+  "pairs": {
+    "focused-one": {
+      "absolute_harness_elapsed_common_observation_range_s": [
+        162.6414489,
+        229.487535
+      ],
+      "absolute_elapsed_comparison": [
+        {
+          "name": "baseline-focused-one-20260908-0102",
+          "observe_start": 110.2887408,
+          "observe_end": 230.2973314,
+          "aligned_n": 67,
+          "aligned_median_mib": 869.84765625
+        },
+        {
+          "name": "candidate-focused-one-20260908-0118",
+          "observe_start": 161.98751,
+          "observe_end": 282.0006167,
+          "aligned_n": 67,
+          "aligned_median_mib": 864.8359375
+        }
+      ],
+      "absolute_elapsed_delta_mib": -5.01171875,
+      "relative_bins": [
+        {
+          "relative_range_s": [
+            0,
+            30
+          ],
+          "stats": [
+            {
+              "name": "baseline-focused-one-20260908-0102",
+              "samples": 30,
+              "median_mib": 1055.09375
+            },
+            {
+              "name": "candidate-focused-one-20260908-0118",
+              "samples": 30,
+              "median_mib": 918.658203125
+            }
+          ],
+          "delta_mib": -136.435546875
+        },
+        {
+          "relative_range_s": [
+            30,
+            60
+          ],
+          "stats": [
+            {
+              "name": "baseline-focused-one-20260908-0102",
+              "samples": 30,
+              "median_mib": 976.087890625
+            },
+            {
+              "name": "candidate-focused-one-20260908-0118",
+              "samples": 29,
+              "median_mib": 863.78125
+            }
+          ],
+          "delta_mib": -112.306640625
+        },
+        {
+          "relative_range_s": [
+            60,
+            90
+          ],
+          "stats": [
+            {
+              "name": "baseline-focused-one-20260908-0102",
+              "samples": 30,
+              "median_mib": 876.064453125
+            },
+            {
+              "name": "candidate-focused-one-20260908-0118",
+              "samples": 30,
+              "median_mib": 806.0
+            }
+          ],
+          "delta_mib": -70.064453125
+        },
+        {
+          "relative_range_s": [
+            90,
+            120
+          ],
+          "stats": [
+            {
+              "name": "baseline-focused-one-20260908-0102",
+              "samples": 29,
+              "median_mib": 813.26953125
+            },
+            {
+              "name": "candidate-focused-one-20260908-0118",
+              "samples": 30,
+              "median_mib": 779.46484375
+            }
+          ],
+          "delta_mib": -33.8046875
+        }
+      ],
+      "interpretation": "same elapsed since harness start vs same elapsed since observation boundary; sequential wall clock not relevant to these two alignments; diagnostic not causal"
+    },
+    "focused-plus-background": {
+      "absolute_harness_elapsed_common_observation_range_s": [
+        120.5253208,
+        222.3300242
+      ],
+      "absolute_elapsed_comparison": [
+        {
+          "name": "baseline-focused-plus-background-20260908-0111",
+          "observe_start": 102.3716051,
+          "observe_end": 222.4025201,
+          "aligned_n": 101,
+          "aligned_median_mib": 2055.31640625
+        },
+        {
+          "name": "candidate-focused-plus-background-20260908-0126",
+          "observe_start": 119.725329,
+          "observe_end": 239.7317908,
+          "aligned_n": 101,
+          "aligned_median_mib": 2095.046875
+        }
+      ],
+      "absolute_elapsed_delta_mib": 39.73046875,
+      "relative_bins": [
+        {
+          "relative_range_s": [
+            0,
+            30
+          ],
+          "stats": [
+            {
+              "name": "baseline-focused-plus-background-20260908-0111",
+              "samples": 29,
+              "median_mib": 2482.90234375
+            },
+            {
+              "name": "candidate-focused-plus-background-20260908-0126",
+              "samples": 29,
+              "median_mib": 2327.59375
+            }
+          ],
+          "delta_mib": -155.30859375
+        },
+        {
+          "relative_range_s": [
+            30,
+            60
+          ],
+          "stats": [
+            {
+              "name": "baseline-focused-plus-background-20260908-0111",
+              "samples": 30,
+              "median_mib": 2346.47265625
+            },
+            {
+              "name": "candidate-focused-plus-background-20260908-0126",
+              "samples": 30,
+              "median_mib": 2096.28125
+            }
+          ],
+          "delta_mib": -250.19140625
+        },
+        {
+          "relative_range_s": [
+            60,
+            90
+          ],
+          "stats": [
+            {
+              "name": "baseline-focused-plus-background-20260908-0111",
+              "samples": 30,
+              "median_mib": 1978.998046875
+            },
+            {
+              "name": "candidate-focused-plus-background-20260908-0126",
+              "samples": 30,
+              "median_mib": 1882.71875
+            }
+          ],
+          "delta_mib": -96.279296875
+        },
+        {
+          "relative_range_s": [
+            90,
+            120
+          ],
+          "stats": [
+            {
+              "name": "baseline-focused-plus-background-20260908-0111",
+              "samples": 30,
+              "median_mib": 1751.73046875
+            },
+            {
+              "name": "candidate-focused-plus-background-20260908-0126",
+              "samples": 30,
+              "median_mib": 1503.42578125
+            }
+          ],
+          "delta_mib": -248.3046875
+        }
+      ],
+      "interpretation": "same elapsed since harness start vs same elapsed since observation boundary; sequential wall clock not relevant to these two alignments; diagnostic not causal"
+    }
+  },
+  "method": "Select raw samples between each qualification observe-start/end. Absolute alignment restricts both to intersection of raw elapsed_s ranges and computes each median. Relative alignment bins elapsed_s minus qualification start into 0-30,30-60,60-90,90-120 seconds. No interpolation; bin sample counts explicit. This is descriptive, not paired subject control or causal savings."
+}
