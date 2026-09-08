@@ -1,0 +1,9 @@
+param([Parameter(Mandatory=$true)][ValidatePattern('^native-render-owner-census-focused-plus-background-[A-Za-z0-9_.-]+$')][string]$CellId,[Parameter(Mandatory=$true)][string]$Destination)
+$ErrorActionPreference='Stop'; $run=Join-Path 'C:\Users\BotTest' ('274bot-runs\'+$CellId); if(-not(Test-Path $run -PathType Container)){throw 'Run directory missing'}
+$dest=Join-Path $Destination $CellId;if(Test-Path $dest){throw 'Archive exists; preserve prior output'};New-Item -ItemType Directory -Path $dest|Out-Null;Copy-Item (Join-Path $run '*') $dest -Recurse -Force
+$rawDest=Join-Path $dest 'raw-run';New-Item -ItemType Directory -Path $rawDest|Out-Null;$rawSources=@()
+foreach($receiptPath in @(Get-ChildItem $run -Recurse -File -Filter receipt.json)){ $receipt=Get-Content $receiptPath.FullName -Raw|ConvertFrom-Json; $raw=[string]$receipt.run_dir; if(-not $raw -or -not(Test-Path $raw -PathType Container)){throw "External raw run missing: $raw"}; $leaf=Split-Path $raw -Leaf; $copy=Join-Path $rawDest $leaf; Copy-Item $raw $copy -Recurse -Force; $rawSources += [ordered]@{receipt=$receiptPath.FullName.Substring($run.Length+1);source=$raw;destination=$copy} }
+$rawSources|ConvertTo-Json -Depth 6|Set-Content (Join-Path $dest 'raw-run-sources.json') -Encoding UTF8
+$files=Get-ChildItem $dest -File -Recurse|Sort-Object FullName|ForEach-Object{[ordered]@{path=$_.FullName.Substring($dest.Length+1);sha256=(Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower();length=$_.Length}}
+$manifestPath=Join-Path $dest 'archive-manifest.json';[ordered]@{schema='renderer-tile-probe-archive-v1';cell_id=$CellId;stage='9268890';archive=$dest;sourceRun=$run;files=$files;performanceAcceptance=$false;note='Tile layout and occupancy rows are diagnostic observations only; no representation change, causal RSS subtraction, or performance acceptance'}|ConvertTo-Json -Depth 10|Set-Content $manifestPath -Encoding UTF8
+Get-FileHash $manifestPath -Algorithm SHA256

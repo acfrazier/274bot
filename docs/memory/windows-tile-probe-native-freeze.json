@@ -1,4 +1,6 @@
 {
+  "schema": "renderer-tile-probe-native-freeze-v1",
+  "purpose": "One fresh native Windows N16 focused-plus-background TILE LAYOUT/OCCUPANCY diagnostic",
   "host_commit": "9268890217d968cfeb7c66ebb11dd5c3dd2c084f",
   "client_commit": "abb811bd0afa1acd99319ccd5bc36bfb241080f9",
   "binary_sha256": "e2deb1db371366f674c18e39d04f7309480310072ade224ffa1433c84d4559b5",
@@ -9,7 +11,21 @@
   "native_stage": "C:/ProgramData/274bot-Test/renderer-owner-census-9268890",
   "source_archive_manifest": "/private/tmp/274bot-windows-setup-20260907/windows-panel-9268890-source-manifest.json",
   "client_archive": "/private/tmp/274bot-windows-setup-20260907/client-abb811b.tar.gz",
+  "client_archive_sha256": "c8eac9ccd06c46a0beca420f6fc30ccd2e4b23237c1ea9894ea743b73fd834ab",
   "build_evidence": "docs/memory/diagnostics/windows-tile-probe-build-9268890",
+  "build_receipts": {
+    "build.log": {"sha256": "9f40d0ecea7367ab1db250fc31afb1c80069376360d39055a1d69d9e1ef3d98f", "length": 4636},
+    "receipt.json": {"sha256": "4ae787ecf206eb8ce768c7e59ab33fd5e5a3da111290ed8bf3800be44ead35d3", "length": 912},
+    "source-pre.json": {"sha256": "b80b674cd3beb4c113beb214c0f72ff7d772f88d73408296205dc1ddd6e61532", "length": 114},
+    "source-post.json": {"sha256": "b80b674cd3beb4c113beb214c0f72ff7d772f88d73408296205dc1ddd6e61532", "length": 114},
+    "binary.json": {"sha256": "68e19d2c7c5b0e8b02faf36d337b3167fe3d782ff4d5927987e024042842de5c", "length": 208},
+    "rustc.txt": {"sha256": "74e2aedc1e7a1158a156783d68c0c0dc5e87eb42dde71587c79dc7c69627de48", "length": 204}
+  },
+  "independent_manifest_check": {
+    "manifest_entries": 871,
+    "client_entries": 183,
+    "client_archive_manifest": "/private/tmp/274bot-windows-setup-20260907/windows-panel-9268890-source-manifest.json"
+  },
   "review": {
     "task": "t_99a0f554",
     "model": "grok-4.5",
@@ -17,5 +33,6 @@
     "session": "20260907_225410_003242",
     "verdict": "approved"
   },
-  "performance_acceptance": false
+  "performance_acceptance": false,
+  "representation_change": false
 }
