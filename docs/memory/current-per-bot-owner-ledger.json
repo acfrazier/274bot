@@ -13,7 +13,11 @@
     "source_delta": "diagnostics/current-per-bot-owner-preflight/current-source-delta.json"
   },
   "native_layout": {
-    "receipt": "diagnostics/current-per-bot-owner-layout/owner-layout-1827/layout-receipt.json",
+    "receipt": "diagnostics/current-per-bot-owner-layout/owner-layout-1838/layout-receipt.json",
+    "receipts": [
+      "diagnostics/current-per-bot-owner-layout/owner-layout-1827/layout-receipt.json",
+      "diagnostics/current-per-bot-owner-layout/owner-layout-1838/layout-receipt.json"
+    ],
     "kind": "compile_only_native_type_layout_not_heap_occupancy",
     "target": "x86_64-unknown-linux-gnu",
     "rustc": "1.98.0",
@@ -43,9 +47,11 @@
       "ChatLineView": {"size": 56, "align": 8},
       "StatView": {"size": 48, "align": 8},
       "GroundItemView": {"size": 96, "align": 8},
-      "Option_Box_Square": {"size": 8, "align": 8},
-      "Option_ClientPlayer": {"size": 496, "align": 8},
-      "Option_ClientNpc": {"size": 360, "align": 8},
+      "OptionBoxSquare": {"size": 8, "align": 8},
+      "OptionBoxPlayer": {"size": 8, "align": 8},
+      "OptionBoxNpc": {"size": 8, "align": 8},
+      "OptionUsize": {"size": 16, "align": 8},
+      "OptionOcclude": {"size": 76, "align": 4},
       "Option_SnapshotFingerprint": {"size": 752, "align": 8}
     }
   },
@@ -63,17 +69,21 @@
   },
   "formulas": {
     "vec_element_reservation": "capacity * size_of::<T>()",
-    "world_grid_slots": "max_level * max_tile_x * max_tile_z",
-    "world_squares_slot_bytes": "world_grid_slots * 8",
-    "world_dynamic_sprite_slot_bytes": "5000 * size_of::<Option<usize>>()",
-    "world_occluder_slot_bytes": "(4 * 500) * size_of::<Option<Occlude>>()",
-    "world_occlusion_cycle_bytes": "max_level * (max_tile_x + 1) * (max_tile_z + 1) * 4",
+    "world_grid_slots": "4 * 104 * 104 = 43264",
+    "world_squares_slot_bytes": "43264 * 8 = 346112",
+    "world_dynamic_sprite_slot_bytes": "5000 * 16 = 80000",
+    "world_occluder_slot_bytes": "(4 * 500) * 76 = 152000",
+    "world_occlusion_cycle_bytes": "4 * 105 * 105 * 4 = 176400",
+    "player_pointer_slot_bytes": "2048 * 8 = 16384",
+    "npc_pointer_slot_bytes": "16384 * 8 = 131072",
+    "source_fixed_constants": {"build_area_levels": 4, "build_area_size": 104, "max_player_count": 2048, "max_npc_count": 16384, "max_dynamic_sprites": 5000, "occluder_levels": 4, "max_occluders": 500},
     "limits": ["nested allocations excluded", "allocator rounding excluded", "RSS page retention excluded", "serialized length is not vector capacity"]
   },
   "owners": [
     {"id":"shared_cache","scope":"shared","lifetime":"process/client lifetime","measured_occupancy":"unknown","next_discriminator":"shared_vs_private allocation families"},
     {"id":"shared_ifaces_template","scope":"shared plus per-client COW","lifetime":"process plus client overlays","measured_occupancy":"unknown","next_discriminator":"COW count and nested capacities"},
-    {"id":"client_world_entities","scope":"per_bot","lifetime":"slot thread through join","fixed_headers_bytes":{"Client":28048,"World":248,"Square":184,"ClientPlayer":496,"ClientNpc":360},"measured_occupancy":"unknown","next_discriminator":"live capacities and occupied boxes"},
+    {"id":"client_world_entities","scope":"per_bot","lifetime":"slot thread through join","fixed_headers_bytes":{"Client":28048,"World":248,"Square":184,"ClientPlayer":496,"ClientNpc":360},"source_fixed_element_storage_bytes":{"world_squares_slots":346112,"dynamic_sprite_slots":80000,"occluder_slots":152000,"occlusion_cycle":176400},"measured_occupancy":"unknown","next_discriminator":"live capacities and occupied boxes"},
+    {"id":"client_entity_pointer_tables","scope":"per_bot","lifetime":"slot thread through join","source_fixed_element_storage_bytes":{"player_pointer_slots":16384,"npc_pointer_slots":131072},"boxed_payload_bytes":{"ClientPlayer":496,"ClientNpc":360},"measured_occupancy":"unknown","next_discriminator":"occupied boxes and allocator families"},
     {"id":"game_snapshot_and_families","scope":"per_bot","lifetime":"slot through join","fixed_headers_bytes":{"GameSnapshot":1384,"WidgetView":344,"LocView":144,"ItemView":88,"NpcView":184,"PlayerView":160},"measured_occupancy":"unknown","next_discriminator":"family capacities and two-epoch overlap"},
     {"id":"script_isolate_fingerprint_ipc","scope":"per_bot","lifetime":"Start through script Stop; client survives","fixed_headers_bytes":{"SlotScript":1272,"SnapshotFingerprint":752,"Packet":2112},"measured_occupancy":"unknown","next_discriminator":"Rust capacities separated from V8/native"},
     {"id":"nav_status_queues","scope":"per_bot maps plus shared NavWorld","lifetime":"until consumed/slot join","measured_occupancy":"unknown","next_discriminator":"queue capacities and Arc counts"},
