@@ -9,6 +9,25 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 00:59 UTC
+
+- Census/private sampler66ba7c1/client9f72c2f passed corrective actual Grok4.5
+  t_d0cddc78 session20260907_205354_c756d5. Native Windows release panel build
+  completed0 at00:56:53 in32.91s; all859source files verified pre/post, aggregate
+  a7e618488b08a80e510626e60908c3f009acfdc68132ef4dd22b652e2a00b108.
+  Native rss tests completed0 at00:58:10:11passed including actual PrivateUsage
+  availability and legacy failure mapping. Binary remains Austen campaign build
+  output, not BotTest staged yet. Six build receipts and test directory copied
+  to isolated census docs/memory/diagnostics/windows-owner-census-66ba7c1.
+- Lazy complete-spec correction83ccc63 approved t_682585b8 actual reviewer run528.
+  Eight files staged hashverified00:58:15 in new lazy-upload-controls-83ccc63.
+  Archive SHA0e5dddfdfe4990bae07b5f043ade256e3367aab895946f5f8b356555161af76a.
+  Next root: native AST parser + complete no-launch spec/build/server preflight,
+  then fresh unique paired cells. Failed0049 cell and older stages preserved.
+- Snapshot frame correction handed back to reviewer (run527 active00:57),
+  claims golden v2 plus missing histories; root must verify actual final verdict.
+  All root Windows builds/tests are now complete. No paired bot sample yet.
+
 ## Latest boundary — 2026-09-08 00:54 UTC
 
 - Root found private-commit60af766 changed peak field availability when Windows
