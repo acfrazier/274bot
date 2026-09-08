@@ -11,6 +11,26 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 12:08 UTC
+
+- Corrective reader t_25c2eb89 actual implementer run731 remains live;
+  integration still withheld pending corrected commit and same-card review.
+- Independent native build preparation started for approved Rust producer,
+  tracer and publisher. This does not release the matched comparison gate:
+  corrected reader, combined Grok4.6 review and input functional proof remain
+  required before comparison. Python reader changes are not compiled Rust;
+  future reader hashes will be frozen separately from these source manifests.
+- Candidate984c639/clientfd956c9 native Windows release build started12:05 UTC
+  in unique target-native-cohort-984c639, jobs4, memory-profile-no-alloc.
+  Actual cargo PID8740 and four rustc processes verified12:07; no receipt yet.
+  Pre-build source verification:881 files, aggregate
+  b66a0ddf7847778372e3184588769b2e6f9deba64b01f06f365563de81177fd1.
+  Local log diagnostics/windows-cohort-build-984c639/remote-build.log.
+- Referencebf2d1ed archive/build script staged but build not started. Remote
+  preflight found no native workload/build, and all staged archive/script
+  hashes match windows-cohort-source-preparation.json. Build preparation only;
+  no gameplay stimulation, latency run or new accepted performance evidence.
+
 ## Latest boundary — 2026-09-08 12:00 UTC
 
 - Reader ec5dda2 APPROVED by actual Grok4.5/xai-oauth session
