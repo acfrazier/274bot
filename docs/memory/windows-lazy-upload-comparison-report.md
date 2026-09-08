@@ -14,14 +14,11 @@ nested renderer records; it writes the machine-readable `table.json`.
 The protocol SHA-256 recomputed by the tool is
 `5f5aeb3fba0de48d16a9100a5a00f8b0d00c83b2e8fb515aac4787ab612e8d2d`.
 Every archive-manifest-listed file exists with the listed length and SHA-256
-for all four cells (28, 22, 28 and 22 files respectively). Tarball SHA-256
-recomputation agrees for the three archives below. The focused baseline tar
-recomputed as
-`637b594951873aa01f05977bc4d654282cd0630313db868e573347f6688a5694`, while
-the task-supplied expected value is
-`637b594951873aa01f05977bd4c654282cd0630313db868e573347f6688a5694`;
-this one-character/order mismatch is retained as a provenance discrepancy,
-not silently repaired. The archive-manifest file checks still pass.
+for all four cells (28, 22, 28 and 22 files respectively). Independent
+tarball SHA-256 recomputation agrees with all four task-supplied values,
+including focused baseline
+`637b594951873aa01f05977bc4d654282cd0630313db868e573347f6688a5694`.
+`table.json` records `archive_tar_ok=true` for every comparison cell.
 
 The binding files independently report `status=bound`, `binding_ok=true`,
 `pair_eligible=false`, and no final acceptance for every cell. All four
@@ -68,28 +65,32 @@ The archived raw phase counts are baseline focused-one 80 seed/29 warmup/119 obs
 The observation boundaries are based on the qualification records rather than
 assuming that the harness's first or last raw row is an observation boundary.
 The measured client cadence is about 48.48--48.69 ticks/slot/s in all four
-cells, above the 40-iteration working target in this diagnostic window. This
-does not establish p99 start intervals: the selected binding has no accepted
-`simulation_intervals`/`simulation_ticks` scalar result. Scheduling interval
-histograms remain nested raw evidence and are not collapsed into a fabricated
-p99.
+cells, above the 40-iteration working target in this diagnostic window.
+Binding scheduling histograms show available per-slot p99 interval bounds of
+28--32 ms (baseline focused-one), 25--30 ms (baseline background), 30--33 ms
+(candidate focused-one), and 27--30 ms (candidate background). Focused-one
+has 15/16 scheduling slots available; both background cells have 16/16. The
+missing focused-one slot and every `scene_transition_separation` value marked
+unavailable remain explicit limits. These are offline observation-window
+histograms, not a global cross-run alignment or a fabricated p99 start
+interval. The selected binding has no accepted `simulation_intervals` or
+`simulation_ticks` scalar result.
 
-Focused-one renderer profiles show one full-rate GPU renderer and no background
-renderer. Their maximum nested paint counters are 10,934 baseline and 13,431
-candidate; these counters are not scanout or presented-frame measurements.
-The profile schema exposes `completed_n`, `gpu_frame_n`, completion coverage,
-latency buckets, stable/transition paint counters and interval data, but this
-report does not equate paint callbacks with completed hardware frames. The
-raw UI counters are likewise construction/delivery counters, not scanout.
-
-Focused-plus-background profiles show 16 renderer records per observation,
-with one `full_rate=true` focused renderer and 15 `full_rate=false` renderers.
-The configured background policy is 1 fps, but configuration is not a measured
-cadence. The archived nested profile contains stable paint counters and
-interval fields; it does not provide an accepted per-background-slot physical
-presentation rate. Therefore no blanket claim is made that all 15 background
-slots crossed a measured 1 fps stage boundary. GPU tracked maxima are reported
-as a separate accounting domain and are not subtracted from RSS.
+Focused-one renderer configuration has one present/full-rate GPU renderer and
+15 absent renderers in both roles; observed renderer rows are 119 focused plus
+15 non-present records per sample. Maximum nested paint counters are 10,934
+baseline and 13,431 candidate. Focused-plus-background configuration has 16
+present GPU renderers, one full-rate and 15 non-full-rate, in both roles; the
+observed profiles contain 16 renderer records per sample. Paint and callback
+counters are not scanout or presented-frame measurements. The configured
+background policy is 1 fps, but the archived nested profile does not provide
+an accepted per-background-slot physical presentation rate, so no blanket
+stage-crossing claim is made. Completed-GPU latency diagnostics are available
+for 1/16 focused-one slots (p99 40--50 ms, target unproven) and 16/16
+background slots (focused p99 40--50 ms; background p99 10--25 ms, with the
+target verdicts still including unproven). These are completed-GPU diagnostics,
+not physical scanout. GPU tracked maxima remain a separate accounting domain
+and are not subtracted from RSS.
 
 ## Falling RSS and timing limits
 
@@ -103,12 +104,14 @@ are approximately:
 - candidate focused-plus-background: 2483.949 -> 1376.762 MiB (-1107.188 MiB)
 
 The same samples are anchored to the absolute harness elapsed values in the
-raw JSONL; those starts occur at different wall-clock times and each cell has
-its own seed/teardown duration. The aligned observation-relative comparison is
-therefore the useful paired view, while absolute elapsed overlap does not make
-the runs simultaneous or remove startup/phase confounding. A falling finite
-series is not a stationary plateau. It does not identify resident allocation
-ownership, reclamation cause, or a causal lazy-upload saving.
+raw JSONL and each binding records a native observation wall span. The paired
+cells are sequential, so their absolute wall-clock overlap is 0 s in both
+modes; absolute elapsed timing therefore supplies no simultaneous control.
+The observation-relative first/last/min/max values in `table.json` are the
+usable paired descriptive view, while still retaining startup/phase
+confounding. A falling finite series is not a stationary plateau. It does not
+identify resident allocation ownership, reclamation cause, or a causal
+lazy-upload saving.
 
 The background mode's roughly 1.9--2.1 GiB medians and 2.51 GiB peaks exceed
 the panel N=16 targets (768 MiB median and 1 GiB peak). Focused-one medians
@@ -120,20 +123,28 @@ lifecycle, responsiveness, physical scanout, or target-hardware proof exists.
 
 ## Per-slot and environment evidence
 
-The qualification records show 16 ready/active slots with positive progress in
-each cell. Focused captures are available for scene-ready, bank-arrival and
-return-route stages. The archived capture metadata records actual slot state,
-scene state, position, inventory/bank fields, temperature/power/provenance
-fields where present; background navigation capture is explicitly unsupported.
-Capture-time gameplay state is not a universal route or rendering guarantee.
+The qualification records show 16 ready/active slots in every cell, and the
+focused captures show `ingame=true`, `drawing=true`, and `scene_state=2` at
+scene-ready, bank-arrival, and return-route checkpoints in both focused cells.
+The focused baseline and candidate captures differ in slot id and snapshot
+age (for example scene-ready 641 ms vs 401 ms); they are evidence of the
+captured state, not universal route or rendering guarantees. Background
+navigation capture is explicitly unsupported and absent.
 
-The managed process accounting records explicit role PIDs and stable Windows
-creation-filetime identities for bootstrap, controller, game server, launcher
-and collector, with no PID reuse reported. Waited-child current RSS and host
-pressure are unavailable on Windows and are not fabricated. Collector
-sampling overhead and descendant process RSS are outside the measured process
-RSS domain. These limits matter when interpreting the large background-mode
-RSS difference and prevent a causal stage/owner attribution.
+Recorded environment fields are concrete and mostly matched: all four cells
+use canonical cache path `\\?\\C:\\Users\\BotTest\\274bot-server-4c95f87\\data\\pack\\client`,
+snapshot `2faf336eeb0462ed`, allocator `std::alloc::System`, and the same
+client commit `5ee9b6e`; cache content hash is null at the boundary, so cache
+contents are not independently proven equal. AC-line status is 1, computer
+system power state 0, battery status 2, and brightness 20 in every cell; the
+computer-system value is not substituted for AC-line status. No temperature
+field is present. Host provenance differs as expected: baseline commit
+`36825a9` / baseline binary SHA, candidate commit `3118e96` / candidate binary
+SHA, with stable source digests in each binding. Per-cell values and SHA-256
+of each host-conditions file are in `table.json`; those file hashes differ
+because each record is cell-specific, not because a source identity mismatch
+was inferred. Waited-child current RSS, host pressure, collector overhead, and
+descendant RSS remain unavailable.
 
 ## Conclusion
 

@@ -5,17 +5,7 @@
         16,
         16
       ],
-      "archive_manifest_file_count": 28,
-      "archive_manifest_files_ok": true,
-      "archive_tar_expected": "637b594951873aa01f05977bd4c654282cd0630313db868e573347f6688a5694",
-      "archive_tar_ok": false,
-      "archive_tar_sha256": "637b594951873aa01f05977bc4d654282cd0630313db868e573347f6688a5694",
-      "client_tick_delta": 92806,
-      "cpu_core_estimate": 0.5658028913681797,
-      "cpu_system_delta_s": 12.34375,
-      "cpu_user_delta_s": 55.09375,
-      "elapsed_observation_s": 119.18903390000001,
-      "file_checks": [
+      "archive_manifest_file_checks": [
         {
           "actual_length": 538,
           "actual_sha256": "31ecb28004fdb7a37780b741a8b460f0c566aa9244e9a224b142d3b3342ce562",
@@ -241,10 +231,141 @@
           "path": "raw-run-01/samples.qualification.jsonl"
         }
       ],
+      "archive_manifest_file_count": 28,
+      "archive_manifest_files_ok": true,
+      "archive_tar_expected": "637b594951873aa01f05977bc4d654282cd0630313db868e573347f6688a5694",
+      "archive_tar_ok": true,
+      "archive_tar_sha256": "637b594951873aa01f05977bc4d654282cd0630313db868e573347f6688a5694",
+      "captures": {
+        "bank-arrival": {
+          "bank_loaded": null,
+          "capture_delay_ms": 2020,
+          "drawing": true,
+          "event_tick": 225,
+          "file": "raw-run-01/captures/2026-09-08T01-02-31_16804/2026-09-08T01-04-38_nav-2-bank-arrival-live41a40_0.json",
+          "ingame": true,
+          "inventory_count": 4,
+          "position": [
+            2655,
+            3286,
+            0
+          ],
+          "scene_state": 2,
+          "slot": "live41a40_0",
+          "snapshot_age_ms": 153
+        },
+        "return-route-start": {
+          "bank_loaded": null,
+          "capture_delay_ms": 2020,
+          "drawing": true,
+          "event_tick": 232,
+          "file": "raw-run-01/captures/2026-09-08T01-02-31_16804/2026-09-08T01-04-42_nav-3-return-route-start-live41a40_0.json",
+          "ingame": true,
+          "inventory_count": 22,
+          "position": [
+            2655,
+            3286,
+            0
+          ],
+          "scene_state": 2,
+          "slot": "live41a40_0",
+          "snapshot_age_ms": 316
+        },
+        "scene-ready": {
+          "bank_loaded": null,
+          "capture_delay_ms": 2027,
+          "drawing": true,
+          "event_tick": 14,
+          "file": "raw-run-01/captures/2026-09-08T01-02-31_16804/2026-09-08T01-02-31_nav-1-scene-ready-live41a40_0.json",
+          "ingame": true,
+          "inventory_count": 4,
+          "position": [
+            2661,
+            3306,
+            0
+          ],
+          "scene_state": 2,
+          "slot": "live41a40_0",
+          "snapshot_age_ms": 641
+        }
+      },
+      "client_tick_delta": 92806,
+      "cpu_core_estimate": 0.5658028913681797,
+      "elapsed_observation_s": 119.18903390000001,
+      "environment": {
+        "cache": {
+          "cache_dir": "\\\\?\\C:\\Users\\BotTest\\274bot-server-4c95f87\\data\\pack\\client",
+          "content_hash": null,
+          "content_hash_limit": "native qualification records null_at_boundary / not_hashed_at_boundary",
+          "snapshot_version": "2faf336eeb0462ed"
+        },
+        "power": {
+          "ac_line_status": 1,
+          "battery_status": 2,
+          "brightness": 20,
+          "computer_system_power_state": 0,
+          "limit": "computerSystemPowerState is not AC-line status; battery/brightness are preflight observations"
+        },
+        "provenance": {
+          "allocator": "std::alloc::System",
+          "binary_sha256": "87c24665563ef8a55751244a52f7d25c7edf68e3117e84f2ff464add596c71fb",
+          "client_commit": "5ee9b6efb2342452ceeb7958f864fd68d0daadd1",
+          "host_commit": "36825a9f0a07a19610439c691f6dfe3d2e1cbf48",
+          "host_conditions_sha256": "e87a1155f20321278dbf030cbff338abe955647f9743877cab599f8efb4d4b1a",
+          "role": "reference",
+          "sources_stable": true
+        },
+        "ready_scene_active_fields": {
+          "active_observed": [
+            16,
+            16
+          ],
+          "limit": "host-conditions has no per-slot ready/scene/active sample; raw rows/captures are used instead",
+          "ready_observed": [
+            16,
+            16
+          ],
+          "scene_state_observed": [
+            2
+          ]
+        },
+        "temperature": {
+          "limit": "no temperature field in archived host-conditions",
+          "value": null
+        }
+      },
+      "gpu_completion_latency": {
+        "available_count": 1,
+        "completion_coverage_complete_count": 1,
+        "limit": "completed GPU diagnostic only; no physical scanout and not product frame cadence",
+        "p99_ranges_ms": [
+          [
+            40,
+            50
+          ]
+        ],
+        "slot_count": 16,
+        "target_verdicts": [
+          "unproven"
+        ]
+      },
       "gpu_tracked_mib_max": 17.589920043945312,
       "gpu_tracked_mib_median": 17.589920043945312,
+      "match_configuration": {
+        "cache_dir_canonical": "\\\\?\\C:\\Users\\BotTest\\274bot-server-4c95f87\\data\\pack\\client",
+        "cache_dir_canonical_available": true,
+        "lowmem_requested": true,
+        "n": 16,
+        "port": 43594,
+        "render_policy_requested": "focused-one",
+        "workload": "active"
+      },
       "mode": "focused-one",
       "observation_rows": 119,
+      "observation_wall_span_unix_s": [
+        1788829448.894601,
+        1788829568.9103806
+      ],
       "observe_bounds_s": [
         110.2887408,
         230.2973314
@@ -256,10 +377,10 @@
         "pair_eligible": false,
         "status": "bound"
       },
+      "qualification_observation_s": 119.18903390000001,
       "qualification_rows": 2,
       "qualification_selected": {
         "client_ticks_per_slot_s": 48.665341182868666,
-        "observe_sample_n": 119,
         "steal_gains": {
           "live41a40_0": 6,
           "live41a40_1": 9,
@@ -290,6 +411,15 @@
         16,
         16
       ],
+      "renderer_configuration_counts": {
+        "backend_counts": {
+          "absent": 15,
+          "gpu": 1
+        },
+        "full_rate": 1,
+        "present": 1,
+        "records": 16
+      },
       "renderer_counter_max": {
         "paint_n": 10934,
         "stable_paint_interval_ns": 223231863300,
@@ -376,6 +506,93 @@
       "rss_max_mib": 1083.33203125,
       "rss_median_mib": 921.1875,
       "rss_min_mib": 805.85546875,
+      "runtime_configuration_counts": {
+        "draw_false": 15,
+        "draw_true": 1,
+        "records": 16
+      },
+      "scheduling_intervals": {
+        "available_count": 15,
+        "limit": "offline observation-window histogram; not physical scanout/product cadence; JSONL row time is not interval endpoint",
+        "p99_bounds_ms": [
+          28,
+          32
+        ],
+        "p99_ranges_ms": [
+          [
+            29,
+            30
+          ],
+          [
+            28,
+            29
+          ],
+          [
+            29,
+            30
+          ],
+          [
+            29,
+            30
+          ],
+          [
+            29,
+            30
+          ],
+          [
+            29,
+            30
+          ],
+          [
+            31,
+            32
+          ],
+          [
+            29,
+            30
+          ],
+          [
+            28,
+            29
+          ],
+          [
+            28,
+            29
+          ],
+          [
+            29,
+            30
+          ],
+          [
+            29,
+            30
+          ],
+          [
+            29,
+            30
+          ],
+          [
+            28,
+            29
+          ],
+          [
+            29,
+            30
+          ]
+        ],
+        "scene_transition_separation": [
+          null,
+          "unavailable"
+        ],
+        "slot_count": 16,
+        "status_counts": {
+          "available": 15,
+          "unavailable": 1
+        },
+        "target_verdicts": [
+          "meet"
+        ]
+      },
       "ui_draw_delta": 5565,
       "ui_frame_delta": 5565
     },
@@ -384,17 +601,7 @@
         16,
         16
       ],
-      "archive_manifest_file_count": 22,
-      "archive_manifest_files_ok": true,
-      "archive_tar_expected": "306d937d513eaad0136ad59d737672115202609c414c3092c94c4058d8e26e46",
-      "archive_tar_ok": true,
-      "archive_tar_sha256": "306d937d513eaad0136ad59d737672115202609c414c3092c94c4058d8e26e46",
-      "client_tick_delta": 92819,
-      "cpu_core_estimate": 0.639874368755109,
-      "cpu_system_delta_s": 12.71875,
-      "cpu_user_delta_s": 63.515625,
-      "elapsed_observation_s": 119.1395979,
-      "file_checks": [
+      "archive_manifest_file_checks": [
         {
           "actual_length": 586,
           "actual_sha256": "8653acefc4a3de7e14b0a53cf036ffe1de7718afc539f93205cabde164869f9d",
@@ -572,10 +779,148 @@
           "path": "raw-run-01/samples.qualification.jsonl"
         }
       ],
+      "archive_manifest_file_count": 22,
+      "archive_manifest_files_ok": true,
+      "archive_tar_expected": "306d937d513eaad0136ad59d737672115202609c414c3092c94c4058d8e26e46",
+      "archive_tar_ok": true,
+      "archive_tar_sha256": "306d937d513eaad0136ad59d737672115202609c414c3092c94c4058d8e26e46",
+      "captures": {},
+      "client_tick_delta": 92819,
+      "cpu_core_estimate": 0.639874368755109,
+      "elapsed_observation_s": 119.1395979,
+      "environment": {
+        "cache": {
+          "cache_dir": "\\\\?\\C:\\Users\\BotTest\\274bot-server-4c95f87\\data\\pack\\client",
+          "content_hash": null,
+          "content_hash_limit": "native qualification records null_at_boundary / not_hashed_at_boundary",
+          "snapshot_version": "2faf336eeb0462ed"
+        },
+        "power": {
+          "ac_line_status": 1,
+          "battery_status": 2,
+          "brightness": 20,
+          "computer_system_power_state": 0,
+          "limit": "computerSystemPowerState is not AC-line status; battery/brightness are preflight observations"
+        },
+        "provenance": {
+          "allocator": "std::alloc::System",
+          "binary_sha256": "87c24665563ef8a55751244a52f7d25c7edf68e3117e84f2ff464add596c71fb",
+          "client_commit": "5ee9b6efb2342452ceeb7958f864fd68d0daadd1",
+          "host_commit": "36825a9f0a07a19610439c691f6dfe3d2e1cbf48",
+          "host_conditions_sha256": "2f4e0ad719a72f435ef1e9801095cd46b44ee31d058dac79dca3fecaad96d192",
+          "role": "reference",
+          "sources_stable": true
+        },
+        "ready_scene_active_fields": {
+          "active_observed": [
+            16,
+            16
+          ],
+          "limit": "host-conditions has no per-slot ready/scene/active sample; raw rows/captures are used instead",
+          "ready_observed": [
+            16,
+            16
+          ],
+          "scene_state_observed": []
+        },
+        "temperature": {
+          "limit": "no temperature field in archived host-conditions",
+          "value": null
+        }
+      },
+      "gpu_completion_latency": {
+        "available_count": 16,
+        "completion_coverage_complete_count": 16,
+        "limit": "completed GPU diagnostic only; no physical scanout and not product frame cadence",
+        "p99_ranges_ms": [
+          [
+            40,
+            50
+          ],
+          [
+            20,
+            25
+          ],
+          [
+            20,
+            25
+          ],
+          [
+            20,
+            25
+          ],
+          [
+            20,
+            25
+          ],
+          [
+            20,
+            25
+          ],
+          [
+            20,
+            25
+          ],
+          [
+            20,
+            25
+          ],
+          [
+            20,
+            25
+          ],
+          [
+            20,
+            25
+          ],
+          [
+            20,
+            25
+          ],
+          [
+            20,
+            25
+          ],
+          [
+            20,
+            25
+          ],
+          [
+            20,
+            25
+          ],
+          [
+            20,
+            25
+          ],
+          [
+            20,
+            25
+          ]
+        ],
+        "slot_count": 16,
+        "target_verdicts": [
+          "meet",
+          "unproven"
+        ]
+      },
       "gpu_tracked_mib_max": 143.1080780029297,
       "gpu_tracked_mib_median": 142.9523468017578,
+      "match_configuration": {
+        "cache_dir_canonical": "\\\\?\\C:\\Users\\BotTest\\274bot-server-4c95f87\\data\\pack\\client",
+        "cache_dir_canonical_available": true,
+        "lowmem_requested": true,
+        "n": 16,
+        "port": 43594,
+        "render_policy_requested": "focused-plus-background",
+        "workload": "active"
+      },
       "mode": "focused-plus-background",
       "observation_rows": 119,
+      "observation_wall_span_unix_s": [
+        1788829948.672694,
+        1788830068.7107992
+      ],
       "observe_bounds_s": [
         102.3716051,
         222.4025201
@@ -587,10 +932,10 @@
         "pair_eligible": false,
         "status": "bound"
       },
+      "qualification_observation_s": 119.1395979,
       "qualification_rows": 2,
       "qualification_selected": {
         "client_ticks_per_slot_s": 48.69235419838529,
-        "observe_sample_n": 119,
         "steal_gains": {
           "livea800_0": 4,
           "livea800_1": 6,
@@ -621,6 +966,14 @@
         16,
         16
       ],
+      "renderer_configuration_counts": {
+        "backend_counts": {
+          "gpu": 16
+        },
+        "full_rate": 1,
+        "present": 16,
+        "records": 16
+      },
       "renderer_counter_max": {
         "paint_n": 10513,
         "stable_paint_interval_ns": 214538330800,
@@ -705,6 +1058,95 @@
       "rss_max_mib": 2499.0078125,
       "rss_median_mib": 2190.40234375,
       "rss_min_mib": 1567.734375,
+      "runtime_configuration_counts": {
+        "draw_false": 0,
+        "draw_true": 16,
+        "records": 16
+      },
+      "scheduling_intervals": {
+        "available_count": 16,
+        "limit": "offline observation-window histogram; not physical scanout/product cadence; JSONL row time is not interval endpoint",
+        "p99_bounds_ms": [
+          25,
+          30
+        ],
+        "p99_ranges_ms": [
+          [
+            26,
+            27
+          ],
+          [
+            29,
+            30
+          ],
+          [
+            25,
+            26
+          ],
+          [
+            29,
+            30
+          ],
+          [
+            29,
+            30
+          ],
+          [
+            29,
+            30
+          ],
+          [
+            26,
+            27
+          ],
+          [
+            28,
+            29
+          ],
+          [
+            26,
+            27
+          ],
+          [
+            26,
+            27
+          ],
+          [
+            29,
+            30
+          ],
+          [
+            29,
+            30
+          ],
+          [
+            29,
+            30
+          ],
+          [
+            27,
+            28
+          ],
+          [
+            26,
+            27
+          ],
+          [
+            29,
+            30
+          ]
+        ],
+        "scene_transition_separation": [
+          "unavailable"
+        ],
+        "slot_count": 16,
+        "status_counts": {
+          "available": 16
+        },
+        "target_verdicts": [
+          "meet"
+        ]
+      },
       "ui_draw_delta": 5570,
       "ui_frame_delta": 5570
     },
@@ -713,17 +1155,7 @@
         16,
         16
       ],
-      "archive_manifest_file_count": 28,
-      "archive_manifest_files_ok": true,
-      "archive_tar_expected": "6ac66be419307c9cba1f02d43a07734a6dd682ae1dd0d16b36b5ec9dcaf9ca8a",
-      "archive_tar_ok": true,
-      "archive_tar_sha256": "6ac66be419307c9cba1f02d43a07734a6dd682ae1dd0d16b36b5ec9dcaf9ca8a",
-      "client_tick_delta": 92511,
-      "cpu_core_estimate": 0.5156446096658092,
-      "cpu_system_delta_s": 12.421875,
-      "cpu_user_delta_s": 49.078125,
-      "elapsed_observation_s": 119.26819139999998,
-      "file_checks": [
+      "archive_manifest_file_checks": [
         {
           "actual_length": 542,
           "actual_sha256": "56bb3ecf3aa1129ff4ee884c691ce02c36d5e20a4ba0307da0f94e9dee6e3a42",
@@ -949,10 +1381,141 @@
           "path": "raw-run-01/samples.qualification.jsonl"
         }
       ],
+      "archive_manifest_file_count": 28,
+      "archive_manifest_files_ok": true,
+      "archive_tar_expected": "6ac66be419307c9cba1f02d43a07734a6dd682ae1dd0d16b36b5ec9dcaf9ca8a",
+      "archive_tar_ok": true,
+      "archive_tar_sha256": "6ac66be419307c9cba1f02d43a07734a6dd682ae1dd0d16b36b5ec9dcaf9ca8a",
+      "captures": {
+        "bank-arrival": {
+          "bank_loaded": null,
+          "capture_delay_ms": 2027,
+          "drawing": true,
+          "event_tick": 185,
+          "file": "raw-run-01/captures/2026-09-08T01-17-58_8644/2026-09-08T01-19-40_nav-2-bank-arrival-live21c40_0.json",
+          "ingame": true,
+          "inventory_count": 4,
+          "position": [
+            2655,
+            3286,
+            0
+          ],
+          "scene_state": 2,
+          "slot": "live21c40_0",
+          "snapshot_age_ms": 582
+        },
+        "return-route-start": {
+          "bank_loaded": null,
+          "capture_delay_ms": 2028,
+          "drawing": true,
+          "event_tick": 192,
+          "file": "raw-run-01/captures/2026-09-08T01-17-58_8644/2026-09-08T01-19-44_nav-3-return-route-start-live21c40_0.json",
+          "ingame": true,
+          "inventory_count": 22,
+          "position": [
+            2655,
+            3286,
+            0
+          ],
+          "scene_state": 2,
+          "slot": "live21c40_0",
+          "snapshot_age_ms": 725
+        },
+        "scene-ready": {
+          "bank_loaded": null,
+          "capture_delay_ms": 2030,
+          "drawing": true,
+          "event_tick": 15,
+          "file": "raw-run-01/captures/2026-09-08T01-17-58_8644/2026-09-08T01-17-58_nav-1-scene-ready-live21c40_0.json",
+          "ingame": true,
+          "inventory_count": 4,
+          "position": [
+            2661,
+            3306,
+            0
+          ],
+          "scene_state": 2,
+          "slot": "live21c40_0",
+          "snapshot_age_ms": 401
+        }
+      },
+      "client_tick_delta": 92511,
+      "cpu_core_estimate": 0.5156446096658092,
+      "elapsed_observation_s": 119.26819139999998,
+      "environment": {
+        "cache": {
+          "cache_dir": "\\\\?\\C:\\Users\\BotTest\\274bot-server-4c95f87\\data\\pack\\client",
+          "content_hash": null,
+          "content_hash_limit": "native qualification records null_at_boundary / not_hashed_at_boundary",
+          "snapshot_version": "2faf336eeb0462ed"
+        },
+        "power": {
+          "ac_line_status": 1,
+          "battery_status": 2,
+          "brightness": 20,
+          "computer_system_power_state": 0,
+          "limit": "computerSystemPowerState is not AC-line status; battery/brightness are preflight observations"
+        },
+        "provenance": {
+          "allocator": "std::alloc::System",
+          "binary_sha256": "1937663506e3f0b243f5a9a742de3ae8d86ded66867bf2db38f9f882ec76e2e3",
+          "client_commit": "5ee9b6efb2342452ceeb7958f864fd68d0daadd1",
+          "host_commit": "3118e9661a89906589ee6e0239e475b36228bde3",
+          "host_conditions_sha256": "b7ebb9d95074e7438ddce0f4e45874b722a159058eeeb6888ad23e13d3fabb8a",
+          "role": "candidate",
+          "sources_stable": true
+        },
+        "ready_scene_active_fields": {
+          "active_observed": [
+            16,
+            16
+          ],
+          "limit": "host-conditions has no per-slot ready/scene/active sample; raw rows/captures are used instead",
+          "ready_observed": [
+            16,
+            16
+          ],
+          "scene_state_observed": [
+            2
+          ]
+        },
+        "temperature": {
+          "limit": "no temperature field in archived host-conditions",
+          "value": null
+        }
+      },
+      "gpu_completion_latency": {
+        "available_count": 1,
+        "completion_coverage_complete_count": 1,
+        "limit": "completed GPU diagnostic only; no physical scanout and not product frame cadence",
+        "p99_ranges_ms": [
+          [
+            40,
+            50
+          ]
+        ],
+        "slot_count": 16,
+        "target_verdicts": [
+          "unproven"
+        ]
+      },
       "gpu_tracked_mib_max": 17.525924682617188,
       "gpu_tracked_mib_median": 17.525924682617188,
+      "match_configuration": {
+        "cache_dir_canonical": "\\\\?\\C:\\Users\\BotTest\\274bot-server-4c95f87\\data\\pack\\client",
+        "cache_dir_canonical_available": true,
+        "lowmem_requested": true,
+        "n": 16,
+        "port": 43594,
+        "render_policy_requested": "focused-one",
+        "workload": "active"
+      },
       "mode": "focused-one",
       "observation_rows": 119,
+      "observation_wall_span_unix_s": [
+        1788830426.2913904,
+        1788830546.309742
+      ],
       "observe_bounds_s": [
         161.98751,
         282.0006167
@@ -964,10 +1527,10 @@
         "pair_eligible": false,
         "status": "bound"
       },
+      "qualification_observation_s": 119.26819139999998,
       "qualification_rows": 2,
       "qualification_selected": {
         "client_ticks_per_slot_s": 48.478453744709014,
-        "observe_sample_n": 119,
         "steal_gains": {
           "live21c40_0": 7,
           "live21c40_1": 3,
@@ -998,6 +1561,15 @@
         16,
         16
       ],
+      "renderer_configuration_counts": {
+        "backend_counts": {
+          "absent": 15,
+          "gpu": 1
+        },
+        "full_rate": 1,
+        "present": 1,
+        "records": 16
+      },
       "renderer_counter_max": {
         "paint_n": 13431,
         "stable_paint_interval_ns": 274752052600,
@@ -1084,6 +1656,93 @@
       "rss_max_mib": 966.49609375,
       "rss_median_mib": 807.21484375,
       "rss_min_mib": 753.26171875,
+      "runtime_configuration_counts": {
+        "draw_false": 15,
+        "draw_true": 1,
+        "records": 16
+      },
+      "scheduling_intervals": {
+        "available_count": 15,
+        "limit": "offline observation-window histogram; not physical scanout/product cadence; JSONL row time is not interval endpoint",
+        "p99_bounds_ms": [
+          30,
+          33
+        ],
+        "p99_ranges_ms": [
+          [
+            30,
+            31
+          ],
+          [
+            30,
+            31
+          ],
+          [
+            30,
+            31
+          ],
+          [
+            30,
+            31
+          ],
+          [
+            30,
+            31
+          ],
+          [
+            30,
+            31
+          ],
+          [
+            32,
+            33
+          ],
+          [
+            30,
+            31
+          ],
+          [
+            30,
+            31
+          ],
+          [
+            30,
+            31
+          ],
+          [
+            30,
+            31
+          ],
+          [
+            30,
+            31
+          ],
+          [
+            30,
+            31
+          ],
+          [
+            30,
+            31
+          ],
+          [
+            30,
+            31
+          ]
+        ],
+        "scene_transition_separation": [
+          null,
+          "unavailable"
+        ],
+        "slot_count": 16,
+        "status_counts": {
+          "available": 15,
+          "unavailable": 1
+        },
+        "target_verdicts": [
+          "meet"
+        ]
+      },
       "ui_draw_delta": 5546,
       "ui_frame_delta": 5546
     },
@@ -1092,17 +1751,7 @@
         16,
         16
       ],
-      "archive_manifest_file_count": 22,
-      "archive_manifest_files_ok": true,
-      "archive_tar_expected": "e10791a380f8404030c194662bd0f50270dda4210152fe7dc83b1181e696bd79",
-      "archive_tar_ok": true,
-      "archive_tar_sha256": "e10791a380f8404030c194662bd0f50270dda4210152fe7dc83b1181e696bd79",
-      "client_tick_delta": 92619,
-      "cpu_core_estimate": 0.6472061518612487,
-      "cpu_system_delta_s": 15.765625,
-      "cpu_user_delta_s": 61.3125,
-      "elapsed_observation_s": 119.09362229999999,
-      "file_checks": [
+      "archive_manifest_file_checks": [
         {
           "actual_length": 590,
           "actual_sha256": "5a99e506793d83cfa223099edb3c97c676b32eeb60cf596d9865bb6b753c9fe7",
@@ -1280,10 +1929,148 @@
           "path": "raw-run-01/samples.qualification.jsonl"
         }
       ],
+      "archive_manifest_file_count": 22,
+      "archive_manifest_files_ok": true,
+      "archive_tar_expected": "e10791a380f8404030c194662bd0f50270dda4210152fe7dc83b1181e696bd79",
+      "archive_tar_ok": true,
+      "archive_tar_sha256": "e10791a380f8404030c194662bd0f50270dda4210152fe7dc83b1181e696bd79",
+      "captures": {},
+      "client_tick_delta": 92619,
+      "cpu_core_estimate": 0.6472061518612487,
+      "elapsed_observation_s": 119.09362229999999,
+      "environment": {
+        "cache": {
+          "cache_dir": "\\\\?\\C:\\Users\\BotTest\\274bot-server-4c95f87\\data\\pack\\client",
+          "content_hash": null,
+          "content_hash_limit": "native qualification records null_at_boundary / not_hashed_at_boundary",
+          "snapshot_version": "2faf336eeb0462ed"
+        },
+        "power": {
+          "ac_line_status": 1,
+          "battery_status": 2,
+          "brightness": 20,
+          "computer_system_power_state": 0,
+          "limit": "computerSystemPowerState is not AC-line status; battery/brightness are preflight observations"
+        },
+        "provenance": {
+          "allocator": "std::alloc::System",
+          "binary_sha256": "1937663506e3f0b243f5a9a742de3ae8d86ded66867bf2db38f9f882ec76e2e3",
+          "client_commit": "5ee9b6efb2342452ceeb7958f864fd68d0daadd1",
+          "host_commit": "3118e9661a89906589ee6e0239e475b36228bde3",
+          "host_conditions_sha256": "1bd1ed8fe79f1ee2d85e9c20c839e7397302cdca7ffef288ca4eabca8a3d07db",
+          "role": "candidate",
+          "sources_stable": true
+        },
+        "ready_scene_active_fields": {
+          "active_observed": [
+            16,
+            16
+          ],
+          "limit": "host-conditions has no per-slot ready/scene/active sample; raw rows/captures are used instead",
+          "ready_observed": [
+            16,
+            16
+          ],
+          "scene_state_observed": []
+        },
+        "temperature": {
+          "limit": "no temperature field in archived host-conditions",
+          "value": null
+        }
+      },
+      "gpu_completion_latency": {
+        "available_count": 16,
+        "completion_coverage_complete_count": 16,
+        "limit": "completed GPU diagnostic only; no physical scanout and not product frame cadence",
+        "p99_ranges_ms": [
+          [
+            40,
+            50
+          ],
+          [
+            20,
+            25
+          ],
+          [
+            20,
+            25
+          ],
+          [
+            10,
+            20
+          ],
+          [
+            20,
+            25
+          ],
+          [
+            20,
+            25
+          ],
+          [
+            20,
+            25
+          ],
+          [
+            20,
+            25
+          ],
+          [
+            10,
+            20
+          ],
+          [
+            20,
+            25
+          ],
+          [
+            10,
+            20
+          ],
+          [
+            10,
+            20
+          ],
+          [
+            10,
+            20
+          ],
+          [
+            20,
+            25
+          ],
+          [
+            10,
+            20
+          ],
+          [
+            20,
+            25
+          ]
+        ],
+        "slot_count": 16,
+        "target_verdicts": [
+          "meet",
+          "unproven"
+        ]
+      },
       "gpu_tracked_mib_max": 143.36687469482422,
       "gpu_tracked_mib_median": 143.19178009033203,
+      "match_configuration": {
+        "cache_dir_canonical": "\\\\?\\C:\\Users\\BotTest\\274bot-server-4c95f87\\data\\pack\\client",
+        "cache_dir_canonical_available": true,
+        "lowmem_requested": true,
+        "n": 16,
+        "port": 43594,
+        "render_policy_requested": "focused-plus-background",
+        "workload": "active"
+      },
       "mode": "focused-plus-background",
       "observation_rows": 119,
+      "observation_wall_span_unix_s": [
+        1788830885.273731,
+        1788831005.2854376
+      ],
       "observe_bounds_s": [
         119.725329,
         239.7317908
@@ -1295,10 +2082,10 @@
         "pair_eligible": false,
         "status": "bound"
       },
+      "qualification_observation_s": 119.09362229999999,
       "qualification_rows": 2,
       "qualification_selected": {
         "client_ticks_per_slot_s": 48.60619223939753,
-        "observe_sample_n": 119,
         "steal_gains": {
           "live3af80_0": 18,
           "live3af80_1": 5,
@@ -1329,6 +2116,14 @@
         16,
         16
       ],
+      "renderer_configuration_counts": {
+        "backend_counts": {
+          "gpu": 16
+        },
+        "full_rate": 1,
+        "present": 16,
+        "records": 16
+      },
       "renderer_counter_max": {
         "paint_n": 11340,
         "stable_paint_interval_ns": 231782694700,
@@ -1413,15 +2208,256 @@
       "rss_max_mib": 2483.94921875,
       "rss_median_mib": 2042.78125,
       "rss_min_mib": 1376.31640625,
+      "runtime_configuration_counts": {
+        "draw_false": 0,
+        "draw_true": 16,
+        "records": 16
+      },
+      "scheduling_intervals": {
+        "available_count": 15,
+        "limit": "offline observation-window histogram; not physical scanout/product cadence; JSONL row time is not interval endpoint",
+        "p99_bounds_ms": [
+          27,
+          30
+        ],
+        "p99_ranges_ms": [
+          [
+            29,
+            30
+          ],
+          [
+            29,
+            30
+          ],
+          [
+            29,
+            30
+          ],
+          [
+            27,
+            28
+          ],
+          [
+            28,
+            29
+          ],
+          [
+            28,
+            29
+          ],
+          [
+            27,
+            28
+          ],
+          [
+            28,
+            29
+          ],
+          [
+            28,
+            29
+          ],
+          [
+            28,
+            29
+          ],
+          [
+            28,
+            29
+          ],
+          [
+            28,
+            29
+          ],
+          [
+            29,
+            30
+          ],
+          [
+            29,
+            30
+          ],
+          [
+            28,
+            29
+          ]
+        ],
+        "scene_transition_separation": [
+          null,
+          "unavailable"
+        ],
+        "slot_count": 16,
+        "status_counts": {
+          "available": 15,
+          "unavailable": 1
+        },
+        "target_verdicts": [
+          "meet"
+        ]
+      },
       "ui_draw_delta": 5554,
       "ui_frame_delta": 5554
     }
   },
+  "cross_cell": {
+    "cache": {
+      "all_equal": true,
+      "limit": "comparison is descriptive; equality is only claimed for recorded fields",
+      "values": {
+        "baseline-focused-one-20260908-0102": {
+          "cache_dir": "\\\\?\\C:\\Users\\BotTest\\274bot-server-4c95f87\\data\\pack\\client",
+          "content_hash": null,
+          "content_hash_limit": "native qualification records null_at_boundary / not_hashed_at_boundary",
+          "snapshot_version": "2faf336eeb0462ed"
+        },
+        "baseline-focused-plus-background-20260908-0111": {
+          "cache_dir": "\\\\?\\C:\\Users\\BotTest\\274bot-server-4c95f87\\data\\pack\\client",
+          "content_hash": null,
+          "content_hash_limit": "native qualification records null_at_boundary / not_hashed_at_boundary",
+          "snapshot_version": "2faf336eeb0462ed"
+        },
+        "candidate-focused-one-20260908-0118": {
+          "cache_dir": "\\\\?\\C:\\Users\\BotTest\\274bot-server-4c95f87\\data\\pack\\client",
+          "content_hash": null,
+          "content_hash_limit": "native qualification records null_at_boundary / not_hashed_at_boundary",
+          "snapshot_version": "2faf336eeb0462ed"
+        },
+        "candidate-focused-plus-background-20260908-0126": {
+          "cache_dir": "\\\\?\\C:\\Users\\BotTest\\274bot-server-4c95f87\\data\\pack\\client",
+          "content_hash": null,
+          "content_hash_limit": "native qualification records null_at_boundary / not_hashed_at_boundary",
+          "snapshot_version": "2faf336eeb0462ed"
+        }
+      }
+    },
+    "power": {
+      "all_equal": true,
+      "limit": "comparison is descriptive; equality is only claimed for recorded fields",
+      "values": {
+        "baseline-focused-one-20260908-0102": {
+          "ac_line_status": 1,
+          "battery_status": 2,
+          "brightness": 20,
+          "computer_system_power_state": 0,
+          "limit": "computerSystemPowerState is not AC-line status; battery/brightness are preflight observations"
+        },
+        "baseline-focused-plus-background-20260908-0111": {
+          "ac_line_status": 1,
+          "battery_status": 2,
+          "brightness": 20,
+          "computer_system_power_state": 0,
+          "limit": "computerSystemPowerState is not AC-line status; battery/brightness are preflight observations"
+        },
+        "candidate-focused-one-20260908-0118": {
+          "ac_line_status": 1,
+          "battery_status": 2,
+          "brightness": 20,
+          "computer_system_power_state": 0,
+          "limit": "computerSystemPowerState is not AC-line status; battery/brightness are preflight observations"
+        },
+        "candidate-focused-plus-background-20260908-0126": {
+          "ac_line_status": 1,
+          "battery_status": 2,
+          "brightness": 20,
+          "computer_system_power_state": 0,
+          "limit": "computerSystemPowerState is not AC-line status; battery/brightness are preflight observations"
+        }
+      }
+    },
+    "provenance": {
+      "all_equal": false,
+      "limit": "comparison is descriptive; equality is only claimed for recorded fields",
+      "values": {
+        "baseline-focused-one-20260908-0102": {
+          "allocator": "std::alloc::System",
+          "binary_sha256": "87c24665563ef8a55751244a52f7d25c7edf68e3117e84f2ff464add596c71fb",
+          "client_commit": "5ee9b6efb2342452ceeb7958f864fd68d0daadd1",
+          "host_commit": "36825a9f0a07a19610439c691f6dfe3d2e1cbf48",
+          "host_conditions_sha256": "e87a1155f20321278dbf030cbff338abe955647f9743877cab599f8efb4d4b1a",
+          "role": "reference",
+          "sources_stable": true
+        },
+        "baseline-focused-plus-background-20260908-0111": {
+          "allocator": "std::alloc::System",
+          "binary_sha256": "87c24665563ef8a55751244a52f7d25c7edf68e3117e84f2ff464add596c71fb",
+          "client_commit": "5ee9b6efb2342452ceeb7958f864fd68d0daadd1",
+          "host_commit": "36825a9f0a07a19610439c691f6dfe3d2e1cbf48",
+          "host_conditions_sha256": "2f4e0ad719a72f435ef1e9801095cd46b44ee31d058dac79dca3fecaad96d192",
+          "role": "reference",
+          "sources_stable": true
+        },
+        "candidate-focused-one-20260908-0118": {
+          "allocator": "std::alloc::System",
+          "binary_sha256": "1937663506e3f0b243f5a9a742de3ae8d86ded66867bf2db38f9f882ec76e2e3",
+          "client_commit": "5ee9b6efb2342452ceeb7958f864fd68d0daadd1",
+          "host_commit": "3118e9661a89906589ee6e0239e475b36228bde3",
+          "host_conditions_sha256": "b7ebb9d95074e7438ddce0f4e45874b722a159058eeeb6888ad23e13d3fabb8a",
+          "role": "candidate",
+          "sources_stable": true
+        },
+        "candidate-focused-plus-background-20260908-0126": {
+          "allocator": "std::alloc::System",
+          "binary_sha256": "1937663506e3f0b243f5a9a742de3ae8d86ded66867bf2db38f9f882ec76e2e3",
+          "client_commit": "5ee9b6efb2342452ceeb7958f864fd68d0daadd1",
+          "host_commit": "3118e9661a89906589ee6e0239e475b36228bde3",
+          "host_conditions_sha256": "1bd1ed8fe79f1ee2d85e9c20c839e7397302cdca7ffef288ca4eabca8a3d07db",
+          "role": "candidate",
+          "sources_stable": true
+        }
+      }
+    },
+    "temperature": {
+      "all_equal": true,
+      "limit": "comparison is descriptive; equality is only claimed for recorded fields",
+      "values": {
+        "baseline-focused-one-20260908-0102": {
+          "limit": "no temperature field in archived host-conditions",
+          "value": null
+        },
+        "baseline-focused-plus-background-20260908-0111": {
+          "limit": "no temperature field in archived host-conditions",
+          "value": null
+        },
+        "candidate-focused-one-20260908-0118": {
+          "limit": "no temperature field in archived host-conditions",
+          "value": null
+        },
+        "candidate-focused-plus-background-20260908-0126": {
+          "limit": "no temperature field in archived host-conditions",
+          "value": null
+        }
+      }
+    }
+  },
   "pairs": {
     "focused-one": {
+      "absolute_elapsed_limit": "sequential cells have no simultaneous wall-clock control; overlap does not remove phase confounding",
+      "absolute_wall_overlap_s": 0.0,
       "client_tick_delta": -295,
       "cpu_core_estimate": -0.05015828170237058,
       "gpu_tracked_mib_max": -0.063995361328125,
+      "observation_relative": {
+        "rss_first_mib": {
+          "baseline": 1028.43359375,
+          "candidate": 966.49609375,
+          "delta": -61.9375
+        },
+        "rss_last_mib": {
+          "baseline": 805.85546875,
+          "candidate": 753.26171875,
+          "delta": -52.59375
+        },
+        "rss_max_mib": {
+          "baseline": 1083.33203125,
+          "candidate": 966.49609375,
+          "delta": -116.8359375
+        },
+        "rss_min_mib": {
+          "baseline": 805.85546875,
+          "candidate": 753.26171875,
+          "delta": -52.59375
+        }
+      },
       "peak_max_mib": 22.71484375,
       "rss_first_mib": -61.9375,
       "rss_last_mib": -52.59375,
@@ -1432,9 +2468,33 @@
       "ui_frame_delta": -19
     },
     "focused-plus-background": {
+      "absolute_elapsed_limit": "sequential cells have no simultaneous wall-clock control; overlap does not remove phase confounding",
+      "absolute_wall_overlap_s": 0.0,
       "client_tick_delta": -200,
       "cpu_core_estimate": 0.0073317831061398,
       "gpu_tracked_mib_max": 0.25879669189453125,
+      "observation_relative": {
+        "rss_first_mib": {
+          "baseline": 2461.59765625,
+          "candidate": 2483.94921875,
+          "delta": 22.3515625
+        },
+        "rss_last_mib": {
+          "baseline": 1567.734375,
+          "candidate": 1376.76171875,
+          "delta": -190.97265625
+        },
+        "rss_max_mib": {
+          "baseline": 2499.0078125,
+          "candidate": 2483.94921875,
+          "delta": -15.05859375
+        },
+        "rss_min_mib": {
+          "baseline": 1567.734375,
+          "candidate": 1376.31640625,
+          "delta": -191.41796875
+        }
+      },
       "peak_max_mib": 2.0,
       "rss_first_mib": 22.3515625,
       "rss_last_mib": -190.97265625,
@@ -1446,5 +2506,5 @@
     }
   },
   "protocol_sha256": "5f5aeb3fba0de48d16a9100a5a00f8b0d00c83b2e8fb515aac4787ab612e8d2d",
-  "schema": "windows-lazy-upload-comparison-v1"
+  "schema": "windows-lazy-upload-comparison-v2"
 }
