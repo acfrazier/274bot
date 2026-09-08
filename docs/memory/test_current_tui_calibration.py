@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -85,6 +86,24 @@ class CurrentTuiCalibrationControls(unittest.TestCase):
             self.assertEqual(env["NAV_PACK"], str((root / "nav").resolve()))
             self.assertEqual(env["LOGIN_RSAN"], "123")
 
+    def test_launch_environment_preserves_operator_context_from_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            server = root / "server"
+            (server / "data/config").mkdir(parents=True)
+            (server / "server-login-public.json").write_text(json.dumps({
+                "modulus_decimal": "123", "exponent_decimal": "65537"}))
+            args = argparse.Namespace(server_root=server, rs2b0t=root / "rs2b0t",
+                                     nav_pack=root / "nav", nav_flags=root / "flags")
+            base = {"PATH": "/usr/bin", "HOME": "/operator", "TERM": "xterm",
+                    "BOT_DEBUG": "1", "BOT_CPU": "1"}
+            env = runner.launch_environment(args, base=base)
+            self.assertEqual(env["PATH"], "/usr/bin")
+            self.assertEqual(env["HOME"], "/operator")
+            self.assertEqual(env["TERM"], "xterm")
+            self.assertNotIn("BOT_DEBUG", env)
+            self.assertNotIn("BOT_CPU", env)
+
     def test_feature_contract_rejects_counting_or_snapshot_dedup(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / "manifest.json"
@@ -120,6 +139,60 @@ class CurrentTuiCalibrationControls(unittest.TestCase):
             self.assertEqual(report["status"], "failed_or_unavailable")
             self.assertFalse(report["performance_acceptance"])
             self.assertEqual(report["memory_guard"]["status"], "not_triggered")
+
+    def test_existing_output_is_refused_before_managed_launch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp) / "result.json"
+            output.write_text("existing")
+            args = mock.Mock(output=output)
+            with self.assertRaisesRegex(runner.CalibrationError, "existing output"):
+                runner.run(args, {"id": "result"})
+
+    def test_run_passes_preserved_context_to_managed_runner(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp) / "result.json"
+            args = mock.Mock(output=output, host_checkout=pathlib.Path(tmp))
+            captured = {}
+            def managed(*_args, **_kwargs):
+                captured.update({key: os.environ.get(key) for key in ("PATH", "HOME", "TERM", "BOT_DEBUG")})
+                return {"status": "failed_or_unavailable", "launched": False, "attempts": 1}
+            with mock.patch.dict(os.environ, {"PATH": "/operator/bin", "HOME": "/operator", "TERM": "xterm", "BOT_DEBUG": "1"}, clear=True), \
+                 mock.patch.object(runner, "launch_environment", side_effect=lambda _args, base=None: runner.clean_environment(base)), \
+                 mock.patch.object(runner.rmc, "run_managed_cell", side_effect=managed):
+                self.assertEqual(runner.run(args, {"id": "result"}), 1)
+            self.assertEqual(captured["PATH"], "/operator/bin")
+            self.assertEqual(captured["HOME"], "/operator")
+            self.assertEqual(captured["TERM"], "xterm")
+            self.assertIsNone(captured["BOT_DEBUG"])
+
+    def test_managed_exception_does_not_claim_no_launch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp) / "result.json"
+            args = mock.Mock(output=output, host_checkout=pathlib.Path(tmp))
+            with mock.patch.object(runner, "launch_environment", return_value={}), \
+                 mock.patch.object(runner.rmc, "run_managed_cell", side_effect=RuntimeError("cancelled after launch")):
+                self.assertEqual(runner.run(args, {"id": "result"}), 1)
+            report = json.loads(output.read_text())
+            self.assertNotEqual(report["launched"], False)
+            self.assertTrue(report["execution_attempted"])
+
+    def test_preflight_samples_declared_server_identity(self):
+        args = mock.Mock(server_identity=pathlib.Path("server.json"), server_pid=42,
+                         server_start_identity="start:42")
+        identity = {"pid": 42, "start_identity": "start:42"}
+        with mock.patch.object(runner, "validate_server_identity", return_value=identity), \
+             mock.patch.object(runner.sr, "sample_process", return_value=identity) as sample:
+            runner.validate_live_server(args)
+        sample.assert_called_once_with(42, timeout=5.0)
+
+    def test_preflight_rejects_server_pid_start_mismatch(self):
+        args = mock.Mock(server_identity=pathlib.Path("server.json"), server_pid=42,
+                         server_start_identity="start:42")
+        identity = {"pid": 42, "start_identity": "start:42"}
+        with mock.patch.object(runner, "validate_server_identity", return_value=identity), \
+             mock.patch.object(runner.sr, "sample_process", return_value={"pid": 42, "start_identity": "reused"}):
+            with self.assertRaisesRegex(runner.CalibrationError, "live server identity"):
+                runner.validate_live_server(args)
 
     def test_memory_guard_interrupts_managed_call_and_owned_child_is_cleaned(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -26,6 +26,7 @@ if str(HERE) not in sys.path:
 
 import build_provenance as bp  # noqa: E402
 import run_managed_cell as rmc  # noqa: E402
+import server_resources as sr  # noqa: E402
 
 EXPECTED_HOST = "c0709aba2f8b45e42193225cf8f4e7325b5ca9bf"
 EXPECTED_CLIENT = "3456edc8dabf7b25ada78110ffa56327af9f67a4"
@@ -112,8 +113,8 @@ def _server_public_environment(server_root: pathlib.Path) -> Dict[str, str]:
     return {"ENGINE_DIR": str(root), "LOGIN_RSAN": modulus, "LOGIN_RSAE": exponent}
 
 
-def launch_environment(args: argparse.Namespace) -> Dict[str, str]:
-    env = clean_environment()
+def launch_environment(args: argparse.Namespace, base: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
+    env = clean_environment(base)
     env.update({"LIVE": "1", "BOT_TARGET": "local", "RS2B0T": str(args.rs2b0t.resolve()),
                 "NAV_PACK": str(args.nav_pack.resolve()), "NAV_FLAGS": str(args.nav_flags.resolve())})
     env.update(_server_public_environment(args.server_root))
@@ -144,6 +145,18 @@ def validate_server_artifact_hashes(server_root: pathlib.Path, identity: Mapping
             raise CalibrationError(f"server {key} is not bound to the declared artifact")
     if config["world_json_sha256"] != identity["config_sha256"]:
         raise CalibrationError("server configuration world hash is inconsistent")
+
+
+def validate_live_server(args: argparse.Namespace) -> Dict[str, Any]:
+    """Re-sample the declared server before reserving any run output."""
+    identity = validate_server_identity(args.server_identity, args.server_pid, args.server_start_identity)
+    try:
+        sample = sr.sample_process(args.server_pid, timeout=5.0)
+    except (sr.SampleError, OSError, ValueError, TypeError) as exc:
+        raise CalibrationError(f"live server identity sample failed: {exc}") from exc
+    if sample.get("start_identity") != identity["start_identity"]:
+        raise CalibrationError("live server identity does not match declared PID/start identity")
+    return sample
 
 
 def diagnostic_argv(binary: pathlib.Path, manifest: pathlib.Path, role: str) -> list[str]:
@@ -204,14 +217,15 @@ def build_spec(args: argparse.Namespace, source: Mapping[str, Any]) -> Dict[str,
 
 def validate_inputs(args: argparse.Namespace) -> Dict[str, Any]:
     source = check_source(args.host_checkout, args.expected_host_commit, args.expected_client_commit)
-    identity = validate_server_identity(args.server_identity, args.server_pid, args.server_start_identity)
+    identity = validate_live_server(args)
     for label, path in (("binary", args.binary), ("build manifest", args.build_manifest), ("host conditions", args.host_conditions), ("nav pack", args.nav_pack), ("nav flags", args.nav_flags), ("catalog", args.catalog), ("server root", args.server_root), ("rs2b0t", args.rs2b0t)):
         if not path.exists():
             raise CalibrationError(f"{label} does not exist: {path}")
     # This is the same reviewed manifest verifier used by run_managed_cell.
     bp.verify_build(args.build_manifest, args.build_role, "tui", args.binary, args.nav_pack, args.nav_flags, args.catalog)
     validate_feature_contract(args.build_manifest)
-    validate_server_artifact_hashes(args.server_root, identity)
+    declared_identity = validate_server_identity(args.server_identity, args.server_pid, args.server_start_identity)
+    validate_server_artifact_hashes(args.server_root, declared_identity)
     return source
 
 
@@ -267,20 +281,22 @@ def run(args: argparse.Namespace, spec: Dict[str, Any]) -> int:
         if hasattr(signal, "SIGUSR1"):
             os.kill(os.getpid(), signal.SIGUSR1)
     guard = MemoryGuard(cleanup)
-    report: Dict[str, Any]
+    report: Dict[str, Any] = {"status": "failed_or_unavailable", "launched": "unknown",
+                              "attempts": 1, "execution_attempted": True}
     previous_handler = signal.getsignal(signal.SIGUSR1) if hasattr(signal, "SIGUSR1") else None
     def abort_from_guard(signum: int, frame: Any) -> None:
         raise RuntimeError("predeclared host memory guard: owned managed cell cancelled")
     if hasattr(signal, "SIGUSR1"):
         signal.signal(signal.SIGUSR1, abort_from_guard)
     previous_env = os.environ.copy()
+    launch_env = launch_environment(args, base=previous_env)
     os.environ.clear()
-    os.environ.update(launch_environment(args))
+    os.environ.update(launch_env)
     guard.start()
     try:
         report = rmc.run_managed_cell(spec_path, cells_root, cwd=args.host_checkout)
-    except Exception as exc:  # preserve a durable failed artifact
-        report = {"status": "failed_or_unavailable", "launched": False, "attempts": 1, "error": str(exc)}
+    except Exception as exc:  # preserve a durable failed artifact and honest attempt state
+        report["error"] = str(exc)
     finally:
         guard.close()
         os.environ.clear()

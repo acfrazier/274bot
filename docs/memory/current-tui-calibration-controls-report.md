@@ -46,12 +46,17 @@ turning it into acceptance evidence.
 
 Verification
 
-`python3 -m unittest docs/memory/test_current_tui_calibration.py -v` — 11 tests
+`python3 -m unittest docs/memory/test_current_tui_calibration.py -v` — 17 tests
 passed. `python3 -m py_compile` passed for both Python files. Tests cover exact
 flags/spec, hot-flag scrubbing, source mismatch before launch, server identity
 hash/port validation, no-launch preflight behavior, explicit launch-environment
 binding, feature-contract rejection, fail-closed memory guard cancellation and
-owned-child cleanup, and incomplete native state remaining failed/unaccepted.
+owned-child cleanup, and incomplete native state remaining failed/unaccepted. Before either preflight
+mode or launch, the declared server PID is freshly sampled and its start identity
+must match; the launch environment is built from the pre-clear operator snapshot
+so PATH, HOME, TERM, and other non-hot context survive while forbidden hot flags
+are scrubbed. Exceptions after the managed attempt begins are recorded as an
+unknown launch state rather than falsely claiming no launch.
 
 Root-owned next steps
 
