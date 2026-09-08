@@ -1,0 +1,208 @@
+{
+  "status": "Final cache/capture native build and scoped regression proof only; no matched performance acceptance",
+  "verified_utc": "2026-09-08T13:37:08.317971+00:00",
+  "roles": {
+    "reference": {
+      "build": {
+        "hostCommit": "e25f32806957b1a44c75a598cbdb7ab53afc5383",
+        "clientCommit": "abb811bd0afa1acd99319ccd5bc36bfb241080f9",
+        "archiveSha256": "399ff38ec2aa09d8c51517508c8423e6441eade8bfff4fbd8f946194340e3255",
+        "binarySha256": "2061d0c7ba82c950084523a7c7e89eed27854e2a533377d9f40ed4a53da5f3ce",
+        "binaryBytes": 76621312,
+        "sourcePrePost": {
+          "verified_files": 877,
+          "sources_sha256": "1f2289839d4359f6316cc3c27e3740efa18bcf0691d2a5621aae080fb226013b"
+        },
+        "receipt": {
+          "hostCommit": "e25f32806957b1a44c75a598cbdb7ab53afc5383",
+          "clientCommit": "abb811bd0afa1acd99319ccd5bc36bfb241080f9",
+          "source": "C:\\Users\\Austen\\274bot-campaign\\host-e25f328",
+          "exitCode": 0,
+          "startedUtc": "2026-09-08T13:19:38.1053747Z",
+          "endedUtc": "2026-09-08T13:23:36.1277305Z",
+          "command": "cargo build --locked --release -p panel --bin panel-play --features memory-profile-no-alloc",
+          "jobs": 4
+        }
+      },
+      "tests": {
+        "archiveSha256": "731d39e6c19703b4d627a3b67070b8d2b31bcedab69e48b7c3aed24000a7439f",
+        "sourcePrePost": {
+          "verified_files": 877,
+          "sources_sha256": "1f2289839d4359f6316cc3c27e3740efa18bcf0691d2a5621aae080fb226013b"
+        },
+        "results": [
+          {
+            "name": "host",
+            "argv": [
+              "test",
+              "--locked",
+              "--release",
+              "-p",
+              "host",
+              "--lib",
+              "--",
+              "--test-threads=1"
+            ],
+            "exitCode": 0,
+            "startedUtc": "2026-09-08T13:24:32.1822191Z",
+            "endedUtc": "2026-09-08T13:25:39.5512969Z"
+          },
+          {
+            "name": "publisher",
+            "argv": [
+              "test",
+              "--locked",
+              "--release",
+              "-p",
+              "host-play",
+              "--features",
+              "memory-profile-no-alloc",
+              "--lib",
+              "--",
+              "cohort",
+              "poll_forces_final_observe",
+              "observe_end_qualification",
+              "--test-threads=1"
+            ],
+            "exitCode": 0,
+            "startedUtc": "2026-09-08T13:25:39.5571042Z",
+            "endedUtc": "2026-09-08T13:27:46.5053637Z"
+          },
+          {
+            "name": "panel-capture",
+            "argv": [
+              "test",
+              "--locked",
+              "--release",
+              "-p",
+              "panel",
+              "--features",
+              "memory-profile-no-alloc",
+              "--lib",
+              "--",
+              "capture",
+              "memory_",
+              "--test-threads=1"
+            ],
+            "exitCode": 0,
+            "startedUtc": "2026-09-08T13:27:46.5073660Z",
+            "endedUtc": "2026-09-08T13:27:56.9073413Z"
+          }
+        ]
+      },
+      "stage": {
+        "utc": "2026-09-08T13:31:16.3670113Z",
+        "hostCommit": "e25f32806957b1a44c75a598cbdb7ab53afc5383",
+        "clientCommit": "abb811bd0afa1acd99319ccd5bc36bfb241080f9",
+        "binarySha256": "2061d0c7ba82c950084523a7c7e89eed27854e2a533377d9f40ed4a53da5f3ce",
+        "build": "C:/Users/Austen/274bot-campaign/build-panel-e25f328",
+        "stage": "C:/ProgramData/274bot-Test/cohort-reference-e25f328",
+        "nativeTestsPassed": true,
+        "purpose": "prepared matched cohort reference; no run or performance acceptance"
+      },
+      "archive_directory": "diagnostics/windows-cohort-build-e25f328"
+    },
+    "candidate": {
+      "build": {
+        "hostCommit": "ca56e14371d1edb8c09df1276638ce196d502e36",
+        "clientCommit": "fd956c91bf09e059359c8e182a33583e2c626cd3",
+        "archiveSha256": "1d696b819fe12e635ca86cca53c875e4f76393c451d1010d0b975b8d92aabe42",
+        "binarySha256": "3d0037010e21b345daab8d23435f158a79f42b9a46f3c4b2d720f39946edb81b",
+        "binaryBytes": 76626944,
+        "sourcePrePost": {
+          "verified_files": 882,
+          "sources_sha256": "7b1f4fa9519037ec00842a6c7517cbb0cc7cfc0730bda1635a838f4118b21cf0"
+        },
+        "receipt": {
+          "hostCommit": "ca56e14371d1edb8c09df1276638ce196d502e36",
+          "clientCommit": "fd956c91bf09e059359c8e182a33583e2c626cd3",
+          "source": "C:\\Users\\Austen\\274bot-campaign\\host-ca56e14",
+          "exitCode": 0,
+          "startedUtc": "2026-09-08T13:28:17.1578103Z",
+          "endedUtc": "2026-09-08T13:32:12.4259700Z",
+          "command": "cargo build --locked --release -p panel --bin panel-play --features memory-profile-no-alloc",
+          "jobs": 4
+        }
+      },
+      "tests": {
+        "archiveSha256": "5d8c03393832a0b3c61d735394021e808b8ba3d0a0caa896ef99ccd737e440db",
+        "sourcePrePost": {
+          "verified_files": 882,
+          "sources_sha256": "7b1f4fa9519037ec00842a6c7517cbb0cc7cfc0730bda1635a838f4118b21cf0"
+        },
+        "results": [
+          {
+            "name": "host",
+            "argv": [
+              "test",
+              "--locked",
+              "--release",
+              "-p",
+              "host",
+              "--lib",
+              "--",
+              "--test-threads=1"
+            ],
+            "exitCode": 0,
+            "startedUtc": "2026-09-08T13:32:30.2824864Z",
+            "endedUtc": "2026-09-08T13:33:37.5083824Z"
+          },
+          {
+            "name": "publisher",
+            "argv": [
+              "test",
+              "--locked",
+              "--release",
+              "-p",
+              "host-play",
+              "--features",
+              "memory-profile-no-alloc",
+              "--lib",
+              "--",
+              "cohort",
+              "poll_forces_final_observe",
+              "observe_end_qualification",
+              "--test-threads=1"
+            ],
+            "exitCode": 0,
+            "startedUtc": "2026-09-08T13:33:37.5141309Z",
+            "endedUtc": "2026-09-08T13:35:44.1955558Z"
+          },
+          {
+            "name": "panel-capture",
+            "argv": [
+              "test",
+              "--locked",
+              "--release",
+              "-p",
+              "panel",
+              "--features",
+              "memory-profile-no-alloc",
+              "--lib",
+              "--",
+              "capture",
+              "memory_",
+              "--test-threads=1"
+            ],
+            "exitCode": 0,
+            "startedUtc": "2026-09-08T13:35:44.1955558Z",
+            "endedUtc": "2026-09-08T13:35:54.5268222Z"
+          }
+        ]
+      },
+      "stage": {
+        "utc": "2026-09-08T13:36:32.2389242Z",
+        "hostCommit": "ca56e14371d1edb8c09df1276638ce196d502e36",
+        "clientCommit": "fd956c91bf09e059359c8e182a33583e2c626cd3",
+        "binarySha256": "3d0037010e21b345daab8d23435f158a79f42b9a46f3c4b2d720f39946edb81b",
+        "build": "C:/Users/Austen/274bot-campaign/build-panel-ca56e14",
+        "stage": "C:/ProgramData/274bot-Test/cohort-candidate-ca56e14",
+        "nativeTestsPassed": true,
+        "purpose": "prepared matched cohort candidate; no run or performance acceptance"
+      },
+      "archive_directory": "diagnostics/windows-cohort-build-ca56e14"
+    }
+  },
+  "crates_common_patch_id": "cb00240445cb30c9d361707a1295954a60157c1a",
+  "crates_role_difference_patch_id": "6d29db24d5ccc97cdd2e5271a6a849a2dc3681c6"
+}
