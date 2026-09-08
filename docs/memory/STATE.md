@@ -9,6 +9,28 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 04:24 UTC
+
+- Tile corrective source fd956c9/host260f163 approved actualGrok4.5/xai-oauth
+  20260908_001922_9359cb. Root found default-feature report did not compile
+  feature-gated memory.rs; ran48 host-play memory-profile-no-alloc tests PASS
+  plus35 separate client draw/gpu_mesh/model/rebuild tests PASS. Report corrected
+  and hashed logs retained. New unit emit test is callable-path proof only;
+  existing gpu_mesh integration asserts geometry, native visual remains pending.
+- Root combined freeze fb3589ac28583242b999ac864ea69c4ef8fa5923 pinsclient
+  fd956c91bf09e059359c8e182a33583e2c626cd3 with root verification/protocol.
+  Required integration milestone t_037ff8fd actualbranchreviewer Grok4.6/xai-oauth
+  session20260908_002323_df2c86 RUNNING on exactbase9268890..fb3589a.
+  No candidate native build/run yet. Four source build inputs staged Windows;
+  876 files aggregate189dac149beb6f258f5a79bdf09de43818556a5f06ffa783a608f0113a64d8a4.
+  Frozen package record /private/tmp/274bot-windows-setup-20260907/tile-boxed-fb3589a-freeze.json.
+  Build helper build-panel-fb3589a.ps1 prepared, must await gate and unchanged source.
+- Linux evidence f07ee67 firstreview requests food-range correction. Root added
+  clock-origin correction: raw samples and qualification use SAME self.started,
+  differing instants/windows, not different origins; launcher/accounting differs.
+  Same-card t_082c43c4 correction/re-review pending. Native successful receipt
+  binding already verified independently; no repeated diagnostic run planned.
+
 ## Latest boundary — 2026-09-08 04:17 UTC
 
 - Linux timing native ONE launch completed0; launcher/collector0, no orphan.
