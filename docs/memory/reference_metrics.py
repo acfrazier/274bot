@@ -20,6 +20,8 @@ import sys
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
+import cohort_reader
+
 ROOT = pathlib.Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -3051,6 +3053,8 @@ def analyze_run(
             "decode": _unavailable("missing_metadata"),
             "input": _unavailable("missing_metadata"),
             "gpu": _unavailable("missing_metadata"),
+            "decode_cohort": _unavailable("missing_metadata"),
+            "input_cohort": _unavailable("missing_metadata"),
         }
         return result
 
@@ -3064,13 +3068,15 @@ def analyze_run(
             "decode": _unavailable("bad_metadata"),
             "input": _unavailable("bad_metadata"),
             "gpu": _unavailable("bad_metadata"),
+            "decode_cohort": _unavailable("bad_metadata"),
+            "input_cohort": _unavailable("bad_metadata"),
         }
         return result
     if not isinstance(meta, dict):
         result["error"] = "metadata not object"
         result["gates"] = {"resources": _unavailable("bad_metadata")}
         result["gates"].update({
-            k: _unavailable("bad_metadata") for k in ("scheduling", "decode", "input", "gpu")
+            k: _unavailable("bad_metadata") for k in ("scheduling", "decode", "input", "gpu", "decode_cohort", "input_cohort")
         })
         return result
 
@@ -3095,6 +3101,8 @@ def analyze_run(
             "decode": _unavailable("samples_unreadable"),
             "input": _unavailable("samples_unreadable"),
             "gpu": _unavailable("samples_unreadable"),
+            "decode_cohort": _unavailable("samples_unreadable"),
+            "input_cohort": _unavailable("samples_unreadable"),
         }
         return result
 
@@ -3128,6 +3136,8 @@ def analyze_run(
         "decode": evaluate_decode(meta, samples),
         "input": evaluate_input(meta, samples),
         "gpu": evaluate_gpu(meta, samples),
+        "decode_cohort": cohort_reader.read_cohort(run_dir, meta, samples, "decode"),
+        "input_cohort": cohort_reader.read_cohort(run_dir, meta, samples, "input"),
     }
 
     return result
@@ -3158,7 +3168,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     p.add_argument(
         "--require",
         default="",
-        help="comma list: resources,scheduling,decode,input,gpu — exit 1 if unavailable or target unproven",
+        help="comma list: resources,scheduling,decode,input,decode_cohort,input_cohort,gpu — exit 1 if unavailable or target unproven",
     )
     p.add_argument(
         "--contamination-from",
