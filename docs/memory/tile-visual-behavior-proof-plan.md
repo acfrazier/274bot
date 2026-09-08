@@ -132,7 +132,22 @@ Raster `none`, observe the focused pane detach while both status rows remain
 ingame, and click Raster `GPU` and wait for the same client to restore a
 non-zero scene. Record the observed slot names, scene-status transitions, and
 whether an independent capture was actually readable.
-There is likewise no existing non-memory N=2 trigger for G1 rebuild/freeze.
+The non-memory `null_raster` path does have a headed rebuild inducer: the
+Debug-panel `Lumbridge` button sends `session.cheat_focused("~home")`
+(`crates/panel/src/app.rs` ~1750–1754), and the focused tele paths can do the
+same. It is therefore usable for an operator-triggered G1 attempt, but it
+still lacks the built-in F12 path while `state.live` is set and emits no
+`render_profile` rows. The missing capability is unattended/readable capture
+and state-correlated evidence, not the absence of a rebuild trigger.
+
+Memory N=1 remains usable for G1/G4 when the operator needs its interactive
+F12 path: `state.live` is `None`, so the `ui_frame` F12 guard does not suppress
+it (`app.rs` ~4225–4231), and the per-frame `memory_focus` call only re-pins
+the selected slot/draw policy. It is not usable for manual G2/G3 overrides.
+Account for the memory run's normal observation completion/exit at `app.rs`
+~4187–4190: use a reviewed long-observe/sustain arrangement if the run configuration
+provides one, or capture the ordered scene transition before
+the run exits. Do not invent a new CLI flag or treat an early exit as proof.
 
 ### 3.4 What recent native cells already did **not** prove
 
@@ -152,8 +167,10 @@ No gameplay policy, fixture, or timeout edits.
 
 **Binary.** Staged `tile-boxed-fb3589a` hash-verify
 `a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f`.
-N=1 focused-one first (simplest visual oracle); optional N=16 only after N=1
-G2/G3 pass if multi-head attach storms need evidence.
+Use N=1 memory or interactive mode for the simplest G1/G4 visual oracle;
+memory `focused-one` is not a manual G2/G3 setup. Use N=2 `--live null_raster`
+for the bounded manual G2/G3 path; optional N=16 is diagnostic only if
+multi-head attach storms need evidence.
 
 **Bounded timeout (wall).**
 
@@ -266,18 +283,19 @@ row pair proving residency moved.
 
 | Gate | Offline/unit | Host unit | Live e2e | Frozen native UI/hooks | Automated native freeze harness | Verdict for execution |
 | --- | --- | --- | --- | --- | --- | --- |
-| G1 freeze+minimap | Strong GPU/CPU predicates + splash + IF-over-freeze | Zap cadence only | No | Status scene log + F12 + tele/home cheats + GPU finish hold | **None** | **Missing complete unpinned setup**; memory path cannot be used as a manual freeze harness and null_raster has no rebuild trigger |
+| G1 freeze+minimap | Strong GPU/CPU predicates + splash + IF-over-freeze | Zap cadence only | No | Memory/interactive status scene log + F12, or null_raster status log + headed tele/home cheats; GPU finish hold | **None** | **Manual G1 attempt exists** with memory/interactive F12 or null_raster rebuild trigger, but no complete built-in capture/state-correlated harness; require observable scene1→capture ordering and mark absent readback `blocked-missing-capability` / `inconclusive` |
 | G2 focus/watch | Policy unit only | — | panel_view single-slot draw | N=2 `--live null_raster` rail controls; no profile/capture output | No multi-slot visual auto | **Manual setup exists**, but visual evidence is blocked/inconclusive unless an independent capture is available; do not use memory `--focused-one` |
 | G3 attach/detach | client_build flags | **Strong** client_frame + profile counters | — | N=2 `--live null_raster` Raster None/GPU controls; no profile/capture output | No pixel auto | **Manual setup exists**, but readback evidence is blocked/inconclusive unless an independent capture is available |
-| G4 overlays | IF freeze unit; chrome dirty tests | — | — | F12 + freeze series | No | **Executable** as inspection on G1/G2 PNGs |
+| G4 overlays | IF freeze unit; chrome dirty tests | — | — | Memory/interactive F12 + freeze series, or independent capture for null_raster | No | **Executable only as visual inspection** when a readable scene2/freeze capture exists; memory is allowed for G1/G4 but not G2/G3 overrides |
 
 ## 6. Minimal additional diagnostic hooks (propose only — do not implement here)
 
-The non-memory `null_raster` path removes the focus-pin problem for G2/G3, but
-the frozen binary still lacks a complete unpinned capture/rebuild harness.
-Treat the capture limitation and G1 trigger as missing capabilities, not as
-operator error or permission to use a personal vault. Any unattended proof
-needs the hooks below (or an explicitly reviewed equivalent).
+The non-memory `null_raster` path removes the focus-pin problem for G2/G3 and
+has headed tele/home rebuild controls, but the frozen binary still lacks a
+complete unpinned capture/state-correlated harness. Treat the capture/profile
+limitation as a missing capability, not as operator error or permission to use
+a personal vault. Any unattended proof needs the hooks below (or an explicitly
+reviewed equivalent).
 
 Propose **only if** root wants unattended native proof:
 
@@ -316,14 +334,21 @@ executable merely because the memory CLI accepts `--focused-one`.
 
 ## 8. Suggested execution order (for root after review)
 
-1. Do not launch G1/G4 yet: the frozen binary has no complete unpinned rebuild
-   and capture path; retain this as `blocked-missing-capability` until the
-   proposed hook or an independently reviewed capture procedure exists.
+1. G1/G4 may use an N=1 memory run or the interactive panel. For memory,
+   preserve the selected slot and use F12 plus the reviewed long-observe/
+   sustain arrangement (or capture before the normal observation exit at
+   `app.rs` ~4187–4190); this does not make memory a manual G2/G3 harness.
+   For `null_raster`, the Debug-panel `Lumbridge` / focused tele can induce
+   rebuild, but live mode suppresses F12 and supplies no profile rows, so use
+   an independent capture path and mark missing ordering/readback evidence
+   `blocked-missing-capability` or `inconclusive`.
 2. N=2 `--live null_raster` diagnostic: G2 focus switch, then G3 Raster
    None→GPU on the same client; use an independent window capture or mark the
    visual evidence blocked/inconclusive because F12/profile output is absent.
-3. N=1 memory or interactive diagnostic: G1 + G4 only if a separate operator
-   capture path can observe the ordered scene2→scene1→scene2 transition.
+3. For either G1 path, require the ordered scene2→scene1→scene2 transition;
+   a capture without an observed scene1 interval is inconclusive. G4 can be
+   inspected over that G1 freeze and at scene2, but remains unproven without
+   a readable capture.
 4. Optional CPU RasterMode cell repeating G1 checklist (separate from clean GPU).
 5. Record gate table; **no** performance acceptance; whole-branch Grok still later.
 
