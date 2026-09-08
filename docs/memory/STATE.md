@@ -9,6 +9,26 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 06:27 UTC
+
+- Fresh CPU0215 baseline and candidate both complete0, nativebound/qualified1/1,
+  no missingmatchkeys; each28 archivefiles hash/lengthverified, independent local
+  qualify_control passed. Baseline raw061603Z tarA39B8A50FF4A83E3B641A780F4ED58A3352A265DC86897E3202DDCB00D4D798A;
+  candidate raw062148Z tarC267376258BEF262AD130F5EFB8818FDDF3C31C1B07D70A86B68762F970294D4.
+  Root directly inspected all6PNG: CPU scene2 market, bank/restock, return route
+  visible on both; no obvious blank/corrupt geometry. Functional proof only.
+  Full receipts and visual scope: windows-tile-cpu-paired-0215-receipts.json.
+- ORIGINAL FOUR GPU RUNTIME FILES RESTORED AND HASHVERIFIED after nofrontend/
+  VMOff0RAMguard. First restore attempt stopped BEFORE mutation on PS5 nested
+  array-count check; v2 removed pipeline array wrapper, validated all4 original
+  and currentCPU hashes beforecopy, verified all4 original hashes aftercopy.
+  Restore receipt retained in paired report; temporary CPU tooling is no longer
+  installed in native3118 runtime. All native proof sessions terminal.
+- Next: independently review completed CPU proof/evidence scope and determine
+  one bounded longer focused confirmation protocol from approved0501fed without
+  claiming missing fine latency/input gates passed. No longer clean cells yet.
+  Scene1FBO/focusdetach/lifecycle/scaling/finaltargets+wholeGrok4.6 still pending.
+
 ## Latest boundary — 2026-09-08 06:16 UTC
 
 - CPU provenance correction b8327a3 approved actualGrok4.5/xai-oauth session
