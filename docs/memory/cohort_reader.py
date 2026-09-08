@@ -506,16 +506,19 @@ def _resolve_render_policy(meta: dict, settings: Optional[dict]) -> Optional[str
 def _derive_input_population(
     frontend: str, policy: Optional[str], n: int,
 ) -> tuple[Optional[dict], Optional[str]]:
-    """Source policy → input_population (host-play arm_cohort_at_observe_start)."""
+    """Source policy → input_population (host-play arm_cohort_at_observe_start).
+
+    memory.rs: panel&&pins_focus → focused-one/[0]; else frontend==tui →
+    tui-endpoint (regardless of render_policy); else all-run-slots.
+    """
     if frontend not in SUPPORTED_FRONTENDS:
         return None, "unsupported_frontend"
+    known = PINS_FOCUS_POLICIES | {None, "rotating-all"}
+    if policy not in known:
+        return None, "unsupported_render_policy"
     if frontend == "tui":
-        # Panel-only render policies cannot apply to TUI.
-        if policy is not None and policy not in (None, "rotating-all"):
-            # TUI leaves policy at RotatingAll; explicit panel policies are invalid.
-            if policy in PINS_FOCUS_POLICIES or policy == "rotating-all":
-                if policy != "rotating-all":
-                    return None, "tui_render_policy_invalid"
+        # Source emits tui-endpoint for any tui frontend; policy does not
+        # rebind the population (panel-only env policies are a prepare guard).
         return {
             "kind": "tui-endpoint",
             "note": TUI_INPUT_NOTE,
@@ -523,9 +526,7 @@ def _derive_input_population(
     # panel
     if policy in PINS_FOCUS_POLICIES:
         return {"kind": "focused-one", "slots": [0]}, None
-    if policy in (None, "rotating-all"):
-        return {"kind": "all-run-slots", "n": n}, None
-    return None, "unsupported_render_policy"
+    return {"kind": "all-run-slots", "n": n}, None
 
 
 def _input_pop_matches(header_pop: Any, derived: dict) -> bool:
@@ -540,8 +541,8 @@ def _input_pop_matches(header_pop: Any, derived: dict) -> bool:
     if kind == "all-run-slots":
         return header_pop.get("n") == derived.get("n")
     if kind == "tui-endpoint":
-        note = header_pop.get("note")
-        return note == TUI_INPUT_NOTE or note is None or isinstance(note, str)
+        # Source always emits the exact note string.
+        return header_pop.get("note") == TUI_INPUT_NOTE
     return False
 
 
@@ -590,20 +591,32 @@ def _validate_sample_clock(clock: Any) -> tuple[Optional[dict], Optional[str]]:
     }, None
 
 
-def _validate_capture_brackets(
+def _parse_capture_brackets(
     row: dict, gate: str,
-) -> Optional[str]:
-    """Per-slot capture brackets when present — structural containment only."""
+) -> tuple[Optional[str], Optional[tuple[int, int]]]:
+    """Per-slot gate capture brackets.
+
+    Keys must be present. ``0,0`` is source-legal **unset** (host default before
+    first capture) — not a structural fault by itself. Set brackets return
+    ``(None, (lo, hi))``; unset returns ``(None, None)``.
+    """
     prefix = "decode" if gate == "decode" else "input"
     lo_k = f"{prefix}_capture_mono_ns_lower"
     hi_k = f"{prefix}_capture_mono_ns_upper"
-    if lo_k not in row and hi_k not in row:
-        return "capture_bracket_missing"
-    c_lo, c_hi, c_err = _mono_pair(row, lo_k, hi_k)
-    if c_err:
-        return f"capture_bracket_{c_err}"
-    assert c_lo is not None and c_hi is not None
-    return None
+    if lo_k not in row or hi_k not in row:
+        return "capture_bracket_missing", None
+    lo, hi = row.get(lo_k), row.get(hi_k)
+    if not _u64(lo) or not _u64(hi):
+        return "capture_bracket_malformed", None
+    # _u64 guarantees plain non-bool int
+    lo_i = lo  # type: ignore[assignment]
+    hi_i = hi  # type: ignore[assignment]
+    assert isinstance(lo_i, int) and isinstance(hi_i, int)
+    if hi_i < lo_i:
+        return "capture_bracket_inverted", None
+    if lo_i == 0 and hi_i == 0:
+        return None, None  # unset
+    return None, (lo_i, hi_i)
 
 
 def _validate_cohort_clock_lifecycle(
@@ -616,11 +629,17 @@ def _validate_cohort_clock_lifecycle(
 
     Does not require aggregate pending=0 at edges. Harness elapsed_s is a
     distinct clock validated elsewhere; mono brackets prove containment.
+
+    Final observe: host-play poll checks mono NOW>=END, writes observe-end
+    qualification, THEN takes elapsed mono + read brackets — so the forced
+    final observe sample normally lies wholly AFTER END (does not enclose END).
     """
     start, end, tail = boundaries
     observe_clocks: list[dict] = []
     drain_clocks: list[dict] = []
     prev_elapsed_mono: Optional[int] = None
+    # Per-slot: once a set (non-zero) capture is seen, later unset is a fault.
+    capture_seen: dict[int, bool] = {sid: False for sid in expected_sids}
 
     for sample in samples:
         if not isinstance(sample, dict):
@@ -650,21 +669,24 @@ def _validate_cohort_clock_lifecycle(
             row = by_sid.get(sid)
             if row is None:
                 return "sample_population_incomplete"
-            cap_err = _validate_capture_brackets(row, gate)
+            cap_err, cap = _parse_capture_brackets(row, gate)
             if cap_err:
                 return cap_err
-            # Capture must sit at/before sample upper (source read encloses capture end).
-            prefix = "decode" if gate == "decode" else "input"
-            c_lo, c_hi, _ = _mono_pair(
-                row, f"{prefix}_capture_mono_ns_lower", f"{prefix}_capture_mono_ns_upper",
-            )
-            assert c_lo is not None and c_hi is not None
-            if c_hi > parsed["read_hi"] or c_hi > parsed["sample_hi"] or c_lo > parsed["sample_hi"]:
-                return "capture_outside_sample_bracket"
+            if cap is None:
+                # Leading unset (keys present, 0,0) before first set capture.
+                if capture_seen[sid]:
+                    return "capture_bracket_unset_after_activity"
+            else:
+                c_lo, c_hi = cap
+                # Capture must sit at/before sample upper (source read encloses capture end).
+                if c_hi > parsed["read_hi"] or c_hi > parsed["sample_hi"] or c_lo > parsed["sample_hi"]:
+                    return "capture_outside_sample_bracket"
+                capture_seen[sid] = True
 
         if phase == "observe":
-            # Observe samples live in the fixed window mono domain.
-            if parsed["sample_hi"] < start or parsed["sample_lo"] > end:
+            # Wholly before START is never valid. Wholly after END is only
+            # legal for the forced final observe (checked after the loop).
+            if parsed["sample_hi"] < start:
                 return "observe_sample_outside_window"
             observe_clocks.append(parsed)
         elif phase == "drain":
@@ -678,16 +700,21 @@ def _validate_cohort_clock_lifecycle(
 
     if not observe_clocks:
         return "observe_samples_missing"
-    # Required first/final observe publication: ≥2 observe rows, final encloses END.
+    # Required first/final observe publication: ≥2 observe rows.
     if len(observe_clocks) < 2:
         return "observe_boundary_samples_missing"
     first, final = observe_clocks[0], observe_clocks[-1]
-    if first["elapsed_ns"] < start or first["sample_lo"] < start:
-        # First observe is after arm; mono must not precede immutable START.
-        if first["sample_hi"] < start:
-            return "observe_first_before_start"
-    if not (final["sample_lo"] <= end <= final["sample_hi"]):
-        # Source forces a final observe row at mono END before drain.
+    if first["sample_hi"] < start:
+        return "observe_first_before_start"
+    # Non-final observe rows must not lie wholly after END (only the forced
+    # post-END boundary sample may).
+    for oc in observe_clocks[:-1]:
+        if oc["sample_lo"] > end:
+            return "observe_sample_outside_window"
+    # Final observe: poll arms after NOW>=END; sample mono is taken after the
+    # observe-end qualification write — elapsed must be at/after END, and the
+    # bracket need not enclose END.
+    if final["elapsed_ns"] < end:
         return "observe_final_missing_or_misaligned"
     if drain_clocks and drain_clocks[0]["elapsed_ns"] < end:
         return "drain_before_observe_end"
@@ -960,8 +987,11 @@ def _read_cohort_impl(run_dir: pathlib.Path, meta: dict, samples: list[dict], ga
         return unavailable(clock_err, gate=gate)
 
     # Provenance refs on samples + qualification must agree with sidecar.
+    # Also build (cursor, sample_hi) timeline for publication-order checks.
     sample_refs = []
     sample_cursors: list[int] = []
+    sample_cursor_timeline: list[tuple[int, int]] = []  # (cursor, sample_hi)
+    prev_sample_cursor: Optional[int] = None
     for sample in samples:
         if not isinstance(sample, dict) or "cohort" not in sample:
             continue
@@ -981,7 +1011,17 @@ def _read_cohort_impl(run_dir: pathlib.Path, meta: dict, samples: list[dict], ga
             cur = ref.get("cursor")
             if not _uint(cur):
                 return unavailable("sample_cursor_malformed", gate=gate)
-            sample_cursors.append(int(cur))
+            cur_i = int(cur)
+            if prev_sample_cursor is not None and cur_i < prev_sample_cursor:
+                return unavailable("sample_cursor_regression", gate=gate)
+            prev_sample_cursor = cur_i
+            sample_cursors.append(cur_i)
+            # Sample mono upper already validated in clock lifecycle.
+            clock = sample.get("responsiveness_clock")
+            if isinstance(clock, dict) and _u64(clock.get("sample_mono_ns_upper")):
+                sample_cursor_timeline.append((cur_i, int(clock["sample_mono_ns_upper"])))
+            else:
+                return unavailable("sample_clock_missing", gate=gate)
     qual_refs = []
     for row in qualification:
         if "cohort" in row:
@@ -1015,6 +1055,8 @@ def _read_cohort_impl(run_dir: pathlib.Path, meta: dict, samples: list[dict], ga
     seen_sequences: set[tuple[Any, ...]] = set()
     batch_count = 0
     emitted_cursors: set[int] = {0}
+    # Journal stream in cursor order: ("event", complete_mono_ns) | ("loss", None)
+    journal_stream: list[tuple[str, Optional[int]]] = []
 
     for obj in objects[1:]:
         if not isinstance(obj, dict):
@@ -1059,12 +1101,16 @@ def _read_cohort_impl(run_dir: pathlib.Path, meta: dict, samples: list[dict], ga
                     return unavailable("duplicate_event_identity", gate=gate)
                 seen_sequences.add(key)
                 records.append(rec)
+                journal_stream.append(
+                    ("event", int(rec["complete_mono_ns"]) if rec.get("complete_mono_ns") is not None else None)
+                )
 
             for raw in batch_losses:
                 err = _loss(raw)
                 if err:
                     return unavailable(err, gate=gate)
                 losses.append(raw)
+                journal_stream.append(("loss", None))
 
             retained = len(batch_records) + len(batch_losses)
             # Inclusive high-water: empty batch keeps cursor; non-empty advances
@@ -1123,6 +1169,23 @@ def _read_cohort_impl(run_dir: pathlib.Path, meta: dict, samples: list[dict], ga
             return unavailable("sample_cursor_mismatch", gate=gate)
     if max(sample_cursors) != cursor:
         return unavailable("sample_cursor_hwm_mismatch", gate=gate)
+
+    # Publication ordering: durable_write drains journal THEN attaches cursor
+    # after the registry read. Do not require event completion before the same
+    # sample's read brackets; the *next* sample's mono upper can expose an
+    # impossible early cursor (complete still in the future of that next sample).
+    if len(journal_stream) != cursor:
+        return unavailable("cursor_accounting_mismatch", gate=gate)
+    for i, (sc, _shi) in enumerate(sample_cursor_timeline):
+        if sc > len(journal_stream):
+            return unavailable("sample_cursor_mismatch", gate=gate)
+        if i + 1 >= len(sample_cursor_timeline):
+            break
+        next_hi = sample_cursor_timeline[i + 1][1]
+        for j in range(sc):
+            kind_j, complete_ns = journal_stream[j]
+            if kind_j == "event" and complete_ns is not None and complete_ns > next_hi:
+                return unavailable("sample_cursor_publication_impossible", gate=gate)
 
     if not all(_uint(terminal.get(k)) for k in ("records_n", "losses_n", "pending_n")):
         return unavailable("malformed_terminal_counts", gate=gate)

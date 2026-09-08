@@ -22,14 +22,16 @@ TAIL = 5_000_000_000
 OBSERVE = END - START
 HARNESS_OBS_START_S = 120.0
 HARNESS_OBS_END_S = 720.0
-# First observe ~1s after arm; final observe forced at mono END; drain after.
+# First observe ~1s after arm; final observe forced after mono END (poll:
+# NOW>=END → write observe-end → then sample mono, so final lies after END);
+# drain after.
 FIRST_OBS_MONO = START + 1_000_000_000
 MID_OBS_MONO = START + 200_000_000_000
-FINAL_OBS_MONO = END
+FINAL_OBS_MONO = END + 1_000_000  # END+1ms — source-shaped post-END final
 DRAIN_MONO = END + 2_000_000_000
 FIRST_OBS_ELAPSED_S = 121.0
 MID_OBS_ELAPSED_S = 320.0
-FINAL_OBS_ELAPSED_S = 720.0
+FINAL_OBS_ELAPSED_S = 720.001
 DRAIN_ELAPSED_S = 722.0
 
 
@@ -136,20 +138,32 @@ def _clock(elapsed_mono_ns: int, *, slop: int = 50_000) -> dict:
     }
 
 
-def _profile_row(sid: int, gen: int, sample_mono: int, *, ended: bool = False) -> dict:
-    """Per-slot row with capture brackets enclosed by the sample mono."""
-    # Capture ends slightly before sample read; starts inside the observe window.
-    cap_lo = max(START, sample_mono - 500_000_000)
-    cap_hi = max(cap_lo, sample_mono - 100_000)
-    return {
+def _profile_row(sid: int, gen: int, sample_mono: int, *, ended: bool = False,
+                 capture: str = "set") -> dict:
+    """Per-slot row with capture brackets.
+
+    capture='set': enclosed by sample mono (post-activity).
+    capture='unset': source-legal 0,0 host default before first capture.
+    """
+    row = {
         "slot_id": sid,
         "generation": gen,
         "ended": ended,
-        "decode_capture_mono_ns_lower": cap_lo,
-        "decode_capture_mono_ns_upper": cap_hi,
-        "input_capture_mono_ns_lower": cap_lo,
-        "input_capture_mono_ns_upper": cap_hi,
     }
+    if capture == "unset":
+        row["decode_capture_mono_ns_lower"] = 0
+        row["decode_capture_mono_ns_upper"] = 0
+        row["input_capture_mono_ns_lower"] = 0
+        row["input_capture_mono_ns_upper"] = 0
+    else:
+        # Capture ends slightly before sample read; starts inside the observe window.
+        cap_lo = max(START, sample_mono - 500_000_000)
+        cap_hi = max(cap_lo, sample_mono - 100_000)
+        row["decode_capture_mono_ns_lower"] = cap_lo
+        row["decode_capture_mono_ns_upper"] = cap_hi
+        row["input_capture_mono_ns_lower"] = cap_lo
+        row["input_capture_mono_ns_upper"] = cap_hi
+    return row
 
 
 def _build_records(
@@ -284,14 +298,43 @@ class CohortReaderTests(unittest.TestCase):
 
         b = records[0]["boundaries"]
         final_cursor = 0
+        journal_completes: list = []
         for rec in records:
             if isinstance(rec, dict) and rec.get("record") == "cohort-batch":
                 final_cursor = rec.get("next_cursor", final_cursor)
-        ref_sample = {
+                for ev in rec.get("records") or []:
+                    if isinstance(ev, dict):
+                        c = ev.get("complete_mono_ns")
+                        journal_completes.append(int(c) if type(c) is int else None)
+                    else:
+                        journal_completes.append(None)
+                for _loss in rec.get("losses") or []:
+                    journal_completes.append(None)
+
+        def _cursor_at(sample_hi: int, *, is_last: bool) -> int:
+            """Contiguous journal prefix publishable by sample_hi.
+
+            Source durable_write drains after registry read; last sample may
+            carry the final HWM without a subsequent sample to bound it.
+            When batch next_cursor disagrees with retained journal length
+            (negative fixtures), fall back to a uniform final_cursor stamp so
+            sample-cursor regression is not an artifact of the helper.
+            """
+            if int(final_cursor) != len(journal_completes):
+                return int(final_cursor)
+            if is_last:
+                return int(final_cursor)
+            k = 0
+            for complete in journal_completes:
+                if complete is not None and complete > sample_hi:
+                    break
+                k += 1
+            return k
+
+        ref_sample_base = {
             "present": True,
             "schema_version": 1,
             "sidecar_path": claimed,
-            "cursor": final_cursor,
             "tail_name": "DEFAULT_TAIL_NS",
             "boundaries": b,
             "terminal": None,
@@ -310,47 +353,30 @@ class CohortReaderTests(unittest.TestCase):
         ref_qual_end["phase_tag"] = "observe-end"
         ref_qual_end["observe_end_elapsed_s"] = HARNESS_OBS_END_S
 
-        def _rows_at(mono: int):
-            return [_profile_row(sid, gens[sid], mono) for sid in ids]
+        def _rows_at(mono: int, *, capture: str = "set"):
+            return [_profile_row(sid, gens[sid], mono, capture=capture) for sid in ids]
 
-        # first observe, mid observe, final observe at END, drain after END.
+        def _sample(phase, elapsed_s, mono, *, capture: str, is_last: bool = False):
+            clk = _clock(mono)
+            ref = dict(ref_sample_base)
+            ref["cursor"] = _cursor_at(clk["sample_mono_ns_upper"], is_last=is_last)
+            return {
+                "phase": phase,
+                "elapsed_s": elapsed_s,
+                "frontend": meta.get("frontend"),
+                "n": n,
+                "responsiveness_profile": _rows_at(mono, capture=capture),
+                "responsiveness_clock": clk,
+                "cohort": ref,
+            }
+
+        # first observe (leading unset 0,0 capture — source default pre-activity),
+        # mid observe (set capture), final observe after END, drain after END.
         samples = [
-            {
-                "phase": "observe",
-                "elapsed_s": FIRST_OBS_ELAPSED_S,
-                "frontend": meta.get("frontend"),
-                "n": n,
-                "responsiveness_profile": _rows_at(FIRST_OBS_MONO),
-                "responsiveness_clock": _clock(FIRST_OBS_MONO),
-                "cohort": dict(ref_sample),
-            },
-            {
-                "phase": "observe",
-                "elapsed_s": MID_OBS_ELAPSED_S,
-                "frontend": meta.get("frontend"),
-                "n": n,
-                "responsiveness_profile": _rows_at(MID_OBS_MONO),
-                "responsiveness_clock": _clock(MID_OBS_MONO),
-                "cohort": dict(ref_sample),
-            },
-            {
-                "phase": "observe",
-                "elapsed_s": FINAL_OBS_ELAPSED_S,
-                "frontend": meta.get("frontend"),
-                "n": n,
-                "responsiveness_profile": _rows_at(FINAL_OBS_MONO),
-                "responsiveness_clock": _clock(FINAL_OBS_MONO),
-                "cohort": dict(ref_sample),
-            },
-            {
-                "phase": "drain",
-                "elapsed_s": DRAIN_ELAPSED_S,
-                "frontend": meta.get("frontend"),
-                "n": n,
-                "responsiveness_profile": _rows_at(DRAIN_MONO),
-                "responsiveness_clock": _clock(DRAIN_MONO),
-                "cohort": dict(ref_sample),
-            },
+            _sample("observe", FIRST_OBS_ELAPSED_S, FIRST_OBS_MONO, capture="unset"),
+            _sample("observe", MID_OBS_ELAPSED_S, MID_OBS_MONO, capture="set"),
+            _sample("observe", FINAL_OBS_ELAPSED_S, FINAL_OBS_MONO, capture="set"),
+            _sample("drain", DRAIN_ELAPSED_S, DRAIN_MONO, capture="set", is_last=True),
         ]
         (run / "samples.jsonl").write_text(
             "\n".join(json.dumps(x) for x in samples) + "\n", encoding="utf-8"
@@ -1158,7 +1184,11 @@ class CohortReaderTests(unittest.TestCase):
             self.assertEqual(result["status"], "unavailable")
             self.assertIn(
                 result["reason"],
-                ("sample_cursor_mismatch", "sample_cursor_hwm_mismatch"),
+                (
+                    "sample_cursor_mismatch",
+                    "sample_cursor_hwm_mismatch",
+                    "sample_cursor_regression",
+                ),
             )
             self.assertNotEqual(result.get("target_verdict"), "meet")
         finally:
@@ -1390,6 +1420,62 @@ class CohortReaderTests(unittest.TestCase):
         finally:
             td.cleanup()
 
+    def test_leading_unset_capture_still_meets(self):
+        """First observe 0,0 (keys present) is source-legal; later set + events meet."""
+        n = 1
+        meta = _meta(n=n)
+        records = _build_records("PLACEHOLDER", n=n)
+        td, run, samples = self._materialize(meta, records, n=n)
+        try:
+            # _materialize already uses leading unset on first observe.
+            self.assertEqual(
+                samples[0]["responsiveness_profile"][0]["decode_capture_mono_ns_lower"], 0
+            )
+            self.assertEqual(
+                samples[0]["responsiveness_profile"][0]["decode_capture_mono_ns_upper"], 0
+            )
+            for gate in ("decode", "input"):
+                result = cr.read_cohort(run, meta, samples, gate)
+                self.assertEqual(result.get("target_verdict"), "meet", (gate, result))
+        finally:
+            td.cleanup()
+
+    def test_unset_capture_after_activity_unavailable(self):
+        n = 1
+        meta = _meta(n=n)
+        records = _build_records("PLACEHOLDER", n=n)
+        td, run, samples = self._materialize(meta, records, n=n)
+        try:
+            samples = json.loads(json.dumps(samples))
+            # Mid observe already set; force final observe back to unset.
+            sid = _ids(n)[0]
+            samples[2]["responsiveness_profile"] = [
+                _profile_row(sid, 3, FINAL_OBS_MONO, capture="unset")
+            ]
+            (run / "samples.jsonl").write_text(
+                "\n".join(json.dumps(x) for x in samples) + "\n"
+            )
+            result = cr.read_cohort(run, meta, samples, "decode")
+            self.assertEqual(result["status"], "unavailable")
+            self.assertEqual(result["reason"], "capture_bracket_unset_after_activity")
+        finally:
+            td.cleanup()
+
+    def test_observe_final_after_end_meets(self):
+        """Final observe at END+1ms (source poll order) must meet, not outside_window."""
+        n = 1
+        meta = _meta(n=n)
+        records = _build_records("PLACEHOLDER", n=n)
+        td, run, samples = self._materialize(meta, records, n=n)
+        try:
+            clk = samples[2]["responsiveness_clock"]
+            self.assertGreater(clk["sample_mono_ns_lower"], END)
+            self.assertGreaterEqual(clk["elapsed_mono_ns"], END)
+            result = cr.read_cohort(run, meta, samples, "decode")
+            self.assertEqual(result.get("target_verdict"), "meet", result)
+        finally:
+            td.cleanup()
+
     def test_observe_final_misaligned_unavailable(self):
         n = 1
         meta = _meta(n=n)
@@ -1397,7 +1483,7 @@ class CohortReaderTests(unittest.TestCase):
         td, run, samples = self._materialize(meta, records, n=n)
         try:
             samples = json.loads(json.dumps(samples))
-            # Move final observe mono away from END so it no longer encloses END.
+            # Move final observe mono before END so it is not the post-END boundary.
             bad_mono = END - 10_000_000_000
             samples[2]["responsiveness_clock"] = _clock(bad_mono)
             samples[2]["responsiveness_profile"] = [
@@ -1409,6 +1495,70 @@ class CohortReaderTests(unittest.TestCase):
             result = cr.read_cohort(run, meta, samples, "decode")
             self.assertEqual(result["status"], "unavailable")
             self.assertEqual(result["reason"], "observe_final_missing_or_misaligned")
+        finally:
+            td.cleanup()
+
+    def test_sample_cursor_publication_impossible(self):
+        """Early HWM cursor with late event completion → next sample upper exposes."""
+        n = 1
+        meta = _meta(n=n)
+        ids = _ids(n)
+        # Events complete near END while early samples already claim final HWM.
+        late_start = END - 1_000_000
+        late_complete = END + 1_000_000
+        records = _build_records(
+            "PLACEHOLDER",
+            n=n,
+            decode_events=[
+                _event(ids[0], 3, 100, late_start, "Decode", late_complete),
+            ],
+            input_events=[
+                _event(ids[0], 3, 1, late_start, "Panel", late_complete),
+            ],
+        )
+        td, run, samples = self._materialize(meta, records, n=n)
+        try:
+            samples = json.loads(json.dumps(samples))
+            # Force every sample to the final HWM (forged early publication).
+            hwm = 0
+            for rec in records:
+                if rec.get("record") == "cohort-batch":
+                    hwm = rec.get("next_cursor", hwm)
+            for s in samples:
+                s["cohort"]["cursor"] = hwm
+            (run / "samples.jsonl").write_text(
+                "\n".join(json.dumps(x) for x in samples) + "\n"
+            )
+            for gate in ("decode", "input"):
+                result = cr.read_cohort(run, meta, samples, gate)
+                self.assertEqual(result["status"], "unavailable", (gate, result))
+                self.assertEqual(
+                    result["reason"],
+                    "sample_cursor_publication_impossible",
+                    (gate, result),
+                )
+        finally:
+            td.cleanup()
+
+    def test_tui_note_must_match_source_exactly(self):
+        n = 2
+        meta = _meta(n=n, frontend="tui", render_policy="rotating-all")
+        records = _build_records(
+            "PLACEHOLDER", n=n, frontend="tui", input_kind="tui-endpoint"
+        )
+        records[0]["input_population"]["note"] = "wrong note"
+        td, run, samples = self._materialize(meta, records, n=n)
+        try:
+            result = cr.read_cohort(run, meta, samples, "input")
+            self.assertEqual(result["status"], "unavailable")
+            self.assertIn(
+                result["reason"],
+                (
+                    "input_population_mismatch",
+                    "input_population_policy_mismatch",
+                ),
+                result,
+            )
         finally:
             td.cleanup()
 

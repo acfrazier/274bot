@@ -61,7 +61,7 @@ header claims. Header must match the derived shape exactly:
 | --- | --- | --- |
 | panel | `fixed-one`, `focused-one`, `focused-plus-background` (`RenderPolicy::pins_focus`) | `{"kind":"focused-one","slots":[0]}` |
 | panel | `rotating-all` (or unset → rotating) | `{"kind":"all-run-slots","n":N}` |
-| tui | rotating-all only | `{"kind":"tui-endpoint","note":"TUI flush endpoint; not panel texture present"}` |
+| tui | any known policy (source: `frontend==tui` only; panel pins_focus is not consulted) | `{"kind":"tui-endpoint","note":"TUI flush endpoint; not panel texture present"}` |
 
 - pins_focus always fixture **ordinal 0** → FNV `responsiveness_slot_id`;
   alternate/duplicate/empty ordinals → `input_population_ordinal_mismatch` (etc.).
@@ -69,6 +69,8 @@ header claims. Header must match the derived shape exactly:
 - Panel vs Tui surfaces are distinct; input gate selects `Panel` or `Tui` by
   frontend. Mixed/forged endpoint success is rejected.
 - Meta `render_policy` and qual `render_policy_requested` must agree when both set.
+- TUI note must match the exact source string (no arbitrary/missing note).
+- Unknown render policy strings → `unsupported_render_policy` (both frontends).
 
 ### Process-mono clock and sample lifecycle
 
@@ -81,24 +83,33 @@ Every cohort-bearing sample must publish:
 - valid sample/read mono brackets (`lo<=hi`, non-unset), `elapsed_mono_ns` u64
   contained in the sample bracket; read contained in sample
 - per-population-slot capture brackets for the gate prefix
-  (`decode_capture_mono_*` / `input_capture_mono_*`) contained at/before
-  sample/read upper
+  (`decode_capture_mono_*` / `input_capture_mono_*`):
+  - keys **must** be present (`capture_bracket_missing` if absent)
+  - `0,0` is source-legal **unset** (host default before first capture) —
+    leading unset before any set capture is allowed
+  - after a set (non-zero) capture has been observed for that slot, a later
+    unset → `capture_bracket_unset_after_activity`
+  - set brackets must be structurally valid and contained at/before sample/read upper
 
-Observe lifecycle (source publisher):
+Observe lifecycle (source publisher poll order):
 
 - ≥2 observe samples with clocks (first + final publication)
-- final observe sample mono bracket **encloses** immutable `end_mono_ns`
-  (forced final observe at END before drain)
-- observe samples not outside `[START, END]` mono domain
+- poll checks mono `NOW>=END`, writes observe-end qualification, **then** takes
+  elapsed mono + read brackets — so the forced final observe sample normally
+  lies **wholly after END** (does **not** enclose END). Require
+  `final.elapsed_mono_ns >= END`; non-final observe rows must not lie wholly
+  after END; reject final with `elapsed_mono_ns < END`
+  (`observe_final_missing_or_misaligned`)
 - drain samples after END, not past `END+tail`
 - mono elapsed non-decreasing across cohort-bearing samples
 
-Missing/malformed/inverted/domain-mismatched clocks, missing capture brackets,
-and misaligned final observe fail closed. Aggregate edge `pending==0` is **not**
-required (cohort identity/loss/terminal accounting is).
+Missing/malformed/inverted/domain-mismatched clocks, missing capture keys,
+post-activity unset, and misaligned final observe fail closed. Aggregate edge
+`pending==0` is **not** required (cohort identity/loss/terminal accounting is).
 
 Positive fixtures use source-faithful 600s observe mono window, first/mid/final
-observe + drain samples, capture brackets, and harness qualification 120..720
+observe (final at END+1ms) + drain samples, leading unset then set capture
+brackets, progressive sample cursors, and harness qualification 120..720
 independently of mono.
 
 ### Provenance and path binding
@@ -120,7 +131,14 @@ independently of mono.
   harness elapsed (self-consistent harness clock; not mono)
 - Cohort-bearing sample harness `elapsed_s` must not precede observe-start
 - Sample `cohort.cursor` must be a uint in the set of emitted batch
-  `next_cursor` values (plus 0), and `max(sample cursors) == final batch HWM`
+  `next_cursor` values (plus 0), non-decreasing across samples, and
+  `max(sample cursors) == final batch HWM`
+- **Publication ordering** (source `durable_write_sample_line`: registry read →
+  journal drain → attach cursor): do not require event completion before the
+  same sample's read brackets; the **next** sample's `sample_mono_ns_upper`
+  may expose impossibility if an earlier sample already claims a cursor whose
+  journal prefix includes an event with `complete_mono_ns` still in the future
+  of that next sample → `sample_cursor_publication_impossible`
 
 ### Identity mapping (source-faithful)
 
@@ -211,23 +229,25 @@ Prior codes retained. Additive / tightened for this card:
 `unsupported_frontend`, `input_population_ordinal_mismatch`,
 `input_population_policy_mismatch`, `input_population_duplicate_ordinal`,
 `input_population_mismatch`, `render_policy_meta_qualification_disagree`,
-`tui_render_policy_invalid`, `unsupported_render_policy`,
+`unsupported_render_policy`,
 `sample_clock_missing`, `sample_clock_malformed`, `sample_clock_domain_mismatch`,
 `sample_clock_bracket_*`, `sample_elapsed_mono_malformed`,
 `sample_read_outside_sample_bracket`, `sample_elapsed_outside_sample_bracket`,
 `sample_mono_time_regression`, `capture_bracket_missing` / `_malformed` /
-`_inverted` / `_unset`, `capture_outside_sample_bracket`,
+`_inverted`, `capture_bracket_unset_after_activity`,
+`capture_outside_sample_bracket`,
 `observe_samples_missing`, `observe_boundary_samples_missing`,
 `observe_first_before_start`, `observe_final_missing_or_misaligned`,
 `observe_sample_outside_window`, `drain_sample_before_window`,
-`drain_sample_past_tail`, `drain_before_observe_end`, …
+`drain_sample_past_tail`, `drain_before_observe_end`,
+`sample_cursor_regression`, `sample_cursor_publication_impossible`, …
 
 ## Verification commands and counts
 
 ```
 cd /Users/acfrazier/experiments/274bot/.worktrees/latency-cohort-reader
 python3 -m unittest discover -s docs/memory -p 'test_cohort_reader.py' -v
-# → 52 tests, 0 fail, 0 err
+# → 57 tests, 0 fail, 0 err
 
 python3 -m unittest discover -s docs/memory -p 'test_reference_metrics.py' -v
 # → 100 tests, 0 fail, 0 err
@@ -242,17 +262,24 @@ python3 -m unittest discover -s docs/memory -p 'test_instrumentation_overhead.py
 p99 freeze hash verified unchanged:
 `ade46732007625b4ddd83f7895e38350646c7799879ed8f9030c8ceb41a9d8f3`
 
-cohort_reader SHA-256 after this card:
-`573cf29ab7397254bbf8f925d94f89c574848fe4b4b4ec4d5450d3a9008af20a`
+cohort_reader SHA-256 after this correction round:
+`0fa06e0ba3c182fca5eac567040f041068af3425774fdc1311a2aa68f2af818c`
 
-### Root false-meet probes (now fail-closed)
+### Root false-meet / false-reject probes (now fail-closed / meet)
 
-From `cohort-reader-ec5dda2-root-probes.json` remaining false meets:
+From ec5dda2 / 5c5353a root probes + reviewer:
 
 1. headless frontend + Panel events → `unsupported_frontend`
 2. focused-one `slots:[1]` → `input_population_ordinal_mismatch`
 3. `EventId.sequence=2**64` → `malformed_event_identity`
 4. missing `responsiveness_clock` → `sample_clock_missing`
+5. final observe at END+1ms (source poll order) → **meet** (not
+   `observe_sample_outside_window`)
+6. early sample cursor HWM with late event completion →
+   `sample_cursor_publication_impossible`
+7. leading capture `0,0` then later set → **meet**; unset after set →
+   `capture_bracket_unset_after_activity`
+8. TUI wrong note → population mismatch
 
 Prior R2 six + interior ref still fail-closed. Control happy path meets with
 source-faithful clocks/observe publication.
@@ -289,8 +316,11 @@ quiet-inner-span not selected; malformed surface and fuzzed scalar types →
 unavailable without exception; N=16 single-slot cannot meet; ns boundary /
 exact 100ms / 100ms+1ns overflow; all six R2 provenance probes + interior ref;
 **headless unsupported; wrong ordinal; u64 overflow sequence; missing/inverted/
-domain-mismatched clock; missing capture; final observe misaligned; pins_focus
-fixed-one + focused-plus-background meet; TUI endpoint distinct from Panel.**
+domain-mismatched clock; missing capture; leading unset meet + unset-after-
+activity unavailable; final observe after END meets; final before END
+misaligned; late-complete early-cursor publication impossible; pins_focus
+fixed-one + focused-plus-background meet; TUI endpoint distinct from Panel;
+TUI note exact match.**
 
 ## Limitations (honest)
 
