@@ -8,6 +8,8 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import matched_evidence_adapter as reader
+import run_managed_cell as managed
+import run_diagnostic as diagnostic
 from test_matched_evidence_adapter import NATIVE_WINDOWS_CONDITIONS
 
 CONTROLLER = pathlib.Path(__file__).with_name('run-panel-lazy-upload-focused-one.py')
@@ -16,6 +18,9 @@ CONTROLLER = pathlib.Path(__file__).with_name('run-panel-lazy-upload-focused-one
 def output_expression(name, namespace):
     tree = ast.parse(CONTROLLER.read_text())
     for node in tree.body:
+        if (name == 'spec' and isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name) and node.targets[0].id == name):
+            return eval(compile(ast.Expression(node.value), str(CONTROLLER), 'eval'), namespace)
         if (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
                 and isinstance(node.value.func, ast.Name) and node.value.func.id == 'dump'
                 and isinstance(node.value.args[0], ast.Name)
@@ -25,6 +30,51 @@ def output_expression(name, namespace):
 
 
 class ControllerProvenance(unittest.TestCase):
+    def test_real_spec_expression_satisfies_managed_validator_for_four_cells(self):
+        for role in ('baseline', 'candidate'):
+            for mode in ('focused-one', 'focused-plus-background'):
+                with self.subTest(role=role, mode=mode):
+                    cell_id = role + '-' + mode + '-fixture'
+                    role_info = {
+                        'manifest_role': 'reference' if role == 'baseline' else 'candidate',
+                    }
+                    value = output_expression('spec', {
+                        'role_info': role_info, 'role': role, 'mode': mode,
+                        'cell_id': cell_id, 'binary': pathlib.Path('/fixture/panel-play.exe'),
+                        'manifest': pathlib.Path('/fixture/build-manifest.json'),
+                        'server_id': pathlib.Path('/fixture/server-identity.json'),
+                        'conditions': pathlib.Path('/fixture/host-conditions.json'),
+                        'catalog': pathlib.Path('/fixture/js-scripts.json'),
+                        'mem': pathlib.Path('/fixture/docs/memory'),
+                        'diag': [
+                            'panel', '16', 'active', '--binary', '/fixture/panel-play.exe',
+                            '--build-manifest', '/fixture/build-manifest.json', '--build-role',
+                            role_info['manifest_role'], '--sustain', '--warmup', '30',
+                            *(['--nav-captures'] if mode == 'focused-one' else []),
+                            '--observe', '120',
+                            '--focused-one' if mode == 'focused-one' else '--focused-background',
+                            '--render-profile', '--gpu-completion-profile', '--scheduling-profile',
+                            '--responsiveness-profile', '--responsiveness-fine', '--failure-capture',
+                        ],
+                        'pid': 6728, 'server': pathlib.Path('/fixture/server'),
+                        'home': pathlib.Path('/fixture/home'), 'sys': types.SimpleNamespace(executable='python'),
+                        'os': types.SimpleNamespace(environ={'NAV_PACK': '/fixture/navpack', 'NAV_FLAGS': '/fixture/navflags'}, getppid=lambda: 8123),
+                    })
+                    normalized = managed.validate_spec(value)
+                    self.assertEqual(normalized['index'], 1)
+                    self.assertEqual(normalized['build_role'], role_info['manifest_role'])
+                    self.assertEqual(normalized['cell_id'], cell_id)
+                    parser = diagnostic.build_parser()
+                    args = parser.parse_args(value['diagnostic_argv'])
+                    diagnostic.validate_args(args, parser)
+                    self.assertEqual(args.build_role, role_info['manifest_role'])
+                    self.assertEqual(args.observe, 120)
+                    self.assertEqual(args.warmup, 30)
+                    missing_index = dict(value)
+                    del missing_index['index']
+                    with self.assertRaises(managed.CellError):
+                        managed.validate_spec(missing_index)
+
     def test_real_condition_expression_satisfies_reader_for_four_cells(self):
         for role in ('baseline', 'candidate'):
             for mode in ('focused-one', 'focused-plus-background'):

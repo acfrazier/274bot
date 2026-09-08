@@ -20,4 +20,11 @@ if(Test-Path $run){
     }
 }
 $result=[ordered]@{utc=[DateTime]::UtcNow.ToString('o');task=$name;cell_id=$CellId;taskState=if($task){[string]$task.State}else{'Missing'};lastTaskResult=if($info){$info.LastTaskResult}else{$null};completionPresent=(Test-Path $completion);startup=$startup;performanceAcceptance=$false};$result|ConvertTo-Json -Depth 6
-if($Final){if(-not (Test-Path $completion)){throw 'Completion receipt missing'};$c=Get-Content $completion -Raw|ConvertFrom-Json;if($c.exit_code -ne 0){throw ('Diagnostic exit code '+$c.exit_code)};$requested='Intel(R) Graphics';$matching=@($startup|Where-Object {$_.adapter_name -eq $requested -and $_.requested_adapter_name -eq $requested});if($matching.Count -lt 1){throw 'No startup record proves requested and selected adapter both equal Intel(R) Graphics')}}
+if($Final){
+    if(-not (Test-Path $completion)){throw 'Completion receipt missing'}
+    $c=Get-Content $completion -Raw|ConvertFrom-Json
+    if($c.exit_code -ne 0){throw ('Diagnostic exit code '+$c.exit_code)}
+    $requested='Intel(R) Graphics'
+    $matching=@($startup|Where-Object {$_.adapter_name -eq $requested -and $_.requested_adapter_name -eq $requested})
+    if($matching.Count -lt 1){throw 'No startup record proves requested and selected adapter both equal Intel(R) Graphics'}
+}

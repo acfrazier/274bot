@@ -82,6 +82,9 @@ Transfer this directory without renaming files. The six executable controls are:
 Also transfer `test_controller_provenance.py`, which evaluates the actual controller
 output expressions against the strict evidence reader and tests omitted-field
 rejection. This seventh file is a local regression test, not a launch entry point.
+Before any launch, run `validate-controls-ast.ps1` from the same directory. It uses
+PowerShell's `Parser.ParseFile` over all four executable `.ps1` controls (preflight,
+launch, poll, and archive) and fails closed on any syntax error.
 
 Preparation does not copy or modify the candidate. The root BotTest machine
 already has the approved candidate staged at
