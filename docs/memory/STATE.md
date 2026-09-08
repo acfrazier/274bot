@@ -11,6 +11,23 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 18:40 UTC
+
+- Phase A ledger469ce26 received actual Grok4.5 changes requested, session
+  20260908_143713_0914cf (t_debbacca). Root supplied additive native ABI proof
+  owner-layout-1838, preserving1827: OptionBox slots8, OptionUsize16,
+  OptionOcclude76, Vec header24 bytes. Correct source-fixed104x104x4 grid and
+  2048/16384 entity pointer table accounting and false original-probe claim.
+  Luna run827 is correcting the same ledger card; no live capture released.
+- Heaptrack owned Python smoke exited0, report0,5902 allocations and expected
+  PyByteArray_Resize stack. Evidence diagnostics/heaptrack-smoke-1837. Exact
+  frozen ELF retains script encoding symbols, but client stack/source-line
+  coverage remains unproven; these tool smokes are not campaign measurements.
+- 289 bc7cbbe mapping source review passed, but actual Grok4.5 session
+  20260908_143413_05801a rejected its non-empty enclosed test: bytes were
+  position-before-opcode, taking the unknown branch rather than decoding90/71.
+  Luna run826 corrects authentic framing before same-card review and root live.
+
 ## Latest boundary — 2026-09-08 18:34 UTC
 
 - Corrected ownership design bc713b9 approved by actual Grok4.5/xai-oauth,
