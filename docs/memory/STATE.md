@@ -11,6 +11,32 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 20:03 UTC
+
+- Capture instrumentation1fe2161 APPROVED actual Grok4.5/xai session
+  20260908_155322_0bb06f run859,25 independent checks. Root same main-path
+  timeout probe confirms SystemExit1 with childexit0+durabletimeoutmetadata.
+- Exact85Pythonfile bundle SHA807158864234f71813133eda756d2ac4dbca26715c0e20776211ccbd0a86a684
+  staged separately in Concord profile-tooling-stage-1915; original1113frozen
+  files reverified unchanged. Native101tests PASS2platformskips. Owned smoke
+  heaptrack-seam-smoke-2001 PASS: directchild2031/parent2030,FS3GiB,raw0600,
+  parentlimits/envunchanged,positivepeak5730024bytes including known4196352
+  bytearrayfamily. Analysischildren2034/2035 both exit0. No game in smoke.
+- Sole N1 capture NOW RUNNING at current-owner-heaptrack-n1-2003 on Concord.
+  Rootcontroller2066/start602348/SSHparent2065, frontend2096; launcher metadata
+  started1788897753.9746997, raw144504166bytes at firstcheck/RSS172MiB.
+  Frozenhostc0709ab/client3456/System/noalloc/TUIRasterOff unchanged.
+  Logs owner-capture-launch-2003.log; frontendrun profile-tooling-stage-1915/
+  docs/memory/diagnostics/20260908T200229Z_tui_n1_active. No repeat authorized.
+  Preceding2002 failed BEFORElaunch/attempts0 because root launcher used wrong
+  sidecarpath; corrected to profile-tooling-stage-1915-server-identity.json.
+  Both preflight artifacts preserved. Nativecommand execsession76811 ownsSSH.
+- 289 c135f60 REJECTED actualGrok4.5 for missingsemanticoutcome foundation.
+  Root reclaimed thirdLuna beforetrackededits and reassigned t_358c02ad to
+  verifiedorchAstra/openai default; actualsession20260908_155623_15c47a running.
+  Bounded implementation only, no newcards/delegation/live/hostwork. All
+  remainingB-H and finalwholebranch/live gates remain.
+
 ## Latest boundary — 2026-09-08 19:51 UTC
 
 - Capture c94ed59 fixes ordinary960/capture1320 declarations and adds
