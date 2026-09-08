@@ -6,7 +6,7 @@ Companion: `docs/memory/current-latency-companion-plan.md`, `docs/memory/latency
 
 ## Summary
 
-Additive fixed-window cohort journal publisher on the memory harness path. Active only when the existing responsiveness profile is already enabled at observe-start (no new CLI/env flags). `begin_armed` activation order fixed (OPT_IN before START under ledger lock). Operator integration-review checklist resolved, including a production poll scheduling gap for the final observe row. Round-1 review corrections: concrete JSON envelope freeze below; `observe_end_elapsed_s` stamped before observe-end qualification write; report provenance matches commit file list.
+Additive fixed-window cohort journal publisher on the memory harness path. Active only when the existing responsiveness profile is already enabled at observe-start (no new CLI/env flags). `begin_armed` activation order fixed (OPT_IN before START under ledger lock). Operator integration-review checklist resolved, including a production poll scheduling gap for the final observe row. Round-1 review corrections: concrete JSON envelope freeze below; `observe_end_elapsed_s` stamped before observe-end qualification write; report provenance matches commit file list. Round-2: envelope field meanings aligned to source (`complete`/`next_cursor`/`pending_n`/`records_n`/finalize endpoint); production `Run::poll` asserts poll-written observe-end qual meta.
 
 ## Changes
 
@@ -25,7 +25,7 @@ Additive fixed-window cohort journal publisher on the memory harness path. Activ
 1. **attach before durable write** — `durable_write_sample_line`: drain journal → `attach_cohort_sample_refs` → `writeln`. Qualification path attaches before write.
 2. **Same immutable START/END as activation** — `arm_cohort_at_observe_start` stores `begin_armed` boundaries; phase/tail use those fields only (not a later poll-entry now + re-begin).
 3. **Observe-end final row before drain** — `enter_drain_after_sample` defers drain flip until after the sample write; `sample_due` includes that flag so a recent `<1s` last_sample still forces the final phase=`"observe"` row. Drain is set only after that write.
-4. **Stop at predeclared absolute END+tail** — `cohort_tail_complete(boundaries, now_mono)`: `now_mono >= end_mono_ns + tail_ns` (`DEFAULT_TAIL_NS = 5s`, name `DEFAULT_TAIL_NS`). Not Instant-relative drain or 60s teardown as the finite tail.
+4. **Stop at predeclared absolute END+tail** — `cohort_tail_complete(boundaries, now_mono)`: `now_mono >= end_mono_ns + tail_ns` (equality OK; `finalize` rejects only `<`). Named `DEFAULT_TAIL_NS = 5s`. Not Instant-relative drain or 60s teardown as the finite tail.
 5. **Cohort-off preserved** — arm only if `responsiveness_profile::enabled()`; child-process `--exact` test.
 6. **observe-end meta** — stamp `CohortPublisher.observe_end_elapsed_s` from harness `started.elapsed()` **before** `write_qualification(..., "observe-end")` so additive `cohort.observe_end_elapsed_s` is non-null on that row.
 
@@ -50,7 +50,7 @@ Exactly one line per record, UTF-8 JSON objects, newline-terminated:
 
 1. **`cohort-header`** — once, at arm (observe-start), before any batch.
 2. **`cohort-batch`** — zero or more, at 1 Hz sample cadence and once more at finalize (final extract after barrier).
-3. **`cohort-terminal`** — once, after producers joined + `acknowledge_producers_closed` + `finalize(now_mono ≥ END+tail)`.
+3. **`cohort-terminal`** — once, after producers joined + `acknowledge_producers_closed` + `finalize(now_mono ≥ END+tail)` (equality permitted; source rejects only `now_mono < END+tail`).
 
 No other record types. Batches may be **counter-only** (empty `records`/`losses`) when `loss_count` or `journal_overflow_n` advanced.
 
@@ -84,13 +84,13 @@ No other record types. Batches may be **counter-only** (empty `records`/`losses`
 | `record` | `"cohort-batch"` | discriminant |
 | `schema_version` | u16 | from `CohortBatch` |
 | `boundaries` | Boundaries | same window |
-| `records` | EventRecord[] | completed/canceled journal rows since cursor |
-| `losses` | LossReceipt[] | loss receipts since cursor |
-| `next_cursor` | u64 | exclusive high-water; next `extract_since` argument |
-| `complete` | bool | producer barrier + no pending (batch flag) |
+| `records` | EventRecord[] | journal EventRecords with `sequence > cursor` (any `Outcome`) |
+| `losses` | LossReceipt[] | loss receipts with `sequence > cursor` |
+| `next_cursor` | u64 | **inclusive** high-water: largest **included** `journal_sequence` in this batch (`max(sequence)` for entries with `sequence > cursor`). Next `extract_since` call still filters `sequence > next_cursor`. Not an exclusive end index. |
+| `complete` | bool | **`State.finalized` only** (source: `complete: s.finalized`). Not proof of producer barrier success, empty pending, or lossless population. Can be `true` on an unavailable final batch after finalize. |
 | `loss_count` | u64 | cumulative losses |
 | `journal_overflow_n` | u64 | cumulative capacity rejects |
-| `available` | bool | **only when** `journal_overflow_n > 0` → `false` |
+| `available` | bool | **only when** `journal_overflow_n > 0` → `false` (publisher adds this on overflow drain) |
 | `unavailable_reason` | string | **only when** overflow → `"journal_overflow"` |
 
 EventRecord: `{id: EventId, complete_mono_ns: Option<u64>, outcome: Outcome}`.  
@@ -107,17 +107,22 @@ LossReceipt: `{sequence, slot_id, generation: Option<u64>, start_mono_ns: Option
 | `record` | `"cohort-terminal"` | discriminant |
 | `schema_version` | u16 | from `TerminalSummary` |
 | `boundaries` | Boundaries | same window |
-| `terminal` | bool | summary.terminal |
-| `available` | bool | false on source losses / incomplete / overflow path |
-| `records_n` | u64 | population count |
-| `losses_n` | u64 | loss count |
-| `pending_n` | u64 | still-pending at finalize |
+| `terminal` | bool | summary.terminal (always true on success path) |
+| `available` | bool | `s.available && s.pending.is_empty()` after finalize drain; false on source losses / incomplete / overflow path |
+| `records_n` | u64 | count of **all** EventRecords successfully appended via the terminal path (`records_n` increments for any `Outcome` that becomes an EventRecord). **Not** “Completed latency samples only”. Inspect `outcome` on records; losses are separate (`losses_n` / LossReceipt). |
+| `losses_n` | u64 | cumulative loss receipts (Capacity/Incomplete/etc.) |
+| `pending_n` | u64 | `s.pending.len()` **after** finalize drains prior pending into Incomplete LossReceipts. Typically **0 even when incomplete work existed**. Reader must use `losses_n` / `available` / loss reasons — **never** equate `pending_n == 0` with closed success. |
 | `tail_name` | string | `"DEFAULT_TAIL_NS"` |
 | `producers_joined` | bool | publisher proved stop_slot/join path |
 | `observe_end_elapsed_s` | f64 \| null | harness elapsed stamped at observe-end |
 | `frontend` | string | same as header |
 
-**Fail-closed terminal:** `available == false` → `finish_cohort_journal_after_barrier` returns `Err` (`cohort terminal unavailable: …`). Overflow on final batch also Err. Finalize before END+tail mono is Err. Incomplete producer barrier is Err via `acknowledge_producers_closed` / finalize.
+**Finalize / completion deadline (source-aligned):**
+
+- `finalize(now_mono_ns)` rejects only when `now_mono_ns < end_mono_ns + tail_ns` (or producers not closed). **Equality is permitted.**
+- Harness `cohort_tail_complete` is `now_mono >= end_mono_ns + tail_ns` (same inclusive endpoint).
+
+**Fail-closed terminal:** `available == false` → `finish_cohort_journal_after_barrier` returns `Err` (`cohort terminal unavailable: …`). Overflow on final batch also Err. Finalize with `now_mono < END+tail` is Err. Incomplete producer barrier is Err via `acknowledge_producers_closed` / finalize.
 
 ### Additive refs on legacy samples / qualification (not sidecar)
 
@@ -158,11 +163,11 @@ Legacy sample/qualification field meanings and counters are unchanged; `cohort` 
 
 ```text
 cargo test -p host-play --features memory-profile --lib \
-  -- --exact memory::tests::observe_end_qualification_meta_includes_elapsed_when_stamped_before_write \
+  -- --exact memory::tests::poll_forces_final_observe_sample_when_last_sample_recent_at_end \
   --test-threads=1
 
 cargo test -p host-play --features memory-profile --lib \
-  -- --exact memory::tests::poll_forces_final_observe_sample_when_last_sample_recent_at_end \
+  -- --exact memory::tests::observe_end_qualification_meta_includes_elapsed_when_stamped_before_write \
   --test-threads=1
 
 cargo test -p host-play --features memory-profile --lib cohort -- --test-threads=1
@@ -176,8 +181,8 @@ cargo check -p tui --features memory-profile
 Production-path coverage (not mirrored helpers alone):
 
 - `cohort_publisher_production_lifecycle_cursor_drain_finalize` — arm → complete → durable_write drain → cursor progress → absolute END+tail finish
-- `poll_forces_final_observe_sample_when_last_sample_recent_at_end` — **production `Run::poll`**: last_sample recent at mono END forces final observe row then drain
-- `observe_end_qualification_meta_includes_elapsed_when_stamped_before_write` — production `write_qualification("observe-end")` after stamp; unstamped attach stays null
+- `poll_forces_final_observe_sample_when_last_sample_recent_at_end` — **production `Run::poll`**: last_sample recent at mono END forces final observe row then drain; **also** asserts poll-written observe-end qualification has non-null `cohort.observe_end_elapsed_s` (catches stamp-after-write regressions)
+- `observe_end_qualification_meta_includes_elapsed_when_stamped_before_write` — write_qualification + unstamped attach null check (supplementary; not sole coverage)
 - `finish_cohort_shutdown_joins_slot_before_terminal` — stop_slot + join via real Play path
 - `cohort_tail_complete_uses_absolute_end_plus_tail_not_relative`
 - `cohort_publisher_skips_when_responsiveness_profile_off` — fresh child `--exact`
@@ -194,4 +199,4 @@ Full `cargo test -p host-play --features memory-profile --lib` can report 4 `pre
 
 ## Handoff
 
-Ready for profile `reviewer` same-card re-review after round-1 corrections.
+Ready for profile `reviewer` same-card re-review after round-2 envelope + production observe-end poll coverage.

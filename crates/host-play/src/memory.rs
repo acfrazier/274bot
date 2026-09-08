@@ -3661,6 +3661,33 @@ mod tests {
             "after forced write, phase is drain"
         );
 
+        // Production path: poll stamps observe_end_elapsed_s before
+        // write_qualification("observe-end"). Manual stamp-before-write tests
+        // cannot catch a poll order regression that leaves meta null.
+        let qtext = std::fs::read_to_string(&qpath).unwrap_or_default();
+        let mut found_observe_end = false;
+        for line in qtext.lines() {
+            let row: serde_json::Value = serde_json::from_str(line).expect("qual json");
+            if row.get("phase").and_then(|p| p.as_str()) == Some("observe-end") {
+                found_observe_end = true;
+                let meta = row
+                    .get("cohort")
+                    .expect("cohort meta on poll-written observe-end row");
+                assert!(
+                    meta["observe_end_elapsed_s"].as_f64().is_some(),
+                    "poll-written observe-end must have non-null cohort.observe_end_elapsed_s: {row}"
+                );
+                assert!(
+                    meta["observe_end_elapsed_s"].as_f64().unwrap() >= 0.0,
+                    "{row}"
+                );
+            }
+        }
+        assert!(
+            found_observe_end,
+            "poll at mono END must write observe-end qualification; q={qtext}"
+        );
+
         host::responsiveness_cohort::harness_test_reset();
         let _ = std::fs::remove_dir_all(dir);
     }
