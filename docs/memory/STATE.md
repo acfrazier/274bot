@@ -11,6 +11,22 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 13:15 UTC
+
+- Capture-corrected native N1 diagnostic b exited 0 at 13:12:17 UTC, no
+  timeout. Root downloaded archive and verified all 31 manifest files plus
+  archive/manifest SHA256. Evidence: diagnostics/windows-input-trace-cohort-b/
+  root-archive-verification.json. Raw terminal reports 320 records, zero losses,
+  zero pending, producers joined. Full independent cohort analysis still next;
+  terminal availability alone is not performance acceptance.
+- Reviewed host debug cache bf5f49c integrated on primary142f7c3 and identical
+  native role branches referencee25f328/candidateca56e14. Root host lib tests
+  213 PASS/1 existing GPU ignore, 10.69s. Native rebuilds remain pending.
+- Next: independently analyze archived input/decode cohort and write follow-up
+  report; verify common role patch/provenance; rebuild/test final native roles;
+  obtain Grok4.6 correction/evidence reconciliation before N16 matched pair.
+  No new matched performance acceptance and whole campaign remains open.
+
 ## Latest boundary — 2026-09-08 12:49 UTC
 
 - Reader63b847b APPROVED actualGrok4.5/xai-oauth20260908_084235_12cb9b;
