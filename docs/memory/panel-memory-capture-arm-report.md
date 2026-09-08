@@ -39,15 +39,16 @@ in: after pane close + direct policy open + `set_game_pane_open(true)`,
 
 ## Fix
 
-Minimum ownership change in `Session::memory_focus` / new private
-`memory_focus_at`:
+Minimum ownership change in `Session::memory_focus` / private `memory_focus_at`:
 
 - Still apply `memory_draw_policy` for renderer/wall/cadence bits.
 - For FixedOne / FocusedOne / FocusedPlusBackground, roll back the policy's
-  direct `game_pane_open = true` write to the prior value, then call
-  `set_game_pane_open(true)` so a real closed→open edge reattaches one channel.
-- Already-open + capture on: `set_game_pane_open(true)` is a no-op for the
-  channel (no per-frame recreate, queued edges kept).
+  direct `game_pane_open = true` write to the prior value.
+- Call `set_game_pane_open(true)` **only when** `forces_pane && !was_open` so a
+  real closed→open edge reattaches one channel **and** issues the single wake
+  that open edge already owed. Already-open forced-pane frames are a no-op for
+  both channel and `play.wake` (avoids a second per-frame wake before
+  `game_window`'s setter).
 - Capture pref off: open edge does not attach.
 - RotatingAll does not force pane open (unchanged).
 - Focus switch still goes through `select` (old drain disabled, current attached).
@@ -60,10 +61,10 @@ ownership. No metric/admission/input synthesis changes.
 
 ```text
 cargo test -p panel --features memory-profile-no-alloc --lib memory_
-  → 9 passed (focus policy + new session capture lifecycle)
+  → memory lifecycle + focus policy tests
 
 cargo test -p panel --features memory-profile-no-alloc --lib -- capture
-  → 18 passed (legacy close/reopen, stream_capture, prefs, new lifecycle)
+  → legacy close/reopen, stream_capture, prefs, lifecycle
 ```
 
 Covered:
@@ -73,6 +74,7 @@ Covered:
 | Direct policy open after close strands channel (confounder) | asserted |
 | capture attached → pane close → memory_focus → pane open → channel + key to SlotInput | pass |
 | repeat memory_focus stable channel keeps queued edges | pass |
+| stable open memory_focus adds zero `set_game_pane_open` wake attempts; closed→open wakes once | pass |
 | capture pref off stays off through memory_focus + open | pass |
 | focus switch disables old drain, attaches current | pass |
 | legacy close/reopen / stream_capture / pref persist | pass |
@@ -81,7 +83,7 @@ No live secrets; no native test claims.
 
 ## Files
 
-- `crates/panel/src/session.rs` — `memory_focus` / `memory_focus_at` + tests
+- `crates/panel/src/session.rs` — gated `memory_focus_at` + wake-neutrality test
 - `crates/panel/src/focus.rs` — ownership comment on `memory_draw_policy`
 - `docs/memory/panel-memory-capture-arm-report.md` — this report
 

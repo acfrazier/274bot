@@ -923,6 +923,11 @@ pub struct Session {
     /// `Session::new`; every `live_prepare_*` flips it off so an ephemeral
     /// live boot never touches the operator's `last_focus`.
     pub persist_ui: bool,
+    /// Test-only: counts `set_game_pane_open` entries that would kick
+    /// `play.wake` (focused name present). Used to prove stable
+    /// `memory_focus_at` frames add no scheduler wakes.
+    #[cfg(test)]
+    set_game_pane_open_wake_attempts: u32,
 }
 
 /// Keep each per-name panel log bounded.
@@ -1106,6 +1111,8 @@ impl Session {
                     mainland: false,
                 }
             },
+            #[cfg(test)]
+            set_game_pane_open_wake_attempts: 0,
         }
     }
 
@@ -1434,6 +1441,11 @@ impl Session {
     /// (including a direct `game_pane_open = true` for Focus-level math);
     /// those direct pane writes are rolled back here before the owned
     /// transition so we never skip `capture_on` after an actual pane close.
+    ///
+    /// Already-open forced-pane frames must not call `set_game_pane_open`:
+    /// that setter ends with an unconditional `play.wake`, and the app
+    /// already wakes once after draw via the real pane callback. Only the
+    /// closed→open edge is owned here.
     #[cfg(feature = "memory-profile")]
     fn memory_focus_at(
         &mut self,
@@ -1460,7 +1472,9 @@ impl Session {
                 focus.game_pane_open = was_open;
             }
         }
-        if forces_pane {
+        // Gate on a real required opening only — stable open frames are a
+        // no-op for both channel reattach and play.wake.
+        if forces_pane && !was_open {
             self.set_game_pane_open(true);
         }
     }
@@ -2408,6 +2422,11 @@ impl Session {
         // draw_for_slot gates on the pane; kick the focused slot so a
         // parked thread sees the change within a frame.
         if let Some(name) = name {
+            #[cfg(test)]
+            {
+                self.set_game_pane_open_wake_attempts =
+                    self.set_game_pane_open_wake_attempts.saturating_add(1);
+            }
             if let Some(play) = self.play.as_ref() {
                 play.wake(&name);
             }
@@ -6654,6 +6673,50 @@ mod tests {
         assert!(
             input.drain_with_actionable_flag(&mut shell),
             "repeat memory_focus must not discard a queued edge"
+        );
+    }
+
+    /// Stable forced-pane frames must not call `set_game_pane_open` (and
+    /// therefore must not add `play.wake` attempts). Closed→open still
+    /// wakes once via the owned open edge.
+    #[cfg(feature = "memory-profile")]
+    #[test]
+    fn memory_focus_stable_open_adds_no_set_game_pane_open_wakes() {
+        let mut s = Session::new();
+        s.slots.insert(
+            "alice".into(),
+            SlotIo {
+                input: SlotInput::new(),
+                pixels: FrameBuf::new(),
+            },
+        );
+        s.select("alice");
+        s.set_capture(true);
+        assert!(s.focus.lock().unwrap().game_pane_open);
+        assert!(s.capture_tx.is_some());
+
+        let names = vec!["alice".into()];
+        s.set_game_pane_open_wake_attempts = 0;
+        s.memory_focus_at(&names, 0, host_play::memory::RenderPolicy::FocusedOne);
+        s.memory_focus_at(&names, 0, host_play::memory::RenderPolicy::FocusedOne);
+        s.memory_focus_at(&names, 0, host_play::memory::RenderPolicy::FixedOne);
+        assert_eq!(
+            s.set_game_pane_open_wake_attempts, 0,
+            "already-open forced-pane memory_focus must not wake via set_game_pane_open"
+        );
+        assert!(s.capture_tx.is_some());
+        assert!(s.focus.lock().unwrap().game_pane_open);
+
+        // Closed→open still owns one open edge (one wake attempt).
+        s.set_game_pane_open(false);
+        assert!(s.capture_tx.is_none());
+        s.set_game_pane_open_wake_attempts = 0;
+        s.memory_focus_at(&names, 0, host_play::memory::RenderPolicy::FocusedOne);
+        assert!(s.focus.lock().unwrap().game_pane_open);
+        assert!(s.capture_tx.is_some(), "closed→open must reattach capture");
+        assert_eq!(
+            s.set_game_pane_open_wake_attempts, 1,
+            "owned closed→open edge must wake once via set_game_pane_open"
         );
     }
 
