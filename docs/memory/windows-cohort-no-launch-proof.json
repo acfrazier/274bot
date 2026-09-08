@@ -1,0 +1,98 @@
+{
+  "status": "Native no-launch proof only; sampler integration and live comparison remain pending",
+  "archiveSha256": "b0070a7693267468529ef817a88441f741927a268b6195ee20e68297a517f4f8",
+  "verifiedFiles": 31,
+  "roles": {
+    "baseline": {
+      "contract": {
+        "kind": "no-launch contract test",
+        "cell_id": "baseline-focused-one-cohort-native-20260908-1400",
+        "check_id": "baseline-focused-one-cohort-native-20260908-1400",
+        "contract_id": "baseline-focused-one-cohort-native-20260908-1400-cohort-contractcheck",
+        "checks": [
+          {
+            "id": "baseline-focused-one-cohort-native-20260908-1400",
+            "contract_cell_id": "baseline-focused-one-cohort-native-20260908-1400-cohort-contractcheck",
+            "checked": true,
+            "launched": false,
+            "client_started": false,
+            "server_pid": 6728,
+            "native_conditions_complete": true,
+            "owner_census_opt_in": false
+          }
+        ],
+        "performance_acceptance": false
+      },
+      "prepare": {
+        "schema": "cohort-pair-prepare-no-launch-v1",
+        "cell_id": "baseline-focused-one-cohort-native-20260908-1400",
+        "host_root": "C:/Users/BotTest/274bot-workspaces/3118e96/host",
+        "stage": "C:\\ProgramData\\274bot-Test\\cohort-reference-e25f328",
+        "ast_parser": "consumed before privileged staging",
+        "native_preflight": "consumed before privileged staging",
+        "python_contract_tests": "run separately as BotTest Interactive Limited",
+        "binding_conditions": "passed",
+        "count": 16,
+        "mode": "focused-one",
+        "observe_s": 600,
+        "warmup_s": 120,
+        "cohort_tail_s": 5,
+        "teardown_grace_s": 60,
+        "requested_backend": "gpu",
+        "client_started": false,
+        "scheduled_task_created": false,
+        "performanceAcceptance": false,
+        "build_manifest": "C:\\ProgramData\\274bot-Test\\cohort-pair-provenance-ec0adc4\\build-manifest.json",
+        "build_receipt": "C:\\ProgramData\\274bot-Test\\cohort-pair-provenance-ec0adc4\\baseline-build-receipt.json",
+        "stimulus_plan": "C:\\ProgramData\\274bot-Test\\cohort-pair-provenance-ec0adc4\\baseline-stimulus-plan-1400.json",
+        "stimulus_receipt": "C:\\Users\\BotTest\\274bot-runs\\latency-diagnostic-cohort-pair-baseline-focused-one-cohort-native-20260908-1400\\post-run-envelope.json"
+      }
+    },
+    "candidate": {
+      "contract": {
+        "kind": "no-launch contract test",
+        "cell_id": "candidate-focused-one-cohort-native-20260908-1400",
+        "check_id": "candidate-focused-one-cohort-native-20260908-1400",
+        "contract_id": "candidate-focused-one-cohort-native-20260908-1400-cohort-contractcheck",
+        "checks": [
+          {
+            "id": "candidate-focused-one-cohort-native-20260908-1400",
+            "contract_cell_id": "candidate-focused-one-cohort-native-20260908-1400-cohort-contractcheck",
+            "checked": true,
+            "launched": false,
+            "client_started": false,
+            "server_pid": 6728,
+            "native_conditions_complete": true,
+            "owner_census_opt_in": false
+          }
+        ],
+        "performance_acceptance": false
+      },
+      "prepare": {
+        "schema": "cohort-pair-prepare-no-launch-v1",
+        "cell_id": "candidate-focused-one-cohort-native-20260908-1400",
+        "host_root": "C:/Users/BotTest/274bot-workspaces/3118e96/host",
+        "stage": "C:\\ProgramData\\274bot-Test\\cohort-candidate-ca56e14",
+        "ast_parser": "consumed before privileged staging",
+        "native_preflight": "consumed before privileged staging",
+        "python_contract_tests": "run separately as BotTest Interactive Limited",
+        "binding_conditions": "passed",
+        "count": 16,
+        "mode": "focused-one",
+        "observe_s": 600,
+        "warmup_s": 120,
+        "cohort_tail_s": 5,
+        "teardown_grace_s": 60,
+        "requested_backend": "gpu",
+        "client_started": false,
+        "scheduled_task_created": false,
+        "performanceAcceptance": false,
+        "build_manifest": "C:\\ProgramData\\274bot-Test\\cohort-pair-provenance-ec0adc4\\build-manifest.json",
+        "build_receipt": "C:\\ProgramData\\274bot-Test\\cohort-pair-provenance-ec0adc4\\candidate-build-receipt.json",
+        "stimulus_plan": "C:\\ProgramData\\274bot-Test\\cohort-pair-provenance-ec0adc4\\candidate-stimulus-plan-1400.json",
+        "stimulus_receipt": "C:\\Users\\BotTest\\274bot-runs\\latency-diagnostic-cohort-pair-candidate-focused-one-cohort-native-20260908-1400\\post-run-envelope.json"
+      }
+    }
+  },
+  "quiet_service_note": "ClickToRunSvc observed Running/Automatic and restored to previously operator-authorized Stopped/Disabled; cause of configuration drift was not established."
+}
