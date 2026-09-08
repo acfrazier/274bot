@@ -9,6 +9,22 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 07:07 UTC
+
+- Longer baseline0250 completed0/IntelVulkan, nativebound/qualified16/16,
+  no missingmatchkeys; all22archivefiles hash/lengthverified and actual local
+  qualify_control passed. TarB580284CD6EF1EB5766877E8D4543B853C0E6C55A4C8DAA3612932856F5907CF;
+  manifestD7F48092AFEAC0FDB4A4708135B50B5E4147CAB8B252905F4954E0A38C7BBD7D.
+  windows-tile-boxed-long-baseline-receipt.json records qualification598.9314s,
+  allslotsteals45..75. No comparison/acceptance from baselinealone.
+- Candidate-focused-one-long-native-20260908-0250 launched07:05:11.5675UTC
+  after freshpreflight/contractconsume. Native raw20260908T070512Z_panel_n16_active
+  PID9412 currentlywarming/Running; await same600s cell completion, nativebind,
+  qual andarchive. Do not add anotherlongerstage. Originalruntimeunchanged.
+- Coverageaudit t_27ed9e56 firstworker exitedwithoutlifecyclehandoff; secondactual
+  implementer run active. Visualsetupcorrection t_a82d06cc stillactualrunning.
+  Bothread-onlylocal; no nativeoverlap. No readerfix or newvisualproof yet.
+
 ## Latest boundary — 2026-09-08 07:00 UTC
 
 - Longer baseline0250 actual scheduled task stillRunning06:59:31UTC; no terminal
