@@ -9,6 +9,25 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 04:40 UTC
+
+- Native supplementary backend tests fb/clientfd PASSED: gpu_backend10,
+  render_backend5, BOT_CPU override1; no unavailable-adapter skip reported.
+  Same876source pre/post verified. Backend adapter identity not reported;
+  offscreen backend proof only, livevisual/CPUgameplay/focusdetach still pending.
+  Receipt windows-tile-native-backend-proof.json; nativeexec94600 drained.
+- Clean controls t_10e7c701 firstreview running; root cold-read found stale
+  copied census contract helpers: absentfilenames, oldCellId/926-only binding,
+  ownerON assertion contradicts cleanOFF. Commented samecard; do not stage or
+  launch this revision. Await corrected full bothrole/mode no-launch contract.
+- Explicit CPU-only diagnostic tooling t_008e604c actualimplementer running.
+  Rootprecreated .worktrees/t_008e604c codex/cpu-fallback-proof-tools fromb63263b
+  with narrowSTATE6fea6bf. Existinglauncher scrubsBOT_CPU, so explicitpanel-only
+  --cpu-fallback option required for truthfulfunctionalproof; rejectGPUcompletion,
+  preserve defaultGPU behavior and preventCPU/GPUmatchedtargetmisclassification.
+  Python-only/no nativeactions. Integrate only worker source commit, not root
+  isolatedSTATE setup. Rootlater separatefunctionalproof aftercleanscreen.
+
 ## Latest boundary — 2026-09-08 04:32 UTC
 
 - Grok4.6 milestone t_037ff8fd APPROVED exactfb3589a/clientfd956c9;

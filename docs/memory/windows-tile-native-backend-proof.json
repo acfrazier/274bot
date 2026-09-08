@@ -1,0 +1,64 @@
+{
+  "host": "fb3589ac28583242b999ac864ea69c4ef8fa5923",
+  "client": "fd956c91bf09e059359c8e182a33583e2c626cd3",
+  "native_receipt": {
+    "hostCommit": "fb3589ac28583242b999ac864ea69c4ef8fa5923",
+    "clientCommit": "fd956c91bf09e059359c8e182a33583e2c626cd3",
+    "startedUtc": "2026-09-08T04:39:26.3768419Z",
+    "endedUtc": "2026-09-08T04:39:32.5241952Z",
+    "gpuBackendExit": 0,
+    "renderBackendExit": 0,
+    "cpuEnvExit": 0,
+    "performanceAcceptance": false
+  },
+  "pre": {
+    "verified_files": 876,
+    "sources_sha256": "189dac149beb6f258f5a79bdf09de43818556a5f06ffa783a608f0113a64d8a4"
+  },
+  "post": {
+    "verified_files": 876,
+    "sources_sha256": "189dac149beb6f258f5a79bdf09de43818556a5f06ffa783a608f0113a64d8a4"
+  },
+  "commands": [
+    "cargo test --locked --release -p client --test gpu_backend -- --nocapture --test-threads=1",
+    "cargo test --locked --release -p client --test render_backend -- --nocapture --test-threads=1",
+    "cargo test --locked --release -p host --lib bot_cpu_env_forces_cpu_even_when_slot_input_prefers_gpu -- --nocapture --test-threads=1"
+  ],
+  "pass_counts": [
+    10,
+    5,
+    1
+  ],
+  "gpu_unavailable_skip_reported": false,
+  "limits": [
+    "Native offscreen backend tests; selected adapter identity not reported, not proof of Intel comparison setup.",
+    "Full live visual scene_state1/focus/attach/detach and CPU gameplay capture remain pending.",
+    "No resource or performance acceptance."
+  ],
+  "receipts": {
+    "source-post.json": {
+      "bytes": 114,
+      "sha256": "f3689abf6ebe6ad94fd2123c2763ba4c621c546ea0d1b867c7c8f7641dca24fa"
+    },
+    "gpu-backend.log": {
+      "bytes": 2794,
+      "sha256": "c6ed80ef5a2de074158025e877ade33908b2db1ad15c7f4846d6be90c9ee5bcc"
+    },
+    "render-backend.log": {
+      "bytes": 2772,
+      "sha256": "a30d78b9291d94da70e0625e961506085b9f7dad67ea6925c64472e14447818b"
+    },
+    "cpu-env.log": {
+      "bytes": 1588,
+      "sha256": "2f66218a6339124903b9e2bf2bb68741a8f7dd378252e4dc7a4be78aac194c3e"
+    },
+    "source-pre.json": {
+      "bytes": 114,
+      "sha256": "f3689abf6ebe6ad94fd2123c2763ba4c621c546ea0d1b867c7c8f7641dca24fa"
+    },
+    "receipt.json": {
+      "bytes": 712,
+      "sha256": "2011bee6b45b7a787e42631251b631c7e96f052623f04593c54db07baa4d004d"
+    }
+  }
+}
