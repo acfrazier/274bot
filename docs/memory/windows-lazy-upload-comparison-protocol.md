@@ -70,7 +70,7 @@ startup. A configured 1 fps value is not a measured cadence.
 
 ## Files and root staging instructions
 
-Transfer this directory without renaming files. The six controls are:
+Transfer this directory without renaming files. The six executable controls are:
 
 - `run-panel-lazy-upload-focused-one.py`
 - `run-panel-lazy-upload-focused-plus-background.py`
@@ -78,6 +78,10 @@ Transfer this directory without renaming files. The six controls are:
 - `launch-panel-lazy-upload.ps1`
 - `poll-panel-lazy-upload.ps1`
 - `archive-panel-lazy-upload.ps1`
+
+Also transfer `test_controller_provenance.py`, which evaluates the actual controller
+output expressions against the strict evidence reader and tests omitted-field
+rejection. This seventh file is a local regression test, not a launch entry point.
 
 Preparation does not copy or modify the candidate. The root BotTest machine
 already has the approved candidate staged at
@@ -105,7 +109,12 @@ and current Process Lasso/driver/process state. Power evidence includes the real
 Windows AC-line status, computer-system power state as a separately named field,
 active power scheme and AC display/lid settings, battery telemetry, and panel
 brightness when available; do not interpret computer-system power state as AC
-line status.
+line status. The DxDiag display list is a saved console observation with source
+path, SHA-256 and last-write time, explicitly labeled as not a fresh scan. Fresh
+CIM driver/session data and actual startup adapter records remain required; the
+saved list does not prove current display routing. Conditions retain the strict
+reader purpose and panel/terminal fields, and the server sidecar retains the
+three configuration hashes and existing bind-host/Node-version identity.
 It writes a cell-specific checked record to the frozen baseline stage; never
 reuse a prior cell's timestamped record. Candidate binary presence is
 intentionally deferred until candidate staging.
