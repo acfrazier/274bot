@@ -9,6 +9,27 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 04:17 UTC
+
+- Linux timing native ONE launch completed0; launcher/collector0, no orphan.
+  Archive f4d5ed16c857b281296f5b95d7ac19bbee9706592a4e601bac24295e0d053077,
+  27 files plus manifest copied/verified locally under
+  diagnostics/linux-failure-timing-20260908/archive-fec9793 including raw-run-01.
+  Native receipt binder bound/qualified true; local workload qualifier16/16
+  118.2653s, median626327552B, CPU0.7160896core,49.0037clientticks/slot/s.
+  No failure attribution on32 boundary rows; non-reproduction only, no causal
+  fix or performance acceptance. Root report linux-timing-native-root-observation.json.
+  Native first binder invocation incorrectly used cell_report instead of receipt;
+  preserved missing-field result, correct unchanged receipt binding passes.
+- Independent Linux evidence card t_082c43c4 assigned Luna primary; verify actual
+  run through same-card review. No new diagnostic rerun. Both native hosts quiet;
+  root sessions47284/32912/88514 completed, VM Off.
+- Tile t_598d9469 firstreview requested corrections: missing report, out-of-scope
+  STATE edit, incomplete all8tile/linked/etc evidence. Same-card implementer
+  actually running correction. Source hostd053a46/clientf58be06 not yet approved.
+  Root noted worker prematurely included gitlink; no history rewrite, no further
+  Git hygiene delegated. Await final corrections and reviewed exact sources.
+
 ## Latest boundary — 2026-09-08 04:09 UTC
 
 - Native timing controls fec9793 approved actualGrok4.5/xai-oauth session

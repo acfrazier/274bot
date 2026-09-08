@@ -1,0 +1,65 @@
+{
+  "archive_sha256": "f4d5ed16c857b281296f5b95d7ac19bbee9706592a4e601bac24295e0d053077",
+  "archive_manifest_files_verified": 27,
+  "binary_sha256": "0695a7bfd31122c17a93b9f79d2ffcfbb2eb0c2296d3fd08edc178bc726d5163",
+  "native_binding_ok": true,
+  "native_qualified": true,
+  "native_binding_sha256": "c3a09ed727b1b2b106e171280bbe95123a71b7f1c7cc44d4b7857a0e3354c7fc",
+  "root_qualification": {
+    "run": ".worktrees/t_a1f4796f/diagnostics/linux-failure-timing-20260908/archive-fec9793/raw-run-01",
+    "qualified": true,
+    "errors": [],
+    "qualification": {
+      "run": ".worktrees/t_a1f4796f/diagnostics/linux-failure-timing-20260908/archive-fec9793/raw-run-01",
+      "n": 16,
+      "counting": false,
+      "diagnostics": false,
+      "qualified": true,
+      "errors": [],
+      "observation_s": 118.26530549099999,
+      "cpu_seconds": 84.688558,
+      "cpu_cores": 0.7160896228052682,
+      "client_ticks_per_slot_s": 49.003699571393184,
+      "median_resident_bytes": 626327552.0,
+      "steal_gains": {
+        "live25bde_0": 15,
+        "live25bde_1": 6,
+        "live25bde_2": 7,
+        "live25bde_3": 4,
+        "live25bde_4": 9,
+        "live25bde_5": 6,
+        "live25bde_6": 9,
+        "live25bde_7": 10,
+        "live25bde_8": 6,
+        "live25bde_9": 10,
+        "live25bde_10": 11,
+        "live25bde_11": 11,
+        "live25bde_12": 10,
+        "live25bde_13": 8,
+        "live25bde_14": 10,
+        "live25bde_15": 4
+      },
+      "diagnostic_only": true
+    },
+    "counting": false,
+    "diagnostics": false,
+    "workload": "active",
+    "pass_means": "workload qualification only; not performance or budget acceptance"
+  },
+  "boundary_errors": [],
+  "boundary_failure_attribution": [],
+  "boundaries": [
+    {
+      "phase": "observe-start",
+      "elapsed_s": 102.665305022,
+      "slots": 16
+    },
+    {
+      "phase": "observe-end",
+      "elapsed_s": 222.700757229,
+      "slots": 16
+    }
+  ],
+  "interpretation": "One successful diagnostic non-reproduction only; no failure duration observed, causal fix or performance acceptance. Earlier failures remain valid. Different native build toolchain and changed instrumentation preclude a matched comparison to old Docker binary.",
+  "incorrect_binder_invocation": "First invocation supplied cell_report.json instead of receipt.json and failed missing-field validation. Preserved native-binding-fec9793.json; corrected receipt invocation passes without raw edits."
+}
