@@ -22,7 +22,7 @@ $allowedRoots=@([IO.Path]::GetFullPath('C:\Users\BotTest\274bot-runs\visual-proo
 $receipt=Join-Path $out ($Label+'.input-stimulus.json')
 $events=New-Object System.Collections.Generic.List[object]
 $startedUtc=$null;$endedUtc=$null;$outcome='not-started';$terminalReason=$null;$failure=$null
-$process=$null;$window=[IntPtr]::Zero;$initialRect=$null;$sessionId=$null;$binaryHash=$null
+$process=$null;$window=[IntPtr]::Zero;$initialRect=$null;$sessionId=$null;$binaryHash=$null;$finalBinaryHash=$null
 $pressedKey=$null;$pressedAt=$null;$requested=0;$completed=0;$missed=0;$deferred=0
 $stopwatch=[Diagnostics.Stopwatch]::StartNew();$receiptOwned=$false
 
@@ -32,7 +32,7 @@ function Write-Receipt {
  [ordered]@{
   schema='native-panel-input-stimulus-v1';label=$Label;pid=$PanelPid;startUtc=$ExpectedStartUtc
   expectedUser=$ExpectedUser;sessionId=$sessionId;expectedSessionId=$ExpectedSessionId
-  binary=$ExpectedBinary;binarySha256=$binaryHash;expectedBinarySha256=$ExpectedBinarySha256
+  binary=$ExpectedBinary;binarySha256=$binaryHash;finalBinarySha256=$finalBinaryHash;expectedBinarySha256=$ExpectedBinarySha256
   windowHandle=$windowValue;expectedRect=$ExpectedRect;observedRect=$rectValue;gameImagePoint=$GameImagePoint
   captureEnabledVerified=[bool]$CaptureEnabledVerified;slotZeroFocusVerified=[bool]$SlotZeroFocusVerified
   cadenceMilliseconds=$CadenceMilliseconds;pressMilliseconds=$PressMilliseconds;durationSeconds=$DurationSeconds
@@ -48,7 +48,6 @@ function Assert-Target([bool]$CheckRect) {
  if($process.StartTime.ToUniversalTime().ToString('o') -cne $ExpectedStartUtc -or $process.SessionId -ne $ExpectedSessionId){throw 'Target process start/session identity changed'}
  if($sessionId -ne (Get-Process -Id $PID).SessionId){throw 'Helper and target are not in the same local session'}
  if([PanelInputStimulusNative]::GetSystemMetrics(0x1000) -ne 0){throw 'Local console required'}
- if((Get-FileHash -LiteralPath $ExpectedBinary -Algorithm SHA256).Hash.ToLower() -cne $ExpectedBinarySha256.ToLower()){throw 'Frozen binary hash changed'}
  if([PanelInputStimulusNative]::GetForegroundWindow() -ne $window){throw 'Target window is not foreground'}
  if([PanelInputStimulusNative]::IsIconic($window)){throw 'Target window is minimized'}
  $ownerPid=0;[void][PanelInputStimulusNative]::GetWindowThreadProcessId($window,[ref]$ownerPid)
@@ -138,10 +137,13 @@ try {
   $down=[PanelInputStimulusNative]::CreateKeyboardInput([ushort]$vk,$downFlags);$up=[PanelInputStimulusNative]::CreateKeyboardInput([ushort]$vk,$upFlags)
   if($down.keyboard.wVk -ne $vk -or $up.keyboard.wVk -ne $vk -or $down.keyboard.dwFlags -ne $downFlags -or $up.keyboard.dwFlags -ne $upFlags){throw 'Arrow INPUT factory fields invalid'}
   $direction=if($vk -eq 0x25){'Left'}else{'Right'}
-  $event=[ordered]@{index=$i+1;direction=$direction;virtualKey=$vk;downFlags=$downFlags;upFlags=$upFlags;dueMilliseconds=$due;latenessMilliseconds=$late;requestedUtc=[DateTime]::UtcNow.ToString('o');downUtc=$null;upUtc=$null;downSendInputResult=$null;upSendInputResult=$null;upSendInputException=$null;releaseAttempted=$false;releaseSucceeded=$false}
+  $event=[ordered]@{index=$i+1;direction=$direction;virtualKey=$vk;downFlags=$downFlags;upFlags=$upFlags;dueMilliseconds=$due;latenessMilliseconds=$late;actualDownElapsedMilliseconds=$null;actualDownLatenessMilliseconds=$null;requestedUtc=[DateTime]::UtcNow.ToString('o');downUtc=$null;upUtc=$null;downSendInputResult=$null;upSendInputResult=$null;upSendInputException=$null;releaseAttempted=$false;releaseSucceeded=$false}
   $downSucceeded=$false
   try {
    Assert-Target $true | Out-Null
+   $event.actualDownElapsedMilliseconds=$stopwatch.ElapsedMilliseconds;$event.actualDownLatenessMilliseconds=$event.actualDownElapsedMilliseconds-$due
+   if($event.actualDownElapsedMilliseconds -ge $deadlineMilliseconds){$terminalReason='total-duration-limit';throw 'Total duration limit reached after target guards'}
+   if($event.actualDownLatenessMilliseconds -ge $CadenceMilliseconds){$deferred++;$terminalReason='cadence-delayed-no-catch-up';throw 'Cadence delayed after target guards; refusing catch-up keystrokes'}
    $event.downUtc=[DateTime]::UtcNow.ToString('o');$event.downSendInputResult=[PanelInputStimulusNative]::SendInput(1,@($down),$inputSize)
    if($event.downSendInputResult -ne 1){throw 'Arrow key-down SendInput failed'}
    $downSucceeded=$true;$pressedKey=$vk;$pressedAt=$event.downUtc
@@ -152,6 +154,10 @@ try {
   }
   if($downSucceeded -and -not $event.releaseSucceeded){$terminalReason='key-release-failed';throw 'Arrow key-up SendInput failed'}
  }
+ if($stopwatch.ElapsedMilliseconds -ge $deadlineMilliseconds){$terminalReason='total-duration-limit';throw 'Total duration limit reached after final release'}
+ $finalBinaryHash=(Get-FileHash -LiteralPath $ExpectedBinary -Algorithm SHA256).Hash.ToLower()
+ if($finalBinaryHash -cne $ExpectedBinarySha256.ToLower()){throw 'Frozen binary hash changed at final verification'}
+ if($stopwatch.ElapsedMilliseconds -ge $deadlineMilliseconds){$terminalReason='total-duration-limit';throw 'Total duration limit reached after final verification'}
  $outcome='completed';$terminalReason='all-predeclared-pulses-completed'
 } catch {
  $outcome='failed';if(-not $terminalReason){$terminalReason='guard-or-input-failure'};$failure=$_.Exception.Message
@@ -160,5 +166,5 @@ try {
  if($null -ne $pressedKey){try{$release=[PanelInputStimulusNative]::CreateKeyboardInput([ushort]$pressedKey,0x0003);$releaseResult=[PanelInputStimulusNative]::SendInput(1,@($release),[Runtime.InteropServices.Marshal]::SizeOf($release));if($releaseResult -ne 1){$failure=($failure+'; finally key release failed');$outcome='failed'}else{$pressedKey=$null;$pressedAt=$null}}catch{$failure=($failure+'; finally key release exception: '+$_.Exception.Message);$outcome='failed'}}
  $endedUtc=[DateTime]::UtcNow.ToString('o');if($receiptOwned){Write-Receipt}
 }
-Get-Content -LiteralPath $receipt -Raw
+if($receiptOwned){Get-Content -LiteralPath $receipt -Raw}
 if($outcome -ne 'completed'){throw ('Panel input stimulus '+$outcome+': '+$terminalReason)}
