@@ -11,6 +11,29 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 23:00 UTC
+
+- Native code `6be6328` plus report-only correction `f097fdc` passed actual
+  Grok 4.5 / xai-oauth review session `20260908_184643_6b95a9` on `t_98f58617`.
+  All original/local proof limitations remain; this approved a compiled tool.
+- Root started the existing Linux builder VM after identity/resource/conflict
+  checks, verified its pinned SSH key at new DHCP address `172.23.82.228`,
+  and built the reviewed package with rustc/cargo 1.98.0 on Ubuntu 24.04.4,
+  glibc 2.39, x86_64. Source hashes matched before/after; build completed.
+- Root staged and hash-verified all 40 files plus all three Linux ELF identities
+  and resolved libraries at `/home/acfrazier/owner-native-f097fdc` on Concord.
+  Exact manifests/build receipts are in
+  `diagnostics/replay-native-stage-rust-preparation/`. Only tooling and small
+  allowlisted fixtures were transferred, no production trace.
+- Root released `t_ebf2e33a` to Luna for ONE unchanged fixture-only qualification
+  in that tree, output `qualification-1`, explicit three binary hashes, no
+  portable flag, no retry or cap increase. It must export evidence, recompute
+  rates, report and obtain same-card review. No production replay is released.
+- Separate 289 E `2a0f774` passed actual Grok 4.5 session
+  `20260908_184242_66d645`. F social/chat/player options now runs as
+  `t_4583da40`, actual Luna session `20260908_185044_629a83`. G-H/live/final
+  whole-branch acceptance remain open.
+
 ## Latest boundary — 2026-09-08 22:43 UTC
 
 - Native implementation `6be6328` is submitted on `t_98f58617`; actual
