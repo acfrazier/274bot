@@ -9,6 +9,29 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 11:13 UTC
+
+- Reader t_829c6804 first draft a84a2b4 submitted by luna; actual reviewer
+  Grok4.5/xai-oauth session20260908_071025_662251 running. Root independently
+  reproduced false meet with N16 but one decode slot/no samples/profile off;
+  counter-only losses7 hidden; batch after terminal accepted; list-valued
+  surface raises TypeError. Corrective context added to same card. No reader
+  integration or acceptance. Three smoke tests do not satisfy original matrix.
+- Root prepared two isolated native-parent branches with identical reviewed
+  producer/tracer/publisher commits, no conflicts: windows-cohort-reference
+  codex/windows-cohort-reference bf2d1ed (parent9268890/clientabb811b) and
+  windows-cohort-candidate codex/windows-cohort-candidate984c639
+  (parentfb3589a/clientfd956c9). Instrumentation stable patch-id identical;
+  original role difference patch-id preserved. Source-only receipt:
+  windows-cohort-source-preparation.json. Host archives and source manifests,
+  plus adapted build scripts, prepared under existing /tmp Windows helper dir;
+  existing client archives verified via embedded git commit before reuse.
+- No native upload/build/test/run from this preparation. Reader review and
+  required combined integration review remain prerequisites for native pair.
+  Source packages do not yet include the reader and are not final build receipts.
+  Primary tracked Rust unchanged; all previous target/matrix/lifecycle/scaling
+  and final whole-Grok gates remain open.
+
 ## Latest boundary — 2026-09-08 11:05 UTC
 
 - Publisher d6c10ae APPROVED t_5992fd7a actual Grok4.5/xai-oauth session

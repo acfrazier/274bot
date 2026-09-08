@@ -1,0 +1,33 @@
+{
+  "status": "source preparation only; reader and combined integration review pending; no native build or measurement",
+  "prepared_utc": "2026-09-08T11:12:50.167595+00:00",
+  "roles": {
+    "reference": {
+      "parent": "9268890217d968cfeb7c66ebb11dd5c3dd2c084f",
+      "host": "bf2d1ed75424a45ae0d38b8381bfd1eac2c83749",
+      "client": "abb811bd0afa1acd99319ccd5bc36bfb241080f9",
+      "files": 876,
+      "sources_sha256": "ceeab25f672b70641787e81344b3bf2445acaa38748d242c3665f23abbb11fb5",
+      "instrumentation_patch_id": "395182524a34bcd09ed6717b8cf6a9ed1b51ebd4",
+      "archives": {
+        "host-bf2d1ed.tar.gz": "c2af47331e8e3779bb7caead3db6faa6545b057b8d3cc6ee16120d436d2b0a04",
+        "client-abb811b.tar.gz": "c8eac9ccd06c46a0beca420f6fc30ccd2e4b23237c1ea9894ea743b73fd834ab"
+      }
+    },
+    "candidate": {
+      "parent": "fb3589ac28583242b999ac864ea69c4ef8fa5923",
+      "host": "984c63993cebcf4dc3ff6cc965031e896dc685a4",
+      "client": "fd956c91bf09e059359c8e182a33583e2c626cd3",
+      "files": 881,
+      "sources_sha256": "b66a0ddf7847778372e3184588769b2e6f9deba64b01f06f365563de81177fd1",
+      "instrumentation_patch_id": "395182524a34bcd09ed6717b8cf6a9ed1b51ebd4",
+      "archives": {
+        "host-984c639.tar.gz": "6ce48b47c551eb277ea0bf345f7d3edf3975903ff8887bb426ca422e7af819af",
+        "client-fd956c9.tar.gz": "ff65c36d805e1b0c63569884fe0316c436e3e9f4b6d26e440d5f848ca0fd1be7"
+      }
+    }
+  },
+  "original_role_difference_patch_id": "e95ca64e3d1d5caa8735fcec9f2360a5e7383b4b",
+  "prepared_role_difference_patch_id": "e95ca64e3d1d5caa8735fcec9f2360a5e7383b4b",
+  "role_difference_preserved": true
+}
