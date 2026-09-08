@@ -2217,6 +2217,46 @@ class FocusedGpuRoleCoverageTests(unittest.TestCase):
         missing_focus[1]["renderer_profile"][0]["full_rate"] = False
         self.assertEqual(rm.evaluate_gpu(meta, missing_focus)["status"], "unavailable")
 
+    def test_public_evaluate_gpu_rejects_interior_gpu_epoch_changes(self):
+        meta = _meta(render_profile=True, gpu_completion_profile=True, frontend="panel", n=1,
+                     render_policy="focused-one", render_policy_requested=True)
+        probes = ("enabled", "backend_kind", "stable_completion_interval_buckets")
+        for probe in probes:
+            samples = self._samples(1, "focused-one", middle=0)
+            row = samples[1]["renderer_profile"][0]
+            if probe == "enabled":
+                row["gpu_completion"]["enabled"] = False
+            elif probe == "backend_kind":
+                row["backend_kind"] = None
+            else:
+                row["gpu_completion"]["stable_completion_interval_buckets"] = [0, 0, 0, 5000] + [0] * 7
+            self.assertEqual(rm.evaluate_gpu(meta, samples)["status"], "unavailable", probe)
+
+    def test_public_evaluate_gpu_rejects_interior_counter_reset_and_background_drop(self):
+        focused_meta = _meta(render_profile=True, gpu_completion_profile=True, frontend="panel", n=1,
+                             render_policy="focused-one", render_policy_requested=True)
+        samples = self._samples(1, "focused-one", middle=0)
+        middle = samples[1]["renderer_profile"][0]["gpu_completion"]
+        middle["completed_n"] = 5000
+        middle["stable_completed_n"] = 5000
+        self.assertEqual(rm.evaluate_gpu(focused_meta, samples)["status"], "unavailable")
+
+        background_meta = _meta(render_profile=True, gpu_completion_profile=True, frontend="panel", n=2,
+                                render_policy="focused-plus-background", render_policy_requested=True)
+        samples = self._samples(2, "focused-plus-background", middle=0)
+        samples[1]["renderer_profile"][1]["backend_kind"] = None
+        self.assertEqual(rm.evaluate_gpu(background_meta, samples)["status"], "unavailable")
+
+    def test_public_evaluate_gpu_requires_complete_zero_headless_shape(self):
+        meta = _meta(render_profile=True, gpu_completion_profile=True, frontend="panel", n=2,
+                     render_policy="focused-one", render_policy_requested=True)
+        nonzero = self._samples(2, "focused-one")
+        nonzero[1]["renderer_profile"][1]["gpu_completion"]["stable_completion_intervals"] = 1
+        self.assertEqual(rm.evaluate_gpu(meta, nonzero)["status"], "unavailable")
+        missing = self._samples(2, "focused-one")
+        del missing[1]["renderer_profile"][1]["gpu_completion"]["completion_latency_buckets"]
+        self.assertEqual(rm.evaluate_gpu(meta, missing)["status"], "unavailable")
+
 
 if __name__ == "__main__":
     unittest.main()

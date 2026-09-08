@@ -2076,15 +2076,54 @@ def _gpu_headless_row_valid(row: dict) -> bool:
         return False
     if completion.get("pending_n") != 0:
         return False
-    if any(completion.get(key) != 0 for key in GPU_COUNTER_KEYS[:-1]):
+    if any(completion.get(key) != 0 for key in GPU_COUNTER_KEYS):
         return False
     if completion.get("registration_complete") is not True or completion.get("completion_coverage_complete") is not True:
         return False
     for key in ("stable_completion_interval_buckets", "completion_latency_buckets"):
         values = completion.get(key)
-        if values is not None and (not isinstance(values, list) or any(value != 0 for value in values)):
+        if not isinstance(values, list) or any(value != 0 for value in values):
             return False
     return True
+
+
+def _gpu_required_row_epoch_error(row: dict, previous: Optional[dict]) -> Optional[str]:
+    """Validate one required GPU row, including every contained epoch."""
+    completion = row.get("gpu_completion")
+    if not isinstance(completion, dict) or completion.get("enabled") is not True:
+        return "gpu_backend_or_completion_unavailable"
+    if not _gpu_backend_present(row):
+        return "gpu_backend_or_completion_unavailable"
+    if completion.get("pending_n") != 0 or completion.get("dropped_n") != 0 or completion.get("lost_n") != 0:
+        return "coverage_lost_or_incomplete"
+    if completion.get("registration_complete") is not True or completion.get("completion_coverage_complete") is not True:
+        return "coverage_incomplete"
+    for key in GPU_COUNTER_KEYS:
+        value = completion.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return "missing_or_malformed_gpu_counter"
+    for key in ("stable_completion_interval_buckets", "completion_latency_buckets"):
+        values = completion.get(key)
+        if not isinstance(values, list) or any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in values
+        ):
+            return "missing_or_malformed_gpu_histogram"
+    if previous is None:
+        return None
+    previous_completion = previous.get("gpu_completion")
+    if not isinstance(previous_completion, dict):
+        return "missing_gpu_completion"
+    for key in GPU_COUNTER_KEYS:
+        if completion[key] < previous_completion.get(key, -1):
+            return "counter_reset"
+    for key in ("stable_completion_interval_buckets", "completion_latency_buckets"):
+        current_values = completion[key]
+        previous_values = previous_completion.get(key)
+        if not isinstance(previous_values, list) or len(current_values) != len(previous_values):
+            return "missing_or_reset_gpu_histogram"
+        if any(current < prior for current, prior in zip(current_values, previous_values)):
+            return "missing_or_reset_gpu_histogram"
+    return None
 
 
 def _gpu_role_contract(meta: dict, observed: list[dict], n: Any) -> tuple[Optional[str], Optional[str]]:
@@ -2099,6 +2138,7 @@ def _gpu_role_contract(meta: dict, observed: list[dict], n: Any) -> tuple[Option
         return "invalid_declared_slot_count", None
     expected_set = None
     focused_key = None
+    previous_rows = {}
     for sample in observed:
         row_map, error = _index_slots(sample.get("renderer_profile"))
         if error:
@@ -2130,6 +2170,13 @@ def _gpu_role_contract(meta: dict, observed: list[dict], n: Any) -> tuple[Option
                 return "unexpected_renderer_role", None
         elif roles.count("focused_full_rate") != 1 or roles.count("background") != n - 1:
             return "focused_plus_background_role_contract_failed", None
+        for key, row, role in zip(row_map, row_map.values(), roles):
+            if meta["render_policy"] == "focused-one" and role is None:
+                continue
+            epoch_error = _gpu_required_row_epoch_error(row, previous_rows.get(key))
+            if epoch_error:
+                return epoch_error, None
+        previous_rows = row_map
     return None, meta["render_policy"]
 
 
