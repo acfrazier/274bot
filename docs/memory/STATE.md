@@ -9,6 +9,27 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 00:04 UTC
+
+- Lazy-upload follow-up t_f6265320 approved actual Grok4.6 session
+  20260907_195747_29d8a5, report a35512c in isolated candidate. Root verified
+  actual model in session database. Approved source3118e96/client5ee9 packaged
+  and transferred; host archive SHA256
+  a9f68a7fedac13d83567c6f28a3bb9370e6f624427585be8d7957fb27ab3838d.
+  Manifest852 files changes from368 baseline: game_view.rs plus execution/STATE
+  docs. Native build started00:03:30, cargoPID980 with actual rustc children;
+  output C:/Users/Austen/274bot-campaign/build-panel-3118e96, local exec72080.
+  Preflight before build found console LOCKED. Unlock request pending; no live
+  candidate launched. Do not repeat build while handle/process remains active.
+- Root integration found owner-census retained omissions after task approval:
+  Box<TileModels> storage and vis_backing missing, Model object storage domain
+  and attach/detach coverage need explicit accounting/limitations. Corrective
+  t_7280bc28 Luna running on isolated census checkout. Client is still
+  uncommitted; do not freeze/native-use before correction and review.
+- Snapshot correction t_cc437480 actual implementer still running (~14min).
+  No new performance acceptance; native lifecycle/latency/resource proof and
+  final whole-branch Grok review remain required.
+
 ## Latest boundary — 2026-09-07 23:58 UTC
 
 - First independent reviewer trial completed on isolated
