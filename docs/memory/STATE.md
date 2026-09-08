@@ -11,6 +11,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 23:10 UTC
+
+- Native Linux qualification FAILED at core tests:9/11 pass, midpass mutation
+  assertion failed, then shared mutex poison. No Python/native or timing cells ran.
+  Report ade95e0 approved as an accurate failure by actual Grok4.5/xai session
+  `20260908_190345_2eafb7`. No production retry or new qualification released.
+- Root tiny fresh Linux builder fixtures showed32/32 immediate same-size writes
+  retained identical stat timestamps despite changed disk bytes. New t_20b7fef4
+  diagnoses the identity contract and bounded corrective tests/code locally,
+  followed by same-card review. No remote or production work on that card.
+- Operator requested stable builder networking. Root added a dedicated internal
+  management adapter:192.168.247.2/30, Windows192.168.247.1. SSH alias now uses it;
+  original Default Switch still supplies internet. Guest-only reboot verified
+  fixed SSH and HTTPS despite changed DHCP. See hyperv-builder-fixed-management.md.
+- Separate 289 F32c12f5 received Grok4.5 changes requested for chalreq text and
+  tutorial rendering/dismissal coverage. Same card t_4583da40 continues corrections.
+  G-H, authentic live proof and final whole-branch acceptance remain open.
+
 ## Latest boundary — 2026-09-08 23:00 UTC
 
 - Native code `6be6328` plus report-only correction `f097fdc` passed actual
