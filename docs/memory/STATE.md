@@ -9,6 +9,26 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 01:12 UTC
+
+- Focused baseline0102 completed0 and Intel/Vulkan startup verified. Archive
+  SHA637b594951873aa01f05977bc4d654282cd0630313db868e573347f6688a5694
+  copied/extracted under diagnostics/windows-lazy-upload-20260908;28filehashes
+  match. Qualifier with declared diagnostics=true passes16/16;119.189s,
+  median965935104bytes,CPU0.5658029core,client48.66534ticks/slot/s. Actual native
+  unchanged reader binding passes. Root read all3captures; bank-arrival already
+  closing bank with22food; return-route shows banktrips1. No saving yet.
+- ACTUAL baseline-focused-plus-background-20260908-0111 launched01:10:43 using
+  same83controls; poll existing task, never restart on timeout. Candidate cells
+  remain next only after completion/archive inspection. Root Windows build/test
+  work stopped before launch. Native owner-census controls preparation t_98f39886
+  dispatched Luna on isolated census checkout, no native work delegated; root
+  executes census only AFTER four lazy-upload cells.
+- Snapshot tests integrated6f46907+edd16a7; root9off/16on andpanel2off/3on pass,
+  off/on transcript SHA783a7d5077829887147240a17545b69351ad2938c7304785489c899fb2dd81d4.
+  Actual reviewer session20260907_205655_85aa99 verifiedGrok4.5. Verification18f18cb
+  records test hashes; multi-thread/GameView residuals remain explicit.
+
 ## Latest boundary — 2026-09-08 01:03 UTC
 
 - ROOT ACTUAL BASELINE RUNNING: baseline-focused-one-20260908-0102 launched

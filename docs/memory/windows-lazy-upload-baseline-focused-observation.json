@@ -1,0 +1,56 @@
+{
+  "cell_id": "baseline-focused-one-20260908-0102",
+  "archive_sha256": "637b594951873aa01f05977bc4d654282cd0630313db868e573347f6688a5694",
+  "archive_files_verified": 28,
+  "binding_ok": true,
+  "match_keys_missing": null,
+  "qualification": {
+    "run": "diagnostics/windows-lazy-upload-20260908/baseline-focused-one-20260908-0102/raw-run-01",
+    "qualified": true,
+    "errors": [],
+    "qualification": {
+      "run": "diagnostics/windows-lazy-upload-20260908/baseline-focused-one-20260908-0102/raw-run-01",
+      "n": 16,
+      "counting": false,
+      "diagnostics": true,
+      "qualified": true,
+      "errors": [],
+      "observation_s": 119.18903390000001,
+      "cpu_seconds": 67.4375,
+      "cpu_cores": 0.5658028913681797,
+      "client_ticks_per_slot_s": 48.665341182868666,
+      "median_resident_bytes": 965935104,
+      "steal_gains": {
+        "live41a40_0": 6,
+        "live41a40_1": 9,
+        "live41a40_2": 11,
+        "live41a40_3": 2,
+        "live41a40_4": 12,
+        "live41a40_5": 22,
+        "live41a40_6": 7,
+        "live41a40_7": 7,
+        "live41a40_8": 10,
+        "live41a40_9": 6,
+        "live41a40_10": 3,
+        "live41a40_11": 10,
+        "live41a40_12": 5,
+        "live41a40_13": 11,
+        "live41a40_14": 5,
+        "live41a40_15": 8
+      },
+      "diagnostic_only": true
+    },
+    "counting": false,
+    "diagnostics": true,
+    "workload": "active",
+    "pass_means": "workload qualification only; not performance or budget acceptance"
+  },
+  "visual_inspection": {
+    "captures_read": 3,
+    "scene_ready": "valid scene and HUD, fleet still preparing",
+    "bank_arrival": "at bank booth, 22 food visible, overlay Closing the bank; bank window already closed",
+    "return_route": "returning from bank, 22 food and bank trips1 visible"
+  },
+  "performance_acceptance": false,
+  "comparison_pending": true
+}
