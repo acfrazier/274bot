@@ -9,6 +9,25 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 00:15 UTC
+
+- Operator explicitly authorized clamshell awake configuration. Root verified
+  active Ultimate Performance AC sleep/hibernate already0 and lid action0;
+  display idle was900s. Set/readback AC lid/sleep/hibernate/display all0 at
+  00:14:04; battery and lock policies unchanged. Backup scheme+before/after+
+  receipt saved ProgramData/274bot-Test/clamshell-awake-ac-20260908 and copied
+  under local diagnostics. Fresh paired controls must sample this new state.
+  This keeps power active, not guaranteed unlocked or unchanged GPU routing.
+- Census t_7280bc28 approved actualGrok4.5. Root added independent census
+  sampled_ms and actual simulation build_generation; timestamps survive later
+  profile publication. Root22hostpass1ignored,8clientpass,requiredhostplay
+  memory-profile-noalloc checkPASS. Client frozen9f72c2f,host7d13232,manifest
+  21fc7b8 in isolated census checkout. Combined Grok4.6 t_352677f5 running;
+  no native owner binary or private-commit measurement exists yet.
+- Lazy controls65ae895 t_13aa7d6e now actualGrok4.5 review. Snapshot corrective
+  t_cc437480 handed off after24min and actualreviewrunning. Await both actual
+  verdicts and root integration checks; no native workload started.
+
 ## Latest boundary — 2026-09-08 00:08 UTC
 
 - Native lazy-upload build3118e96/client5ee9 completed0 in23.60s at00:03:54.
