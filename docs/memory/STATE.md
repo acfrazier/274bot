@@ -11,6 +11,28 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 19:00 UTC
+
+- Capture plan t_aa4dcc1e corrected723a5a3/390e364/e00a979 after actual Grok4.5
+  findings on bounds and unsupported phase claims. Root reclaimed the latest
+  review to select a newly proven simpler direct-preload/raw procedure; Luna
+  is revising the same card. Native owned Python smoke under
+  diagnostics/heaptrack-direct-smoke-1857 records/interprets/analyzes exit0,
+  raw332128bytes, common-time peak5435240bytes. No wrapper/FIFO/compressor
+  during collection; analysis after child exit. No client profile released.
+- Existing Heaptrack timeline replay did not provide stack child trees.
+  The proven peak-flamegraph path on the saved smoke sums5435240bytes with
+  expected4196352-byte allocation family. This supports global-peak families,
+  not observe-end/after-Stop ownership, snapshot equality or RSS attribution.
+- 289 colour01074a4 passed actual Grok4.5/xai session20260908_145015_c05ebf.
+  Root rebuilt and ran isolated client93494: FAIL ingame then T1 packet115/6,
+  HINT_ARROW in absolute isolated engine. Capture read confirms title; owned
+  client stopped exit-15 and three protected config digests unchanged.
+  Runtime/client-proof-1854 preserves evidence. New card t_43f9ff17 is a FULL
+  revision-to-handler audit/cleanup contract, including conditional emissions;
+  no further live after another isolated one-packet fix. Actual source coverage
+  and required corrections must pass review first. Host integration stays parked.
+
 ## Latest boundary — 2026-09-08 18:46 UTC
 
 - Owner ledger636d2e4 APPROVED actual Grok4.5/xai-oauth, session
