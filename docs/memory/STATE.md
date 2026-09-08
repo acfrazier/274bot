@@ -11,6 +11,30 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 12:17 UTC
+
+- Candidate984c639/clientfd956c9 Windows native release build PASS4m13s,
+ 12:05:16..12:09:32UTC. Archived binary SHA256
+ 8247b70397a0e1580e222ff5d530d9173e1f3d6c3401a794425620e1ac5b9f91,
+ 76625920bytes. Root confirms all881source hashes unchanged before/after.
+ Artifacts+root-verification in diagnostics/windows-cohort-build-984c639/.
+- Candidate native regressions PASS: host212/1ignored, publisher6 plus child
+ fixture, panel capture15; source hashes unchanged. Native test receipts/logs
+ archived under same diagnostic directory/tests. Referencebf2d1ed native
+ release build now started in its own target directory; no measurement run.
+- Reader5c5353a REJECTED actualGrok4.5/xai-oauth session
+ 20260908_081232_49205e, run732. Leading source-legal unset capture brackets
+ falsely unavailable; same-card correction ready. Root separate probes show
+ valid final observe poll END+1ms falsely rejected, and cursor published before
+ future events falsely meets. Artifact diagnostics/cohort-reader-5c5353a-root-probes.json.
+- Root comment corrects source semantics: final observe sample is captured
+ AFTER mono>=END check and qualification write; cannot require enclosing END.
+ Cursor linkage must respect batch publication order without assuming flush
+ precedes same sample read. Root also challenges reviewer TUI policy restriction:
+ source emits tui-endpoint for every TUI policy, requiring source reconciliation.
+ Corrective reader, combined integration review and input functional proof remain
+ open; no matched latency or new accepted performance evidence.
+
 ## Latest boundary — 2026-09-08 12:08 UTC
 
 - Corrective reader t_25c2eb89 actual implementer run731 remains live;
