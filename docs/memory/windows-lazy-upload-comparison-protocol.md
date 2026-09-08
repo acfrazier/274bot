@@ -101,7 +101,11 @@ Run a fresh preflight for each cell from elevated PowerShell on the unlocked Bot
 console. It checks the builder VM is off, no cargo/rustc/frontend/VM process is
 running, quiet services remain stopped, the server is the expected `node.exe`
 process and owns the expected listener, the console is active and unlocked,
-and current Process Lasso/driver/process state, including current power state.
+and current Process Lasso/driver/process state. Power evidence includes the real
+Windows AC-line status, computer-system power state as a separately named field,
+active power scheme and AC display/lid settings, battery telemetry, and panel
+brightness when available; do not interpret computer-system power state as AC
+line status.
 It writes a cell-specific checked record to the frozen baseline stage; never
 reuse a prior cell's timestamped record. Candidate binary presence is
 intentionally deferred until candidate staging.
