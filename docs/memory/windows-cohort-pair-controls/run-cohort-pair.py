@@ -93,7 +93,7 @@ def validate_stimulus_plan(path):
             raise AssertionError("stimulus plan contains observed run facts")
     return plan
 
-def validate_stimulus_receipt(path, *, plan, cell_id, run_started_unix):
+def validate_stimulus_receipt(path, *, plan, cell_id, run_started_unix, target_pid, target_start_identity, publication):
     """Validate the separately root-managed post-run helper envelope."""
     receipt = json.loads(pathlib.Path(path).read_text(encoding="utf-8-sig"))
     if receipt.get("schema") != "native-panel-input-stimulus-run-receipt-v1":
@@ -102,31 +102,114 @@ def validate_stimulus_receipt(path, *, plan, cell_id, run_started_unix):
         raise AssertionError("stimulus receipt run identity/outcome mismatch")
     if receipt.get("helperSha256") != plan["helperSha256"] or receipt.get("cadenceMilliseconds") != 1000 or receipt.get("pressMilliseconds") != 80 or receipt.get("durationSeconds") != 120:
         raise AssertionError("stimulus receipt helper binding mismatch")
-    if receipt.get("startedUnix", 0) < run_started_unix:
+    started = receipt.get("startedUnix")
+    if type(started) not in (int, float) or not math.isfinite(started) or started < run_started_unix:
         raise AssertionError("stimulus receipt predates this run")
     if receipt.get("captureEnabledVerified") is not True or receipt.get("slotZeroFocusVerified") is not True:
         raise AssertionError("stimulus receipt lacks UI binding verification")
-    if not isinstance(receipt.get("helperPid"), int) or not receipt.get("helperStartUtc") or not receipt.get("targetPid") or not receipt.get("targetStartUtc"):
-        raise AssertionError("stimulus receipt lacks helper/target process identity")
+    helper_identity = receipt.get("helperStartIdentity", "")
+    if type(receipt.get("helperPid")) is not int or receipt["helperPid"] <= 0 or re.fullmatch(r"windows_creation_filetime:[1-9][0-9]*", helper_identity or "") is None:
+        raise AssertionError("stimulus receipt lacks native helper creation identity")
+    if receipt.get("targetPid") != target_pid or receipt.get("targetStartIdentity") != target_start_identity or not receipt.get("targetStartUtc"):
+        raise AssertionError("stimulus target differs from this managed frontend")
     delay = receipt.get("triggerDelaySeconds")
     if type(delay) not in (int, float) or not math.isfinite(delay) or not 60 <= delay <= 90:
         raise AssertionError("stimulus trigger was outside the observe-start window")
+    if publication.get("schema") != "cohort-observe-start-publication-v1" or publication.get("cellId") != cell_id:
+        raise AssertionError("stimulus publication belongs to another run")
     accounting = receipt.get("resourceAccounting")
     if not isinstance(accounting, dict) or accounting.get("status") != "available":
         raise AssertionError("stimulus process accounting is unavailable")
-    if accounting.get("sampler") != "root-managed windows_process_sample":
+    if receipt.get("sampler") != {"label": "root-managed windows_process_sample", "backend": "windows_process_sample.sample_process"}:
         raise AssertionError("stimulus process sampler is not identified")
-    for process_name in ("helper", "target"):
-        sample = accounting.get(process_name)
-        if not isinstance(sample, dict) or not isinstance(sample.get("pid"), int) or not sample.get("start_identity"):
-            raise AssertionError("stimulus process accounting lacks identity samples")
-        if not isinstance(sample.get("cpu_seconds"), (int, float)) or not isinstance(sample.get("rss_bytes"), int):
-            raise AssertionError("stimulus process accounting lacks resource samples")
-    if not isinstance(accounting.get("samples"), list) or not accounting["samples"]:
-        raise AssertionError("stimulus process accounting has no sample records")
+    if accounting.get("targetIdentity") != target_start_identity or accounting.get("targetExcludedFromManagedTotals") is not True:
+        raise AssertionError("stimulus accounting double-counts or misidentifies target")
+    samples = receipt.get("samples")
+    if not isinstance(samples, list) or not samples:
+        raise AssertionError("stimulus process accounting has no raw samples")
+    seen = set()
+    for name, role in (("helper", "input-helper"), ("wrapper", "wrapper-sampler")):
+        summary = accounting.get(name)
+        if not isinstance(summary, dict) or summary.get("status") != "available" or summary.get("process") != role:
+            raise AssertionError("stimulus process role unavailable")
+        pid, identity = summary.get("pid"), summary.get("start_identity")
+        if type(pid) is not int or pid <= 0 or re.fullmatch(r"windows_creation_filetime:[1-9][0-9]*", identity or "") is None:
+            raise AssertionError("stimulus process accounting lacks native identity")
+        if (pid, identity) in seen or pid == target_pid:
+            raise AssertionError("stimulus process accounting duplicates another process")
+        seen.add((pid, identity))
+        if name == "helper" and (pid, identity) != (receipt["helperPid"], helper_identity):
+            raise AssertionError("helper summary identity mismatch")
+        indexes = summary.get("sampleIndexes")
+        if not isinstance(indexes, list) or not indexes or any(type(i) is not int or i < 0 or i >= len(samples) for i in indexes) or indexes != sorted(set(indexes)):
+            raise AssertionError("stimulus raw sample linkage invalid")
+        valid = []
+        for index in indexes:
+            row = samples[index]
+            sample = row.get("sample", {})
+            if row.get("status") != "available" or row.get("pid") != pid or row.get("process") not in (role, role + "-final") or sample.get("start_identity") != identity:
+                raise AssertionError("stimulus linked sample identity mismatch")
+            cpu = [sample.get("user_s"), sample.get("system_s")]
+            rss = sample.get("resident_bytes")
+            if any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in cpu) or type(rss) is not int or rss <= 0:
+                raise AssertionError("stimulus linked resource sample invalid")
+            valid.append((sum(cpu), rss))
+        if (summary.get("cpu_seconds"), summary.get("rss_bytes")) != valid[-1]:
+            raise AssertionError("stimulus summary does not match last available raw sample")
+    files = receipt.get("helperOutputFiles")
+    if not isinstance(files, dict) or not files:
+        raise AssertionError("stimulus helper artifacts missing")
+    for filename, digest in files.items():
+        if sha(filename) != digest:
+            raise AssertionError("stimulus helper artifact hash mismatch")
+    helper_paths = [name for name in files if pathlib.Path(name).name == "helper-receipt.json"]
+    if len(helper_paths) != 1:
+        raise AssertionError("exact archived helper receipt required")
+    helper = json.loads(pathlib.Path(helper_paths[0]).read_text(encoding="utf-8-sig"))
+    if helper.get("pid") != target_pid or helper.get("startUtc") != receipt["targetStartUtc"] or helper.get("outcome") != "completed":
+        raise AssertionError("archived helper receipt target/outcome mismatch")
+    events = helper.get("events")
+    if helper.get("completedPulses") != 120 or helper.get("requestedPulses") != 120 or not isinstance(events, list) or len(events) != 120:
+        raise AssertionError("archived helper pulse accounting incomplete")
+    for i, event in enumerate(events):
+        if event.get("index") != i + 1 or event.get("direction") != ("Left" if i % 2 == 0 else "Right") or event.get("downSendInputResult") != 1 or event.get("upSendInputResult") != 1 or event.get("releaseSucceeded") is not True:
+            raise AssertionError("archived helper event failed or out of order")
     if receipt.get("performanceAcceptance") is not False or receipt.get("inputCoveragePass") is not False:
         raise AssertionError("stimulus receipt must not claim acceptance")
     return receipt
+
+def publication_boundaries(base, path, *, cell_id, controller_identity):
+    """Persist the existing managed loop's first validated start observation.
+
+    This is controller receipt time, not a reconstructed host cohort timestamp.
+    The base parser consumes every row unchanged; no polling process is added.
+    """
+    class PublishingBoundaries(base):
+        def consume(self, line, now):
+            had_start = self.start is not None
+            super().consume(line, now)
+            if not had_start and self.start is not None and not self.errors:
+                record = {
+                    "schema": "cohort-observe-start-publication-v1",
+                    "cellId": cell_id,
+                    "monotonicSeconds": now,
+                    "recordedUnix": time.time(),
+                    "clock": "Python time.monotonic on this Windows host",
+                    "boundary": "managed controller first read of validated observe-start row",
+                    "controllerIdentity": controller_identity,
+                    "qualification": self.start,
+                    "rawLineSha256": hashlib.sha256(line.encode("utf-8")).hexdigest(),
+                    "performanceAcceptance": False,
+                }
+                destination = pathlib.Path(path)
+                temporary = destination.with_suffix(".pending")
+                with temporary.open("x", encoding="utf-8") as stream:
+                    json.dump(record, stream, indent=2)
+                    stream.write("\n")
+                if destination.exists():
+                    raise AssertionError("observe-start publication already exists")
+                temporary.rename(destination)
+    return PublishingBoundaries
 
 def validate_prepare_receipt(receipt, *, cell_id):
     """Validate the privileged no-launch receipt consumed only at launch."""
@@ -208,12 +291,21 @@ keep_awake.argtypes = [ctypes.c_uint]
 keep_awake.restype = ctypes.c_uint
 if keep_awake(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED) == 0:
     raise OSError("SetThreadExecutionState failed")
+original_boundaries = rmc.QualificationBoundaries
+rmc.QualificationBoundaries = publication_boundaries(
+    original_boundaries, out / "observe-start-publication.json", cell_id=cell_id,
+    controller_identity={"pid": os.getpid(), "start_identity": wps.sample_process(os.getpid())["start_identity"]})
 try:
     rc = rmc.main([str(sp), str(out / "cells")])
 finally:
+    rmc.QualificationBoundaries = original_boundaries
     keep_awake(ES_CONTINUOUS)
 try:
-    stimulus_receipt = validate_stimulus_receipt(stimulus_path, plan=stimulus_plan, cell_id=cell_id, run_started_unix=json.loads((out / "started.json").read_text())["started_unix"])
+    managed_report = json.loads((out / "cells" / spec["id"] / "cell_report.json").read_text())
+    publication = json.loads((out / "observe-start-publication.json").read_text())
+    stimulus_receipt = validate_stimulus_receipt(stimulus_path, plan=stimulus_plan, cell_id=cell_id,
+        run_started_unix=json.loads((out / "started.json").read_text())["started_unix"],
+        target_pid=managed_report.get("frontend_pid"), target_start_identity=managed_report.get("frontend_start_identity"), publication=publication)
     dump(out / "stimulus-receipt.json", stimulus_receipt)
     stimulus_status = {"status": "complete", "reason": None}
 except (AssertionError, OSError, json.JSONDecodeError) as exc:

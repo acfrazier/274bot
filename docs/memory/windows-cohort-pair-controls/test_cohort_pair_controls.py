@@ -14,14 +14,35 @@ import run_managed_cell as rmc
 
 def controller_functions():
     tree = ast.parse((HERE / "run-cohort-pair.py").read_text())
-    names = {"diagnostic_argv", "validate_build_receipt", "validate_stimulus_plan", "validate_stimulus_receipt", "validate_prepare_receipt"}
+    names = {"sha", "publication_boundaries", "diagnostic_argv", "validate_build_receipt", "validate_stimulus_plan", "validate_stimulus_receipt", "validate_prepare_receipt"}
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
-    namespace = {"math": __import__("math"), "re": __import__("re"), "json": __import__("json"), "pathlib": pathlib}
+    namespace = {"time": __import__("time"), "hashlib": hashlib,"math": __import__("math"), "re": __import__("re"), "json": __import__("json"), "pathlib": pathlib}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "run-cohort-pair.py", "exec"), namespace)
     return namespace
 
 
 class CohortPairControls(unittest.TestCase):
+    def test_publication_uses_first_validated_managed_boundary(self):
+        import tempfile
+        factory = controller_functions()["publication_boundaries"]
+        with tempfile.TemporaryDirectory() as temp:
+            output = pathlib.Path(temp) / "publication.json"
+            cls = factory(rmc.QualificationBoundaries, output, cell_id="baseline-focused-one-x", controller_identity={"pid": 8, "start_identity": "test"})
+            tracker = cls()
+            line = json.dumps({"phase": "observe-start", "elapsed_s": 120, "slots": [{"slot": 0}]})
+            tracker.consume(line, 451.125)
+            record = json.loads(output.read_text())
+            self.assertEqual(record["monotonicSeconds"], 451.125)
+            self.assertEqual(record["rawLineSha256"], hashlib.sha256(line.encode()).hexdigest())
+            tracker.consume(line, 452)
+            self.assertEqual(json.loads(output.read_text()), record)
+            self.assertIn("duplicate or reversed start", tracker.errors)
+            other = pathlib.Path(temp) / "invalid.json"
+            bad = factory(rmc.QualificationBoundaries, other, cell_id="test", controller_identity={})()
+            bad.consume("invalid JSON", 1)
+            bad.consume(line, 2)
+            self.assertFalse(other.exists())
+
     def test_actual_parser_emits_n16_pair_contract(self):
         fn = controller_functions()["diagnostic_argv"]
         argv = fn("panel-play.exe", "manifest.json", "reference", "focused-one")
@@ -71,28 +92,42 @@ class CohortPairControls(unittest.TestCase):
         self.assertEqual(hashlib.sha256(helper.read_bytes()).hexdigest(), "04822c0e9f5ade2d555e408cc707722c234bc1e7b442676975a16e7efcaebbd1")
 
     def test_stimulus_receipt_is_postrun_and_resource_bound(self):
+        import tempfile
         fn = controller_functions()["validate_stimulus_receipt"]
         plan = {"helperSha256": "04822c0e9f5ade2d555e408cc707722c234bc1e7b442676975a16e7efcaebbd1"}
-        sample = {"pid": 7, "start_identity": "start-7", "cpu_seconds": 1.0, "rss_bytes": 1024}
-        good = {"schema": "native-panel-input-stimulus-run-receipt-v1", "cellId": "baseline-focused-one-x", "outcome": "completed", "helperSha256": plan["helperSha256"], "cadenceMilliseconds": 1000, "pressMilliseconds": 80, "durationSeconds": 120, "startedUnix": 101, "captureEnabledVerified": True, "slotZeroFocusVerified": True, "helperPid": 7, "helperStartUtc": "2026-01-01T00:00:00Z", "targetPid": 8, "targetStartUtc": "2026-01-01T00:00:00Z", "triggerDelaySeconds": 60, "resourceAccounting": {"status": "available", "sampler": "root-managed windows_process_sample", "helper": sample, "target": dict(sample, pid=8), "samples": [sample]}, "performanceAcceptance": False, "inputCoveragePass": False}
-        path = HERE / "test-stimulus-receipt.json"
-        path.write_text(json.dumps(good))
-        try:
-            self.assertEqual(fn(path, plan=plan, cell_id=good["cellId"], run_started_unix=100), good)
+        identity = lambda n: "windows_creation_filetime:" + str(n)
+        with tempfile.TemporaryDirectory() as temp:
+            helper_path = pathlib.Path(temp) / "helper-receipt.json"
+            helper = {"pid": 8, "startUtc": "2026-01-01T00:00:00Z", "outcome": "completed", "completedPulses": 120, "requestedPulses": 120,
+                      "events": [{"index": i + 1, "direction": "Left" if i % 2 == 0 else "Right", "downSendInputResult": 1, "upSendInputResult": 1, "releaseSucceeded": True} for i in range(120)]}
+            helper_path.write_text(json.dumps(helper))
+            samples = [{"pid": pid, "process": role, "status": "available", "sample": {"start_identity": identity(pid), "user_s": 0.5, "system_s": 0.5, "resident_bytes": 1024}} for pid, role in ((7, "input-helper"), (9, "wrapper-sampler"))]
+            summary = lambda n: {"pid": samples[n]["pid"], "process": samples[n]["process"], "status": "available", "start_identity": samples[n]["sample"]["start_identity"], "cpu_seconds": 1.0, "rss_bytes": 1024, "sampleIndexes": [n]}
+            good = {"schema": "native-panel-input-stimulus-run-receipt-v1", "cellId": "baseline-focused-one-x", "outcome": "completed", "helperSha256": plan["helperSha256"], "cadenceMilliseconds": 1000, "pressMilliseconds": 80, "durationSeconds": 120, "startedUnix": 101, "captureEnabledVerified": True, "slotZeroFocusVerified": True, "helperPid": 7, "helperStartUtc": None, "helperStartIdentity": identity(7), "targetPid": 8, "targetStartIdentity": identity(8), "targetStartUtc": helper["startUtc"], "triggerDelaySeconds": 60, "resourceAccounting": {"status": "available", "helper": summary(0), "wrapper": summary(1), "targetIdentity": identity(8), "targetExcludedFromManagedTotals": True}, "sampler": {"label": "root-managed windows_process_sample", "backend": "windows_process_sample.sample_process"}, "samples": samples, "helperOutputFiles": {str(helper_path): hashlib.sha256(helper_path.read_bytes()).hexdigest()}, "performanceAcceptance": False, "inputCoveragePass": False}
+            kwargs = {"plan": plan, "cell_id": good["cellId"], "run_started_unix": 100, "target_pid": 8, "target_start_identity": identity(8), "publication": {"schema": "cohort-observe-start-publication-v1", "cellId": good["cellId"]}}
+            path = pathlib.Path(temp) / "envelope.json"
+            path.write_text(json.dumps(good))
+            self.assertEqual(fn(path, **kwargs), good)
             for delay in (60, 60.125, 89.999, 90):
                 candidate = dict(good, triggerDelaySeconds=delay)
                 path.write_text(json.dumps(candidate))
-                self.assertEqual(fn(path, plan=plan, cell_id=good["cellId"], run_started_unix=100)["triggerDelaySeconds"], delay)
-            for delay in (59.999, 90.001, True, False, None, "60", float("nan"), float("inf"), -float("inf")):
-                path.write_text(json.dumps(dict(good, triggerDelaySeconds=delay)))
-                with self.assertRaises(AssertionError, msg=str(delay)):
-                    fn(path, plan=plan, cell_id=good["cellId"], run_started_unix=100)
-            for bad in ({"cellId": "candidate-focused-one-x"}, {"startedUnix": 99}, {"helperSha256": "pending"}, {"cadenceMilliseconds": 500}, {"resourceAccounting": {"status": "available"}}):
+                self.assertEqual(fn(path, **kwargs)["triggerDelaySeconds"], delay)
+            invalid = [{"triggerDelaySeconds": delay} for delay in (59.999, 90.001, True, False, None, "60", float("nan"), float("inf"), -float("inf"))]
+            invalid += [{"cellId": "candidate-focused-one-x"}, {"startedUnix": 99}, {"startedUnix": float("nan")}, {"helperSha256": "pending"}, {"cadenceMilliseconds": 500}, {"resourceAccounting": {"status": "available"}}, {"targetPid": 99}, {"helperStartIdentity": "fake"}]
+            for bad in invalid:
                 candidate = dict(good); candidate.update(bad); path.write_text(json.dumps(candidate))
                 with self.assertRaises(AssertionError):
-                    fn(path, plan=plan, cell_id=good["cellId"], run_started_unix=100)
-        finally:
-            path.unlink(missing_ok=True)
+                    fn(path, **kwargs)
+            for field, value in (("user_s", None), ("system_s", float("nan")), ("resident_bytes", 0), ("start_identity", identity(99))):
+                candidate = json.loads(json.dumps(good))
+                candidate["samples"][0]["sample"][field] = value
+                path.write_text(json.dumps(candidate))
+                with self.assertRaises(AssertionError):
+                    fn(path, **kwargs)
+            path.write_text(json.dumps(good))
+            helper_path.write_text("changed artifact")
+            with self.assertRaisesRegex(AssertionError, "hash mismatch"):
+                fn(path, **kwargs)
 
     def test_duration_and_tail_are_explicit_in_source(self):
         source = (HERE / "run-cohort-pair.py").read_text()
