@@ -16,7 +16,7 @@ def controller_functions():
     tree = ast.parse((HERE / "run-cohort-pair.py").read_text())
     names = {"diagnostic_argv", "validate_build_receipt", "validate_stimulus_plan", "validate_stimulus_receipt", "validate_prepare_receipt"}
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
-    namespace = {"re": __import__("re"), "json": __import__("json"), "pathlib": pathlib}
+    namespace = {"math": __import__("math"), "re": __import__("re"), "json": __import__("json"), "pathlib": pathlib}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "run-cohort-pair.py", "exec"), namespace)
     return namespace
 
@@ -79,6 +79,14 @@ class CohortPairControls(unittest.TestCase):
         path.write_text(json.dumps(good))
         try:
             self.assertEqual(fn(path, plan=plan, cell_id=good["cellId"], run_started_unix=100), good)
+            for delay in (60, 60.125, 89.999, 90):
+                candidate = dict(good, triggerDelaySeconds=delay)
+                path.write_text(json.dumps(candidate))
+                self.assertEqual(fn(path, plan=plan, cell_id=good["cellId"], run_started_unix=100)["triggerDelaySeconds"], delay)
+            for delay in (59.999, 90.001, True, False, None, "60", float("nan"), float("inf"), -float("inf")):
+                path.write_text(json.dumps(dict(good, triggerDelaySeconds=delay)))
+                with self.assertRaises(AssertionError, msg=str(delay)):
+                    fn(path, plan=plan, cell_id=good["cellId"], run_started_unix=100)
             for bad in ({"cellId": "candidate-focused-one-x"}, {"startedUnix": 99}, {"helperSha256": "pending"}, {"cadenceMilliseconds": 500}, {"resourceAccounting": {"status": "available"}}):
                 candidate = dict(good); candidate.update(bad); path.write_text(json.dumps(candidate))
                 with self.assertRaises(AssertionError):

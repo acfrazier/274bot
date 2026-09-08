@@ -5,6 +5,7 @@ No native, network, or live action occurs while this file is prepared.
 import ctypes
 import hashlib
 import json
+import math
 import os
 import pathlib
 import platform
@@ -107,7 +108,8 @@ def validate_stimulus_receipt(path, *, plan, cell_id, run_started_unix):
         raise AssertionError("stimulus receipt lacks UI binding verification")
     if not isinstance(receipt.get("helperPid"), int) or not receipt.get("helperStartUtc") or not receipt.get("targetPid") or not receipt.get("targetStartUtc"):
         raise AssertionError("stimulus receipt lacks helper/target process identity")
-    if receipt.get("triggerDelaySeconds") not in (60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90):
+    delay = receipt.get("triggerDelaySeconds")
+    if type(delay) not in (int, float) or not math.isfinite(delay) or not 60 <= delay <= 90:
         raise AssertionError("stimulus trigger was outside the observe-start window")
     accounting = receipt.get("resourceAccounting")
     if not isinstance(accounting, dict) or accounting.get("status") != "available":
