@@ -11,6 +11,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 15:32 UTC
+
+- Calibration t_c2879587 remains active on its isolated branch. Grok4.5 rejected
+  bf78504 harness/builder mismatch, then verified those fixes in9d54955 but
+  requested correction of metric/overhead qualification contradictions. Luna
+  run5 is confirmed live. No rejected plan integrated and no new live run/build.
+- Read-only native checks: Concord server152004 is active (comm MainThread),
+  loopback80/43594/8898 listening; MemAvailable961077248bytes,2 CPUs,no swap,
+  no tui/panel/cargo/rustc processes; old nightly timer inactive. These are
+  readiness snapshots, not new resource measurements or stable future identity.
+- ssh274bot-builder timed out. Authoritative Get-VM15:28:45UTC shows known
+  VM34954ade-f213-45ef-8957-dfafdbaa53fc Off/Operating normally/4vCPU/0assignedRAM,
+  existingDefaultSwitch and no native frontends. No need reprovision; controlled
+  boot/fresh trusted address verification belongs to reviewed preparation.
+- Public development push remains unexecuted; operator only asked safety so far.
+  Last goal turn made progress through reviewed cohort evidence and preserved
+  reports. Current continuation advances corrected calibration design/readiness.
+
 ## Latest boundary — 2026-09-08 15:25 UTC
 
 - Native1430 evidence APPROVED actual Grok4.5/xai-oauth session
