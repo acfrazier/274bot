@@ -11,6 +11,23 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 14:05 UTC
+
+- Controls a522e02 approved actual Grok4.5 session20260908_095342_8f94d2;
+  integrated three scoped commits on primary through62f80fa; root8 tests PASS.
+  Native13 source hashes and7 PowerShell parses PASS. Both per-cell native
+  preflight, BotTest no-launch contract and privileged prepare steps PASS.
+- Root archived and verified all31 proof files; windows-cohort-no-launch-proof.json
+  binds both1400 cells. Archive SHA b0070a7693267468529ef817a88441f741927a268b6195ee20e68297a517f4f8.
+  Primary proof commit ef6d245. No frontend was launched by these checks.
+- Preflight initially found Office ClickToRunSvc Running/Automatic; restored
+  operator-authorized temporary Stopped/Disabled configuration. Dell services
+  remained stopped/disabled. Cause of configuration drift is not established.
+- Sampler2d5d17a rejected by Grok4.5 execution review for remaining argument
+  binding/cleanup/accounting issues. Corrective Luna run5 is active on
+  t_7394914d. Sampler integration and reviewed live input remain prerequisites;
+  no matched N16 cell or performance acceptance yet.
+
 ## Latest boundary — 2026-09-08 13:55 UTC
 
 - Controller a522e02 corrects the receipt ordering and is under same-card
