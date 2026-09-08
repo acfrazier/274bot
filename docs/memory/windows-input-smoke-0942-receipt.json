@@ -1,0 +1,23 @@
+{
+  "archive_sha256": "c7ab1ae3bcfd3ceb7f373090a1e133e7e1d0dc08d6042641caa8bfc441e52fb6",
+  "verified_files": 29,
+  "sample_rows": 381,
+  "input_maxima": {
+    "input_start_n": 0,
+    "input_complete_n": 0,
+    "input_pending_n": 0,
+    "input_canceled_n": 0,
+    "input_lost_n": 0,
+    "input_dropped_n": 0,
+    "input_latency_n": 0
+  },
+  "requested_pulses": 20,
+  "completed_pulses": 20,
+  "native_events_all_down_up_success": true,
+  "actual_send_lateness_ms_range": [
+    9,
+    26
+  ],
+  "host_input_coverage": false,
+  "performance_acceptance": false
+}
