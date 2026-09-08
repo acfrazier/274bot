@@ -11,6 +11,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 23:55 UTC
+
+- Local parser correction5dd7702 is in actual Grok4.5/xai review session
+  20260908_195351_1020ed on t_b03522bc. The one-change, finite Mac comparison
+  reduced interpreted churn CPU53–61%; root independently verified18 raw hashes,
+  18 phase medians and9 reductions. This is local diagnostic evidence only.
+- Newly exposed preexisting reference parity defect: without descriptor
+  definitions, native emits definitions.a=0 while Python omits that key.
+  Both baseline and candidate reproduce it. Resolve this correctness gate before
+  any subsequent Linux qualification; do not waive it because it predates the fix.
+- 289 G t_7f7981c3 remains active:12 production-path fixtures pass; full suites
+  and actual review are pending. H/live/final whole-branch reviews remain open.
+- Operator can enable Mac CPU tracing but it needs a Mac restart, and agreed to
+  wait for safety. Root is draining current workers/reviews before declaring a
+  restart point. Hold new long-running jobs, native stages and H until that point;
+  no restart or tracing configuration has been requested or performed by root.
+  Preserve the full campaign scope and resume pending work after operator return.
+
 ## Latest boundary — 2026-09-08 23:44 UTC
 
 - Corrected failed-qualification report6e7f78e passed actual Grok4.5/xai
