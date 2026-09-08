@@ -16,7 +16,8 @@ verify it on resume because a worker may finish after this snapshot.
   Same876source pre/post verified. Backend adapter identity not reported;
   offscreen backend proof only, livevisual/CPUgameplay/focusdetach still pending.
   Receipt windows-tile-native-backend-proof.json; nativeexec94600 drained.
-- Clean controls t_10e7c701 firstreview running; root cold-read found stale
+- Clean controls t_10e7c701 firstreview REJECTED6be21ef; same-card Luna
+  correction actually running after04:41. Root cold-read found stale
   copied census contract helpers: absentfilenames, oldCellId/926-only binding,
   ownerON assertion contradicts cleanOFF. Commented samecard; do not stage or
   launch this revision. Await corrected full bothrole/mode no-launch contract.
