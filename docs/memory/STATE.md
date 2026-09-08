@@ -11,6 +11,26 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 19:40 UTC
+
+- Capture correction4aae8cd is in actual Grok4.5/xai review, session
+  20260908_153721_f26fcf (t_314f3b20). Root found remaining timeout defect:
+  ordinary max_wall960 changes to1140, declared live780 is schema-only with no
+  runtime enforcement. Reviewer independently confirms. Evidence preserved in
+  diagnostics/heaptrack-seam-root-review-4aae8cd/findings.json. No native
+  tooling overlay/game capture released; require ordinary960 preserved and
+  capture frontend960 plus separate two180 post-exit analysis windows.
+- Full289 audit0b89fc3 APPROVED actual Grok4.5/xai session
+  20260908_153220_7293ec (t_43f9ff17):70 genuine inbound operations and82
+  outbound rows, concrete semantics/emission anchors. Root released bounded
+  section A on t_358c02ad; actual Luna worker is running in isolated289
+  checkout. Remaining B-H, aggregate/final reviews and live proof still open.
+- Concord19:35 precheck: no frontend/build/profiler, MemAvailable990332KiB,
+  freeDisk14852366336bytes, sameboot/server726. Revalidate at actual launch.
+  Root prepared native-seam-smoke.py under /tmp/274bot-tui-calibration-c0709ab
+  for owned-child/process/limits/environment/raw-format/global-peak checks;
+  execute only after exact tooling review and overlay. No game started.
+
 ## Latest boundary — 2026-09-08 19:26 UTC
 
 - Instrumentation79008ad REJECTED actual Grok4.5/xai-oauth session
