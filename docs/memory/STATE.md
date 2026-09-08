@@ -9,6 +9,23 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 08:13 UTC
+
+- Visual0742 proof38693c6 APPROVED t_da614000 actualGrok4.5/xai-oauth
+  20260908_035956_4b96ce. Reviewer independently verified78 hashes/16receipts
+  and used vision for keyPNG. Approval preserves all stated qualitative limits.
+- Reader8100b8f now same-card review pending/dispatch after round3 corrections;
+  remains isolated codex/focused-gpu-coverage. No integration or acceptedGPU/RSS.
+- NEW t_bfaf7292 Luna source-only synchronized burst+single-click controller.
+  Existing a6b3632 capture helper unchanged. One native controller must compile
+  input support first, start capture child, verify freshready/firstframe and
+  live child, then click exact screenshot-verified coordinates and record input
+  timestamps inside burst. Reviewer/nativevalidation required before next G1.
+  No corrected native attempt yet; all panel processes closed. Both local test
+  accounts now at Lumbridge after0800; use existing inspected Teles destination
+  for a real region change in next bounded diagnostic, not repeated same-home
+  assumptions. Full campaign scope/gates and focused RSS park unchanged.
+
 ## Latest boundary — 2026-09-08 08:10 UTC
 
 - Visual0742 session normally closed; no native frontend. Root verified all78
