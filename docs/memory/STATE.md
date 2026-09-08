@@ -9,6 +9,34 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 02:33 UTC
+
+- Linux corrected d4 actual frontend failed once, raw021322Z. Archive25files
+  fully copied/hashverified:40444f4b6af3ad6bb82b13384dd7ed52e92485e09b6ece3ac3ed247d2efb2750.
+  Failure16.222461943s ordinal15 tick19 sync Runtime(Unknown error), tick-matched
+  interrupt_id1 and combined terminating_before_cancel=true. Only host slow-tick
+  path allocates that identity; budget remains50ms. This attributes this failure
+  to host interruption, not why slow or proof of older uninstrumented causes.
+  Root reporta1480d9; independent de04972 t_328a68aa APPROVED per-task review
+  (verify actual session model on next read). No frontend remains; no retry.
+- Tile design5acc187 t_6117c619 approved, but root comment requires net moved
+  payload accounting and public enum source-compatibility before implementation.
+  Next authorized step is layout/occupancy probe only, not boxing yet.
+- Hyper-V recovery found real first-boot MAC00 vs newly assigned01 mismatch.
+  Healthy Ubuntu login screen read directly. Temporary owned Internal switch
+  274bot-builder-recovery-20260908, old MAC00, IPv6linklocal interface50 restored
+  guest reachability. SSH strict original hostkey succeeded via temporary
+  loopback TCP relay in BotTest scheduledtask274bot-BotTest-guest-recovery-relay-0231.
+  Direct Start-Process relay died with SSH session; scheduled task solved it.
+  Guest netplan backed up, matching MAC changed to01; netplan generate passed.
+  Disabled cloud-init network regeneration and added oneshot public-IP serial
+  report on boot. Host VM now staticMAC00155D00CD01 back on Default Switch.
+  VM restarted02:33; serial capture localexec62152 pending45s to recovernewIP.
+  Need verify native SSH/toolchain, update ONLY builder HostName/pinned hostkey
+  mapping, remove temporary recovery switch/disable relay task after use.
+  No shared switch/router/user network settings changed. VM4vCPU8GiB remains
+  running for Linux build/test; stop before later Windows comparison workloads.
+
 ## Latest boundary — 2026-09-08 02:14 UTC
 
 - Four-cell lazy report bc6a101 approved actual Grok4.5 after third review.
