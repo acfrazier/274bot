@@ -12,11 +12,10 @@ param(
  [Parameter(Mandatory=$true)][ValidatePattern('^[A-Za-z0-9_-]+$')][string]$Label,
  [Parameter(Mandatory=$true)][ValidateRange(1,900)][int]$DurationSeconds,
  [Parameter(Mandatory=$true)][switch]$CaptureEnabledVerified,
- [Parameter(Mandatory=$true)][switch]$SlotZeroFocusVerified,
- [ValidateRange(1,120)][int]$CadenceMilliseconds = 1000,
- [ValidateRange(1,500)][int]$PressMilliseconds = 80
+ [Parameter(Mandatory=$true)][switch]$SlotZeroFocusVerified
 )
 $ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue'
+$CadenceMilliseconds=1000;$PressMilliseconds=80
 
 $out=[IO.Path]::GetFullPath($OutputDirectory)
 $allowedRoots=@([IO.Path]::GetFullPath('C:\Users\BotTest\274bot-runs\visual-proof-'),[IO.Path]::GetFullPath('C:\Users\BotTest\274bot-runs\latency-diagnostic-'))
@@ -47,6 +46,9 @@ function Assert-Target([bool]$CheckRect) {
  $process.Refresh()
  if($process.HasExited -or $process.ProcessName -ne 'panel-play' -or $process.Path -cne $ExpectedBinary){throw 'Target process identity changed'}
  if($process.StartTime.ToUniversalTime().ToString('o') -cne $ExpectedStartUtc -or $process.SessionId -ne $ExpectedSessionId){throw 'Target process start/session identity changed'}
+ if($sessionId -ne (Get-Process -Id $PID).SessionId){throw 'Helper and target are not in the same local session'}
+ if([PanelInputStimulusNative]::GetSystemMetrics(0x1000) -ne 0){throw 'Local console required'}
+ if((Get-FileHash -LiteralPath $ExpectedBinary -Algorithm SHA256).Hash.ToLower() -cne $ExpectedBinarySha256.ToLower()){throw 'Frozen binary hash changed'}
  if([PanelInputStimulusNative]::GetForegroundWindow() -ne $window){throw 'Target window is not foreground'}
  if([PanelInputStimulusNative]::IsIconic($window)){throw 'Target window is minimized'}
  $ownerPid=0;[void][PanelInputStimulusNative]::GetWindowThreadProcessId($window,[ref]$ownerPid)
@@ -58,7 +60,6 @@ function Assert-Target([bool]$CheckRect) {
 }
 
 try {
- $receiptOwned=$true
  if($env:USERNAME -cne $ExpectedUser){throw 'Helper must run as the expected BotTest user'}
  if($ExpectedRect.Count -ne 4 -or $ExpectedRect[2] -le $ExpectedRect[0] -or $ExpectedRect[3] -le $ExpectedRect[1]){throw 'ExpectedRect must be four ordered physical coordinates'}
  if($GameImagePoint.Count -ne 2){throw 'GameImagePoint must contain exactly two explicit physical coordinates'}
@@ -67,6 +68,10 @@ try {
  if(Test-Path -LiteralPath $receipt -PathType Leaf){throw 'Stimulus label already exists; old outputs are never reused'}
  $old=Get-ChildItem -LiteralPath $out -Filter ($Label+'*') -File -Force -ErrorAction SilentlyContinue
  if($old.Count -ne 0){throw 'Stimulus label has existing output files'}
+ $receiptOwned=$true
+ if(-not [Environment]::Is64BitProcess){throw 'x64 PowerShell process required'}
+ if($PSVersionTable.PSVersion.Major -ne 5 -or $PSVersionTable.PSVersion.Minor -ne 1 -or $PSEdition -ne 'Desktop'){throw 'Windows PowerShell 5.1 required'}
+ if([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT){throw 'Windows PowerShell host required'}
  if(-not $CaptureEnabledVerified){throw 'Root must verify capture enabled from the actual panel UI before invoking this helper'}
  if(-not $SlotZeroFocusVerified){throw 'Root must verify slot-zero focus from the actual panel UI before invoking this helper'}
 
@@ -81,13 +86,17 @@ try {
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
-  [DllImport("user32.dll")] public static extern int GetWindowThreadProcessId(IntPtr h, out int pid);
+   [DllImport("user32.dll")] public static extern int GetWindowThreadProcessId(IntPtr h, out int pid);
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
   [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
   [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X,Y; }
   [DllImport("user32.dll", SetLastError=true)] public static extern uint SendInput(uint n, INPUT[] inputs, int size);
  }
 '@
+ [void][PanelInputStimulusNative]::SetProcessDPIAware()
+ if([PanelInputStimulusNative]::GetSystemMetrics(0x1000) -ne 0){throw 'Local console required'}
  if([Runtime.InteropServices.Marshal]::SizeOf((New-Object PanelInputStimulusNative+INPUT)) -ne 40){throw 'INPUT interop size is not 40 bytes'}
  $process=Get-Process -Id $PanelPid -ErrorAction Stop
  if($process.ProcessName -ne 'panel-play' -or $process.Path -cne $ExpectedBinary){throw 'Unexpected target executable'}
@@ -107,16 +116,21 @@ try {
  $down=[PanelInputStimulusNative]::CreateKeyboardInput(0x25,0x0001)
  $up=[PanelInputStimulusNative]::CreateKeyboardInput(0x25,0x0003)
  if($down.type -ne 1 -or $up.type -ne 1 -or $down.keyboard.wVk -ne 0x25 -or $up.keyboard.wVk -ne 0x25 -or $down.keyboard.dwFlags -ne 1 -or $up.keyboard.dwFlags -ne 3){throw 'Left-arrow INPUT factory fields invalid'}
- $inputSize=[Runtime.InteropServices.Marshal]::SizeOf($down);$startedUtc=[DateTime]::UtcNow.ToString('o');$requested=$DurationSeconds
+ $inputSize=[Runtime.InteropServices.Marshal]::SizeOf($down);$startedUtc=[DateTime]::UtcNow.ToString('o');$requested=$DurationSeconds;$receiptOwned=$true
  $stopwatch.Restart()
+ $deadlineMilliseconds=($DurationSeconds*1000)+5000
  for($i=0;$i -lt $DurationSeconds;$i++) {
   $due=$i*$CadenceMilliseconds
+  if($stopwatch.ElapsedMilliseconds -ge $deadlineMilliseconds){$missed+=($DurationSeconds-$i);$terminalReason='total-duration-limit';throw 'Total duration limit reached'}
   while($stopwatch.ElapsedMilliseconds -lt $due){
-   $remaining=$due-$stopwatch.ElapsedMilliseconds;Start-Sleep -Milliseconds ([Math]::Min(25,[Math]::Max(1,$remaining)))
+   $remaining=$due-$stopwatch.ElapsedMilliseconds
+   if($stopwatch.ElapsedMilliseconds+$remaining -ge $deadlineMilliseconds){$missed+=($DurationSeconds-$i);$terminalReason='total-duration-limit';throw 'Total duration limit reached'}
+   Start-Sleep -Milliseconds ([Math]::Min(25,[Math]::Max(1,$remaining)))
   }
   $late=$stopwatch.ElapsedMilliseconds-$due
   if($late -ge $CadenceMilliseconds){$deferred++;$missed+=($DurationSeconds-$i);$terminalReason='cadence-delayed-no-catch-up';throw 'Cadence delayed; refusing catch-up keystrokes'}
-  Assert-Target $true | Out-Null
+  $pulseRect=Assert-Target $true
+  if($GameImagePoint[0] -lt $pulseRect.Left -or $GameImagePoint[0] -ge $pulseRect.Right -or $GameImagePoint[1] -lt $pulseRect.Top -or $GameImagePoint[1] -ge $pulseRect.Bottom){throw 'GameImagePoint is outside the current physical window rect'}
   if(-not [PanelInputStimulusNative]::SetCursorPos($GameImagePoint[0],$GameImagePoint[1])){throw 'SetCursorPos failed before pulse'}
   $pulsePoint=New-Object PanelInputStimulusNative+POINT
   if(-not [PanelInputStimulusNative]::GetCursorPos([ref]$pulsePoint) -or $pulsePoint.X -ne $GameImagePoint[0] -or $pulsePoint.Y -ne $GameImagePoint[1]){throw 'Cursor did not remain at the verified Game Image point before pulse'}
@@ -124,22 +138,26 @@ try {
   $down=[PanelInputStimulusNative]::CreateKeyboardInput([ushort]$vk,$downFlags);$up=[PanelInputStimulusNative]::CreateKeyboardInput([ushort]$vk,$upFlags)
   if($down.keyboard.wVk -ne $vk -or $up.keyboard.wVk -ne $vk -or $down.keyboard.dwFlags -ne $downFlags -or $up.keyboard.dwFlags -ne $upFlags){throw 'Arrow INPUT factory fields invalid'}
   $direction=if($vk -eq 0x25){'Left'}else{'Right'}
-  $event=[ordered]@{index=$i+1;direction=$direction;virtualKey=$vk;downFlags=$downFlags;upFlags=$upFlags;requestedUtc=[DateTime]::UtcNow.ToString('o');downUtc=$null;upUtc=$null;downSendInputResult=$null;upSendInputResult=$null;releaseAttempted=$false;releaseSucceeded=$false}
+  $event=[ordered]@{index=$i+1;direction=$direction;virtualKey=$vk;downFlags=$downFlags;upFlags=$upFlags;dueMilliseconds=$due;latenessMilliseconds=$late;requestedUtc=[DateTime]::UtcNow.ToString('o');downUtc=$null;upUtc=$null;downSendInputResult=$null;upSendInputResult=$null;upSendInputException=$null;releaseAttempted=$false;releaseSucceeded=$false}
+  $downSucceeded=$false
   try {
-   $event.downUtc=[DateTime]::UtcNow.ToString('o');$pressedKey=$vk;$pressedAt=$event.downUtc;$event.downSendInputResult=[PanelInputStimulusNative]::SendInput(1,@($down),$inputSize)
+   Assert-Target $true | Out-Null
+   $event.downUtc=[DateTime]::UtcNow.ToString('o');$event.downSendInputResult=[PanelInputStimulusNative]::SendInput(1,@($down),$inputSize)
    if($event.downSendInputResult -ne 1){throw 'Arrow key-down SendInput failed'}
+   $downSucceeded=$true;$pressedKey=$vk;$pressedAt=$event.downUtc
    Start-Sleep -Milliseconds $PressMilliseconds
   } finally {
-   $event.releaseAttempted=$true;$event.upUtc=[DateTime]::UtcNow.ToString('o');$event.upSendInputResult=[PanelInputStimulusNative]::SendInput(1,@($up),$inputSize);$event.releaseSucceeded=($event.upSendInputResult -eq 1);$pressedKey=$null;$pressedAt=$null
+   if($downSucceeded){$event.releaseAttempted=$true;$event.upUtc=[DateTime]::UtcNow.ToString('o');try{$event.upSendInputResult=[PanelInputStimulusNative]::SendInput(1,@($up),$inputSize)}catch{$event.upSendInputException=$_.Exception.Message};$event.releaseSucceeded=($event.upSendInputResult -eq 1);if($event.releaseSucceeded){$pressedKey=$null;$pressedAt=$null}}
+   $events.Add($event);if($downSucceeded -and $event.releaseSucceeded){$completed++}
   }
-  $events.Add($event);$completed++
-  if(-not $event.releaseSucceeded){$terminalReason='key-release-failed';throw 'Arrow key-up SendInput failed'}
+  if($downSucceeded -and -not $event.releaseSucceeded){$terminalReason='key-release-failed';throw 'Arrow key-up SendInput failed'}
  }
  $outcome='completed';$terminalReason='all-predeclared-pulses-completed'
 } catch {
  $outcome='failed';if(-not $terminalReason){$terminalReason='guard-or-input-failure'};$failure=$_.Exception.Message
+ if($requested -gt $completed){$missed=[Math]::Max($missed,$requested-$completed)}
 } finally {
- if($null -ne $pressedKey){try{$release=[PanelInputStimulusNative]::CreateKeyboardInput([ushort]$pressedKey,0x0003);$releaseResult=[PanelInputStimulusNative]::SendInput(1,@($release),[Runtime.InteropServices.Marshal]::SizeOf($release));if($releaseResult -ne 1){$failure=($failure+'; finally key release failed');$outcome='failed'}}catch{$failure=($failure+'; finally key release exception: '+$_.Exception.Message);$outcome='failed'}}
+ if($null -ne $pressedKey){try{$release=[PanelInputStimulusNative]::CreateKeyboardInput([ushort]$pressedKey,0x0003);$releaseResult=[PanelInputStimulusNative]::SendInput(1,@($release),[Runtime.InteropServices.Marshal]::SizeOf($release));if($releaseResult -ne 1){$failure=($failure+'; finally key release failed');$outcome='failed'}else{$pressedKey=$null;$pressedAt=$null}}catch{$failure=($failure+'; finally key release exception: '+$_.Exception.Message);$outcome='failed'}}
  $endedUtc=[DateTime]::UtcNow.ToString('o');if($receiptOwned){Write-Receipt}
 }
 Get-Content -LiteralPath $receipt -Raw
