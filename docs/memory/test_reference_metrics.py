@@ -2257,6 +2257,37 @@ class FocusedGpuRoleCoverageTests(unittest.TestCase):
         del missing[1]["renderer_profile"][1]["gpu_completion"]["completion_latency_buckets"]
         self.assertEqual(rm.evaluate_gpu(meta, missing)["status"], "unavailable")
 
+    def test_public_evaluate_gpu_accepts_native_headless_coverage_flags_false(self):
+        meta = _meta(render_profile=True, gpu_completion_profile=True, frontend="panel", n=2,
+                     render_policy="focused-one", render_policy_requested=True)
+        samples = self._samples(2, "focused-one")
+        for sample in samples:
+            completion = sample["renderer_profile"][1]["gpu_completion"]
+            completion["registration_complete"] = False
+            completion["completion_coverage_complete"] = False
+        result = rm.evaluate_gpu(meta, samples)
+        self.assertEqual(result["status"], "available", result)
+        self.assertEqual(result["slots"][1]["role"], "expected_headless")
+
+    def test_public_evaluate_gpu_allows_interior_pending_but_rejects_epoch_changes(self):
+        meta = _meta(render_profile=True, gpu_completion_profile=True, frontend="panel", n=1,
+                     render_policy="focused-one", render_policy_requested=True)
+        pending = self._samples(1, "focused-one", middle=0)
+        pending[1]["renderer_profile"][0]["gpu_completion"]["pending_n"] = 1
+        self.assertEqual(rm.evaluate_gpu(meta, pending)["target_verdict"], "meet")
+
+        for field in ("attach_n", "detach_n", "backend_change_n"):
+            changed = self._samples(1, "focused-one", middle=0)
+            for sample in changed:
+                sample["renderer_profile"][0][field] = 0
+            changed[1]["renderer_profile"][0][field] = 1
+            result = rm.evaluate_gpu(meta, changed)
+            self.assertEqual(result["status"], "unavailable", field)
+
+        switched = self._samples(1, "focused-one", middle=0)
+        switched[1]["renderer_profile"][0]["backend_kind"] = "vulkan"
+        self.assertEqual(rm.evaluate_gpu(meta, switched)["status"], "unavailable")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2078,8 +2078,6 @@ def _gpu_headless_row_valid(row: dict) -> bool:
         return False
     if any(completion.get(key) != 0 for key in GPU_COUNTER_KEYS):
         return False
-    if completion.get("registration_complete") is not True or completion.get("completion_coverage_complete") is not True:
-        return False
     for key in ("stable_completion_interval_buckets", "completion_latency_buckets"):
         values = completion.get(key)
         if not isinstance(values, list) or any(value != 0 for value in values):
@@ -2094,9 +2092,21 @@ def _gpu_required_row_epoch_error(row: dict, previous: Optional[dict]) -> Option
         return "gpu_backend_or_completion_unavailable"
     if not _gpu_backend_present(row):
         return "gpu_backend_or_completion_unavailable"
-    if completion.get("pending_n") != 0 or completion.get("dropped_n") != 0 or completion.get("lost_n") != 0:
+    # A pending callback in an interior observation is normal in-flight work;
+    # endpoint pending is rejected by the interval adapter below. Drops and
+    # losses are terminal coverage failures at any epoch.
+    if completion.get("dropped_n") != 0 or completion.get("lost_n") != 0:
         return "coverage_lost_or_incomplete"
-    if completion.get("registration_complete") is not True or completion.get("completion_coverage_complete") is not True:
+    if completion.get("registration_complete") is not True:
+        return "coverage_incomplete"
+    # The serializer can publish a normal in-flight callback with coverage
+    # incomplete between endpoints.  The endpoint adapter still requires both
+    # flags complete, while an interior pending epoch remains admissible.
+    pending_n = completion.get("pending_n")
+    if (completion.get("completion_coverage_complete") is not True
+            and not (completion.get("completion_coverage_complete") is False
+                     and isinstance(pending_n, int) and not isinstance(pending_n, bool)
+                     and pending_n > 0)):
         return "coverage_incomplete"
     for key in GPU_COUNTER_KEYS:
         value = completion.get(key)
@@ -2113,6 +2123,18 @@ def _gpu_required_row_epoch_error(row: dict, previous: Optional[dict]) -> Option
     previous_completion = previous.get("gpu_completion")
     if not isinstance(previous_completion, dict):
         return "missing_gpu_completion"
+    if row.get("backend_kind") != previous.get("backend_kind"):
+        return "renderer_backend_changed"
+    for key in ("attach_n", "detach_n", "backend_change_n"):
+        current_value, previous_value = row.get(key), previous.get(key)
+        if current_value is None and previous_value is None:
+            continue
+        if (isinstance(current_value, bool) or not isinstance(current_value, int)
+                or isinstance(previous_value, bool) or not isinstance(previous_value, int)
+                or current_value < previous_value):
+            return "renderer_epoch_invalid"
+        if current_value != previous_value or key == "backend_change_n" and current_value > previous_value:
+            return "renderer_epoch_changed"
     for key in GPU_COUNTER_KEYS:
         if completion[key] < previous_completion.get(key, -1):
             return "counter_reset"
