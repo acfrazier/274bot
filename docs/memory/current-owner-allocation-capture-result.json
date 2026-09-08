@@ -1,0 +1,210 @@
+{
+  "capture_id": "current-owner-heaptrack-n1-2003",
+  "status": "failed_raw_size_guard",
+  "qualified": false,
+  "performance_acceptance": false,
+  "frozen_host": "c0709aba2f8b45e42193225cf8f4e7325b5ca9bf",
+  "frozen_client": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+  "tooling_commit": "1fe21610b6446779133b5ff0dc229ba93599ecc0",
+  "frontend_pid": 2096,
+  "frontend_start_identity": "linux_proc_start_ticks:603986",
+  "frontend_exit_code": -15,
+  "launcher_exit_code": 1,
+  "binding_errors": [
+    "runner:missing observation boundary",
+    "frontend_failed_or_incomplete",
+    "launcher_failed"
+  ],
+  "frontend_metadata_elapsed_s": 590.6642527580261,
+  "qualification_phases": [
+    "observe-start"
+  ],
+  "observe_start_to_frontend_wait_return_s": 455.52433156967163,
+  "heaptrack": {
+    "output": {
+      "directory": "/home/acfrazier/274bot-campaign/current-owner-heaptrack-n1-2003/allocation",
+      "raw": "/home/acfrazier/274bot-campaign/current-owner-heaptrack-n1-2003/allocation/alloc.raw",
+      "directory_mode": "0700",
+      "raw_mode": "0600"
+    },
+    "preload": {
+      "path": "/usr/lib/heaptrack/libheaptrack_preload.so",
+      "version": "1.5.0",
+      "sha256": "134760dbba8d9a2cd1b45f639c119f5c0cd779674a496fb7ed2b6baacac15ca9"
+    },
+    "analysis": {
+      "raw": {
+        "path": "/home/acfrazier/274bot-campaign/current-owner-heaptrack-n1-2003/allocation/alloc.raw",
+        "size": 2149010072,
+        "sha256": "16f51266e56bd065f891ad822a00659a3bd0803aef8f748c82cde5e492b5ca29",
+        "mode": "0600"
+      },
+      "interpreter": {
+        "argv": [
+          "/usr/lib/heaptrack/libexec/heaptrack_interpret"
+        ],
+        "pid": 2154,
+        "exit_code": 0,
+        "output": "/home/acfrazier/274bot-campaign/current-owner-heaptrack-n1-2003/allocation/alloc.interpreted",
+        "output_size": 810563095,
+        "elapsed_s": 58.5555059469998,
+        "peak_rss_bytes": 114855936
+      },
+      "printer": {
+        "argv": [
+          "/usr/bin/heaptrack_print",
+          "--merge-backtraces=0",
+          "--flamegraph-cost-type=peak",
+          "--print-flamegraph",
+          "/home/acfrazier/274bot-campaign/current-owner-heaptrack-n1-2003/allocation/peak-stacks.txt",
+          "/home/acfrazier/274bot-campaign/current-owner-heaptrack-n1-2003/allocation/alloc.interpreted"
+        ],
+        "pid": 2159,
+        "exit_code": 0,
+        "output": "/home/acfrazier/274bot-campaign/current-owner-heaptrack-n1-2003/allocation/peak-analysis.log",
+        "output_size": 58760,
+        "elapsed_s": 13.514582585000426,
+        "peak_rss_bytes": 58503168
+      },
+      "argv": {
+        "interpreter": [
+          "/usr/lib/heaptrack/libexec/heaptrack_interpret"
+        ],
+        "printer": [
+          "/usr/bin/heaptrack_print",
+          "--merge-backtraces=0",
+          "--flamegraph-cost-type=peak",
+          "--print-flamegraph",
+          "/home/acfrazier/274bot-campaign/current-owner-heaptrack-n1-2003/allocation/peak-stacks.txt",
+          "/home/acfrazier/274bot-campaign/current-owner-heaptrack-n1-2003/allocation/alloc.interpreted"
+        ]
+      }
+    },
+    "guard": {
+      "reason": "raw output 2149010072 >= 2147483648",
+      "peak_rss_bytes": 195039232,
+      "peak_raw_bytes": 2149010072
+    }
+  },
+  "peak": {
+    "all_rows": 14903,
+    "positive_rows": 194,
+    "negative_rows": 0,
+    "global_peak_requested_bytes": 160842811,
+    "partition_subtrees": {
+      "other": 362459,
+      "IfType::unpack subtree": 6491160,
+      "Cache::unpack subtree": 4783967,
+      "NavWorld::load_pack subtree": 147272041,
+      "load_templates subtree": 1933184
+    },
+    "top_rows": [
+      {
+        "row": 12243,
+        "bytes": 73438581,
+        "stack": "main;_RNvNtCs6ZjlLoI6YmX_3std2rt19lang_start_internal;_RNCINvNtCs6ZjlLoI6YmX_3std2rt10lang_startNtNtB6_7process8ExitCodeE0Cs4LgEStMLG6c_8tui_play;_RINvNtNtCs6ZjlLoI6YmX_3std3sys9backtrace28___rust_begin_short_backtraceFENtNtB6_7process8ExitCodeB19_ECs4LgEStMLG6c_8tui_play;_RNvNtCsh45fz8A1of3_3tui3bin4main;_RNvNtCsh45fz8A1of3_3tui3bin3run;_RNvMNtCsh45fz8A1of3_3tui3binNtB2_10TuiSession9unlock_at;_RINvCs3JBA3HkGT3V_9host_play11run_with_ioNCNvMNtCsh45fz8A1of3_3tui3binNtBI_10TuiSession10start_play0NCBF_s_0EBK_;_RNvMs6_Cs3JBA3HkGT3V_9host_playNtB5_4Play3new;_RNvMNtCsdO8rEf1jYGK_3nav5worldNtB2_8NavWorld9load_pack;_RNvNvNtCs6ZjlLoI6YmX_3std2fs4read5inner;"
+      },
+      {
+        "row": 10154,
+        "bytes": 65142784,
+        "stack": "main;_RNvNtCs6ZjlLoI6YmX_3std2rt19lang_start_internal;_RNCINvNtCs6ZjlLoI6YmX_3std2rt10lang_startNtNtB6_7process8ExitCodeE0Cs4LgEStMLG6c_8tui_play;_RINvNtNtCs6ZjlLoI6YmX_3std3sys9backtrace28___rust_begin_short_backtraceFENtNtB6_7process8ExitCodeB19_ECs4LgEStMLG6c_8tui_play;_RNvNtCsh45fz8A1of3_3tui3bin4main;_RNvNtCsh45fz8A1of3_3tui3bin3run;_RNvMNtCsh45fz8A1of3_3tui3binNtB2_10TuiSession9unlock_at;_RINvCs3JBA3HkGT3V_9host_play11run_with_ioNCNvMNtCsh45fz8A1of3_3tui3binNtBI_10TuiSession10start_play0NCBF_s_0EBK_;_RNvMs6_Cs3JBA3HkGT3V_9host_playNtB5_4Play3new;_RNvMNtCsdO8rEf1jYGK_3nav5worldNtB2_8NavWorld9load_pack;_RNvNtCsdO8rEf1jYGK_3nav4pack6decode;_RINvXs1_NtNtCscHgRw1M2fX5_5alloc3vec14spec_from_elemhNtB6_12SpecFromElem9from_elemNtNtBa_5alloc6GlobalECsdO8rEf1jYGK_3nav;"
+      },
+      {
+        "row": 10155,
+        "bytes": 8142848,
+        "stack": "main;_RNvNtCs6ZjlLoI6YmX_3std2rt19lang_start_internal;_RNCINvNtCs6ZjlLoI6YmX_3std2rt10lang_startNtNtB6_7process8ExitCodeE0Cs4LgEStMLG6c_8tui_play;_RINvNtNtCs6ZjlLoI6YmX_3std3sys9backtrace28___rust_begin_short_backtraceFENtNtB6_7process8ExitCodeB19_ECs4LgEStMLG6c_8tui_play;_RNvNtCsh45fz8A1of3_3tui3bin4main;_RNvNtCsh45fz8A1of3_3tui3bin3run;_RNvMNtCsh45fz8A1of3_3tui3binNtB2_10TuiSession9unlock_at;_RINvCs3JBA3HkGT3V_9host_play11run_with_ioNCNvMNtCsh45fz8A1of3_3tui3binNtBI_10TuiSession10start_play0NCBF_s_0EBK_;_RNvMs6_Cs3JBA3HkGT3V_9host_playNtB5_4Play3new;_RNvMNtCsdO8rEf1jYGK_3nav5worldNtB2_8NavWorld9load_pack;_RNvNtCsdO8rEf1jYGK_3nav4pack6decode;_RNvMs5_NtCscHgRw1M2fX5_5alloc7raw_vecNtB5_11RawVecInner15try_allocate_inCsdO8rEf1jYGK_3nav;"
+      },
+      {
+        "row": 10156,
+        "bytes": 5887424,
+        "stack": "main;_RNvNtCs6ZjlLoI6YmX_3std2rt19lang_start_internal;_RNCINvNtCs6ZjlLoI6YmX_3std2rt10lang_startNtNtB6_7process8ExitCodeE0Cs4LgEStMLG6c_8tui_play;_RINvNtNtCs6ZjlLoI6YmX_3std3sys9backtrace28___rust_begin_short_backtraceFENtNtB6_7process8ExitCodeB19_ECs4LgEStMLG6c_8tui_play;_RNvNtCsh45fz8A1of3_3tui3bin4main;_RNvNtCsh45fz8A1of3_3tui3bin3run;_RNvMNtCsh45fz8A1of3_3tui3binNtB2_10TuiSession9unlock_at;_RINvCs3JBA3HkGT3V_9host_play11run_with_ioNCNvMNtCsh45fz8A1of3_3tui3binNtBI_10TuiSession10start_play0NCBF_s_0EBK_;_RNvMs6_Cs3JBA3HkGT3V_9host_playNtB5_4Play3new;_RNvMs6_NtNtCseoayFEFQqjH_6client6config7if_typeNtB5_6IfType6unpack;"
+      },
+      {
+        "row": 10157,
+        "bytes": 1962576,
+        "stack": "main;_RNvNtCs6ZjlLoI6YmX_3std2rt19lang_start_internal;_RNCINvNtCs6ZjlLoI6YmX_3std2rt10lang_startNtNtB6_7process8ExitCodeE0Cs4LgEStMLG6c_8tui_play;_RINvNtNtCs6ZjlLoI6YmX_3std3sys9backtrace28___rust_begin_short_backtraceFENtNtB6_7process8ExitCodeB19_ECs4LgEStMLG6c_8tui_play;_RNvNtCsh45fz8A1of3_3tui3bin4main;_RNvNtCsh45fz8A1of3_3tui3bin3run;_RNvMNtCsh45fz8A1of3_3tui3binNtB2_10TuiSession9unlock_at;_RINvCs3JBA3HkGT3V_9host_play11run_with_ioNCNvMNtCsh45fz8A1of3_3tui3binNtBI_10TuiSession10start_play0NCBF_s_0EBK_;_RNvMs6_Cs3JBA3HkGT3V_9host_playNtB5_4Play3new;_RNvMNtCseoayFEFQqjH_6client6configNtB2_5Cache6unpack;_RNvMs_NtNtCseoayFEFQqjH_6client6config8obj_typeNtB4_7ObjType6unpack;"
+      },
+      {
+        "row": 10158,
+        "bytes": 1933184,
+        "stack": "main;_RNvNtCs6ZjlLoI6YmX_3std2rt19lang_start_internal;_RNCINvNtCs6ZjlLoI6YmX_3std2rt10lang_startNtNtB6_7process8ExitCodeE0Cs4LgEStMLG6c_8tui_play;_RINvNtNtCs6ZjlLoI6YmX_3std3sys9backtrace28___rust_begin_short_backtraceFENtNtB6_7process8ExitCodeB19_ECs4LgEStMLG6c_8tui_play;_RNvNtCsh45fz8A1of3_3tui3bin4main;_RNvNtCsh45fz8A1of3_3tui3bin3run;_RNvMNtCsh45fz8A1of3_3tui3binNtB2_10TuiSession9unlock_at;_RINvCs3JBA3HkGT3V_9host_play11run_with_ioNCNvMNtCsh45fz8A1of3_3tui3binNtBI_10TuiSession10start_play0NCBF_s_0EBK_;_RNvMs6_Cs3JBA3HkGT3V_9host_playNtB5_4Play3new;_RINvNtNtCscHgRw1M2fX5_5alloc3vec16in_place_collect18from_iter_in_placeINtNtNtNtCsc36rpYXAlPq_4core4iter8adapters3map3MapINtNtB4_9into_iter8IntoIterINtNtB1f_6option6OptionINtNtB6_5boxed3BoxNtNtNtCseoayFEFQqjH_6client6config7if_type9IfTypeMutEEENCNCNvCs3JBA3HkGT3V_9host_play13load_templates_00EIB2m_INtNtB6_4sync3ArcB30_EEEB3Z_;_RINvXs4_NtNtCscHgRw1M2fX5_5alloc3vec9into_iterINtB6_8IntoIterINtNtCsc36rpYXAlPq_4core6option6OptionINtNtBa_5boxed3BoxNtNtNtCseoayFEFQqjH_6client6config7if_type9IfTypeMutEEENtNtNtNtB12_4iter6traits8iterator8Iterator8try_foldINtNtB8_13in_place_drop11InPlaceDropIBY_INtNtBa_4sync3ArcB1R_EEENCINvNtNtB2Q_8adapters3map12map_try_foldBX_B49_B3z_INtNtB12_6result6ResultB3z_zENCNCNvCs3JBA3HkGT3V_9host_play13load_templates_00NCINvNtB8_16in_place_collect24write_in_place_with_dropB49_E0E0B5q_EB5Z_;"
+      },
+      {
+        "row": 10159,
+        "bytes": 1158408,
+        "stack": "main;_RNvNtCs6ZjlLoI6YmX_3std2rt19lang_start_internal;_RNCINvNtCs6ZjlLoI6YmX_3std2rt10lang_startNtNtB6_7process8ExitCodeE0Cs4LgEStMLG6c_8tui_play;_RINvNtNtCs6ZjlLoI6YmX_3std3sys9backtrace28___rust_begin_short_backtraceFENtNtB6_7process8ExitCodeB19_ECs4LgEStMLG6c_8tui_play;_RNvNtCsh45fz8A1of3_3tui3bin4main;_RNvNtCsh45fz8A1of3_3tui3bin3run;_RNvMNtCsh45fz8A1of3_3tui3binNtB2_10TuiSession9unlock_at;_RINvCs3JBA3HkGT3V_9host_play11run_with_ioNCNvMNtCsh45fz8A1of3_3tui3binNtBI_10TuiSession10start_play0NCBF_s_0EBK_;_RNvMs6_Cs3JBA3HkGT3V_9host_playNtB5_4Play3new;_RNvMNtCseoayFEFQqjH_6client6configNtB2_5Cache6unpack;_RNvMs0_NtNtCseoayFEFQqjH_6client6config8loc_typeNtB5_7LocType6unpack;"
+      },
+      {
+        "row": 10160,
+        "bytes": 366576,
+        "stack": "main;_RNvNtCs6ZjlLoI6YmX_3std2rt19lang_start_internal;_RNCINvNtCs6ZjlLoI6YmX_3std2rt10lang_startNtNtB6_7process8ExitCodeE0Cs4LgEStMLG6c_8tui_play;_RINvNtNtCs6ZjlLoI6YmX_3std3sys9backtrace28___rust_begin_short_backtraceFENtNtB6_7process8ExitCodeB19_ECs4LgEStMLG6c_8tui_play;_RNvNtCsh45fz8A1of3_3tui3bin4main;_RNvNtCsh45fz8A1of3_3tui3bin3run;_RNvMNtCsh45fz8A1of3_3tui3binNtB2_10TuiSession9unlock_at;_RINvCs3JBA3HkGT3V_9host_play11run_with_ioNCNvMNtCsh45fz8A1of3_3tui3binNtBI_10TuiSession10start_play0NCBF_s_0EBK_;_RNvMs6_Cs3JBA3HkGT3V_9host_playNtB5_4Play3new;_RNvMNtCsdO8rEf1jYGK_3nav5worldNtB2_8NavWorld9load_pack;_RNvNtCsdO8rEf1jYGK_3nav4pack6decode;_RNvMs5_NtCscHgRw1M2fX5_5alloc7raw_vecNtB5_11RawVecInner15try_allocate_inCsdO8rEf1jYGK_3nav;"
+      },
+      {
+        "row": 10161,
+        "bytes": 315288,
+        "stack": "main;_RNvNtCs6ZjlLoI6YmX_3std2rt19lang_start_internal;_RNCINvNtCs6ZjlLoI6YmX_3std2rt10lang_startNtNtB6_7process8ExitCodeE0Cs4LgEStMLG6c_8tui_play;_RINvNtNtCs6ZjlLoI6YmX_3std3sys9backtrace28___rust_begin_short_backtraceFENtNtB6_7process8ExitCodeB19_ECs4LgEStMLG6c_8tui_play;_RNvNtCsh45fz8A1of3_3tui3bin4main;_RNvNtCsh45fz8A1of3_3tui3bin3run;_RNvMNtCsh45fz8A1of3_3tui3binNtB2_10TuiSession9unlock_at;_RINvCs3JBA3HkGT3V_9host_play11run_with_ioNCNvMNtCsh45fz8A1of3_3tui3binNtBI_10TuiSession10start_play0NCBF_s_0EBK_;_RNvMs6_Cs3JBA3HkGT3V_9host_playNtB5_4Play3new;_RNvMNtCseoayFEFQqjH_6client6configNtB2_5Cache6unpack;_RNvMs_NtNtCseoayFEFQqjH_6client6config8npc_typeNtB4_7NpcType6unpack;"
+      },
+      {
+        "row": 10162,
+        "bytes": 186912,
+        "stack": "main;_RNvNtCs6ZjlLoI6YmX_3std2rt19lang_start_internal;_RNCINvNtCs6ZjlLoI6YmX_3std2rt10lang_startNtNtB6_7process8ExitCodeE0Cs4LgEStMLG6c_8tui_play;_RINvNtNtCs6ZjlLoI6YmX_3std3sys9backtrace28___rust_begin_short_backtraceFENtNtB6_7process8ExitCodeB19_ECs4LgEStMLG6c_8tui_play;_RNvNtCsh45fz8A1of3_3tui3bin4main;_RNvNtCsh45fz8A1of3_3tui3bin3run;_RNvMNtCsh45fz8A1of3_3tui3binNtB2_10TuiSession9unlock_at;_RINvCs3JBA3HkGT3V_9host_play11run_with_ioNCNvMNtCsh45fz8A1of3_3tui3binNtBI_10TuiSession10start_play0NCBF_s_0EBK_;_RNvMs6_Cs3JBA3HkGT3V_9host_playNtB5_4Play3new;_RNvMs0_NtCsjCVkXGB5m1G_3api9obj_namesNtB5_8ObjNames9from_objs;_RINvXNtNtCscHgRw1M2fX5_5alloc3vec14spec_from_elemINtNtCsc36rpYXAlPq_4core6option6OptionNtNtCsjCVkXGB5m1G_3api9obj_names11ItemDefViewENtB3_12SpecFromElem9from_elemNtNtB7_5alloc6GlobalEB1r_;"
+      },
+      {
+        "row": 10163,
+        "bytes": 185368,
+        "stack": "main;_RNvNtCs6ZjlLoI6YmX_3std2rt19lang_start_internal;_RNCINvNtCs6ZjlLoI6YmX_3std2rt10lang_startNtNtB6_7process8ExitCodeE0Cs4LgEStMLG6c_8tui_play;_RINvNtNtCs6ZjlLoI6YmX_3std3sys9backtrace28___rust_begin_short_backtraceFENtNtB6_7process8ExitCodeB19_ECs4LgEStMLG6c_8tui_play;_RNvNtCsh45fz8A1of3_3tui3bin4main;_RNvNtCsh45fz8A1of3_3tui3bin3run;_RNvMNtCsh45fz8A1of3_3tui3binNtB2_10TuiSession9unlock_at;_RINvCs3JBA3HkGT3V_9host_play11run_with_ioNCNvMNtCsh45fz8A1of3_3tui3binNtBI_10TuiSession10start_play0NCBF_s_0EBK_;_RNvMs6_Cs3JBA3HkGT3V_9host_playNtB5_4Play3new;_RNvMNtCseoayFEFQqjH_6client6configNtB2_5Cache6unpack;_RNvMs_NtNtCseoayFEFQqjH_6client6config8seq_typeNtB4_7SeqType6unpack;"
+      },
+      {
+        "row": 10164,
+        "bytes": 153528,
+        "stack": "main;_RNvNtCs6ZjlLoI6YmX_3std2rt19lang_start_internal;_RNCINvNtCs6ZjlLoI6YmX_3std2rt10lang_startNtNtB6_7process8ExitCodeE0Cs4LgEStMLG6c_8tui_play;_RINvNtNtCs6ZjlLoI6YmX_3std3sys9backtrace28___rust_begin_short_backtraceFENtNtB6_7process8ExitCodeB19_ECs4LgEStMLG6c_8tui_play;_RNvNtCsh45fz8A1of3_3tui3bin4main;_RNvNtCsh45fz8A1of3_3tui3bin3run;_RNvMNtCsh45fz8A1of3_3tui3binNtB2_10TuiSession9unlock_at;_RINvCs3JBA3HkGT3V_9host_play11run_with_ioNCNvMNtCsh45fz8A1of3_3tui3binNtBI_10TuiSession10start_play0NCBF_s_0EBK_;_RNvMs6_Cs3JBA3HkGT3V_9host_playNtB5_4Play3new;_RNvMNtCseoayFEFQqjH_6client6configNtB2_5Cache6unpack;_RNvMs0_NtNtCseoayFEFQqjH_6client6config8loc_typeNtB5_7LocType6unpack;_RNvMs1_NtCscHgRw1M2fX5_5alloc3vecINtB5_3VecINtNtCsc36rpYXAlPq_4core6option6OptionNtNtB7_6string6StringEE6resizeCseoayFEFQqjH_6client;_RINvNvMs2_NtCscHgRw1M2fX5_5alloc7raw_vecINtB8_11RawVecInnerpE7reserve21do_reserve_and_handleNtNtBa_5alloc6GlobalECseoayFEFQqjH_6client;_RNvMs5_NtCscHgRw1M2fX5_5alloc7raw_vecNtB5_11RawVecInner11finish_growCseoayFEFQqjH_6client.llvm.15819653318954751376;"
+      },
+      {
+        "row": 10165,
+        "bytes": 125984,
+        "stack": "main;_RNvNtCs6ZjlLoI6YmX_3std2rt19lang_start_internal;_RNCINvNtCs6ZjlLoI6YmX_3std2rt10lang_startNtNtB6_7process8ExitCodeE0Cs4LgEStMLG6c_8tui_play;_RINvNtNtCs6ZjlLoI6YmX_3std3sys9backtrace28___rust_begin_short_backtraceFENtNtB6_7process8ExitCodeB19_ECs4LgEStMLG6c_8tui_play;_RNvNtCsh45fz8A1of3_3tui3bin4main;_RNvNtCsh45fz8A1of3_3tui3bin3run;_RNvMNtCsh45fz8A1of3_3tui3binNtB2_10TuiSession9unlock_at;_RINvCs3JBA3HkGT3V_9host_play11run_with_ioNCNvMNtCsh45fz8A1of3_3tui3binNtBI_10TuiSession10start_play0NCBF_s_0EBK_;_RNvMs6_Cs3JBA3HkGT3V_9host_playNtB5_4Play3new;_RNvMNtCsdO8rEf1jYGK_3nav5worldNtB2_8NavWorld9load_pack;_RNvNtCsdO8rEf1jYGK_3nav4pack6decode;_RNvMNtCs1lJFy7o6pGX_9hashbrown11rustc_entryINtNtB4_3map7HashMapNtNtCsjCVkXGB5m1G_3api8snapshot9WorldTileINtNtCscHgRw1M2fX5_5alloc3vec3VecjENtNtNtCs6ZjlLoI6YmX_3std4hash6random11RandomStateE11rustc_entryCsdO8rEf1jYGK_3nav;_RINvMs6_NtCs1lJFy7o6pGX_9hashbrown3rawINtB6_8RawTableTNtNtCsjCVkXGB5m1G_3api8snapshot9WorldTileINtNtCscHgRw1M2fX5_5alloc3vec3VecjEEE14reserve_rehashNCINvNtB8_3map11make_hasherBQ_B1v_NtNtNtCs6ZjlLoI6YmX_3std4hash6random11RandomStateE0ECsdO8rEf1jYGK_3nav;"
+      },
+      {
+        "row": 10166,
+        "bytes": 113688,
+        "stack": "main;_RNvNtCs6ZjlLoI6YmX_3std2rt19lang_start_internal;_RNCINvNtCs6ZjlLoI6YmX_3std2rt10lang_startNtNtB6_7process8ExitCodeE0Cs4LgEStMLG6c_8tui_play;_RINvNtNtCs6ZjlLoI6YmX_3std3sys9backtrace28___rust_begin_short_backtraceFENtNtB6_7process8ExitCodeB19_ECs4LgEStMLG6c_8tui_play;_RNvNtCsh45fz8A1of3_3tui3bin4main;_RNvNtCsh45fz8A1of3_3tui3bin3run;_RNvMNtCsh45fz8A1of3_3tui3binNtB2_10TuiSession9unlock_at;_RINvCs3JBA3HkGT3V_9host_play11run_with_ioNCNvMNtCsh45fz8A1of3_3tui3binNtBI_10TuiSession10start_play0NCBF_s_0EBK_;_RNvMs6_Cs3JBA3HkGT3V_9host_playNtB5_4Play3new;_RNvMNtCseoayFEFQqjH_6client6configNtB2_5Cache6unpack;_RNvMs_NtNtCseoayFEFQqjH_6client6config8npc_typeNtB4_7NpcType6unpack;_RNvMs1_NtCscHgRw1M2fX5_5alloc3vecINtB5_3VecINtNtCsc36rpYXAlPq_4core6option6OptionNtNtB7_6string6StringEE6resizeCseoayFEFQqjH_6client;_RINvNvMs2_NtCscHgRw1M2fX5_5alloc7raw_vecINtB8_11RawVecInnerpE7reserve21do_reserve_and_handleNtNtBa_5alloc6GlobalECseoayFEFQqjH_6client;_RNvMs5_NtCscHgRw1M2fX5_5alloc7raw_vecNtB5_11RawVecInner11finish_growCseoayFEFQqjH_6client.llvm.15819653318954751376;"
+      },
+      {
+        "row": 69,
+        "bytes": 107568,
+        "stack": "main;_RNvNtCs6ZjlLoI6YmX_3std2rt19lang_start_internal;_RNCINvNtCs6ZjlLoI6YmX_3std2rt10lang_startNtNtB6_7process8ExitCodeE0Cs4LgEStMLG6c_8tui_play;_RINvNtNtCs6ZjlLoI6YmX_3std3sys9backtrace28___rust_begin_short_backtraceFENtNtB6_7process8ExitCodeB19_ECs4LgEStMLG6c_8tui_play;_RNvNtCsh45fz8A1of3_3tui3bin4main;_RNvNtCsh45fz8A1of3_3tui3bin3run;_RNvMNtCsh45fz8A1of3_3tui3binNtB2_10TuiSession9unlock_at;_RINvCs3JBA3HkGT3V_9host_play11run_with_ioNCNvMNtCsh45fz8A1of3_3tui3binNtBI_10TuiSession10start_play0NCBF_s_0EBK_;_RNvMs6_Cs3JBA3HkGT3V_9host_playNtB5_4Play3new;_RNvMNtCseoayFEFQqjH_6client6configNtB2_5Cache6unpack;_RNvMs0_NtNtCseoayFEFQqjH_6client6config8loc_typeNtB5_7LocType6unpack;_RINvNvMs2_NtCscHgRw1M2fX5_5alloc7raw_vecINtB8_11RawVecInnerpE7reserve21do_reserve_and_handleNtNtBa_5alloc6GlobalECseoayFEFQqjH_6client;_RNvMs5_NtCscHgRw1M2fX5_5alloc7raw_vecNtB5_11RawVecInner11finish_growCseoayFEFQqjH_6client.llvm.15819653318954751376;"
+      }
+    ]
+  },
+  "native_nav_header_probe": {
+    "source": "root read-only postcapture stat and first25bytes",
+    "file_bytes": 73438581,
+    "header_hex": "32373456084007000000050000000000000007000080230000",
+    "width": 1792,
+    "height": 9088,
+    "walk_bytes": 65142784,
+    "blocked_words_bytes": 8142848
+  },
+  "limits": {
+    "raw_soft_stop_bytes": 2147483648,
+    "frontend_rss_limit_bytes": 536870912,
+    "analysis_rss_limit_bytes": 536870912,
+    "analysis_as_limit_bytes": 805306368
+  },
+  "limitations": [
+    "Incomplete observation and no Stop/postjoin boundaries",
+    "Global peak belongs to navigation pack loading, not an active per-bot owner population",
+    "No phase slice, private per-bot ranking, snapshot epoch, RSS ownership, overhead or savings established",
+    "Raw/interpreted retained remotely; downloaded peak and receipts hash-verified"
+  ],
+  "qualifier": {
+    "exit_code": 1,
+    "qualified": false,
+    "errors": [
+      "missing boundary qualification",
+      "observation incomplete",
+      "process failed or incomplete"
+    ]
+  },
+  "recompute_script_sha256": "124a3726e4ff91459fa1ca2ed6d5b8463801f7ed0d62cd0eea9e1a00fb66a457"
+}
