@@ -37,11 +37,140 @@
   "cpu_cores": 0.5617460441918807,
   "resource_gate_status": "unavailable",
   "resource_gate_reason": "missing_resource_provenance",
-  "native_binding_status": "unavailable",
-  "native_binding_reason": "host_conditions_invalid: explicit frontend_processes empty observation rejected by generic missing-leaf rule",
+  "native_binding_status": "bound",
+  "native_binding_reason": null,
   "reader_correction_card": "t_17321283",
   "performance_acceptance": false,
   "overhead": "unmeasured",
   "matched_comparison": false,
-  "latency_and_profiled_cadence": "unavailable by declared profile-off configuration"
+  "latency_and_profiled_cadence": "unavailable by declared profile-off configuration",
+  "original_native_binding_status": "unavailable",
+  "original_native_binding_reason": "host_conditions_invalid: explicit frontend_processes empty observation rejected by generic missing-leaf rule",
+  "native_binding_ok": true,
+  "managed_resources_status": "available",
+  "replay_archive_sha256": "3a7f5bbe2dab42f61f967aac8034b7e2d18772662aac7a73bf5fb5f2c583fc87",
+  "reader_review_commit": "82057de",
+  "reader_review_session": "20260908_124352_8900f2",
+  "process_accounting": {
+    "game_server": {
+      "pid": 726,
+      "start_identity": "linux_proc_start_ticks:1761",
+      "resident_median_bytes": 654934016.0,
+      "resident_sample_count": 1200,
+      "sampled_resident_peak_bytes": 672890880.0,
+      "cpu_s_enclosing_observation": 32.93,
+      "cpu_cores_interval": [
+        0.05483762248980846,
+        0.054837640711516616
+      ],
+      "cpu_duration_interval_s": [
+        600.499940784,
+        600.5001403209999
+      ],
+      "cpu_wall_envelope": [
+        1788884438.749683,
+        1788885039.250407
+      ],
+      "cpu_endpoint_excess_s": [
+        0.3794686794281006,
+        0.07858943939208984
+      ]
+    },
+    "controller": {
+      "pid": 1514,
+      "start_identity": "linux_proc_start_ticks:112599",
+      "resident_median_bytes": 18649088.0,
+      "resident_sample_count": 1200,
+      "sampled_resident_peak_bytes": 19304448.0,
+      "cpu_s_enclosing_observation": 3.0499999999999994,
+      "cpu_cores_interval": [
+        0.005079099507943793,
+        0.005079101318725438
+      ],
+      "cpu_duration_interval_s": [
+        600.499932686,
+        600.5001467740001
+      ],
+      "cpu_wall_envelope": [
+        1788884438.749683,
+        1788885039.250407
+      ],
+      "cpu_endpoint_excess_s": [
+        0.3794686794281006,
+        0.07858943939208984
+      ]
+    },
+    "ssh_parent": {
+      "pid": 1513,
+      "start_identity": "linux_proc_start_ticks:112599",
+      "resident_median_bytes": 2359296.0,
+      "resident_sample_count": 1200,
+      "sampled_resident_peak_bytes": 3407872.0,
+      "cpu_s_enclosing_observation": 0.0,
+      "cpu_cores_interval": [
+        0.0,
+        0.0
+      ],
+      "cpu_duration_interval_s": [
+        600.4999402849999,
+        600.5001516979999
+      ],
+      "cpu_wall_envelope": [
+        1788884438.749683,
+        1788885039.250407
+      ],
+      "cpu_endpoint_excess_s": [
+        0.3794686794281006,
+        0.07858943939208984
+      ]
+    },
+    "launcher": {
+      "pid": 1530,
+      "start_identity": "linux_proc_start_ticks:113606",
+      "resident_median_bytes": 19951616.0,
+      "resident_sample_count": 1200,
+      "sampled_resident_peak_bytes": 116486144.0,
+      "cpu_s_enclosing_observation": 0.4499999999999992,
+      "cpu_cores_interval": [
+        0.0007493753551689515,
+        0.0007493755964216671
+      ],
+      "cpu_duration_interval_s": [
+        600.4999390810001,
+        600.5001324049999
+      ],
+      "cpu_wall_envelope": [
+        1788884438.749683,
+        1788885039.250407
+      ],
+      "cpu_endpoint_excess_s": [
+        0.3794686794281006,
+        0.07858943939208984
+      ]
+    },
+    "collector": {
+      "pid": 1531,
+      "start_identity": "linux_proc_start_ticks:113606",
+      "resident_median_bytes": 16252928.0,
+      "resident_sample_count": 1200,
+      "sampled_resident_peak_bytes": 16515072.0,
+      "cpu_s_enclosing_observation": 2.6,
+      "cpu_cores_interval": [
+        0.004329723518861241,
+        0.0043297264519343084
+      ],
+      "cpu_duration_interval_s": [
+        600.499830385,
+        600.5002371800001
+      ],
+      "cpu_wall_envelope": [
+        1788884438.749683,
+        1788885039.250407
+      ],
+      "cpu_endpoint_excess_s": [
+        0.3794686794281006,
+        0.07858943939208984
+      ]
+    }
+  }
 }

@@ -11,6 +11,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 16:50 UTC
+
+- Reader 82057de approved actual Grok4.5 session20260908_124352_8900f2,
+  integrated ff6307b; root49adapter tests PASS. Native immutable replay bound,
+  qualified and managed resources available; raw/shaped resources remain
+  missing_resource_provenance and overhead unknown. No acceptance or rerun.
+- Replay archive SHA3a7f5bbe2dab42f61f967aac8034b7e2d18772662aac7a73bf5fb5f2c583fc87
+  downloaded and verified underdiagnostics/current-tui-n16-1616. All93original
+  archivefiles verified before/after. Report current-native-tui-calibration-report.md
+  records the521MiB/.562core misses and limits; independent evidence review next.
+- 289 Luna correction reclaimed/resumed after root found reviewer2048-bit RSA
+  incompatible with actualp1/g1ciphertext framing. Root requires matching unique
+  protocol-compatible local-only pair and realPacket roundtrip/envelope proof;
+  preserve established valid local keys on rerun. Same cardt_2b8506ea run4active.
+
 ## Latest boundary — 2026-09-08 16:39 UTC
 
 - TUI1616 completed0; frontend1543 exited. Native archive93files verified,

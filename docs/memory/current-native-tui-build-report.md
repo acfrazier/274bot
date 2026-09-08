@@ -63,7 +63,9 @@ The verified 93-file archive is preserved under
 `diagnostics/current-tui-n16-1616/current-tui-n16-1616-final`, SHA256
 `7612191cfe88f61303e1d0409952032a552c53ff87370f90b03fd4d17a2941c4`.
 The original native reader rejected the explicit empty frontend-process
-observation; correction t_17321283 is under review and will be replayed against
-these same artifacts. Raw files and original rejected outputs remain unchanged.
+observation; correction 82057de passed Grok 4.5 review and native replay now
+binds the same artifacts successfully. See current-native-tui-calibration-report.md
+for the distinct raw-resource gate and overhead limits. Raw files and original
+rejected outputs remain unchanged.
 No matched saving, absolute budget, lifecycle, or final campaign gate is accepted.
 Profile-off cadence/latency and instrumentation overhead remain unmeasured.
