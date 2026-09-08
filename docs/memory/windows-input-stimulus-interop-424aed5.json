@@ -1,0 +1,16 @@
+{
+    "utc":  "2026-09-08T09:24:21.8438298Z",
+    "sourceSha256":  "7ef66deaa5dce23b3bdfdb335de110dcaddccefcdd9d4d7e3583af459baa2dd3",
+    "psVersion":  "5.1.26100.9168",
+    "pointerBytes":  8,
+    "astErrors":  0,
+    "compiled":  true,
+    "inputBytes":  40,
+    "leftVk":  37,
+    "rightVk":  39,
+    "downFlags":  1,
+    "upFlags":  3,
+    "inputType":  1,
+    "inputSent":  false,
+    "controllerExecuted":  false
+}
