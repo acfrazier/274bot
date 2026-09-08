@@ -80,6 +80,7 @@ pub struct LossReceipt {
     pub slot_id: u64,
     pub generation: u64,
     pub start_mono_ns: Option<u64>,
+    pub surface: Surface,
     pub outcome: Outcome,
     pub reason: LossReason,
 }
@@ -230,9 +231,16 @@ fn append(s: &mut State, entry: Entry) -> bool {
     });
     true
 }
-fn loss(s: &mut State, r: LossReceipt) {
+fn loss(s: &mut State, r: LossReceipt) -> bool {
     s.losses_n = s.losses_n.saturating_add(1);
-    let _ = append(s, Entry::Loss(r));
+    let appended = append(s, Entry::Loss(r));
+    s.available = false;
+    appended
+}
+
+fn capacity_overflow(s: &mut State) {
+    s.losses_n = s.losses_n.saturating_add(1);
+    s.journal_overflow_n = s.journal_overflow_n.saturating_add(1);
     s.available = false;
 }
 
@@ -258,6 +266,7 @@ pub fn start(
                     slot_id,
                     generation,
                     start_mono_ns: Some(start_mono_ns),
+                    surface,
                     outcome: Outcome::Dropped,
                     reason: LossReason::LateEvent,
                 },
@@ -269,19 +278,8 @@ pub fn start(
         return None;
     }
     if s.pending.len() + s.journal.len() >= s.capacity {
-        let seq = s.next_sequence;
-        s.next_sequence = seq.wrapping_add(1);
-        loss(
-            &mut s,
-            LossReceipt {
-                sequence: seq,
-                slot_id,
-                generation,
-                start_mono_ns: Some(start_mono_ns),
-                outcome: Outcome::Dropped,
-                reason: LossReason::Capacity,
-            },
-        );
+        s.next_sequence = s.next_sequence.wrapping_add(1);
+        capacity_overflow(&mut s);
         return None;
     }
     let id = EventId {
@@ -318,6 +316,7 @@ pub fn dropped_start(slot_id: u64, generation: u64, start_mono_ns: u64, surface:
             slot_id,
             generation,
             start_mono_ns: Some(start_mono_ns),
+            surface,
             outcome: Outcome::Dropped,
             reason,
         },
@@ -339,6 +338,7 @@ fn terminal(id: EventId, complete: Option<u64>, outcome: Outcome) {
                 slot_id: id.slot_id,
                 generation: id.generation,
                 start_mono_ns: Some(id.start_mono_ns),
+                surface: id.surface,
                 outcome,
                 reason,
             },
@@ -359,6 +359,7 @@ fn terminal(id: EventId, complete: Option<u64>, outcome: Outcome) {
                     slot_id: id.slot_id,
                     generation: id.generation,
                     start_mono_ns: Some(id.start_mono_ns),
+                    surface: id.surface,
                     outcome,
                     reason: LossReason::MalformedTimestamp,
                 },
@@ -373,6 +374,7 @@ fn terminal(id: EventId, complete: Option<u64>, outcome: Outcome) {
                     slot_id: id.slot_id,
                     generation: id.generation,
                     start_mono_ns: Some(id.start_mono_ns),
+                    surface: id.surface,
                     outcome,
                     reason: LossReason::LateEvent,
                 },
@@ -380,8 +382,7 @@ fn terminal(id: EventId, complete: Option<u64>, outcome: Outcome) {
             return;
         }
     }
-    s.records_n = s.records_n.saturating_add(1);
-    if !append(
+    if append(
         &mut s,
         Entry::Record(EventRecord {
             id: pending.id,
@@ -389,6 +390,8 @@ fn terminal(id: EventId, complete: Option<u64>, outcome: Outcome) {
             outcome,
         }),
     ) {
+        s.records_n = s.records_n.saturating_add(1);
+    } else {
         s.available = false;
     }
 }
@@ -428,6 +431,7 @@ pub fn generation_lost(id: EventId, generation: u64) {
                 slot_id: id.slot_id,
                 generation,
                 start_mono_ns: Some(id.start_mono_ns),
+                surface: id.surface,
                 outcome: Outcome::Lost,
                 reason: LossReason::GenerationMismatch,
             },
@@ -439,7 +443,10 @@ pub fn generation_lost(id: EventId, generation: u64) {
 pub fn extract_since(cursor: u64) -> Result<CohortBatch, CohortError> {
     let mut s = state().lock().unwrap();
     let b = s.boundaries.ok_or(CohortError::NotActive)?;
-    if cursor < s.cursor_floor || cursor > s.next_journal_sequence.saturating_sub(1) {
+    // Extraction is an acknowledgement protocol: only the currently exposed
+    // floor may be acknowledged.  Accepting a future cursor would drain and
+    // silently discard entries the reader has never observed.
+    if cursor != s.cursor_floor {
         return Err(CohortError::InvalidCursor);
     }
     let entries: Vec<_> = s.journal.drain(..).collect();
@@ -491,6 +498,7 @@ pub fn finalize(now_mono_ns: u64) -> Result<TerminalSummary, CohortError> {
                 slot_id: p.id.slot_id,
                 generation: p.id.generation,
                 start_mono_ns: Some(p.id.start_mono_ns),
+                surface: p.id.surface,
                 outcome: Outcome::Lost,
                 reason: LossReason::Incomplete,
             },
@@ -512,15 +520,16 @@ pub fn finalize(now_mono_ns: u64) -> Result<TerminalSummary, CohortError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex as StdMutex;
-    static LOCK: StdMutex<()> = StdMutex::new(());
+
     fn reset() {
         *state().lock().unwrap() = State::default();
         OPT_IN.store(false, Ordering::Release);
     }
     #[test]
     fn window_tail_and_barrier() {
-        let _g = LOCK.lock().unwrap();
+        let _g = crate::responsiveness_profile::tests::TEST_LOCK
+            .lock()
+            .unwrap();
         reset();
         let b = Boundaries {
             start_mono_ns: 100,
@@ -537,7 +546,9 @@ mod tests {
     }
     #[test]
     fn extraction_drains_and_capacity_loss_is_bounded() {
-        let _g = LOCK.lock().unwrap();
+        let _g = crate::responsiveness_profile::tests::TEST_LOCK
+            .lock()
+            .unwrap();
         reset();
         begin(
             Boundaries {
@@ -551,17 +562,20 @@ mod tests {
         let id = start(1, 1, 2, Surface::Panel).unwrap();
         assert!(start(1, 1, 3, Surface::Panel).is_none());
         let a = extract_since(0).unwrap();
-        assert_eq!(a.losses.len(), 1);
+        assert!(a.losses.is_empty());
+        assert_eq!(a.journal_overflow_n, 1);
         lost(id);
         let b = extract_since(a.next_cursor).unwrap();
         assert_eq!(b.records.len(), 1);
         assert_eq!(b.loss_count, 1);
-        assert_eq!(b.journal_overflow_n, 0);
+        assert_eq!(b.journal_overflow_n, 1);
     }
 
     #[test]
     fn extraction_does_not_wedge_on_long_pending_first_event() {
-        let _g = LOCK.lock().unwrap();
+        let _g = crate::responsiveness_profile::tests::TEST_LOCK
+            .lock()
+            .unwrap();
         reset();
         begin(
             Boundaries {
@@ -585,7 +599,9 @@ mod tests {
     }
     #[test]
     fn incomplete_and_noncompleted_fail_closed() {
-        let _g = LOCK.lock().unwrap();
+        let _g = crate::responsiveness_profile::tests::TEST_LOCK
+            .lock()
+            .unwrap();
         reset();
         begin(
             Boundaries {
@@ -605,7 +621,9 @@ mod tests {
 
     #[test]
     fn existing_decode_entrypoints_publish_cohort_identity() {
-        let _g = LOCK.lock().unwrap();
+        let _g = crate::responsiveness_profile::tests::TEST_LOCK
+            .lock()
+            .unwrap();
         reset();
         let start_at = std::time::Instant::now();
         let start_ns = crate::responsiveness_profile::mono_ns(start_at);
@@ -625,5 +643,65 @@ mod tests {
         let batch = extract_since(0).unwrap();
         assert_eq!(batch.records.len(), 1);
         assert_eq!(batch.records[0].id.surface, Surface::Decode);
+    }
+
+    #[test]
+    fn forged_cursor_preserves_unacknowledged_journal() {
+        let _g = crate::responsiveness_profile::tests::TEST_LOCK
+            .lock()
+            .unwrap();
+        reset();
+        begin(
+            Boundaries {
+                start_mono_ns: 1,
+                end_mono_ns: 10,
+                tail_ns: 2,
+            },
+            8,
+        )
+        .unwrap();
+        let id = start(1, 1, 2, Surface::Decode).unwrap();
+        complete(id, 3);
+        assert_eq!(extract_since(1), Err(CohortError::InvalidCursor));
+        let batch = extract_since(0).unwrap();
+        assert_eq!(batch.records.len(), 1);
+        assert_eq!(batch.records[0].id.sequence, id.sequence);
+    }
+
+    #[test]
+    fn actual_input_entrypoint_records_surface_and_window_membership() {
+        let _g = crate::responsiveness_profile::tests::TEST_LOCK
+            .lock()
+            .unwrap();
+        reset();
+        crate::responsiveness_profile::enable();
+        let t0 = std::time::Instant::now();
+        let start_ns = crate::responsiveness_profile::mono_ns(t0);
+        begin(
+            Boundaries {
+                start_mono_ns: start_ns,
+                end_mono_ns: start_ns + 1_000_000,
+                tail_ns: 50_000_000,
+            },
+            8,
+        )
+        .unwrap();
+        crate::responsiveness_profile::set_input_surface(
+            crate::responsiveness_profile::InputSurface::Tui,
+        );
+        let local = crate::responsiveness_profile::Local::new(0xdef).unwrap();
+        assert!(crate::responsiveness_profile::note_input_start(
+            local.slot_id(),
+            t0,
+            0
+        ));
+        crate::responsiveness_profile::note_tui_draw_flush(
+            local.slot_id(),
+            t0 + std::time::Duration::from_millis(1),
+        );
+        let batch = extract_since(0).unwrap();
+        assert_eq!(batch.records.len(), 1);
+        assert_eq!(batch.records[0].id.surface, Surface::Tui);
+        assert!(batch.records[0].id.start_mono_ns >= start_ns);
     }
 }

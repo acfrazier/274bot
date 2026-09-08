@@ -1109,12 +1109,12 @@ impl Local {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::Mutex as StdMutex;
     use std::time::Duration;
 
-    static TEST_LOCK: StdMutex<()> = StdMutex::new(());
+    pub(crate) static TEST_LOCK: StdMutex<()> = StdMutex::new(());
 
     fn lock_tests() -> std::sync::MutexGuard<'static, ()> {
         let g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
