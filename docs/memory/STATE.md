@@ -9,6 +9,28 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 01:41 UTC
+
+- FOURTH candidate background0126 completed0, Intel/Vulkan, qualifies16/16 and
+  native unchanged reader binding passes.119.0936223s,median2142011392bytes,
+  CPU0.6472062core,client48.60619ticks/slot/s. ArchiveSHA
+  e10791a380f8404030c194662bd0f50270dda4210152fe7dc83b1181e696bd79
+  downloaded/extracted22hashverifiedfiles under diagnostics/windows-lazy-upload-20260908.
+  All four cells now complete/bound/qualified. Independent analysis t_7cf76634
+  Luna running; elapsed-aligned report and Grok review pending. Descriptive lower
+  candidate medians are not accepted savings or proof of a plateau.
+- Census82cb39b approved after third review; root found required client-source
+  environment input absent from scheduled launcher. Root d89c4a7 fixes verified
+  f746e964c08d229c1551f42a74b8f7ab108be1f691b97abad3cb5f2f53c0356f
+  from exact archived build client bytes and records proof JSON.3tests pass;
+  corrective t_41ddbd18 pending. Stage binary66 is hashverified native at01:37
+  ProgramData/274bot-Test/renderer-owner-census-66ba7c1. No census controls
+  staged or run yet. Old82control package prepared locally is superseded;
+  stage reviewed d89-or-final and perform full native no-launch contract first.
+- Linux native-run controls818f97c rejected for broken prepare-only import/path
+  and other contract gaps. Same-card t_dfb4ece0 Luna correcting; staged new
+  binary remains untouched. No Linux frontend launched. Both native hosts quiet.
+
 ## Latest boundary — 2026-09-08 01:29 UTC
 
 - Candidate focused0118 completed0, Intel/Vulkan startup, qualifies16/16 and
