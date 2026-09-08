@@ -35,3 +35,6 @@ memory-profile-no-alloc = ["memory-profile"]
 
 # Opt-in A1 rebuild-edge exact family body dedup candidate (not default).
 snapshot-dedup = ["api/snapshot-dedup", "host/snapshot-dedup"]
+
+[dev-dependencies]
+serde = { version = "=1.0.219", features = ["derive"] }

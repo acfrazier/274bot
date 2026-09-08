@@ -1,0 +1,1773 @@
+{
+  "schema": "snapshot-frame-equivalence-v2",
+  "steps": [
+    {
+      "name": "first_publication",
+      "path": "host",
+      "dirty_any": true,
+      "dirty_iface": true,
+      "dirty_scene": true,
+      "dirty_inv": true,
+      "rebuilt": null,
+      "obs": {
+        "widget_ids": [
+          1000,
+          1001,
+          1002,
+          1100,
+          1101
+        ],
+        "widget_texts": [
+          null,
+          "Hello",
+          null,
+          null,
+          "tab3"
+        ],
+        "side_tab_roots": [
+          -1,
+          -1,
+          -1,
+          1100,
+          -1,
+          1500,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "side_tab_available": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_active": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_texts": [
+          [],
+          [],
+          [],
+          [
+            null,
+            "tab3"
+          ],
+          [],
+          [
+            null,
+            "tab5"
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "loc_ids": [
+          4671
+        ],
+        "loc_names": [
+          "Large door"
+        ],
+        "gens_iface": 2,
+        "gens_inv": 2,
+        "gens_scene": 1
+      }
+    },
+    {
+      "name": "quiet_after_first",
+      "path": "host",
+      "dirty_any": false,
+      "dirty_iface": false,
+      "dirty_scene": false,
+      "dirty_inv": false,
+      "rebuilt": null,
+      "obs": {
+        "widget_ids": [
+          1000,
+          1001,
+          1002,
+          1100,
+          1101
+        ],
+        "widget_texts": [
+          null,
+          "Hello",
+          null,
+          null,
+          "tab3"
+        ],
+        "side_tab_roots": [
+          -1,
+          -1,
+          -1,
+          1100,
+          -1,
+          1500,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "side_tab_available": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_active": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_texts": [
+          [],
+          [],
+          [],
+          [
+            null,
+            "tab3"
+          ],
+          [],
+          [
+            null,
+            "tab5"
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "loc_ids": [
+          4671
+        ],
+        "loc_names": [
+          "Large door"
+        ],
+        "gens_iface": 2,
+        "gens_inv": 2,
+        "gens_scene": 1
+      }
+    },
+    {
+      "name": "widget_changed",
+      "path": "host",
+      "dirty_any": true,
+      "dirty_iface": true,
+      "dirty_scene": false,
+      "dirty_inv": false,
+      "rebuilt": null,
+      "obs": {
+        "widget_ids": [
+          1000,
+          1001,
+          1002,
+          1100,
+          1101
+        ],
+        "widget_texts": [
+          null,
+          "Changed",
+          null,
+          null,
+          "tab3"
+        ],
+        "side_tab_roots": [
+          -1,
+          -1,
+          -1,
+          1100,
+          -1,
+          1500,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "side_tab_available": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_active": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_texts": [
+          [],
+          [],
+          [],
+          [
+            null,
+            "tab3"
+          ],
+          [],
+          [
+            null,
+            "tab5"
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "loc_ids": [
+          4671
+        ],
+        "loc_names": [
+          "Large door"
+        ],
+        "gens_iface": 3,
+        "gens_inv": 2,
+        "gens_scene": 1
+      }
+    },
+    {
+      "name": "quiet_after_widget",
+      "path": "host",
+      "dirty_any": false,
+      "dirty_iface": false,
+      "dirty_scene": false,
+      "dirty_inv": false,
+      "rebuilt": null,
+      "obs": {
+        "widget_ids": [
+          1000,
+          1001,
+          1002,
+          1100,
+          1101
+        ],
+        "widget_texts": [
+          null,
+          "Changed",
+          null,
+          null,
+          "tab3"
+        ],
+        "side_tab_roots": [
+          -1,
+          -1,
+          -1,
+          1100,
+          -1,
+          1500,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "side_tab_available": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_active": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_texts": [
+          [],
+          [],
+          [],
+          [
+            null,
+            "tab3"
+          ],
+          [],
+          [
+            null,
+            "tab5"
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "loc_ids": [
+          4671
+        ],
+        "loc_names": [
+          "Large door"
+        ],
+        "gens_iface": 3,
+        "gens_inv": 2,
+        "gens_scene": 1
+      }
+    },
+    {
+      "name": "side_tab_changed",
+      "path": "host",
+      "dirty_any": true,
+      "dirty_iface": true,
+      "dirty_scene": false,
+      "dirty_inv": false,
+      "rebuilt": null,
+      "obs": {
+        "widget_ids": [
+          1000,
+          1001,
+          1002,
+          1100,
+          1101
+        ],
+        "widget_texts": [
+          null,
+          "Changed",
+          null,
+          null,
+          "tab3-mut"
+        ],
+        "side_tab_roots": [
+          -1,
+          -1,
+          -1,
+          1100,
+          -1,
+          1500,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "side_tab_available": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_active": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_texts": [
+          [],
+          [],
+          [],
+          [
+            null,
+            "tab3-mut"
+          ],
+          [],
+          [
+            null,
+            "tab5"
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "loc_ids": [
+          4671
+        ],
+        "loc_names": [
+          "Large door"
+        ],
+        "gens_iface": 4,
+        "gens_inv": 2,
+        "gens_scene": 1
+      }
+    },
+    {
+      "name": "quiet_after_side_tab",
+      "path": "host",
+      "dirty_any": false,
+      "dirty_iface": false,
+      "dirty_scene": false,
+      "dirty_inv": false,
+      "rebuilt": null,
+      "obs": {
+        "widget_ids": [
+          1000,
+          1001,
+          1002,
+          1100,
+          1101
+        ],
+        "widget_texts": [
+          null,
+          "Changed",
+          null,
+          null,
+          "tab3-mut"
+        ],
+        "side_tab_roots": [
+          -1,
+          -1,
+          -1,
+          1100,
+          -1,
+          1500,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "side_tab_available": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_active": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_texts": [
+          [],
+          [],
+          [],
+          [
+            null,
+            "tab3-mut"
+          ],
+          [],
+          [
+            null,
+            "tab5"
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "loc_ids": [
+          4671
+        ],
+        "loc_names": [
+          "Large door"
+        ],
+        "gens_iface": 4,
+        "gens_inv": 2,
+        "gens_scene": 1
+      }
+    },
+    {
+      "name": "loc_changed",
+      "path": "host",
+      "dirty_any": true,
+      "dirty_iface": true,
+      "dirty_scene": true,
+      "dirty_inv": true,
+      "rebuilt": null,
+      "obs": {
+        "widget_ids": [
+          1000,
+          1001,
+          1002,
+          1100,
+          1101
+        ],
+        "widget_texts": [
+          null,
+          "Changed",
+          null,
+          null,
+          "tab3-mut"
+        ],
+        "side_tab_roots": [
+          -1,
+          -1,
+          -1,
+          1100,
+          -1,
+          1500,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "side_tab_available": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_active": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_texts": [
+          [],
+          [],
+          [],
+          [
+            null,
+            "tab3-mut"
+          ],
+          [],
+          [
+            null,
+            "tab5"
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "loc_ids": [
+          4672
+        ],
+        "loc_names": [
+          "Open door"
+        ],
+        "gens_iface": 5,
+        "gens_inv": 3,
+        "gens_scene": 2
+      }
+    },
+    {
+      "name": "quiet_after_loc",
+      "path": "host",
+      "dirty_any": false,
+      "dirty_iface": false,
+      "dirty_scene": false,
+      "dirty_inv": false,
+      "rebuilt": null,
+      "obs": {
+        "widget_ids": [
+          1000,
+          1001,
+          1002,
+          1100,
+          1101
+        ],
+        "widget_texts": [
+          null,
+          "Changed",
+          null,
+          null,
+          "tab3-mut"
+        ],
+        "side_tab_roots": [
+          -1,
+          -1,
+          -1,
+          1100,
+          -1,
+          1500,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "side_tab_available": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_active": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_texts": [
+          [],
+          [],
+          [],
+          [
+            null,
+            "tab3-mut"
+          ],
+          [],
+          [
+            null,
+            "tab5"
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "loc_ids": [
+          4672
+        ],
+        "loc_names": [
+          "Open door"
+        ],
+        "gens_iface": 5,
+        "gens_inv": 3,
+        "gens_scene": 2
+      }
+    },
+    {
+      "name": "first_publication",
+      "path": "host_play",
+      "dirty_any": null,
+      "dirty_iface": null,
+      "dirty_scene": null,
+      "dirty_inv": null,
+      "rebuilt": true,
+      "obs": {
+        "widget_ids": [
+          1000,
+          1001,
+          1002,
+          1100,
+          1101
+        ],
+        "widget_texts": [
+          null,
+          "Hello",
+          null,
+          null,
+          "tab3"
+        ],
+        "side_tab_roots": [
+          -1,
+          -1,
+          -1,
+          1100,
+          -1,
+          1500,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "side_tab_available": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_active": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_texts": [
+          [],
+          [],
+          [],
+          [
+            null,
+            "tab3"
+          ],
+          [],
+          [
+            null,
+            "tab5"
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "loc_ids": [
+          4671
+        ],
+        "loc_names": [
+          "Large door"
+        ],
+        "gens_iface": 2,
+        "gens_inv": 2,
+        "gens_scene": 1
+      }
+    },
+    {
+      "name": "quiet_off_edge_after_first",
+      "path": "host_play",
+      "dirty_any": null,
+      "dirty_iface": null,
+      "dirty_scene": null,
+      "dirty_inv": null,
+      "rebuilt": false,
+      "obs": {
+        "widget_ids": [
+          1000,
+          1001,
+          1002,
+          1100,
+          1101
+        ],
+        "widget_texts": [
+          null,
+          "Hello",
+          null,
+          null,
+          "tab3"
+        ],
+        "side_tab_roots": [
+          -1,
+          -1,
+          -1,
+          1100,
+          -1,
+          1500,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "side_tab_available": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_active": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_texts": [
+          [],
+          [],
+          [],
+          [
+            null,
+            "tab3"
+          ],
+          [],
+          [
+            null,
+            "tab5"
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "loc_ids": [
+          4671
+        ],
+        "loc_names": [
+          "Large door"
+        ],
+        "gens_iface": 2,
+        "gens_inv": 2,
+        "gens_scene": 1
+      }
+    },
+    {
+      "name": "equal_repeated_edge",
+      "path": "host_play",
+      "dirty_any": null,
+      "dirty_iface": null,
+      "dirty_scene": null,
+      "dirty_inv": null,
+      "rebuilt": true,
+      "obs": {
+        "widget_ids": [
+          1000,
+          1001,
+          1002,
+          1100,
+          1101
+        ],
+        "widget_texts": [
+          null,
+          "Hello",
+          null,
+          null,
+          "tab3"
+        ],
+        "side_tab_roots": [
+          -1,
+          -1,
+          -1,
+          1100,
+          -1,
+          1500,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "side_tab_available": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_active": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_texts": [
+          [],
+          [],
+          [],
+          [
+            null,
+            "tab3"
+          ],
+          [],
+          [
+            null,
+            "tab5"
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "loc_ids": [
+          4671
+        ],
+        "loc_names": [
+          "Large door"
+        ],
+        "gens_iface": 2,
+        "gens_inv": 2,
+        "gens_scene": 1
+      }
+    },
+    {
+      "name": "widget_changed",
+      "path": "host_play",
+      "dirty_any": null,
+      "dirty_iface": null,
+      "dirty_scene": null,
+      "dirty_inv": null,
+      "rebuilt": true,
+      "obs": {
+        "widget_ids": [
+          1000,
+          1001,
+          1002,
+          1100,
+          1101
+        ],
+        "widget_texts": [
+          null,
+          "Changed",
+          null,
+          null,
+          "tab3"
+        ],
+        "side_tab_roots": [
+          -1,
+          -1,
+          -1,
+          1100,
+          -1,
+          1500,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "side_tab_available": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_active": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_texts": [
+          [],
+          [],
+          [],
+          [
+            null,
+            "tab3"
+          ],
+          [],
+          [
+            null,
+            "tab5"
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "loc_ids": [
+          4671
+        ],
+        "loc_names": [
+          "Large door"
+        ],
+        "gens_iface": 3,
+        "gens_inv": 2,
+        "gens_scene": 1
+      }
+    },
+    {
+      "name": "quiet_off_edge_after_widget",
+      "path": "host_play",
+      "dirty_any": null,
+      "dirty_iface": null,
+      "dirty_scene": null,
+      "dirty_inv": null,
+      "rebuilt": false,
+      "obs": {
+        "widget_ids": [
+          1000,
+          1001,
+          1002,
+          1100,
+          1101
+        ],
+        "widget_texts": [
+          null,
+          "Changed",
+          null,
+          null,
+          "tab3"
+        ],
+        "side_tab_roots": [
+          -1,
+          -1,
+          -1,
+          1100,
+          -1,
+          1500,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "side_tab_available": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_active": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_texts": [
+          [],
+          [],
+          [],
+          [
+            null,
+            "tab3"
+          ],
+          [],
+          [
+            null,
+            "tab5"
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "loc_ids": [
+          4671
+        ],
+        "loc_names": [
+          "Large door"
+        ],
+        "gens_iface": 3,
+        "gens_inv": 2,
+        "gens_scene": 1
+      }
+    },
+    {
+      "name": "side_tab_changed",
+      "path": "host_play",
+      "dirty_any": null,
+      "dirty_iface": null,
+      "dirty_scene": null,
+      "dirty_inv": null,
+      "rebuilt": true,
+      "obs": {
+        "widget_ids": [
+          1000,
+          1001,
+          1002,
+          1100,
+          1101
+        ],
+        "widget_texts": [
+          null,
+          "Changed",
+          null,
+          null,
+          "tab3-mut"
+        ],
+        "side_tab_roots": [
+          -1,
+          -1,
+          -1,
+          1100,
+          -1,
+          1500,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "side_tab_available": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_active": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_texts": [
+          [],
+          [],
+          [],
+          [
+            null,
+            "tab3-mut"
+          ],
+          [],
+          [
+            null,
+            "tab5"
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "loc_ids": [
+          4671
+        ],
+        "loc_names": [
+          "Large door"
+        ],
+        "gens_iface": 4,
+        "gens_inv": 2,
+        "gens_scene": 1
+      }
+    },
+    {
+      "name": "quiet_off_edge_after_side_tab",
+      "path": "host_play",
+      "dirty_any": null,
+      "dirty_iface": null,
+      "dirty_scene": null,
+      "dirty_inv": null,
+      "rebuilt": false,
+      "obs": {
+        "widget_ids": [
+          1000,
+          1001,
+          1002,
+          1100,
+          1101
+        ],
+        "widget_texts": [
+          null,
+          "Changed",
+          null,
+          null,
+          "tab3-mut"
+        ],
+        "side_tab_roots": [
+          -1,
+          -1,
+          -1,
+          1100,
+          -1,
+          1500,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "side_tab_available": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_active": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_texts": [
+          [],
+          [],
+          [],
+          [
+            null,
+            "tab3-mut"
+          ],
+          [],
+          [
+            null,
+            "tab5"
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "loc_ids": [
+          4671
+        ],
+        "loc_names": [
+          "Large door"
+        ],
+        "gens_iface": 4,
+        "gens_inv": 2,
+        "gens_scene": 1
+      }
+    },
+    {
+      "name": "loc_changed",
+      "path": "host_play",
+      "dirty_any": null,
+      "dirty_iface": null,
+      "dirty_scene": null,
+      "dirty_inv": null,
+      "rebuilt": true,
+      "obs": {
+        "widget_ids": [
+          1000,
+          1001,
+          1002,
+          1100,
+          1101
+        ],
+        "widget_texts": [
+          null,
+          "Changed",
+          null,
+          null,
+          "tab3-mut"
+        ],
+        "side_tab_roots": [
+          -1,
+          -1,
+          -1,
+          1100,
+          -1,
+          1500,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "side_tab_available": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_active": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_texts": [
+          [],
+          [],
+          [],
+          [
+            null,
+            "tab3-mut"
+          ],
+          [],
+          [
+            null,
+            "tab5"
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "loc_ids": [
+          4672
+        ],
+        "loc_names": [
+          "Open door"
+        ],
+        "gens_iface": 5,
+        "gens_inv": 3,
+        "gens_scene": 2
+      }
+    },
+    {
+      "name": "quiet_off_edge_after_loc",
+      "path": "host_play",
+      "dirty_any": null,
+      "dirty_iface": null,
+      "dirty_scene": null,
+      "dirty_inv": null,
+      "rebuilt": false,
+      "obs": {
+        "widget_ids": [
+          1000,
+          1001,
+          1002,
+          1100,
+          1101
+        ],
+        "widget_texts": [
+          null,
+          "Changed",
+          null,
+          null,
+          "tab3-mut"
+        ],
+        "side_tab_roots": [
+          -1,
+          -1,
+          -1,
+          1100,
+          -1,
+          1500,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1,
+          -1
+        ],
+        "side_tab_available": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_active": [
+          false,
+          false,
+          false,
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "side_tab_texts": [
+          [],
+          [],
+          [],
+          [
+            null,
+            "tab3-mut"
+          ],
+          [],
+          [
+            null,
+            "tab5"
+          ],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "loc_ids": [
+          4672
+        ],
+        "loc_names": [
+          "Open door"
+        ],
+        "gens_iface": 5,
+        "gens_inv": 3,
+        "gens_scene": 2
+      }
+    }
+  ]
+}
