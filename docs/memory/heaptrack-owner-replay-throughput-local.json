@@ -1,0 +1,2572 @@
+{
+  "python": "3.9.6 (default, Jan  9 2026, 11:03:41) \n[Clang 17.0.0 (clang-1700.6.4.2)]",
+  "platform": "macOS-15.7.9-arm64-arm-64bit",
+  "machine": "arm64",
+  "source_hashes": {
+    "heaptrack_owner_replay.py": "fa4c3ef5384055745d38e80b3e01d37a28a8d28774d175ddb0d82ef81ca18ce0",
+    "heaptrack_owner_runner.py": "d3d7d034019c705e6930db5bec8bcd6999344f48ccf2f6f8c17a1d5e29e00f21",
+    "heaptrack_owner_throughput_probe.py": "ca883dfd29d10564bd655374b674d876dc03dc31895f81df8efe5edfcc491164"
+  },
+  "production_read": false,
+  "native_qualification": false,
+  "note": "Serial warm-cache local fixtures; no production capacity claim",
+  "cases": {
+    "short": {
+      "bytes": 700048,
+      "lines": 100006,
+      "sha256": "4415fb80589f512271478091dd5e2e43c71e808045fc13240476d07ac0cad6e8",
+      "runs": [
+        {
+          "mode": "baseline",
+          "full": false,
+          "profiled": false,
+          "cpu_s": 0.44956599999999997,
+          "wall_s": 0.449634541,
+          "pulse_calls": null,
+          "record_guard_checks": null,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.449114959,
+              "cpu_s": 0.44904700000000003,
+              "cumulative_peak_rss_bytes": 24788992
+            }
+          ],
+          "raw_bytes_per_cpu_s": 1557164.0204107964,
+          "signature": {
+            "bytes": 0,
+            "count": 0,
+            "allocations": 50000,
+            "frees": 50000,
+            "unknown_frees": 0,
+            "temporary": 50000,
+            "max_live_pointers": 1,
+            "events": "de61c556fdd48b822de3d6edcb6bb00c900af6c8257b1d140ef13d3a067ea886",
+            "traces": 1,
+            "trace_digest": "2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032",
+            "metadata": "6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3",
+            "lines": 100006
+          },
+          "profile": []
+        },
+        {
+          "mode": "sampled",
+          "full": false,
+          "profiled": false,
+          "cpu_s": 0.343336,
+          "wall_s": 0.34342270799999997,
+          "pulse_calls": 100006,
+          "record_guard_checks": 97,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.34341729200000004,
+              "cpu_s": 0.34333099999999994,
+              "cumulative_peak_rss_bytes": 24788992
+            }
+          ],
+          "raw_bytes_per_cpu_s": 2038958.920707412,
+          "signature": {
+            "bytes": 0,
+            "count": 0,
+            "allocations": 50000,
+            "frees": 50000,
+            "unknown_frees": 0,
+            "temporary": 50000,
+            "max_live_pointers": 1,
+            "events": "de61c556fdd48b822de3d6edcb6bb00c900af6c8257b1d140ef13d3a067ea886",
+            "traces": 1,
+            "trace_digest": "2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032",
+            "metadata": "6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3",
+            "lines": 100006
+          },
+          "profile": []
+        },
+        {
+          "mode": "sampled_numeric",
+          "full": false,
+          "profiled": false,
+          "cpu_s": 0.2632509999999999,
+          "wall_s": 0.263269459,
+          "pulse_calls": 100006,
+          "record_guard_checks": 97,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.26326462500000003,
+              "cpu_s": 0.263246,
+              "cumulative_peak_rss_bytes": 24788992
+            }
+          ],
+          "raw_bytes_per_cpu_s": 2659241.560335954,
+          "signature": {
+            "bytes": 0,
+            "count": 0,
+            "allocations": 50000,
+            "frees": 50000,
+            "unknown_frees": 0,
+            "temporary": 50000,
+            "max_live_pointers": 1,
+            "events": "de61c556fdd48b822de3d6edcb6bb00c900af6c8257b1d140ef13d3a067ea886",
+            "traces": 1,
+            "trace_digest": "2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032",
+            "metadata": "6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3",
+            "lines": 100006
+          },
+          "profile": []
+        },
+        {
+          "mode": "baseline",
+          "full": false,
+          "profiled": false,
+          "cpu_s": 0.450264,
+          "wall_s": 0.45032866699999996,
+          "pulse_calls": null,
+          "record_guard_checks": null,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.45032366600000007,
+              "cpu_s": 0.450261,
+              "cumulative_peak_rss_bytes": 24788992
+            }
+          ],
+          "raw_bytes_per_cpu_s": 1554750.102162287,
+          "signature": {
+            "bytes": 0,
+            "count": 0,
+            "allocations": 50000,
+            "frees": 50000,
+            "unknown_frees": 0,
+            "temporary": 50000,
+            "max_live_pointers": 1,
+            "events": "de61c556fdd48b822de3d6edcb6bb00c900af6c8257b1d140ef13d3a067ea886",
+            "traces": 1,
+            "trace_digest": "2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032",
+            "metadata": "6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3",
+            "lines": 100006
+          },
+          "profile": []
+        },
+        {
+          "mode": "sampled",
+          "full": false,
+          "profiled": false,
+          "cpu_s": 0.34365599999999996,
+          "wall_s": 0.34368491700000003,
+          "pulse_calls": 100006,
+          "record_guard_checks": 97,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.343680875,
+              "cpu_s": 0.343653,
+              "cumulative_peak_rss_bytes": 24788992
+            }
+          ],
+          "raw_bytes_per_cpu_s": 2037060.3161300838,
+          "signature": {
+            "bytes": 0,
+            "count": 0,
+            "allocations": 50000,
+            "frees": 50000,
+            "unknown_frees": 0,
+            "temporary": 50000,
+            "max_live_pointers": 1,
+            "events": "de61c556fdd48b822de3d6edcb6bb00c900af6c8257b1d140ef13d3a067ea886",
+            "traces": 1,
+            "trace_digest": "2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032",
+            "metadata": "6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3",
+            "lines": 100006
+          },
+          "profile": []
+        },
+        {
+          "mode": "sampled_numeric",
+          "full": false,
+          "profiled": false,
+          "cpu_s": 0.26592499999999997,
+          "wall_s": 0.2659968749999999,
+          "pulse_calls": 100006,
+          "record_guard_checks": 97,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.26599262499999976,
+              "cpu_s": 0.2659210000000001,
+              "cumulative_peak_rss_bytes": 24788992
+            }
+          ],
+          "raw_bytes_per_cpu_s": 2632501.645200715,
+          "signature": {
+            "bytes": 0,
+            "count": 0,
+            "allocations": 50000,
+            "frees": 50000,
+            "unknown_frees": 0,
+            "temporary": 50000,
+            "max_live_pointers": 1,
+            "events": "de61c556fdd48b822de3d6edcb6bb00c900af6c8257b1d140ef13d3a067ea886",
+            "traces": 1,
+            "trace_digest": "2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032",
+            "metadata": "6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3",
+            "lines": 100006
+          },
+          "profile": []
+        },
+        {
+          "mode": "baseline",
+          "full": false,
+          "profiled": false,
+          "cpu_s": 0.4507019999999997,
+          "wall_s": 0.4507930410000003,
+          "pulse_calls": null,
+          "record_guard_checks": null,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.4507875829999999,
+              "cpu_s": 0.45069800000000004,
+              "cumulative_peak_rss_bytes": 24788992
+            }
+          ],
+          "raw_bytes_per_cpu_s": 1553239.1691183986,
+          "signature": {
+            "bytes": 0,
+            "count": 0,
+            "allocations": 50000,
+            "frees": 50000,
+            "unknown_frees": 0,
+            "temporary": 50000,
+            "max_live_pointers": 1,
+            "events": "de61c556fdd48b822de3d6edcb6bb00c900af6c8257b1d140ef13d3a067ea886",
+            "traces": 1,
+            "trace_digest": "2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032",
+            "metadata": "6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3",
+            "lines": 100006
+          },
+          "profile": []
+        },
+        {
+          "mode": "sampled",
+          "full": false,
+          "profiled": false,
+          "cpu_s": 0.3521939999999999,
+          "wall_s": 0.35247154199999997,
+          "pulse_calls": 100006,
+          "record_guard_checks": 97,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.35246575000000036,
+              "cpu_s": 0.3521900000000002,
+              "cumulative_peak_rss_bytes": 24854528
+            }
+          ],
+          "raw_bytes_per_cpu_s": 1987677.24606325,
+          "signature": {
+            "bytes": 0,
+            "count": 0,
+            "allocations": 50000,
+            "frees": 50000,
+            "unknown_frees": 0,
+            "temporary": 50000,
+            "max_live_pointers": 1,
+            "events": "de61c556fdd48b822de3d6edcb6bb00c900af6c8257b1d140ef13d3a067ea886",
+            "traces": 1,
+            "trace_digest": "2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032",
+            "metadata": "6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3",
+            "lines": 100006
+          },
+          "profile": []
+        },
+        {
+          "mode": "sampled_numeric",
+          "full": false,
+          "profiled": false,
+          "cpu_s": 0.2648670000000002,
+          "wall_s": 0.26499875000000017,
+          "pulse_calls": 100006,
+          "record_guard_checks": 97,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.26499349999999966,
+              "cpu_s": 0.26486300000000007,
+              "cumulative_peak_rss_bytes": 24952832
+            }
+          ],
+          "raw_bytes_per_cpu_s": 2643017.0613930747,
+          "signature": {
+            "bytes": 0,
+            "count": 0,
+            "allocations": 50000,
+            "frees": 50000,
+            "unknown_frees": 0,
+            "temporary": 50000,
+            "max_live_pointers": 1,
+            "events": "de61c556fdd48b822de3d6edcb6bb00c900af6c8257b1d140ef13d3a067ea886",
+            "traces": 1,
+            "trace_digest": "2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032",
+            "metadata": "6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3",
+            "lines": 100006
+          },
+          "profile": []
+        }
+      ],
+      "profiles": [
+        {
+          "mode": "baseline",
+          "full": false,
+          "profiled": true,
+          "cpu_s": 0.8821300000000001,
+          "wall_s": 0.8822799579999994,
+          "pulse_calls": null,
+          "record_guard_checks": null,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.8822594590000001,
+              "cpu_s": 0.88211,
+              "cumulative_peak_rss_bytes": 25083904
+            }
+          ],
+          "raw_bytes_per_cpu_s": 793588.2466303152,
+          "signature": {
+            "bytes": 0,
+            "count": 0,
+            "allocations": 50000,
+            "frees": 50000,
+            "unknown_frees": 0,
+            "temporary": 50000,
+            "max_live_pointers": 1,
+            "events": "de61c556fdd48b822de3d6edcb6bb00c900af6c8257b1d140ef13d3a067ea886",
+            "traces": 1,
+            "trace_digest": "2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032",
+            "metadata": "6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3",
+            "lines": 100006
+          },
+          "profile": [
+            {
+              "function": "heaptrack_owner_replay.py:252:raw_pass",
+              "calls": 1,
+              "own_s": 0.114847003,
+              "cumulative_s": 0.88224975
+            },
+            {
+              "function": "heaptrack_owner_replay.py:57:parse_record",
+              "calls": 100006,
+              "own_s": 0.133135688,
+              "cumulative_s": 0.352214896
+            },
+            {
+              "function": "heaptrack_owner_replay.py:132:__iter__",
+              "calls": 100007,
+              "own_s": 0.08846279,
+              "cumulative_s": 0.270393991
+            },
+            {
+              "function": "heaptrack_owner_replay.py:88:<listcomp>",
+              "calls": 100004,
+              "own_s": 0.020304172000000002,
+              "cumulative_s": 0.17516293700000002
+            },
+            {
+              "function": "heaptrack_owner_replay.py:34:number",
+              "calls": 200008,
+              "own_s": 0.05342788800000001,
+              "cumulative_s": 0.15486001500000002
+            },
+            {
+              "function": "heaptrack_owner_runner.py:146:check",
+              "calls": 100008,
+              "own_s": 0.075145242,
+              "cumulative_s": 0.149994436
+            },
+            {
+              "function": "re.py:193:fullmatch",
+              "calls": 200009,
+              "own_s": 0.031914015000000004,
+              "cumulative_s": 0.095850689
+            },
+            {
+              "function": "heaptrack_owner_replay.py:220:emit_digest",
+              "calls": 100002,
+              "own_s": 0.040637678,
+              "cumulative_s": 0.062401453
+            },
+            {
+              "function": "heaptrack_owner_replay.py:29:require",
+              "calls": 1800107,
+              "own_s": 0.046360741000000004,
+              "cumulative_s": 0.046360741000000004
+            },
+            {
+              "function": "re.py:289:_compile",
+              "calls": 200009,
+              "own_s": 0.030858173000000003,
+              "cumulative_s": 0.043804061000000005
+            },
+            {
+              "function": "~:0:<built-in method resource.getrusage>",
+              "calls": 100008,
+              "own_s": 0.03314592,
+              "cumulative_s": 0.03314592
+            },
+            {
+              "function": "heaptrack_owner_replay.py:39:checked",
+              "calls": 250000,
+              "own_s": 0.026677203,
+              "cumulative_s": 0.032661095
+            },
+            {
+              "function": "~:0:<built-in method time.process_time>",
+              "calls": 100010,
+              "own_s": 0.028735875,
+              "cumulative_s": 0.028735875
+            },
+            {
+              "function": "heaptrack_owner_replay.py:231:accept",
+              "calls": 100006,
+              "own_s": 0.02486959,
+              "cumulative_s": 0.027296627
+            },
+            {
+              "function": "~:0:<method 'fullmatch' of 're.Pattern' objects>",
+              "calls": 200009,
+              "own_s": 0.020132613,
+              "cumulative_s": 0.020132613
+            },
+            {
+              "function": "~:0:<built-in method builtins.len>",
+              "calls": 750036,
+              "own_s": 0.019692878,
+              "cumulative_s": 0.019692878
+            },
+            {
+              "function": "~:0:<method 'endswith' of 'bytes' objects>",
+              "calls": 200012,
+              "own_s": 0.013837811,
+              "cumulative_s": 0.013837811
+            },
+            {
+              "function": "~:0:<built-in method builtins.isinstance>",
+              "calls": 200012,
+              "own_s": 0.012946055000000001,
+              "cumulative_s": 0.012946055000000001
+            },
+            {
+              "function": "~:0:<method 'update' of '_hashlib.HASH' objects>",
+              "calls": 200010,
+              "own_s": 0.011654193,
+              "cumulative_s": 0.011654193
+            },
+            {
+              "function": "heaptrack_owner_replay.py:118:count",
+              "calls": 50001,
+              "own_s": 0.007919558,
+              "cumulative_s": 0.009139177
+            },
+            {
+              "function": "~:0:<built-in method _struct.pack>",
+              "calls": 100005,
+              "own_s": 0.007997923,
+              "cumulative_s": 0.007997923
+            },
+            {
+              "function": "~:0:<method 'startswith' of 'bytes' objects>",
+              "calls": 100006,
+              "own_s": 0.0075470960000000005,
+              "cumulative_s": 0.0075470960000000005
+            }
+          ]
+        },
+        {
+          "mode": "sampled_numeric",
+          "full": false,
+          "profiled": true,
+          "cpu_s": 0.5631710000000005,
+          "wall_s": 0.563210625,
+          "pulse_calls": 100006,
+          "record_guard_checks": 97,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.5632008749999997,
+              "cpu_s": 0.5631619999999993,
+              "cumulative_peak_rss_bytes": 25214976
+            }
+          ],
+          "raw_bytes_per_cpu_s": 1243046.960869788,
+          "signature": {
+            "bytes": 0,
+            "count": 0,
+            "allocations": 50000,
+            "frees": 50000,
+            "unknown_frees": 0,
+            "temporary": 50000,
+            "max_live_pointers": 1,
+            "events": "de61c556fdd48b822de3d6edcb6bb00c900af6c8257b1d140ef13d3a067ea886",
+            "traces": 1,
+            "trace_digest": "2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032",
+            "metadata": "6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3",
+            "lines": 100006
+          },
+          "profile": [
+            {
+              "function": "heaptrack_owner_replay.py:252:raw_pass",
+              "calls": 1,
+              "own_s": 0.107323188,
+              "cumulative_s": 0.5631925830000001
+            },
+            {
+              "function": "heaptrack_owner_throughput_probe.py:32:fast_numeric",
+              "calls": 100006,
+              "own_s": 0.13513866800000002,
+              "cumulative_s": 0.19450245200000002
+            },
+            {
+              "function": "heaptrack_owner_replay.py:132:__iter__",
+              "calls": 100007,
+              "own_s": 0.082860578,
+              "cumulative_s": 0.125956632
+            },
+            {
+              "function": "heaptrack_owner_replay.py:220:emit_digest",
+              "calls": 100002,
+              "own_s": 0.038522941000000005,
+              "cumulative_s": 0.058450732000000005
+            },
+            {
+              "function": "heaptrack_owner_replay.py:29:require",
+              "calls": 1400376,
+              "own_s": 0.033116828,
+              "cumulative_s": 0.033116828
+            },
+            {
+              "function": "heaptrack_owner_replay.py:39:checked",
+              "calls": 250000,
+              "own_s": 0.024579535000000003,
+              "cumulative_s": 0.030234697
+            },
+            {
+              "function": "heaptrack_owner_replay.py:231:accept",
+              "calls": 100006,
+              "own_s": 0.023353759,
+              "cumulative_s": 0.025640546
+            },
+            {
+              "function": "~:0:<method 'fullmatch' of 're.Pattern' objects>",
+              "calls": 200009,
+              "own_s": 0.019353029,
+              "cumulative_s": 0.019353029
+            },
+            {
+              "function": "~:0:<built-in method builtins.len>",
+              "calls": 650032,
+              "own_s": 0.015736439,
+              "cumulative_s": 0.015736439
+            },
+            {
+              "function": "~:0:<method 'endswith' of 'bytes' objects>",
+              "calls": 200012,
+              "own_s": 0.013434285,
+              "cumulative_s": 0.013434285
+            },
+            {
+              "function": "heaptrack_owner_throughput_probe.py:55:__call__",
+              "calls": 100006,
+              "own_s": 0.012498380000000002,
+              "cumulative_s": 0.012714922
+            },
+            {
+              "function": "~:0:<method 'update' of '_hashlib.HASH' objects>",
+              "calls": 200010,
+              "own_s": 0.010267418,
+              "cumulative_s": 0.010267418
+            },
+            {
+              "function": "heaptrack_owner_replay.py:118:count",
+              "calls": 50001,
+              "own_s": 0.007428815,
+              "cumulative_s": 0.008573688000000001
+            },
+            {
+              "function": "~:0:<built-in method _struct.pack>",
+              "calls": 100005,
+              "own_s": 0.0075387860000000004,
+              "cumulative_s": 0.0075387860000000004
+            },
+            {
+              "function": "~:0:<method 'readline' of '_io.BufferedReader' objects>",
+              "calls": 100007,
+              "own_s": 0.0061461530000000006,
+              "cumulative_s": 0.0061461530000000006
+            },
+            {
+              "function": "~:0:<method 'append' of 'list' objects>",
+              "calls": 200008,
+              "own_s": 0.006075583000000001,
+              "cumulative_s": 0.006075583000000001
+            },
+            {
+              "function": "~:0:<method 'split' of 'bytes' objects>",
+              "calls": 100004,
+              "own_s": 0.005115902,
+              "cumulative_s": 0.005115902
+            },
+            {
+              "function": "~:0:<method 'encode' of 'str' objects>",
+              "calls": 100004,
+              "own_s": 0.004566676,
+              "cumulative_s": 0.004566676
+            },
+            {
+              "function": "~:0:<built-in method builtins.max>",
+              "calls": 50002,
+              "own_s": 0.004113188,
+              "cumulative_s": 0.004113188
+            },
+            {
+              "function": "~:0:<built-in method builtins.chr>",
+              "calls": 100008,
+              "own_s": 0.003411257,
+              "cumulative_s": 0.003411257
+            },
+            {
+              "function": "~:0:<method 'pop' of 'dict' objects>",
+              "calls": 50000,
+              "own_s": 0.0023098430000000002,
+              "cumulative_s": 0.0023098430000000002
+            },
+            {
+              "function": "heaptrack_owner_runner.py:146:check",
+              "calls": 99,
+              "own_s": 0.000121169,
+              "cumulative_s": 0.00022254300000000001
+            }
+          ]
+        }
+      ],
+      "median_cpu_s": {
+        "baseline": 0.450264,
+        "sampled": 0.34365599999999996,
+        "sampled_numeric": 0.2648670000000002
+      }
+    },
+    "wide": {
+      "bytes": 1850048,
+      "lines": 100006,
+      "sha256": "4b6385adb312bf756c60d2712fe29e0d7b3818540af23fe0c3bdaafcf4b1a9cb",
+      "runs": [
+        {
+          "mode": "baseline",
+          "full": false,
+          "profiled": false,
+          "cpu_s": 0.46109199999999984,
+          "wall_s": 0.4613174579999999,
+          "pulse_calls": null,
+          "record_guard_checks": null,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.46131179200000005,
+              "cpu_s": 0.4610859999999999,
+              "cumulative_peak_rss_bytes": 29032448
+            }
+          ],
+          "raw_bytes_per_cpu_s": 4012318.582842471,
+          "signature": {
+            "bytes": 0,
+            "count": 0,
+            "allocations": 50000,
+            "frees": 50000,
+            "unknown_frees": 0,
+            "temporary": 50000,
+            "max_live_pointers": 1,
+            "events": "a72f59121ec4744c3e43d82a33fe99ce68d88c2f50df3d98fbcffac1fc750a41",
+            "traces": 1,
+            "trace_digest": "2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032",
+            "metadata": "6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3",
+            "lines": 100006
+          },
+          "profile": []
+        },
+        {
+          "mode": "sampled",
+          "full": false,
+          "profiled": false,
+          "cpu_s": 0.35357400000000005,
+          "wall_s": 0.3536777090000003,
+          "pulse_calls": 100006,
+          "record_guard_checks": 97,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.3536729169999999,
+              "cpu_s": 0.3535699999999995,
+              "cumulative_peak_rss_bytes": 29097984
+            }
+          ],
+          "raw_bytes_per_cpu_s": 5232420.935928546,
+          "signature": {
+            "bytes": 0,
+            "count": 0,
+            "allocations": 50000,
+            "frees": 50000,
+            "unknown_frees": 0,
+            "temporary": 50000,
+            "max_live_pointers": 1,
+            "events": "a72f59121ec4744c3e43d82a33fe99ce68d88c2f50df3d98fbcffac1fc750a41",
+            "traces": 1,
+            "trace_digest": "2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032",
+            "metadata": "6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3",
+            "lines": 100006
+          },
+          "profile": []
+        },
+        {
+          "mode": "sampled_numeric",
+          "full": false,
+          "profiled": false,
+          "cpu_s": 0.2668949999999999,
+          "wall_s": 0.26697400000000027,
+          "pulse_calls": 100006,
+          "record_guard_checks": 97,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.2669690420000004,
+              "cpu_s": 0.26689000000000007,
+              "cumulative_peak_rss_bytes": 29163520
+            }
+          ],
+          "raw_bytes_per_cpu_s": 6931744.693606103,
+          "signature": {
+            "bytes": 0,
+            "count": 0,
+            "allocations": 50000,
+            "frees": 50000,
+            "unknown_frees": 0,
+            "temporary": 50000,
+            "max_live_pointers": 1,
+            "events": "a72f59121ec4744c3e43d82a33fe99ce68d88c2f50df3d98fbcffac1fc750a41",
+            "traces": 1,
+            "trace_digest": "2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032",
+            "metadata": "6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3",
+            "lines": 100006
+          },
+          "profile": []
+        },
+        {
+          "mode": "baseline",
+          "full": false,
+          "profiled": false,
+          "cpu_s": 0.4640360000000001,
+          "wall_s": 0.4642678330000001,
+          "pulse_calls": null,
+          "record_guard_checks": null,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.46426250000000024,
+              "cpu_s": 0.4640329999999997,
+              "cumulative_peak_rss_bytes": 29163520
+            }
+          ],
+          "raw_bytes_per_cpu_s": 3986863.0882086726,
+          "signature": {
+            "bytes": 0,
+            "count": 0,
+            "allocations": 50000,
+            "frees": 50000,
+            "unknown_frees": 0,
+            "temporary": 50000,
+            "max_live_pointers": 1,
+            "events": "a72f59121ec4744c3e43d82a33fe99ce68d88c2f50df3d98fbcffac1fc750a41",
+            "traces": 1,
+            "trace_digest": "2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032",
+            "metadata": "6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3",
+            "lines": 100006
+          },
+          "profile": []
+        },
+        {
+          "mode": "sampled",
+          "full": false,
+          "profiled": false,
+          "cpu_s": 0.35179899999999975,
+          "wall_s": 0.3521458749999997,
+          "pulse_calls": 100006,
+          "record_guard_checks": 97,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.35214137499999953,
+              "cpu_s": 0.35179599999999933,
+              "cumulative_peak_rss_bytes": 29278208
+            }
+          ],
+          "raw_bytes_per_cpu_s": 5258821.088178196,
+          "signature": {
+            "bytes": 0,
+            "count": 0,
+            "allocations": 50000,
+            "frees": 50000,
+            "unknown_frees": 0,
+            "temporary": 50000,
+            "max_live_pointers": 1,
+            "events": "a72f59121ec4744c3e43d82a33fe99ce68d88c2f50df3d98fbcffac1fc750a41",
+            "traces": 1,
+            "trace_digest": "2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032",
+            "metadata": "6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3",
+            "lines": 100006
+          },
+          "profile": []
+        },
+        {
+          "mode": "sampled_numeric",
+          "full": false,
+          "profiled": false,
+          "cpu_s": 0.27112800000000004,
+          "wall_s": 0.2716102090000003,
+          "pulse_calls": 100006,
+          "record_guard_checks": 97,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.2716056250000003,
+              "cpu_s": 0.2711249999999996,
+              "cumulative_peak_rss_bytes": 29278208
+            }
+          ],
+          "raw_bytes_per_cpu_s": 6823522.469092089,
+          "signature": {
+            "bytes": 0,
+            "count": 0,
+            "allocations": 50000,
+            "frees": 50000,
+            "unknown_frees": 0,
+            "temporary": 50000,
+            "max_live_pointers": 1,
+            "events": "a72f59121ec4744c3e43d82a33fe99ce68d88c2f50df3d98fbcffac1fc750a41",
+            "traces": 1,
+            "trace_digest": "2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032",
+            "metadata": "6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3",
+            "lines": 100006
+          },
+          "profile": []
+        },
+        {
+          "mode": "baseline",
+          "full": false,
+          "profiled": false,
+          "cpu_s": 0.46228099999999994,
+          "wall_s": 0.4630090830000002,
+          "pulse_calls": null,
+          "record_guard_checks": null,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.4630035000000001,
+              "cpu_s": 0.4622769999999994,
+              "cumulative_peak_rss_bytes": 29278208
+            }
+          ],
+          "raw_bytes_per_cpu_s": 4001998.78428921,
+          "signature": {
+            "bytes": 0,
+            "count": 0,
+            "allocations": 50000,
+            "frees": 50000,
+            "unknown_frees": 0,
+            "temporary": 50000,
+            "max_live_pointers": 1,
+            "events": "a72f59121ec4744c3e43d82a33fe99ce68d88c2f50df3d98fbcffac1fc750a41",
+            "traces": 1,
+            "trace_digest": "2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032",
+            "metadata": "6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3",
+            "lines": 100006
+          },
+          "profile": []
+        },
+        {
+          "mode": "sampled",
+          "full": false,
+          "profiled": false,
+          "cpu_s": 0.3609840000000002,
+          "wall_s": 0.37271074999999954,
+          "pulse_calls": 100006,
+          "record_guard_checks": 97,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.3727057080000007,
+              "cpu_s": 0.36097799999999935,
+              "cumulative_peak_rss_bytes": 29310976
+            }
+          ],
+          "raw_bytes_per_cpu_s": 5125013.851029405,
+          "signature": {
+            "bytes": 0,
+            "count": 0,
+            "allocations": 50000,
+            "frees": 50000,
+            "unknown_frees": 0,
+            "temporary": 50000,
+            "max_live_pointers": 1,
+            "events": "a72f59121ec4744c3e43d82a33fe99ce68d88c2f50df3d98fbcffac1fc750a41",
+            "traces": 1,
+            "trace_digest": "2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032",
+            "metadata": "6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3",
+            "lines": 100006
+          },
+          "profile": []
+        },
+        {
+          "mode": "sampled_numeric",
+          "full": false,
+          "profiled": false,
+          "cpu_s": 0.2748689999999998,
+          "wall_s": 0.27521333299999995,
+          "pulse_calls": 100006,
+          "record_guard_checks": 97,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.27520833300000014,
+              "cpu_s": 0.274864,
+              "cumulative_peak_rss_bytes": 29310976
+            }
+          ],
+          "raw_bytes_per_cpu_s": 6730653.511309029,
+          "signature": {
+            "bytes": 0,
+            "count": 0,
+            "allocations": 50000,
+            "frees": 50000,
+            "unknown_frees": 0,
+            "temporary": 50000,
+            "max_live_pointers": 1,
+            "events": "a72f59121ec4744c3e43d82a33fe99ce68d88c2f50df3d98fbcffac1fc750a41",
+            "traces": 1,
+            "trace_digest": "2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032",
+            "metadata": "6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3",
+            "lines": 100006
+          },
+          "profile": []
+        }
+      ],
+      "profiles": [
+        {
+          "mode": "baseline",
+          "full": false,
+          "profiled": true,
+          "cpu_s": 0.8954869999999993,
+          "wall_s": 0.8963820840000007,
+          "pulse_calls": null,
+          "record_guard_checks": null,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.8963689590000001,
+              "cpu_s": 0.8954749999999994,
+              "cumulative_peak_rss_bytes": 29327360
+            }
+          ],
+          "raw_bytes_per_cpu_s": 2065968.5735247987,
+          "signature": {
+            "bytes": 0,
+            "count": 0,
+            "allocations": 50000,
+            "frees": 50000,
+            "unknown_frees": 0,
+            "temporary": 50000,
+            "max_live_pointers": 1,
+            "events": "a72f59121ec4744c3e43d82a33fe99ce68d88c2f50df3d98fbcffac1fc750a41",
+            "traces": 1,
+            "trace_digest": "2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032",
+            "metadata": "6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3",
+            "lines": 100006
+          },
+          "profile": [
+            {
+              "function": "heaptrack_owner_replay.py:252:raw_pass",
+              "calls": 1,
+              "own_s": 0.115384469,
+              "cumulative_s": 0.8963584590000001
+            },
+            {
+              "function": "heaptrack_owner_replay.py:57:parse_record",
+              "calls": 100006,
+              "own_s": 0.13359798,
+              "cumulative_s": 0.358733937
+            },
+            {
+              "function": "heaptrack_owner_replay.py:132:__iter__",
+              "calls": 100007,
+              "own_s": 0.090248592,
+              "cumulative_s": 0.27638396400000004
+            },
+            {
+              "function": "heaptrack_owner_replay.py:88:<listcomp>",
+              "calls": 100004,
+              "own_s": 0.020234572000000003,
+              "cumulative_s": 0.18027768500000002
+            },
+            {
+              "function": "heaptrack_owner_replay.py:34:number",
+              "calls": 200008,
+              "own_s": 0.054704623,
+              "cumulative_s": 0.16004415400000002
+            },
+            {
+              "function": "heaptrack_owner_runner.py:146:check",
+              "calls": 100008,
+              "own_s": 0.077239848,
+              "cumulative_s": 0.15268999900000002
+            },
+            {
+              "function": "re.py:193:fullmatch",
+              "calls": 200009,
+              "own_s": 0.032113829,
+              "cumulative_s": 0.100109052
+            },
+            {
+              "function": "heaptrack_owner_replay.py:220:emit_digest",
+              "calls": 100002,
+              "own_s": 0.041529642000000005,
+              "cumulative_s": 0.06311593800000001
+            },
+            {
+              "function": "heaptrack_owner_replay.py:29:require",
+              "calls": 1800107,
+              "own_s": 0.046082787,
+              "cumulative_s": 0.046082787
+            },
+            {
+              "function": "re.py:289:_compile",
+              "calls": 200009,
+              "own_s": 0.031198194000000002,
+              "cumulative_s": 0.044175369000000006
+            },
+            {
+              "function": "~:0:<built-in method resource.getrusage>",
+              "calls": 100008,
+              "own_s": 0.033516812,
+              "cumulative_s": 0.033516812
+            },
+            {
+              "function": "heaptrack_owner_replay.py:39:checked",
+              "calls": 250000,
+              "own_s": 0.026387921,
+              "cumulative_s": 0.032232601
+            },
+            {
+              "function": "~:0:<built-in method time.process_time>",
+              "calls": 100010,
+              "own_s": 0.029152528,
+              "cumulative_s": 0.029152528
+            },
+            {
+              "function": "heaptrack_owner_replay.py:231:accept",
+              "calls": 100006,
+              "own_s": 0.024613894,
+              "cumulative_s": 0.027170281
+            },
+            {
+              "function": "~:0:<method 'fullmatch' of 're.Pattern' objects>",
+              "calls": 200009,
+              "own_s": 0.023819854,
+              "cumulative_s": 0.023819854
+            },
+            {
+              "function": "~:0:<built-in method builtins.len>",
+              "calls": 750036,
+              "own_s": 0.019353755,
+              "cumulative_s": 0.019353755
+            },
+            {
+              "function": "~:0:<method 'endswith' of 'bytes' objects>",
+              "calls": 200012,
+              "own_s": 0.014114290000000002,
+              "cumulative_s": 0.014114290000000002
+            },
+            {
+              "function": "~:0:<built-in method builtins.isinstance>",
+              "calls": 200012,
+              "own_s": 0.012977342000000001,
+              "cumulative_s": 0.012977342000000001
+            },
+            {
+              "function": "~:0:<method 'update' of '_hashlib.HASH' objects>",
+              "calls": 200010,
+              "own_s": 0.012305136000000001,
+              "cumulative_s": 0.012305136000000001
+            },
+            {
+              "function": "heaptrack_owner_replay.py:118:count",
+              "calls": 50001,
+              "own_s": 0.008025392000000001,
+              "cumulative_s": 0.009247069
+            },
+            {
+              "function": "~:0:<built-in method _struct.pack>",
+              "calls": 100005,
+              "own_s": 0.008178399000000001,
+              "cumulative_s": 0.008178399000000001
+            },
+            {
+              "function": "~:0:<method 'startswith' of 'bytes' objects>",
+              "calls": 100006,
+              "own_s": 0.007533776000000001,
+              "cumulative_s": 0.007533776000000001
+            }
+          ]
+        },
+        {
+          "mode": "sampled_numeric",
+          "full": false,
+          "profiled": true,
+          "cpu_s": 0.572500999999999,
+          "wall_s": 0.5725777500000007,
+          "pulse_calls": 100006,
+          "record_guard_checks": 97,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.5725673749999984,
+              "cpu_s": 0.5724909999999994,
+              "cumulative_peak_rss_bytes": 29343744
+            }
+          ],
+          "raw_bytes_per_cpu_s": 3231519.2462545973,
+          "signature": {
+            "bytes": 0,
+            "count": 0,
+            "allocations": 50000,
+            "frees": 50000,
+            "unknown_frees": 0,
+            "temporary": 50000,
+            "max_live_pointers": 1,
+            "events": "a72f59121ec4744c3e43d82a33fe99ce68d88c2f50df3d98fbcffac1fc750a41",
+            "traces": 1,
+            "trace_digest": "2727bbb8e6059ddbf921de6b99bf4988b4e845b757580c5e04609fef1a99f032",
+            "metadata": "6eed6aa97b1067f28974c948d7f6d8f651ff0bbab84c056f4f5fd51b88c3bff3",
+            "lines": 100006
+          },
+          "profile": [
+            {
+              "function": "heaptrack_owner_replay.py:252:raw_pass",
+              "calls": 1,
+              "own_s": 0.108520583,
+              "cumulative_s": 0.5725582920000001
+            },
+            {
+              "function": "heaptrack_owner_throughput_probe.py:32:fast_numeric",
+              "calls": 100006,
+              "own_s": 0.136209787,
+              "cumulative_s": 0.199370017
+            },
+            {
+              "function": "heaptrack_owner_replay.py:132:__iter__",
+              "calls": 100007,
+              "own_s": 0.08363184200000001,
+              "cumulative_s": 0.127588235
+            },
+            {
+              "function": "heaptrack_owner_replay.py:220:emit_digest",
+              "calls": 100002,
+              "own_s": 0.038771776,
+              "cumulative_s": 0.059297114000000005
+            },
+            {
+              "function": "heaptrack_owner_replay.py:29:require",
+              "calls": 1400376,
+              "own_s": 0.033321750000000004,
+              "cumulative_s": 0.033321750000000004
+            },
+            {
+              "function": "heaptrack_owner_replay.py:39:checked",
+              "calls": 250000,
+              "own_s": 0.024586785,
+              "cumulative_s": 0.030180415000000002
+            },
+            {
+              "function": "heaptrack_owner_replay.py:231:accept",
+              "calls": 100006,
+              "own_s": 0.023380557,
+              "cumulative_s": 0.025689212000000003
+            },
+            {
+              "function": "~:0:<method 'fullmatch' of 're.Pattern' objects>",
+              "calls": 200009,
+              "own_s": 0.021894923,
+              "cumulative_s": 0.021894923
+            },
+            {
+              "function": "~:0:<built-in method builtins.len>",
+              "calls": 650032,
+              "own_s": 0.015837165,
+              "cumulative_s": 0.015837165
+            },
+            {
+              "function": "~:0:<method 'endswith' of 'bytes' objects>",
+              "calls": 200012,
+              "own_s": 0.01341775,
+              "cumulative_s": 0.01341775
+            },
+            {
+              "function": "heaptrack_owner_throughput_probe.py:55:__call__",
+              "calls": 100006,
+              "own_s": 0.012230421,
+              "cumulative_s": 0.012463335
+            },
+            {
+              "function": "~:0:<method 'update' of '_hashlib.HASH' objects>",
+              "calls": 200010,
+              "own_s": 0.010951476,
+              "cumulative_s": 0.010951476
+            },
+            {
+              "function": "heaptrack_owner_replay.py:118:count",
+              "calls": 50001,
+              "own_s": 0.007301449000000001,
+              "cumulative_s": 0.008467141000000001
+            },
+            {
+              "function": "~:0:<built-in method _struct.pack>",
+              "calls": 100005,
+              "own_s": 0.007885778000000001,
+              "cumulative_s": 0.007885778000000001
+            },
+            {
+              "function": "~:0:<method 'readline' of '_io.BufferedReader' objects>",
+              "calls": 100007,
+              "own_s": 0.006640020000000001,
+              "cumulative_s": 0.006640020000000001
+            },
+            {
+              "function": "~:0:<method 'split' of 'bytes' objects>",
+              "calls": 100004,
+              "own_s": 0.0061523490000000005,
+              "cumulative_s": 0.0061523490000000005
+            },
+            {
+              "function": "~:0:<method 'append' of 'list' objects>",
+              "calls": 200008,
+              "own_s": 0.0060978890000000004,
+              "cumulative_s": 0.0060978890000000004
+            },
+            {
+              "function": "~:0:<method 'encode' of 'str' objects>",
+              "calls": 100004,
+              "own_s": 0.004795712000000001,
+              "cumulative_s": 0.004795712000000001
+            },
+            {
+              "function": "~:0:<built-in method builtins.max>",
+              "calls": 50002,
+              "own_s": 0.004158356,
+              "cumulative_s": 0.004158356
+            },
+            {
+              "function": "~:0:<built-in method builtins.chr>",
+              "calls": 100008,
+              "own_s": 0.0033720110000000003,
+              "cumulative_s": 0.0033720110000000003
+            },
+            {
+              "function": "~:0:<method 'pop' of 'dict' objects>",
+              "calls": 50000,
+              "own_s": 0.0031004490000000003,
+              "cumulative_s": 0.0031004490000000003
+            },
+            {
+              "function": "heaptrack_owner_runner.py:146:check",
+              "calls": 99,
+              "own_s": 0.000124053,
+              "cumulative_s": 0.00023933100000000002
+            }
+          ]
+        }
+      ],
+      "median_cpu_s": {
+        "baseline": 0.46228099999999994,
+        "sampled": 0.35357400000000005,
+        "sampled_numeric": 0.27112800000000004
+      }
+    },
+    "saved_smoke": {
+      "inputs": {
+        "raw": {
+          "bytes": 389215,
+          "sha256": "f0b8bbcff61b7fd0c0ff7257ef40fc3c615365630367849736ff0fa031698146"
+        },
+        "interpreted": {
+          "bytes": 281592,
+          "sha256": "96d8b258f3bbbdf97deeb4b56691d12a23fa43ac5023cdfc3b53c9f6aa435acb"
+        },
+        "peak": {
+          "bytes": 1061617,
+          "sha256": "bbfa1a2bdd75ae37fb9c3a58317a43d48ba741643b0e63c1f9b5a59cd364a943"
+        }
+      },
+      "runs": [
+        {
+          "mode": "baseline",
+          "full": true,
+          "profiled": false,
+          "cpu_s": 0.6592780000000005,
+          "wall_s": 0.6595192080000007,
+          "pulse_calls": null,
+          "record_guard_checks": null,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.12174562499999908,
+              "cpu_s": 0.12173499999999926,
+              "cumulative_peak_rss_bytes": 30670848
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.17356291599999984,
+              "cpu_s": 0.17354400000000147,
+              "cumulative_peak_rss_bytes": 31358976
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.3642014170000003,
+              "cpu_s": 0.36398999999999937,
+              "cumulative_peak_rss_bytes": 34865152
+            }
+          ],
+          "raw_bytes_per_cpu_s": null,
+          "signature": {
+            "raw": {
+              "bytes": 407233,
+              "count": 34,
+              "allocations": 6388,
+              "frees": 6354,
+              "unknown_frees": 2,
+              "temporary": 637,
+              "max_live_pointers": 4962,
+              "events": "bc9ff7ab61ecc464c3cfbea1504f2612d6070c23190ec99cebc6537ee1a3bcc4",
+              "traces": 13943,
+              "trace_digest": "ea3813d080ea93be997cd7dcd598bb7786e30473509283a732b2e581045d5f6a",
+              "metadata": "385c4e8ac68f5464d16fb76c36e3b9122f2a192bd6c88ac294ed37a28ba46639",
+              "lines": 26943
+            },
+            "first": {
+              "peak": {
+                "line": 27144,
+                "offset": 250615,
+                "timestamp_ms": 50,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "last_mark": {
+                "line": 32299,
+                "offset": 281552,
+                "timestamp_ms": 1064,
+                "ordinal": 105,
+                "bytes": 407233,
+                "count": 34
+              },
+              "requested": {
+                "line": 27231,
+                "offset": 251160,
+                "timestamp_ms": 497,
+                "ordinal": 49,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "next_mark": {
+                "line": 27233,
+                "offset": 251173,
+                "timestamp_ms": 507,
+                "ordinal": 50,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "last_event": {
+                "line": 32298,
+                "offset": 281548,
+                "previous_timestamp_ms": 1056
+              },
+              "eof": {
+                "line": 32303,
+                "offset": 281592,
+                "bytes": 407233,
+                "count": 34
+              },
+              "events": "bc9ff7ab61ecc464c3cfbea1504f2612d6070c23190ec99cebc6537ee1a3bcc4",
+              "metadata": "385c4e8ac68f5464d16fb76c36e3b9122f2a192bd6c88ac294ed37a28ba46639",
+              "trace_digest": "ea3813d080ea93be997cd7dcd598bb7786e30473509283a732b2e581045d5f6a",
+              "allocations": 6388,
+              "frees": 6354,
+              "temporary": 638,
+              "max_multiplicity": 2048,
+              "definitions": {
+                "s": 140,
+                "i": 1973,
+                "t": 13944,
+                "a": 3291
+              },
+              "sha256": "96d8b258f3bbbdf97deeb4b56691d12a23fa43ac5023cdfc3b53c9f6aa435acb"
+            },
+            "canonical": {
+              "rows": 2951,
+              "positive_rows": 2212,
+              "bytes": 5730024
+            }
+          },
+          "profile": []
+        },
+        {
+          "mode": "sampled",
+          "full": true,
+          "profiled": false,
+          "cpu_s": 0.5281929999999999,
+          "wall_s": 0.5285557920000006,
+          "pulse_calls": 115186,
+          "record_guard_checks": 112,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.09323737500000107,
+              "cpu_s": 0.09322799999999987,
+              "cumulative_peak_rss_bytes": 34947072
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.13547729199999914,
+              "cpu_s": 0.13546700000000023,
+              "cumulative_peak_rss_bytes": 35176448
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.2998322499999997,
+              "cpu_s": 0.2994890000000012,
+              "cumulative_peak_rss_bytes": 36356096
+            }
+          ],
+          "raw_bytes_per_cpu_s": null,
+          "signature": {
+            "raw": {
+              "bytes": 407233,
+              "count": 34,
+              "allocations": 6388,
+              "frees": 6354,
+              "unknown_frees": 2,
+              "temporary": 637,
+              "max_live_pointers": 4962,
+              "events": "bc9ff7ab61ecc464c3cfbea1504f2612d6070c23190ec99cebc6537ee1a3bcc4",
+              "traces": 13943,
+              "trace_digest": "ea3813d080ea93be997cd7dcd598bb7786e30473509283a732b2e581045d5f6a",
+              "metadata": "385c4e8ac68f5464d16fb76c36e3b9122f2a192bd6c88ac294ed37a28ba46639",
+              "lines": 26943
+            },
+            "first": {
+              "peak": {
+                "line": 27144,
+                "offset": 250615,
+                "timestamp_ms": 50,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "last_mark": {
+                "line": 32299,
+                "offset": 281552,
+                "timestamp_ms": 1064,
+                "ordinal": 105,
+                "bytes": 407233,
+                "count": 34
+              },
+              "requested": {
+                "line": 27231,
+                "offset": 251160,
+                "timestamp_ms": 497,
+                "ordinal": 49,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "next_mark": {
+                "line": 27233,
+                "offset": 251173,
+                "timestamp_ms": 507,
+                "ordinal": 50,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "last_event": {
+                "line": 32298,
+                "offset": 281548,
+                "previous_timestamp_ms": 1056
+              },
+              "eof": {
+                "line": 32303,
+                "offset": 281592,
+                "bytes": 407233,
+                "count": 34
+              },
+              "events": "bc9ff7ab61ecc464c3cfbea1504f2612d6070c23190ec99cebc6537ee1a3bcc4",
+              "metadata": "385c4e8ac68f5464d16fb76c36e3b9122f2a192bd6c88ac294ed37a28ba46639",
+              "trace_digest": "ea3813d080ea93be997cd7dcd598bb7786e30473509283a732b2e581045d5f6a",
+              "allocations": 6388,
+              "frees": 6354,
+              "temporary": 638,
+              "max_multiplicity": 2048,
+              "definitions": {
+                "s": 140,
+                "i": 1973,
+                "t": 13944,
+                "a": 3291
+              },
+              "sha256": "96d8b258f3bbbdf97deeb4b56691d12a23fa43ac5023cdfc3b53c9f6aa435acb"
+            },
+            "canonical": {
+              "rows": 2951,
+              "positive_rows": 2212,
+              "bytes": 5730024
+            }
+          },
+          "profile": []
+        },
+        {
+          "mode": "sampled_numeric",
+          "full": true,
+          "profiled": false,
+          "cpu_s": 0.46478600000000014,
+          "wall_s": 0.4653587090000002,
+          "pulse_calls": 115186,
+          "record_guard_checks": 112,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.07315024999999942,
+              "cpu_s": 0.07296799999999948,
+              "cumulative_peak_rss_bytes": 36700160
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.11432070800000105,
+              "cpu_s": 0.11431099999999894,
+              "cumulative_peak_rss_bytes": 36716544
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.2778787919999992,
+              "cpu_s": 0.27749800000000135,
+              "cumulative_peak_rss_bytes": 37093376
+            }
+          ],
+          "raw_bytes_per_cpu_s": null,
+          "signature": {
+            "raw": {
+              "bytes": 407233,
+              "count": 34,
+              "allocations": 6388,
+              "frees": 6354,
+              "unknown_frees": 2,
+              "temporary": 637,
+              "max_live_pointers": 4962,
+              "events": "bc9ff7ab61ecc464c3cfbea1504f2612d6070c23190ec99cebc6537ee1a3bcc4",
+              "traces": 13943,
+              "trace_digest": "ea3813d080ea93be997cd7dcd598bb7786e30473509283a732b2e581045d5f6a",
+              "metadata": "385c4e8ac68f5464d16fb76c36e3b9122f2a192bd6c88ac294ed37a28ba46639",
+              "lines": 26943
+            },
+            "first": {
+              "peak": {
+                "line": 27144,
+                "offset": 250615,
+                "timestamp_ms": 50,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "last_mark": {
+                "line": 32299,
+                "offset": 281552,
+                "timestamp_ms": 1064,
+                "ordinal": 105,
+                "bytes": 407233,
+                "count": 34
+              },
+              "requested": {
+                "line": 27231,
+                "offset": 251160,
+                "timestamp_ms": 497,
+                "ordinal": 49,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "next_mark": {
+                "line": 27233,
+                "offset": 251173,
+                "timestamp_ms": 507,
+                "ordinal": 50,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "last_event": {
+                "line": 32298,
+                "offset": 281548,
+                "previous_timestamp_ms": 1056
+              },
+              "eof": {
+                "line": 32303,
+                "offset": 281592,
+                "bytes": 407233,
+                "count": 34
+              },
+              "events": "bc9ff7ab61ecc464c3cfbea1504f2612d6070c23190ec99cebc6537ee1a3bcc4",
+              "metadata": "385c4e8ac68f5464d16fb76c36e3b9122f2a192bd6c88ac294ed37a28ba46639",
+              "trace_digest": "ea3813d080ea93be997cd7dcd598bb7786e30473509283a732b2e581045d5f6a",
+              "allocations": 6388,
+              "frees": 6354,
+              "temporary": 638,
+              "max_multiplicity": 2048,
+              "definitions": {
+                "s": 140,
+                "i": 1973,
+                "t": 13944,
+                "a": 3291
+              },
+              "sha256": "96d8b258f3bbbdf97deeb4b56691d12a23fa43ac5023cdfc3b53c9f6aa435acb"
+            },
+            "canonical": {
+              "rows": 2951,
+              "positive_rows": 2212,
+              "bytes": 5730024
+            }
+          },
+          "profile": []
+        },
+        {
+          "mode": "baseline",
+          "full": true,
+          "profiled": false,
+          "cpu_s": 0.6618650000000006,
+          "wall_s": 0.6620731669999991,
+          "pulse_calls": null,
+          "record_guard_checks": null,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.1243828330000003,
+              "cpu_s": 0.12432199999999938,
+              "cumulative_peak_rss_bytes": 37404672
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.1738161250000001,
+              "cpu_s": 0.17379799999999967,
+              "cumulative_peak_rss_bytes": 37601280
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.36386516700000016,
+              "cpu_s": 0.36373600000000117,
+              "cumulative_peak_rss_bytes": 37634048
+            }
+          ],
+          "raw_bytes_per_cpu_s": null,
+          "signature": {
+            "raw": {
+              "bytes": 407233,
+              "count": 34,
+              "allocations": 6388,
+              "frees": 6354,
+              "unknown_frees": 2,
+              "temporary": 637,
+              "max_live_pointers": 4962,
+              "events": "bc9ff7ab61ecc464c3cfbea1504f2612d6070c23190ec99cebc6537ee1a3bcc4",
+              "traces": 13943,
+              "trace_digest": "ea3813d080ea93be997cd7dcd598bb7786e30473509283a732b2e581045d5f6a",
+              "metadata": "385c4e8ac68f5464d16fb76c36e3b9122f2a192bd6c88ac294ed37a28ba46639",
+              "lines": 26943
+            },
+            "first": {
+              "peak": {
+                "line": 27144,
+                "offset": 250615,
+                "timestamp_ms": 50,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "last_mark": {
+                "line": 32299,
+                "offset": 281552,
+                "timestamp_ms": 1064,
+                "ordinal": 105,
+                "bytes": 407233,
+                "count": 34
+              },
+              "requested": {
+                "line": 27231,
+                "offset": 251160,
+                "timestamp_ms": 497,
+                "ordinal": 49,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "next_mark": {
+                "line": 27233,
+                "offset": 251173,
+                "timestamp_ms": 507,
+                "ordinal": 50,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "last_event": {
+                "line": 32298,
+                "offset": 281548,
+                "previous_timestamp_ms": 1056
+              },
+              "eof": {
+                "line": 32303,
+                "offset": 281592,
+                "bytes": 407233,
+                "count": 34
+              },
+              "events": "bc9ff7ab61ecc464c3cfbea1504f2612d6070c23190ec99cebc6537ee1a3bcc4",
+              "metadata": "385c4e8ac68f5464d16fb76c36e3b9122f2a192bd6c88ac294ed37a28ba46639",
+              "trace_digest": "ea3813d080ea93be997cd7dcd598bb7786e30473509283a732b2e581045d5f6a",
+              "allocations": 6388,
+              "frees": 6354,
+              "temporary": 638,
+              "max_multiplicity": 2048,
+              "definitions": {
+                "s": 140,
+                "i": 1973,
+                "t": 13944,
+                "a": 3291
+              },
+              "sha256": "96d8b258f3bbbdf97deeb4b56691d12a23fa43ac5023cdfc3b53c9f6aa435acb"
+            },
+            "canonical": {
+              "rows": 2951,
+              "positive_rows": 2212,
+              "bytes": 5730024
+            }
+          },
+          "profile": []
+        },
+        {
+          "mode": "sampled",
+          "full": true,
+          "profiled": false,
+          "cpu_s": 0.5314630000000005,
+          "wall_s": 0.5316996669999998,
+          "pulse_calls": 115186,
+          "record_guard_checks": 112,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.09512666600000053,
+              "cpu_s": 0.09500399999999942,
+              "cumulative_peak_rss_bytes": 37683200
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.1378652089999992,
+              "cpu_s": 0.13784300000000016,
+              "cumulative_peak_rss_bytes": 37683200
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.2987002909999994,
+              "cpu_s": 0.2986090000000008,
+              "cumulative_peak_rss_bytes": 38371328
+            }
+          ],
+          "raw_bytes_per_cpu_s": null,
+          "signature": {
+            "raw": {
+              "bytes": 407233,
+              "count": 34,
+              "allocations": 6388,
+              "frees": 6354,
+              "unknown_frees": 2,
+              "temporary": 637,
+              "max_live_pointers": 4962,
+              "events": "bc9ff7ab61ecc464c3cfbea1504f2612d6070c23190ec99cebc6537ee1a3bcc4",
+              "traces": 13943,
+              "trace_digest": "ea3813d080ea93be997cd7dcd598bb7786e30473509283a732b2e581045d5f6a",
+              "metadata": "385c4e8ac68f5464d16fb76c36e3b9122f2a192bd6c88ac294ed37a28ba46639",
+              "lines": 26943
+            },
+            "first": {
+              "peak": {
+                "line": 27144,
+                "offset": 250615,
+                "timestamp_ms": 50,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "last_mark": {
+                "line": 32299,
+                "offset": 281552,
+                "timestamp_ms": 1064,
+                "ordinal": 105,
+                "bytes": 407233,
+                "count": 34
+              },
+              "requested": {
+                "line": 27231,
+                "offset": 251160,
+                "timestamp_ms": 497,
+                "ordinal": 49,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "next_mark": {
+                "line": 27233,
+                "offset": 251173,
+                "timestamp_ms": 507,
+                "ordinal": 50,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "last_event": {
+                "line": 32298,
+                "offset": 281548,
+                "previous_timestamp_ms": 1056
+              },
+              "eof": {
+                "line": 32303,
+                "offset": 281592,
+                "bytes": 407233,
+                "count": 34
+              },
+              "events": "bc9ff7ab61ecc464c3cfbea1504f2612d6070c23190ec99cebc6537ee1a3bcc4",
+              "metadata": "385c4e8ac68f5464d16fb76c36e3b9122f2a192bd6c88ac294ed37a28ba46639",
+              "trace_digest": "ea3813d080ea93be997cd7dcd598bb7786e30473509283a732b2e581045d5f6a",
+              "allocations": 6388,
+              "frees": 6354,
+              "temporary": 638,
+              "max_multiplicity": 2048,
+              "definitions": {
+                "s": 140,
+                "i": 1973,
+                "t": 13944,
+                "a": 3291
+              },
+              "sha256": "96d8b258f3bbbdf97deeb4b56691d12a23fa43ac5023cdfc3b53c9f6aa435acb"
+            },
+            "canonical": {
+              "rows": 2951,
+              "positive_rows": 2212,
+              "bytes": 5730024
+            }
+          },
+          "profile": []
+        },
+        {
+          "mode": "sampled_numeric",
+          "full": true,
+          "profiled": false,
+          "cpu_s": 0.46067899999999895,
+          "wall_s": 0.4607557920000005,
+          "pulse_calls": 115186,
+          "record_guard_checks": 112,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.07106045799999983,
+              "cpu_s": 0.07104999999999961,
+              "cumulative_peak_rss_bytes": 38404096
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.11314620800000164,
+              "cpu_s": 0.11314600000000041,
+              "cumulative_peak_rss_bytes": 38453248
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.27653399999999984,
+              "cpu_s": 0.2764690000000005,
+              "cumulative_peak_rss_bytes": 38486016
+            }
+          ],
+          "raw_bytes_per_cpu_s": null,
+          "signature": {
+            "raw": {
+              "bytes": 407233,
+              "count": 34,
+              "allocations": 6388,
+              "frees": 6354,
+              "unknown_frees": 2,
+              "temporary": 637,
+              "max_live_pointers": 4962,
+              "events": "bc9ff7ab61ecc464c3cfbea1504f2612d6070c23190ec99cebc6537ee1a3bcc4",
+              "traces": 13943,
+              "trace_digest": "ea3813d080ea93be997cd7dcd598bb7786e30473509283a732b2e581045d5f6a",
+              "metadata": "385c4e8ac68f5464d16fb76c36e3b9122f2a192bd6c88ac294ed37a28ba46639",
+              "lines": 26943
+            },
+            "first": {
+              "peak": {
+                "line": 27144,
+                "offset": 250615,
+                "timestamp_ms": 50,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "last_mark": {
+                "line": 32299,
+                "offset": 281552,
+                "timestamp_ms": 1064,
+                "ordinal": 105,
+                "bytes": 407233,
+                "count": 34
+              },
+              "requested": {
+                "line": 27231,
+                "offset": 251160,
+                "timestamp_ms": 497,
+                "ordinal": 49,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "next_mark": {
+                "line": 27233,
+                "offset": 251173,
+                "timestamp_ms": 507,
+                "ordinal": 50,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "last_event": {
+                "line": 32298,
+                "offset": 281548,
+                "previous_timestamp_ms": 1056
+              },
+              "eof": {
+                "line": 32303,
+                "offset": 281592,
+                "bytes": 407233,
+                "count": 34
+              },
+              "events": "bc9ff7ab61ecc464c3cfbea1504f2612d6070c23190ec99cebc6537ee1a3bcc4",
+              "metadata": "385c4e8ac68f5464d16fb76c36e3b9122f2a192bd6c88ac294ed37a28ba46639",
+              "trace_digest": "ea3813d080ea93be997cd7dcd598bb7786e30473509283a732b2e581045d5f6a",
+              "allocations": 6388,
+              "frees": 6354,
+              "temporary": 638,
+              "max_multiplicity": 2048,
+              "definitions": {
+                "s": 140,
+                "i": 1973,
+                "t": 13944,
+                "a": 3291
+              },
+              "sha256": "96d8b258f3bbbdf97deeb4b56691d12a23fa43ac5023cdfc3b53c9f6aa435acb"
+            },
+            "canonical": {
+              "rows": 2951,
+              "positive_rows": 2212,
+              "bytes": 5730024
+            }
+          },
+          "profile": []
+        },
+        {
+          "mode": "baseline",
+          "full": true,
+          "profiled": false,
+          "cpu_s": 0.6630590000000005,
+          "wall_s": 0.6679204579999993,
+          "pulse_calls": null,
+          "record_guard_checks": null,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.13086087499999977,
+              "cpu_s": 0.12774600000000014,
+              "cumulative_peak_rss_bytes": 38764544
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.17484541600000014,
+              "cpu_s": 0.17482799999999976,
+              "cumulative_peak_rss_bytes": 38764544
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.36220470900000024,
+              "cpu_s": 0.36047600000000024,
+              "cumulative_peak_rss_bytes": 38780928
+            }
+          ],
+          "raw_bytes_per_cpu_s": null,
+          "signature": {
+            "raw": {
+              "bytes": 407233,
+              "count": 34,
+              "allocations": 6388,
+              "frees": 6354,
+              "unknown_frees": 2,
+              "temporary": 637,
+              "max_live_pointers": 4962,
+              "events": "bc9ff7ab61ecc464c3cfbea1504f2612d6070c23190ec99cebc6537ee1a3bcc4",
+              "traces": 13943,
+              "trace_digest": "ea3813d080ea93be997cd7dcd598bb7786e30473509283a732b2e581045d5f6a",
+              "metadata": "385c4e8ac68f5464d16fb76c36e3b9122f2a192bd6c88ac294ed37a28ba46639",
+              "lines": 26943
+            },
+            "first": {
+              "peak": {
+                "line": 27144,
+                "offset": 250615,
+                "timestamp_ms": 50,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "last_mark": {
+                "line": 32299,
+                "offset": 281552,
+                "timestamp_ms": 1064,
+                "ordinal": 105,
+                "bytes": 407233,
+                "count": 34
+              },
+              "requested": {
+                "line": 27231,
+                "offset": 251160,
+                "timestamp_ms": 497,
+                "ordinal": 49,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "next_mark": {
+                "line": 27233,
+                "offset": 251173,
+                "timestamp_ms": 507,
+                "ordinal": 50,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "last_event": {
+                "line": 32298,
+                "offset": 281548,
+                "previous_timestamp_ms": 1056
+              },
+              "eof": {
+                "line": 32303,
+                "offset": 281592,
+                "bytes": 407233,
+                "count": 34
+              },
+              "events": "bc9ff7ab61ecc464c3cfbea1504f2612d6070c23190ec99cebc6537ee1a3bcc4",
+              "metadata": "385c4e8ac68f5464d16fb76c36e3b9122f2a192bd6c88ac294ed37a28ba46639",
+              "trace_digest": "ea3813d080ea93be997cd7dcd598bb7786e30473509283a732b2e581045d5f6a",
+              "allocations": 6388,
+              "frees": 6354,
+              "temporary": 638,
+              "max_multiplicity": 2048,
+              "definitions": {
+                "s": 140,
+                "i": 1973,
+                "t": 13944,
+                "a": 3291
+              },
+              "sha256": "96d8b258f3bbbdf97deeb4b56691d12a23fa43ac5023cdfc3b53c9f6aa435acb"
+            },
+            "canonical": {
+              "rows": 2951,
+              "positive_rows": 2212,
+              "bytes": 5730024
+            }
+          },
+          "profile": []
+        },
+        {
+          "mode": "sampled",
+          "full": true,
+          "profiled": false,
+          "cpu_s": 0.5279360000000004,
+          "wall_s": 0.5282320840000008,
+          "pulse_calls": 115186,
+          "record_guard_checks": 112,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.09402529199999954,
+              "cpu_s": 0.09402500000000025,
+              "cumulative_peak_rss_bytes": 38780928
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.13691174999999944,
+              "cpu_s": 0.13689299999999882,
+              "cumulative_peak_rss_bytes": 38797312
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.29728575000000035,
+              "cpu_s": 0.2970100000000002,
+              "cumulative_peak_rss_bytes": 40321024
+            }
+          ],
+          "raw_bytes_per_cpu_s": null,
+          "signature": {
+            "raw": {
+              "bytes": 407233,
+              "count": 34,
+              "allocations": 6388,
+              "frees": 6354,
+              "unknown_frees": 2,
+              "temporary": 637,
+              "max_live_pointers": 4962,
+              "events": "bc9ff7ab61ecc464c3cfbea1504f2612d6070c23190ec99cebc6537ee1a3bcc4",
+              "traces": 13943,
+              "trace_digest": "ea3813d080ea93be997cd7dcd598bb7786e30473509283a732b2e581045d5f6a",
+              "metadata": "385c4e8ac68f5464d16fb76c36e3b9122f2a192bd6c88ac294ed37a28ba46639",
+              "lines": 26943
+            },
+            "first": {
+              "peak": {
+                "line": 27144,
+                "offset": 250615,
+                "timestamp_ms": 50,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "last_mark": {
+                "line": 32299,
+                "offset": 281552,
+                "timestamp_ms": 1064,
+                "ordinal": 105,
+                "bytes": 407233,
+                "count": 34
+              },
+              "requested": {
+                "line": 27231,
+                "offset": 251160,
+                "timestamp_ms": 497,
+                "ordinal": 49,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "next_mark": {
+                "line": 27233,
+                "offset": 251173,
+                "timestamp_ms": 507,
+                "ordinal": 50,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "last_event": {
+                "line": 32298,
+                "offset": 281548,
+                "previous_timestamp_ms": 1056
+              },
+              "eof": {
+                "line": 32303,
+                "offset": 281592,
+                "bytes": 407233,
+                "count": 34
+              },
+              "events": "bc9ff7ab61ecc464c3cfbea1504f2612d6070c23190ec99cebc6537ee1a3bcc4",
+              "metadata": "385c4e8ac68f5464d16fb76c36e3b9122f2a192bd6c88ac294ed37a28ba46639",
+              "trace_digest": "ea3813d080ea93be997cd7dcd598bb7786e30473509283a732b2e581045d5f6a",
+              "allocations": 6388,
+              "frees": 6354,
+              "temporary": 638,
+              "max_multiplicity": 2048,
+              "definitions": {
+                "s": 140,
+                "i": 1973,
+                "t": 13944,
+                "a": 3291
+              },
+              "sha256": "96d8b258f3bbbdf97deeb4b56691d12a23fa43ac5023cdfc3b53c9f6aa435acb"
+            },
+            "canonical": {
+              "rows": 2951,
+              "positive_rows": 2212,
+              "bytes": 5730024
+            }
+          },
+          "profile": []
+        },
+        {
+          "mode": "sampled_numeric",
+          "full": true,
+          "profiled": false,
+          "cpu_s": 0.45702099999999923,
+          "wall_s": 0.45724279099999876,
+          "pulse_calls": 115186,
+          "record_guard_checks": 112,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.07067529200000067,
+              "cpu_s": 0.07065799999999989,
+              "cumulative_peak_rss_bytes": 40992768
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.11235766599999941,
+              "cpu_s": 0.11234699999999975,
+              "cumulative_peak_rss_bytes": 41975808
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.2742024169999997,
+              "cpu_s": 0.2740089999999995,
+              "cumulative_peak_rss_bytes": 43548672
+            }
+          ],
+          "raw_bytes_per_cpu_s": null,
+          "signature": {
+            "raw": {
+              "bytes": 407233,
+              "count": 34,
+              "allocations": 6388,
+              "frees": 6354,
+              "unknown_frees": 2,
+              "temporary": 637,
+              "max_live_pointers": 4962,
+              "events": "bc9ff7ab61ecc464c3cfbea1504f2612d6070c23190ec99cebc6537ee1a3bcc4",
+              "traces": 13943,
+              "trace_digest": "ea3813d080ea93be997cd7dcd598bb7786e30473509283a732b2e581045d5f6a",
+              "metadata": "385c4e8ac68f5464d16fb76c36e3b9122f2a192bd6c88ac294ed37a28ba46639",
+              "lines": 26943
+            },
+            "first": {
+              "peak": {
+                "line": 27144,
+                "offset": 250615,
+                "timestamp_ms": 50,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "last_mark": {
+                "line": 32299,
+                "offset": 281552,
+                "timestamp_ms": 1064,
+                "ordinal": 105,
+                "bytes": 407233,
+                "count": 34
+              },
+              "requested": {
+                "line": 27231,
+                "offset": 251160,
+                "timestamp_ms": 497,
+                "ordinal": 49,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "next_mark": {
+                "line": 27233,
+                "offset": 251173,
+                "timestamp_ms": 507,
+                "ordinal": 50,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "last_event": {
+                "line": 32298,
+                "offset": 281548,
+                "previous_timestamp_ms": 1056
+              },
+              "eof": {
+                "line": 32303,
+                "offset": 281592,
+                "bytes": 407233,
+                "count": 34
+              },
+              "events": "bc9ff7ab61ecc464c3cfbea1504f2612d6070c23190ec99cebc6537ee1a3bcc4",
+              "metadata": "385c4e8ac68f5464d16fb76c36e3b9122f2a192bd6c88ac294ed37a28ba46639",
+              "trace_digest": "ea3813d080ea93be997cd7dcd598bb7786e30473509283a732b2e581045d5f6a",
+              "allocations": 6388,
+              "frees": 6354,
+              "temporary": 638,
+              "max_multiplicity": 2048,
+              "definitions": {
+                "s": 140,
+                "i": 1973,
+                "t": 13944,
+                "a": 3291
+              },
+              "sha256": "96d8b258f3bbbdf97deeb4b56691d12a23fa43ac5023cdfc3b53c9f6aa435acb"
+            },
+            "canonical": {
+              "rows": 2951,
+              "positive_rows": 2212,
+              "bytes": 5730024
+            }
+          },
+          "profile": []
+        }
+      ],
+      "profiles": [
+        {
+          "mode": "baseline",
+          "full": true,
+          "profiled": true,
+          "cpu_s": 1.1753609999999988,
+          "wall_s": 1.1755648749999992,
+          "pulse_calls": null,
+          "record_guard_checks": null,
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.23448375000000077,
+              "cpu_s": 0.2344539999999995,
+              "cumulative_peak_rss_bytes": 43728896
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.3264837499999995,
+              "cpu_s": 0.3264220000000009,
+              "cumulative_peak_rss_bytes": 43761664
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.6145824159999993,
+              "cpu_s": 0.614469999999999,
+              "cumulative_peak_rss_bytes": 44498944
+            }
+          ],
+          "raw_bytes_per_cpu_s": null,
+          "signature": {
+            "raw": {
+              "bytes": 407233,
+              "count": 34,
+              "allocations": 6388,
+              "frees": 6354,
+              "unknown_frees": 2,
+              "temporary": 637,
+              "max_live_pointers": 4962,
+              "events": "bc9ff7ab61ecc464c3cfbea1504f2612d6070c23190ec99cebc6537ee1a3bcc4",
+              "traces": 13943,
+              "trace_digest": "ea3813d080ea93be997cd7dcd598bb7786e30473509283a732b2e581045d5f6a",
+              "metadata": "385c4e8ac68f5464d16fb76c36e3b9122f2a192bd6c88ac294ed37a28ba46639",
+              "lines": 26943
+            },
+            "first": {
+              "peak": {
+                "line": 27144,
+                "offset": 250615,
+                "timestamp_ms": 50,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "last_mark": {
+                "line": 32299,
+                "offset": 281552,
+                "timestamp_ms": 1064,
+                "ordinal": 105,
+                "bytes": 407233,
+                "count": 34
+              },
+              "requested": {
+                "line": 27231,
+                "offset": 251160,
+                "timestamp_ms": 497,
+                "ordinal": 49,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "next_mark": {
+                "line": 27233,
+                "offset": 251173,
+                "timestamp_ms": 507,
+                "ordinal": 50,
+                "bytes": 5730024,
+                "count": 4962
+              },
+              "last_event": {
+                "line": 32298,
+                "offset": 281548,
+                "previous_timestamp_ms": 1056
+              },
+              "eof": {
+                "line": 32303,
+                "offset": 281592,
+                "bytes": 407233,
+                "count": 34
+              },
+              "events": "bc9ff7ab61ecc464c3cfbea1504f2612d6070c23190ec99cebc6537ee1a3bcc4",
+              "metadata": "385c4e8ac68f5464d16fb76c36e3b9122f2a192bd6c88ac294ed37a28ba46639",
+              "trace_digest": "ea3813d080ea93be997cd7dcd598bb7786e30473509283a732b2e581045d5f6a",
+              "allocations": 6388,
+              "frees": 6354,
+              "temporary": 638,
+              "max_multiplicity": 2048,
+              "definitions": {
+                "s": 140,
+                "i": 1973,
+                "t": 13944,
+                "a": 3291
+              },
+              "sha256": "96d8b258f3bbbdf97deeb4b56691d12a23fa43ac5023cdfc3b53c9f6aa435acb"
+            },
+            "canonical": {
+              "rows": 2951,
+              "positive_rows": 2212,
+              "bytes": 5730024
+            }
+          },
+          "profile": [
+            {
+              "function": "heaptrack_owner_replay.py:511:analyze",
+              "calls": 1,
+              "own_s": 3.7376e-05,
+              "cumulative_s": 0.9808656250000001
+            },
+            {
+              "function": "heaptrack_owner_replay.py:304:interpreted_pass",
+              "calls": 2,
+              "own_s": 0.086610662,
+              "cumulative_s": 0.630332624
+            },
+            {
+              "function": "heaptrack_owner_replay.py:57:parse_record",
+              "calls": 91549,
+              "own_s": 0.12485742400000001,
+              "cumulative_s": 0.313104311
+            },
+            {
+              "function": "heaptrack_owner_replay.py:132:__iter__",
+              "calls": 94504,
+              "own_s": 0.08759799800000001,
+              "cumulative_s": 0.26754048
+            },
+            {
+              "function": "heaptrack_owner_replay.py:252:raw_pass",
+              "calls": 1,
+              "own_s": 0.025924619000000003,
+              "cumulative_s": 0.2344735
+            },
+            {
+              "function": "heaptrack_owner_replay.py:622:write_outputs",
+              "calls": 1,
+              "own_s": 0.014636304000000001,
+              "cumulative_s": 0.193936834
+            },
+            {
+              "function": "heaptrack_owner_runner.py:146:check",
+              "calls": 115190,
+              "own_s": 0.08989063,
+              "cumulative_s": 0.179237279
+            },
+            {
+              "function": "heaptrack_owner_replay.py:88:<listcomp>",
+              "calls": 91219,
+              "own_s": 0.016920527,
+              "cumulative_s": 0.14605467
+            },
+            {
+              "function": "heaptrack_owner_replay.py:34:number",
+              "calls": 157412,
+              "own_s": 0.043888501,
+              "cumulative_s": 0.129653144
+            },
+            {
+              "function": "heaptrack_owner_replay.py:481:reconcile_peak",
+              "calls": 1,
+              "own_s": 0.004822010000000001,
+              "cumulative_s": 0.115996709
+            },
+            {
+              "function": "heaptrack_owner_replay.py:604:write",
+              "calls": 17,
+              "own_s": 0.022535603,
+              "cumulative_s": 0.109563875
+            },
+            {
+              "function": "heaptrack_owner_replay.py:453:canonical",
+              "calls": 2212,
+              "own_s": 0.029589561,
+              "cumulative_s": 0.098988218
+            },
+            {
+              "function": "re.py:193:fullmatch",
+              "calls": 160367,
+              "own_s": 0.026521328,
+              "cumulative_s": 0.083024278
+            },
+            {
+              "function": "heaptrack_owner_replay.py:552:classify",
+              "calls": 2212,
+              "own_s": 0.018624604,
+              "cumulative_s": 0.053434457000000005
+            },
+            {
+              "function": "heaptrack_owner_replay.py:220:emit_digest",
+              "calls": 80370,
+              "own_s": 0.034173897,
+              "cumulative_s": 0.052703357000000006
+            },
+            {
+              "function": "heaptrack_owner_replay.py:29:require",
+              "calls": 1971971,
+              "own_s": 0.051655052,
+              "cumulative_s": 0.051655052
+            },
+            {
+              "function": "heaptrack_owner_replay.py:185:definition",
+              "calls": 19345,
+              "own_s": 0.016039645,
+              "cumulative_s": 0.049601064
+            },
+            {
+              "function": "~:0:<built-in method resource.getrusage>",
+              "calls": 115190,
+              "own_s": 0.040305412000000006,
+              "cumulative_s": 0.040305412000000006
+            },
+            {
+              "function": "heaptrack_owner_replay.py:424:pretty",
+              "calls": 18079,
+              "own_s": 0.028404052000000003,
+              "cumulative_s": 0.037178787000000005
+            },
+            {
+              "function": "re.py:289:_compile",
+              "calls": 160367,
+              "own_s": 0.025615889000000003,
+              "cumulative_s": 0.036605685
+            },
+            {
+              "function": "~:0:<built-in method time.process_time>",
+              "calls": 115194,
+              "own_s": 0.034105769,
+              "cumulative_s": 0.034105769
+            },
+            {
+              "function": "shutil.py:1263:disk_usage",
+              "calls": 20686,
+              "own_s": 0.006697815,
+              "cumulative_s": 0.032929189000000005
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "cpu_failure_probes": [
+    {
+      "mode": "baseline",
+      "reason": "CPU guard",
+      "cpu_s": 1.0000110000000006,
+      "complete_small_passes": 2,
+      "pulse_calls": 206021,
+      "checks": 206021
+    },
+    {
+      "mode": "sampled_numeric",
+      "reason": "CPU guard",
+      "cpu_s": 1.001859999999997,
+      "complete_small_passes": 3,
+      "pulse_calls": 377856,
+      "checks": 369
+    }
+  ]
+}

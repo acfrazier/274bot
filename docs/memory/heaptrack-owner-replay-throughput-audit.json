@@ -1,0 +1,1293 @@
+{
+  "export_checks": [
+    {
+      "path": "production-input.json",
+      "bytes": 2036,
+      "sha256": "7fcd08aed20e44c81dd495f83ae663b167f4392b84c39a79ce927b45165e1595",
+      "match": true
+    },
+    {
+      "path": "production-launch.json",
+      "bytes": 433,
+      "sha256": "3d6c2d2ce7884b066c0550c1871dc2b90ea43783d707634bced6e2560dac246c",
+      "match": true
+    },
+    {
+      "path": "production-completion.json",
+      "bytes": 516,
+      "sha256": "bd76db92ff479a8b1d18ff4e94d8a9a2b9ead49c03201193788e3205055c02e3",
+      "match": true
+    },
+    {
+      "path": "native-tests.json",
+      "bytes": 373,
+      "sha256": "544c215aa709bc92162212cbb08398812ba86bb1503630df811b1fe2fad6bf16",
+      "match": true
+    },
+    {
+      "path": "production-command.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "match": true
+    },
+    {
+      "path": "native-smoke-command.log",
+      "bytes": 203,
+      "sha256": "1dfa6a4330414d913f6a9b669cb1d6b2b40d651271512192eda4b0bf3f83d012",
+      "match": true
+    },
+    {
+      "path": "native-tests.log",
+      "bytes": 2939,
+      "sha256": "29a85d07869c908c1196596cc048df77fe12c74ef1690b75c46eb5b48ecbc432",
+      "match": true
+    },
+    {
+      "path": "stage-verification.json",
+      "bytes": 208,
+      "sha256": "5185e99143d6dee928645d8c0587e9608180f30dc80d304b96412e673cbf215e",
+      "match": true
+    },
+    {
+      "path": "native-stage-manifest.json",
+      "bytes": 2438,
+      "sha256": "0e226d36e74b94693f92f4620cd812c33df722aa0fa311e59770e600adc2b7a5",
+      "match": true
+    },
+    {
+      "path": "native-smoke/manifest.json",
+      "bytes": 1915,
+      "sha256": "3aa904ae48f1a541f797683b0cfe6e9d8fb01a720d7c9ea475b6b2d0532d86bd",
+      "match": true
+    },
+    {
+      "path": "production-replay/failure.json",
+      "bytes": 499,
+      "sha256": "9fa9b15831fc15d16508df9c59ed45c2183a15c9cf88b038781a568c014d83df",
+      "match": true
+    },
+    {
+      "path": "docs/memory/test_heaptrack_owner_replay.py",
+      "bytes": 24666,
+      "sha256": "00a683a3a1f7faae0c56692cefb801f1a76a2461d264983e81e38be8f63ab20a",
+      "match": true
+    },
+    {
+      "path": "docs/memory/heaptrack_owner_smoke.py",
+      "bytes": 1242,
+      "sha256": "91e2ffcf38ee6be59320c25c9548dc6eb10eb309518df8d178e9012d7997aca8",
+      "match": true
+    },
+    {
+      "path": "docs/memory/heaptrack-owner-replay-implementation-smoke.json",
+      "bytes": 2995,
+      "sha256": "0abf3bb47470808d4c430cfc79b23f577c9f3e924a40e4976e94edddfd862391",
+      "match": true
+    },
+    {
+      "path": "docs/memory/heaptrack_owner_runner.py",
+      "bytes": 19417,
+      "sha256": "d3d7d034019c705e6930db5bec8bcd6999344f48ccf2f6f8c17a1d5e29e00f21",
+      "match": true
+    },
+    {
+      "path": "docs/memory/heaptrack-owner-replay-implementation.md",
+      "bytes": 16435,
+      "sha256": "43cdf4ae7632709857d4f25f0be45d004022582fa71c5a9b4e5ab0dee1bf9f8d",
+      "match": true
+    },
+    {
+      "path": "docs/memory/heaptrack_owner_replay.py",
+      "bytes": 34553,
+      "sha256": "fa4c3ef5384055745d38e80b3e01d37a28a8d28774d175ddb0d82ef81ca18ce0",
+      "match": true
+    },
+    {
+      "path": "native-smoke/replay/runner.json",
+      "bytes": 1146,
+      "sha256": "4cbdb66f61f9789eef875615f20fb6ac8668c4b75dfc7a84021c360a8728798d",
+      "match": true
+    },
+    {
+      "path": "native-smoke/replay/result/requested-families.tsv",
+      "bytes": 1768,
+      "sha256": "b576b230be22831ca8895c7ecc693e5a290cef9e971792ee5ec6520dca778047",
+      "match": true
+    },
+    {
+      "path": "native-smoke/replay/result/eof-stacks.tsv",
+      "bytes": 2541,
+      "sha256": "5e60df2ef5e18c3691d386510490dc8d42470bf00e514218ff0f971b213bf9b0",
+      "match": true
+    },
+    {
+      "path": "native-smoke/replay/result/eof-descriptors.tsv",
+      "bytes": 717,
+      "sha256": "6a5cf37a6cd32e5f1faaea00896e260a586a467b1842e7802629e6cd2c8e05ff",
+      "match": true
+    },
+    {
+      "path": "native-smoke/replay/result/requested-descriptors.tsv",
+      "bytes": 46444,
+      "sha256": "51c562a472901f9cd3a640debcbd70a86aed218cc218aebf42b19506225b0135",
+      "match": true
+    },
+    {
+      "path": "native-smoke/replay/result/eof-families.tsv",
+      "bytes": 537,
+      "sha256": "ab33913b354bd2b0793a2247dffd4bd51d63d380d47a419bab2b8203c1d9fe35",
+      "match": true
+    },
+    {
+      "path": "native-smoke/replay/result/strings.tsv",
+      "bytes": 2723,
+      "sha256": "34895e8a59babc73372a3ad3107598cd919240ecc64f23d527793bb1baa8a0b6",
+      "match": true
+    },
+    {
+      "path": "native-smoke/replay/result/last_mark-stacks.tsv",
+      "bytes": 2541,
+      "sha256": "5e60df2ef5e18c3691d386510490dc8d42470bf00e514218ff0f971b213bf9b0",
+      "match": true
+    },
+    {
+      "path": "native-smoke/replay/result/peak-descriptors.tsv",
+      "bytes": 46444,
+      "sha256": "51c562a472901f9cd3a640debcbd70a86aed218cc218aebf42b19506225b0135",
+      "match": true
+    },
+    {
+      "path": "native-smoke/replay/result/receipt.json",
+      "bytes": 10280,
+      "sha256": "11220c39f77846671ed7cee1920d37db81b0451ebe339e95b7dffe70c3f9261e",
+      "match": true
+    },
+    {
+      "path": "native-smoke/replay/result/requested-stacks.tsv",
+      "bytes": 171021,
+      "sha256": "f0428c921d719bab7bb73928322ad67682f02b768825dac4ef18075eaf494210",
+      "match": true
+    },
+    {
+      "path": "native-smoke/replay/result/ips.tsv",
+      "bytes": 33330,
+      "sha256": "14af8a1b03d53b4dc5a31be565beaf95a0a018e694f8db9e4b8e923399f23df7",
+      "match": true
+    },
+    {
+      "path": "native-smoke/replay/result/last_mark-descriptors.tsv",
+      "bytes": 717,
+      "sha256": "6a5cf37a6cd32e5f1faaea00896e260a586a467b1842e7802629e6cd2c8e05ff",
+      "match": true
+    },
+    {
+      "path": "native-smoke/replay/result/peak-stacks.tsv",
+      "bytes": 171021,
+      "sha256": "f0428c921d719bab7bb73928322ad67682f02b768825dac4ef18075eaf494210",
+      "match": true
+    },
+    {
+      "path": "native-smoke/replay/result/families.tsv",
+      "bytes": 4586,
+      "sha256": "c1919ca26e7ac899fd1f8afe740a5a4b703198492f1d75169ea9b5367d959aa2",
+      "match": true
+    },
+    {
+      "path": "native-smoke/replay/result/last_mark-families.tsv",
+      "bytes": 537,
+      "sha256": "ab33913b354bd2b0793a2247dffd4bd51d63d380d47a419bab2b8203c1d9fe35",
+      "match": true
+    },
+    {
+      "path": "native-smoke/replay/result/peak-families.tsv",
+      "bytes": 1768,
+      "sha256": "b576b230be22831ca8895c7ecc693e5a290cef9e971792ee5ec6520dca778047",
+      "match": true
+    },
+    {
+      "path": "native-smoke/replay/result/traces.tsv",
+      "bytes": 141228,
+      "sha256": "db89023426239faa2ed72d638e9e51d8e9775b44d36449d1f81b0c1b684ff400",
+      "match": true
+    },
+    {
+      "path": "diagnostics/owner-capture-evidence-2015/owner-capture-evidence-2015-manifest.json",
+      "bytes": 16370,
+      "sha256": "97440a25b1e3232bcbfe3185c75466cd96e6ea111746b019745975d3265976be",
+      "match": true
+    },
+    {
+      "path": "diagnostics/owner-capture-evidence-2015/heaptrack-seam-smoke-2001/receipt.json",
+      "bytes": 2181,
+      "sha256": "1f7c8d28af396ea75368fb2c32a3fb17884e66b436a580808c25584388e05a78",
+      "match": true
+    },
+    {
+      "path": "diagnostics/owner-capture-evidence-2015/heaptrack-seam-smoke-2001/capture/alloc.interpreted",
+      "bytes": 281592,
+      "sha256": "96d8b258f3bbbdf97deeb4b56691d12a23fa43ac5023cdfc3b53c9f6aa435acb",
+      "match": true
+    },
+    {
+      "path": "diagnostics/owner-capture-evidence-2015/heaptrack-seam-smoke-2001/capture/peak-stacks.txt",
+      "bytes": 1061617,
+      "sha256": "bbfa1a2bdd75ae37fb9c3a58317a43d48ba741643b0e63c1f9b5a59cd364a943",
+      "match": true
+    },
+    {
+      "path": "diagnostics/owner-capture-evidence-2015/heaptrack-seam-smoke-2001/capture/interpret-stderr.txt",
+      "bytes": 101,
+      "sha256": "6bd12888cdcc6f777f2d4ba9b8096876057c0aed2391e4b5ea1a7540d15e365b",
+      "match": true
+    },
+    {
+      "path": "diagnostics/owner-capture-evidence-2015/heaptrack-seam-smoke-2001/capture/alloc.raw",
+      "bytes": 389215,
+      "sha256": "f0b8bbcff61b7fd0c0ff7257ef40fc3c615365630367849736ff0fa031698146",
+      "match": true
+    }
+  ],
+  "report_receipt_exact_matches": {
+    "production_failure": true,
+    "production_launch": true,
+    "native_tests": true,
+    "native_smoke": true
+  },
+  "local_source_hashes_match": true,
+  "design_maps_all_21_test_names": true,
+  "smoke_output_checks": [
+    {
+      "path": "strings.tsv",
+      "match": true
+    },
+    {
+      "path": "ips.tsv",
+      "match": true
+    },
+    {
+      "path": "traces.tsv",
+      "match": true
+    },
+    {
+      "path": "families.tsv",
+      "match": true
+    },
+    {
+      "path": "peak-stacks.tsv",
+      "match": true
+    },
+    {
+      "path": "peak-families.tsv",
+      "match": true
+    },
+    {
+      "path": "peak-descriptors.tsv",
+      "match": true
+    },
+    {
+      "path": "requested-stacks.tsv",
+      "match": true
+    },
+    {
+      "path": "requested-families.tsv",
+      "match": true
+    },
+    {
+      "path": "requested-descriptors.tsv",
+      "match": true
+    },
+    {
+      "path": "last_mark-stacks.tsv",
+      "match": true
+    },
+    {
+      "path": "last_mark-families.tsv",
+      "match": true
+    },
+    {
+      "path": "last_mark-descriptors.tsv",
+      "match": true
+    },
+    {
+      "path": "eof-stacks.tsv",
+      "match": true
+    },
+    {
+      "path": "eof-families.tsv",
+      "match": true
+    },
+    {
+      "path": "eof-descriptors.tsv",
+      "match": true
+    }
+  ],
+  "test_names": [
+    "test_conversion_hash_suffix_and_canonical_not_sum",
+    "test_each_table_numeric_input_and_depth_cap",
+    "test_linux_native_as_is_bytes_in_owned_child",
+    "test_linux_native_memory_guard_small_child",
+    "test_lossless_output_and_fail_closed_output_budget",
+    "test_manifest_and_receipt_rejections",
+    "test_normalization_collisions_new_stop_inline_unresolved",
+    "test_owned_portable_runner_smoke",
+    "test_ownership_unknown_callers_are_not_lost",
+    "test_real_owned_cpu_guard",
+    "test_real_owned_wall_kill_reap_and_bounded_failure",
+    "test_record_adversaries",
+    "test_reference_and_session_adversaries",
+    "test_resource_failure_reports_exact_guard_and_usage",
+    "test_resource_guards_and_parent_unchanged",
+    "test_saved_smoke_full_canonical_multiset",
+    "test_strict_records_preserve_string_bytes",
+    "test_suppression_does_not_change_population",
+    "test_synthetic_realloc_multiplicity_zero_and_survivor",
+    "test_three_pass_baseline_and_first_peak",
+    "test_time_rejections_and_unbounded_event_tail"
+  ],
+  "completion": {
+    "started_unix": 1788902340.5530686,
+    "boot_id": "2217ec26-dc3e-47a3-a700-d3fafb34163f",
+    "available_bytes": 997117952,
+    "free_disk_bytes": 11835043840,
+    "conflicts": [],
+    "source_commit": "378e634b103d525aef33b86d22e8238fa1bddc79",
+    "manifest_sha256": "7fcd08aed20e44c81dd495f83ae663b167f4392b84c39a79ce927b45165e1595",
+    "new_capture": false,
+    "reinterpretation": false,
+    "attempts_permitted": 1,
+    "runner_pid": 2325,
+    "exit_code": 1,
+    "launcher_timeout": false,
+    "ended_unix": 1788902520.7334542
+  },
+  "native_stage": {
+    "source_commit": "378e634b103d525aef33b86d22e8238fa1bddc79",
+    "verified_files": 12,
+    "archive_sha256": "951742ee8f7eaef0c50e3dc9176298a1650fdebf6e23e93ba79a988faf3fa0d9",
+    "production_replay": false
+  },
+  "smoke_cutoffs": {
+    "peak": {
+      "kind": "first_common_time_global_peak_validation",
+      "actual_mark": null,
+      "position": {
+        "line": 27144,
+        "offset": 250615,
+        "timestamp_ms": 50,
+        "bytes": 5730024,
+        "count": 4962
+      },
+      "next_mark": null,
+      "last_observed_mark": null,
+      "event_tail_time_unbounded": false,
+      "requested_time": null,
+      "bytes": 5730024,
+      "count": 4962,
+      "unknown_ownership_bytes": 5730024,
+      "unknown_symbol_bytes": 5730024
+    },
+    "requested": {
+      "kind": "requested_mark_prefix",
+      "actual_mark": {
+        "line": 27231,
+        "offset": 251160,
+        "timestamp_ms": 497,
+        "ordinal": 49,
+        "bytes": 5730024,
+        "count": 4962
+      },
+      "position": {
+        "line": 27231,
+        "offset": 251160,
+        "timestamp_ms": 497,
+        "ordinal": 49,
+        "bytes": 5730024,
+        "count": 4962
+      },
+      "next_mark": {
+        "line": 27233,
+        "offset": 251173,
+        "timestamp_ms": 507,
+        "ordinal": 50,
+        "bytes": 5730024,
+        "count": 4962
+      },
+      "last_observed_mark": null,
+      "event_tail_time_unbounded": false,
+      "requested_time": 500,
+      "bytes": 5730024,
+      "count": 4962,
+      "unknown_ownership_bytes": 5730024,
+      "unknown_symbol_bytes": 5730024
+    },
+    "last_mark": {
+      "kind": "last_actual_timestamp_prefix",
+      "actual_mark": {
+        "line": 32299,
+        "offset": 281552,
+        "timestamp_ms": 1064,
+        "ordinal": 105,
+        "bytes": 407233,
+        "count": 34
+      },
+      "position": {
+        "line": 32299,
+        "offset": 281552,
+        "timestamp_ms": 1064,
+        "ordinal": 105,
+        "bytes": 407233,
+        "count": 34
+      },
+      "next_mark": null,
+      "last_observed_mark": null,
+      "event_tail_time_unbounded": false,
+      "requested_time": null,
+      "bytes": 407233,
+      "count": 34,
+      "unknown_ownership_bytes": 407233,
+      "unknown_symbol_bytes": 407233
+    },
+    "eof": {
+      "kind": "captured_prefix_end",
+      "actual_mark": null,
+      "position": {
+        "line": 32303,
+        "offset": 281592,
+        "bytes": 407233,
+        "count": 34
+      },
+      "next_mark": null,
+      "last_observed_mark": {
+        "line": 32299,
+        "offset": 281552,
+        "timestamp_ms": 1064,
+        "ordinal": 105,
+        "bytes": 407233,
+        "count": 34
+      },
+      "event_tail_time_unbounded": false,
+      "requested_time": null,
+      "bytes": 407233,
+      "count": 34,
+      "unknown_ownership_bytes": 407233,
+      "unknown_symbol_bytes": 407233
+    }
+  },
+  "timings": {
+    "short": {
+      "baseline": {
+        "median_cpu_s": 0.450264,
+        "min_cpu_s": 0.44956599999999997,
+        "max_cpu_s": 0.4507019999999997,
+        "MB_per_cpu_s": 1.5547501021622872,
+        "phase_cpu_s": [
+          0.450261
+        ]
+      },
+      "sampled": {
+        "median_cpu_s": 0.34365599999999996,
+        "min_cpu_s": 0.343336,
+        "max_cpu_s": 0.3521939999999999,
+        "MB_per_cpu_s": 2.0370603161300838,
+        "phase_cpu_s": [
+          0.343653
+        ]
+      },
+      "sampled_numeric": {
+        "median_cpu_s": 0.2648670000000002,
+        "min_cpu_s": 0.2632509999999999,
+        "max_cpu_s": 0.26592499999999997,
+        "MB_per_cpu_s": 2.6430170613930746,
+        "phase_cpu_s": [
+          0.26486300000000007
+        ]
+      }
+    },
+    "wide": {
+      "baseline": {
+        "median_cpu_s": 0.46228099999999994,
+        "min_cpu_s": 0.46109199999999984,
+        "max_cpu_s": 0.4640360000000001,
+        "MB_per_cpu_s": 4.00199878428921,
+        "phase_cpu_s": [
+          0.4622769999999994
+        ]
+      },
+      "sampled": {
+        "median_cpu_s": 0.35357400000000005,
+        "min_cpu_s": 0.35179899999999975,
+        "max_cpu_s": 0.3609840000000002,
+        "MB_per_cpu_s": 5.232420935928546,
+        "phase_cpu_s": [
+          0.3535699999999995
+        ]
+      },
+      "sampled_numeric": {
+        "median_cpu_s": 0.27112800000000004,
+        "min_cpu_s": 0.2668949999999999,
+        "max_cpu_s": 0.2748689999999998,
+        "MB_per_cpu_s": 6.823522469092088,
+        "phase_cpu_s": [
+          0.2711249999999996
+        ]
+      }
+    },
+    "saved_smoke": {
+      "baseline": {
+        "median_cpu_s": 0.6618650000000006,
+        "min_cpu_s": 0.6592780000000005,
+        "max_cpu_s": 0.6630590000000005,
+        "MB_per_cpu_s": null,
+        "phase_cpu_s": [
+          0.12432199999999938,
+          0.17379799999999967,
+          0.36373600000000117
+        ]
+      },
+      "sampled": {
+        "median_cpu_s": 0.5281929999999999,
+        "min_cpu_s": 0.5279360000000004,
+        "max_cpu_s": 0.5314630000000005,
+        "MB_per_cpu_s": null,
+        "phase_cpu_s": [
+          0.09402500000000025,
+          0.13689299999999882,
+          0.2986090000000008
+        ]
+      },
+      "sampled_numeric": {
+        "median_cpu_s": 0.46067899999999895,
+        "min_cpu_s": 0.45702099999999923,
+        "max_cpu_s": 0.46478600000000014,
+        "MB_per_cpu_s": null,
+        "phase_cpu_s": [
+          0.07104999999999961,
+          0.11314600000000041,
+          0.2764690000000005
+        ]
+      }
+    }
+  },
+  "required_MB_per_cpu_s": {
+    "raw": 11.938944844444444,
+    "interpreted": 4.503128305555556
+  },
+  "local_cpu_failures": [
+    {
+      "mode": "baseline",
+      "reason": "CPU guard",
+      "cpu_s": 1.0000110000000006,
+      "complete_small_passes": 2,
+      "pulse_calls": 206021,
+      "checks": 206021
+    },
+    {
+      "mode": "sampled_numeric",
+      "reason": "CPU guard",
+      "cpu_s": 1.001859999999997,
+      "complete_small_passes": 3,
+      "pulse_calls": 377856,
+      "checks": 369
+    }
+  ],
+  "top_profiles": {
+    "short": [
+      {
+        "mode": "baseline",
+        "cpu_s": 0.8821300000000001,
+        "profile": [
+          {
+            "function": "heaptrack_owner_replay.py:252:raw_pass",
+            "calls": 1,
+            "own_s": 0.114847003,
+            "cumulative_s": 0.88224975
+          },
+          {
+            "function": "heaptrack_owner_replay.py:57:parse_record",
+            "calls": 100006,
+            "own_s": 0.133135688,
+            "cumulative_s": 0.352214896
+          },
+          {
+            "function": "heaptrack_owner_replay.py:132:__iter__",
+            "calls": 100007,
+            "own_s": 0.08846279,
+            "cumulative_s": 0.270393991
+          },
+          {
+            "function": "heaptrack_owner_replay.py:88:<listcomp>",
+            "calls": 100004,
+            "own_s": 0.020304172000000002,
+            "cumulative_s": 0.17516293700000002
+          },
+          {
+            "function": "heaptrack_owner_replay.py:34:number",
+            "calls": 200008,
+            "own_s": 0.05342788800000001,
+            "cumulative_s": 0.15486001500000002
+          },
+          {
+            "function": "heaptrack_owner_runner.py:146:check",
+            "calls": 100008,
+            "own_s": 0.075145242,
+            "cumulative_s": 0.149994436
+          },
+          {
+            "function": "re.py:193:fullmatch",
+            "calls": 200009,
+            "own_s": 0.031914015000000004,
+            "cumulative_s": 0.095850689
+          },
+          {
+            "function": "heaptrack_owner_replay.py:220:emit_digest",
+            "calls": 100002,
+            "own_s": 0.040637678,
+            "cumulative_s": 0.062401453
+          },
+          {
+            "function": "heaptrack_owner_replay.py:29:require",
+            "calls": 1800107,
+            "own_s": 0.046360741000000004,
+            "cumulative_s": 0.046360741000000004
+          },
+          {
+            "function": "re.py:289:_compile",
+            "calls": 200009,
+            "own_s": 0.030858173000000003,
+            "cumulative_s": 0.043804061000000005
+          },
+          {
+            "function": "~:0:<built-in method resource.getrusage>",
+            "calls": 100008,
+            "own_s": 0.03314592,
+            "cumulative_s": 0.03314592
+          },
+          {
+            "function": "heaptrack_owner_replay.py:39:checked",
+            "calls": 250000,
+            "own_s": 0.026677203,
+            "cumulative_s": 0.032661095
+          },
+          {
+            "function": "~:0:<built-in method time.process_time>",
+            "calls": 100010,
+            "own_s": 0.028735875,
+            "cumulative_s": 0.028735875
+          },
+          {
+            "function": "heaptrack_owner_replay.py:231:accept",
+            "calls": 100006,
+            "own_s": 0.02486959,
+            "cumulative_s": 0.027296627
+          },
+          {
+            "function": "~:0:<method 'fullmatch' of 're.Pattern' objects>",
+            "calls": 200009,
+            "own_s": 0.020132613,
+            "cumulative_s": 0.020132613
+          },
+          {
+            "function": "~:0:<built-in method builtins.len>",
+            "calls": 750036,
+            "own_s": 0.019692878,
+            "cumulative_s": 0.019692878
+          },
+          {
+            "function": "~:0:<method 'endswith' of 'bytes' objects>",
+            "calls": 200012,
+            "own_s": 0.013837811,
+            "cumulative_s": 0.013837811
+          },
+          {
+            "function": "~:0:<built-in method builtins.isinstance>",
+            "calls": 200012,
+            "own_s": 0.012946055000000001,
+            "cumulative_s": 0.012946055000000001
+          },
+          {
+            "function": "~:0:<method 'update' of '_hashlib.HASH' objects>",
+            "calls": 200010,
+            "own_s": 0.011654193,
+            "cumulative_s": 0.011654193
+          },
+          {
+            "function": "heaptrack_owner_replay.py:118:count",
+            "calls": 50001,
+            "own_s": 0.007919558,
+            "cumulative_s": 0.009139177
+          },
+          {
+            "function": "~:0:<built-in method _struct.pack>",
+            "calls": 100005,
+            "own_s": 0.007997923,
+            "cumulative_s": 0.007997923
+          },
+          {
+            "function": "~:0:<method 'startswith' of 'bytes' objects>",
+            "calls": 100006,
+            "own_s": 0.0075470960000000005,
+            "cumulative_s": 0.0075470960000000005
+          }
+        ]
+      },
+      {
+        "mode": "sampled_numeric",
+        "cpu_s": 0.5631710000000005,
+        "profile": [
+          {
+            "function": "heaptrack_owner_replay.py:252:raw_pass",
+            "calls": 1,
+            "own_s": 0.107323188,
+            "cumulative_s": 0.5631925830000001
+          },
+          {
+            "function": "heaptrack_owner_throughput_probe.py:32:fast_numeric",
+            "calls": 100006,
+            "own_s": 0.13513866800000002,
+            "cumulative_s": 0.19450245200000002
+          },
+          {
+            "function": "heaptrack_owner_replay.py:132:__iter__",
+            "calls": 100007,
+            "own_s": 0.082860578,
+            "cumulative_s": 0.125956632
+          },
+          {
+            "function": "heaptrack_owner_replay.py:220:emit_digest",
+            "calls": 100002,
+            "own_s": 0.038522941000000005,
+            "cumulative_s": 0.058450732000000005
+          },
+          {
+            "function": "heaptrack_owner_replay.py:29:require",
+            "calls": 1400376,
+            "own_s": 0.033116828,
+            "cumulative_s": 0.033116828
+          },
+          {
+            "function": "heaptrack_owner_replay.py:39:checked",
+            "calls": 250000,
+            "own_s": 0.024579535000000003,
+            "cumulative_s": 0.030234697
+          },
+          {
+            "function": "heaptrack_owner_replay.py:231:accept",
+            "calls": 100006,
+            "own_s": 0.023353759,
+            "cumulative_s": 0.025640546
+          },
+          {
+            "function": "~:0:<method 'fullmatch' of 're.Pattern' objects>",
+            "calls": 200009,
+            "own_s": 0.019353029,
+            "cumulative_s": 0.019353029
+          },
+          {
+            "function": "~:0:<built-in method builtins.len>",
+            "calls": 650032,
+            "own_s": 0.015736439,
+            "cumulative_s": 0.015736439
+          },
+          {
+            "function": "~:0:<method 'endswith' of 'bytes' objects>",
+            "calls": 200012,
+            "own_s": 0.013434285,
+            "cumulative_s": 0.013434285
+          },
+          {
+            "function": "heaptrack_owner_throughput_probe.py:55:__call__",
+            "calls": 100006,
+            "own_s": 0.012498380000000002,
+            "cumulative_s": 0.012714922
+          },
+          {
+            "function": "~:0:<method 'update' of '_hashlib.HASH' objects>",
+            "calls": 200010,
+            "own_s": 0.010267418,
+            "cumulative_s": 0.010267418
+          },
+          {
+            "function": "heaptrack_owner_replay.py:118:count",
+            "calls": 50001,
+            "own_s": 0.007428815,
+            "cumulative_s": 0.008573688000000001
+          },
+          {
+            "function": "~:0:<built-in method _struct.pack>",
+            "calls": 100005,
+            "own_s": 0.0075387860000000004,
+            "cumulative_s": 0.0075387860000000004
+          },
+          {
+            "function": "~:0:<method 'readline' of '_io.BufferedReader' objects>",
+            "calls": 100007,
+            "own_s": 0.0061461530000000006,
+            "cumulative_s": 0.0061461530000000006
+          },
+          {
+            "function": "~:0:<method 'append' of 'list' objects>",
+            "calls": 200008,
+            "own_s": 0.006075583000000001,
+            "cumulative_s": 0.006075583000000001
+          },
+          {
+            "function": "~:0:<method 'split' of 'bytes' objects>",
+            "calls": 100004,
+            "own_s": 0.005115902,
+            "cumulative_s": 0.005115902
+          },
+          {
+            "function": "~:0:<method 'encode' of 'str' objects>",
+            "calls": 100004,
+            "own_s": 0.004566676,
+            "cumulative_s": 0.004566676
+          },
+          {
+            "function": "~:0:<built-in method builtins.max>",
+            "calls": 50002,
+            "own_s": 0.004113188,
+            "cumulative_s": 0.004113188
+          },
+          {
+            "function": "~:0:<built-in method builtins.chr>",
+            "calls": 100008,
+            "own_s": 0.003411257,
+            "cumulative_s": 0.003411257
+          },
+          {
+            "function": "~:0:<method 'pop' of 'dict' objects>",
+            "calls": 50000,
+            "own_s": 0.0023098430000000002,
+            "cumulative_s": 0.0023098430000000002
+          },
+          {
+            "function": "heaptrack_owner_runner.py:146:check",
+            "calls": 99,
+            "own_s": 0.000121169,
+            "cumulative_s": 0.00022254300000000001
+          }
+        ]
+      }
+    ],
+    "wide": [
+      {
+        "mode": "baseline",
+        "cpu_s": 0.8954869999999993,
+        "profile": [
+          {
+            "function": "heaptrack_owner_replay.py:252:raw_pass",
+            "calls": 1,
+            "own_s": 0.115384469,
+            "cumulative_s": 0.8963584590000001
+          },
+          {
+            "function": "heaptrack_owner_replay.py:57:parse_record",
+            "calls": 100006,
+            "own_s": 0.13359798,
+            "cumulative_s": 0.358733937
+          },
+          {
+            "function": "heaptrack_owner_replay.py:132:__iter__",
+            "calls": 100007,
+            "own_s": 0.090248592,
+            "cumulative_s": 0.27638396400000004
+          },
+          {
+            "function": "heaptrack_owner_replay.py:88:<listcomp>",
+            "calls": 100004,
+            "own_s": 0.020234572000000003,
+            "cumulative_s": 0.18027768500000002
+          },
+          {
+            "function": "heaptrack_owner_replay.py:34:number",
+            "calls": 200008,
+            "own_s": 0.054704623,
+            "cumulative_s": 0.16004415400000002
+          },
+          {
+            "function": "heaptrack_owner_runner.py:146:check",
+            "calls": 100008,
+            "own_s": 0.077239848,
+            "cumulative_s": 0.15268999900000002
+          },
+          {
+            "function": "re.py:193:fullmatch",
+            "calls": 200009,
+            "own_s": 0.032113829,
+            "cumulative_s": 0.100109052
+          },
+          {
+            "function": "heaptrack_owner_replay.py:220:emit_digest",
+            "calls": 100002,
+            "own_s": 0.041529642000000005,
+            "cumulative_s": 0.06311593800000001
+          },
+          {
+            "function": "heaptrack_owner_replay.py:29:require",
+            "calls": 1800107,
+            "own_s": 0.046082787,
+            "cumulative_s": 0.046082787
+          },
+          {
+            "function": "re.py:289:_compile",
+            "calls": 200009,
+            "own_s": 0.031198194000000002,
+            "cumulative_s": 0.044175369000000006
+          },
+          {
+            "function": "~:0:<built-in method resource.getrusage>",
+            "calls": 100008,
+            "own_s": 0.033516812,
+            "cumulative_s": 0.033516812
+          },
+          {
+            "function": "heaptrack_owner_replay.py:39:checked",
+            "calls": 250000,
+            "own_s": 0.026387921,
+            "cumulative_s": 0.032232601
+          },
+          {
+            "function": "~:0:<built-in method time.process_time>",
+            "calls": 100010,
+            "own_s": 0.029152528,
+            "cumulative_s": 0.029152528
+          },
+          {
+            "function": "heaptrack_owner_replay.py:231:accept",
+            "calls": 100006,
+            "own_s": 0.024613894,
+            "cumulative_s": 0.027170281
+          },
+          {
+            "function": "~:0:<method 'fullmatch' of 're.Pattern' objects>",
+            "calls": 200009,
+            "own_s": 0.023819854,
+            "cumulative_s": 0.023819854
+          },
+          {
+            "function": "~:0:<built-in method builtins.len>",
+            "calls": 750036,
+            "own_s": 0.019353755,
+            "cumulative_s": 0.019353755
+          },
+          {
+            "function": "~:0:<method 'endswith' of 'bytes' objects>",
+            "calls": 200012,
+            "own_s": 0.014114290000000002,
+            "cumulative_s": 0.014114290000000002
+          },
+          {
+            "function": "~:0:<built-in method builtins.isinstance>",
+            "calls": 200012,
+            "own_s": 0.012977342000000001,
+            "cumulative_s": 0.012977342000000001
+          },
+          {
+            "function": "~:0:<method 'update' of '_hashlib.HASH' objects>",
+            "calls": 200010,
+            "own_s": 0.012305136000000001,
+            "cumulative_s": 0.012305136000000001
+          },
+          {
+            "function": "heaptrack_owner_replay.py:118:count",
+            "calls": 50001,
+            "own_s": 0.008025392000000001,
+            "cumulative_s": 0.009247069
+          },
+          {
+            "function": "~:0:<built-in method _struct.pack>",
+            "calls": 100005,
+            "own_s": 0.008178399000000001,
+            "cumulative_s": 0.008178399000000001
+          },
+          {
+            "function": "~:0:<method 'startswith' of 'bytes' objects>",
+            "calls": 100006,
+            "own_s": 0.007533776000000001,
+            "cumulative_s": 0.007533776000000001
+          }
+        ]
+      },
+      {
+        "mode": "sampled_numeric",
+        "cpu_s": 0.572500999999999,
+        "profile": [
+          {
+            "function": "heaptrack_owner_replay.py:252:raw_pass",
+            "calls": 1,
+            "own_s": 0.108520583,
+            "cumulative_s": 0.5725582920000001
+          },
+          {
+            "function": "heaptrack_owner_throughput_probe.py:32:fast_numeric",
+            "calls": 100006,
+            "own_s": 0.136209787,
+            "cumulative_s": 0.199370017
+          },
+          {
+            "function": "heaptrack_owner_replay.py:132:__iter__",
+            "calls": 100007,
+            "own_s": 0.08363184200000001,
+            "cumulative_s": 0.127588235
+          },
+          {
+            "function": "heaptrack_owner_replay.py:220:emit_digest",
+            "calls": 100002,
+            "own_s": 0.038771776,
+            "cumulative_s": 0.059297114000000005
+          },
+          {
+            "function": "heaptrack_owner_replay.py:29:require",
+            "calls": 1400376,
+            "own_s": 0.033321750000000004,
+            "cumulative_s": 0.033321750000000004
+          },
+          {
+            "function": "heaptrack_owner_replay.py:39:checked",
+            "calls": 250000,
+            "own_s": 0.024586785,
+            "cumulative_s": 0.030180415000000002
+          },
+          {
+            "function": "heaptrack_owner_replay.py:231:accept",
+            "calls": 100006,
+            "own_s": 0.023380557,
+            "cumulative_s": 0.025689212000000003
+          },
+          {
+            "function": "~:0:<method 'fullmatch' of 're.Pattern' objects>",
+            "calls": 200009,
+            "own_s": 0.021894923,
+            "cumulative_s": 0.021894923
+          },
+          {
+            "function": "~:0:<built-in method builtins.len>",
+            "calls": 650032,
+            "own_s": 0.015837165,
+            "cumulative_s": 0.015837165
+          },
+          {
+            "function": "~:0:<method 'endswith' of 'bytes' objects>",
+            "calls": 200012,
+            "own_s": 0.01341775,
+            "cumulative_s": 0.01341775
+          },
+          {
+            "function": "heaptrack_owner_throughput_probe.py:55:__call__",
+            "calls": 100006,
+            "own_s": 0.012230421,
+            "cumulative_s": 0.012463335
+          },
+          {
+            "function": "~:0:<method 'update' of '_hashlib.HASH' objects>",
+            "calls": 200010,
+            "own_s": 0.010951476,
+            "cumulative_s": 0.010951476
+          },
+          {
+            "function": "heaptrack_owner_replay.py:118:count",
+            "calls": 50001,
+            "own_s": 0.007301449000000001,
+            "cumulative_s": 0.008467141000000001
+          },
+          {
+            "function": "~:0:<built-in method _struct.pack>",
+            "calls": 100005,
+            "own_s": 0.007885778000000001,
+            "cumulative_s": 0.007885778000000001
+          },
+          {
+            "function": "~:0:<method 'readline' of '_io.BufferedReader' objects>",
+            "calls": 100007,
+            "own_s": 0.006640020000000001,
+            "cumulative_s": 0.006640020000000001
+          },
+          {
+            "function": "~:0:<method 'split' of 'bytes' objects>",
+            "calls": 100004,
+            "own_s": 0.0061523490000000005,
+            "cumulative_s": 0.0061523490000000005
+          },
+          {
+            "function": "~:0:<method 'append' of 'list' objects>",
+            "calls": 200008,
+            "own_s": 0.0060978890000000004,
+            "cumulative_s": 0.0060978890000000004
+          },
+          {
+            "function": "~:0:<method 'encode' of 'str' objects>",
+            "calls": 100004,
+            "own_s": 0.004795712000000001,
+            "cumulative_s": 0.004795712000000001
+          },
+          {
+            "function": "~:0:<built-in method builtins.max>",
+            "calls": 50002,
+            "own_s": 0.004158356,
+            "cumulative_s": 0.004158356
+          },
+          {
+            "function": "~:0:<built-in method builtins.chr>",
+            "calls": 100008,
+            "own_s": 0.0033720110000000003,
+            "cumulative_s": 0.0033720110000000003
+          },
+          {
+            "function": "~:0:<method 'pop' of 'dict' objects>",
+            "calls": 50000,
+            "own_s": 0.0031004490000000003,
+            "cumulative_s": 0.0031004490000000003
+          },
+          {
+            "function": "heaptrack_owner_runner.py:146:check",
+            "calls": 99,
+            "own_s": 0.000124053,
+            "cumulative_s": 0.00023933100000000002
+          }
+        ]
+      }
+    ],
+    "saved_smoke": [
+      {
+        "mode": "baseline",
+        "cpu_s": 1.1753609999999988,
+        "profile": [
+          {
+            "function": "heaptrack_owner_replay.py:511:analyze",
+            "calls": 1,
+            "own_s": 3.7376e-05,
+            "cumulative_s": 0.9808656250000001
+          },
+          {
+            "function": "heaptrack_owner_replay.py:304:interpreted_pass",
+            "calls": 2,
+            "own_s": 0.086610662,
+            "cumulative_s": 0.630332624
+          },
+          {
+            "function": "heaptrack_owner_replay.py:57:parse_record",
+            "calls": 91549,
+            "own_s": 0.12485742400000001,
+            "cumulative_s": 0.313104311
+          },
+          {
+            "function": "heaptrack_owner_replay.py:132:__iter__",
+            "calls": 94504,
+            "own_s": 0.08759799800000001,
+            "cumulative_s": 0.26754048
+          },
+          {
+            "function": "heaptrack_owner_replay.py:252:raw_pass",
+            "calls": 1,
+            "own_s": 0.025924619000000003,
+            "cumulative_s": 0.2344735
+          },
+          {
+            "function": "heaptrack_owner_replay.py:622:write_outputs",
+            "calls": 1,
+            "own_s": 0.014636304000000001,
+            "cumulative_s": 0.193936834
+          },
+          {
+            "function": "heaptrack_owner_runner.py:146:check",
+            "calls": 115190,
+            "own_s": 0.08989063,
+            "cumulative_s": 0.179237279
+          },
+          {
+            "function": "heaptrack_owner_replay.py:88:<listcomp>",
+            "calls": 91219,
+            "own_s": 0.016920527,
+            "cumulative_s": 0.14605467
+          },
+          {
+            "function": "heaptrack_owner_replay.py:34:number",
+            "calls": 157412,
+            "own_s": 0.043888501,
+            "cumulative_s": 0.129653144
+          },
+          {
+            "function": "heaptrack_owner_replay.py:481:reconcile_peak",
+            "calls": 1,
+            "own_s": 0.004822010000000001,
+            "cumulative_s": 0.115996709
+          },
+          {
+            "function": "heaptrack_owner_replay.py:604:write",
+            "calls": 17,
+            "own_s": 0.022535603,
+            "cumulative_s": 0.109563875
+          },
+          {
+            "function": "heaptrack_owner_replay.py:453:canonical",
+            "calls": 2212,
+            "own_s": 0.029589561,
+            "cumulative_s": 0.098988218
+          },
+          {
+            "function": "re.py:193:fullmatch",
+            "calls": 160367,
+            "own_s": 0.026521328,
+            "cumulative_s": 0.083024278
+          },
+          {
+            "function": "heaptrack_owner_replay.py:552:classify",
+            "calls": 2212,
+            "own_s": 0.018624604,
+            "cumulative_s": 0.053434457000000005
+          },
+          {
+            "function": "heaptrack_owner_replay.py:220:emit_digest",
+            "calls": 80370,
+            "own_s": 0.034173897,
+            "cumulative_s": 0.052703357000000006
+          },
+          {
+            "function": "heaptrack_owner_replay.py:29:require",
+            "calls": 1971971,
+            "own_s": 0.051655052,
+            "cumulative_s": 0.051655052
+          },
+          {
+            "function": "heaptrack_owner_replay.py:185:definition",
+            "calls": 19345,
+            "own_s": 0.016039645,
+            "cumulative_s": 0.049601064
+          },
+          {
+            "function": "~:0:<built-in method resource.getrusage>",
+            "calls": 115190,
+            "own_s": 0.040305412000000006,
+            "cumulative_s": 0.040305412000000006
+          },
+          {
+            "function": "heaptrack_owner_replay.py:424:pretty",
+            "calls": 18079,
+            "own_s": 0.028404052000000003,
+            "cumulative_s": 0.037178787000000005
+          },
+          {
+            "function": "re.py:289:_compile",
+            "calls": 160367,
+            "own_s": 0.025615889000000003,
+            "cumulative_s": 0.036605685
+          },
+          {
+            "function": "~:0:<built-in method time.process_time>",
+            "calls": 115194,
+            "own_s": 0.034105769,
+            "cumulative_s": 0.034105769
+          },
+          {
+            "function": "shutil.py:1263:disk_usage",
+            "calls": 20686,
+            "own_s": 0.006697815,
+            "cumulative_s": 0.032929189000000005
+          }
+        ]
+      }
+    ]
+  },
+  "production_trace_read": false,
+  "limits": "Export integrity and local fixture CPU only; absence-afterwards is not independently observable from these receipts."
+}
