@@ -11,6 +11,28 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 12:00 UTC
+
+- Reader ec5dda2 APPROVED by actual Grok4.5/xai-oauth session
+  20260908_075330_7d14c4, run730. Root independently confirms six previous
+  false meets now unavailable. Original task t_829c6804 is closed.
+- Root withholds integration: broader exact-commit probes still falsely accept
+  headless Panel input, focused-one population moved to ordinal1, and EventId
+  sequence2**64. Positive fixture also lacks actual process clock/capture
+  brackets. Artifact diagnostics/cohort-reader-ec5dda2-root-probes.json.
+  Source pins_focus covers fixed-one/focused-one/focused-plus-background;
+  all emit header focused-one slots:[0], which reader must derive/validate.
+- CLI request-changes/reopen-review refused closed card; promote dry-run also
+  confirms done cannot promote. No board state override. Root created bounded
+  corrective IMPLEMENTATION follow-up t_25c2eb89, configured implementer,
+  same reader checkout/branch ec5dda2, parent closed reader card. Original
+  endpoint/schema/clock/population contract applies plus exact reproductions.
+  Preserve R2 fixes and avoid reintroducing legacy zero-edge-pending gating.
+  Card ready; verify actual run. Same-card reviewer after corrective commit.
+- User-requested overview.md delivered and linked from STATE; primary
+  e1fa8d5/e09121b,1519words/18verifiedlocal links. No native actions or accepted
+  measurement; source-prepared roles and all final campaign gates unchanged.
+
 ## Latest boundary — 2026-09-08 11:46 UTC
 
 - Reader ef879aa REJECTED actual Grok4.5/xai-oauth session
