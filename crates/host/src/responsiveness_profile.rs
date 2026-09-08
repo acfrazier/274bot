@@ -1116,13 +1116,14 @@ pub(crate) mod tests {
 
     pub(crate) static TEST_LOCK: StdMutex<()> = StdMutex::new(());
 
-    fn lock_tests() -> std::sync::MutexGuard<'static, ()> {
+    pub(crate) fn lock_tests() -> std::sync::MutexGuard<'static, ()> {
         let g = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Isolate fine flag + leftover registry rows between tests.
         FINE_ENABLED.store(false, Relaxed);
         REGISTRY.lock().unwrap().clear();
         INPUT_PENDING.lock().unwrap().clear();
         DECODE_BRIDGE.lock().unwrap().clear();
+        crate::responsiveness_cohort::test_reset();
         g
     }
 

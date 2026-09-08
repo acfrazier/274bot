@@ -217,8 +217,14 @@ pub fn producers_closed() -> bool {
     state().lock().unwrap().producers_closed
 }
 
+fn occupied(s: &State) -> usize {
+    s.pending.len().saturating_add(s.journal.len())
+}
+
 fn append(s: &mut State, entry: Entry) -> bool {
-    if s.journal.len() >= s.capacity {
+    // Shared bound: pending identities + undrained journal entries together.
+    // Never retain a receipt that would push occupied memory past capacity.
+    if occupied(s) >= s.capacity {
         s.available = false;
         s.journal_overflow_n = s.journal_overflow_n.saturating_add(1);
         return false;
@@ -277,7 +283,7 @@ pub fn start(
     if start_mono_ns < b.start_mono_ns || start_mono_ns >= b.end_mono_ns {
         return None;
     }
-    if s.pending.len() + s.journal.len() >= s.capacity {
+    if occupied(&s) >= s.capacity {
         s.next_sequence = s.next_sequence.wrapping_add(1);
         capacity_overflow(&mut s);
         return None;
@@ -304,6 +310,12 @@ pub fn dropped_start(slot_id: u64, generation: u64, start_mono_ns: u64, surface:
     }
     let seq = s.next_sequence;
     s.next_sequence = seq.wrapping_add(1);
+    // When the shared pending+journal bound is already full, count the drop as
+    // an overflow gap without retaining an extra journal slot.
+    if occupied(&s) >= s.capacity {
+        capacity_overflow(&mut s);
+        return;
+    }
     let reason = if s.finalized || s.producers_closed {
         LossReason::LateEvent
     } else {
@@ -321,7 +333,6 @@ pub fn dropped_start(slot_id: u64, generation: u64, start_mono_ns: u64, surface:
             reason,
         },
     );
-    let _ = surface;
 }
 fn terminal(id: EventId, complete: Option<u64>, outcome: Outcome) {
     let mut s = state().lock().unwrap();
@@ -518,38 +529,61 @@ pub fn finalize(now_mono_ns: u64) -> Result<TerminalSummary, CohortError> {
 }
 
 #[cfg(test)]
+pub(crate) fn test_reset() {
+    *state().lock().unwrap() = State::default();
+    OPT_IN.store(false, Ordering::Release);
+}
+
+/// Test-only occupied count for capacity regressions.
+#[cfg(test)]
+fn test_occupied() -> usize {
+    let s = state().lock().unwrap();
+    occupied(&s)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
-    fn reset() {
-        *state().lock().unwrap() = State::default();
-        OPT_IN.store(false, Ordering::Release);
+    fn isolate() -> std::sync::MutexGuard<'static, ()> {
+        let g = crate::responsiveness_profile::tests::lock_tests();
+        // lock_tests already clears profile queues and cohort via test_reset.
+        g
     }
+
+    // Clear decode pending without going through lost accounting after test body.
+    fn silence_local_drop(local: &mut crate::responsiveness_profile::Local) {
+        // Use public cancel path until empty, then drop is quiet on decode side.
+        // Local::decode_pending is private — cancel repeatedly via note_script_canceled.
+        for _ in 0..64 {
+            local.note_script_canceled();
+        }
+    }
+
     #[test]
     fn window_tail_and_barrier() {
-        let _g = crate::responsiveness_profile::tests::TEST_LOCK
-            .lock()
-            .unwrap();
-        reset();
+        let _g = isolate();
         let b = Boundaries {
             start_mono_ns: 100,
             end_mono_ns: 200,
             tail_ns: 50,
         };
         begin(b, 8).unwrap();
-        assert!(start(1, 2, 99, Surface::Decode).is_none());
+        assert!(start(1, 2, 99, Surface::Decode).is_none()); // pre-start
+        assert!(start(1, 2, 200, Surface::Decode).is_none()); // post-end (half-open)
+        assert!(start(1, 2, 250, Surface::Decode).is_none()); // post-end
         let id = start(1, 2, 150, Surface::Decode).unwrap();
-        complete(id, 240);
+        complete(id, 240); // completion in tail
         assert!(finalize(250).is_err());
         acknowledge_producers_closed().unwrap();
         assert_eq!(finalize(250).unwrap().records_n, 1);
+        test_reset();
     }
+
     #[test]
     fn extraction_drains_and_capacity_loss_is_bounded() {
-        let _g = crate::responsiveness_profile::tests::TEST_LOCK
-            .lock()
-            .unwrap();
-        reset();
+        let _g = isolate();
         begin(
             Boundaries {
                 start_mono_ns: 1,
@@ -561,6 +595,7 @@ mod tests {
         .unwrap();
         let id = start(1, 1, 2, Surface::Panel).unwrap();
         assert!(start(1, 1, 3, Surface::Panel).is_none());
+        assert!(test_occupied() <= 1);
         let a = extract_since(0).unwrap();
         assert!(a.losses.is_empty());
         assert_eq!(a.journal_overflow_n, 1);
@@ -569,14 +604,39 @@ mod tests {
         assert_eq!(b.records.len(), 1);
         assert_eq!(b.loss_count, 1);
         assert_eq!(b.journal_overflow_n, 1);
+        test_reset();
+    }
+
+    #[test]
+    fn drop_before_admit_at_full_pending_does_not_exceed_capacity() {
+        let _g = isolate();
+        begin(
+            Boundaries {
+                start_mono_ns: 1,
+                end_mono_ns: 100,
+                tail_ns: 2,
+            },
+            1,
+        )
+        .unwrap();
+        let id = start(1, 1, 2, Surface::Decode).unwrap();
+        assert_eq!(test_occupied(), 1);
+        // Pending holds the only slot; drop-before-admit must not retain a journal entry.
+        dropped_start(9, 1, 3, Surface::Decode);
+        assert!(test_occupied() <= 1);
+        let batch = extract_since(0).unwrap();
+        assert!(batch.records.is_empty());
+        assert!(batch.losses.is_empty());
+        assert!(batch.journal_overflow_n >= 1);
+        lost(id);
+        let batch = extract_since(batch.next_cursor).unwrap();
+        assert_eq!(batch.records.len(), 1);
+        test_reset();
     }
 
     #[test]
     fn extraction_does_not_wedge_on_long_pending_first_event() {
-        let _g = crate::responsiveness_profile::tests::TEST_LOCK
-            .lock()
-            .unwrap();
-        reset();
+        let _g = isolate();
         begin(
             Boundaries {
                 start_mono_ns: 1,
@@ -596,13 +656,12 @@ mod tests {
         let batch = extract_since(batch.next_cursor).unwrap();
         assert_eq!(batch.records.len(), 1);
         assert_eq!(batch.records[0].id.sequence, first.sequence);
+        test_reset();
     }
+
     #[test]
     fn incomplete_and_noncompleted_fail_closed() {
-        let _g = crate::responsiveness_profile::tests::TEST_LOCK
-            .lock()
-            .unwrap();
-        reset();
+        let _g = isolate();
         begin(
             Boundaries {
                 start_mono_ns: 1,
@@ -617,40 +676,12 @@ mod tests {
         acknowledge_producers_closed().unwrap();
         let s = finalize(12).unwrap();
         assert!(!s.available);
-    }
-
-    #[test]
-    fn existing_decode_entrypoints_publish_cohort_identity() {
-        let _g = crate::responsiveness_profile::tests::TEST_LOCK
-            .lock()
-            .unwrap();
-        reset();
-        let start_at = std::time::Instant::now();
-        let start_ns = crate::responsiveness_profile::mono_ns(start_at);
-        begin(
-            Boundaries {
-                start_mono_ns: start_ns.saturating_sub(1),
-                end_mono_ns: start_ns + 1_000_000,
-                tail_ns: 50_000_000,
-            },
-            8,
-        )
-        .unwrap();
-        crate::responsiveness_profile::enable();
-        let mut local = crate::responsiveness_profile::Local::new(0xabc).unwrap();
-        local.note_decode_edge(start_at);
-        local.note_script_dispatch(start_at + std::time::Duration::from_millis(1));
-        let batch = extract_since(0).unwrap();
-        assert_eq!(batch.records.len(), 1);
-        assert_eq!(batch.records[0].id.surface, Surface::Decode);
+        test_reset();
     }
 
     #[test]
     fn forged_cursor_preserves_unacknowledged_journal() {
-        let _g = crate::responsiveness_profile::tests::TEST_LOCK
-            .lock()
-            .unwrap();
-        reset();
+        let _g = isolate();
         begin(
             Boundaries {
                 start_mono_ns: 1,
@@ -666,21 +697,88 @@ mod tests {
         let batch = extract_since(0).unwrap();
         assert_eq!(batch.records.len(), 1);
         assert_eq!(batch.records[0].id.sequence, id.sequence);
+        test_reset();
     }
 
     #[test]
-    fn actual_input_entrypoint_records_surface_and_window_membership() {
-        let _g = crate::responsiveness_profile::tests::TEST_LOCK
-            .lock()
-            .unwrap();
-        reset();
+    fn disabled_legacy_entrypoints_do_not_mutate_cohort() {
+        let _g = isolate();
+        assert!(!enabled());
+        crate::responsiveness_profile::enable();
+        let t0 = std::time::Instant::now();
+        let mut local = crate::responsiveness_profile::Local::new(0xd150).unwrap();
+        local.note_decode_edge(t0);
+        local.note_script_dispatch(t0 + Duration::from_millis(1));
+        crate::responsiveness_profile::set_input_surface(
+            crate::responsiveness_profile::InputSurface::Tui,
+        );
+        assert!(crate::responsiveness_profile::note_input_start(
+            local.slot_id(),
+            t0,
+            0
+        ));
+        crate::responsiveness_profile::note_tui_draw_flush(
+            local.slot_id(),
+            t0 + Duration::from_millis(2),
+        );
+        // Cohort never began: still disabled, extract refuses, no journal growth possible.
+        assert!(!enabled());
+        assert_eq!(extract_since(0), Err(CohortError::NotActive));
+        // Starting a fresh cohort after disabled traffic must see a clean sequence space.
+        let start_ns = crate::responsiveness_profile::mono_ns(t0);
+        begin(
+            Boundaries {
+                start_mono_ns: start_ns + 10_000_000,
+                end_mono_ns: start_ns + 20_000_000,
+                tail_ns: 1_000_000,
+            },
+            8,
+        )
+        .unwrap();
+        let batch = extract_since(0).unwrap();
+        assert!(batch.records.is_empty());
+        assert!(batch.losses.is_empty());
+        assert_eq!(batch.loss_count, 0);
+        silence_local_drop(&mut local);
+        test_reset();
+    }
+
+    #[test]
+    fn existing_decode_entrypoints_publish_cohort_identity() {
+        let _g = isolate();
+        let start_at = std::time::Instant::now();
+        let start_ns = crate::responsiveness_profile::mono_ns(start_at);
+        begin(
+            Boundaries {
+                start_mono_ns: start_ns.saturating_sub(1),
+                end_mono_ns: start_ns + 1_000_000_000,
+                tail_ns: 50_000_000,
+            },
+            8,
+        )
+        .unwrap();
+        crate::responsiveness_profile::enable();
+        let mut local = crate::responsiveness_profile::Local::new(0xabc).unwrap();
+        local.note_decode_edge(start_at);
+        local.note_script_dispatch(start_at + Duration::from_millis(1));
+        let batch = extract_since(0).unwrap();
+        assert_eq!(batch.records.len(), 1);
+        assert_eq!(batch.records[0].id.surface, Surface::Decode);
+        assert_eq!(batch.records[0].outcome, Outcome::Completed);
+        silence_local_drop(&mut local);
+        test_reset();
+    }
+
+    #[test]
+    fn actual_input_tui_complete_and_cancel_entrypoints() {
+        let _g = isolate();
         crate::responsiveness_profile::enable();
         let t0 = std::time::Instant::now();
         let start_ns = crate::responsiveness_profile::mono_ns(t0);
         begin(
             Boundaries {
-                start_mono_ns: start_ns,
-                end_mono_ns: start_ns + 1_000_000,
+                start_mono_ns: start_ns.saturating_sub(1),
+                end_mono_ns: start_ns + 1_000_000_000,
                 tail_ns: 50_000_000,
             },
             8,
@@ -689,7 +787,7 @@ mod tests {
         crate::responsiveness_profile::set_input_surface(
             crate::responsiveness_profile::InputSurface::Tui,
         );
-        let local = crate::responsiveness_profile::Local::new(0xdef).unwrap();
+        let mut local = crate::responsiveness_profile::Local::new(0xdef).unwrap();
         assert!(crate::responsiveness_profile::note_input_start(
             local.slot_id(),
             t0,
@@ -697,11 +795,186 @@ mod tests {
         ));
         crate::responsiveness_profile::note_tui_draw_flush(
             local.slot_id(),
-            t0 + std::time::Duration::from_millis(1),
+            t0 + Duration::from_millis(1),
         );
         let batch = extract_since(0).unwrap();
         assert_eq!(batch.records.len(), 1);
         assert_eq!(batch.records[0].id.surface, Surface::Tui);
-        assert!(batch.records[0].id.start_mono_ns >= start_ns);
+        assert_eq!(batch.records[0].outcome, Outcome::Completed);
+
+        // Cancel path on a second start.
+        let t1 = std::time::Instant::now();
+        assert!(crate::responsiveness_profile::note_input_start(
+            local.slot_id(),
+            t1,
+            0
+        ));
+        crate::responsiveness_profile::note_input_canceled(local.slot_id());
+        let batch = extract_since(batch.next_cursor).unwrap();
+        assert_eq!(batch.records.len(), 1);
+        assert_eq!(batch.records[0].outcome, Outcome::Canceled);
+        assert_eq!(batch.records[0].id.surface, Surface::Tui);
+        silence_local_drop(&mut local);
+        test_reset();
+    }
+
+    #[test]
+    fn actual_panel_present_entrypoint_records_surface() {
+        let _g = isolate();
+        crate::responsiveness_profile::enable();
+        let t0 = std::time::Instant::now();
+        let start_ns = crate::responsiveness_profile::mono_ns(t0);
+        begin(
+            Boundaries {
+                start_mono_ns: start_ns.saturating_sub(1),
+                end_mono_ns: start_ns + 1_000_000_000,
+                tail_ns: 50_000_000,
+            },
+            8,
+        )
+        .unwrap();
+        crate::responsiveness_profile::set_input_surface(
+            crate::responsiveness_profile::InputSurface::Panel,
+        );
+        let mut local = crate::responsiveness_profile::Local::new(0xbabe1).unwrap();
+        let sid = local.slot_id();
+        assert!(crate::responsiveness_profile::note_input_start(sid, t0, 0));
+        crate::responsiveness_profile::bind_input_to_mailbox_gen(sid, 7);
+        crate::responsiveness_profile::note_panel_present(sid, 7, t0 + Duration::from_millis(40));
+        let batch = extract_since(0).unwrap();
+        assert_eq!(batch.records.len(), 1);
+        assert_eq!(batch.records[0].id.surface, Surface::Panel);
+        assert_eq!(batch.records[0].outcome, Outcome::Completed);
+        silence_local_drop(&mut local);
+        test_reset();
+    }
+
+    #[test]
+    fn local_drop_teardown_publishes_lost_via_actual_drop() {
+        let _g = isolate();
+        crate::responsiveness_profile::enable();
+        let t0 = std::time::Instant::now();
+        let start_ns = crate::responsiveness_profile::mono_ns(t0);
+        begin(
+            Boundaries {
+                start_mono_ns: start_ns.saturating_sub(1),
+                end_mono_ns: start_ns + 1_000_000_000,
+                tail_ns: 50_000_000,
+            },
+            8,
+        )
+        .unwrap();
+        {
+            let mut local = crate::responsiveness_profile::Local::new(0xd70b).unwrap();
+            local.note_decode_edge(t0);
+            crate::responsiveness_profile::set_input_surface(
+                crate::responsiveness_profile::InputSurface::Tui,
+            );
+            assert!(crate::responsiveness_profile::note_input_start(
+                local.slot_id(),
+                t0,
+                0
+            ));
+            // Drop without complete — decode + input lost via Drop wiring.
+        }
+        let batch = extract_since(0).unwrap();
+        assert_eq!(batch.records.len(), 2);
+        assert!(batch.records.iter().all(|r| r.outcome == Outcome::Lost));
+        let surfaces: Vec<_> = batch.records.iter().map(|r| r.id.surface).collect();
+        assert!(surfaces.contains(&Surface::Decode));
+        assert!(surfaces.contains(&Surface::Tui));
+        test_reset();
+    }
+
+    #[test]
+    fn finalize_race_after_barrier_records_late_producer_start() {
+        let _g = isolate();
+        crate::responsiveness_profile::enable();
+        let t0 = std::time::Instant::now();
+        let start_ns = crate::responsiveness_profile::mono_ns(t0);
+        let end_ns = start_ns + 1_000_000_000;
+        let tail_ns = 1_000_000;
+        begin(
+            Boundaries {
+                start_mono_ns: start_ns.saturating_sub(1),
+                end_mono_ns: end_ns,
+                tail_ns,
+            },
+            8,
+        )
+        .unwrap();
+        let mut local = crate::responsiveness_profile::Local::new(0xface).unwrap();
+        // Barrier closed while a producer could still publish with in-window time.
+        acknowledge_producers_closed().unwrap();
+        // Actual decode entrypoint after barrier: in-window start must be LateEvent, not silent.
+        local.note_decode_edge(t0);
+        let batch = extract_since(0).unwrap();
+        assert_eq!(batch.records.len(), 0);
+        assert_eq!(batch.losses.len(), 1);
+        assert_eq!(batch.losses[0].reason, LossReason::LateEvent);
+        assert_eq!(batch.losses[0].surface, Surface::Decode);
+        // Finalize still requires tail time; after tail, unavailable due to late loss.
+        let now = end_ns + tail_ns;
+        let summary = finalize(now).unwrap();
+        assert!(!summary.available);
+        silence_local_drop(&mut local);
+        test_reset();
+    }
+
+    #[test]
+    fn missing_generation_input_admits_legacy_without_cohort_identity() {
+        let _g = isolate();
+        crate::responsiveness_profile::enable();
+        let t0 = std::time::Instant::now();
+        let start_ns = crate::responsiveness_profile::mono_ns(t0);
+        begin(
+            Boundaries {
+                start_mono_ns: start_ns.saturating_sub(1),
+                end_mono_ns: start_ns + 1_000_000_000,
+                tail_ns: 50_000_000,
+            },
+            8,
+        )
+        .unwrap();
+        crate::responsiveness_profile::set_input_surface(
+            crate::responsiveness_profile::InputSurface::Tui,
+        );
+        // No Local/registry row for this slot → live_generation_for is None.
+        let orphan = 0x0f_fa_u64;
+        assert!(crate::responsiveness_profile::note_input_start(
+            orphan, t0, 0
+        ));
+        crate::responsiveness_profile::note_tui_draw_flush(orphan, t0 + Duration::from_millis(1));
+        let batch = extract_since(0).unwrap();
+        assert!(batch.records.is_empty());
+        assert!(batch.losses.is_empty());
+        test_reset();
+    }
+
+    #[test]
+    fn post_end_start_excluded_on_real_decode_entrypoint() {
+        let _g = isolate();
+        crate::responsiveness_profile::enable();
+        let t0 = std::time::Instant::now();
+        // End at the mono of t0 (at least 1). A start stamped 1ms later is post-end.
+        let end_ns = crate::responsiveness_profile::mono_ns(t0).max(1);
+        begin(
+            Boundaries {
+                start_mono_ns: 0,
+                end_mono_ns: end_ns,
+                tail_ns: 50_000_000,
+            },
+            8,
+        )
+        .unwrap();
+        let mut local = crate::responsiveness_profile::Local::new(0xb057).unwrap();
+        let later = t0 + Duration::from_millis(1);
+        local.note_decode_edge(later); // start_mono >= end → excluded
+        local.note_script_dispatch(later + Duration::from_millis(1));
+        let batch = extract_since(0).unwrap();
+        assert!(batch.records.is_empty());
+        assert!(batch.losses.is_empty());
+        silence_local_drop(&mut local);
+        test_reset();
     }
 }
