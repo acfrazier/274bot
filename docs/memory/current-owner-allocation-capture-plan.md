@@ -6,13 +6,14 @@ is deferred until a separate reviewed discriminator step.
 
 ## Decision
 
-The selected discriminator is native live allocation families and requested
-capacities, with snapshot publication-epoch overlap as a secondary observation.
+The selected discriminator is allocation-stack families and their requested
+bytes at the single common-time global allocation peak. Exact vector capacities
+and snapshot publication-epoch overlap remain unmeasured.
 Phase A cannot rank `Client`/`World`, snapshot families, shared cache/interface
 owners, script buffers, or retained allocator pages from headers, serialized
 lengths, V8 gauges, or RSS. Heaptrack is therefore the next bounded diagnostic.
 It will report allocation call stacks and live/peak requested bytes for the
-owned frontend process tree. It will not establish causal RSS ownership, V8
+owned frontend process. It will not establish causal RSS ownership, V8
 size, mmap/GPU ownership, or CPU cost.
 
 The allocation-family discriminator is the first stack frame in the captured
@@ -90,8 +91,9 @@ artifact. Direct raw mode has no profiler wrapper, interpreter, or compressor
 child during collection. Account for the controller, real frontend, game
 server, and SSH parent separately; record the frontend PID/start identity, and
 record the post-exit interpreter PID/exit status as analysis metadata rather
-than as captured frontend ownership. The raw artifact is unique, owned, mode
-0700, and never reused or symlinked.
+than as captured frontend ownership. The capture directory is unique, owned, and mode0700. The raw file is created
+inside it, never reused or symlinked, and restricted to mode0600 via the owned
+child umask077. The directory and file permissions are different facts.
 
 This seam is instrumentation-only and needs its own reviewed behavior contract
 before launch. No change to the Rust/client behavior or to account/cache/server
@@ -135,7 +137,7 @@ resources, and page retention may be absent or incomplete.
 Analyze the preserved artifact with the exact Heaptrack 1.5 command proven by
 the owned smoke:
 
-    heaptrack_print --merge-backtraces=0 --flamegraph-cost-type=peak --print-flamegraph <capture-dir>/alloc.interpreted > <capture-dir>/peak-stacks.txt
+    heaptrack_print --merge-backtraces=0 --flamegraph-cost-type=peak --print-flamegraph <capture-dir>/peak-stacks.txt <capture-dir>/alloc.interpreted > <capture-dir>/peak-analysis.log
 
 Parse the flamegraph rows as one common-time global-peak population; retain
 the raw text, row count, positive-row count, and the sum of positive costs.
@@ -184,28 +186,39 @@ remain explicit unknowns. CPU attribution is a separate future design step.
 
 ## Bounds, provenance recheck, and failure rule
 
-Before launch, require a fresh `/proc/meminfo` and server sample. The existing
-server is about 630 MiB RSS and the unprofiled N1 frontend peak is about 177
-MiB. Capture admission is **MemAvailable >= 768 MiB**, which reserves the
-known frontend peak plus a predeclared 256 MiB profiler/helper allowance and
-an additional safety margin; it is separate from the server's already-used
-RSS. Record the measured value and the rationale in the manifest and fail
-closed below it. The expected profiler/helper overhead is bounded separately
-at 256 MiB for admission; exceeding that budget is a failed diagnostic, not a
-performance result. During the run retain the existing 128 MiB
-`MEM_AVAILABLE_GUARD_BYTES` as a last-ditch runtime abort, not as admission.
+Before launch, require a fresh `/proc/meminfo` and server sample. Capture
+admission is **MemAvailable >=768MiB**. The unprofiled N1 peak is about177MiB;
+256MiB is an additional planning allowance, with the rest a safety margin.
+The server's already-used memory is outside MemAvailable. The preload lives
+inside the frontend; its overhead cannot be independently measured by PID.
+Do not report the allowance as observed overhead or subtract177MiB from a
+profiled RSS to invent it.
 
-Also require fresh free disk >= 4 GiB and an empty unique owned capture
-directory. Poll `du -sk` for the directory (raw artifact and temps) every 0.5 s:
-2 GiB is a soft limit that requests orderly frontend stop and marks the attempt
-failed; 3 GiB is a hard limit that terminates only the owned frontend process,
-then waits for it. These are owned-runner checks, not a filesystem quota or
-privileged configuration. Bound the attempt to one 120s warmup + 600s observe +
-60s teardown, plus the controller's existing 180s launch/cleanup allowance.
-Bound post-exit interpretation separately with the existing controller cleanup
-allowance; preserve partial output and logs on either bound breach, and never
-retry or shorten the window. Sample frontend/server/controller roles at 0.5 s;
-the post-exit interpreter is not part of the live-process sample.
+During collection sample at0.5s and abort if frontend **total RSS >512MiB**,
+MemAvailable <128MiB, or the existing controller guard fails. This is a
+process-total operational ceiling, not an owner or overhead measurement.
+Require free disk >=8GiB and a unique empty owned capture directory. At0.5s
+poll the owned raw output size; >=2GiB requests Stop and marks the capture
+failed. Set **RLIMIT_FSIZE soft=hard=3GiB only on the frontend**, before exec,
+for an enforced per-file ceiling. Preserve the inherited limit if it is more
+restrictive and report that restriction rather than raise it. No filesystem
+quota or privileged configuration is involved. Keep the existing960s maximum
+for120s warmup +600s observe +60s teardown +180s launch/cleanup allowance.
+Use existing identity-checked Stop/TERM/KILL cleanup on a guard breach; do not
+signal the server or an unrelated process, and preserve partial raw bytes.
+
+After the frontend exits, run the interpreter and printer sequentially on
+Concord. Each analysis process has wall timeout180s, total RSS ceiling512MiB
+(sample at0.5s), and child-only RLIMIT_AS768MiB. Before each command require
+MemAvailable >=768MiB. The interpreter has RLIMIT_FSIZE3GiB; the printer has
+RLIMIT_FSIZE512MiB, bounding both peak-stacks and its stdout report. Set limits
+only in these owned child processes. Capture their PID/start identity, argv,
+limits, exit status and logs separately. Timeout, RSS/limit breach, missing
+output, or nonzero exit fails the analysis; terminate and reap only that owned
+process. These two180s analysis allowances are outside the live960s budget.
+Raw3GiB + interpreted3GiB + two512MiB printer files fit within the8GiB disk
+admission with margin; continue checking free disk and abort below1GiB.
+The interpreter is never part of the live frontend allocation population.
 
 The source/build/cache/server provenance must be rechecked immediately before
 launch and recorded in the capture manifest. The fresh Concord receipt is
@@ -213,7 +226,7 @@ launch and recorded in the capture manifest. The fresh Concord receipt is
 recorded binary SHA, fixture manifest SHA, world SHA, package/tool versions,
 boot ID, kernel, server PID, and start identity are the required baseline. The
 capture manifest must also record the Heaptrack version, exact profiler argv,
-actual frontend PID/start identity, helper PIDs/start identities, exit codes,
+actual frontend PID/start identity, separate analysis PIDs/start identities, exit codes,
 artifact sizes and hashes, and the post-cleanup process check.
 
 One attempt only. Failure means any provenance mismatch, stale/reused server
@@ -228,15 +241,21 @@ new reviewed card for any different procedure.
 
 ## Evidence anchors and interpretation limits
 
-This plan is based on the approved Phase A ledger and attribution plan, the
-Heaptrack 1.5 owned Python smoke (`diagnostics/heaptrack-smoke-1837`, record and
-report exit 0, 5,902 allocation calls, expected `PyByteArray_Resize` stack), the
-99-sample perf smoke (`diagnostics/perf-smoke-1836`, tool access only), the
-fresh Concord post-update receipt, and the existing N1 managed launch contract.
-Those smokes establish tool collection and cleanup only; they are not client
-allocation or CPU evidence. Heaptrack's own help explicitly warns that runtime
-attach is unstable, so the capture uses direct preload in the frontend
-environment, not attach or the Heaptrack wrapper script.
+The chosen direct-preload path is proved by
+`diagnostics/heaptrack-direct-smoke-1857/receipt.json`: record, interpretation
+and printer each exit0; raw332128bytes; peak costs sum5435240bytes; largest
+4196352-byte family resolves to PyByteArray_Resize and matches2048*2049requests.
+Preload `/usr/lib/heaptrack/libheaptrack_preload.so` SHA256 is
+`134760dbba8d9a2cd1b45f639c119f5c0cd779674a496fb7ed2b6baacac15ca9`.
+Recheck the installed library/version/hash before every owned frontend launch.
+No wrapper, FIFO or collection-time helper was used in this smoke.
+
+The earlier `diagnostics/heaptrack-smoke-1837` wrapper smoke and offline peak
+and Massif replays are supporting historical tool evidence. The99-sample perf
+smoke proves CPU-tool access only. Neither supplies client allocation, phase
+retention, CPU attribution or accepted savings. The approved owner ledger,
+fresh Concord post-update receipt and existing N1 managed contract remain the
+source, lifecycle and provenance anchors.
 
 This document is the reviewed-scope candidate for the next executable
 diagnostic design. Root must first verify the launch seam, output paths,
