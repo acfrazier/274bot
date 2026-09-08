@@ -58,6 +58,12 @@ so PATH, HOME, TERM, and other non-hot context survive while forbidden hot flags
 are scrubbed. Exceptions after the managed attempt begins are recorded as an
 unknown launch state rather than falsely claiming no launch.
 
+The memory-guard cancellation proof injects an explicit `reader` into the actual
+`MemoryGuard`; it does not patch the constructor-captured default indirectly.
+The prior Mac pass was insufficient because `/proc/meminfo` was unavailable there,
+so the default reader failed closed without exercising the native Linux path. The
+preserved Ubuntu17-test failure remains pending a root-owned native rerun.
+
 Root-owned next steps
 
 Root must supply and independently freeze the actual current host checkout,

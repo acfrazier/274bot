@@ -198,27 +198,36 @@ class CurrentTuiCalibrationControls(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             output = pathlib.Path(tmp) / "result.json"
             child = []
+            managed_finished = threading.Event()
             args = mock.Mock(output=output, host_checkout=pathlib.Path(tmp),
                              rs2b0t=pathlib.Path(tmp), nav_pack=pathlib.Path(tmp),
                              nav_flags=pathlib.Path(tmp), server_root=pathlib.Path(tmp))
             def managed(*_args, **_kwargs):
                 import subprocess
-                proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+                proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(0.1)"])
                 child.append(proc)
                 try:
-                    time.sleep(30)
+                    time.sleep(2)
+                    managed_finished.set()
                 finally:
-                    proc.terminate()
-                    proc.wait(timeout=2)
+                    if proc.poll() is None:
+                        proc.terminate()
+                        proc.wait(timeout=2)
                 return {"status": "completed", "attempts": 1}
             args.host_checkout = pathlib.Path(tmp)
+            actual_guard = runner.MemoryGuard
+            reader = mock.Mock(return_value=None)
+            def injected_guard(on_trigger):
+                return actual_guard(on_trigger, reader=reader)
             with mock.patch.object(runner, "launch_environment", return_value={}), \
                  mock.patch.object(runner.rmc, "run_managed_cell", side_effect=managed), \
                  mock.patch.object(runner, "MEM_GUARD_INTERVAL_S", 0.01), \
-                 mock.patch.object(runner, "read_mem_available", return_value=None):
+                 mock.patch.object(runner, "MemoryGuard", side_effect=injected_guard):
                 self.assertEqual(runner.run(args, {"id": "result"}), 1)
             self.assertTrue(child)
             self.assertIsNotNone(child[0].poll())
+            self.assertFalse(managed_finished.is_set())
+            reader.assert_called()
             self.assertEqual(json.loads(output.read_text())["memory_guard"]["status"], "triggered")
 
     def test_source_mismatch_fails_before_build_or_launch(self):
