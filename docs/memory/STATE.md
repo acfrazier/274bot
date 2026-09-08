@@ -11,6 +11,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 19:26 UTC
+
+- Instrumentation79008ad REJECTED actual Grok4.5/xai-oauth session
+  20260908_152119_4bb632 (t_314f3b20, run848). Portable imports, AS units,
+  active RSS/admission enforcement, reap/cleanup, output validation, analysis
+  timing separation and guard-failure propagation need correction. Root offline
+  probes reproduce Windows-import failure,768GiB-vs768MiB and false success
+  with empty analysis output; diagnostics/heaptrack-seam-root-review-79008ad.
+  Luna run849 is correcting. No unreviewed tooling installed on Concord.
+- Native staging is ready at /home/acfrazier/274bot-campaign/profile-tooling-
+  stage-1915: separate full local Git clone at c0709ab/client3456; both this
+  base and original frozen checkout verify1113source files. Receipt in
+  diagnostics/profile-tooling-stage-1915. Fresh server-identity.json binds
+  currentboot726/start595 and verifies config/fixture/publickey hashes/ports;
+  old server sidecar remains unchanged. Native tests/capture still pending.
+- Full289 source audit continues under actual Astra/openai-codex session
+  20260908_150417_c3ca10, card t_43f9ff17. No further isolated live attempt.
+
 ## Latest boundary — 2026-09-08 19:12 UTC
 
 - Direct allocation capture design e8c3c80 APPROVED actual Grok4.5/xai,
