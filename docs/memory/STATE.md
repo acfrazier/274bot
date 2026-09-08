@@ -11,6 +11,23 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 19:12 UTC
+
+- Direct allocation capture design e8c3c80 APPROVED actual Grok4.5/xai,
+  session20260908_150817_e3dd33 (t_aa4dcc1e). Current action is instrumentation
+  card t_314f3b20, Luna running: child-only preload/output/limits, retained direct
+  PID ownership, bounded separate post-exit interpretation, failures preserved.
+  Same-card review and native owned-process smoke required before root sole N1
+  capture. No game profile has started; no new memory/CPU acceptance.
+- Root verified actual binary, build manifest, navpack, prior N1 cache provenance
+  and preload-library paths/hashes on Concord. Reviewed tool bundle will remain
+  separate from frozen workspace-c0709ab; preserve all1113 frozen source bytes.
+- Full289 audit a97b4ae REJECTED by actualGrok4.5: template unknowns and length
+  table slots did not establish real Java dispatch branches/semantics. Corrective
+  t_43f9ff17 now runs verified orch default Astra/openai-codex, session
+  20260908_150417_c3ca10, restricted to source audit/cleanup contract in isolated
+  client checkout. No new live until actual coverage and corrections are reviewed.
+
 ## Latest boundary — 2026-09-08 19:00 UTC
 
 - Capture plan t_aa4dcc1e corrected723a5a3/390e364/e00a979 after actual Grok4.5
