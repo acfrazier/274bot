@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare and run exactly one current-source native TUI N16 diagnostic.
+"""Prepare and run exactly one current-source native TUI N1 or N16 diagnostic.
 
 This controller is intentionally a thin adapter around run_managed_cell.py.  It
 never builds, starts, stops, or mutates the game server, and it never retries a
@@ -36,10 +36,16 @@ MEM_GUARD_INTERVAL_S = 0.5
 WARMUP_S = 120
 OBSERVE_S = 600
 TEARDOWN_GRACE_S = 60
+SUPPORTED_N = (1, 16)
 
 
 class CalibrationError(RuntimeError):
     """A fail-closed configuration, provenance, or execution error."""
+
+
+def requested_n(args: argparse.Namespace) -> int:
+    value = getattr(args, "n", 16)
+    return value if isinstance(value, int) else 16
 
 
 def sha256(path: pathlib.Path) -> str:
@@ -114,7 +120,7 @@ def _server_public_environment(server_root: pathlib.Path) -> Dict[str, str]:
 
 
 def launch_environment(args: argparse.Namespace, base: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
-    env = clean_environment(base)
+    env = clean_environment(base, n=requested_n(args))
     env.update({"LIVE": "1", "BOT_TARGET": "local", "RS2B0T": str(args.rs2b0t.resolve()),
                 "NAV_PACK": str(args.nav_pack.resolve()), "NAV_FLAGS": str(args.nav_flags.resolve())})
     env.update(_server_public_environment(args.server_root))
@@ -159,9 +165,9 @@ def validate_live_server(args: argparse.Namespace) -> Dict[str, Any]:
     return sample
 
 
-def diagnostic_argv(binary: pathlib.Path, manifest: pathlib.Path, role: str) -> list[str]:
+def diagnostic_argv(binary: pathlib.Path, manifest: pathlib.Path, role: str, n: int = 16) -> list[str]:
     return [
-        "tui", "16", "active",
+        "tui", str(n), "active",
         "--binary", str(binary),
         "--build-manifest", str(manifest),
         "--build-role", role,
@@ -170,7 +176,7 @@ def diagnostic_argv(binary: pathlib.Path, manifest: pathlib.Path, role: str) -> 
     ]
 
 
-def clean_environment(base: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
+def clean_environment(base: Optional[Mapping[str, str]] = None, n: int = 16) -> Dict[str, str]:
     env = dict(base if base is not None else os.environ)
     forced_off = (
         "BOT_DEBUG", "BOT_CPU", "BOT_SCHEDULING_PROFILE", "BOT_RESPONSIVENESS_PROFILE",
@@ -180,7 +186,7 @@ def clean_environment(base: Optional[Mapping[str, str]] = None) -> Dict[str, str
     for key in forced_off:
         env.pop(key, None)
     env.update(
-        BOT_MEMORY_N="16", BOT_MEMORY_WORKLOAD="active", BOT_MEMORY_WARMUP_S=str(WARMUP_S),
+        BOT_MEMORY_N=str(n), BOT_MEMORY_WORKLOAD="active", BOT_MEMORY_WARMUP_S=str(WARMUP_S),
         BOT_MEMORY_OBSERVE_S=str(OBSERVE_S), BOT_MEMORY_DIAGNOSTICS="0",
         BOT_MEMORY_SUSTAIN="1", BOT_SCHEDULING_PROFILE="0", BOT_RESPONSIVENESS_PROFILE="0",
         BOT_RESPONSIVENESS_FINE="0", BOT_RENDER_PROFILE="0", BOT_GPU_COMPLETION_PROFILE="0",
@@ -193,12 +199,12 @@ def build_spec(args: argparse.Namespace, source: Mapping[str, Any]) -> Dict[str,
     cell_id = output.stem
     if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", cell_id) is None:
         raise CalibrationError("output basename must produce a safe cell id")
-    diag = diagnostic_argv(args.binary.resolve(), args.build_manifest.resolve(), args.build_role)
+    diag = diagnostic_argv(args.binary.resolve(), args.build_manifest.resolve(), args.build_role, n=requested_n(args))
     launcher = [sys.executable, str(HERE / "run_diagnostic.py"), *diag]
     return {
         "id": cell_id, "index": 1, "kind": "diagnostic", "frontend": "tui",
         "build_role": args.build_role, "binary": str(args.binary.resolve()),
-        "build_manifest": str(args.build_manifest.resolve()),
+        "build_manifest": str(args.build_manifest.resolve()), "n": requested_n(args),
         "server_identity_path": str(args.server_identity.resolve()),
         "host_conditions_path": str(args.host_conditions.resolve()),
         "nav_pack": str(args.nav_pack.resolve()), "nav_flags": str(args.nav_flags.resolve()),
@@ -281,7 +287,7 @@ def run(args: argparse.Namespace, spec: Dict[str, Any]) -> int:
         if hasattr(signal, "SIGUSR1"):
             os.kill(os.getpid(), signal.SIGUSR1)
     guard = MemoryGuard(cleanup)
-    report: Dict[str, Any] = {"status": "failed_or_unavailable", "launched": "unknown",
+    report: Dict[str, Any] = {"status": "failed_or_unavailable", "launched": "unknown", "n": requested_n(args),
                               "attempts": 1, "execution_attempted": True}
     previous_handler = signal.getsignal(signal.SIGUSR1) if hasattr(signal, "SIGUSR1") else None
     def abort_from_guard(signum: int, frame: Any) -> None:
@@ -315,6 +321,7 @@ def run(args: argparse.Namespace, spec: Dict[str, Any]) -> int:
 
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--n", type=int, choices=SUPPORTED_N, default=16)
     p.add_argument("--host-checkout", type=pathlib.Path, required=True)
     p.add_argument("--binary", type=pathlib.Path, required=True)
     p.add_argument("--build-manifest", type=pathlib.Path, required=True)

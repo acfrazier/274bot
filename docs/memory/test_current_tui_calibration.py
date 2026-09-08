@@ -25,6 +25,36 @@ class CurrentTuiCalibrationControls(unittest.TestCase):
         for forbidden in ("--debug", "--tui-input-probes", "--stack-logging", "--scheduling-profile", "--render-profile", "--responsiveness-profile"):
             self.assertNotIn(forbidden, argv)
 
+    def test_n1_cli_and_environment_agree_in_generated_contract(self):
+        argv = runner.diagnostic_argv(pathlib.Path("/bin/tui-play"), pathlib.Path("/tmp/build.json"), "candidate", n=1)
+        self.assertEqual(argv[:3], ["tui", "1", "active"])
+        clean = runner.clean_environment({}, n=1)
+        self.assertEqual(clean["BOT_MEMORY_N"], "1")
+
+    def test_n1_spec_receipt_matches_cli_and_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            args = argparse.Namespace(
+                n=1, output=root / "n1.json", binary=root / "binary", build_manifest=root / "manifest.json",
+                build_role="candidate", server_identity=root / "server.json", host_conditions=root / "conditions.json",
+                nav_pack=root / "nav", nav_flags=root / "flags", catalog=root / "catalog.json", server_pid=42,
+                ssh_parent_pid=7, server_root=root, rs2b0t=root / "rs2b0t", cache_dir=root / "cache",
+                unpack_root=root / "unpack",
+            )
+            spec = runner.build_spec(args, {"host_commit": runner.EXPECTED_HOST})
+            self.assertEqual(spec["n"], 1)
+            self.assertEqual(spec["diagnostic_argv"][1], "1")
+            self.assertEqual(runner.clean_environment({}, n=spec["n"])["BOT_MEMORY_N"], spec["diagnostic_argv"][1])
+
+    def test_default_n16_remains_the_cli_and_environment_contract(self):
+        self.assertEqual(runner.parser()._option_string_actions["--n"].default, 16)
+        self.assertEqual(runner.diagnostic_argv(pathlib.Path("/bin/tui-play"), pathlib.Path("/tmp/build.json"), "candidate")[1], "16")
+        self.assertEqual(runner.clean_environment({})["BOT_MEMORY_N"], "16")
+
+    def test_invalid_n_fails_before_launch(self):
+        with self.assertRaises(SystemExit):
+            runner.parser().parse_args(["--n", "2"])
+
     def test_clean_environment_forces_all_hot_flags_off(self):
         env = {key: "1" for key in ("BOT_DEBUG", "BOT_CPU", "BOT_SCHEDULING_PROFILE", "BOT_RENDER_PROFILE", "BOT_RESPONSIVENESS_PROFILE", "MallocStackLogging")}
         clean = runner.clean_environment(env)
@@ -78,13 +108,14 @@ class CurrentTuiCalibrationControls(unittest.TestCase):
             (server / "data/config").mkdir(parents=True)
             (server / "server-login-public.json").write_text(json.dumps({
                 "modulus_decimal": "123", "exponent_decimal": "65537"}))
-            args = argparse.Namespace(server_root=server, rs2b0t=root / "rs2b0t",
+            args = argparse.Namespace(n=1, server_root=server, rs2b0t=root / "rs2b0t",
                                      nav_pack=root / "nav", nav_flags=root / "flags")
             env = runner.launch_environment(args)
             self.assertEqual(env["ENGINE_DIR"], str(server.resolve()))
             self.assertEqual(env["RS2B0T"], str((root / "rs2b0t").resolve()))
             self.assertEqual(env["NAV_PACK"], str((root / "nav").resolve()))
             self.assertEqual(env["LOGIN_RSAN"], "123")
+            self.assertEqual(env["BOT_MEMORY_N"], "1")
 
     def test_launch_environment_preserves_operator_context_from_snapshot(self):
         with tempfile.TemporaryDirectory() as tmp:
