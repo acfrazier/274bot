@@ -11,6 +11,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 13:28 UTC
+
+- Grok4.6 correction/evidence gate BOUNDED ACCEPT, t_5b03b1fe completed,
+  report committedb4c0966. Independent archive31/31, cohort300/20, source
+  symmetry and debug cache verified. Final native pair remains prerequisite.
+- Referencee25f328 native release build and scoped tests complete, exit0.
+  Binary2061d0c7ba82c950084523a7c7e89eed27854e2a533377d9f40ed4a53da5f3ce,
+  76621312 bytes; all877 source hashes unchanged through build/tests.
+  Host215 PASS/1 GPU ignore; publisher6 plus child; panel25 PASS.
+  Root verified build/test archives in diagnostics/windows-cohort-build-e25f328.
+- Candidateca56e14 native build started after reference tests finalized.
+  Pair controls t_5bb0cbaf Luna still implementing in isolated checkout.
+  No matched run launched. Final target/lifecycle/campaign acceptance open.
+
 ## Latest boundary — 2026-09-08 13:23 UTC
 
 - Independent native b raw check: 320 unique fixed-window identities,
