@@ -1,0 +1,107 @@
+{
+  "status": "failed_cpu_guard",
+  "source_commit": "378e634b103d525aef33b86d22e8238fa1bddc79",
+  "review_model": "grok-4.5",
+  "review_provider": "xai-oauth",
+  "review_session": "20260908_170931_3239c3",
+  "native_tests": {
+    "argv": [
+      "python3",
+      "-B",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "docs/memory",
+      "-p",
+      "test_heaptrack_owner_replay.py",
+      "-v"
+    ],
+    "pid": 2291,
+    "exit_code": 0,
+    "timeout": false,
+    "elapsed_s": 13.917025327682495,
+    "started_unix": 1788902223.2220974,
+    "children_ru_maxrss_bytes": 77594624,
+    "production_trace_read": false
+  },
+  "native_smoke": {
+    "child_pid": 2316,
+    "exit_code": 0,
+    "owned_child_reaped": true,
+    "wall_s": 2.088748158999806,
+    "peak_rss_bytes": 24473600,
+    "peak_address_bytes": 34344960,
+    "linux_proc_monitor": true,
+    "phases": [
+      {
+        "phase": 1,
+        "wall_s": 0.3721717440002976,
+        "cpu_s": 0.372113257,
+        "cumulative_peak_rss_bytes": 20840448
+      },
+      {
+        "phase": 2,
+        "wall_s": 0.5379706519997853,
+        "cpu_s": 0.5379283990000001,
+        "cumulative_peak_rss_bytes": 21569536
+      },
+      {
+        "phase": 3,
+        "wall_s": 1.1000447910009825,
+        "cpu_s": 1.0999486580000002,
+        "cumulative_peak_rss_bytes": 24453120
+      }
+    ],
+    "status": "validated_prefix_diagnostic",
+    "capture_complete": false,
+    "acceptance": false,
+    "manifest_sha256": "3aa904ae48f1a541f797683b0cfe6e9d8fb01a720d7c9ea475b6b2d0532d86bd",
+    "receipt_sha256": "11220c39f77846671ed7cee1920d37db81b0451ebe339e95b7dffe70c3f9261e",
+    "tooling_sha256": {
+      "heaptrack_owner_runner.py": "d3d7d034019c705e6930db5bec8bcd6999344f48ccf2f6f8c17a1d5e29e00f21",
+      "heaptrack_owner_replay.py": "fa4c3ef5384055745d38e80b3e01d37a28a8d28774d175ddb0d82ef81ca18ce0"
+    }
+  },
+  "production_launch": {
+    "started_unix": 1788902340.5530686,
+    "boot_id": "2217ec26-dc3e-47a3-a700-d3fafb34163f",
+    "available_bytes": 997117952,
+    "free_disk_bytes": 11835043840,
+    "conflicts": [],
+    "source_commit": "378e634b103d525aef33b86d22e8238fa1bddc79",
+    "manifest_sha256": "7fcd08aed20e44c81dd495f83ae663b167f4392b84c39a79ce927b45165e1595",
+    "new_capture": false,
+    "reinterpretation": false,
+    "attempts_permitted": 1,
+    "runner_pid": 2325
+  },
+  "production_failure": {
+    "status": "failed",
+    "capture_complete": false,
+    "acceptance": false,
+    "reason": "child: CPU guard",
+    "manifest_sha256": "7fcd08aed20e44c81dd495f83ae663b167f4392b84c39a79ce927b45165e1595",
+    "resources": {
+      "child_pid": 2326,
+      "wall_s": 180.0950095950011,
+      "peak_rss_bytes": 90357760,
+      "peak_address_bytes": 100413440,
+      "phase": 1,
+      "linux_proc_monitor": true,
+      "exit_code": -9,
+      "owned_child_reaped": true
+    },
+    "campaign_capture_status": "failed_raw_size_guard"
+  },
+  "runner_and_child_absent_afterwards": true,
+  "retained_production_outputs": [
+    "failure.json"
+  ],
+  "raw_hash_verification_completed": false,
+  "production_owner_ranking_available": false,
+  "original_capture_status": "failed_raw_size_guard",
+  "accepted_savings": false,
+  "export_sha256": "0d741086ccb6d4e53e11d0376d1cdac8bee3909fdf148826d5f184c4bb1bbaf1",
+  "verified_export_files": 41
+}
