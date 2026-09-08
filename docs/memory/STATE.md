@@ -5,6 +5,8 @@ Updated 2026-09-07. Branch `codex/memory-diagnostics`; active checkout
 
 Approved plan: [performance-finish-plan.md](performance-finish-plan.md), initially
 approved at `530b83e`. Workflow: [../execution.md](../execution.md).
+For a readable explanation of the campaign, start with [the overview](overview.md).
+
 Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
