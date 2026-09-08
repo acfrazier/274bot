@@ -89,6 +89,11 @@ pub fn should_capture(f: &Focus) -> bool {
 /// New low-end modes force Game pane, wall membership, cadence knobs and per-slot
 /// renderer bits so adverse persisted prefs cannot change the requested cell.
 /// Legacy fixed-one / rotating-all paths keep their historical field writes.
+///
+/// `game_pane_open = true` here is Focus-level draw math only. Session memory
+/// harness frames must own the real closed→open edge via
+/// `Session::set_game_pane_open` (see `memory_focus_at`) so capture reattaches;
+/// writing the flag alone strands `capture_tx` after an actual pane close.
 #[cfg(feature = "memory-profile")]
 pub fn memory_draw_policy(
     f: &mut Focus,

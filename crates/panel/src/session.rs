@@ -1423,13 +1423,46 @@ impl Session {
 
     #[cfg(feature = "memory-profile")]
     pub fn memory_focus(&mut self, run: &host_play::memory::Run) {
-        let index = run.focus_index();
-        let name = &run.names[index];
+        self.memory_focus_at(&run.names, run.focus_index(), run.render_policy);
+    }
+
+    /// Apply the memory harness focus/draw policy for `names[index]`.
+    ///
+    /// Policies that force the Game pane must open it through
+    /// [`Self::set_game_pane_open`] so a real closed→open edge reattaches
+    /// `capture_tx`. `memory_draw_policy` still writes Focus draw fields
+    /// (including a direct `game_pane_open = true` for Focus-level math);
+    /// those direct pane writes are rolled back here before the owned
+    /// transition so we never skip `capture_on` after an actual pane close.
+    #[cfg(feature = "memory-profile")]
+    fn memory_focus_at(
+        &mut self,
+        names: &[String],
+        index: usize,
+        policy: host_play::memory::RenderPolicy,
+    ) {
+        let name = &names[index];
         if self.focus.lock().unwrap().focused.as_ref() != Some(name) {
             self.select(name);
         }
-        let mut focus = self.focus.lock().unwrap();
-        crate::focus::memory_draw_policy(&mut focus, &run.names, run.render_policy);
+        let forces_pane = matches!(
+            policy,
+            host_play::memory::RenderPolicy::FixedOne
+                | host_play::memory::RenderPolicy::FocusedOne
+                | host_play::memory::RenderPolicy::FocusedPlusBackground
+        );
+        let was_open = self.focus.lock().unwrap().game_pane_open;
+        {
+            let mut focus = self.focus.lock().unwrap();
+            crate::focus::memory_draw_policy(&mut focus, names, policy);
+            if forces_pane {
+                // Undo the policy's direct open write; own the edge below.
+                focus.game_pane_open = was_open;
+            }
+        }
+        if forces_pane {
+            self.set_game_pane_open(true);
+        }
     }
 
     /// Live `stress50` RAM watch: temp vault `s00`…`s49` (password =
@@ -6496,6 +6529,214 @@ mod tests {
         assert!(s.capture_tx.is_none());
         s.set_game_pane_open(true);
         assert!(s.capture_tx.is_some(), "pref on resumes the drain");
+    }
+
+    /// Prove the native confounder: `memory_draw_policy` writing
+    /// `game_pane_open=true` directly after a real pane close makes the
+    /// subsequent `set_game_pane_open(true)` see `was=true` and skip
+    /// `capture_on`, stranding `capture_tx=None` while capture stays on.
+    #[cfg(feature = "memory-profile")]
+    #[test]
+    fn memory_draw_policy_direct_open_strands_capture_without_owned_edge() {
+        let mut s = Session::new();
+        let input = SlotInput::new();
+        s.slots.insert(
+            "alice".into(),
+            SlotIo {
+                input: Arc::clone(&input),
+                pixels: FrameBuf::new(),
+            },
+        );
+        s.select("alice");
+        s.set_capture(true);
+        assert!(s.capture_tx.is_some());
+        s.set_game_pane_open(false);
+        assert!(s.capture_tx.is_none());
+        let names = vec!["alice".into()];
+        {
+            let mut focus = s.focus.lock().unwrap();
+            crate::focus::memory_draw_policy(
+                &mut focus,
+                &names,
+                host_play::memory::RenderPolicy::FocusedOne,
+            );
+            assert!(focus.game_pane_open, "policy forces the flag directly");
+        }
+        // App path after policy: pane is building again.
+        s.set_game_pane_open(true);
+        assert!(
+            s.capture_tx.is_none(),
+            "direct policy open skips the closed→open capture_on edge"
+        );
+        assert!(
+            s.focus.lock().unwrap().capture && s.focus.lock().unwrap().game_pane_open,
+            "pref and pane look armed while the channel is gone"
+        );
+    }
+
+    #[cfg(feature = "memory-profile")]
+    #[test]
+    fn memory_focus_restores_capture_after_pane_close_and_delivers_key() {
+        let mut s = Session::new();
+        let input = SlotInput::new();
+        s.slots.insert(
+            "alice".into(),
+            SlotIo {
+                input: Arc::clone(&input),
+                pixels: FrameBuf::new(),
+            },
+        );
+        s.select("alice");
+        s.set_capture(true);
+        assert!(s.capture_tx.is_some());
+        s.set_game_pane_open(false);
+        assert!(s.capture_tx.is_none());
+
+        let names = vec!["alice".into()];
+        s.memory_focus_at(&names, 0, host_play::memory::RenderPolicy::FocusedOne);
+        // Actual pane open after the harness frame (app reports Some).
+        s.set_game_pane_open(true);
+
+        assert!(s.focus.lock().unwrap().game_pane_open);
+        assert!(s.focus.lock().unwrap().capture);
+        assert!(
+            s.capture_tx.is_some(),
+            "owned open edge must reattach the capture channel"
+        );
+        assert!(input.enabled(), "focused drain must be enabled");
+
+        s.capture_tx
+            .as_ref()
+            .unwrap()
+            .send(InputEv::Key {
+                down: true,
+                ch: 37,
+            })
+            .unwrap();
+        let mut shell = client::client::GameShell::new();
+        assert!(
+            input.drain_with_actionable_flag(&mut shell),
+            "queued key must reach the focused SlotInput receiver"
+        );
+    }
+
+    #[cfg(feature = "memory-profile")]
+    #[test]
+    fn memory_focus_repeat_keeps_stable_channel_and_queued_edges() {
+        let mut s = Session::new();
+        let input = SlotInput::new();
+        s.slots.insert(
+            "alice".into(),
+            SlotIo {
+                input: Arc::clone(&input),
+                pixels: FrameBuf::new(),
+            },
+        );
+        s.select("alice");
+        s.set_capture(true);
+        let names = vec!["alice".into()];
+        s.memory_focus_at(&names, 0, host_play::memory::RenderPolicy::FocusedOne);
+        assert!(s.capture_tx.is_some());
+
+        s.capture_tx
+            .as_ref()
+            .unwrap()
+            .send(InputEv::Key {
+                down: true,
+                ch: 39,
+            })
+            .unwrap();
+        // Same focused name every frame must not rebuild the channel.
+        s.memory_focus_at(&names, 0, host_play::memory::RenderPolicy::FocusedOne);
+        s.memory_focus_at(&names, 0, host_play::memory::RenderPolicy::FocusedOne);
+
+        let mut shell = client::client::GameShell::new();
+        assert!(
+            input.drain_with_actionable_flag(&mut shell),
+            "repeat memory_focus must not discard a queued edge"
+        );
+    }
+
+    #[cfg(feature = "memory-profile")]
+    #[test]
+    fn memory_focus_does_not_enable_capture_when_pref_off() {
+        let mut s = Session::new();
+        s.slots.insert(
+            "alice".into(),
+            SlotIo {
+                input: SlotInput::new(),
+                pixels: FrameBuf::new(),
+            },
+        );
+        s.select("alice");
+        s.set_capture(false);
+        assert!(s.capture_tx.is_none());
+        s.set_game_pane_open(false);
+
+        let names = vec!["alice".into()];
+        s.memory_focus_at(&names, 0, host_play::memory::RenderPolicy::FocusedOne);
+        s.set_game_pane_open(true);
+
+        assert!(!s.focus.lock().unwrap().capture);
+        assert!(
+            s.capture_tx.is_none(),
+            "capture pref off must stay detached"
+        );
+    }
+
+    #[cfg(feature = "memory-profile")]
+    #[test]
+    fn memory_focus_switch_disables_old_drain_and_attaches_current() {
+        let mut s = Session::new();
+        let a_in = SlotInput::new();
+        let b_in = SlotInput::new();
+        s.slots.insert(
+            "alice".into(),
+            SlotIo {
+                input: Arc::clone(&a_in),
+                pixels: FrameBuf::new(),
+            },
+        );
+        s.slots.insert(
+            "bob".into(),
+            SlotIo {
+                input: Arc::clone(&b_in),
+                pixels: FrameBuf::new(),
+            },
+        );
+        s.select("alice");
+        s.set_capture(true);
+        assert!(a_in.enabled());
+        assert!(s.capture_tx.is_some());
+
+        let names = vec!["alice".into(), "bob".into()];
+        // Simulate rotating focus landing on bob (index 1).
+        s.memory_focus_at(&names, 1, host_play::memory::RenderPolicy::RotatingAll);
+        assert_eq!(s.focused_name().as_deref(), Some("bob"));
+        assert!(
+            !a_in.enabled(),
+            "previous focused drain must disable on focus switch"
+        );
+        assert!(b_in.enabled(), "current focused drain must attach");
+        assert!(s.capture_tx.is_some());
+
+        s.capture_tx
+            .as_ref()
+            .unwrap()
+            .send(InputEv::Key {
+                down: true,
+                ch: 37,
+            })
+            .unwrap();
+        let mut shell = client::client::GameShell::new();
+        assert!(
+            !a_in.drain_with_actionable_flag(&mut shell),
+            "old receiver must not take the new channel"
+        );
+        assert!(
+            b_in.drain_with_actionable_flag(&mut shell),
+            "key must reach the newly focused SlotInput"
+        );
     }
 
     #[test]
