@@ -93,6 +93,8 @@ pub struct CohortBatch {
     pub next_cursor: u64,
     pub complete: bool,
     pub loss_count: u64,
+    /// Number of terminal entries rejected after the bounded journal filled.
+    pub journal_overflow_n: u64,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalSummary {
@@ -122,15 +124,20 @@ pub enum CohortError {
 struct Pending {
     id: EventId,
 }
+struct JournalEntry {
+    journal_sequence: u64,
+    entry: Entry,
+}
 enum Entry {
     Record(EventRecord),
     Loss(LossReceipt),
 }
 struct State {
     boundaries: Option<Boundaries>,
-    journal: VecDeque<Entry>,
+    journal: VecDeque<JournalEntry>,
     pending: VecDeque<Pending>,
     next_sequence: u64,
+    next_journal_sequence: u64,
     cursor_floor: u64,
     available: bool,
     finalized: bool,
@@ -139,6 +146,7 @@ struct State {
     last_end: Option<u64>,
     records_n: u64,
     losses_n: u64,
+    journal_overflow_n: u64,
 }
 impl Default for State {
     fn default() -> Self {
@@ -147,6 +155,7 @@ impl Default for State {
             journal: VecDeque::new(),
             pending: VecDeque::new(),
             next_sequence: 1,
+            next_journal_sequence: 1,
             cursor_floor: 0,
             available: true,
             finalized: false,
@@ -155,6 +164,7 @@ impl Default for State {
             last_end: None,
             records_n: 0,
             losses_n: 0,
+            journal_overflow_n: 0,
         }
     }
 }
@@ -209,9 +219,15 @@ pub fn producers_closed() -> bool {
 fn append(s: &mut State, entry: Entry) -> bool {
     if s.journal.len() >= s.capacity {
         s.available = false;
+        s.journal_overflow_n = s.journal_overflow_n.saturating_add(1);
         return false;
     }
-    s.journal.push_back(entry);
+    let journal_sequence = s.next_journal_sequence;
+    s.next_journal_sequence = journal_sequence.wrapping_add(1);
+    s.journal.push_back(JournalEntry {
+        journal_sequence,
+        entry,
+    });
     true
 }
 fn loss(s: &mut State, r: LossReceipt) {
@@ -231,7 +247,7 @@ pub fn start(
     }
     let mut s = state().lock().unwrap();
     let b = s.boundaries?;
-    if s.finalized {
+    if s.finalized || s.producers_closed {
         if start_mono_ns >= b.start_mono_ns && start_mono_ns < b.end_mono_ns {
             let seq = s.next_sequence;
             s.next_sequence = seq.wrapping_add(1);
@@ -285,11 +301,16 @@ pub fn dropped_start(slot_id: u64, generation: u64, start_mono_ns: u64, surface:
     }
     let mut s = state().lock().unwrap();
     let Some(b) = s.boundaries else { return };
-    if s.finalized || start_mono_ns < b.start_mono_ns || start_mono_ns >= b.end_mono_ns {
+    if start_mono_ns < b.start_mono_ns || start_mono_ns >= b.end_mono_ns {
         return;
     }
     let seq = s.next_sequence;
     s.next_sequence = seq.wrapping_add(1);
+    let reason = if s.finalized || s.producers_closed {
+        LossReason::LateEvent
+    } else {
+        LossReason::Capacity
+    };
     loss(
         &mut s,
         LossReceipt {
@@ -298,7 +319,7 @@ pub fn dropped_start(slot_id: u64, generation: u64, start_mono_ns: u64, surface:
             generation,
             start_mono_ns: Some(start_mono_ns),
             outcome: Outcome::Dropped,
-            reason: LossReason::Capacity,
+            reason,
         },
     );
     let _ = surface;
@@ -396,6 +417,9 @@ pub fn generation_lost(id: EventId, generation: u64) {
         lost(id)
     } else if enabled() {
         let mut s = state().lock().unwrap();
+        if let Some(pos) = s.pending.iter().position(|p| p.id == id) {
+            let _ = s.pending.remove(pos);
+        }
         let seq = id.sequence;
         loss(
             &mut s,
@@ -415,31 +439,24 @@ pub fn generation_lost(id: EventId, generation: u64) {
 pub fn extract_since(cursor: u64) -> Result<CohortBatch, CohortError> {
     let mut s = state().lock().unwrap();
     let b = s.boundaries.ok_or(CohortError::NotActive)?;
-    if cursor < s.cursor_floor || cursor >= s.next_sequence {
+    if cursor < s.cursor_floor || cursor > s.next_journal_sequence.saturating_sub(1) {
         return Err(CohortError::InvalidCursor);
     }
-    let mut entries: Vec<_> = s.journal.drain(..).collect();
-    entries.sort_by_key(entry_seq);
+    let entries: Vec<_> = s.journal.drain(..).collect();
     let mut records = Vec::new();
     let mut losses = Vec::new();
     let mut next = cursor;
-    let mut keep = VecDeque::new();
     for entry in entries {
-        let sequence = entry_seq(&entry);
-        if sequence <= cursor {
-            keep.push_back(entry);
-        } else if sequence == next.saturating_add(1) {
-            match entry {
+        let sequence = entry.journal_sequence;
+        if sequence > cursor {
+            match entry.entry {
                 Entry::Record(record) => records.push(record),
                 Entry::Loss(receipt) => losses.push(receipt),
             }
-            next = sequence;
-        } else {
-            keep.push_back(entry);
+            next = next.max(sequence);
         }
     }
-    s.journal = keep;
-    s.cursor_floor = next;
+    s.cursor_floor = s.cursor_floor.max(next);
     Ok(CohortBatch {
         schema_version: SCHEMA_VERSION,
         boundaries: b,
@@ -448,13 +465,8 @@ pub fn extract_since(cursor: u64) -> Result<CohortBatch, CohortError> {
         next_cursor: next,
         complete: s.finalized,
         loss_count: s.losses_n,
+        journal_overflow_n: s.journal_overflow_n,
     })
-}
-fn entry_seq(e: &Entry) -> u64 {
-    match e {
-        Entry::Record(r) => r.id.sequence,
-        Entry::Loss(r) => r.sequence,
-    }
 }
 
 pub fn finalize(now_mono_ns: u64) -> Result<TerminalSummary, CohortError> {
@@ -539,11 +551,37 @@ mod tests {
         let id = start(1, 1, 2, Surface::Panel).unwrap();
         assert!(start(1, 1, 3, Surface::Panel).is_none());
         let a = extract_since(0).unwrap();
-        assert_eq!(a.losses.len(), 0);
+        assert_eq!(a.losses.len(), 1);
         lost(id);
         let b = extract_since(a.next_cursor).unwrap();
-        assert_eq!(b.records.len(), 0);
+        assert_eq!(b.records.len(), 1);
         assert_eq!(b.loss_count, 1);
+        assert_eq!(b.journal_overflow_n, 0);
+    }
+
+    #[test]
+    fn extraction_does_not_wedge_on_long_pending_first_event() {
+        let _g = LOCK.lock().unwrap();
+        reset();
+        begin(
+            Boundaries {
+                start_mono_ns: 1,
+                end_mono_ns: 10,
+                tail_ns: 2,
+            },
+            8,
+        )
+        .unwrap();
+        let first = start(1, 1, 2, Surface::Decode).unwrap();
+        let second = start(1, 1, 3, Surface::Decode).unwrap();
+        complete(second, 4);
+        let batch = extract_since(0).unwrap();
+        assert_eq!(batch.records.len(), 1);
+        assert_eq!(batch.records[0].id.sequence, second.sequence);
+        complete(first, 5);
+        let batch = extract_since(batch.next_cursor).unwrap();
+        assert_eq!(batch.records.len(), 1);
+        assert_eq!(batch.records[0].id.sequence, first.sequence);
     }
     #[test]
     fn incomplete_and_noncompleted_fail_closed() {

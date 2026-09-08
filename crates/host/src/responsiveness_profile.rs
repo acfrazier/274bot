@@ -412,7 +412,10 @@ pub fn decode_coverage_complete(s: &SlotObservation) -> bool {
 pub fn decode_accounting_exact(s: &SlotObservation) -> bool {
     let rhs = s
         .dispatch_n
-        .saturating_add(s.decode_canceled_n.saturating_sub(s.decode_unmatched_canceled_n))
+        .saturating_add(
+            s.decode_canceled_n
+                .saturating_sub(s.decode_unmatched_canceled_n),
+        )
         .saturating_add(s.decode_pending_n)
         .saturating_add(s.decode_dropped_n)
         .saturating_add(s.decode_lost_n);
@@ -532,7 +535,8 @@ impl Local {
             mono_ns(at),
             crate::responsiveness_cohort::Surface::Decode,
         );
-        self.decode_pending.push_back(DecodePending { at, cohort_id });
+        self.decode_pending
+            .push_back(DecodePending { at, cohort_id });
         self.snap.decode_pending_n = self.decode_pending.len() as u64;
         self.dirty = true;
         self.maybe_flush();
@@ -843,16 +847,18 @@ pub fn note_input_start(slot_id: u64, at: Instant, require_gen: u64) -> bool {
     let mut q = INPUT_PENDING.lock().unwrap();
     if q.len() >= MAX_INPUT_PENDING {
         drop(q);
-        if let Some(generation) = live_generation_for(slot_id) {
-            crate::responsiveness_cohort::dropped_start(
-                slot_id,
-                generation,
-                mono_ns(at),
-                match surface {
-                    InputSurface::Panel => crate::responsiveness_cohort::Surface::Panel,
-                    _ => crate::responsiveness_cohort::Surface::Tui,
-                },
-            );
+        if crate::responsiveness_cohort::enabled() {
+            if let Some(generation) = live_generation_for(slot_id) {
+                crate::responsiveness_cohort::dropped_start(
+                    slot_id,
+                    generation,
+                    mono_ns(at),
+                    match surface {
+                        InputSurface::Panel => crate::responsiveness_cohort::Surface::Panel,
+                        _ => crate::responsiveness_cohort::Surface::Tui,
+                    },
+                );
+            }
         }
         with_live_slot_from(t0, slot_id, |s| {
             s.input_dropped_n = s.input_dropped_n.wrapping_add(1);
@@ -860,17 +866,20 @@ pub fn note_input_start(slot_id: u64, at: Instant, require_gen: u64) -> bool {
         });
         return false;
     }
-    let cohort_id = live_generation_for(slot_id).and_then(|generation| {
-        crate::responsiveness_cohort::start(
-            slot_id,
-            generation,
-            mono_ns(at),
-            match surface {
-                InputSurface::Panel => crate::responsiveness_cohort::Surface::Panel,
-                _ => crate::responsiveness_cohort::Surface::Tui,
-            },
-        )
-    });
+    let cohort_id = crate::responsiveness_cohort::enabled()
+        .then(|| live_generation_for(slot_id))
+        .flatten()
+        .and_then(|generation| {
+            crate::responsiveness_cohort::start(
+                slot_id,
+                generation,
+                mono_ns(at),
+                match surface {
+                    InputSurface::Panel => crate::responsiveness_cohort::Surface::Panel,
+                    _ => crate::responsiveness_cohort::Surface::Tui,
+                },
+            )
+        });
     q.push_back(InputPending {
         slot_id,
         at,
@@ -918,9 +927,7 @@ pub fn note_panel_present(slot_id: u64, presented_gen: u64, at: Instant) {
         return;
     }
     complete_input(slot_id, at, |p| {
-        p.surface == InputSurface::Panel
-            && p.require_gen != 0
-            && p.require_gen <= presented_gen
+        p.surface == InputSurface::Panel && p.require_gen != 0 && p.require_gen <= presented_gen
     });
 }
 
@@ -966,8 +973,7 @@ fn complete_input(slot_id: u64, at: Instant, pred: impl Fn(&InputPending) -> boo
             s.input_latency_buckets[b] = s.input_latency_buckets[b].wrapping_add(1);
             if fine_enabled() {
                 let fb = fine_latency_bucket(d);
-                s.input_fine_latency_buckets[fb] =
-                    s.input_fine_latency_buckets[fb].wrapping_add(1);
+                s.input_fine_latency_buckets[fb] = s.input_fine_latency_buckets[fb].wrapping_add(1);
             }
         }
         s.input_pending_n = pending_n;
@@ -1212,7 +1218,10 @@ mod tests {
         assert_eq!(l.snap.decode_latency_n, 1);
         // 120ms → bucket index for 250ms bound
         assert_eq!(l.snap.decode_latency_buckets[7], 1);
-        assert_eq!(p99_upper_bound_ms(&l.snap.decode_latency_buckets), Some(250));
+        assert_eq!(
+            p99_upper_bound_ms(&l.snap.decode_latency_buckets),
+            Some(250)
+        );
     }
 
     #[test]
@@ -1460,7 +1469,10 @@ mod tests {
         assert_eq!(row.decode_capture_mono_ns_lower, decode_lo);
         assert_eq!(row.decode_capture_mono_ns_upper, decode_hi);
         assert!(row.input_capture_mono_ns_upper > 0);
-        assert!(row.input_capture_mono_ns_lower >= decode_hi || row.input_capture_mono_ns_lower > decode_lo);
+        assert!(
+            row.input_capture_mono_ns_lower >= decode_hi
+                || row.input_capture_mono_ns_lower > decode_lo
+        );
         assert_eq!(row.input_complete_n, 1);
         assert_eq!(row.dispatch_n, 1);
         l.decode_pending.clear();
@@ -1535,7 +1547,10 @@ mod tests {
         let rows2 = read().expect("on");
         let r2 = rows2.iter().find(|s| s.slot_id == sid).expect("row");
         assert_eq!(r2.input_start_n, 2, "stale start count retained");
-        assert_eq!(r2.input_pending_n, 2, "pending gauge still 2 after flush cut");
+        assert_eq!(
+            r2.input_pending_n, 2,
+            "pending gauge still 2 after flush cut"
+        );
         assert!(r2.input_capture_mono_ns_lower <= after_second_lo);
         assert!(
             r2.input_capture_mono_ns_upper > after_second_hi,
