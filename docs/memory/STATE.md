@@ -9,6 +9,22 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 00:54 UTC
+
+- Root found private-commit60af766 changed peak field availability when Windows
+  CPU sampling fails. Corrected isolated census66ba7c1 restores old joint peak
+  contract while current/private stay independent. Seven focused host-play rss
+  tests pass with memory-profile-no-alloc. Corrective t_d0cddc78 reviewer is
+  actually running; native API/build proof remains pending. Do not use60af766
+  unchanged for native integration.
+- Native PowerShell AST ParseFile inspected all four staged cdf65b3 controls:
+  archive/launch/preflight have0syntax errors; poll has5 parser diagnostics
+  from extra closing parenthesis. Preserved parse-lazy-controls-cdf65b3.json
+  under docs/memory/diagnostics/windows-lazy-upload-20260908. New correction
+  t_682585b8 remains active; require native full-contract no-launch check.
+- Snapshot frame correction t_d5a87488 remains active after review rejection.
+  No new Windows bot workload, no native build and no new memory result.
+
 ## Latest boundary — 2026-09-08 00:51 UTC
 
 - cdf65b3 provenance correction approved actual Grok4.5 t_92c98e27. Root
