@@ -1,10 +1,12 @@
 param([Parameter(Mandatory=$true)][ValidateSet('baseline','candidate')][string]$BuildRole,[Parameter(Mandatory=$true)][ValidateSet('focused-one','focused-plus-background')][string]$Mode,[Parameter(Mandatory=$true)][ValidatePattern('^[A-Za-z0-9_-]+$')][string]$CellId)
 $ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'
-$stage=if($BuildRole -eq 'baseline'){'C:\ProgramData\274bot-Test\panel-36825a9'}else{'C:\ProgramData\274bot-Test\panel-3118e966'}
+$stage=if($BuildRole -eq 'baseline'){'C:\ProgramData\274bot-Test\panel-36825a9'}else{'C:\ProgramData\274bot-Test\panel-3118e96'}
+$prefix="$BuildRole-$Mode-"; if(-not $CellId.StartsWith($prefix)){throw "CellId must start with $prefix"}
 $runner=Join-Path $PSScriptRoot ("run-panel-lazy-upload-"+$(if($Mode -eq 'focused-one'){'focused-one'}else{'focused-plus-background'})+'.py')
-$preflight='C:\ProgramData\274bot-Test\panel-36825a9\preflight-panel-lazy-upload.json'; if(-not (Test-Path $runner)){throw 'Controller missing'}; if(-not (Test-Path (Join-Path $stage 'panel-play.exe'))){throw 'Role binary missing'}; if(-not (Test-Path $preflight)){throw 'Matching paired preflight missing'}
+$preflight='C:\ProgramData\274bot-Test\panel-36825a9\preflight-panel-lazy-upload-'+$CellId+'.json'; if(-not (Test-Path $runner)){throw 'Controller missing'}; if(-not (Test-Path (Join-Path $stage 'panel-play.exe'))){throw 'Role binary missing'}; if(-not (Test-Path $preflight)){throw 'Fresh per-cell preflight missing'}
 $out=Join-Path 'C:\Users\BotTest\274bot-runs' ('managed-panel-lazy-upload-'+$CellId); if(Test-Path $out){throw 'Cell output exists; choose a new cell id'}
 Copy-Item $runner (Join-Path $stage ("run-"+$CellId+'.py')) -Force
+Copy-Item (Join-Path $PSScriptRoot 'run-panel-lazy-upload-focused-one.py') (Join-Path $stage 'run-panel-lazy-upload-focused-one.py') -Force
 $launcher=Join-Path $stage ("launch-"+$CellId+'.ps1'); $log=Join-Path 'C:\Users\BotTest\274bot-runs' ('managed-panel-lazy-upload-'+$CellId+'-launcher.log')
 @"
 `$ErrorActionPreference='Continue'; `$ProgressPreference='SilentlyContinue'

@@ -1,6 +1,6 @@
-param()
+param([Parameter(Mandatory=$true)][ValidatePattern('^[A-Za-z0-9_-]+$')][string]$CellId)
 $ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'
-$baselineStage='C:\ProgramData\274bot-Test\panel-36825a9'; $candidateStage='C:\ProgramData\274bot-Test\panel-3118e966'
+$baselineStage='C:\ProgramData\274bot-Test\panel-36825a9'; $candidateStage='C:\ProgramData\274bot-Test\panel-3118e96'
 if(-not (Test-Path $baselineStage)){throw "Required baseline stage missing: $baselineStage"}
 $vm=Get-VM -Name '274bot-builder'; if([string]$vm.State -ne 'Off'){throw 'Builder VM is not off'}
 if(Get-Process -Name cargo,rustc,panel-play,tui-play,qemu-system-x86_64,vmware-vmx -ErrorAction SilentlyContinue){throw 'Build/frontend/VM still running'}
@@ -18,6 +18,7 @@ if(Get-Process LogonUI -ErrorAction SilentlyContinue|Where-Object SessionId -eq 
 $processes=@(Get-CimInstance Win32_Process|Select-Object ProcessId,ParentProcessId,Name,SessionId,CreationDate,CommandLine)
 $lasso=@($processes|Where-Object {$_.Name -match '(?i)^(ProcessLasso|bitsum|LassoGovernor).*\.exe$'})
 $serverRecord=[ordered]@{ProcessId=[int]$server.ProcessId;ParentProcessId=[int]$server.ParentProcessId;Name=[string]$server.Name;SessionId=[int]$server.SessionId;CreationDate=[string]$server.CreationDate;CommandLine=$server.CommandLine}
-$record=[ordered]@{schema='lazy-upload-preflight-v1';adapter='Intel(R) Graphics';count=16;cells=@('focused-one','focused-plus-background');roles=@('baseline','candidate');backgroundFps=1;utc=[DateTime]::UtcNow.ToString('o');consoleSessionId=$consoleSid;vm=($vm|Select-Object Name,@{n='State';e={[string]$_.State}},MemoryAssigned);quietServices=@($services|Select-Object Name,@{n='Status';e={[string]$_.Status}});drivers=$drivers;sessions=$sessions;processes=$processes;server=$serverRecord;processLasso=[ordered]@{running=(@($lasso).Count -gt 0);processes=$lasso};strict_binding='unchanged';performanceAcceptance=$false;stages=@(@{role='baseline';path=$baselineStage;binaryPresent=(Test-Path (Join-Path $baselineStage 'panel-play.exe'))},@{role='candidate';path=$candidateStage;binaryPresent=(Test-Path (Join-Path $candidateStage 'panel-play.exe'));stageRequiredBeforeLaunch=$true})}
-$record|ConvertTo-Json -Depth 8|Set-Content (Join-Path $baselineStage 'preflight-panel-lazy-upload.json') -Encoding UTF8
-'Preflight passed: paired stages, checked server identity, quiet services, and unlocked console'
+$power=@(Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue|Select-Object EstimatedChargeRemaining,BatteryStatus); $powerState=[ordered]@{ac=(Get-CimInstance Win32_ComputerSystem).PowerState;battery=$power}
+$record=[ordered]@{schema='lazy-upload-preflight-v1';cellId=$CellId;adapter='Intel(R) Graphics';count=16;cells=@('focused-one','focused-plus-background');roles=@('baseline','candidate');backgroundFps=1;utc=[DateTime]::UtcNow.ToString('o');powerState=$powerState;consoleSessionId=$consoleSid;vm=($vm|Select-Object Name,@{n='State';e={[string]$_.State}},MemoryAssigned);quietServices=@($services|Select-Object Name,@{n='Status';e={[string]$_.Status}});drivers=$drivers;sessions=$sessions;processes=$processes;server=$serverRecord;processLasso=[ordered]@{running=(@($lasso).Count -gt 0);processes=$lasso};strict_binding='unchanged';performanceAcceptance=$false;stages=@(@{role='baseline';path=$baselineStage;binaryPresent=(Test-Path (Join-Path $baselineStage 'panel-play.exe'))},@{role='candidate';path=$candidateStage;binaryPresent=(Test-Path (Join-Path $candidateStage 'panel-play.exe'));stageRequiredBeforeLaunch=$true})}
+$record|ConvertTo-Json -Depth 8|Set-Content (Join-Path $baselineStage ('preflight-panel-lazy-upload-'+$CellId+'.json')) -Encoding UTF8
+'Preflight passed: fresh per-cell record, current power state, checked server identity, quiet services, and unlocked console'

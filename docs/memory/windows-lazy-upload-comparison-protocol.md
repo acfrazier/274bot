@@ -50,7 +50,7 @@ The controls call the existing `docs/memory/run_diagnostic.py` without changing
 it. The focused cell uses:
 
     panel 16 active --focused-one --nav-captures --binary B \
-      --build-manifest M --build-role ROLE --sustain --diagnostics \
+      --build-manifest M --build-role ROLE --sustain \
       --warmup 30 --observe 120 --render-profile --gpu-completion-profile \
       --scheduling-profile --responsiveness-profile --responsiveness-fine \
       --failure-capture
@@ -79,10 +79,10 @@ Transfer this directory without renaming files. The six controls are:
 - `poll-panel-lazy-upload.ps1`
 - `archive-panel-lazy-upload.ps1`
 
-Preparation does not stage the candidate. On the root BotTest machine, after
-operator approval and only before candidate launch, create a new isolated
-stage at `C:\ProgramData\274bot-Test\panel-3118e966` and place only the approved
-candidate `panel-play.exe` there. Verify its SHA-256 against the value above.
+Preparation does not copy or modify the candidate. The root BotTest machine
+already has the approved candidate staged at
+`C:\ProgramData\274bot-Test\panel-3118e96`; verify its SHA-256 against the
+value above before candidate launch.
 The frozen baseline remains in
 `C:\ProgramData\274bot-Test\panel-36825a9`; never replace it. The existing
 workload, cache, nav pack, nav flags, catalog, and local server are reused, not
@@ -97,17 +97,19 @@ or scheduled task.
 
 ## Preflight and execution order
 
-Run the preflight once from elevated PowerShell on the unlocked BotTest local
+Run a fresh preflight for each cell from elevated PowerShell on the unlocked BotTest local
 console. It checks the builder VM is off, no cargo/rustc/frontend/VM process is
 running, quiet services remain stopped, the server is the expected `node.exe`
 process and owns the expected listener, the console is active and unlocked,
-and current Process Lasso/driver/process state. It writes the checked record to
-the frozen baseline stage. Candidate binary presence is intentionally deferred
-until candidate staging.
+and current Process Lasso/driver/process state, including current power state.
+It writes a cell-specific checked record to the frozen baseline stage; never
+reuse a prior cell's timestamped record. Candidate binary presence is
+intentionally deferred until candidate staging.
 
 For each cell, use the following order and wait for completion and cleanup
 before proceeding:
 
+    .\preflight-panel-lazy-upload.ps1 -CellId baseline-focused-one-<unique>
     .\launch-panel-lazy-upload.ps1 -BuildRole baseline -Mode focused-one `
       -CellId baseline-focused-one-<unique>
     .\poll-panel-lazy-upload.ps1 -CellId baseline-focused-one-<unique>
