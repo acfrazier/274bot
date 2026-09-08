@@ -14,6 +14,9 @@ or a full pass from this observation alone.
 Frozen `a9b581ba…` panel ran as BotTest in local console session2, PID8748,
 start `2026-09-08T08:33:38.6938556Z`, using `--live null_raster` and its two
 temporary local test accounts. Harness printed PASS. Both started at Lumbridge.
+The archived GUI startup row identifies Intel(R) Graphics / Vulkan, integrated
+GPU, driver101.8991, Fifo, actual1680×870 at scale1.5. Render attribution was
+enabled for this diagnostic; no clean performance result is inferred.
 Root inspected the actual Teles popup, then supplied Varrock coordinates
 (1760,693) relative to physical window bounds [228,228,2326,1154]. No personal
 vault or production service was used. Builder was Off with zero assigned RAM.

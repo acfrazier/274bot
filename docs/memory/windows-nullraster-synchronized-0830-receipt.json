@@ -161,5 +161,16 @@
     "fullG1G4Accepted": false,
     "cadenceInputP99Proven": false,
     "performanceAcceptance": false
-  }
+  },
+  "guiStartup": {
+    "adapter_name": "Intel(R) Graphics",
+    "adapter_backend": "Vulkan",
+    "adapter_device_type": "IntegratedGpu",
+    "adapter_driver_info": "101.8991",
+    "actual_width": 1680,
+    "actual_height": 870,
+    "scale_factor": 1.5,
+    "present_mode": "Fifo"
+  },
+  "guiStartupSource": "stderr.log first panel-render-attribution startup row"
 }
