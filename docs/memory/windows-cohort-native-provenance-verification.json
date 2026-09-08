@@ -1,0 +1,86 @@
+﻿{
+  "reference": {
+    "status": "verified",
+    "role": "reference",
+    "manifest_binary_key": "control_panel_play",
+    "manifest_path": "C:\\ProgramData\\274bot-Test\\cohort-pair-provenance-ec0adc4\\build-manifest.json",
+    "manifest_sha256": "75e7d48c805f931b8a327a2f1d920b88011f35645010dd2e7338c29e1c0404f6",
+    "build_commit": "e25f32806957b1a44c75a598cbdb7ab53afc5383",
+    "build_branch": "codex/windows-cohort-reference",
+    "host_sources_sha256": "1f2289839d4359f6316cc3c27e3740efa18bcf0691d2a5621aae080fb226013b",
+    "client_commit": "abb811bd0afa1acd99319ccd5bc36bfb241080f9",
+    "client_sources_sha256": "ea6402702a56dc29359bf4effd9ca87407734fc9d940bfabdefb92cec8bf41ee",
+    "feature_flags": {
+      "requested": "memory-profile-no-alloc",
+      "locked": true,
+      "allocation_counting": false
+    },
+    "allocator_provenance": "system",
+    "allocation_counting": false,
+    "files": {
+      "manifest": {
+        "path": "C:\\ProgramData\\274bot-Test\\cohort-pair-provenance-ec0adc4\\build-manifest.json",
+        "sha256": "75e7d48c805f931b8a327a2f1d920b88011f35645010dd2e7338c29e1c0404f6"
+      },
+      "binary": {
+        "path": "C:\\ProgramData\\274bot-Test\\cohort-reference-e25f328\\panel-play.exe",
+        "sha256": "2061d0c7ba82c950084523a7c7e89eed27854e2a533377d9f40ed4a53da5f3ce"
+      },
+      "nav_pack": {
+        "path": "C:\\Users\\BotTest\\.274bot\\274bot.navpack",
+        "sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30"
+      },
+      "nav_flags": {
+        "path": "C:\\Users\\BotTest\\.274bot\\274bot.navflags",
+        "sha256": "92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb"
+      },
+      "catalog": {
+        "path": "C:\\Users\\BotTest\\.274bot\\js-scripts.json",
+        "sha256": "0caf390147528a34e4aebecc1411d8cfa793bdb18d243d2202cecde3972e8ad8"
+      }
+    },
+    "performance_acceptance": false
+  },
+  "candidate": {
+    "status": "verified",
+    "role": "candidate",
+    "manifest_binary_key": "candidate_panel_play",
+    "manifest_path": "C:\\ProgramData\\274bot-Test\\cohort-pair-provenance-ec0adc4\\build-manifest.json",
+    "manifest_sha256": "75e7d48c805f931b8a327a2f1d920b88011f35645010dd2e7338c29e1c0404f6",
+    "build_commit": "ca56e14371d1edb8c09df1276638ce196d502e36",
+    "build_branch": "codex/windows-cohort-candidate",
+    "host_sources_sha256": "7b1f4fa9519037ec00842a6c7517cbb0cc7cfc0730bda1635a838f4118b21cf0",
+    "client_commit": "fd956c91bf09e059359c8e182a33583e2c626cd3",
+    "client_sources_sha256": "fad2e79248c8d62cff2ceba5c757ef555705e85d3dc6797586c9841d9dbfb53e",
+    "feature_flags": {
+      "requested": "memory-profile-no-alloc",
+      "locked": true,
+      "allocation_counting": false
+    },
+    "allocator_provenance": "system",
+    "allocation_counting": false,
+    "files": {
+      "manifest": {
+        "path": "C:\\ProgramData\\274bot-Test\\cohort-pair-provenance-ec0adc4\\build-manifest.json",
+        "sha256": "75e7d48c805f931b8a327a2f1d920b88011f35645010dd2e7338c29e1c0404f6"
+      },
+      "binary": {
+        "path": "C:\\ProgramData\\274bot-Test\\cohort-candidate-ca56e14\\panel-play.exe",
+        "sha256": "3d0037010e21b345daab8d23435f158a79f42b9a46f3c4b2d720f39946edb81b"
+      },
+      "nav_pack": {
+        "path": "C:\\Users\\BotTest\\.274bot\\274bot.navpack",
+        "sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30"
+      },
+      "nav_flags": {
+        "path": "C:\\Users\\BotTest\\.274bot\\274bot.navflags",
+        "sha256": "92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb"
+      },
+      "catalog": {
+        "path": "C:\\Users\\BotTest\\.274bot\\js-scripts.json",
+        "sha256": "0caf390147528a34e4aebecc1411d8cfa793bdb18d243d2202cecde3972e8ad8"
+      }
+    },
+    "performance_acceptance": false
+  }
+}
