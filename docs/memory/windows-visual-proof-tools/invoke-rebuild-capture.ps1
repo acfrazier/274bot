@@ -18,7 +18,7 @@ $prefix=[IO.Path]::GetFullPath('C:\Users\BotTest\274bot-runs\visual-proof-')
 $controllerReceipt=Join-Path $out ($Label+'.controller.json')
 $stdoutPath=Join-Path $out ($Label+'.helper.stdout.txt')
 $stderrPath=Join-Path $out ($Label+'.helper.stderr.txt')
-$child=$null;$childPid=$null;$childStartUtc=$null;$childHandle=$null;$receiptOwned=$false
+$child=$null;$childPid=$null;$childStartUtc=$null;$childHandle=$null;$childStarted=$false;$receiptOwned=$false
 $controllerStartUtc=[DateTime]::UtcNow.ToString('o')
 $inputBeforeUtc=$null;$inputDownUtc=$null;$inputUpUtc=$null
 $readyUtc=$null;$firstFrame=$null;$outcome='not-started';$failure=$null;$childExitCode=$null
@@ -70,6 +70,7 @@ try {
   [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X,Y; }
   [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT { public int dx,dy; public uint mouseData, dwFlags, time; public UIntPtr dwExtraInfo; }
   [StructLayout(LayoutKind.Explicit, Size=40)] public struct INPUT { [FieldOffset(0)] public uint type; [FieldOffset(8)] public MOUSEINPUT mouse; }
+  public static INPUT CreateMouseInput(uint flags) { INPUT input = new INPUT(); input.type = 0; MOUSEINPUT mouse = new MOUSEINPUT(); mouse.dwFlags = flags; input.mouse = mouse; return input; }
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
@@ -102,7 +103,7 @@ try {
  $psi.FileName=Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
  $psi.UseShellExecute=$false;$psi.CreateNoWindow=$true;$psi.WindowStyle=[Diagnostics.ProcessWindowStyle]::Hidden
  $psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
- $args=@('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$helperPath,'-PanelPid',[string]$PanelPid,'-ExpectedStartUtc',$ExpectedStartUtc,'-OutputDirectory',$out,'-Label',$Label,'-DurationSeconds','30','-MaxFrames','300','-DelayMilliseconds','100')
+ $args=@('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$helperPath,'-PanelPid',[string]$PanelPid,'-ExpectedStartUtc',$ExpectedStartUtc,'-OutputDirectory',$out,'-Label',$Label,'-DurationSeconds','30','-MaxFrames','300','-DelayMilliseconds','10')
  $psi.Arguments=(($args | ForEach-Object {Quote-Argument ([string]$_)}) -join ' ')
  $child=New-Object Diagnostics.Process;$child.StartInfo=$psi
  $childStartUtc=[DateTime]::UtcNow.ToString('o')
@@ -110,6 +111,7 @@ try {
  $childPid=$child.Id
  $childStartUtc=$child.StartTime.ToUniversalTime().ToString('o')
  $childHandle=$child.Handle
+ $childStarted=$true
  $child.Refresh()
  if($child.SessionId -ne $sessionId){throw 'Capture helper belongs to another Windows session'}
  $stdoutTask=$child.StandardOutput.ReadToEndAsync();$stderrTask=$child.StandardError.ReadToEndAsync()
@@ -148,8 +150,9 @@ try {
  $null=Verify-Target $true
  if($child.HasExited){throw 'Capture helper exited before input'}
  $childAliveAtInput=$true
- $down=New-Object PanelRebuildCaptureNative+INPUT;$down.type=0;$down.mouse.dwFlags=0x0002
- $up=New-Object PanelRebuildCaptureNative+INPUT;$up.type=0;$up.mouse.dwFlags=0x0004
+ $down=[PanelRebuildCaptureNative]::CreateMouseInput(0x0002)
+ $up=[PanelRebuildCaptureNative]::CreateMouseInput(0x0004)
+ if($down.mouse.dwFlags -ne 0x0002 -or $up.mouse.dwFlags -ne 0x0004){throw 'Mouse input interop flags were not preserved'}
  $inputSize=[Runtime.InteropServices.Marshal]::SizeOf($down)
  $clickAttempted=$true
  try {
@@ -184,18 +187,22 @@ try {
 } catch {
  $outcome='failed';$failure=$_.Exception.Message
 } finally {
- if($null -ne $child -and $child.HasExited -eq $false){
+ if($childStarted -and $null -ne $child){
   try {
    $child.Refresh()
-   if($child.Id -eq $childPid -and $child.StartTime.ToUniversalTime().ToString('o') -eq $childStartUtc){
-    $child.Kill();$remainingMs=[Math]::Max(0,60000-[int]$stopwatch.ElapsedMilliseconds)
-    if(-not $child.WaitForExit([Math]::Min(5000,$remainingMs))){throw 'Capture helper did not stop within cleanup bound'}
-   } else {throw 'Capture helper identity changed; refusing cleanup'}
-  } catch {$failure=($failure+'; cleanup: '+$_.Exception.Message)}
+   if(-not $child.HasExited){
+    if($child.Id -eq $childPid -and $child.StartTime.ToUniversalTime().ToString('o') -eq $childStartUtc){
+     $child.Kill();$remainingMs=[Math]::Max(0,60000-[int]$stopwatch.ElapsedMilliseconds)
+     if(-not $child.WaitForExit([Math]::Min(5000,$remainingMs))){throw 'Capture helper did not stop within cleanup bound'}
+    } else {throw 'Capture helper identity changed; refusing cleanup'}
+   }
+  } catch {$outcome='failed';$failure=($failure+'; cleanup: '+$_.Exception.Message)}
  }
- if($null -ne $child -and $child.HasExited){try{$childExitCode=$child.ExitCode}catch{}}
- if($null -ne $stdoutTask){try{[IO.File]::WriteAllText($stdoutPath,$stdoutTask.GetAwaiter().GetResult())}catch{$failure=($failure+'; stdout: '+$_.Exception.Message)}}
- if($null -ne $stderrTask){try{[IO.File]::WriteAllText($stderrPath,$stderrTask.GetAwaiter().GetResult())}catch{$failure=($failure+'; stderr: '+$_.Exception.Message)}}
+ if($childStarted -and $null -ne $child){try{if($child.HasExited){$childExitCode=$child.ExitCode}}catch{$outcome='failed';$failure=($failure+'; exitcode: '+$_.Exception.Message)}}
+ $remainingMs=[Math]::Max(0,60000-[int]$stopwatch.ElapsedMilliseconds)
+ if($null -ne $stdoutTask){try{if(-not $stdoutTask.Wait($remainingMs)){throw 'Helper stdout drain exceeded controller bound'};[IO.File]::WriteAllText($stdoutPath,$stdoutTask.Result)}catch{$outcome='failed';$failure=($failure+'; stdout: '+$_.Exception.Message)}}
+ $remainingMs=[Math]::Max(0,60000-[int]$stopwatch.ElapsedMilliseconds)
+ if($null -ne $stderrTask){try{if(-not $stderrTask.Wait($remainingMs)){throw 'Helper stderr drain exceeded controller bound'};[IO.File]::WriteAllText($stderrPath,$stderrTask.Result)}catch{$outcome='failed';$failure=($failure+'; stderr: '+$_.Exception.Message)}}
  $controllerEndUtc=[DateTime]::UtcNow.ToString('o')
  if($receiptOwned){[ordered]@{schema='native-synchronized-rebuild-controller-v1';label=$Label;controllerStartUtc=$controllerStartUtc;controllerEndUtc=$controllerEndUtc;controllerDurationMilliseconds=$stopwatch.ElapsedMilliseconds;panelPid=$PanelPid;expectedStartUtc=$ExpectedStartUtc;sessionId=$sessionId;binary=$expectedBinary;binarySha256=$binaryHash;helperPath=$helperPath;helperSha256=$helperHash;helperPid=$childPid;helperStartUtc=$childStartUtc;helperExitCode=$childExitCode;helperHandleRetained=($null -ne $childHandle);expectedRect=$ExpectedRect;input=$inputIdentity;readyUtc=$readyUtc;firstFrame=$firstFrame;burstOutcome=$burstOutcome;inputBeforeUtc=$inputBeforeUtc;inputDownUtc=$inputDownUtc;inputUpUtc=$inputUpUtc;downSendInputResult=$downSendInputResult;upSendInputResult=$upSendInputResult;clickAttempted=$clickAttempted;chronology=[ordered]@{firstFrameAfterController=($null -ne $firstFrame -and [DateTime]::Parse($firstFrame.captureStartedUtc).ToUniversalTime() -ge [DateTime]::Parse($controllerStartUtc).ToUniversalTime());inputAfterReady=($null -ne $readyUtc -and $null -ne $inputBeforeUtc -and [DateTime]::Parse($inputBeforeUtc).ToUniversalTime() -ge [DateTime]::Parse($readyUtc).ToUniversalTime());inputWhileHelperAlive=$childAliveAtInput;inputInsideAcceptedBurst=($burstIdentityMatch -and $burstOutcome -eq 'completed' -and $null -ne $inputDownUtc -and $null -ne $inputUpUtc -and [DateTime]::Parse($inputDownUtc).ToUniversalTime() -ge [DateTime]::Parse($burst.captureStartedUtc).ToUniversalTime() -and [DateTime]::Parse($inputUpUtc).ToUniversalTime() -le [DateTime]::Parse($burst.captureEndedUtc).ToUniversalTime())};outcome=$outcome;failure=$failure;sceneState='not inferred from capture';performanceAcceptance=$false}|ConvertTo-Json -Depth 12|Set-Content -LiteralPath $controllerReceipt -Encoding UTF8;$receiptWritten=$true}
  if($null -ne $child){$child.Dispose()}
