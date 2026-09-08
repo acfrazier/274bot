@@ -9,6 +9,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 11:26 UTC
+
+- Reader t_829c6804 configured implementer run727 verified live (~4min),
+  same-card corrective scope unchanged. No new reader commit/review accepted.
+- Root initialized exact client submodules in the two prepared native-parent
+  worktrees; tracked sources clean and client HEADs verified. Local macOS
+  cargo check --locked -p panel --features memory-profile-no-alloc passes for
+  reference bf2d1ed (7.21s) and candidate984c639 (3.93s after forced source
+  recompile). Existing cadence unused-method warning only. Not native evidence.
+- Initial candidate shared-target check1.18s reused artifacts and is excluded.
+  Refreshing only tracked source mtimes forced actual candidate dependencies
+  to recompile. Source contents stayed unchanged. Prepared native build scripts
+  now require distinct initially absent target-native-cohort-HASH directories;
+  archive-preserved mtimes must not allow one role to reuse the other role.
+  Updated source-preparation receipt includes script hashes and local results.
+- No native upload/build/test/run. Reader and combined review still required;
+  previous source/binary receipts and all final acceptance gaps preserved.
+
 ## Latest boundary — 2026-09-08 11:21 UTC
 
 - Root reclaimed reader corrective Luna run726 after direct source audit:

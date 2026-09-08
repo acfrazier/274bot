@@ -12,6 +12,17 @@
       "archives": {
         "host-bf2d1ed.tar.gz": "c2af47331e8e3779bb7caead3db6faa6545b057b8d3cc6ee16120d436d2b0a04",
         "client-abb811b.tar.gz": "c8eac9ccd06c46a0beca420f6fc30ccd2e4b23237c1ea9894ea743b73fd834ab"
+      },
+      "prepared_build_script_sha256": "dcba00eb19233ccd0cbd2f7a626197461c115a67e7bcc3d9e3756dab52def5fe",
+      "native_target_directory": "target-native-cohort-bf2d1ed",
+      "local_compile_check": {
+        "host_platform": "macOS arm64",
+        "command": "cargo check --locked -p panel --features memory-profile-no-alloc",
+        "exit_code": 0,
+        "duration_s": 7.21,
+        "source_recompiled": true,
+        "existing_warning": "cadence generation and slot_id unused",
+        "native_evidence": false
       }
     },
     "candidate": {
@@ -24,10 +35,23 @@
       "archives": {
         "host-984c639.tar.gz": "6ce48b47c551eb277ea0bf345f7d3edf3975903ff8887bb426ca422e7af819af",
         "client-fd956c9.tar.gz": "ff65c36d805e1b0c63569884fe0316c436e3e9f4b6d26e440d5f848ca0fd1be7"
+      },
+      "prepared_build_script_sha256": "de0f3229a5c3c869edbce527e95c9695114c7a4c0b466b506941244a7c18c149",
+      "native_target_directory": "target-native-cohort-984c639",
+      "local_compile_check": {
+        "host_platform": "macOS arm64",
+        "command": "cargo check --locked -p panel --features memory-profile-no-alloc",
+        "exit_code": 0,
+        "duration_s": 3.93,
+        "source_recompiled": true,
+        "existing_warning": "cadence generation and slot_id unused",
+        "native_evidence": false
       }
     }
   },
   "original_role_difference_patch_id": "e95ca64e3d1d5caa8735fcec9f2360a5e7383b4b",
   "prepared_role_difference_patch_id": "e95ca64e3d1d5caa8735fcec9f2360a5e7383b4b",
-  "role_difference_preserved": true
+  "role_difference_preserved": true,
+  "native_build_isolation": "Each prepared role uses a distinct initially absent target directory. Shared Cargo target plus archive-preserved mtimes can incorrectly reuse the other role; no native builds have run.",
+  "discarded_local_check": "Candidate initial 1.18s shared-target check reused source artifacts; excluded. Tracked source mtimes refreshed without content changes and actual candidate client/host/host-play dependencies recompiled in recorded 3.93s check."
 }
