@@ -11,6 +11,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 18:46 UTC
+
+- Owner ledger636d2e4 APPROVED actual Grok4.5/xai-oauth, session
+  20260908_144214_01bc3d (t_debbacca). Source-fixed element storage is now
+  evaluated using native supplementary layouts; dynamic heap occupancy remains
+  unmeasured. Next card t_aa4dcc1e declares one bounded N1 allocation-family
+  capture procedure; no live capture is released until its concrete review.
+- 289 corrected regression1c1c2fb APPROVED actual Grok4.5/xai-oauth, session
+  20260908_144014_332eb3. Root built window target and performed isolated proof
+  client90172 against original server67696. FAIL: ingame then T1 packet160/4
+  after63/63, root-read capture confirms return to title. Root stopped client,
+  exit-15; all three protected274/377 config digests unchanged. Evidence remains
+  isolated runtime/client-proof-1844 with launch/completion/proof manifests.
+- Absolute engine ServerGameProt.ts defines IF_SETCOLOUR160/4. New Luna card
+  t_5f66df33 is running the correction and transitive login/first-tick emission
+  audit, since prior completeness claims did not survive live proof. No new
+  live attempt until reviewed; host integration planning remains parked.
+
 ## Latest boundary — 2026-09-08 18:40 UTC
 
 - Phase A ledger469ce26 received actual Grok4.5 changes requested, session
