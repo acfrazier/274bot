@@ -9,6 +9,28 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 01:03 UTC
+
+- ROOT ACTUAL BASELINE RUNNING: baseline-focused-one-20260908-0102 launched
+  01:02:12 with immutable83ccc63 operational controls. Poll01:02:44 confirms
+  scheduled task Running, controller9276, launcher17476, panel16804, collector
+  19276. Completion absent; do not restart. Wait/poll existing cell then archive
+  and inspect before next baseline background/candidate cells. No build/test
+  runs overlap this Windows cell. Startup not yet surfaced by receipt-based poll.
+- Before launch, native BotTest contractcheck-83ccc63 completed0 with all four
+  actual controller role/mode paths. Replaced managed main ONLY in separate
+  diagnostic wrapper to run validate_spec, parse, argv consistency and actual
+  build/server preflight, never launch children. Four unique contractcheck dirs
+  explicitly are no-launch diagnostics. Native direct ParseFile confirms all
+  four operational83 controls parse clean. Added helper itself had invalid
+  $name: interpolation; root helper-only15a5ed4 fixes it, no operational change.
+  Keep83staged and prior failures immutable; helper was not used for launch.
+- Real-frame3dd0792 approved Grok4.5 review529: hostplay9off/16on, panel2/3,
+  committed golden v2 and dumps byte-identical. Root integration verification
+  and cherry-pick remain pending; do not infer multi-thread/GameView proof.
+- Census binary66ba7c1 SHA2046ca2444a3389d9d0a993c156fde286dd9c9caac61c8766b65d9a21bf45d7f;
+  native11sampler tests passed earlier, still not BotTest staged or measured.
+
 ## Latest boundary — 2026-09-08 00:59 UTC
 
 - Census/private sampler66ba7c1/client9f72c2f passed corrective actual Grok4.5
