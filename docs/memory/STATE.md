@@ -11,6 +11,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 16:01 UTC
+
+- Operator performed prepared VPS reboot. Root verified new boot08c031f9,
+  kernel6.8.0-139-generic, no reboot-required marker, SSH socket22111 active.
+  Concord automatically returned as PID726/start linux_proc_start_ticks:1761;
+  loopback80/43594/8898 listen and HTTP/crc20040bytes matches pre-reboot hash.
+  Nightly remains disabled/inactive. Old PID152004 receipts are historical.
+- Frozen c0709ab/client3456 source1113files and binarya0c6eb0b staged and
+  hash-verified on VPS. Native ldd resolves every dependency; no frontend launch.
+  Source checkout workspace-c0709ab/host, immutable binary in
+  calibration-c0709ab-incoming; local vps-stage-receipt.json preserves proof.
+- Fixture review rejected0b4aa95; Luna correction active. Controls430a88f in
+  second Grok4.5 review; root found environment cleared before being copied
+  into launch configuration and false no-launch exception reporting. No release.
+
 ## Latest boundary — 2026-09-08 15:59 UTC
 
 - Development branch published normally at aa82c8b; remote exact commit verified.
