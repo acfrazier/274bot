@@ -9,6 +9,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 06:16 UTC
+
+- CPU provenance correction b8327a3 approved actualGrok4.5/xai-oauth session
+  20260908_021239_ecb3ad. Native14-file controls archive hash
+  aaa2547beeca0bbbdc26140550e1b654f21e48bf74b75601b2d78c3fe5950a4b
+  verified/staged; PowerShell AST, both fresh0215 privileged preflights,
+  actual/contract controller staging and BotTest limited no-launch checks passed.
+  Both explicitly validate generated server_configuration. Controller SHA
+  7537ac90f325138ce6484aaa3264eb23d832e19fa9713f2ae81820f1343d3b41.
+- Fresh baseline-focused-one-cpu-native-20260908-0215 launched after successful
+  receipt consume and fresh preflight. Await actual completion, native binding,
+  qualification, archive verification and image inspection before candidate0215.
+  Original0155 incomplete proof preserved. Four temporary CPU runtime files
+  still installed: restore original hashed backup before any clean GPU stage.
+- Focused report correction0501fed approved actualGrok4.5/xai-oauth session
+  20260908_021139_7ec297. Single longer focused600s recommendation remains
+  unlaunched; focused RSS result inconclusive. Final campaign gates unchanged.
+
 ## Latest boundary — 2026-09-08 06:10 UTC
 
 - CPU runtime 2d15282 and controls26426b0 were staged after native no-frontend/
