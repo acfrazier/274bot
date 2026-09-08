@@ -1,0 +1,21 @@
+{
+  "controls_commit": "e7158ba46ce19d7086dff1fac242a1dca53ac283",
+  "review": {
+    "model": "grok-4.5",
+    "provider": "xai-oauth",
+    "session": "20260908_010029_f5cd81",
+    "verdict": "approved"
+  },
+  "native_ast": "pass 7 scripts",
+  "native_contract": "pass all four role/mode contracts as BotTest limited, exit0; privileged receipt consume passed; actual launch output namespaces absent",
+  "performance_acceptance": false,
+  "files": {
+    "tile-boxed-contract-baseline-focused-plus-background-nativecheck-20260908-0103-contractcheck.json": "71f40b2787b8ab179f9e280bb3d0f1857d95cdb573f978150104b850dcecfa56",
+    "tile-boxed-contractcheck-all-0103-exit.txt": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354",
+    "transfer-receipt.json": "7b1cd8cd2ac1fec10bf343b3e8ab0a4350fec30ebe2c822307e3312fdcd76b0b",
+    "tile-boxed-contract-baseline-focused-one-nativecheck-20260908-0103-contractcheck.json": "1adbdf7ff03d6b23f8077a923142e21fe56e2816451faf10aeb6dce9506ab61b",
+    "tile-boxed-contract-candidate-focused-one-nativecheck-20260908-0103-contractcheck.json": "fe6232aeaec957be80f13419f22ae1a40e4f05ebf92a80cc6a8c0a37946e45e2",
+    "tile-boxed-contract-candidate-focused-plus-background-nativecheck-20260908-0103-contractcheck.json": "1ee654b7c33fd8ace109c92f6380c51ea8833ab5799479bfad1eb3dd67f205c8",
+    "tile-boxed-contractcheck-all-0103.log": "4e0709ff9d2ffce3764e184ccc6bf203ec81411b2c04e50f7964960f401bd36e"
+  }
+}

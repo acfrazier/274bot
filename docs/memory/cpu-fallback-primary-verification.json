@@ -1,0 +1,22 @@
+{
+  "source_commits": [
+    "35eab6c",
+    "2d15282"
+  ],
+  "original_commits": [
+    "137d2f9",
+    "79d02e0"
+  ],
+  "review_session": "20260908_005829_0f89e3",
+  "review_model": "grok-4.5",
+  "review_provider": "xai-oauth",
+  "command": "python3 -m unittest test_run_diagnostic test_run_managed_cell test_matched_evidence_adapter test_reference_metrics",
+  "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory",
+  "tests": 197,
+  "result": "OK",
+  "elapsed_s": 36.857,
+  "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/cpu-fallback-primary-tests.log",
+  "log_sha256": "e7b75209b4388ea7654c2be567d73f7c592ab214edf0870edd26d68995dfa12a",
+  "native_cpu_proof": false,
+  "performance_acceptance": false
+}

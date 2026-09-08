@@ -9,6 +9,26 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 05:04 UTC
+
+- CPU tooling correction approved actual Grok 4.5/xai-oauth session
+  20260908_005829_0f89e3. Integrated only source137d2f9/79d02e0 as35eab6c/2d15282.
+  Primary complete four-suite test passed197 tests36.857s, including historical
+  fixtures. cpu-fallback-primary-verification.json records hashes; native CPU
+  functional proof remains pending. Frozen Rust/native binaries unchanged.
+- Controls e7158ba approved actual Grok4.5 session20260908_010029_f5cd81.
+  Root native AST7, four role/mode preflights, privileged contract staging,
+  limited BotTest no-launch contracts and privileged receipt consume all passed.
+  Four real output paths remained absent after contract. Hashed report:
+  windows-tile-boxed-contract-native-e7158ba.json. Failed0055 path preserved.
+- FIRST clean N16 background baseline launched05:03:35UTC with fresh preflight:
+  baseline-focused-plus-background-nativecheck-20260908-0103. Native scheduled
+  task274bot-BotTest-tile-boxed-baseline-focused-plus-background-nativecheck-20260908-0103.
+  Controller SHA685bac0dfe2eecec971c77fc5cc4377a1dfdd731280535fbc3a29a7fb944f70a,
+  controls stageProgramData/274bot-Test/tile-boxed-controls-e7158ba. Await actual
+  terminal completion, adapter proof, archive/binding/qualification before next
+  candidate cell. Order remains backgroundABBA then focusedAB; no acceptance yet.
+
 ## Latest boundary — 2026-09-08 04:57 UTC
 
 - Clean controls bbf26a0 passed local 6 tests and actual Grok 4.5 review
