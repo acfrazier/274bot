@@ -58,7 +58,8 @@ def no_launch(argv):
     assert os.environ.get("BOT_RENDER_OWNER_CENSUS") != "1"
     assert spec["stimulus_plan"] and spec["stimulus_receipt"]
     assert spec["stimulus_schema"] == "native-panel-input-stimulus-run-receipt-v1"
-    assert spec["prepare_receipt"]
+    assert os.environ.get("COHORT_NO_LAUNCH_VALIDATION") == "1"
+    assert spec.get("prepare_receipt") is None
 
     assert spec["cell_id"] == contract_id
     checks.append({"id": target_cell_id, "contract_cell_id": cell_id, "checked": True, "launched": False, "client_started": False,

@@ -14,7 +14,7 @@ import run_managed_cell as rmc
 
 def controller_functions():
     tree = ast.parse((HERE / "run-cohort-pair.py").read_text())
-    names = {"diagnostic_argv", "validate_build_receipt", "validate_stimulus_plan", "validate_stimulus_receipt"}
+    names = {"diagnostic_argv", "validate_build_receipt", "validate_stimulus_plan", "validate_stimulus_receipt", "validate_prepare_receipt"}
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
     namespace = {"re": __import__("re"), "json": __import__("json"), "pathlib": pathlib}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "run-cohort-pair.py", "exec"), namespace)
@@ -93,6 +93,21 @@ class CohortPairControls(unittest.TestCase):
         self.assertIn('"cohort_tail_s": 5', source)
         self.assertIn('"teardown_grace_s": 60', source)
         self.assertIn('"stimulus_receipt"', source)
+
+    def test_no_launch_then_prepare_then_launch_order_is_explicit(self):
+        validate_prepare = controller_functions()["validate_prepare_receipt"]
+        cell_id = "baseline-focused-one-x"
+        contract = {"kind": "no-launch contract test", "cell_id": cell_id, "performance_acceptance": False}
+        self.assertFalse((HERE / "test-prepare-missing.json").exists())
+        prepare = {"schema": "cohort-pair-prepare-no-launch-v1", "cell_id": cell_id, "client_started": False, "scheduled_task_created": False}
+        self.assertIs(validate_prepare(prepare, cell_id=contract["cell_id"]), prepare)
+        for bad in ({"cell_id": "candidate-focused-one-x"}, {"client_started": True}, {"scheduled_task_created": True}):
+            candidate = dict(prepare); candidate.update(bad)
+            with self.assertRaises(AssertionError):
+                validate_prepare(candidate, cell_id=cell_id)
+        launch_source = (HERE / "launch-cohort.ps1").read_text()
+        self.assertIn("Exact no-launch prepare receipt is required before scheduling", launch_source)
+        self.assertIn("COHORT_NO_LAUNCH_VALIDATION", (HERE / "run-contractcheck.ps1").read_text())
 
     def test_scheduled_launcher_serializes_frozen_child_bindings(self):
         source = (HERE / "launch-cohort.ps1").read_text()

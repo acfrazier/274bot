@@ -32,7 +32,7 @@ if(-not $ContractReceipt){ $ContractReceipt = 'C:\Users\BotTest\274bot-runs\coho
 # preflight, and contract staging have already run in their documented order;
 # the real controller contract check ran separately as BotTest Interactive
 # Limited.
-$stage = if($BuildRole -eq 'baseline'){if($env:COHORT_REFERENCE_STAGE){$env:COHORT_REFERENCE_STAGE}else{'C:\ProgramData\274bot-Test\cohort-reference'}}else{if($env:COHORT_CANDIDATE_STAGE){$env:COHORT_CANDIDATE_STAGE}else{'C:\ProgramData\274bot-Test\cohort-candidate'}}
+$stage = if($BuildRole -eq 'baseline'){if($env:COHORT_REFERENCE_STAGE){$env:COHORT_REFERENCE_STAGE}else{'C:\ProgramData\274bot-Test\cohort-reference-e25f328'}}else{if($env:COHORT_CANDIDATE_STAGE){$env:COHORT_CANDIDATE_STAGE}else{'C:\ProgramData\274bot-Test\cohort-candidate-ca56e143'}}
 $preflightDir=if($env:COHORT_PREFLIGHT_DIR){$env:COHORT_PREFLIGHT_DIR}else{'C:\ProgramData\274bot-Test\cohort-preflight'}; $preflight = Join-Path $preflightDir ('preflight-cohort-'+$CellId+'.json')
 if(-not (Test-Path $preflight -PathType Leaf)){ throw 'No-launch preflight receipt missing' }
 $record = Get-Content $preflight -Raw | ConvertFrom-Json

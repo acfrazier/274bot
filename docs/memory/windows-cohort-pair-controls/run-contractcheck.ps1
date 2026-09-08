@@ -12,15 +12,14 @@ param(
     [Parameter(Mandatory=$true)][string]$BuildManifest,
     [Parameter(Mandatory=$true)][string]$BuildReceipt,
     [Parameter(Mandatory=$true)][string]$StimulusPlan,
-    [Parameter(Mandatory=$true)][string]$StimulusReceipt,
-    [Parameter(Mandatory=$true)][string]$PrepareReceipt
+    [Parameter(Mandatory=$true)][string]$StimulusReceipt
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 if($env:USERNAME -ne 'BotTest'){ throw 'Contract check must run as BotTest Interactive Limited' }
 $prefix="$BuildRole-$Mode-"; if(-not $CellId.StartsWith($prefix)){throw "CellId must start with $prefix"}
 $contractId = $CellId + '-cohort-contractcheck'
-$stage = if($BuildRole -eq 'baseline'){if($env:COHORT_REFERENCE_STAGE){$env:COHORT_REFERENCE_STAGE}else{'C:\ProgramData\274bot-Test\cohort-reference'}}else{if($env:COHORT_CANDIDATE_STAGE){$env:COHORT_CANDIDATE_STAGE}else{'C:\ProgramData\274bot-Test\cohort-candidate'}}
+$stage = if($BuildRole -eq 'baseline'){if($env:COHORT_REFERENCE_STAGE){$env:COHORT_REFERENCE_STAGE}else{'C:\ProgramData\274bot-Test\cohort-reference-e25f328'}}else{if($env:COHORT_CANDIDATE_STAGE){$env:COHORT_CANDIDATE_STAGE}else{'C:\ProgramData\274bot-Test\cohort-candidate-ca56e143'}}
 $preflightDir=if($env:COHORT_PREFLIGHT_DIR){$env:COHORT_PREFLIGHT_DIR}else{'C:\ProgramData\274bot-Test\cohort-preflight'}; $preflight = Join-Path $preflightDir ('preflight-cohort-'+$CellId+'.json')
 if(-not (Test-Path $preflight -PathType Leaf)){ throw "Privileged host preflight receipt missing: $preflight" }
 $contractCellId = $CellId + '-cohort-contractcheck'
@@ -42,8 +41,9 @@ $env:COHORT_BUILD_MANIFEST = $BuildManifest
 $env:COHORT_BUILD_RECEIPT = $BuildReceipt
 $env:COHORT_STIMULUS_PLAN = $StimulusPlan
 $env:COHORT_STIMULUS_RECEIPT = $StimulusReceipt
-$env:COHORT_PREPARE_RECEIPT = $PrepareReceipt
-if(-not (Test-Path $BuildManifest -PathType Leaf) -or -not (Test-Path $BuildReceipt -PathType Leaf) -or -not (Test-Path $StimulusPlan -PathType Leaf) -or -not (Test-Path $PrepareReceipt -PathType Leaf)){ throw 'Explicit contract provenance files are required' }
+$env:COHORT_NO_LAUNCH_VALIDATION = '1'
+Remove-Item Env:COHORT_PREPARE_RECEIPT -ErrorAction SilentlyContinue
+if(-not (Test-Path $BuildManifest -PathType Leaf) -or -not (Test-Path $BuildReceipt -PathType Leaf) -or -not (Test-Path $StimulusPlan -PathType Leaf)){ throw 'Explicit contract provenance files are required' }
 Push-Location $HostRoot
 try { & $python (Join-Path $PSScriptRoot 'check-cohort-contract.py') }
 finally { Pop-Location }

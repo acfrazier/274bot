@@ -126,6 +126,14 @@ def validate_stimulus_receipt(path, *, plan, cell_id, run_started_unix):
         raise AssertionError("stimulus receipt must not claim acceptance")
     return receipt
 
+def validate_prepare_receipt(receipt, *, cell_id):
+    """Validate the privileged no-launch receipt consumed only at launch."""
+    if receipt.get("schema") != "cohort-pair-prepare-no-launch-v1":
+        raise AssertionError("invalid prepare receipt schema")
+    if receipt.get("cell_id") != cell_id or receipt.get("client_started") is not False or receipt.get("scheduled_task_created") is not False:
+        raise AssertionError("prepare receipt is not an exact no-launch receipt")
+    return receipt
+
 receipt_path = pathlib.Path(os.environ.get("COHORT_BUILD_RECEIPT", ""))
 assert receipt_path.is_file(), "explicit frozen build receipt is required"
 build_receipt = validate_build_receipt(json.loads(receipt_path.read_text(encoding="utf-8-sig")), role_name=role, role_info=role_info, binary_path=binary, expected_client=expected_client)
@@ -135,10 +143,13 @@ assert stimulus_plan_path.is_file(), "explicit root-managed stimulus plan is req
 stimulus_plan = validate_stimulus_plan(stimulus_plan_path)
 stimulus_path = pathlib.Path(os.environ.get("COHORT_STIMULUS_RECEIPT") or stimulus_plan["receiptPath"])
 prepare_receipt_path = pathlib.Path(os.environ.get("COHORT_PREPARE_RECEIPT", ""))
-assert prepare_receipt_path.is_file(), "explicit consumed no-launch prepare receipt is required"
-prepare_receipt = json.loads(prepare_receipt_path.read_text(encoding="utf-8-sig"))
-assert prepare_receipt.get("schema") == "cohort-pair-prepare-no-launch-v1"
-assert prepare_receipt.get("cell_id") == cell_id and prepare_receipt.get("client_started") is False
+no_launch_validation = os.environ.get("COHORT_NO_LAUNCH_VALIDATION") == "1"
+if no_launch_validation:
+    # Contract validation is first; preparation consumes its receipt later.
+    prepare_receipt = None
+else:
+    assert prepare_receipt_path.is_file(), "explicit consumed no-launch prepare receipt is required"
+    prepare_receipt = validate_prepare_receipt(json.loads(prepare_receipt_path.read_text(encoding="utf-8-sig")), cell_id=cell_id)
 server = home / "274bot-server-4c95f87"
 launch = json.loads((server / "server-launch.json").read_text(encoding="utf-8-sig"))
 pid = int(launch["pid"])
@@ -185,7 +196,7 @@ dump(server_id, {"configuration": {"world_json_sha256": sha(server / "data/confi
 dump(conditions, {"purpose": "Native N16 cohort matched pair diagnostic", "terminal_transport_expected": False, "panel_render_attribution": True, "platform": platform.platform(), "user": os.environ["USERNAME"], "role": role, "mode": mode, "cell_id": cell_id, "performance_acceptance": False, "builds_stopped_before_run": True, "native_preflight": preflight_record, "checked_server": preflight_record["server"], "stimulus": {"controller": "root-managed receipt-bound helper", "plan_required": True, "completed_receipt_after_run": True, "binding": "slot0 Game Image after scene2 capture verification"}})
 # The longer confirmation deliberately avoids navigation PNG capture and all census/counting diagnostics.
 diag = diagnostic_argv(binary, manifest, role_info["manifest_role"], mode)
-spec = {"id": "native-panel-cohort-pair-" + cell_id, "index": 1, "cell_id": cell_id, "build_role": role_info["manifest_role"], "mode": mode, "kind": "diagnostic", "frontend": "panel", "count": 16, "requested_backend": "gpu", "requested_adapter": "Intel(R) Graphics", "configured_background_fps": None, "binary": str(binary), "build_manifest": str(manifest), "build_receipt": str(receipt_path), "server_identity_path": str(server_id), "host_conditions_path": str(conditions), "nav_pack": os.environ["NAV_PACK"], "nav_flags": os.environ["NAV_FLAGS"], "catalog_path": str(catalog), "launcher_argv": [sys.executable, str(mem / "run_diagnostic.py"), *diag], "diagnostic_argv": diag, "game_server_pid": pid, "ambient_helpers": {"bootstrap": os.getppid()}, "sampler_interval_s": 0.5, "max_wall_s": 1500, "observe_s": 600, "warmup_s": 120, "teardown_grace_s": 60, "cohort_tail_s": 5, "process_backend": "system", "cache_dir": str(server / "data/pack/client"), "unpack_root": str(home / ".274bot/unpack"), "stimulus_plan": str(stimulus_plan_path), "stimulus_receipt": str(stimulus_path), "stimulus_schema": "native-panel-input-stimulus-run-receipt-v1", "prepare_receipt": str(prepare_receipt_path), "performance_acceptance": False}
+spec = {"id": "native-panel-cohort-pair-" + cell_id, "index": 1, "cell_id": cell_id, "build_role": role_info["manifest_role"], "mode": mode, "kind": "diagnostic", "frontend": "panel", "count": 16, "requested_backend": "gpu", "requested_adapter": "Intel(R) Graphics", "configured_background_fps": None, "binary": str(binary), "build_manifest": str(manifest), "build_receipt": str(receipt_path), "server_identity_path": str(server_id), "host_conditions_path": str(conditions), "nav_pack": os.environ["NAV_PACK"], "nav_flags": os.environ["NAV_FLAGS"], "catalog_path": str(catalog), "launcher_argv": [sys.executable, str(mem / "run_diagnostic.py"), *diag], "diagnostic_argv": diag, "game_server_pid": pid, "ambient_helpers": {"bootstrap": os.getppid()}, "sampler_interval_s": 0.5, "max_wall_s": 1500, "observe_s": 600, "warmup_s": 120, "teardown_grace_s": 60, "cohort_tail_s": 5, "process_backend": "system", "cache_dir": str(server / "data/pack/client"), "unpack_root": str(home / ".274bot/unpack"), "stimulus_plan": str(stimulus_plan_path), "stimulus_receipt": str(stimulus_path), "stimulus_schema": "native-panel-input-stimulus-run-receipt-v1", "prepare_receipt": str(prepare_receipt_path) if prepare_receipt is not None else None, "no_launch_validation": no_launch_validation, "performance_acceptance": False}
 sp = out / "spec.json"
 dump(sp, spec)
 dump(out / "started.json", {"pid": os.getpid(), "start_identity": wps.sample_process(os.getpid())["start_identity"], "started_unix": time.time(), "role": role, "mode": mode, "cell_id": cell_id, "count": 16, "observe_s": 600, "warmup_s": 120, "cohort_tail_s": 5, "teardown_grace_s": 60, "requested_backend": "gpu", "requested_adapter": "Intel(R) Graphics", "build_receipt": str(receipt_path), "stimulus_plan": str(stimulus_plan_path), "stimulus_receipt": str(stimulus_path)})
