@@ -1,0 +1,123 @@
+{
+  "scope": "Fixed-window cohort producer, publisher, reader, bounded panel input trace, and memory-harness capture lifecycle integration milestone. Not final whole-campaign review.",
+  "frozen_utc": "2026-09-08T12:50:46.423200+00:00",
+  "base": "1ce9edb8252a0917c86e66ab5a31324426284af5",
+  "head": "f9d729ce6e986a9effeac3134e262eeeb9209cb7",
+  "primary_branch": "codex/memory-diagnostics",
+  "client": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+  "source_files_sha256": {
+    "crates/host-play/src/lib.rs": "ab8284adda3b7c5f07d0eabbfa11e5eef2435bb3079f242d34f0218ed10683b4",
+    "crates/host-play/src/memory.rs": "31b5238d61fb044906bf8f2b6c7096cd44c234dfefdbbb6b377b6d61224a0f99",
+    "crates/host/src/input_seam_trace.rs": "1701af8e76c45fba252028a88e8445d4f67bd4be1a0b2c2b87d3145d2c58eb97",
+    "crates/host/src/lib.rs": "9114754e187b4ac1e2d7adba19ba8456db2ca44333a88bfa2b8471e953f46378",
+    "crates/host/src/responsiveness_cohort.rs": "fd9031f6861a5323bbb1f03d48642eb8cb389b6948ea2560e62b652a017d919a",
+    "crates/host/src/responsiveness_profile.rs": "47d85f0deead67ba8330d5216a23de68688e4eccf82bcfef2b97b1e4d1c916ed",
+    "crates/host/src/slot_io.rs": "5dd786541181dcf3ff9267fb928bf8f0bcbcef00a790c40edc375ef5533d7bc0",
+    "crates/panel/src/app.rs": "c0d755cf8a48751298668fe8281f19106f1dc424678ac3b0d8c1512b583b3387",
+    "crates/panel/src/focus.rs": "2831df62543d8af36dac1116ec445c60da01a21e6bea83eed22e93e1ee93d0bb",
+    "crates/panel/src/session.rs": "8896d4783c0f3c6bf02ca04e5e6cf7d00f05ecf413e034d853f5836ba5f2396d",
+    "crates/panel/src/window.rs": "3b70c761a42eb322f2ddfca40ad27fd4b528dda127fef29c9402a5a0b4c6e748",
+    "docs/memory/cohort_reader.py": "cd383fc3c9ced01efd12c5bd077d74b20d70db2feb4b7001e0757e4c84603d40",
+    "docs/memory/reference_metrics.py": "4913d232e6a637a55d0c62d8faffce9d6667d9f3b1c22457b6dff43576d3297e",
+    "docs/memory/test_cohort_reader.py": "7508999ad1616db7a1ec0d9f4255b4d282a81f3138071a34b09106219225a9b9"
+  },
+  "python_tests": {
+    "test_cohort_reader": {
+      "ran": 60,
+      "failed": 0,
+      "skipped": 0,
+      "duration_s": 0.124
+    },
+    "test_reference_metrics": {
+      "ran": 100,
+      "failed": 0,
+      "skipped": 0,
+      "duration_s": 0.265
+    },
+    "test_matched_evidence_adapter": {
+      "ran": 46,
+      "failed": 0,
+      "skipped": 0,
+      "duration_s": 0.49
+    },
+    "test_instrumentation_overhead": {
+      "ran": 29,
+      "failed": 0,
+      "skipped": 0,
+      "duration_s": 2.352
+    }
+  },
+  "panel_verification": {
+    "command": "cargo test --locked -p panel --features memory-profile-no-alloc --lib -- capture memory_ --test-threads=1",
+    "passed": 25,
+    "failed": 0,
+    "ignored": 0,
+    "filtered": 363,
+    "log": "diagnostics/cohort-integrated-panel-tests.log",
+    "log_sha256": "39e9878e1b4e2cd865801428d043a3baaeebe83139fab165f7bfea47b139c77a",
+    "primary_client_host_host_play_panel_recompiled": true
+  },
+  "rust_python_diff_check": "passed; Markdown hard-break trailing spaces preserved",
+  "reviews": {
+    "reader_native_endstamp": {
+      "task": "t_2a8d467c",
+      "commit": "63b847bd290419d53f8821fa487a686797d4d571",
+      "model": "grok-4.5",
+      "provider": "xai-oauth",
+      "session": "20260908_084235_12cb9b",
+      "verdict": "approved"
+    },
+    "capture_lifecycle": {
+      "task": "t_f2d0af32",
+      "commit": "2e896e8f1b4c61fee5f3f9f4231482b1213569ae",
+      "model": "grok-4.5",
+      "provider": "xai-oauth",
+      "session": "20260908_084435_ede0af",
+      "verdict": "approved"
+    }
+  },
+  "native_parent_roles": {
+    "reference": {
+      "head": "8d3bd4ff36c28485b90df840da1623705ab66676",
+      "client": "abb811bd0afa1acd99319ccd5bc36bfb241080f9",
+      "parent": "9268890217d968cfeb7c66ebb11dd5c3dd2c084f",
+      "status": "same reviewed Rust instrumentation plus capture correction applied; new native binaries pending"
+    },
+    "candidate": {
+      "head": "e3a2cbfbdfdab37a4f35ee330e91a7e6264c14d7",
+      "client": "fd956c91bf09e059359c8e182a33583e2c626cd3",
+      "parent": "fb3589ac28583242b999ac864ea69c4ef8fa5923",
+      "status": "same reviewed Rust instrumentation plus capture correction applied; new native binaries pending"
+    }
+  },
+  "common_instrumentation_patch_id": "dbb26aaf43e4631d7f7e2ef05c238c178ef3a7c6",
+  "role_difference_patch_id": "e95ca64e3d1d5caa8735fcec9f2360a5e7383b4b",
+  "native_evidence": {
+    "builds_and_pre_capture_fix_tests": "docs/memory/windows-cohort-native-builds.json",
+    "functional_report": "docs/memory/native-cohort-input-trace-report.md",
+    "raw_archive": "diagnostics/windows-input-trace-cohort-a/archive.tar.gz",
+    "raw_archive_sha256": "8a9e5a1a9fc446a980ab579faf04516dd2ad45e94737c05cff96e1e148c7dbd5",
+    "raw_run": "diagnostics/windows-input-trace-cohort-a-archive/latency-diagnostic-input-trace-20260908-a",
+    "reader_direct_structural": "diagnostics/windows-input-trace-cohort-a/reader-63b847b-direct-structural.json",
+    "native_proof_limit": "Original native binary predates capture correction. 300 decode events structurally available; input population incomplete. Direct reader metadata argument comes from qualifier settings, not canonical matched metadata. No performance acceptance."
+  },
+  "remaining_gates": [
+    "Combined Grok4.6 source/evidence integration approval",
+    "Rebuild and verify capture-corrected native roles",
+    "Source-justified one bounded native input functional rerun",
+    "Freeze full canonical metadata/provenance and execute predeclared N16 matched companion once",
+    "Independently recompute results and preserve all incomplete populations",
+    "Full approved performance-finish-plan and final whole-campaign Grok4.6 remain open"
+  ],
+  "contract_and_evidence_sha256": {
+    "docs/execution.md": "e391cc95d7e09690d18a37815acf91f626b654fee72452e90dc4e1ad2d405b6f",
+    "docs/memory/current-latency-companion-plan.md": "a9c0db6d35dd783db442c636734501899e058c7b25079d6ad721e3c533088629",
+    "docs/memory/latency-cohort-producer-report.md": "10f54cab19104415f7a71a90c77c6894af65908bef559f95f2750f6ff251cbf0",
+    "docs/memory/latency-cohort-publisher-report.md": "6853493ec52c6887ca4a7b1c5e60d865076d7d381a56050b10b7524720250076",
+    "docs/memory/latency-cohort-reader-report.md": "cefd548e3785b17fff9e8415f5d67dc0105f4d33896e4344a1353397ae822ca6",
+    "docs/memory/panel-input-seam-trace-report.md": "750f9d9aa2b2e3de9593dea6a8cdafa4436ea989576f06d2115dac431d855328",
+    "docs/memory/panel-memory-capture-arm-report.md": "c5d5100d972c4dd42efe32640954312066a483c4fe9051f7360b68cfc092c731",
+    "docs/memory/native-cohort-input-trace-report.md": "042aa7eda7e698f8994a10e61408936e5f7e362a98d748947f06b340f56b5aac",
+    "docs/memory/windows-visual-proof-tools/invoke-panel-input-stimulus.ps1": "04822c0e9f5ade2d555e408cc707722c234bc1e7b442676975a16e7efcaebbd1"
+  }
+}

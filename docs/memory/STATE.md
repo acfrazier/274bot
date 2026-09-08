@@ -11,6 +11,29 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 12:49 UTC
+
+- Reader63b847b APPROVED actualGrok4.5/xai-oauth20260908_084235_12cb9b;
+ source end-stamp ownership corrected. Root unchanged native direct structural
+ probe now300Decode available and inputdeclared_population_incomplete. Original
+ archive/canonical missing_metadata classification unchanged; no acceptance.
+- Capture2e896e8 APPROVED actualGrok4.5/xai-oauth20260908_084435_ede0af.
+ Stable forced-open frames no longer add play.wake; real closed-to-open still
+ attaches capture. Integrated reader six scoped commits and capture two commits
+ on primary through f9d729c; excluded reader setup STATE6b87370.
+- Root combined Python60/100/46/29PASS, no skips; panel25PASS363filtered with
+ memory-profile-no-alloc. Primary client/host/host-play/panel recompiled after
+ source mtime refresh (content unchanged). Rust/Python diff-check clean;
+ reviewed Markdown hard-break whitespace retained.
+- Applied identical capture correction to native role branches: reference8d3bd4f
+ clientabb811b; candidatee3a2cbf clientfd956c9. Common instrumentation patch-id
+ dbb26aaf43e4631d7f7e2ef05c238c178ef3a7c6; original role difference remains
+ e95ca64e3d1d5caa8735fcec9f2360a5e7383b4b. New native binaries still pending.
+- Combined Grok4.6 integration milestone freeze: base1ce9edb, headf9d729c,
+ cohort-integration-review-manifest.json. Source, review receipts, raw native
+ diagnostic and open gates explicitly bound. This milestone precedes expensive
+ matched comparison; final whole-campaign Grok4.6 still remains required.
+
 ## Latest boundary — 2026-09-08 12:42 UTC
 
 - Both prepared native roles built and passed scoped regressions; source hashes
