@@ -11,6 +11,19 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 15:34 UTC
+
+- Operator explicitly authorized pushing the development branch. Root is
+  publishing the current committed campaign snapshot by normal fast-forward;
+  main/releases and unrelated experimental branches remain outside this action.
+  Verify the exact remote commit after push; this paragraph is authorization,
+  not a claim that transmission has completed.
+- Operator confirms the Hyper-V builder was shut down for Windows testing and
+  authorizes bringing it up/down as needed. Keep the VM Off for clean Windows
+  native measurements; use it for reviewed native Linux build preparation.
+- Calibration corrective plan has returned to same-card review (run6); no
+  rejected draft integrated, and no new benchmark launched.
+
 ## Latest boundary — 2026-09-08 15:32 UTC
 
 - Calibration t_c2879587 remains active on its isolated branch. Grok4.5 rejected
