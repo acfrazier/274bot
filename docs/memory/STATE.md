@@ -9,6 +9,26 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 01:18 UTC
+
+- Baseline background0111 completed0, Intel/Vulkan startup matches. Archive
+  SHA306d937d513eaad0136ad59d737672115202609c414c3092c94c4058d8e26e46
+  downloaded/extracted22hashverifiedfiles. Qualifies16/16 and native unchanged
+  reader binding passes.119.1396s,median2296803328bytes,CPU0.6398744core,
+  client48.69235ticks/slot/s. No PNG in this CLI mode; no visual proof invented.
+- ACTUAL candidate-focused-one-20260908-0118 launched01:17:41 with same83controls,
+  fresh preflight and frozen3118/client5ee binary. Poll existing scheduled task;
+  do not restart. Candidate background remains next after archive/inspection.
+  Both baseline observations are diagnostic, not accepted savings or plateau.
+- Linux changed diagnostic source prepared isolated linux-failure-attribution:
+  prior188a520 plus reviewedbc0a30c/ce6ea7d transplanted as e51c5ec/e1cdfbc,
+  client3456 unchanged. Task57d5229, Luna t_ad1fb12e active verification only;
+  no native/VPS/VM/Docker actions delegated. Next native Linux attempt must use
+  reviewed changed instrumentation, preserve old failed originals and timeouts.
+- Owner-census controls t_98f39886 handed to reviewer after6min preparation.
+  Verify actual review start/verdict before root uses controls; census must wait
+  until four lazy cells finish. No Windows build/test overlaps candidate.
+
 ## Latest boundary — 2026-09-08 01:12 UTC
 
 - Focused baseline0102 completed0 and Intel/Vulkan startup verified. Archive
