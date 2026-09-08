@@ -9,6 +9,22 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 04:50 UTC
+
+- Clean controls t_10e7c701 secondreview rejected eee9087 receipt-path mismatch.
+  Root found further deterministic contract failures: Namespace tested as argv
+  list, contract consumes actual launch output namespace, privilegeddefault
+  receipt path uses Austen rather than BotTest. Reclaimed corrective run after
+  preserving3files9insertions, resumed Luna with allfindings; actual sixthrun
+  now running after04:49. No controls staged or frontend launched.
+- CPU tooling t_008e604c approved137d2f9 per-taskGrok4.5, not integrated. Root
+  audited resource_match_keys_from_meta and construct_match_keys: explicit
+  malformed cpu_fallback string silently normalizesFalse/GPU. New bounded
+  corrective t_8d302a38 assigned implementer sameisolatedbranch; preserve legacy
+  defaults only if both backend fields absent, reject malformed/partial/null/
+  inconsistent newmetadata and test realgate behavior. Await actualrun+review.
+  No productionRust/candidatebinary change. Both nativehosts quiet, VMOff.
+
 ## Latest boundary — 2026-09-08 04:40 UTC
 
 - Native supplementary backend tests fb/clientfd PASSED: gpu_backend10,
