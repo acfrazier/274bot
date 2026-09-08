@@ -11,6 +11,33 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 15:59 UTC
+
+- Development branch published normally at aa82c8b; remote exact commit verified.
+  Reviewed calibration design integrated through c0709ab; no live cell launched.
+- Existing Hyper-V builder is running. Frozen c0709ab/client3456 native TUI
+  build passed; ELF a0c6eb0b, System memory-profile-no-alloc, snapshot-dedup OFF.
+  All1113 source files verified after the failed test attempt. Local29-file
+  build/log/backtrace archive verified against native hashes under diagnostics/
+  current-tui-calibration-build-c0709ab; binary is not fully qualified.
+- Affected tests passed API5/host213/host-play182/script46; TUI fixture stalled
+  in client initialization retries while Play teardown joined its worker.
+  Root preserved gdb proof and terminated only the identified test process;
+  actual suite exit101 retained. t_59836fed fixture repair0b4aa95 is in review;
+  root requests scrutiny of runtime seam scope and vacuous no-worker assertions.
+- Calibration controls t_d503245a6fb176f rejected: memory guard records but
+  does not cancel, environment/cwd inputs are not wired. Luna corrective run3
+  is active. Neither rejected controls nor fixture draft integrated/released.
+- Operator authorized VPS reboot at a safe gap. Prepared checked script at
+  /home/acfrazier/274bot-admin/reboot-kernel-20260908.sh awaits operator sudo;
+  SSH account has no passwordless sudo. Script checks inactive workloads,
+  enables existing Concord service at boot, and reboots. SSH socket is already
+  enabled on22111. Current kernel137, installed139; no reboot observed yet.
+  Refresh server PID/start/cache/provenance after reboot before any live cell.
+- Next: complete same-card reviews, native fixture qualification, operator
+  reboot verification, current calibration release prerequisites and sole run.
+  Final performance/lifecycle/scaling gates and whole-branch Grok4.6 remain open.
+
 ## Latest boundary — 2026-09-08 15:34 UTC
 
 - Operator explicitly authorized pushing the development branch. Root is
