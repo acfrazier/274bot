@@ -9,6 +9,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 11:21 UTC
+
+- Root reclaimed reader corrective Luna run726 after direct source audit:
+  draft invented qualification_slot_rows and required generations on qualification
+  slots; actual qualification has slots with ordinal/name/responsiveness_slot_id,
+  and generation must be joined from sample responsiveness rows. Numeric
+  EventId.slot_id is not fixture ordinal. Draft cursor gap and path alias checks
+  remained permissive. Preserved dirty reader/tests atop rejected a84a2b4.
+- Same card t_829c6804 reassigned configured implementer (verified default
+  grok-composer-2.5-fast/xai-oauth), full source-faithful corrective context added.
+  No duplicate card, no task model/provider overrides, no approved reader.
+  Verify actual new run before describing it as running. Original full test
+  matrix and per-task reviewer/combined review requirements remain unchanged.
+- Previous native source packages remain preparation only; no native activity.
+
 ## Latest boundary — 2026-09-08 11:17 UTC
 
 - Reader a84a2b4 REJECTED by actual Grok4.5/xai-oauth reviewer session
