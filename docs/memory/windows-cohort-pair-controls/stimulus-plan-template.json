@@ -1,0 +1,14 @@
+{
+  "schema": "native-panel-input-stimulus-plan-v1",
+  "helperPath": "invoke-panel-input-stimulus.ps1",
+  "helperSha256": "04822c0e9f5ade2d555e408cc707722c234bc1e7b442676975a16e7efcaebbd1",
+  "cadenceMilliseconds": 1000,
+  "pressMilliseconds": 80,
+  "durationSeconds": 120,
+  "triggerWindowAfterObserveStartSeconds": [60, 90],
+  "noRetry": true,
+  "receiptPath": "<root-selected future completed receipt path>",
+  "inputPopulation": "slot0",
+  "directions": ["Left", "Right"],
+  "binding": "root supplies fresh scene2/capture/slot0 focus, PID/start/session, rectangle, and Game Image point after launch"
+}
