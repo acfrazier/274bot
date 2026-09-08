@@ -41,7 +41,33 @@
       "rustc.txt": "3975d062e234a9f3921955bf6ae5b90f5819df94fa825d057f76b34a35ed0f4d",
       "source-post.json": "89908739ba63f51ade4bac6d0e7bfbca1d9aa8773c2274d70d5f42fc154825eb",
       "source-pre.json": "89908739ba63f51ade4bac6d0e7bfbca1d9aa8773c2274d70d5f42fc154825eb",
-      "started.txt": "1a0bffa6ce1041c20fa37d55bc1f40eb9efc1c200db47f5d87b1ccf449af414f"
+      "started.txt": "1a0bffa6ce1041c20fa37d55bc1f40eb9efc1c200db47f5d87b1ccf449af414f",
+      "test-attribution-exit.txt": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "test-attribution.log": "4f62e89a4ae80af21887eebcfe67c44121dc344bd1bea62da8483cfb1d8a0ab9",
+      "test-script-lib-exit.txt": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "test-script-lib.log": "fa636e115a16e4265c34a9e62e80e32418d63c69d4c6a000e40e69d522b95737"
     }
+  },
+  "script_tests": {
+    "focused_attribution": {
+      "passed": 4,
+      "failed": 0
+    },
+    "all_script_lib": {
+      "passed": 46,
+      "failed": 0
+    },
+    "features": "memory-profile",
+    "profile": "release",
+    "locked": true,
+    "offline": true,
+    "test_threads": 2
+  },
+  "vm_state_after_tests": {
+    "state": "Off",
+    "verified_utc": "2026-09-08T02:48:26.6435638Z",
+    "assigned_memory_bytes": 0,
+    "recovery_switch_count": 0,
+    "relay_task_state": "Disabled"
   }
 }

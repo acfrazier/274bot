@@ -9,6 +9,25 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 02:51 UTC
+
+- Native Hyper-V script tests PASSED: focused attribution4/4, full script lib46/46
+  with memory-profile, release/offline/locked. Twelve build/test receipts retained
+  and hashed in hyperv-builder-network-recovery.json. VM shut down cleanly;
+  Windows02:48:26 verified Off/0assignedRAM, recoveryswitch0, relaytaskDisabled.
+  No native Linux/Windows build/test/frontend remains active.
+- Tile diagnostic probe host4f3d096/clientb9ae946 handed off; Grok4.5/xai-oauth
+  actualreview session20260907_224909_bc1559 RUNNING on samecard t_99a0f554.
+  Root pinned gitlink only in57361ec. Review context explicitly flags by-value
+  larger OwnerCensus/SlotObservation storage/copies even when census disabled;
+  ptr_width is bytes. No moving-diff acceptance or representation change.
+- Exact57361ec/clientb9ae946 source packages prepared/staged on Windows ONLY,
+  not built pending review. Archive hashes host1c36880635cb95d976f5a8cb5c8d391cfa2efbcae4512c48213faa2481be3e9f
+  client682ec4a165f52ccfd7e4068d0176a489d524d153afedeb117d371cf6e0537d9e,
+  871 regular source files aggregate5595abe00aba9ecd560ffa9ccaabd9e3cd72a61276a2cac7130e8c8cd437ac70.
+  Native helper build-panel-57361ec.ps1 adapted reviewed66 helper with exact
+  identities/hashes only; root to execute after review if source unchanged.
+
 ## Latest boundary — 2026-09-08 02:45 UTC
 
 - First native Hyper-V project release build PASSED0 in4m05s; source57d5229
