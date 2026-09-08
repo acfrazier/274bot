@@ -19,7 +19,10 @@ $stage = if($BuildRole -eq 'baseline'){'C:\ProgramData\274bot-Test\renderer-owne
 $preflight = Join-Path 'C:\ProgramData\274bot-Test\renderer-owner-census-9268890' ('preflight-tile-boxed-'+$CellId+'.json')
 if(-not (Test-Path $preflight -PathType Leaf)){ throw "Privileged host preflight receipt missing: $preflight" }
 $contractCellId = $CellId + '-contractcheck'
-Copy-Item (Join-Path $PSScriptRoot 'run-tile-boxed-focused-one.py') (Join-Path $stage ("run-$contractCellId.py")) -Force
+$runner = Join-Path $stage ("run-$contractCellId.py")
+if(-not (Test-Path $runner -PathType Leaf)){ throw "Privileged staged contract runner missing: $runner" }
+$source = Join-Path $PSScriptRoot 'run-tile-boxed-focused-one.py'
+if((Get-FileHash $runner -Algorithm SHA256).Hash.ToLower() -ne (Get-FileHash $source -Algorithm SHA256).Hash.ToLower()){ throw 'Staged contract runner hash does not match controls source' }
 $python = 'C:\Program Files\Python314\python.exe'
 $env:TILE_BOXED_CONTRACT_ID = $contractId
 $env:TILE_BOXED_BUILD_ROLE = $BuildRole

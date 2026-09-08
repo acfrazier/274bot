@@ -64,12 +64,18 @@ class BoxedTileControls(unittest.TestCase):
 
     def test_control_contract_and_archive_require_raw_runs(self):
         prepare = (HERE / "prepare-tile-probe.ps1").read_text()
+        stage = (HERE / "stage-contract-tile-probe.ps1").read_text()
         contract = (HERE / "run-contractcheck-tile-probe.ps1").read_text()
         archive = (HERE / "archive-tile-boxed.ps1").read_text()
         self.assertIn("client_started -ne $false", prepare)
         self.assertIn("check-tile-probe-contract.py", contract)
         self.assertIn("run-tile-boxed-focused-one.py", contract)
         self.assertIn("preflight-tile-boxed-", contract)
+        self.assertIn("Get-FileHash $runner", contract)
+        self.assertIn("Copy-Item $source $destination", stage)
+        self.assertIn("privileged=$true", stage)
+        self.assertIn("$env:USERNAME -eq 'BotTest'", stage)
+        self.assertNotIn("Copy-Item", contract)
         self.assertNotIn("RENDER_OWNER_CENSUS_", contract)
         self.assertNotIn("preflight-tile-probe-", contract)
         self.assertNotIn("run-panel-tile-probe", contract)
@@ -82,6 +88,7 @@ class BoxedTileControls(unittest.TestCase):
         self.assertIn('args.no_diagnostics', check)
         self.assertIn('args.failure_capture', check)
         self.assertIn('TILE_BOXED_TARGET_CELL_ID', check)
+        self.assertIn('"check_id": target_cell_id', check)
         self.assertIn('TILE_BOXED_PREFLIGHT_CELL_ID', contract)
         self.assertIn('run-$contractCellId.py', contract)
 
@@ -92,12 +99,16 @@ class BoxedTileControls(unittest.TestCase):
         self.assertIn(expected, prepare)
         self.assertIn("tile-boxed-contract-'+$contractId+'.json", contract)
         self.assertIn("C:\\Users\\BotTest\\274bot-runs", prepare)
+        self.assertIn("contract.cell_id -ne $CellId", prepare)
+        self.assertIn("contract.contract_id -ne $expectedContractId", prepare)
+        self.assertIn("contract.check_id -ne $CellId", prepare)
+        self.assertIn("$contract.checks[0].id -ne $CellId", prepare)
 
     def test_each_control_is_present_and_python_parses(self):
         for path in HERE.iterdir():
             if path.suffix == ".py" and path.name != pathlib.Path(__file__).name:
                 ast.parse(path.read_text())
-        expected = {"prepare-tile-probe.ps1", "run-contractcheck-tile-probe.ps1", "preflight-tile-boxed.ps1", "launch-tile-boxed.ps1", "poll-tile-boxed.ps1", "archive-tile-boxed.ps1"}
+        expected = {"prepare-tile-probe.ps1", "stage-contract-tile-probe.ps1", "run-contractcheck-tile-probe.ps1", "preflight-tile-boxed.ps1", "launch-tile-boxed.ps1", "poll-tile-boxed.ps1", "archive-tile-boxed.ps1"}
         self.assertTrue(expected.issubset({p.name for p in HERE.iterdir()}))
 
 

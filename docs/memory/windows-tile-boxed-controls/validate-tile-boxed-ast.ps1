@@ -1,6 +1,6 @@
 param([string]$ControlDirectory = $PSScriptRoot)
 $ErrorActionPreference = 'Stop'
-$controls = @('prepare-tile-probe.ps1','run-contractcheck-tile-probe.ps1','preflight-tile-boxed.ps1','launch-tile-boxed.ps1','poll-tile-boxed.ps1','archive-tile-boxed.ps1')
+$controls = @('prepare-tile-probe.ps1','stage-contract-tile-probe.ps1','run-contractcheck-tile-probe.ps1','preflight-tile-boxed.ps1','launch-tile-boxed.ps1','poll-tile-boxed.ps1','archive-tile-boxed.ps1')
 foreach($name in $controls) {
     $path = Join-Path $ControlDirectory $name
     if(-not (Test-Path $path -PathType Leaf)){ throw "Control missing: $path" }

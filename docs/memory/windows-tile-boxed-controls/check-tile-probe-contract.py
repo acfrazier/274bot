@@ -50,6 +50,7 @@ except SystemExit as exc:
     assert exc.code == 0, exc.code
 out = pathlib.Path.home() / "274bot-runs" / ("tile-boxed-contract-" + contract_id + ".json")
 out.write_text(json.dumps({"kind": "no-launch contract test", "cell_id": target_cell_id,
+                           "check_id": target_cell_id,
                            "contract_id": contract_id, "checks": checks,
                            "performance_acceptance": False}, indent=2))
 print(out.read_text())
