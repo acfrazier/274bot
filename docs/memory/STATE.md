@@ -11,6 +11,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 21:53 UTC
+
+- Native task `t_98f58617` found a Python reference defect before porting:
+  unresolved inline function groups could be omitted from whole-stack unknown
+  disclosure. Root independently reproduced the failures and approved the
+  bounded correction in `heaptrack-owner-reference-defect-decision.md` (`55243ca`).
+  Allocation totals, canonical reconciliation and first-useful owner selection
+  remain unchanged. Preserve the failing regression snapshot `698cc6a`.
+- The same task resumed under actual Astra / openai-codex, session
+  `20260908_174936_0e4dbf`, and is implementing the complete native package.
+  The eventual Grok 4.5 review must cover the reference correction and full port.
+  No Linux qualification or production replay has been released.
+- A root read-only SSH check of the existing Linux builder timed out. The last
+  Windows observation after restart had its VM off. Reverify VM/network/toolchain
+  before native staging; the older compiler receipt is not current readiness.
+- Separate 289 D remains active; new actor fixtures pass, broader regression
+  checks and same-card review remain pending. E-H are not released.
+
 ## Latest boundary — 2026-09-08 21:44 UTC
 
 - Throughput diagnosis/design `faf6985` is approved by actual Grok 4.5 / xai-oauth,
