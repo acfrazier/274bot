@@ -12,7 +12,7 @@ mod slot;
 mod slot_io;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -36,6 +36,7 @@ pub use slot_io::{
 /// Host debug toggle, set by host-play's `--debug`; `BOT_DEBUG=1` enables it
 /// via [`debug_enabled`] regardless.
 static DEBUG: AtomicBool = AtomicBool::new(false);
+static BOT_DEBUG_ENV: OnceLock<bool> = OnceLock::new();
 
 /// Enable host debug logging (host-play maps `--debug` to this).
 pub fn set_debug(enabled: bool) {
@@ -44,10 +45,15 @@ pub fn set_debug(enabled: bool) {
 
 /// Host debug logging is on when `BOT_DEBUG=1` or [`set_debug`] ran.
 pub fn debug_enabled() -> bool {
-    debug_flag()
-        || std::env::var("BOT_DEBUG")
-            .map(|v| v == "1")
-            .unwrap_or(false)
+    debug_flag() || *BOT_DEBUG_ENV.get_or_init(read_bot_debug_env)
+}
+
+fn read_bot_debug_env() -> bool {
+    debug_env_value(std::env::var_os("BOT_DEBUG").as_deref())
+}
+
+fn debug_env_value(value: Option<&std::ffi::OsStr>) -> bool {
+    value == Some(std::ffi::OsStr::new("1"))
 }
 
 /// Non-allocating host debug latch (`set_debug` / `--debug` only).
@@ -2880,5 +2886,51 @@ mod tests {
             c.out.pos > 0,
             "lamp_auto flipped live: next guardian tick must rub"
         );
+    }
+
+    #[test]
+    fn bot_debug_env_requires_exact_one_and_handles_all_values() {
+        use std::ffi::OsStr;
+
+        assert!(!debug_env_value(None));
+        assert!(!debug_env_value(Some(OsStr::new("0"))));
+        assert!(debug_env_value(Some(OsStr::new("1"))));
+        assert!(!debug_env_value(Some(OsStr::new("true"))));
+        assert!(!debug_env_value(Some(OsStr::new("1 "))));
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            assert!(!debug_env_value(Some(OsStr::from_bytes(b"\xff"))));
+        }
+    }
+
+    #[test]
+    fn bot_debug_env_cache_initializes_once() {
+        use std::sync::atomic::AtomicUsize;
+
+        let cache = OnceLock::new();
+        let reads = AtomicUsize::new(0);
+        assert!(!*cache.get_or_init(|| {
+            reads.fetch_add(1, Ordering::Relaxed);
+            false
+        }));
+        // The second check is the production fast path: the initializer is
+        // not called again after the environment decision is cached.
+        assert!(!*cache.get_or_init(|| {
+            reads.fetch_add(1, Ordering::Relaxed);
+            true
+        }));
+        assert_eq!(reads.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn set_debug_is_a_live_latch_independent_of_cached_environment() {
+        let env_enabled = *BOT_DEBUG_ENV.get_or_init(read_bot_debug_env);
+        set_debug(false);
+        assert_eq!(debug_enabled(), env_enabled);
+        set_debug(true);
+        assert!(debug_enabled());
+        set_debug(false);
+        assert_eq!(debug_enabled(), env_enabled);
     }
 }
