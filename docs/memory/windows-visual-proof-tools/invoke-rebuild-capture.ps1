@@ -18,13 +18,14 @@ $prefix=[IO.Path]::GetFullPath('C:\Users\BotTest\274bot-runs\visual-proof-')
 $controllerReceipt=Join-Path $out ($Label+'.controller.json')
 $stdoutPath=Join-Path $out ($Label+'.helper.stdout.txt')
 $stderrPath=Join-Path $out ($Label+'.helper.stderr.txt')
-$child=$null;$childPid=$null;$childStartUtc=$null;$childHandle=$null
+$child=$null;$childPid=$null;$childStartUtc=$null;$childHandle=$null;$receiptOwned=$false
 $controllerStartUtc=[DateTime]::UtcNow.ToString('o')
 $inputBeforeUtc=$null;$inputDownUtc=$null;$inputUpUtc=$null
 $readyUtc=$null;$firstFrame=$null;$outcome='not-started';$failure=$null;$childExitCode=$null
 $targetWindow=[IntPtr]::Zero;$initialRect=$null;$binaryHash=$null;$helperHash=$null;$sessionId=$null
-$inputIdentity=$null;$clickAttempted=$false;$stopwatch=[Diagnostics.Stopwatch]::StartNew()
-$childAliveAtInput=$false
+$inputIdentity=$null;$clickAttempted=$false;$downSendInputResult=$null;$upSendInputResult=$null;$releaseFailure=$null
+$burst=$null;$burstOutcome=$null;$burstIdentityMatch=$false;$stopwatch=[Diagnostics.Stopwatch]::StartNew()
+$childAliveAtInput=$false;$receiptWritten=$false
 
 function Quote-Argument([string]$Value) {
  return '"'+($Value -replace '(\\*)"','$1$1\"' -replace '(\\+)$','$1$1')+'"'
@@ -54,11 +55,12 @@ try {
  if($InputX -lt 0 -or $InputY -lt 0){throw 'Input coordinates must be non-negative window-relative integers'}
  if(-not (Test-Path -LiteralPath $out -PathType Container)){throw 'Prepared output directory missing'}
  if(-not $out.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'Output must be in a dedicated visual-proof directory'}
- if(Test-Path -LiteralPath $controllerReceipt -PathType Leaf){throw 'Controller label already exists'}
- if(Test-Path -LiteralPath $stdoutPath -PathType Leaf -or Test-Path -LiteralPath $stderrPath -PathType Leaf){throw 'Controller output files already exist'}
+ if((Test-Path -LiteralPath $controllerReceipt -PathType Leaf)){throw 'Controller label already exists'}
+ if((Test-Path -LiteralPath $stdoutPath -PathType Leaf) -or (Test-Path -LiteralPath $stderrPath -PathType Leaf)){throw 'Controller output files already exist'}
  if(-not (Test-Path -LiteralPath $helperPath -PathType Leaf)){throw 'Existing burst helper missing'}
  $helperHash=(Get-FileHash -LiteralPath $helperPath -Algorithm SHA256).Hash.ToLower()
  if($helperHash -ne $expectedHelperHash){throw 'Existing burst helper hash mismatch'}
+ $receiptOwned=$true
 
  Add-Type -TypeDefinition @'
  using System;
@@ -127,10 +129,14 @@ try {
  if($child.HasExited){throw 'Capture helper exited before synchronized input'}
  $firstStart=[DateTime]::Parse($firstFrame.captureStartedUtc).ToUniversalTime()
  if($firstStart -lt [DateTime]::Parse($controllerStartUtc).ToUniversalTime()){throw 'First frame predates controller start'}
+ $readyTime=[DateTime]::Parse($readyUtc).ToUniversalTime()
+ $firstEnd=[DateTime]::Parse($firstFrame.captureEndedUtc).ToUniversalTime()
+ if($readyTime -lt $firstStart -or $readyTime -lt $firstEnd){throw 'Ready timestamp is inconsistent with first frame'}
  if([string]$firstFrame.label -ne $Label -or [int]$firstFrame.frame -ne 1 -or [int]$firstFrame.pid -ne $PanelPid -or [string]$firstFrame.startUtc -ne $ExpectedStartUtc -or [string]$firstFrame.binary -ne $expectedBinary -or [string]$firstFrame.binarySha256 -ne $binaryHash -or [Int64]$firstFrame.windowHandle -ne $targetWindow.ToInt64()){throw 'First frame identity does not match expected target'}
  $frameRect=@($firstFrame.rect | ForEach-Object {[int]$_})
  if($frameRect.Count -ne 4 -or $frameRect[0] -ne $ExpectedRect[0] -or $frameRect[1] -ne $ExpectedRect[1] -or $frameRect[2] -ne $ExpectedRect[2] -or $frameRect[3] -ne $ExpectedRect[3]){throw 'First frame rectangle does not match expected target'}
  if(-not (Test-Path -LiteralPath ([string]$firstFrame.png) -PathType Leaf)){throw 'First frame PNG receipt is missing'}
+ if((Get-FileHash -LiteralPath ([string]$firstFrame.png) -Algorithm SHA256).Hash.ToLower() -ne ([string]$firstFrame.pngSha256).ToLower()){throw 'First frame PNG hash mismatch'}
 
  $null=Verify-Target $true
  $inputBeforeUtc=[DateTime]::UtcNow.ToString('o')
@@ -148,12 +154,15 @@ try {
  $clickAttempted=$true
  try {
   $inputDownUtc=[DateTime]::UtcNow.ToString('o')
-  if([PanelRebuildCaptureNative]::SendInput(1,@($down),$inputSize) -ne 1){throw 'Mouse-down SendInput failed'}
+  $downSendInputResult=[PanelRebuildCaptureNative]::SendInput(1,@($down),$inputSize)
+  if($downSendInputResult -ne 1){throw 'Mouse-down SendInput failed'}
   Start-Sleep -Milliseconds 80
  } finally {
   $inputUpUtc=[DateTime]::UtcNow.ToString('o')
-  [void][PanelRebuildCaptureNative]::SendInput(1,@($up),$inputSize)
+  $upSendInputResult=[PanelRebuildCaptureNative]::SendInput(1,@($up),$inputSize)
+  if($upSendInputResult -ne 1){$releaseFailure='Mouse-up SendInput failed'}
  }
+ if($null -ne $releaseFailure){throw $releaseFailure}
  $null=Verify-Target $true
  while(-not $child.HasExited -and $stopwatch.Elapsed.TotalSeconds -lt 60){Start-Sleep -Milliseconds 100}
  if(-not $child.HasExited){throw 'Capture helper exceeded the 60 second controller bound'}
@@ -162,20 +171,34 @@ try {
  $burstPath=Join-Path $out ($Label+'.burst.json')
  if(-not (Test-Path -LiteralPath $burstPath -PathType Leaf)){throw 'Capture helper exited without burst receipt'}
  $burst=Get-Content -LiteralPath $burstPath -Raw | ConvertFrom-Json
- if([string]$burst.outcome -ne 'completed'){throw ('Capture burst terminal outcome was '+[string]$burst.outcome)}
+ $burstOutcome=[string]$burst.outcome
+ if($burstOutcome -ne 'completed'){throw ('Capture burst terminal outcome was '+$burstOutcome)}
+ $burstStart=[DateTime]::Parse($burst.captureStartedUtc).ToUniversalTime()
+ $burstEnd=[DateTime]::Parse($burst.captureEndedUtc).ToUniversalTime()
+ $downTime=[DateTime]::Parse($inputDownUtc).ToUniversalTime();$upTime=[DateTime]::Parse($inputUpUtc).ToUniversalTime()
+ if($downTime -lt $burstStart -or $upTime -gt $burstEnd -or $upTime -lt $downTime){throw 'Complete click interval was not inside the accepted burst'}
+ if([string]$burst.label -ne $Label -or [int]$burst.pid -ne $PanelPid -or [string]$burst.startUtc -ne $ExpectedStartUtc -or [string]$burst.binary -ne $expectedBinary -or [string]$burst.binarySha256 -ne $binaryHash -or [Int64]$burst.windowHandle -ne $targetWindow.ToInt64()){throw 'Burst identity does not match expected target'}
+ $burstRect=@($burst.rect | ForEach-Object {[int]$_})
+ if($burstRect.Count -ne 4 -or $burstRect[0] -ne $ExpectedRect[0] -or $burstRect[1] -ne $ExpectedRect[1] -or $burstRect[2] -ne $ExpectedRect[2] -or $burstRect[3] -ne $ExpectedRect[3]){throw 'Burst rectangle does not match expected target'}
+ $burstIdentityMatch=$true
 } catch {
  $outcome='failed';$failure=$_.Exception.Message
 } finally {
- if($null -ne $child -and $child.HasExited -eq $false -and $stopwatch.Elapsed.TotalSeconds -ge 60){
+ if($null -ne $child -and $child.HasExited -eq $false){
   try {
    $child.Refresh()
-   if($child.Id -eq $childPid -and $child.StartTime.ToUniversalTime().ToString('o') -eq $childStartUtc){$child.Kill();$child.WaitForExit(5000)}
+   if($child.Id -eq $childPid -and $child.StartTime.ToUniversalTime().ToString('o') -eq $childStartUtc){
+    $child.Kill();$remainingMs=[Math]::Max(0,60000-[int]$stopwatch.ElapsedMilliseconds)
+    if(-not $child.WaitForExit([Math]::Min(5000,$remainingMs))){throw 'Capture helper did not stop within cleanup bound'}
+   } else {throw 'Capture helper identity changed; refusing cleanup'}
   } catch {$failure=($failure+'; cleanup: '+$_.Exception.Message)}
  }
  if($null -ne $child -and $child.HasExited){try{$childExitCode=$child.ExitCode}catch{}}
+ if($null -ne $stdoutTask){try{[IO.File]::WriteAllText($stdoutPath,$stdoutTask.GetAwaiter().GetResult())}catch{$failure=($failure+'; stdout: '+$_.Exception.Message)}}
+ if($null -ne $stderrTask){try{[IO.File]::WriteAllText($stderrPath,$stderrTask.GetAwaiter().GetResult())}catch{$failure=($failure+'; stderr: '+$_.Exception.Message)}}
  $controllerEndUtc=[DateTime]::UtcNow.ToString('o')
- [ordered]@{schema='native-synchronized-rebuild-controller-v1';label=$Label;controllerStartUtc=$controllerStartUtc;controllerEndUtc=$controllerEndUtc;controllerDurationMilliseconds=$stopwatch.ElapsedMilliseconds;panelPid=$PanelPid;expectedStartUtc=$ExpectedStartUtc;sessionId=$sessionId;binary=$expectedBinary;binarySha256=$binaryHash;helperPath=$helperPath;helperSha256=$helperHash;helperPid=$childPid;helperStartUtc=$childStartUtc;helperExitCode=$childExitCode;helperHandleRetained=($null -ne $childHandle);expectedRect=$ExpectedRect;input=$inputIdentity;readyUtc=$readyUtc;firstFrame=$firstFrame;inputBeforeUtc=$inputBeforeUtc;inputDownUtc=$inputDownUtc;inputUpUtc=$inputUpUtc;clickAttempted=$clickAttempted;chronology=[ordered]@{firstFrameAfterController=($null -ne $firstFrame -and [DateTime]::Parse($firstFrame.captureStartedUtc).ToUniversalTime() -ge [DateTime]::Parse($controllerStartUtc).ToUniversalTime());inputAfterReady=($null -ne $readyUtc -and $null -ne $inputBeforeUtc -and [DateTime]::Parse($inputBeforeUtc).ToUniversalTime() -ge [DateTime]::Parse($readyUtc).ToUniversalTime());inputWhileHelperAlive=$childAliveAtInput;inputInsideAcceptedBurst=($null -ne $firstFrame -and $null -ne $inputBeforeUtc -and [DateTime]::Parse($inputBeforeUtc).ToUniversalTime() -ge [DateTime]::Parse($firstFrame.captureStartedUtc).ToUniversalTime())};outcome=$outcome;failure=$failure;sceneState='not inferred from capture';performanceAcceptance=$false}|ConvertTo-Json -Depth 12|Set-Content -LiteralPath $controllerReceipt -Encoding UTF8
+ if($receiptOwned){[ordered]@{schema='native-synchronized-rebuild-controller-v1';label=$Label;controllerStartUtc=$controllerStartUtc;controllerEndUtc=$controllerEndUtc;controllerDurationMilliseconds=$stopwatch.ElapsedMilliseconds;panelPid=$PanelPid;expectedStartUtc=$ExpectedStartUtc;sessionId=$sessionId;binary=$expectedBinary;binarySha256=$binaryHash;helperPath=$helperPath;helperSha256=$helperHash;helperPid=$childPid;helperStartUtc=$childStartUtc;helperExitCode=$childExitCode;helperHandleRetained=($null -ne $childHandle);expectedRect=$ExpectedRect;input=$inputIdentity;readyUtc=$readyUtc;firstFrame=$firstFrame;burstOutcome=$burstOutcome;inputBeforeUtc=$inputBeforeUtc;inputDownUtc=$inputDownUtc;inputUpUtc=$inputUpUtc;downSendInputResult=$downSendInputResult;upSendInputResult=$upSendInputResult;clickAttempted=$clickAttempted;chronology=[ordered]@{firstFrameAfterController=($null -ne $firstFrame -and [DateTime]::Parse($firstFrame.captureStartedUtc).ToUniversalTime() -ge [DateTime]::Parse($controllerStartUtc).ToUniversalTime());inputAfterReady=($null -ne $readyUtc -and $null -ne $inputBeforeUtc -and [DateTime]::Parse($inputBeforeUtc).ToUniversalTime() -ge [DateTime]::Parse($readyUtc).ToUniversalTime());inputWhileHelperAlive=$childAliveAtInput;inputInsideAcceptedBurst=($burstIdentityMatch -and $burstOutcome -eq 'completed' -and $null -ne $inputDownUtc -and $null -ne $inputUpUtc -and [DateTime]::Parse($inputDownUtc).ToUniversalTime() -ge [DateTime]::Parse($burst.captureStartedUtc).ToUniversalTime() -and [DateTime]::Parse($inputUpUtc).ToUniversalTime() -le [DateTime]::Parse($burst.captureEndedUtc).ToUniversalTime())};outcome=$outcome;failure=$failure;sceneState='not inferred from capture';performanceAcceptance=$false}|ConvertTo-Json -Depth 12|Set-Content -LiteralPath $controllerReceipt -Encoding UTF8;$receiptWritten=$true}
  if($null -ne $child){$child.Dispose()}
 }
-Get-Content -LiteralPath $controllerReceipt -Raw
+if($receiptWritten){Get-Content -LiteralPath $controllerReceipt -Raw}
 if($outcome -eq 'failed'){throw ('Synchronized rebuild controller failed: '+$failure)}
