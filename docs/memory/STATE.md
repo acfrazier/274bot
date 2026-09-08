@@ -9,6 +9,30 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 07:23 UTC
+
+- SINGLE longer stage bothcells complete0/IntelVulkan/nativebound/qualified16,
+  no missingkeys. Candidate0250 raw070512Z end703.0163s all16Running1GPU/noerrors;
+  tarF651FBDA0FE19539512BF81CC2AD2B665AA686844C011AF124C76BF50A3374AD
+  manifest12596C3674FEA36EDDA9034C74DFB33DECFB48C787745463BF951043E6BBFFB1.
+  All22candidatearchivefiles verified; actual localqualify passed599.773s.
+  Candidate receipt windows-tile-boxed-long-candidate-receipt.json.
+- Root predeclared common124.72663..702.97571: RSS592828416→596338688B
+  (+.592%),CPU-1.736%; final300RSS536899584→579948544B(+8.02%), CPUlower.
+  windows-tile-boxed-long-root-screen.json preserves whole/common/100sbins/
+  final300 sideendpoints. No sustained focusedRSSwin shown. No acceptance.
+  Independent t_8bd8b95c actualLuna running exactpair/protocol+fine/provenance
+  recomputation and candidate-status recommendation, then same-cardGrok.
+- Coverageaudit composer twoactualterminal handofffailures; reclaimedthird,
+  samecard t_27ed9e56 movedLuna. Initialc0e74c2 rejected for role table/count/
+  scheduling claims; corrective4af1348 awaitingreview. No readerchange yet.
+- Visualsetup composer actualterminalhandofffailure; reclaimedautoretry,
+  t_a82d06cc movedLuna. Initial8d58709 rejected: real Lumbridge~home button
+  remains available undernull_raster; F12capture gating is separate. GPU/CPU
+  prefer_cpu differs from Off/drawpolicy reset. CorrectiveLuna active.
+  Need source-grounded existingUI setup plus independent native windowcapture,
+  not invented missing host verbs. All visual/lifecycle/finalbudget gatespending.
+
 ## Latest boundary — 2026-09-08 07:07 UTC
 
 - Longer baseline0250 completed0/IntelVulkan, nativebound/qualified16/16,

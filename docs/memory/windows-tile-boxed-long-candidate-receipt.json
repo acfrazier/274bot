@@ -1,0 +1,59 @@
+{
+  "cell": "candidate-focused-one-long-native-20260908-0250",
+  "archive_sha256": "f651fbda0fe19539512bf81cc2ad2b665aa686844c011af124c76bf50a3374ad",
+  "manifest_sha256": "12596c3674fea36edda9034c74dfb33decfb48c787745463bf951043e6bbffb1",
+  "verified_files": 22,
+  "native_binding": {
+    "status": "bound",
+    "reason": null,
+    "binding_ok": true,
+    "qualified": true,
+    "exit_code": 0,
+    "match_keys_missing": null,
+    "n": 16,
+    "run_dir": "C:\\Users\\BotTest\\274bot-workspaces\\3118e96\\host\\docs\\memory\\diagnostics\\20260908T070512Z_panel_n16_active"
+  },
+  "qualification": {
+    "run": "C:\\Users\\BotTest\\274bot-workspaces\\3118e96\\host\\docs\\memory\\diagnostics\\20260908T070512Z_panel_n16_active",
+    "qualified": true,
+    "errors": [],
+    "qualification": {
+      "run": "C:\\Users\\BotTest\\274bot-workspaces\\3118e96\\host\\docs\\memory\\diagnostics\\20260908T070512Z_panel_n16_active",
+      "n": 16,
+      "counting": false,
+      "diagnostics": false,
+      "qualified": true,
+      "errors": [],
+      "observation_s": 599.7733533,
+      "cpu_seconds": 306.484375,
+      "cpu_cores": 0.5110003192267528,
+      "client_ticks_per_slot_s": 48.932233882221716,
+      "median_resident_bytes": 596912128.0,
+      "steal_gains": {
+        "live24c40_0": 49,
+        "live24c40_1": 54,
+        "live24c40_2": 49,
+        "live24c40_3": 72,
+        "live24c40_4": 53,
+        "live24c40_5": 71,
+        "live24c40_6": 60,
+        "live24c40_7": 91,
+        "live24c40_8": 68,
+        "live24c40_9": 80,
+        "live24c40_10": 65,
+        "live24c40_11": 82,
+        "live24c40_12": 58,
+        "live24c40_13": 60,
+        "live24c40_14": 72,
+        "live24c40_15": 59
+      },
+      "diagnostic_only": true
+    },
+    "counting": false,
+    "diagnostics": false,
+    "workload": "active",
+    "pass_means": "workload qualification only; not performance or budget acceptance"
+  },
+  "local_qualification_passed": true,
+  "performance_acceptance": false
+}
