@@ -49,8 +49,8 @@ def main():
     for a, b in zip(first, second):
         assert a["ordinal"] == b["ordinal"] and a["name"] == b["name"]
         by_slot.append({"ordinal": a["ordinal"], "name": a["name"],
-                        "start": {k: a.get(k) for k in ["sampled_ms", "build_generation", "phase", "unmeasured_mask"] + fields},
-                        "end": {k: b.get(k) for k in ["sampled_ms", "build_generation", "phase", "unmeasured_mask"] + fields},
+                        "start": {k: a.get(k) for k in ["sampled_ms", "build_generation", "phase", "duration_ns", "unmeasured_mask"] + fields},
+                        "end": {k: b.get(k) for k in ["sampled_ms", "build_generation", "phase", "duration_ns", "unmeasured_mask"] + fields},
                         "delta": {k: b.get(k) - a.get(k) for k in fields if isinstance(a.get(k), (int,float)) and isinstance(b.get(k), (int,float))}})
     manifest = ROOT / "diagnostics/windows-owner-census-20260908/native-render-owner-census-focused-plus-background-20260908-0150/archive-manifest.json"
     manifest_obj = json.loads(manifest.read_text(encoding="utf-8-sig"))
@@ -80,6 +80,8 @@ def main():
         "archive_manifest_file_count": len(manifest_obj["files"]),
         "archive_manifest_verification": {"all_hashes_ok": all(x["ok"] for x in manifest_checks), "all_lengths_ok": all(x["length_ok"] for x in manifest_checks), "checked": len(manifest_checks)},
         "unmeasured_mask": sorted(set(x["unmeasured_mask"] for x in first + second)),
+        "duration_ns": {boundary_name: {"min": min(x["duration_ns"] for x in source), "max": max(x["duration_ns"] for x in source)}
+                        for boundary_name, source in [("observe-start", first), ("observe-end", second)]},
         "caveats": ["Owner census appears only at qualification boundaries, not periodic rawrenderer samples.", "Absent fields are not treated as zero.", "Nested model bytes and unique Arc model bytes are distinct views; do not add them.", "Per-renderer unique Arc identity cannot establish fleet-wide deduplication.", "These attribution samples do not explain total RSS and do not accept performance overhead."],
     }
     for boundary_name, source in [("observe-start", first), ("observe-end", second)]:

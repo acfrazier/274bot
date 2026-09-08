@@ -37,11 +37,11 @@ The full machine-readable table retains every measured field, both boundary gene
 
 | field | category / purpose | lifetime / accounting |
 |---|---|---|
-| `tile_container_bytes` | tile containers | renderer world tile/container ownership; lifetime follows the renderer world. |
-| `linked_container_bytes` | linked containers | linked container backing storage; lifetime follows linked world/container state. |
-| `sprite_container_bytes` | sprite containers | sprite/cache container backing storage; lifetime follows sprite cache state. |
+| `tile_container_bytes` | tile containers | renderer world tile/container ownership; `tile_models.capacity() * size_of::<Option<Box<TileModels>>>()` plus allocated `TileModels` count * `size_of::<TileModels>()`; lifetime follows the renderer world. |
+| `linked_container_bytes` | linked containers | linked container backing storage using the same option-box plus allocated-`TileModels` accounting; lifetime follows linked world/container state. |
+| `sprite_container_bytes` | sprite containers | `sprite_models` option capacity plus `sprite_stamps` capacity; lifetime follows sprite cache state. |
 | `nested_model_bytes` | nested model bytes | model bytes counted through nested ownership; nested occurrence, not an extra unique allocation. Do not add to unique Arc bytes. |
-| `unique_arc_model_bytes` | unique Arc model bytes | unique Arc-owned model pointees in this renderer census; aggregate identity is renderer-local. Renderer-local identity; do not infer fleet-wide deduplication. |
+| `unique_arc_model_bytes` | unique Arc model bytes | unique Arc-owned model pointees in this renderer census; `owner_census` visits each `SceneModel`, adds `owner_payload_bytes()` once per distinct `Arc::as_ptr`; aggregate identity is renderer-local. Renderer-local identity; do not infer fleet-wide deduplication. |
 | `shared_arc_pointees` | shared Arc pointees | count of shared Arc pointees represented by the unique-model accounting. |
 | `render_world_scratch_bytes` | render-world scratch | temporary renderer-world scratch storage; lifetime follows render/update work. |
 | `pix3d_scratch_bytes` | Pix3D scratch | Pix3D temporary scratch storage; lifetime follows 3D raster work. |
@@ -49,15 +49,15 @@ The full machine-readable table retains every measured field, both boundary gene
 | `pix3d_texel_free_bytes` | Pix3D free texels | free/reusable Pix3D texel backing storage; retained until allocator/cache release. |
 | `pixmap_bytes` | pixmaps | software pixmap backing storage; lifetime follows pixmap owners. |
 | `minimap_bytes` | minimap | minimap backing storage; lifetime follows minimap state. |
-| `overlay_materialized` | materialized overlays | count of materialized overlay objects, not bytes. |
+| `overlay_materialized` | materialized overlays | count of materialized overlay objects, not bytes; counts world squares whose ground is present. |
 | `transient_mesh_bytes` | transient meshes | currently-live transient mesh bytes; short-lived render work. |
 | `transient_mesh_high_water_bytes` | transient mesh high-water | observed transient mesh peak, not current residency. High-water diagnostic, not current residency. |
 
-The field names are the frozen source instrumentation contract for host render-profile owner census at host commit `66ba7c1` / client `9f72c2f`; the archived binding records the exact source digests and the client source correction `f746e9...356f`. This checkout does not contain those frozen source objects, so no current-checkout source line is substituted for the frozen-source attribution.
+The field names are the frozen source instrumentation contract for host render-profile owner census at host commit `66ba7c1` / client `9f72c2f`; the archived binding records the exact source digests and the client source correction `f746e9...356f`. In the frozen client source, `TileModels` contains seven `Option<SceneModel>` fields (`wall_model1`, `wall_model2`, `decor_model`, `gd_model`, `obj_bottom`, `obj_middle`, `obj_top`). The host serializes `duration_ns` alongside the owner values; it is diagnostic walk cost, not an owner category.
 
 ## Largest owners and accounting limits
 
-Tile containers are the largest fixed per-renderer category: 49,387,600 B per renderer and 790,201,600 B across 16. Nested model bytes are 16,764,772 B per renderer (268,236,352 B fleet); unique Arc model bytes are 15,870,584 B per renderer (258,054,184 B fleet). They are different accounting views: nested occurrences can include repeated references, while unique Arc bytes count pointees once within the renderer-local census. Adding them double-counts. The first slot is the requested check: tile 49,387,600 B, unique Arc 15,870,584 B, nested 16,764,772 B.
+Tile containers are the largest fixed per-renderer category in these two boundaries: 49,387,600 B per renderer and 790,201,600 B across 16. Nested model bytes are 16,764,772 B per renderer (268,236,352 B fleet). Unique Arc model bytes vary by renderer: 15,870,584–16,243,948 B per renderer, with the exact fleet sum retained in the machine-readable table; they are not a fixed per-renderer value. They are different accounting views: nested occurrences can include repeated references, while unique Arc bytes count pointees once within the renderer-local census. Adding them double-counts. The first slot is the requested check: tile 49,387,600 B, unique Arc 15,870,584 B, nested 16,764,772 B.
 
 Other fixed fleet sums at each boundary are linked containers 2,097,152 B, sprite containers 21,889,024 B, render-world scratch 10,849,280 B, Pix3D scratch 52,747,392 B, free texels 20,971,520 B, pixmaps 46,346,688 B, minimap 16,777,216 B, and materialized overlays 13,856. Active texels and current/high-water transient meshes are zero in both boundary snapshots. These are fleet aggregates of per-renderer fields, not RSS corrections; do not subtract logical, commit, or GPU gauges from RSS.
 
@@ -65,7 +65,7 @@ The aggregate is fixed-versus-fleet accounting within this one N16 capture. Cros
 
 ## Boundary freshness and periodic context
 
-At observe-start, owner `sampled_ms` values span 1788832139885–1788832139964; at observe-end they span 1788832259889–1788832259968 (about 120 s later). All 16 owner rows carry `build_generation=5`, `phase=2` (`steady_resolved`), and renderer generations are unchanged per ordinal across the two boundaries. That is a boundary comparison only: it does not establish no intermediate owner changes or stationary residency.
+At observe-start, owner `sampled_ms` values span 1788832139475–1788832140086; at observe-end they span 1788832259524–1788832260127 (about 120 s later). All 16 owner rows carry `build_generation=5`, `phase=2` (`steady_resolved`), and renderer generations are unchanged per ordinal across the two boundaries. Each owner row also retains `duration_ns` in the table; this diagnostic walk cost is summarized there by boundary min/max and is not an overhead acceptance result. That is a boundary comparison only: it does not establish no intermediate owner changes or stationary residency.
 
 The periodic raw renderer profile stream has no owner census rows. It does provide private-commit samples throughout seed/warmup/observe (for example, 2,771,111,936 B at elapsed 151.5663 s and 2,773,958,656 B at 201.9340 s) and the qualification root reports the 119.089 s diagnostic interval. Private commit, resident, GPU, logical and commit-related gauges have different scopes and must not be combined with owner bytes as one total.
 
