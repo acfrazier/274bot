@@ -2064,6 +2064,75 @@ def _gpu_backend_present(row: dict) -> bool:
     }
 
 
+def _gpu_headless_row_valid(row: dict) -> bool:
+    """Validate an explicitly expected, non-rendering panel slot."""
+    if (row.get("renderer_present") is not False
+            or row.get("backend_kind") not in (None, "")
+            or row.get("draw") is not False
+            or row.get("full_rate") is not False):
+        return False
+    completion = row.get("gpu_completion")
+    if not isinstance(completion, dict) or completion.get("enabled") is not True:
+        return False
+    if completion.get("pending_n") != 0:
+        return False
+    if any(completion.get(key) != 0 for key in GPU_COUNTER_KEYS[:-1]):
+        return False
+    if completion.get("registration_complete") is not True or completion.get("completion_coverage_complete") is not True:
+        return False
+    for key in ("stable_completion_interval_buckets", "completion_latency_buckets"):
+        values = completion.get(key)
+        if values is not None and (not isinstance(values, list) or any(value != 0 for value in values)):
+            return False
+    return True
+
+
+def _gpu_role_contract(meta: dict, observed: list[dict], n: Any) -> tuple[Optional[str], Optional[str]]:
+    """Check declared policy and every contained renderer-profile epoch."""
+    declared = "render_policy" in meta or "render_policy_requested" in meta
+    if not declared:
+        return None, None  # historical all-slots-must-render behavior
+    if (meta.get("render_policy_requested") is not True
+            or meta.get("render_policy") not in {"focused-one", "focused-plus-background"}):
+        return "invalid_render_policy", None
+    if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+        return "invalid_declared_slot_count", None
+    expected_set = None
+    focused_key = None
+    for sample in observed:
+        row_map, error = _index_slots(sample.get("renderer_profile"))
+        if error:
+            return error, None
+        assert row_map is not None
+        if len(row_map) != n:
+            return "renderer_slot_count_mismatch", None
+        keys = set(row_map)
+        if expected_set is None:
+            expected_set = keys
+        elif keys != expected_set:
+            return "renderer_slot_set_changed", None
+        for row in row_map.values():
+            age_error = _sample_age_reason(row)
+            if age_error:
+                return age_error, None
+        roles = [_gpu_role(row) for row in row_map.values()]
+        current_focused = [key for key, row in row_map.items() if _gpu_role(row) == "focused_full_rate"]
+        if focused_key is None:
+            focused_key = current_focused[0] if len(current_focused) == 1 else None
+        elif current_focused != [focused_key]:
+            return "focused_renderer_identity_changed", None
+        if meta["render_policy"] == "focused-one":
+            if roles.count("focused_full_rate") != 1:
+                return "focused_one_role_contract_failed", None
+            if sum(_gpu_headless_row_valid(row) for row in row_map.values()) != n - 1:
+                return "focused_one_role_contract_failed", None
+            if any(role not in ("focused_full_rate", None) for role in roles):
+                return "unexpected_renderer_role", None
+        elif roles.count("focused_full_rate") != 1 or roles.count("background") != n - 1:
+            return "focused_plus_background_role_contract_failed", None
+    return None, meta["render_policy"]
+
+
 def evaluate_gpu_completion_intervals(
     meta: dict,
     samples: list[dict],
@@ -2089,6 +2158,14 @@ def evaluate_gpu_completion_intervals(
         return unavailable("gpu_completion_profile_disabled")
     if not meta.get("render_profile"):
         return unavailable("render_profile_disabled")
+    if not isinstance(meta, dict) or not isinstance(samples, list):
+        return unavailable("malformed_gpu_input")
+    observed = [sample for sample in samples if isinstance(sample, dict) and sample.get("phase") == "observe"]
+    if len(observed) < 2:
+        return unavailable("no_observe_samples")
+    contract_error, declared_policy = _gpu_role_contract(meta, observed, meta.get("n"))
+    if contract_error:
+        return unavailable(contract_error, declared_render_policy=meta.get("render_policy"))
     start, end = _observe_pair(samples)
     if start is None or end is None:
         return unavailable("no_observe_samples")
@@ -2118,6 +2195,14 @@ def evaluate_gpu_completion_intervals(
     slots = []
     for key in sorted(e_map):
         srow, erow = s_map[key], e_map[key]
+        if declared_policy == "focused-one" and _gpu_headless_row_valid(erow):
+            slots.append({
+                "slot_id": key[0], "generation": key[1], "expected_slot": True,
+                "status": "available", "role": "expected_headless",
+                "target_verdict": "not_applicable", "gpu_completion_required": False,
+                "freshness_field": "sample_age_ms",
+            })
+            continue
         sg, eg = srow.get("gpu_completion"), erow.get("gpu_completion")
         base = {"slot_id": key[0], "generation": key[1], "expected_slot": True}
         age_err = _sample_age_reason(erow) or _sample_age_reason(srow)
@@ -2221,8 +2306,9 @@ def evaluate_gpu_completion_intervals(
             "timestamp_semantics": "callback_delivery_cpu_after_prior_submit_not_hw_gpu_or_scanout",
         })
 
-    verdicts = {s.get("target_verdict") for s in slots}
-    if any(s.get("status") != "available" for s in slots):
+    required_slots = [s for s in slots if s.get("gpu_completion_required", True)]
+    verdicts = {s.get("target_verdict") for s in required_slots}
+    if any(s.get("status") != "available" for s in required_slots):
         status, aggregate = "unavailable", "unavailable"
     elif verdicts == {"meet"}:
         status, aggregate = "available", "meet"
@@ -2236,6 +2322,8 @@ def evaluate_gpu_completion_intervals(
         "gate": "gpu",
         "slots": slots,
         "expected_slot_set": sorted(s_map),
+        "declared_render_policy": declared_policy,
+        "required_gpu_slot_n": len(required_slots),
         "target_ms": target_ms,
         "target_verdict": aggregate,
         "paint_proxy_forbidden": True,

@@ -2135,5 +2135,88 @@ class InputPreactivityTrimTests(unittest.TestCase):
         self.assertEqual(g["slots"][0]["reason"], "no_input_samples")
 
 
+class FocusedGpuRoleCoverageTests(unittest.TestCase):
+    def _completion(self, count, *, headless=False):
+        return {
+            "enabled": True, "registered_n": count, "completed_n": count,
+            "dropped_n": 0, "lost_n": 0, "pending_n": 0,
+            "stable_completed_n": count, "stable_completion_intervals": count,
+            "stable_completion_interval_buckets": [0, 0, 0, count] + [0] * 7,
+            "completion_latency_buckets": [0] * 11,
+            "registration_complete": True, "completion_coverage_complete": True,
+            "interval_bound_ms": list(rm.INTERVAL_BOUNDS_MS),
+        } if not headless else {
+            "enabled": True, "registered_n": 0, "completed_n": 0,
+            "dropped_n": 0, "lost_n": 0, "pending_n": 0,
+            "stable_completed_n": 0, "stable_completion_intervals": 0,
+            "stable_completion_interval_buckets": [0] * 10,
+            "completion_latency_buckets": [0] * 11,
+            "registration_complete": True, "completion_coverage_complete": True,
+        }
+
+    def _row(self, slot, *, focused=False, background=False, count=0):
+        headless = not focused and not background
+        return {
+            "slot_id": slot, "generation": 1, "sample_age_ms": 3,
+            "renderer_present": not headless, "backend_kind": "wgpu" if not headless else None,
+            "ingame": True, "scene_state": 2, "draw": focused,
+            "full_rate": focused, "gpu_completion": self._completion(count, headless=headless),
+        }
+
+    def _samples(self, n, policy, middle=None):
+        def rows(focus=0, completed=False):
+            return [self._row(slot, focused=slot == focus, background=policy == "focused-plus-background" and slot != focus,
+                              count=(4800 if slot == focus else 120) if completed else 0) for slot in range(n)]
+        start, end = rows(0), rows(0, completed=True)
+        if middle is not None:
+            middle_rows = rows(middle, completed=True)
+            return [{"phase": "observe", "elapsed_s": 0.0, "renderer_profile": start},
+                    {"phase": "observe", "elapsed_s": 60.0, "renderer_profile": middle_rows},
+                    {"phase": "observe", "elapsed_s": 120.0, "renderer_profile": end}]
+        return [{"phase": "observe", "elapsed_s": 0.0, "renderer_profile": start},
+                {"phase": "observe", "elapsed_s": 120.0, "renderer_profile": end}]
+
+    def test_public_evaluate_gpu_accepts_focused_one_n1_and_n16(self):
+        for n in (1, 16):
+            meta = _meta(render_profile=True, gpu_completion_profile=True, frontend="panel", n=n,
+                         render_policy="focused-one", render_policy_requested=True)
+            result = rm.evaluate_gpu(meta, self._samples(n, "focused-one"))
+            self.assertEqual(result["status"], "available", result)
+            self.assertEqual(result["target_verdict"], "meet", result)
+            self.assertEqual(sum(s["role"] == "expected_headless" for s in result["slots"]), n - 1)
+
+    def test_public_evaluate_gpu_background_requires_all_gpu_rows(self):
+        meta = _meta(render_profile=True, gpu_completion_profile=True, frontend="panel", n=16,
+                     render_policy="focused-plus-background", render_policy_requested=True)
+        result = rm.evaluate_gpu(meta, self._samples(16, "focused-plus-background"))
+        self.assertEqual(result["target_verdict"], "meet", result)
+        self.assertEqual(result["required_gpu_slot_n"], 16)
+        bad_samples = self._samples(16, "focused-plus-background")
+        bad_samples[1]["renderer_profile"][-1]["backend_kind"] = None
+        bad = rm.evaluate_gpu(meta, bad_samples)
+        self.assertEqual(bad["status"], "unavailable")
+
+    def test_focused_role_switch_interior_and_malformed_policy_fail_closed(self):
+        meta = _meta(render_profile=True, gpu_completion_profile=True, frontend="panel", n=16,
+                     render_policy="focused-one", render_policy_requested=True)
+        switched = rm.evaluate_gpu(meta, self._samples(16, "focused-one", middle=7))
+        self.assertEqual(switched["status"], "unavailable")
+        malformed = dict(meta, render_policy="mystery")
+        self.assertEqual(rm.evaluate_gpu(malformed, self._samples(16, "focused-one"))["status"], "unavailable")
+
+    def test_headless_activity_or_missing_focus_never_passes(self):
+        meta = _meta(render_profile=True, gpu_completion_profile=True, frontend="panel", n=16,
+                     render_policy="focused-one", render_policy_requested=True)
+        active_headless = self._samples(16, "focused-one")
+        active_headless[1]["renderer_profile"][1]["draw"] = True
+        self.assertEqual(rm.evaluate_gpu(meta, active_headless)["status"], "unavailable")
+        missing_focus = self._samples(16, "focused-one")
+        missing_focus[1]["renderer_profile"][0]["renderer_present"] = False
+        missing_focus[1]["renderer_profile"][0]["backend_kind"] = None
+        missing_focus[1]["renderer_profile"][0]["draw"] = False
+        missing_focus[1]["renderer_profile"][0]["full_rate"] = False
+        self.assertEqual(rm.evaluate_gpu(meta, missing_focus)["status"], "unavailable")
+
+
 if __name__ == "__main__":
     unittest.main()
