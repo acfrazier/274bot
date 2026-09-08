@@ -11,6 +11,25 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 23:31 UTC
+
+- Corrected native qualification completed17.509seconds and FAILED the necessary
+  throughput gate after2/9 cases (six timed repetitions). All16 core and36
+  Linux/Python tests passed without skips. Wide250k phase3 median4.416362MB/CPU-s
+  is below4.503128; raw/phase2 passed. No later cases or production replay ran.
+- Root independently recomputed18 rates and6 medians; all24 checks match.
+  Raw qualification SHA b7a2af38b7adb1b0f2e2c0d611a53ac2fa168bbf3b1d6e952bf33f6d0db47e83.
+  Evidence is in diagnostics/replay-native-8b4d6f5-qualification-1 and preparation.
+  Report on t_c07bdca6 is entering review; root flagged date/count and sampling
+  caveats: each short cell has only one early external sample, not a true peak
+  or sustained cadence; native phases separately report cumulative peak RSS.
+- Pending t_b03522bc is gated on that report review: measure and correct local
+  native hot-loop overhead with all semantics/guards preserved. JSON construction
+  per allocation/event is a source lead, not measured attribution. No remote,
+  new qualification, production retry or guard/case change is released there.
+- Separate 289 F remains in the same-card correction/review cycle. G-H and
+  authentic live/final whole-branch review remain required.
+
 ## Latest boundary — 2026-09-08 23:26 UTC
 
 - Identity test correction8b4d6f5 passed actual Grok4.5/xai session
