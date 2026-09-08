@@ -11,6 +11,25 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 23:26 UTC
+
+- Identity test correction8b4d6f5 passed actual Grok4.5/xai session
+  `20260908_191947_d712bb` on t_20b7fef4. Production reader behavior/pass bounds
+  are unchanged; tests separately prove metadata and consumed-byte SHA checks.
+  First Linux qualification and all prior failures remain preserved.
+- Root built frozen corrected package on the Linux VM in11.9seconds, source
+  hashes verified before/after. All40 staged files, three ELF hashes and dynamic
+  libraries verified on Concord at `/home/acfrazier/owner-native-8b4d6f5`.
+  Receipts: `diagnostics/replay-native-8b4d6f5-preparation/`.
+- Root released t_c07bdca6 to Luna for ONE corrected fixture-only qualification
+  at new `qualification-1` under that tree:16 core tests,36 native/Python tests,
+  nine cases/three timed repetitions, unchanged caps and no portable flag.
+  New corrected-qualification reports must preserve old failed reports.
+  No production replay is released; fresh results and actual review are pending.
+- Separate 289 F e36946c fixed challenge/tutorial behavior but second Grok review
+  requested stronger private/friend/staff/publication fixtures. Same card
+  t_4583da40 is in its next Luna correction; G-H and live/final review remain open.
+
 ## Latest boundary — 2026-09-08 23:10 UTC
 
 - Native Linux qualification FAILED at core tests:9/11 pass, midpass mutation
