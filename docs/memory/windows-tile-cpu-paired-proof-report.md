@@ -28,10 +28,9 @@ all files were present and their recorded byte lengths and SHA-256 digests match
 | baseline | `baseline-focused-one-cpu-native-20260908-0215` | `a39b8a50ff4a83e3b641a780f4ed58a3352a265dc86897e3202ddcb00d4d798a` | 28/28 |
 | candidate | `candidate-focused-one-cpu-native-20260908-0215` | `c267376258bef262ad130f5efb8818fddf3c31c1b07d70a86b68762f970294d4` | 28/28 |
 
-The archive digests above are the immutable native receipt values; the available
-checkout contains the extracted archive directories rather than the original tar
-streams, so this local check independently verifies the complete manifest file set,
-not a newly reconstructed tar-byte digest.
+The checker also hashes the sibling `.tar.gz` files directly. Their measured local
+SHA-256 values match the native receipt values above; this is a byte-level check of
+the actual archived evidence, in addition to the extracted manifest-file checks.
 
 Both native completion receipts have `exit_code: 0`, `functional_only: true`, and
 `performance_acceptance: false`. The native-bound records independently report
@@ -86,9 +85,31 @@ collapsed into a same-binary claim. The native receipt also records the checkout
 host commit `b4b686fd8765cc9d1aa880346f440bd6b781246e` and marks it as not the build
 authority.
 
+## Runtime restore receipt audit
+
+The root paired receipt's `runtime_restore` is consistent with the three preserved
+runtime documents under
+`docs/memory/diagnostics/cpu-proof-runtime-26426b0/`. The original manifest,
+staging receipt, and restore receipt each describe the same four named files and
+the same original/CPU SHA-256 pairs; the embedded root receipt repeats those four
+rows byte-for-byte. The measured document SHA-256 values are:
+
+| document | SHA-256 |
+|---|---|
+| `original-runtime-manifest.json` | `2f96e500e461d506587f16bf7ea0f4426d7eb18346a21f9142f78d64544afeb6` |
+| `runtime-staging-receipt.json` | `c109ba443ea76c3affcf2fb03928df4d1e35edfbb2c9bbb5f604a3aff7818948` |
+| `restore-receipt.json` | `c79cb9ebfe8290d6361e54fc7c979e1432787c4fd7630a33cf434ed594af005a` |
+
+The restore receipt records `original_runtime_restored: true`, inactive native
+frontend, VM state `Off`, and `performance_acceptance: false`; the root receipt
+repeats those values. This is receipt and hash consistency evidence only. A local
+Mac checkout cannot assert the current state of the remote Windows VM or workspace,
+and this task did not perform native restore or SSH actions.
+
 ## Visual functional inspection
 
-I independently used the available image-inspection tool on all six PNG captures,
+I independently used the available `vision_analyze` image-inspection tool on all
+six PNG captures,
 three per role, rather than inferring rendering from filenames or JSON metadata.
 The baseline and candidate scene-ready captures show a populated textured market/
 guard scene, one visible bot, minimap, status/debug panels, and overlays. The bank

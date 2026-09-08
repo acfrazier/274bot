@@ -16,6 +16,9 @@ EXPECTED_ARCHIVES = {
     "baseline": "a39b8a50ff4a83e3b641a780f4ed58a3352a265dc86897e3202ddcb00d4d798a",
     "candidate": "c267376258bef262ad130f5efb8818fddf3c31c1b07d70a86b68762f970294d4",
 }
+RECEIPTS = ROOT / "docs" / "memory" / "windows-tile-cpu-paired-0215-receipts.json"
+RUNTIME = ROOT / "docs" / "memory" / "diagnostics" / "cpu-proof-runtime-26426b0"
+RUNTIME_FILES = ("original-runtime-manifest.json", "runtime-staging-receipt.json", "restore-receipt.json")
 
 
 def load(path: Path):
@@ -30,8 +33,36 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def runtime_rows(document):
+    if isinstance(document, list):
+        return document
+    files = document["files"]
+    return files["value"] if isinstance(files, dict) else files
+
+
 def main() -> None:
     result = {"schema": "windows-tile-cpu-paired-proof-check-v1", "cells": {}}
+    root_receipt = load(RECEIPTS)
+    runtime_restore = root_receipt["runtime_restore"]
+    runtime_documents = {name: load(RUNTIME / name) for name in RUNTIME_FILES}
+    expected_runtime_rows = runtime_rows(runtime_documents[RUNTIME_FILES[0]])
+    runtime_checks = {
+        "original_runtime_restored": runtime_restore["original_runtime_restored"] is True,
+        "frontend_inactive": runtime_restore["frontend_active"] is False,
+        "vm_off": runtime_restore["vm_state"] == "Off",
+        "performance_acceptance_false": runtime_restore["performance_acceptance"] is False,
+        "file_count": runtime_restore["files"]["Count"] == len(expected_runtime_rows) == 4,
+        "manifest_matches_staging": expected_runtime_rows == runtime_rows(runtime_documents[RUNTIME_FILES[1]]),
+        "manifest_matches_restore": expected_runtime_rows == runtime_rows(runtime_documents[RUNTIME_FILES[2]]),
+        "receipt_matches_manifest": expected_runtime_rows == runtime_restore["files"]["value"],
+    }
+    if not all(runtime_checks.values()):
+        raise SystemExit(f"runtime restore checks failed: {runtime_checks}")
+    result["runtime_restore"] = {
+        "checks": runtime_checks,
+        "document_sha256": {name: sha256(RUNTIME / name) for name in RUNTIME_FILES},
+        "file_count": len(expected_runtime_rows),
+    }
     for role, name in CELLS.items():
         cell = BASE / name
         manifest = load(cell / "archive-manifest.json")
@@ -64,6 +95,7 @@ def main() -> None:
         result["cells"][role] = {
             "cell_id": manifest["cell_id"],
             "archive_sha256_from_receipt": EXPECTED_ARCHIVES[role],
+            "archive_sha256_actual": sha256(BASE / f"{name}.tar.gz"),
             "archive_manifest_file_count": len(manifest["files"]),
             "archive_manifest_files_verified": not failures,
             "archive_manifest_failures": failures,
@@ -99,6 +131,8 @@ def main() -> None:
             },
             "file_results": files,
         }
+        if result["cells"][role]["archive_sha256_actual"] != EXPECTED_ARCHIVES[role]:
+            raise SystemExit(f"archive SHA-256 mismatch for {role}")
     print(json.dumps(result, indent=2, sort_keys=True))
 
 
