@@ -1,6 +1,7 @@
 import json
 import os
 import pathlib
+import re
 import runpy
 import sys
 
@@ -25,26 +26,33 @@ checks = []
 def server_configuration_complete(server):
     configuration = server.get("configuration") if isinstance(server, dict) else None
     required = ("world_json_sha256", "maps_addition_sha256", "wordenc_addition_sha256", "bind_host", "node_version")
-    return isinstance(configuration, dict) and all(configuration.get(key) for key in required) and configuration.get("bind_host") == "127.0.0.1" and configuration.get("node_version") == "24.19.0"
+    digest_keys = ("world_json_sha256", "maps_addition_sha256", "wordenc_addition_sha256")
+    return (isinstance(configuration, dict)
+            and all(isinstance(configuration.get(key), str) and re.fullmatch(r"[0-9a-f]{64}", configuration[key]) for key in digest_keys)
+            and configuration.get("bind_host") == "127.0.0.1"
+            and configuration.get("node_version") == "24.19.0")
 
-def long_argv_contract_complete(args):
+def long_argv_contract_complete(args, argv=()):
     return (args.n == 16 and args.focused_one and not args.focused_background and args.warmup == 30
-            and args.observe == 600 and not getattr(args, "cpu_fallback", False) and not args.nav_captures
-            and args.no_diagnostics and args.failure_capture and rmc.rd.requested_backend(args) == "gpu")
+            and args.observe == 600 and not getattr(args, "cpu_fallback", False) and not getattr(args, "nav_captures", False)
+            and getattr(args, "no_diagnostics", False) and getattr(args, "failure_capture", False)
+            and getattr(args, "render_profile", False) and getattr(args, "gpu_completion_profile", False)
+            and "--cpu-fallback" not in argv and "--owner-census" not in argv)
 
 def no_launch(argv):
     spec = rmc.validate_spec(rmc.load_spec(pathlib.Path(argv[0])))
     args = rmc.parse_diagnostic_argv(spec["diagnostic_argv"])
     rmc.require_argv_consistent_with_spec(spec, args)
-    assert args.no_diagnostics
-    assert args.failure_capture
-    assert not args.nav_captures
-    assert long_argv_contract_complete(args), "Long confirmation argv contract failed"
+    assert spec["count"] == 16 and spec["mode"] == "focused-one"
+    assert (spec["warmup_s"], spec["observe_s"], spec["teardown_grace_s"]) == (30, 600, 60)
+    assert spec["requested_backend"] == "gpu" and spec["requested_adapter"] == "Intel(R) Graphics"
+    assert long_argv_contract_complete(args, spec["diagnostic_argv"]), "Long confirmation argv contract failed"
     server = json.loads(pathlib.Path(spec["server_identity_path"]).read_text())
     assert server_configuration_complete(server), "Incomplete generated server configuration"
     pf = rmc.preflight(spec, args)
     conditions = json.loads(pathlib.Path(spec["host_conditions_path"]).read_text())
     assert mea._native_windows_conditions_complete(conditions), "Incomplete native conditions"
+    assert not os.environ.get("BOT_CPU")
     assert os.environ.get("BOT_RENDER_OWNER_CENSUS") != "1"
 
     assert spec["cell_id"] == contract_id

@@ -30,4 +30,4 @@ Root should invoke exactly two fresh cells in predeclared baseline then candidat
 
 Verification status
 
-Local Python tests execute the controller's actual argv helper, parse it with run_managed_cell, evaluate the generated spec, exercise the no-launch server-configuration callback, and cover negative duration/mode/CPU/census/missing-configuration cases. PowerShell parser validation and native preflight/contract execution remain Windows/root-owned gates; no native action was taken here.
+Local Python tests execute the controller's actual argv helper, parse it with the exact original native parser extracted from git revision 35eab6c^, evaluate the generated spec, exercise the real no-launch callback without launching, and cover negative duration/mode/CPU/census/malformed-digest/missing-configuration cases. PowerShell parser validation and native preflight/contract execution remain Windows/root-owned gates; no native action was taken here.
