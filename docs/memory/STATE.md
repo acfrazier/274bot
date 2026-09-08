@@ -9,6 +9,28 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 09:26 UTC
+
+- Producer c4e142b rejected on t_844175ba by actual Grok4.5/xai-oauth
+  20260908_051809_de38c9: event-start sequence wrongly used as contiguous
+  extraction cursor, full-journal terminal identity loss, new REGISTRY lock
+  on cohort-disabled input, and missing real-producer tests. Same-card Luna
+  corrective run698 is live (started09:21); isolated ledger checkout only.
+  No producer integration or host-play/reader wiring yet.
+- Stimulus3730b40 source approved t_abf0c59f actualGrok4.5/xai-oauth
+  20260908_052009_ace916; root found actual-send timing guard gap afterward.
+  Root424aed5 corrects after-guard lateness/deadline, hashes binary before/
+  after schedule instead of twice per pulse, and avoids reading old receipts.
+  Corrective t_c18cae71 APPROVED actualGrok4.5/xai-oauth
+  20260908_052410_62cea7. Exact native PS5.1 AST0/C#compile INPUT40/type1/
+  Left37/Right39/flags1and3 passed09:24:21UTC; receipt8049f4d. Earlier3730b40
+  proof preserved9da7662. Both are factory-only; no controller/input invoked.
+- Next: finish producer correction and actual review, root cold review/tests,
+  then host-play/reader integration and combined review. Approved input helper
+  still needs screenshot-verified capture-enabled slot0 GameImage functional
+  smoke before latency use. Windows has no new frontend or performance run.
+  Full budgets/lifecycle/scaling/native matched pair/final whole-Grok remain.
+
 ## Latest boundary — 2026-09-08 09:08 UTC
 
 - Splash audit b7ccbf3 APPROVED t_8c2b78ce, actual Grok4.5/xai-oauth
