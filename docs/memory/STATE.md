@@ -11,6 +11,23 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 22:02 UTC
+
+- Native Rust task `t_98f58617` remains in implementation under the resumed
+  Astra session. Raw/interpreted parsing and classification are being ported;
+  full supervisor/parity/qualification gates are not yet complete or reviewed.
+- Root freshly confirmed the existing Windows builder VM is off (VM ID
+  `34954ade-f213-45ef-8957-dfafdbaa53fc`, uptime zero). No VM start, build or
+  production replay occurred. Native staging remains gated on code review.
+- Separate 289 D `5f5148b` passed actual Grok 4.5 / xai-oauth review, session
+  `20260908_175536_8c5ea7`, completed 22:00 UTC. Actor fixtures and focused
+  regressions passed; implementation report retains the earlier intermittent
+  stage1 failure. Root also read the primary Java hit/SAY source anchors.
+- Root released Section E world/zone implementation as `t_3aa4481e`, under
+  actual Astra / openai-codex session `20260908_180137_51a864`. Both standalone
+  and enclosed zone paths require complete-frame staging and source fixtures.
+  F-H, live proof and whole-branch review remain pending.
+
 ## Latest boundary — 2026-09-08 21:53 UTC
 
 - Native task `t_98f58617` found a Python reference defect before porting:
