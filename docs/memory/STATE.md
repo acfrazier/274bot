@@ -9,6 +9,33 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 01:29 UTC
+
+- Candidate focused0118 completed0, Intel/Vulkan startup, qualifies16/16 and
+  native unchanged reader binding passes.119.268s,median846426112bytes,
+  CPU0.5156446core,client48.47845ticks/slot/s. ArchiveSHA
+  6ac66be419307c9cba1f02d43a07734a6dd682ae1dd0d16b36b5ec9dcaf9ca8a
+  local diagnostics/windows-lazy-upload-20260908 with28verifiedfiles. Root read
+  all3captures; correct scene/restock/return, bank window already closed in
+  arrival capture. No accepted saving or causal/plateau conclusion yet.
+- ACTUAL fourthcell candidate-focused-plus-background-20260908-0126 launched
+  01:26:02. Poll existing task throughcompletion, then archive/bind/qualify and
+  independent elapsed-aligned comparison. No Windows builds/tests overlap.
+- Census f38d2e0 rejected by Grok4.5: expanded scope, false binary/commit labels,
+  missing runtime env/census switch/full manifest and broken paths. Same-card
+  t_98f39886 Luna correcting single66census observation, not four cells.
+- Linux source t_ad1fb12e approved; Mac Docker Linuxamd64 build57d5229 succeeded
+  in23.13s with852source pre/post hashes identical (aggregate
+  2ce61b110fe97fb22e8a9dd0ce7b21307c7bfba53c86df1a551df59035a78f5f).
+  Initial attempt failed before compile due /work permissions; preserved.
+  Corrected isolated build container -b completed0; no measurement claim from
+  emulated builder. Logs copied isolated Linux docs/memory/diagnostics/linux-build-57d5229.
+  New binary e451c0164c96142c4da28f9b6dcfe1944823b0c4c3282c54e06804832784fd0a
+  staged/hashverified on Concord in new linux-failure-attribution-20260908;
+  ldd resolves dependencies, no frontend run yet. VPSserver152004 available,
+ 926MiB free availability observed. New t_dfb4ece0 prepares one reviewed
+  diagnostic controller preserving old fixture expectations/guard/timeouts.
+
 ## Latest boundary — 2026-09-08 01:18 UTC
 
 - Baseline background0111 completed0, Intel/Vulkan startup matches. Archive
