@@ -77,7 +77,64 @@ visual proof. Do not mark G1–G4 from Cargo alone.
 | Opt-in `--render-profile` | Host `render_profile`: per-slot `scene_state`, `attach_n`/`detach_n`, backend, paint/skip, stable_paint intervals; JSONL via host-play memory samples | Instrumentation for G2/G3; **not** pixel proof; keep off clean CPU/latency cells or label diagnostic |
 | Zap cadence | `client_frame`: `scene_state != 2` forces full-rate paint so loading is not 1 fps snow (`host/lib.rs` ~422–425, test ~2079) | Loading must animate splash/static path; distinguishes “stuck 1 fps freeze” from intentional FBO hold |
 
-### 3.3 What recent native cells already did **not** prove
+### 3.3 Focus-pin boundary and the existing unpinned setup
+
+The memory panel is not an operator-drivable focus harness. `ui_frame` calls
+`state.session.memory_focus(run)` on every frame (`crates/panel/src/app.rs`
+~4180–4190) whenever the memory run is not draining captures. That method
+selects `run.focus_index()` and immediately reapplies
+`memory_draw_policy` (`crates/panel/src/session.rs` ~1411–1420). The policy
+also writes `renderer=true` and the selected/per-slot draw bits
+(`crates/panel/src/focus.rs` ~88–140). Consequently, launching
+`run_diagnostic.py ... --focused-one` and then clicking another rail slot, or
+unchecking the renderer, is not a valid G2/G3 procedure: the next UI frame can
+select slot 0 and restore the requested policy. The raster buttons are real
+controls (`app.rs` ~3127–3140), but they are not durable against this memory
+loop.
+
+There is one existing non-memory N=2 path that does not call `memory_focus`:
+the headed `null_raster` harness. Its exact setup is
+`Session::live_prepare_null_raster` (`crates/panel/src/session.rs` ~1351–1380):
+it creates a temporary vault containing the disposable `test` and `test2`
+fixtures, sets `persist_ui=false`, loads both into the wall, selects `test`,
+enables its renderer, and logs both in. It stays open after both slots reach
+scene 2 (`app.rs` ~656–694), so an operator can use the rail and Raster
+None/GPU buttons on the same clients. Start the frozen executable directly,
+with the same already-reviewed server/navigation environment as the native
+controller, and with memory variables absent:
+
+```powershell
+$env:BOT_MEMORY_N = $null
+$env:BOT_MEMORY_WORKLOAD = $null
+$env:BOT_MEMORY_RENDER_POLICY = $null
+$env:BOT_MEMORY_SINGLE_RENDERER = $null
+$env:BOT_CPU = $null       # leave GPU selected for this cell
+& 'C:\ProgramData\274bot-Test\tile-boxed-fb3589a\panel-play.exe' --live null_raster
+```
+
+The stage and hash must still be checked against §1 before launch. This path
+does not touch the personal vault: the temporary vault is created inside the
+live boot and `persist_ui=false`. Do not replace it with bare interactive
+`panel-play` plus `BOT_VAULT_PASS`; that opens the default personal vault and
+has no existing CLI option for selecting a disposable vault.
+
+This path is sufficient to drive a bounded manual N=2 G2 focus switch and G3
+Raster None→GPU round trip without a memory-policy override. It is not a
+complete capture harness: while any live harness is active, `ui_frame` disables
+the interactive F12 path (`app.rs` ~4225–4231), and `null_raster` does not emit
+`render_profile` rows. Therefore an operator must use an independently
+available, read-capable window capture for the visual pair, or record the
+capability as blocked/inconclusive; do not claim G2/G3 from the command alone.
+The manual input sequence is: wait for both `test` and `test2` to show
+`ingame scene 2`; click the `test2` rail entry; observe that the Game pane
+follows it while `test` remains the watch slot; click `test` again; then click
+Raster `none`, observe the focused pane detach while both status rows remain
+ingame, and click Raster `GPU` and wait for the same client to restore a
+non-zero scene. Record the observed slot names, scene-status transitions, and
+whether an independent capture was actually readable.
+There is likewise no existing non-memory N=2 trigger for G1 rebuild/freeze.
+
+### 3.4 What recent native cells already did **not** prove
 
 - Clean N16 GPU ABBA / focused screens: scene2 qualification + descriptive RSS; no G1.
 - CPU N1 pair 0215: six PNGs scene2 market/bank/return; receipts set
@@ -103,7 +160,7 @@ G2/G3 pass if multi-head attach storms need evidence.
 | Phase | Bound |
 | --- | --- |
 | Login → first `ingame && scene_state==2` | ≤ 180 s |
-| Each G1 freeze window (tele/home → scene1 → scene2) | ≤ 90 s total; capture within 2 s of first `scene 1` log |
+| Each G1 freeze window (tele/home → scene1 → scene2) | ≤ 90 s total; after an observed `scene 1` log, request the capture and record both timestamps — no fixed 2 s timing guarantees scene 1 on a fast cache |
 | Focus switch settle | ≤ 15 s to non-zero new frame |
 | Attach/detach round-trip (Off→Gpu or Gpu↔Cpu) | ≤ 30 s to restored non-zero scene2 frame |
 | Whole diagnostic cell | ≤ 20 min including teardown |
@@ -130,8 +187,10 @@ retry indefinitely (§5 park/investigate rule).
    `check_minimap` at `draw.rs` ~3920–3968; GPU freeze
    `freeze_last_scene` + overlay pass `gpu.rs` ~1191–1199, finish minimap hold
    ~1388–1534).
-3. On status log `{name}: scene 1`, immediately F12 **freeze-hold** (and optional
-   second shot 0.5–1.0 s later).
+3. On an observed status log `{name}: scene 1`, request **freeze-hold** and
+   record the request/capture timestamps (optional second shot after 0.5–1.0 s).
+   A fast cache may enter and leave scene 1 before a fixed-delay screenshot;
+   without an observable scene1→capture ordering, the result is inconclusive.
 4. Wait for `{name}: scene 2`; F12 **post-rebuild-live**.
 5. **Human/vision inspection checklist (mandatory):**
    - freeze-hold 3D ≈ baseline geometry (last FBO), not black clear and not a
@@ -207,17 +266,18 @@ row pair proving residency moved.
 
 | Gate | Offline/unit | Host unit | Live e2e | Frozen native UI/hooks | Automated native freeze harness | Verdict for execution |
 | --- | --- | --- | --- | --- | --- | --- |
-| G1 freeze+minimap | Strong GPU/CPU predicates + splash + IF-over-freeze | Zap cadence only | No | Status scene log + F12 + tele/home cheats + GPU finish hold | **None** | **Executable manually/diagnostic on frozen binary**; no new code strictly required |
-| G2 focus/watch | Policy unit only | — | panel_view single-slot draw | Focus UI + memory policies + optional render_profile | No multi-slot visual auto | **Executable** with N≥2 diagnostic panel |
-| G3 attach/detach | client_build flags | **Strong** client_frame + profile counters | — | Raster Off/Gpu/Cpu UI | No pixel auto | **Executable**; pair UI with profile or visual restore |
+| G1 freeze+minimap | Strong GPU/CPU predicates + splash + IF-over-freeze | Zap cadence only | No | Status scene log + F12 + tele/home cheats + GPU finish hold | **None** | **Missing complete unpinned setup**; memory path cannot be used as a manual freeze harness and null_raster has no rebuild trigger |
+| G2 focus/watch | Policy unit only | — | panel_view single-slot draw | N=2 `--live null_raster` rail controls; no profile/capture output | No multi-slot visual auto | **Manual setup exists**, but visual evidence is blocked/inconclusive unless an independent capture is available; do not use memory `--focused-one` |
+| G3 attach/detach | client_build flags | **Strong** client_frame + profile counters | — | N=2 `--live null_raster` Raster None/GPU controls; no profile/capture output | No pixel auto | **Manual setup exists**, but readback evidence is blocked/inconclusive unless an independent capture is available |
 | G4 overlays | IF freeze unit; chrome dirty tests | — | — | F12 + freeze series | No | **Executable** as inspection on G1/G2 PNGs |
 
 ## 6. Minimal additional diagnostic hooks (propose only — do not implement here)
 
-Existing mechanisms can prove all four gates on a frozen binary **if** an
-operator (or root) drives UI and a vision-capable inspector reads PNGs.
-Automation gaps are convenience and fail-closed CI, not fundamental missing
-host verbs.
+The non-memory `null_raster` path removes the focus-pin problem for G2/G3, but
+the frozen binary still lacks a complete unpinned capture/rebuild harness.
+Treat the capture limitation and G1 trigger as missing capabilities, not as
+operator error or permission to use a personal vault. Any unattended proof
+needs the hooks below (or an explicitly reviewed equivalent).
 
 Propose **only if** root wants unattended native proof:
 
@@ -238,7 +298,10 @@ Propose **only if** root wants unattended native proof:
 4. **Do not propose:** gameplay telebots, weakened splash expectations,
    disabling zap, pooling scene textures, or clean-cell profile defaults.
 
-If root declines new hooks, execution uses §4 manual/diagnostic procedure only.
+If root declines new hooks, execute only the bounded `null_raster` setup for
+manual G2/G3 observation and record any absent capture/profile evidence as
+`blocked-missing-capability` or `inconclusive`. Do not call all gates
+executable merely because the memory CLI accepts `--focused-one`.
 
 ## 7. Contamination and anti-false-pass summary
 
@@ -253,9 +316,14 @@ If root declines new hooks, execution uses §4 manual/diagnostic procedure only.
 
 ## 8. Suggested execution order (for root after review)
 
-1. N1 GPU diagnostic: G1 + G4 on fb3589a binary (≤20 min).
-2. N2 or N16 focused-one diagnostic: G2 focus switch.
-3. Same session or follow-up: G3 Raster Off/On and optional Gpu↔Cpu.
+1. Do not launch G1/G4 yet: the frozen binary has no complete unpinned rebuild
+   and capture path; retain this as `blocked-missing-capability` until the
+   proposed hook or an independently reviewed capture procedure exists.
+2. N=2 `--live null_raster` diagnostic: G2 focus switch, then G3 Raster
+   None→GPU on the same client; use an independent window capture or mark the
+   visual evidence blocked/inconclusive because F12/profile output is absent.
+3. N=1 memory or interactive diagnostic: G1 + G4 only if a separate operator
+   capture path can observe the ordered scene2→scene1→scene2 transition.
 4. Optional CPU RasterMode cell repeating G1 checklist (separate from clean GPU).
 5. Record gate table; **no** performance acceptance; whole-branch Grok still later.
 
