@@ -11,6 +11,26 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 22:43 UTC
+
+- Native implementation `6be6328` is submitted on `t_98f58617`; actual
+  Grok 4.5 / xai-oauth review session `20260908_184142_115431` started.
+  Local evidence: 11 native core tests pass, Python/native suite 35 pass plus
+  one Linux AS skip, original Python suite 19 pass plus two Linux skips.
+  Nine small generated cases completed 27 portable repetitions.
+- Root recomputed 81 phase rates and 27 medians from the submitted probe;
+  all match. Receipt is under
+  `diagnostics/replay-native-stage-rust-preparation/local-probe-arithmetic-check.json`.
+  This validates local arithmetic, not native throughput or production capacity.
+- Root flagged a report-only threshold error for review: interpreted/selected
+  required rates are 4.503128 MB/CPU-s, not the report's 3.175. The approved
+  design, driver constants and executed probe already use the correct value.
+  Code review remains unresolved; no Linux build/qualification/retry is released.
+- Separate 289 E `2a0f774` completed both final workspace configurations and
+  entered actual Grok 4.5 review session `20260908_184242_66d645` on
+  `t_3aa4481e`. Earlier timing failures and the timeout remain in its report.
+  F-H and authentic live/final whole-branch review are still pending.
+
 ## Latest boundary — 2026-09-08 22:02 UTC
 
 - Native Rust task `t_98f58617` remains in implementation under the resumed
