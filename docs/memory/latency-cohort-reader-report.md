@@ -127,8 +127,11 @@ independently of mono.
 - Qualification cohort refs also require
   `qualification_elapsed_s_is_harness_not_cohort_mono=true` and a string
   `phase_tag` (harness elapsed is not cohort mono)
-- Terminal `observe_end_elapsed_s` must equal qualification observe-end
-  harness elapsed (self-consistent harness clock; not mono)
+- The observe-end qualification cohort stamp is captured before the
+  qualification row's independent `elapsed_s` read. It must be finite and
+  ordered `observe-start elapsed_s <= observe_end_elapsed_s <= observe-end
+  elapsed_s`; equality is not required. The terminal must repeat that retained
+  stamp exactly. The observe-start ref must carry a null end stamp.
 - Cohort-bearing sample harness `elapsed_s` must not precede observe-start
 - Sample `cohort.cursor` must be a uint in the set of emitted batch
   `next_cursor` values (plus 0), non-decreasing across samples, and
@@ -263,7 +266,7 @@ p99 freeze hash verified unchanged:
 `ade46732007625b4ddd83f7895e38350646c7799879ed8f9030c8ceb41a9d8f3`
 
 cohort_reader SHA-256 after this correction round:
-`0fa06e0ba3c182fca5eac567040f041068af3425774fdc1311a2aa68f2af818c`
+`cd383fc3c9ced01efd12c5bd077d74b20d70db2feb4b7001e0757e4c84603d40`
 
 ### Root false-meet / false-reject probes (now fail-closed / meet)
 
@@ -330,3 +333,21 @@ TUI note exact match.**
 - Untracked diagnostic fixture symlinks (if present) are local test reuse only
   and must not be committed as reader artifacts
 - Not a native latency pass, matched-pair proof, or campaign acceptance
+
+## Corrective native archive probe
+
+The unchanged archive
+`latency-diagnostic-input-trace-20260908-a` was read structurally with the
+qualification-derived `meta_argument` from the root probe (the archive has no
+canonical `metadata.json`). Its tar SHA-256 is
+`8a9e5a1a9fc446a980ab579faf04516dd2ad45e94737c05cff96e1e148c7dbd`; the
+manifest contains 35 files. The corrected reader returns:
+
+- `decode`: `available`, 300 records, population 1, fine p99 upper 19 ms,
+  target verdict `meet` (structural evidence only)
+- `input`: `unavailable`, `declared_population_incomplete`, expected 1 and
+  missing 1, because the independently traced capture channel is absent
+
+This is not a native latency or performance acceptance claim. The direct
+structural probe remains intentionally separate from normal `analyze_run`,
+which must continue to report `missing_metadata` for this archive.

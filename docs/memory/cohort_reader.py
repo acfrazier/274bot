@@ -377,11 +377,18 @@ def _qual_boundary_pair(
         return None, None, "qualification_start_phase_tag"
     if ec.get("phase_tag") not in (None, "observe-end"):
         return None, None, "qualification_end_phase_tag"
+    # The producer stores the cohort end stamp before it captures the
+    # qualification row's independent harness elapsed value.  The two values
+    # therefore share a clock and ordering, not identity.  The start boundary
+    # has no end stamp; the end boundary must retain one in the source order.
+    if sc.get("observe_end_elapsed_s") is not None:
+        return None, None, "qualification_start_observe_end_unexpected"
     oee = ec.get("observe_end_elapsed_s")
-    if oee is not None and _finite(oee) and float(oee) != end_elapsed:
-        # Harness clock self-consistency: end boundary elapsed vs declared end mark.
-        if abs(float(oee) - end_elapsed) > 1e-9:
-            return None, None, "qualification_observe_end_elapsed_mismatch"
+    if not _finite(oee):
+        return None, None, "qualification_end_observe_end_missing"
+    oee_f = float(oee)
+    if not (start_elapsed <= oee_f <= end_elapsed):
+        return None, None, "qualification_observe_end_elapsed_order"
     return start_row, end_row, None
 
 
@@ -931,7 +938,6 @@ def _read_cohort_impl(run_dir: pathlib.Path, meta: dict, samples: list[dict], ga
         return unavailable(berr, gate=gate)
     assert start_qual is not None and end_qual is not None
     harness_start_elapsed = float(start_qual["elapsed_s"])
-    harness_end_elapsed = float(end_qual["elapsed_s"])
 
     settings_list, serr = _qual_settings_list(qualification)
     if serr:
@@ -1155,8 +1161,12 @@ def _read_cohort_impl(run_dir: pathlib.Path, meta: dict, samples: list[dict], ga
     oee = terminal.get("observe_end_elapsed_s")
     if not _finite(oee):
         return unavailable("observe_end_elapsed_missing", gate=gate)
-    # Terminal harness end mark must agree with qualification observe-end.
-    if abs(float(oee) - harness_end_elapsed) > 1e-9:
+    # The terminal repeats the retained cohort end stamp.  It is not required
+    # to equal the qualification row's later harness elapsed capture.
+    end_cohort = end_qual["cohort"]
+    assert isinstance(end_cohort, dict)
+    retained_end_elapsed = float(end_cohort["observe_end_elapsed_s"])
+    if float(oee) != retained_end_elapsed:
         return unavailable("observe_end_elapsed_mismatch", gate=gate)
     if batch_count == 0 or not last_batch_complete:
         return unavailable("final_batch_incomplete", gate=gate)

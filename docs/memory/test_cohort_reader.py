@@ -274,7 +274,10 @@ def _win_path(run_name: str, leaf: str = "samples.cohort.jsonl") -> str:
 
 
 class CohortReaderTests(unittest.TestCase):
-    def _materialize(self, meta, records, *, n=None, generations=None):
+    def _materialize(
+        self, meta, records, *, n=None, generations=None,
+        qualification_end_elapsed_s=HARNESS_OBS_END_S - 0.001,
+    ):
         """Write a complete archived run. ``records[0].sidecar_path`` is rewritten
         to a native Windows path ending in this run directory name.
 
@@ -291,6 +294,7 @@ class CohortReaderTests(unittest.TestCase):
 
         records = [json.loads(json.dumps(r)) for r in records]  # deep copy
         records[0]["sidecar_path"] = claimed
+        records[-1]["observe_end_elapsed_s"] = qualification_end_elapsed_s
         (run / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
         (run / "samples.cohort.jsonl").write_text(
             "\n".join(json.dumps(x) for x in records) + "\n", encoding="utf-8"
@@ -351,7 +355,7 @@ class CohortReaderTests(unittest.TestCase):
         }
         ref_qual_end = dict(ref_qual_start)
         ref_qual_end["phase_tag"] = "observe-end"
-        ref_qual_end["observe_end_elapsed_s"] = HARNESS_OBS_END_S
+        ref_qual_end["observe_end_elapsed_s"] = qualification_end_elapsed_s
 
         def _rows_at(mono: int, *, capture: str = "set"):
             return [_profile_row(sid, gens[sid], mono, capture=capture) for sid in ids]
@@ -448,6 +452,44 @@ class CohortReaderTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+        finally:
+            td.cleanup()
+
+    def test_distinct_end_stamp_and_qualification_row_elapsed_are_valid(self):
+        meta = _meta(n=1)
+        records = _build_records("PLACEHOLDER", n=1, input_events=[])
+        td, run, samples = self._materialize(meta, records, n=1)
+        try:
+            result = cr.read_cohort(run, meta, samples, "decode")
+            self.assertEqual(result["target_verdict"], "meet", result)
+        finally:
+            td.cleanup()
+
+    def test_terminal_end_stamp_must_match_retained_qualification_stamp(self):
+        meta = _meta(n=1)
+        records = _build_records("PLACEHOLDER", n=1, input_events=[])
+        td, run, samples = self._materialize(meta, records, n=1)
+        try:
+            raw = [json.loads(line) for line in (run / "samples.cohort.jsonl").read_text().splitlines()]
+            raw[-1]["observe_end_elapsed_s"] += 0.001
+            (run / "samples.cohort.jsonl").write_text(
+                "\n".join(json.dumps(row) for row in raw) + "\n"
+            )
+            result = cr.read_cohort(run, meta, samples, "decode")
+            self.assertEqual(result["reason"], "observe_end_elapsed_mismatch")
+        finally:
+            td.cleanup()
+
+    def test_end_stamp_after_qualification_row_is_unavailable(self):
+        meta = _meta(n=1)
+        records = _build_records("PLACEHOLDER", n=1, input_events=[])
+        td, run, samples = self._materialize(
+            meta, records, n=1,
+            qualification_end_elapsed_s=HARNESS_OBS_END_S + 0.001,
+        )
+        try:
+            result = cr.read_cohort(run, meta, samples, "decode")
+            self.assertEqual(result["reason"], "qualification_observe_end_elapsed_order")
         finally:
             td.cleanup()
 
