@@ -11,6 +11,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 20:52 UTC
+
+- Operator confirms Windows restarted and BotTest console signed in; Windows
+  hold is lifted. Root read-only verification at20:51:45Z confirms fresh boot
+  20:49:12Z, BotTest console1 Active, Sunshine10088 in session1 and service6868.
+  No detected ffxiv/panel/tui-play/cargo/rustc/LogonUI process. Sunshine is newly
+  installed/running; paid vHID is not installed per operator. No configuration,
+  driver installation, VM start, desktop input or workload launch performed.
+  Future clean native measurement must account for the changed Sunshine baseline
+  and avoid a live viewer during measured cells. Existing-data replay still uses
+  Concord after code review and Linux guard proof; no Hyper-V need established.
+- 289 B429c732 approved actual Grok4.5/xai session20260908_164529_456dd4 after
+  final redraw-icons correction. Released C t_19843fbb to verified Luna defaults;
+  actual run live since20:50, nine inventory/varp/stat IDs, serialized client scope.
+- Replay t_2aba75a5 remains live in implementation: saved-smoke full stack
+  comparison passes locally; owned runner and rejection tests still in progress.
+  No formal code approval, production replay or accepted new memory result.
+
 ## Latest boundary — 2026-09-08 20:43 UTC
 
 - Replay implementation t_2aba75a5 is live under actual gpt-6-astra/openai-codex,
