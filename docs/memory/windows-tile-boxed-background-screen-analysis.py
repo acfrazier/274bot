@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+"""Independently recompute the native boxed-tile N16 ABBA screen.
+
+Only the four immutable clean archives named below are inputs.  The script
+keeps Windows paths as recorded, verifies local archive/manifests without
+attempting to reopen those paths, and never treats resource provenance labels
+as an acceptance gate.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import statistics
+import tarfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+ARCHIVE_ROOT = ROOT / "diagnostics/windows-tile-boxed-clean-20260908"
+OUT = Path(__file__).with_name("windows-tile-boxed-background-screen-table.json")
+CELLS = [
+    ("baseline-forward", "baseline-focused-plus-background-nativecheck-20260908-0103", "reference"),
+    ("candidate-forward", "candidate-focused-plus-background-nativecheck-20260908-0103", "candidate"),
+    ("candidate-reverse", "candidate-focused-plus-background-reverse-20260908-0116", "candidate"),
+    ("baseline-reverse", "baseline-focused-plus-background-reverse-20260908-0116", "reference"),
+]
+
+def sha(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for block in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(block)
+    return h.hexdigest()
+
+def load(path: Path):
+    return json.loads(path.read_text(encoding="utf-8-sig"))
+
+def jsonl(path: Path):
+    return [json.loads(line) for line in path.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+
+def nums(rows, key):
+    return [r[key] for r in rows if isinstance(r.get(key), (int, float))]
+
+def mib(v):
+    return None if v is None else v / 1048576.0
+
+def range_for(rows, key):
+    v = nums(rows, key)
+    return [min(v), max(v)] if v else None
+
+def aggregate(rows):
+    elapsed = nums(rows, "elapsed_s")
+    user = nums(rows, "process_cpu_user_s")
+    system = nums(rows, "process_cpu_system_s")
+    wall = elapsed[-1] - elapsed[0] if len(elapsed) > 1 else None
+    cpu = None
+    if wall and len(user) > 1 and len(system) > 1:
+        cpu = ((user[-1] - user[0]) + (system[-1] - system[0])) / wall
+    rss = nums(rows, "resident_bytes")
+    peak = nums(rows, "peak_resident_bytes")
+    private = nums(rows, "windows_private_commit_bytes")
+    return {
+        "elapsed_endpoint_s": [elapsed[0], elapsed[-1]] if elapsed else None,
+        "duration_s": wall,
+        "sample_count": len(rows),
+        "rss_median_mib": mib(statistics.median(rss)) if rss else None,
+        "rss_max_mib": mib(max(rss)) if rss else None,
+        "rss_peak_field_max_mib": mib(max(peak)) if peak else None,
+        "private_commit_median_mib": mib(statistics.median(private)) if private else None,
+        "private_commit_max_mib": mib(max(private)) if private else None,
+        "gpu_tracked_median_mib": mib(statistics.median(nums(rows, "gpu_tracked_bytes"))) if nums(rows, "gpu_tracked_bytes") else None,
+        "gpu_tracked_max_mib": mib(max(nums(rows, "gpu_tracked_bytes"))) if nums(rows, "gpu_tracked_bytes") else None,
+        "cpu_process_cores": cpu,
+        "ready_range": range_for(rows, "ready"),
+        "active_range": range_for(rows, "active"),
+        "client_tick_delta": (nums(rows, "client_tick_count")[-1] - nums(rows, "client_tick_count")[0]) if len(nums(rows, "client_tick_count")) > 1 else None,
+        "ui_draw_delta": (nums(rows, "ui_draw_count")[-1] - nums(rows, "ui_draw_count")[0]) if len(nums(rows, "ui_draw_count")) > 1 else None,
+        "ui_frame_delta": (nums(rows, "ui_frame_count")[-1] - nums(rows, "ui_frame_count")[0]) if len(nums(rows, "ui_frame_count")) > 1 else None,
+    }
+
+def manifest_check(cell: Path):
+    manifest = load(cell / "archive-manifest.json")
+    checks = []
+    for item in manifest.get("files", []):
+        rel = item["path"].replace("\\", "/")
+        p = cell / rel
+        actual = sha(p) if p.is_file() else None
+        checks.append({"path": rel, "listed_sha256": item.get("sha256"), "actual_sha256": actual,
+                       "listed_length": item.get("length"), "actual_length": p.stat().st_size if p.is_file() else None,
+                       "ok": p.is_file() and actual == item.get("sha256") and p.stat().st_size == item.get("length")})
+    tar = cell.with_suffix(".tar.gz")
+    return {"file_count": len(checks), "all_files_ok": all(x["ok"] for x in checks),
+            "checks": checks, "tar_sha256": sha(tar) if tar.is_file() else None,
+            "tar_present": tar.is_file()}
+
+def qualification(cell: Path):
+    rows = jsonl(cell / "raw-run-01/samples.qualification.jsonl")
+    by = {r.get("phase"): r for r in rows}
+    start, end = by.get("observe-start", {}), by.get("observe-end", {})
+    return {
+        "phases": [r.get("phase") for r in rows],
+        "elapsed_s": {"start": start.get("elapsed_s"), "end": end.get("elapsed_s")},
+        "slot_count": {"start": len(start.get("slots", [])), "end": len(end.get("slots", []))},
+        "all_16_running_at_boundaries": all(s.get("state") == "Running" and not s.get("error") for s in start.get("slots", []) + end.get("slots", [])),
+        "startup_age_to_observe_start_s": start.get("elapsed_s"),
+        "native_rows_preserved": True,
+    }
+
+def find_keys(obj, key, out):
+    if isinstance(obj, dict):
+        if key in obj:
+            out.append(obj[key])
+        for v in obj.values():
+            find_keys(v, key, out)
+    elif isinstance(obj, list):
+        for v in obj:
+            find_keys(v, key, out)
+
+def gate_summary(cell: Path):
+    p = cell / "managed-run/cells"
+    reports = list(p.glob("*/cell_report.json"))
+    if not reports:
+        return {"status": "unavailable", "reason": "cell_report_missing"}
+    obj = load(reports[0])
+    result = {}
+    for key in ("scheduling", "decode", "input", "gpu"):
+        found = []
+        find_keys(obj.get("analysis", obj), key, found)
+        result[key] = {"occurrences": len(found), "statuses": sorted({str(x.get("status")) for x in found if isinstance(x, dict)})}
+    return result
+
+def bound_summary(cell: Path):
+    bound = load(cell / "managed-run/native-bound.json")
+    side = bound.get("side_provenance", {})
+    qual = bound.get("qualification", {})
+    q = qual.get("qualification", {}) if isinstance(qual, dict) else {}
+    return {
+        "status": bound.get("status"),
+        "binding_ok": bound.get("binding_ok"),
+        "qualified": bound.get("qualified"),
+        "exit_code": bound.get("exit_code"),
+        "pair_eligible": bound.get("pair_eligible"),
+        "final_acceptance_claim": bound.get("final_acceptance_claim"),
+        "raw_hash_status": bound.get("raw_hash_status"),
+        "binary_sha256": bound.get("binary_sha256"),
+        "manifest_binary_key": bound.get("manifest_binary_key"),
+        "manifest_build_commit": side.get("manifest_build_commit"),
+        "manifest_sources_sha256": side.get("manifest_sources_sha256"),
+        "client_commit": side.get("client_commit"),
+        "client_sources_sha256": side.get("client_sources_sha256"),
+        "qualification": {k: q.get(k) for k in ("qualified", "observation_s", "cpu_cores", "client_ticks_per_slot_s", "steal_gains")},
+        "native_observation_wall_span": bound.get("observation_wall_span"),
+        "native_wall_span_source": bound.get("observation_wall_span_source"),
+        "endpoint_notes": bound.get("endpoint_notes"),
+        "managed_resource_status": (bound.get("managed_resources") or {}).get("status"),
+        "managed_resource_reason": (bound.get("managed_resources") or {}).get("reason"),
+    }
+
+def main():
+    cells = {}
+    for label, name, role in CELLS:
+        cell = ARCHIVE_ROOT / name
+        raw = jsonl(cell / "raw-run-01/samples.jsonl")
+        q = qualification(cell)
+        lo, hi = q["elapsed_s"]["start"], q["elapsed_s"]["end"]
+        obs = [r for r in raw if lo <= r.get("elapsed_s", -1) <= hi]
+        cells[label] = {
+            "archive": name, "role": role, "raw_row_count": len(raw), "qualification": q,
+            "native_bound": bound_summary(cell),
+            "metadata": {k: load(cell / "raw-run-01/metadata.json").get(k) for k in
+                         ("frontend", "n", "workload", "warmup_s", "observe_s", "render_policy",
+                          "render_policy_requested", "scheduling_profile", "render_profile",
+                          "gpu_completion_profile", "responsiveness_profile", "responsiveness_fine",
+                          "diagnostic_sidecar", "allocation_counting", "nav_captures", "failure_capture",
+                          "single_renderer", "sustain", "binary", "binary_sha256", "host_commit",
+                          "client_commit", "started_unix", "ended_unix", "build_provenance")},
+            "whole_observation": aggregate(obs), "gates": gate_summary(cell),
+            "archive_verification": manifest_check(cell),
+            "raw_input_files": {x: sha(cell / "raw-run-01" / x) for x in ("metadata.json", "samples.jsonl", "samples.qualification.jsonl")},
+            "raw_rows": raw,
+        }
+    # Common harness-elapsed range across every qualified observation.
+    common_start = max(c["whole_observation"]["elapsed_endpoint_s"][0] for c in cells.values())
+    common_end = min(c["whole_observation"]["elapsed_endpoint_s"][1] for c in cells.values())
+    for c in cells.values():
+        c["common_observation"] = aggregate([r for r in c["raw_rows"] if common_start <= r.get("elapsed_s", -1) <= common_end])
+        del c["raw_rows"]
+    def pair(a, b):
+        x, y = cells[a]["common_observation"], cells[b]["common_observation"]
+        wx, wy = cells[a]["whole_observation"], cells[b]["whole_observation"]
+        return {"reference": a, "candidate": b, "common_elapsed_s": [common_start, common_end],
+                "duration_s": common_end - common_start, "sample_counts": {"reference": x["sample_count"], "candidate": y["sample_count"]},
+                "whole_observation_delta_candidate_minus_reference": {k: (wy[k] - wx[k]) if isinstance(wx.get(k), (int, float)) and isinstance(wy.get(k), (int, float)) else None
+                                                                        for k in ("rss_median_mib", "rss_max_mib", "rss_peak_field_max_mib", "private_commit_median_mib", "gpu_tracked_median_mib", "cpu_process_cores")},
+                "delta_candidate_minus_reference": {k: (y[k] - x[k]) if isinstance(x.get(k), (int, float)) and isinstance(y.get(k), (int, float)) else None
+                                                      for k in ("rss_median_mib", "rss_max_mib", "rss_peak_field_max_mib", "private_commit_median_mib", "gpu_tracked_median_mib", "cpu_process_cores", "client_tick_delta", "ui_draw_delta", "ui_frame_delta")}}
+    out = {
+        "schema": "windows-tile-boxed-background-screen-recompute-v1", "reproducible_command": "python3 docs/memory/windows-tile-boxed-background-screen-analysis.py",
+        "scope": "screening evidence only; no retention, budget, lifecycle, visual, or final acceptance claim",
+        "archives_read_exactly": [x[1] for x in CELLS], "cells": cells,
+        "forward_AB": pair("baseline-forward", "candidate-forward"), "reverse_BA": pair("baseline-reverse", "candidate-reverse"),
+        "common_all_four_elapsed_s": [common_start, common_end], "common_all_four_duration_s": common_end - common_start,
+        "classification": {
+            "intended_rss_reduction": "inconclusive",
+            "cpu_5_percent_non_regression": "inconclusive",
+            "p99_2ms_non_regression": "unavailable",
+            "reason": "two repeats expose order/readiness variation but are not a noise distribution; resource provenance remains unavailable and endpoint readers are diagnostic-only",
+            "next_action": "focused-one regression pair; consider one longer confirmation only if focused pair supports retention",
+        },
+        "limitations": ["Windows original paths are intentionally not reopened on macOS; native-bound status remains artifact proof.", "Source/runtime checkout labels are not binary identity; build_provenance and Intel Vulkan records are retained in each bound artifact.", "No rendered-image proof is inferred from logs; no captures were supplied by these CLI cells.", "Missing input samples and incomplete decode/transition coverage remain unavailable where the reviewed readers report them.", "Private commit, GPU tracking, and peak RSS are reported separately and never subtracted from RSS."],
+    }
+    json_ready = json.loads(json.dumps(out, default=lambda x: None))
+    OUT.write_text(json.dumps(json_ready, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(json.dumps({"output": str(OUT), "common_elapsed_s": [common_start, common_end], "cells": {k: {"whole": v["whole_observation"], "common": v["common_observation"], "archive_ok": v["archive_verification"]["all_files_ok"]} for k, v in cells.items()}}, indent=2, sort_keys=True))
+
+if __name__ == "__main__":
+    main()
