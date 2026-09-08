@@ -11,6 +11,18 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 23:40 UTC
+
+- Corrected native failed-qualification report6e7f78e is in its final Grok4.5
+  review, actual session20260908_193749_b73139. Throughput rejection, sparse
+  external sampling and all missing proof remain explicit. No native rerun.
+  Local optimization t_b03522bc remains gated on review completion.
+- Separate 289 F97341e6 passed actual Grok4.5/xai session
+  20260908_193349_2d2e9c after challenge/tutorial and fixture corrections.
+  Root released G as t_7f7981c3 under configured Astra/orch:12 camera/audio/hint/HUD
+  IDs, staged dispatch, exact padding and publication, primary-source tests.
+  H, authentic live proof and final whole-branch Grok4.6 remain open.
+
 ## Latest boundary — 2026-09-08 23:31 UTC
 
 - Corrected native qualification completed17.509seconds and FAILED the necessary
