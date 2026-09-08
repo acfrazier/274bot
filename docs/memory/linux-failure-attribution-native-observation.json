@@ -1,0 +1,31 @@
+{
+  "status": "failed",
+  "performance_acceptance": false,
+  "archive_sha256": "40444f4b6af3ad6bb82b13384dd7ed52e92485e09b6ece3ac3ed247d2efb2750",
+  "verified_files": 25,
+  "phase": "failure-boundary",
+  "elapsed_s": 16.222461943,
+  "failures": [
+    {
+      "ordinal": 15,
+      "name": "live25aa3_15",
+      "error": "tick 19: Unknown error",
+      "client": {
+        "ingame": true,
+        "scene_state": 2,
+        "x": 2661,
+        "z": 3306,
+        "level": 0
+      },
+      "failure_attribution": {
+        "tick": 19,
+        "call_path": "sync",
+        "error_variant": "Runtime",
+        "error_debug": "Runtime(\"Unknown error\")",
+        "terminating_before_cancel": true,
+        "interrupt_id": 1
+      }
+    }
+  ],
+  "interpretation": "The current changed-instrument run records a tick-matched host slow-tick interrupt identity before cancellation on the synchronous path. This attributes this run failure to host-issued interruption, but does not establish why the tick exceeded its budget or retroactively prove the cause of older uninstrumented failures. Timeouts remain unchanged. No rerun of this cell."
+}
