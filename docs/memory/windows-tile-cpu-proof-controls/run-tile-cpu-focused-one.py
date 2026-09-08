@@ -48,6 +48,62 @@ def sha(path):
 def dump(path, value):
     pathlib.Path(path).write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
 
+def server_identity_payload(server, pid, sample, launch, sha_fn=sha):
+    """Full reviewed GPU e715 server-identity schema; digests from real files only."""
+    world = sha_fn(server / "data/config/world.json")
+    return {
+        "configuration": {
+            "world_json_sha256": world,
+            "maps_addition_sha256": sha_fn(server / "native-server-maps-addition.json"),
+            "wordenc_addition_sha256": sha_fn(server / "native-server-wordenc-addition.json"),
+            "bind_host": "127.0.0.1",
+            "node_version": "24.19.0",
+        },
+        "pid": pid,
+        "start_identity": sample["start_identity"],
+        "port_listen": 43594,
+        "server_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
+        "launch": launch,
+        "sample": sample,
+        "config_sha256": world,
+        "public_key_sha256": sha_fn(server / "data/config/public.pem"),
+    }
+
+def require_server_identity_complete(sid):
+    """Fail closed: PID alone is not complete server provenance."""
+    if not isinstance(sid, dict):
+        raise AssertionError("server identity not object")
+    cfg = sid.get("configuration")
+    if not isinstance(cfg, dict):
+        raise AssertionError("server_configuration missing")
+    for field in ("world_json_sha256", "maps_addition_sha256", "wordenc_addition_sha256"):
+        val = cfg.get(field)
+        if not isinstance(val, str) or len(val) != 64 or any(c not in "0123456789abcdef" for c in val):
+            raise AssertionError("server_configuration." + field + " missing or malformed")
+    if cfg.get("bind_host") != "127.0.0.1":
+        raise AssertionError("server_configuration.bind_host missing or malformed")
+    if not isinstance(cfg.get("node_version"), str) or not cfg["node_version"]:
+        raise AssertionError("server_configuration.node_version missing or malformed")
+    for field in ("config_sha256", "public_key_sha256"):
+        val = sid.get(field)
+        if not isinstance(val, str) or len(val) != 64 or any(c not in "0123456789abcdef" for c in val):
+            raise AssertionError(field + " missing or malformed")
+    if sid.get("config_sha256") != cfg.get("world_json_sha256"):
+        raise AssertionError("config_sha256 does not match world_json_sha256")
+    if type(sid.get("pid")) is not int or sid["pid"] <= 0:
+        raise AssertionError("server pid missing or invalid")
+    if not isinstance(sid.get("start_identity"), str) or not sid["start_identity"]:
+        raise AssertionError("server start_identity missing")
+    if type(sid.get("port_listen")) is not int or not 0 < sid["port_listen"] < 65536:
+        raise AssertionError("server port_listen missing or invalid")
+    if not isinstance(sid.get("server_commit"), str) or not sid["server_commit"]:
+        raise AssertionError("server_commit missing")
+    if not isinstance(sid.get("launch"), dict):
+        raise AssertionError("launch missing or malformed")
+    if not isinstance(sid.get("sample"), dict) or not sid["sample"].get("start_identity"):
+        raise AssertionError("sample missing or malformed")
+    return True
+
 def clean_environment():
     """Make CPU intent explicit; inherited BOT_CPU never selects a backend."""
     for key in ("BOT_CPU", "BOT_DEBUG", "BOT_RENDER_OWNER_CENSUS", "BOT_MEMORY_OUTPUT", "BOT_MEMORY_N", "BOT_MEMORY_WORKLOAD", "BOT_MEMORY_RENDER_POLICY", "BOT_MEMORY_SINGLE_RENDERER"):
@@ -77,7 +133,7 @@ server_id = out / "server-identity.json"
 conditions = out / "host-conditions.json"
 side = {"commit": role_info["host_commit"], "branch": role_info["branch"], "build_exit": 0, "sources_sha256_pre": role_info["host_sources_sha256_pre"], "sources_sha256_post": role_info["host_sources_sha256_post"], "host_sources_file_count": role_info["host_sources_file_count"], "host_sources_aggregate_sha256": role_info["host_sources_aggregate_sha256"], "sources_stable_across_build": True, "client": {"commit": role_info["client_commit"], "sources_sha256": role_info["client_sources_sha256"], "sources_file_count": role_info["client_sources_file_count"], "sources_aggregate_sha256": role_info["client_sources_aggregate_sha256"]}}
 dump(manifest, {role_info["manifest_side"]: side, "features": {"requested": "memory-profile-no-alloc", "locked": True, "allocation_counting": False, "allocator": "std::alloc::System"}, "binaries": {role_info["manifest_side"] + "_panel_play": {"path": str(binary), "sha256": sha(binary)}}, "nav": {"nav_pack": os.environ["NAV_PACK"], "nav_flags": os.environ["NAV_FLAGS"], "nav_pack_sha256": sha(os.environ["NAV_PACK"]), "nav_flags_sha256": sha(os.environ["NAV_FLAGS"])}, "catalog": {"js_scripts_json": str(catalog), "js_scripts_json_sha256": sha(catalog)}, "performance_acceptance": False, "functional_only": True})
-dump(server_id, {"pid": pid, "start_identity": sample["start_identity"], "launch": launch, "server_commit": "4c95f87efe00b068cadbd229d94736626907bd1a", "port_listen": 43594})
+dump(server_id, server_identity_payload(server, pid, sample, launch))
 fixture = {"world": "configured native active fixture", "loadout": "trade_bot catalog entry", "nav_pack": os.environ["NAV_PACK"], "nav_flags": os.environ["NAV_FLAGS"], "catalog_path": str(catalog), "cache_dir": str(server / "data/pack/client"), "unpack_root": str(home / ".274bot/unpack")}
 dump(conditions, {"purpose": "Native N1 CPU-fallback functional proof", "terminal_transport_expected": False, "panel_render_attribution": True, "platform": platform.platform(), "user": os.environ["USERNAME"], "role": role, "mode": mode, "cell_id": cell_id, "fixture": fixture, "backend": "cpu_fallback", "requested_backend": "cpu_fallback", "cpu_renderer_cadence": "configured/default", "performance_acceptance": False, "builds_stopped_before_run": True, "native_preflight": preflight_record, "checked_server": preflight_record["server"], "process_lasso": preflight_record["processLasso"], "dxdiag": preflight_record["dxdiag"], "owner_census": False, "debug": False, "stack_logging": False, "counting": False})
 diag = diagnostic_argv(binary, manifest, role_info["manifest_role"], mode)

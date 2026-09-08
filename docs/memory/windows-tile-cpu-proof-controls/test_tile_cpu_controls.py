@@ -5,9 +5,39 @@ import unittest
 import tempfile
 import json
 import os
+import copy
 import runpy
 HERE = pathlib.Path(__file__).parent
 CONTROLLER = HERE / "run-tile-cpu-focused-one.py"
+
+def _load_controller_helpers():
+    tree = ast.parse(CONTROLLER.read_text())
+    funcs = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+    namespace = {"pathlib": pathlib, "hashlib": __import__("hashlib")}
+    for name in ("sha", "server_identity_payload", "require_server_identity_complete"):
+        exec(compile(ast.Module(body=[funcs[name]], type_ignores=[]), str(CONTROLLER), "exec"), namespace)
+    return namespace
+
+def _complete_server_identity(pid=101):
+    digest = "a" * 64
+    return {
+        "configuration": {
+            "world_json_sha256": digest,
+            "maps_addition_sha256": digest,
+            "wordenc_addition_sha256": digest,
+            "bind_host": "127.0.0.1",
+            "node_version": "24.19.0",
+        },
+        "pid": pid,
+        "start_identity": "filetime:1",
+        "port_listen": 43594,
+        "server_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
+        "launch": {"pid": pid},
+        "sample": {"start_identity": "filetime:1"},
+        "config_sha256": digest,
+        "public_key_sha256": digest,
+    }
+
 class CpuControls(unittest.TestCase):
     def test_parser_namespace_and_explicit_cpu_backend(self):
         tree = ast.parse(CONTROLLER.read_text())
@@ -55,6 +85,9 @@ class CpuControls(unittest.TestCase):
         self.assertIn("except SystemExit as exc", source)
         self.assertIn("_native_windows_conditions_complete", source)
         self.assertIn("TILE_CPU_PREFLIGHT_CELL_ID", source)
+        self.assertIn("require_server_identity_complete", source)
+        self.assertIn("server_configuration_complete", source)
+        self.assertIn("load_require_server_identity_complete", source)
 
     def test_contract_execution_path_writes_distinct_receipt(self):
         source = (HERE / "check-tile-cpu-contract.py").read_text()
@@ -87,7 +120,67 @@ class CpuControls(unittest.TestCase):
         self.assertNotIn("check-tile-cpu-contract-$contract", contract_stage)
         self.assertEqual(contract, "baseline-focused-one-contractcheck")
 
-    def test_contract_executes_no_launch_and_writes_receipt(self):
+    def test_server_identity_payload_matches_e715_schema(self):
+        helpers = _load_controller_helpers()
+        digest_map = {
+            "data/config/world.json": "b" * 64,
+            "native-server-maps-addition.json": "c" * 64,
+            "native-server-wordenc-addition.json": "d" * 64,
+            "data/config/public.pem": "e" * 64,
+        }
+        def sha_fn(path):
+            text = str(path).replace("\\", "/")
+            for suffix, digest in digest_map.items():
+                if text.endswith(suffix):
+                    return digest
+            raise AssertionError("unexpected path " + text)
+        server = pathlib.Path("/fixture-server")
+        payload = helpers["server_identity_payload"](
+            server, 6728, {"start_identity": "filetime:9"}, {"pid": 6728}, sha_fn=sha_fn
+        )
+        cfg = payload["configuration"]
+        self.assertEqual(cfg["world_json_sha256"], "b" * 64)
+        self.assertEqual(cfg["maps_addition_sha256"], "c" * 64)
+        self.assertEqual(cfg["wordenc_addition_sha256"], "d" * 64)
+        self.assertEqual(cfg["bind_host"], "127.0.0.1")
+        self.assertEqual(cfg["node_version"], "24.19.0")
+        self.assertEqual(payload["config_sha256"], "b" * 64)
+        self.assertEqual(payload["public_key_sha256"], "e" * 64)
+        self.assertEqual(payload["port_listen"], 43594)
+        self.assertEqual(payload["server_commit"], "4c95f87efe00b068cadbd229d94736626907bd1a")
+        self.assertTrue(helpers["require_server_identity_complete"](payload))
+        source = CONTROLLER.read_text()
+        self.assertIn("server_identity_payload(server, pid, sample, launch)", source)
+        self.assertIn("world_json_sha256", source)
+        self.assertIn("maps_addition_sha256", source)
+        self.assertIn("wordenc_addition_sha256", source)
+        self.assertIn("public_key_sha256", source)
+
+    def test_require_server_identity_rejects_pid_only_and_mutated_config(self):
+        helpers = _load_controller_helpers()
+        require = helpers["require_server_identity_complete"]
+        complete = _complete_server_identity()
+        self.assertTrue(require(complete))
+        with self.assertRaises(AssertionError):
+            require({"pid": 101, "start_identity": "x", "launch": {}, "server_commit": "c", "port_listen": 43594})
+        missing_cfg = dict(complete)
+        del missing_cfg["configuration"]
+        with self.assertRaises(AssertionError):
+            require(missing_cfg)
+        mutated = copy.deepcopy(complete)
+        mutated["configuration"]["world_json_sha256"] = "0" * 63
+        with self.assertRaises(AssertionError):
+            require(mutated)
+        mismatched = copy.deepcopy(complete)
+        mismatched["config_sha256"] = "f" * 64
+        with self.assertRaises(AssertionError):
+            require(mismatched)
+        empty_bind = copy.deepcopy(complete)
+        empty_bind["configuration"]["bind_host"] = ""
+        with self.assertRaises(AssertionError):
+            require(empty_bind)
+
+    def _run_no_launch_contract(self, server_identity, expect_success=True):
         import sys
         sys.path.insert(0, str(HERE.parent))
         import run_managed_cell as rmc
@@ -112,8 +205,9 @@ class CpuControls(unittest.TestCase):
                     "server": {"ProcessId": 101, "Name": "node.exe", "CreationDate": "now"},
                     "performanceAcceptance": False},
             }
-            for name in ("binary", "manifest", "server", "nav", "flags", "catalog"):
+            for name in ("binary", "manifest", "nav", "flags", "catalog"):
                 (root / name).write_text("{}\n")
+            (root / "server").write_text(json.dumps(server_identity) + "\n")
             diag = ["panel", "1", "active", "--binary", str(root / "binary"), "--build-manifest", str(root / "manifest"),
                     "--build-role", "reference", "--sustain", "--warmup", "30", "--observe", "120", "--focused-one",
                     "--cpu-fallback", "--nav-captures", "--failure-capture", "--no-diagnostics", "--render-profile",
@@ -139,12 +233,31 @@ class CpuControls(unittest.TestCase):
             old_env = os.environ.copy(); old_preflight = rmc.preflight
             os.environ.update(env); rmc.preflight = lambda actual_spec, actual_args: {"server_pid": 101}
             try:
-                runpy.run_path(str(HERE / "check-tile-cpu-contract.py"), run_name="__main__")
+                if expect_success:
+                    runpy.run_path(str(HERE / "check-tile-cpu-contract.py"), run_name="__main__")
+                    receipt = json.loads((runs / "tile-cpu-contract-baseline-focused-one-contractcheck.json").read_text())
+                    return receipt
+                with self.assertRaises((AssertionError, SystemExit)):
+                    runpy.run_path(str(HERE / "check-tile-cpu-contract.py"), run_name="__main__")
+                return None
             finally:
                 rmc.preflight = old_preflight; os.environ.clear(); os.environ.update(old_env)
-            receipt = json.loads((runs / "tile-cpu-contract-baseline-focused-one-contractcheck.json").read_text())
-            self.assertFalse(receipt["checks"][0]["launched"])
-            self.assertTrue(receipt["functional_only"])
+
+    def test_contract_executes_no_launch_and_writes_receipt(self):
+        receipt = self._run_no_launch_contract(_complete_server_identity())
+        self.assertFalse(receipt["checks"][0]["launched"])
+        self.assertTrue(receipt["functional_only"])
+        self.assertTrue(receipt["checks"][0]["server_configuration_complete"])
+
+    def test_no_launch_rejects_absent_server_configuration(self):
+        pid_only = {"pid": 101, "start_identity": "filetime:1", "launch": {"pid": 101},
+                    "server_commit": "4c95f87efe00b068cadbd229d94736626907bd1a", "port_listen": 43594}
+        self._run_no_launch_contract(pid_only, expect_success=False)
+
+    def test_no_launch_rejects_mutated_server_configuration(self):
+        bad = _complete_server_identity()
+        bad["configuration"]["maps_addition_sha256"] = "not-a-digest"
+        self._run_no_launch_contract(bad, expect_success=False)
 
     def test_native_shape_is_fail_closed_and_cpu_attributed(self):
         source = (HERE / "run-tile-cpu-focused-one.py").read_text()

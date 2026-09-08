@@ -21,6 +21,26 @@ Candidate uses host `fb3589ac28583242b999ac864ea69c4ef8fa5923`, client
 The controller records the exact reviewed source aggregates, file counts, role,
 fixture, server identity, native conditions, and binary digest per cell.
 
+Server identity schema (e715 parity)
+
+`server_identity_payload` writes the same reviewed GPU boxed identity shape:
+`configuration.world_json_sha256`, `maps_addition_sha256`,
+`wordenc_addition_sha256`, `bind_host`, `node_version`, plus top-level
+`config_sha256`, `public_key_sha256`, `sample`, `launch`, `pid`,
+`start_identity`, `port_listen`, and `server_commit`. Digests come only from
+real server files via `sha`; values are never invented. The no-launch contract
+loads the controller's `require_server_identity_complete` helper and rejects
+PID-only or malformed configuration rather than treating process identity as
+complete provenance. Local tests exercise the payload helper and real no-launch
+callback with absent and config-mutated negatives.
+
+Prior native baseline N1 (`baseline-focused-one-cpu-native-20260908-0155`)
+finished workload-qualified under the incomplete PID-only identity and remains
+partial functional evidence only. It is not rewritten or retroactively accepted
+as full server-configuration provenance. Root will launch fresh baseline and
+candidate IDs after same-card review of this control fix. Native runtime files
+already staged for the prior cell are out of scope here.
+
 Cell contract
 
 Use fresh paired N=1 cells for each role and `focused-one` /
@@ -32,8 +52,8 @@ scheduling, and responsiveness flags, and deliberately contains no
 off. The configured CPU renderer cadence is not altered. Inherited `BOT_CPU` is
 scrubbed; only explicit `--cpu-fallback` can set CPU intent. The real
 `run_managed_cell` parser returns and validates an `argparse.Namespace`, and the
-contract checks backend metadata (`cpu_fallback`) and distinct no-launch versus
-launch output identities.
+contract checks backend metadata (`cpu_fallback`), complete server configuration
+shape/digests, and distinct no-launch versus launch output identities.
 
 Required execution order
 
@@ -47,9 +67,9 @@ Required execution order
    this task does not stage them.
 3. BotTest Interactive Limited runs the distinct `-contractcheck` controller,
    which binds `TILE_CPU_PREFLIGHT_CELL_ID` to the target cell, verifies the
-   staged contract-runner hash, assembles and validates the real spec/parser namespace
-   and complete native-conditions schema without starting the client, and writes
-   a separate contract receipt.
+   staged contract-runner hash, assembles and validates the real spec/parser namespace,
+   complete native-conditions schema, and complete server-identity configuration
+   without starting the client, and writes a separate contract receipt.
 4. Austen/admin consumes and verifies that receipt, then root performs one
    supervised launch, polling, and archive of managed output plus every raw
    receipt-referenced run/capture directory. A failed cell is preserved, not
@@ -64,3 +84,4 @@ successful functional cell, a capable image inspector must inspect the scene,
 bank/interaction, return-route, focus/overlay, and focused-background captures;
 filenames or capture existence are not visual proof. CPU fallback remains a
 separate functional/visual check and cannot inherit GPU completion conclusions.
+This control-commit does not claim native proof.

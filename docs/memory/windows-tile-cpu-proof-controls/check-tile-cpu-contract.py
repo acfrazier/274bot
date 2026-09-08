@@ -1,4 +1,5 @@
 """BotTest limited no-launch contract for CPU functional cells."""
+import ast
 import json
 import os
 import pathlib
@@ -21,6 +22,19 @@ default_stage = r"C:/ProgramData/274bot-Test/renderer-owner-census-9268890" if r
 stage = pathlib.Path(os.environ.get("TILE_CPU_STAGE_ROOT", default_stage))
 runner = stage / ("run-" + contract_id + ".py")
 checks = []
+
+def load_require_server_identity_complete(controller_path):
+    """Bind the controller's actual helper; do not reimplement a weaker check."""
+    tree = ast.parse(pathlib.Path(controller_path).read_text(encoding="utf-8"))
+    funcs = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+    namespace = {"pathlib": pathlib}
+    exec(compile(ast.Module(body=[funcs["require_server_identity_complete"]], type_ignores=[]), str(controller_path), "exec"), namespace)
+    return namespace["require_server_identity_complete"]
+
+require_server_identity_complete = load_require_server_identity_complete(
+    pathlib.Path(__file__).with_name("run-tile-cpu-focused-one.py")
+)
+
 def no_launch(argv):
     spec = rmc.validate_spec(rmc.load_spec(pathlib.Path(argv[0])))
     args = rmc.parse_diagnostic_argv(spec["diagnostic_argv"])
@@ -35,7 +49,11 @@ def no_launch(argv):
     assert preflight["server_pid"] == spec["game_server_pid"]
     assert conditions["backend"] == "cpu_fallback"
     assert mea._native_windows_conditions_complete(conditions), "Incomplete native conditions"
-    checks.append({"id": target, "contract_cell_id": contract_id, "checked": True, "launched": False, "client_started": False, "cpu_intent": True, "gpu_completion": False, "server_pid": preflight["server_pid"], "native_conditions_complete": True})
+    sid_path = pathlib.Path(spec["server_identity_path"])
+    sid = json.loads(sid_path.read_text(encoding="utf-8-sig"))
+    # PID-only identity is incomplete; configuration digests must be present and well-formed.
+    require_server_identity_complete(sid)
+    checks.append({"id": target, "contract_cell_id": contract_id, "checked": True, "launched": False, "client_started": False, "cpu_intent": True, "gpu_completion": False, "server_pid": preflight["server_pid"], "native_conditions_complete": True, "server_configuration_complete": True})
     return 0
 rmc.main = no_launch
 try:
