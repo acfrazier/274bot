@@ -2149,7 +2149,7 @@ class FocusedGpuRoleCoverageTests(unittest.TestCase):
             "enabled": True, "registered_n": 0, "completed_n": 0,
             "dropped_n": 0, "lost_n": 0, "pending_n": 0,
             "stable_completed_n": 0, "stable_completion_intervals": 0,
-            "stable_completion_interval_buckets": [0] * 10,
+            "stable_completion_interval_buckets": [0] * 11,
             "completion_latency_buckets": [0] * 11,
             "registration_complete": True, "completion_coverage_complete": True,
         }
@@ -2287,6 +2287,36 @@ class FocusedGpuRoleCoverageTests(unittest.TestCase):
         switched = self._samples(1, "focused-one", middle=0)
         switched[1]["renderer_profile"][0]["backend_kind"] = "vulkan"
         self.assertEqual(rm.evaluate_gpu(meta, switched)["status"], "unavailable")
+
+    def test_public_evaluate_gpu_rejects_malformed_headless_zero_shape(self):
+        meta = _meta(render_profile=True, gpu_completion_profile=True, frontend="panel", n=2,
+                     render_policy="focused-one", render_policy_requested=True)
+        for field, value in (("completed_n", False), ("pending_n", "0")):
+            samples = self._samples(2, "focused-one")
+            samples[1]["renderer_profile"][1]["gpu_completion"][field] = value
+            self.assertEqual(rm.evaluate_gpu(meta, samples)["status"], "unavailable", field)
+        for value in ([], [False] * 11):
+            samples = self._samples(2, "focused-one")
+            samples[1]["renderer_profile"][1]["gpu_completion"]["completion_latency_buckets"] = value
+            self.assertEqual(rm.evaluate_gpu(meta, samples)["status"], "unavailable", value)
+
+    def test_public_evaluate_gpu_rejects_headless_residency_epoch_change(self):
+        meta = _meta(render_profile=True, gpu_completion_profile=True, frontend="panel", n=2,
+                     render_policy="focused-one", render_policy_requested=True)
+        for field in ("attach_n", "detach_n", "backend_change_n"):
+            samples = self._samples(2, "focused-one", middle=0)
+            for sample in samples:
+                sample["renderer_profile"][1][field] = 0
+            samples[1]["renderer_profile"][1][field] = 1
+            self.assertEqual(rm.evaluate_gpu(meta, samples)["status"], "unavailable", field)
+
+    def test_public_evaluate_gpu_rejects_malformed_required_gpu_pending(self):
+        meta = _meta(render_profile=True, gpu_completion_profile=True, frontend="panel", n=1,
+                     render_policy="focused-one", render_policy_requested=True)
+        for value in (-1, "1", True, None):
+            samples = self._samples(1, "focused-one", middle=0)
+            samples[1]["renderer_profile"][0]["gpu_completion"]["pending_n"] = value
+            self.assertEqual(rm.evaluate_gpu(meta, samples)["status"], "unavailable", value)
 
 
 if __name__ == "__main__":

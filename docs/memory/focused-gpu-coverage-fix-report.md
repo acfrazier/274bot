@@ -37,14 +37,19 @@ records read-only recomputation of these six short native-bound archives:
 The approved primary diagnostics directory was checked read-only at
 `/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/windows-tile-boxed-clean-20260908`.
 All six named raw-run-01 archives were reopened with the public `evaluate_gpu`
-entry point. The before/after reader results were, respectively:
+entry point using the parent reader (`e852262^`, source SHA-256
+`ee9e5589ae7d8b6d900a838b477fb51b4a0d7923c547b1ef52f18c798983c10b`) and the
+candidate reader (source SHA-256
+`33fcbad168a3d68cb99d4989b7b4878c6da8468d1348698fc93afc1e405b238d`). Each
+window contained 118 observe samples. The exact old-status/reason to
+new-status/verdict results were:
 
-- baseline-focused-one-nativecheck-20260908-0103: available / meet
-- candidate-focused-one-nativecheck-20260908-0103: available / meet
-- baseline-focused-plus-background-nativecheck-20260908-0103: available / meet
-- candidate-focused-plus-background-nativecheck-20260908-0103: available / meet
-- baseline-focused-plus-background-reverse-20260908-0116: available / meet
-- candidate-focused-plus-background-reverse-20260908-0116: available / meet
+- baseline-focused-one-nativecheck-20260908-0103: unavailable / focused_one_role_contract_failed -> available / meet (1 required GPU row)
+- candidate-focused-one-nativecheck-20260908-0103: unavailable / focused_one_role_contract_failed -> available / meet (1 required GPU row)
+- baseline-focused-plus-background-nativecheck-20260908-0103: unavailable / coverage_lost_or_incomplete -> available / meet (16 required GPU rows)
+- candidate-focused-plus-background-nativecheck-20260908-0103: unavailable / coverage_lost_or_incomplete -> available / meet (16 required GPU rows)
+- baseline-focused-plus-background-reverse-20260908-0116: unavailable / coverage_lost_or_incomplete -> available / meet (16 required GPU rows)
+- candidate-focused-plus-background-reverse-20260908-0116: unavailable / coverage_lost_or_incomplete -> available / meet (16 required GPU rows)
 
 These are reader recomputations only. They retain the archives' original
 native-bound provenance and do not manufacture a local Windows path binding or
@@ -52,12 +57,12 @@ make a native, visual, performance, or final acceptance claim.
 
 Reader version: focused-gpu-role-contract-v2
 Reader source SHA-256 after change:
-d26f71d24a303cad8f7fe1588462237f946c935254e149135b6869fc03ee5946
+33fcbad168a3d68cb99d4989b7b4878c6da8468d1348698fc93afc1e405b238d
 
 Verification
 
-- Targeted metrics/adapter/overhead suites: 84 passed, 2 skipped.
-- Full memory unittest discovery: 431 tests; 1 pre-existing missing diagnostic
+- Targeted metrics/adapter/overhead suites: 87 passed, 2 skipped.
+- Full memory unittest discovery: 434 tests; 1 pre-existing missing diagnostic
   fixture error, 1 pre-existing missing reviewed-cell failure, and 8 skips.
 - git diff --check: passed.
 

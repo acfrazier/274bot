@@ -2074,15 +2074,40 @@ def _gpu_headless_row_valid(row: dict) -> bool:
     completion = row.get("gpu_completion")
     if not isinstance(completion, dict) or completion.get("enabled") is not True:
         return False
-    if completion.get("pending_n") != 0:
-        return False
-    if any(completion.get(key) != 0 for key in GPU_COUNTER_KEYS):
-        return False
-    for key in ("stable_completion_interval_buckets", "completion_latency_buckets"):
+    for key in ("pending_n",) + GPU_COUNTER_KEYS:
+        value = completion.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value != 0:
+            return False
+    expected_widths = {
+        "stable_completion_interval_buckets": len(INTERVAL_BOUNDS_MS) + 1,
+        "completion_latency_buckets": len(INTERVAL_BOUNDS_MS) + 1,
+    }
+    for key, expected_width in expected_widths.items():
         values = completion.get(key)
-        if not isinstance(values, list) or any(value != 0 for value in values):
+        if (not isinstance(values, list) or len(values) != expected_width
+                or any(isinstance(value, bool) or not isinstance(value, int) or value != 0
+                       for value in values)):
             return False
     return True
+
+
+def _gpu_residency_epoch_error(row: dict, previous: Optional[dict]) -> Optional[str]:
+    """Reject backend/residency changes between adjacent renderer samples."""
+    if previous is None:
+        return None
+    if row.get("backend_kind") != previous.get("backend_kind"):
+        return "renderer_backend_changed"
+    for key in ("attach_n", "detach_n", "backend_change_n"):
+        current_value, previous_value = row.get(key), previous.get(key)
+        if current_value is None and previous_value is None:
+            continue
+        if (isinstance(current_value, bool) or not isinstance(current_value, int)
+                or isinstance(previous_value, bool) or not isinstance(previous_value, int)
+                or current_value < previous_value):
+            return "renderer_epoch_invalid"
+        if current_value != previous_value:
+            return "renderer_epoch_changed"
+    return None
 
 
 def _gpu_required_row_epoch_error(row: dict, previous: Optional[dict]) -> Optional[str]:
@@ -2095,6 +2120,9 @@ def _gpu_required_row_epoch_error(row: dict, previous: Optional[dict]) -> Option
     # A pending callback in an interior observation is normal in-flight work;
     # endpoint pending is rejected by the interval adapter below. Drops and
     # losses are terminal coverage failures at any epoch.
+    pending_n = completion.get("pending_n")
+    if isinstance(pending_n, bool) or not isinstance(pending_n, int) or pending_n < 0:
+        return "missing_or_malformed_gpu_counter"
     if completion.get("dropped_n") != 0 or completion.get("lost_n") != 0:
         return "coverage_lost_or_incomplete"
     if completion.get("registration_complete") is not True:
@@ -2102,7 +2130,6 @@ def _gpu_required_row_epoch_error(row: dict, previous: Optional[dict]) -> Option
     # The serializer can publish a normal in-flight callback with coverage
     # incomplete between endpoints.  The endpoint adapter still requires both
     # flags complete, while an interior pending epoch remains admissible.
-    pending_n = completion.get("pending_n")
     if (completion.get("completion_coverage_complete") is not True
             and not (completion.get("completion_coverage_complete") is False
                      and isinstance(pending_n, int) and not isinstance(pending_n, bool)
@@ -2123,18 +2150,9 @@ def _gpu_required_row_epoch_error(row: dict, previous: Optional[dict]) -> Option
     previous_completion = previous.get("gpu_completion")
     if not isinstance(previous_completion, dict):
         return "missing_gpu_completion"
-    if row.get("backend_kind") != previous.get("backend_kind"):
-        return "renderer_backend_changed"
-    for key in ("attach_n", "detach_n", "backend_change_n"):
-        current_value, previous_value = row.get(key), previous.get(key)
-        if current_value is None and previous_value is None:
-            continue
-        if (isinstance(current_value, bool) or not isinstance(current_value, int)
-                or isinstance(previous_value, bool) or not isinstance(previous_value, int)
-                or current_value < previous_value):
-            return "renderer_epoch_invalid"
-        if current_value != previous_value or key == "backend_change_n" and current_value > previous_value:
-            return "renderer_epoch_changed"
+    residency_error = _gpu_residency_epoch_error(row, previous)
+    if residency_error:
+        return residency_error
     for key in GPU_COUNTER_KEYS:
         if completion[key] < previous_completion.get(key, -1):
             return "counter_reset"
@@ -2194,6 +2212,9 @@ def _gpu_role_contract(meta: dict, observed: list[dict], n: Any) -> tuple[Option
             return "focused_plus_background_role_contract_failed", None
         for key, row, role in zip(row_map, row_map.values(), roles):
             if meta["render_policy"] == "focused-one" and role is None:
+                residency_error = _gpu_residency_epoch_error(row, previous_rows.get(key))
+                if residency_error:
+                    return residency_error, None
                 continue
             epoch_error = _gpu_required_row_epoch_error(row, previous_rows.get(key))
             if epoch_error:
