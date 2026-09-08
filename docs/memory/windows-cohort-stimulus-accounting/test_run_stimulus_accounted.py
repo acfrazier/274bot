@@ -103,6 +103,17 @@ class ControllerTests(unittest.TestCase):
         result = controller.run(self.write_manifest(value), clock=Clock(), sampler=self.sampler,
                                 popen=lambda *a, **k: self.fail("must not spawn"))
         self.assertIn("missing target binding", result["incompleteReason"])
+        self.assertTrue((self.root / "post-run.json").is_file())
+
+    def test_missing_ui_verification_fails_closed_without_switches(self):
+        value = manifest(self.root)
+        value["target"]["captureEnabled"] = False
+        called = []
+        result = controller.run(self.write_manifest(value), clock=Clock(), sampler=self.sampler,
+                                popen=lambda *a, **k: called.append(a))
+        self.assertIn("captureEnabled", result["incompleteReason"])
+        self.assertEqual(called, [])
+        self.assertFalse(result["captureEnabledVerified"])
 
     def test_wrong_helper_hash_does_not_spawn(self):
         value = manifest(self.root)
@@ -154,12 +165,30 @@ class ControllerTests(unittest.TestCase):
     def test_sampler_failure_is_retained_not_zero(self):
         value = manifest(self.root)
         process = Process(polls=0)
+        calls = [0]
         def failing(pid):
+            if calls[0] == 0:
+                calls[0] += 1
+                return {"start_identity": "target-start"}
             raise RuntimeError("lost sampler coverage")
         result = controller.run(self.write_manifest(value), clock=Clock(), sampler=failing,
                                 popen=lambda *a, **k: process)
-        self.assertTrue(all(row["status"] == "unavailable" for row in result["samples"]))
+        self.assertTrue(result["samples"])
+        self.assertTrue(any(row["status"] == "unavailable" for row in result["samples"]))
         self.assertEqual(result["managedProcesses"], [])
+        self.assertEqual(result["resourceAccounting"]["status"], "unavailable")
+
+    def test_missing_cpu_is_explicitly_unavailable(self):
+        value = manifest(self.root)
+        process = Process(polls=0)
+        (self.root / "helper-receipt.json").write_text("{}", encoding="utf-8")
+        def sampler(pid):
+            return {"start_identity": "target-start" if pid == 3131 else "helper-start"}
+        result = controller.run(self.write_manifest(value), clock=Clock(), sampler=sampler,
+                                popen=lambda *a, **k: process)
+        helper = result["resourceAccounting"]["helper"]
+        self.assertIsNone(helper["cpu_seconds"])
+        self.assertEqual(helper["cpuAvailability"], "unavailable")
 
     def test_helper_failure_and_cleanup_receipt_mismatch_are_incomplete(self):
         value = manifest(self.root)

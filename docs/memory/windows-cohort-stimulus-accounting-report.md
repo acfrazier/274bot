@@ -19,13 +19,29 @@ The controller:
 
 The immutable helper was not modified.
 
+## Envelope compatibility note
+
+This wrapper emits the v1 run envelope but intentionally does not pretend to
+match the pair-controls validator from `63bfed6`/`1c2d8bd`. Compared with that
+validator, `helperStartUtc` is recorded from the injected process identity when
+available (and remains null when unavailable), while
+`captureEnabledVerified` and `slotZeroFocusVerified` are recorded from the
+fresh binding and gate launch. The top-level `sampler` is a descriptive object,
+where the controls envelope expects a `resourceAccounting.sampler` string.
+Resource accounting uses explicit `helper` and `wrapper` summaries plus raw
+`samples`; it does not reshape them into the controls `processes` list or add a
+fabricated target-cost row. Wrapper sampler cost is separate, and target cost
+is excluded from managed totals to avoid double counting. `inputCoveragePass`
+and `performanceAcceptance` remain false in every envelope, including retained
+incomplete failures.
+
 ## Verification
 
-`python3 -m unittest discover -s docs/memory/windows-cohort-stimulus-accounting -v`: 10 passed.
+`python3 -m unittest discover -s docs/memory/windows-cohort-stimulus-accounting -v`: 12 passed.
 
 `python3 -m py_compile docs/memory/windows-cohort-stimulus-accounting/run_stimulus_accounted.py docs/memory/windows-cohort-stimulus-accounting/test_run_stimulus_accounted.py`: passed.
 
-Tests use fake clock, sampler, and subprocess adapters. They cover wrong target identity, missing session binding, wrong helper hash, no completed receipt, missed trigger/no spawn, exactly one spawn and safe argv, unavailable sampler coverage, helper failure, receipt mismatch, and receipt/event archiving.
+Tests use fake clock, sampler, and subprocess adapters. They cover wrong target identity, missing session/UI verification, missing session binding with retained envelope, wrong helper hash, no completed receipt, missed trigger/no spawn, exactly one spawn and safe argv, unavailable sampler coverage after spawn, missing CPU counters, helper failure, receipt mismatch, and receipt/event archiving.
 
 ## Remaining integration requirements
 
