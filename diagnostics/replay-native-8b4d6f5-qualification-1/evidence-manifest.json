@@ -1,0 +1,41 @@
+{
+  "schema": "owner-native-corrected-qualification-evidence/v1",
+  "source_commit": "8b4d6f5a3686e85e5fed55574b205936d4be45a1",
+  "qualification": {
+    "remote": "/home/acfrazier/owner-native-8b4d6f5/qualification-1/qualification.json",
+    "local": "diagnostics/replay-native-8b4d6f5-qualification-1/qualification.json",
+    "sha256": "b7a2af38b7adb1b0f2e2c0d611a53ac2fa168bbf3b1d6e952bf33f6d0db47e83",
+    "bytes": 16509
+  },
+  "reports": {
+    "markdown": {
+      "path": "docs/memory/heaptrack-owner-native-corrected-qualification.md",
+      "sha256": "128ee505d8dac7638b0286c9eab0783bdb42a8de9a85c3d815ea1234d86ea080"
+    },
+    "json": {
+      "path": "docs/memory/heaptrack-owner-native-corrected-qualification.json",
+      "sha256": "a789c0da106addf154f1ba491847ecae88cbb5137c5a6f59e0aa042882be0236"
+    }
+  },
+  "prelaunch_receipt": {
+    "path": "diagnostics/replay-native-8b4d6f5-preparation/concord-stage-receipt.json",
+    "manifest_sha256": "71d33982b5bf2ab06f2ef65560325f5609a64121a041231f3d87eb173fa870a4",
+    "unix": 1788909930.0377018,
+    "memory_available_bytes": 1002622976,
+    "disk_free_bytes": 11819978752,
+    "conflicts": [],
+    "files_verified": 40
+  },
+  "scope": {
+    "production_read": false,
+    "production_retry_authorized": false,
+    "remote_output_only": true,
+    "prior_failed_reports_modified": false,
+    "retries": 0
+  },
+  "limitations": [
+    "No worker-created post-run admission receipt; root prelaunch receipt is retained as such.",
+    "Qualification driver emitted no separate completion, per-guard, or saved-smoke hash receipt.",
+    "Only two cases ran before the required throughput stop."
+  ]
+}

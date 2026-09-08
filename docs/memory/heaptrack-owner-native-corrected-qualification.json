@@ -1,0 +1,84 @@
+{
+  "schema": "owner-native-corrected-qualification/v1",
+  "status": "failed",
+  "attempt": "one fresh fixture-only Linux qualification",
+  "source_commit": "8b4d6f5a3686e85e5fed55574b205936d4be45a1",
+  "stage": "/home/acfrazier/owner-native-8b4d6f5",
+  "output": "/home/acfrazier/owner-native-8b4d6f5/qualification-1",
+  "qualification_json_sha256": "b7a2af38b7adb1b0f2e2c0d611a53ac2fa168bbf3b1d6e952bf33f6d0db47e83",
+  "command_mode": "native Linux; no --portable-probe",
+  "launch": {
+    "local_ssh_background_pid": 17201,
+    "qualification_wall_s": 17.508897191997676,
+    "exit_code": 1,
+    "output_prelaunch_absent": true,
+    "remote_qualification_pid": "not recorded by driver",
+    "post_completion_owned_processes": "none observed"
+  },
+  "prelaunch_admission": {
+    "receipt": "diagnostics/replay-native-8b4d6f5-preparation/concord-stage-receipt.json",
+    "unix": 1788909930.0377018,
+    "memory_available_bytes": 1002622976,
+    "disk_free_bytes": 11819978752,
+    "conflicts": [],
+    "files_verified": 40,
+    "manifest_sha256": "71d33982b5bf2ab06f2ef65560325f5609a64121a041231f3d87eb173fa870a4",
+    "note": "Root prelaunch receipt; not a worker-created post-run admission receipt."
+  },
+  "identity": {
+    "child_sha256": "16f0ac41ffcc8c8134b48ea03704890a681f8f5c07c564034838359eeee4f8f5",
+    "fixture_sha256": "10d2cb7113e457fefd508391987f516c90d36b9231ccc75e4f3fdcc21613f8d6",
+    "core_tests_sha256": "ba4d0cf258ff82563f23f506ac0d4f622b3cbbb5f5e00e9aedf55be287f0386c",
+    "source_manifest_sha256": "6ac139115f39c0954a638f1b9e045535032349fff87d78cabb43dfed513c43cf"
+  },
+  "gates": {
+    "native_core": "16 passed, 0 failed, 0 ignored",
+    "python_native_suite": "36 run, 36 pass, 0 skipped",
+    "cases_completed": 2,
+    "cases_declared": 9,
+    "timed_repetitions_completed": 6,
+    "timed_repetitions_declared": 27,
+    "stop_reason": "necessary throughput threshold failed",
+    "production_read": false,
+    "production_retry_authorized": false
+  },
+  "thresholds_bytes_per_cpu_s": [11938945, 4503128, 4503128],
+  "arithmetic": {
+    "method": "independent Python recomputation of medians from stored repeat phase CPU/byte rows",
+    "all_stored_medians_match": true,
+    "cases": [
+      {
+        "size_bound": 250000,
+        "wide": false,
+        "phase_medians_bytes_per_cpu_s": [15743928.488972072, 5105346.04256718, 4845660.757015204],
+        "necessary_rate_pass": true,
+        "max_peak_rss_bytes": 417792,
+        "max_peak_address_bytes": 1445888,
+        "max_sample_interval_s": 0.0005861919999006204
+      },
+      {
+        "size_bound": 250000,
+        "wide": true,
+        "phase_medians_bytes_per_cpu_s": [35701922.15412879, 5033171.737584553, 4416362.4607893815],
+        "necessary_rate_pass": false,
+        "failure": "phase 3 median 4416362.4607893815 < required 4503128",
+        "max_peak_rss_bytes": 417792,
+        "max_peak_address_bytes": 1445888,
+        "max_sample_interval_s": 0.0006020780019753147
+      }
+    ]
+  },
+  "cleanup": {
+    "owned_child_reaped": "true for all six completed timed cells",
+    "qualification_and_owned_child_processes": "absent in post-run observation",
+    "negative_guard_reason_detail": "guard suite passed, but the driver did not emit per-guard reason receipts",
+    "ranking_publication": "none; driver reported production_read=false and production_retry_authorized=false"
+  },
+  "evidence_limits": [
+    "The driver emitted only qualification.json; no separate admission, identity, completion, per-guard, or saved-smoke hash receipt was produced.",
+    "Saved-smoke test_saved_smoke passed in the 36-test transcript, but its full canonical output/hash and graph/cutoff comparison are not independently re-emittable from the bounded qualification JSON.",
+    "Cases after the second case did not run because the reviewed driver stops on the first necessary-rate failure.",
+    "This fixture failure is readiness evidence only and does not authorize production replay or establish production capacity, population/table/output/I/O capacity, owner attribution, or memory savings."
+  ],
+  "raw_qualification": "diagnostics/replay-native-8b4d6f5-qualification-1/qualification.json"
+}

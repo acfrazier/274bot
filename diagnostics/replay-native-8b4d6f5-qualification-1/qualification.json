@@ -1,0 +1,364 @@
+{
+  "status": "failed",
+  "production_read": false,
+  "production_retry_authorized": false,
+  "portable_probe": false,
+  "cases": [
+    {
+      "size_bound": 250000,
+      "wide": false,
+      "bytes": [
+        249990,
+        142886,
+        142886
+      ],
+      "records": [
+        35712,
+        35714
+      ],
+      "repeats": [
+        {
+          "resources": {
+            "wall_s": 0.10172245299690985,
+            "samples": 1,
+            "max_sample_interval_s": 0.000580529998842394,
+            "peak_rss_bytes": 417792,
+            "peak_address_bytes": 1445888,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.015877869998803362,
+              "cpu_s": 0.015878502,
+              "cumulative_peak_rss_bytes": 31944704,
+              "charged_capacity_bytes": 1855688,
+              "high_charged_capacity_bytes": 2243787,
+              "line": 35712,
+              "offset": 249990,
+              "records": 35712
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.02798774099937873,
+              "cpu_s": 0.027987525,
+              "cumulative_peak_rss_bytes": 31944704,
+              "charged_capacity_bytes": 1868255,
+              "high_charged_capacity_bytes": 2243787,
+              "line": 35714,
+              "offset": 142886,
+              "records": 35714
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.02949828100099694,
+              "cpu_s": 0.029487413000000004,
+              "cumulative_peak_rss_bytes": 31944704,
+              "charged_capacity_bytes": 1887674,
+              "high_charged_capacity_bytes": 2243787,
+              "line": 1,
+              "offset": 6,
+              "records": 35715
+            }
+          ],
+          "bytes_per_cpu_s": [
+            15743928.488972072,
+            5105346.04256718,
+            4845660.757015204
+          ]
+        },
+        {
+          "resources": {
+            "wall_s": 0.10143039000104181,
+            "samples": 1,
+            "max_sample_interval_s": 0.0005657270012306981,
+            "peak_rss_bytes": 417792,
+            "peak_address_bytes": 1445888,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.01553195899759885,
+              "cpu_s": 0.015532341000000002,
+              "cumulative_peak_rss_bytes": 31944704,
+              "charged_capacity_bytes": 1855688,
+              "high_charged_capacity_bytes": 2243787,
+              "line": 35712,
+              "offset": 249990,
+              "records": 35712
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.027519231000042055,
+              "cpu_s": 0.027518972,
+              "cumulative_peak_rss_bytes": 31944704,
+              "charged_capacity_bytes": 1868255,
+              "high_charged_capacity_bytes": 2243787,
+              "line": 35714,
+              "offset": 142886,
+              "records": 35714
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.029109529001289047,
+              "cpu_s": 0.029109303999999996,
+              "cumulative_peak_rss_bytes": 31944704,
+              "charged_capacity_bytes": 1887674,
+              "high_charged_capacity_bytes": 2243787,
+              "line": 1,
+              "offset": 6,
+              "records": 35715
+            }
+          ],
+          "bytes_per_cpu_s": [
+            16094805.026492786,
+            5192272.4438979775,
+            4908602.417976054
+          ]
+        },
+        {
+          "resources": {
+            "wall_s": 0.10144584400040912,
+            "samples": 1,
+            "max_sample_interval_s": 0.0005861919999006204,
+            "peak_rss_bytes": 405504,
+            "peak_address_bytes": 1445888,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.016316932000336237,
+              "cpu_s": 0.01631739,
+              "cumulative_peak_rss_bytes": 31944704,
+              "charged_capacity_bytes": 1855688,
+              "high_charged_capacity_bytes": 2243787,
+              "line": 35712,
+              "offset": 249990,
+              "records": 35712
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.028249442999367602,
+              "cpu_s": 0.028249267,
+              "cumulative_peak_rss_bytes": 31944704,
+              "charged_capacity_bytes": 1868255,
+              "high_charged_capacity_bytes": 2243787,
+              "line": 35714,
+              "offset": 142886,
+              "records": 35714
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.030040714002097957,
+              "cpu_s": 0.030040418999999992,
+              "cumulative_peak_rss_bytes": 31944704,
+              "charged_capacity_bytes": 1887674,
+              "high_charged_capacity_bytes": 2243787,
+              "line": 1,
+              "offset": 6,
+              "records": 35715
+            }
+          ],
+          "bytes_per_cpu_s": [
+            15320464.853754183,
+            5058042.744967506,
+            4756458.290411996
+          ]
+        }
+      ],
+      "median_bytes_per_cpu_s": [
+        15743928.488972072,
+        5105346.04256718,
+        4845660.757015204
+      ],
+      "necessary_rate_pass": true
+    },
+    {
+      "size_bound": 250000,
+      "wide": true,
+      "bytes": [
+        249990,
+        47670,
+        47670
+      ],
+      "records": [
+        11908,
+        11910
+      ],
+      "repeats": [
+        {
+          "resources": {
+            "wall_s": 0.10145331700186944,
+            "samples": 1,
+            "max_sample_interval_s": 0.0006020780019753147,
+            "peak_rss_bytes": 417792,
+            "peak_address_bytes": 1257472,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.006992259997787187,
+              "cpu_s": 0.006955614000000001,
+              "cumulative_peak_rss_bytes": 31944704,
+              "charged_capacity_bytes": 1665256,
+              "high_charged_capacity_bytes": 2052133,
+              "line": 11908,
+              "offset": 249990,
+              "records": 11908
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.009558816000208026,
+              "cpu_s": 0.009528269,
+              "cumulative_peak_rss_bytes": 31944704,
+              "charged_capacity_bytes": 1677823,
+              "high_charged_capacity_bytes": 2052133,
+              "line": 11910,
+              "offset": 47670,
+              "records": 11910
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.010818471000675345,
+              "cpu_s": 0.010793951,
+              "cumulative_peak_rss_bytes": 31944704,
+              "charged_capacity_bytes": 1697229,
+              "high_charged_capacity_bytes": 2052133,
+              "line": 1,
+              "offset": 6,
+              "records": 11911
+            }
+          ],
+          "bytes_per_cpu_s": [
+            35940752.31891821,
+            5003007.366815525,
+            4416362.4607893815
+          ]
+        },
+        {
+          "resources": {
+            "wall_s": 0.10144605599998613,
+            "samples": 1,
+            "max_sample_interval_s": 0.0005560949975915719,
+            "peak_rss_bytes": 413696,
+            "peak_address_bytes": 1257472,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.007073494998621754,
+              "cpu_s": 0.007074007,
+              "cumulative_peak_rss_bytes": 31944704,
+              "charged_capacity_bytes": 1665256,
+              "high_charged_capacity_bytes": 2052133,
+              "line": 11908,
+              "offset": 249990,
+              "records": 11908
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.009306636999099283,
+              "cpu_s": 0.009306591000000001,
+              "cumulative_peak_rss_bytes": 31944704,
+              "charged_capacity_bytes": 1677823,
+              "high_charged_capacity_bytes": 2052133,
+              "line": 11910,
+              "offset": 47670,
+              "records": 11910
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.01102467000237084,
+              "cpu_s": 0.011024487999999999,
+              "cumulative_peak_rss_bytes": 31944704,
+              "charged_capacity_bytes": 1697229,
+              "high_charged_capacity_bytes": 2052133,
+              "line": 1,
+              "offset": 6,
+              "records": 11911
+            }
+          ],
+          "bytes_per_cpu_s": [
+            35339235.59872078,
+            5122176.315688526,
+            4324010.33045707
+          ]
+        },
+        {
+          "resources": {
+            "wall_s": 0.10147304800193524,
+            "samples": 1,
+            "max_sample_interval_s": 0.0005114480009069666,
+            "peak_rss_bytes": 409600,
+            "peak_address_bytes": 1445888,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.007001415000559064,
+              "cpu_s": 0.007002144,
+              "cumulative_peak_rss_bytes": 31944704,
+              "charged_capacity_bytes": 1665256,
+              "high_charged_capacity_bytes": 2052133,
+              "line": 11908,
+              "offset": 249990,
+              "records": 11908
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.009471328998188255,
+              "cpu_s": 0.009471165,
+              "cumulative_peak_rss_bytes": 31944704,
+              "charged_capacity_bytes": 1677823,
+              "high_charged_capacity_bytes": 2052133,
+              "line": 11910,
+              "offset": 47670,
+              "records": 11910
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.010697506000724388,
+              "cpu_s": 0.010697262000000003,
+              "cumulative_peak_rss_bytes": 31944704,
+              "charged_capacity_bytes": 1697229,
+              "high_charged_capacity_bytes": 2052133,
+              "line": 1,
+              "offset": 6,
+              "records": 11911
+            }
+          ],
+          "bytes_per_cpu_s": [
+            35701922.15412879,
+            5033171.737584553,
+            4456280.494952819
+          ]
+        }
+      ],
+      "median_bytes_per_cpu_s": [
+        35701922.15412879,
+        5033171.737584553,
+        4416362.4607893815
+      ],
+      "necessary_rate_pass": false
+    }
+  ],
+  "required_bytes_per_cpu_s": [
+    11938945,
+    4503128,
+    4503128
+  ],
+  "executable_sha256": {
+    "child": "16f0ac41ffcc8c8134b48ea03704890a681f8f5c07c564034838359eeee4f8f5",
+    "fixture": "10d2cb7113e457fefd508391987f516c90d36b9231ccc75e4f3fdcc21613f8d6",
+    "core_tests": "ba4d0cf258ff82563f23f506ac0d4f622b3cbbb5f5e00e9aedf55be287f0386c"
+  },
+  "core_tests": "\nrunning 16 tests\ntest core::migration_tests::actual_stream_open_counts ... ok\ntest core::migration_tests::buffered_write_with_simulated_equal_metadata_keeps_consumed_hash ... ok\ntest core::migration_tests::frozen_expected_hash_rejected ... ok\ntest core::migration_tests::frozen_suffix_size_rejected ... ok\ntest core::migration_tests::interpreted_mutation_between_passes ... ok\ntest core::migration_tests::midpass_metadata_change_rejected ... ok\ntest core::migration_tests::normalized_batching_exact_bytes ... ok\ntest core::migration_tests::same_size_content_change_rejected_by_hash ... ok\ntest core::migration_tests::unread_write_with_simulated_equal_metadata_rejected_by_hash ... ok\ntest core::tests::capacity_accounts_for_transient_buffers ... ok\ntest core::tests::checked_numeric_limits ... ok\ntest core::tests::hard_collision_probe_bound ... ok\ntest core::tests::inner_work_pulse_observes_expiry ... ok\ntest core::tests::phase_end_must_check_before_reset ... ok\ntest core::tests::rehash_tombstones_and_seeded_churn ... ok\ntest core::tests::render_and_sort_stalls_fail_closed ... ok\n\ntest result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.15s\n\n",
+  "tests": "test_baseline_zero_multiplicity_and_tail (test_differential.Differential.test_baseline_zero_multiplicity_and_tail) ... ok\ntest_chunk_boundaries (test_differential.Differential.test_chunk_boundaries) ... ok\ntest_chunk_splits_inside_fields_and_utf8 (test_differential.Differential.test_chunk_splits_inside_fields_and_utf8) ... ok\ntest_lower_caps (test_differential.Differential.test_lower_caps) ... ok\ntest_native_grammar (test_differential.Differential.test_native_grammar) ... ok\ntest_reference_adversaries (test_differential.Differential.test_reference_adversaries) ... ok\ntest_seeded_random_pairs (test_differential.Differential.test_seeded_random_pairs) ... ok\ntest_whole_stack_inline_output (test_differential.Differential.test_whole_stack_inline_output) ... ok\ntest_duplicate_keys_and_provenance (test_native_contract.NativeContract.test_duplicate_keys_and_provenance) ... ok\ntest_receipt_warning_options_and_counters (test_native_contract.NativeContract.test_receipt_warning_options_and_counters) ... ok\ntest_all_external_samples_and_admission (test_native_guards.NativeGuards.test_all_external_samples_and_admission) ... ok\ntest_explicit_hash_and_no_fallback (test_native_guards.NativeGuards.test_explicit_hash_and_no_fallback) ... ok\ntest_native_address (test_native_guards.NativeGuards.test_native_address) ... ok\ntest_native_cpu (test_native_guards.NativeGuards.test_native_cpu) ... ok\ntest_native_output_table_scratch_fail_closed (test_native_guards.NativeGuards.test_native_output_table_scratch_fail_closed) ... ok\ntest_native_phase_end (test_native_guards.NativeGuards.test_native_phase_end) ... ok\ntest_native_protocol_failures (test_native_guards.NativeGuards.test_native_protocol_failures) ... ok\ntest_native_rss (test_native_guards.NativeGuards.test_native_rss) ... ok\ntest_native_wall_reap (test_native_guards.NativeGuards.test_native_wall_reap) ... ok\ntest_saved_smoke (test_native_parity.NativeParity.test_saved_smoke) ... ok\ntest_all_record_adversaries (test_native_seams.NativeSeams.test_all_record_adversaries) ... ok\ntest_original_normalization (test_native_seams.NativeSeams.test_original_normalization) ... ok\ntest_original_ownership (test_native_seams.NativeSeams.test_original_ownership) ... ok\ntest_zero_and_depth (test_native_seams.NativeSeams.test_zero_and_depth) ... ok\ntest_conversion_hash_suffix_and_canonical_not_sum (test_original_fixtures.OriginalFixtures.test_conversion_hash_suffix_and_canonical_not_sum) ... ok\ntest_each_table_numeric_input_and_depth_cap (test_original_fixtures.OriginalFixtures.test_each_table_numeric_input_and_depth_cap) ... ok\ntest_lossless_output_and_fail_closed_output_budget (test_original_fixtures.OriginalFixtures.test_lossless_output_and_fail_closed_output_budget) ... ok\ntest_reference_and_session_adversaries (test_original_fixtures.OriginalFixtures.test_reference_and_session_adversaries) ... ok\ntest_saved_smoke_full_canonical_multiset (test_original_fixtures.OriginalFixtures.test_saved_smoke_full_canonical_multiset) ... ok\ntest_suppression_does_not_change_population (test_original_fixtures.OriginalFixtures.test_suppression_does_not_change_population) ... ok\ntest_synthetic_realloc_multiplicity_zero_and_survivor (test_original_fixtures.OriginalFixtures.test_synthetic_realloc_multiplicity_zero_and_survivor) ... ok\ntest_three_pass_baseline_and_first_peak (test_original_fixtures.OriginalFixtures.test_three_pass_baseline_and_first_peak) ... ok\ntest_time_rejections_and_unbounded_event_tail (test_original_fixtures.OriginalFixtures.test_time_rejections_and_unbounded_event_tail) ... ok\ntest_unresolved_inline_caller_is_not_lost (test_reference_contract.WholeStackUnknownContract.test_unresolved_inline_caller_is_not_lost) ... ok\ntest_unresolved_inline_owner_is_not_lost (test_reference_contract.WholeStackUnknownContract.test_unresolved_inline_owner_is_not_lost) ... ok\ntest_unresolved_primary_caller_control (test_reference_contract.WholeStackUnknownContract.test_unresolved_primary_caller_control) ... ok\n\n----------------------------------------------------------------------\nRan 36 tests in 14.198s\n\nOK\n",
+  "reason": "RuntimeError: necessary throughput threshold failed",
+  "wall_s": 17.508897191997676
+}
