@@ -11,19 +11,23 @@ service and could stall the test process.
 
 ## Change
 
-`crates/tui/src/bin.rs` now keeps the production path unchanged: the normal
-`live_prepare_script` delegates to the shared preparation implementation with
-slot spawning enabled. A `#[cfg(test)]` fixture entry point delegates with slot
-spawning disabled. The shared implementation still performs the real test
-preparation: temporary vault creation/unlock, scenario setup, live names,
-settings injection, catalog discovery/transpilation, script selection, sibling
-resolution, and pending catalog-start staging.
+`crates/tui/src/bin.rs` keeps the production `live_prepare_script` body on its
+original path, including slot spawning. A separate `#[cfg(test)]` fixture entry
+point performs the same preparation with slot spawning omitted. Both paths
+perform the real preparation: temporary vault creation/unlock, scenario setup,
+live names, settings injection, catalog discovery/transpilation, script
+selection, sibling resolution, and pending catalog-start staging. The test-only
+duplication avoids adding a production-compiled spawn-control seam.
 
 The BoneBurier and Thiever tests use that test-only entry point. Their
-substantive catalog-selection and injected-settings assertions remain intact;
-BoneBurier also continues to assert that preparation has not put the isolate in
-`Running` state. No production timeout, worker lifecycle, client source, or
-host-play code changed.
+substantive catalog-selection and injected-settings assertions remain intact.
+BoneBurier additionally proves that no arm/worker was created and that the
+selected card is staged in `pending_script`; its `script_state != Running`
+assertion is retained only as a non-vacuous boundary check. The unit fixture
+covers vault/catalog/pending staging without slot workers. The meaningful
+"Start waits for StartScript" isolate-state assertion remains live-harness
+coverage. No production timeout, worker lifecycle, client source, or host-play
+code changed.
 
 ## Verification
 
