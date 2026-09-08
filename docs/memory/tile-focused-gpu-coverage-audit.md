@@ -6,8 +6,8 @@ raw samples were changed and no new samples were manufactured.
 
 ## Evidence inspected
 
-The two focused-one pairs and the two background pairs were independently
-recomputed with the existing readers:
+The one focused-one baseline/candidate AB pair and the two background pairs were
+independently recomputed with the existing readers:
 
 - `baseline-focused-one-nativecheck-20260908-0103`
 - `candidate-focused-one-nativecheck-20260908-0103`
@@ -77,14 +77,19 @@ render policy and preserve the full stable slot identity set:
 | declared mode | required role set | non-rendered rows |
 |---|---|---|
 | `focused-one` | exactly 1 `focused_full_rate` GPU row | exactly 15 `expected_headless` rows, each identity-stable and explicitly declared headless |
-| background | 16 `background` GPU rows | none |
+| `focused-plus-background` | 1 `focused_full_rate` GPU row + 15 `background` GPU rows | none |
 
 For focused-one, a row may be classified `expected_headless` only when the
 policy declaration and row evidence agree: stable slot ID/generation mapping,
 `renderer_present=false`, `backend_kind` absent/null, `draw=false`,
-`full_rate=false`, and no completion counters claimed for that row. The
+`full_rate=false`, and the observed headless completion object is consistent
+with that role: `gpu_completion` is present with `enabled=true`,
+`stable_completed_n=0`, `pending_n=0`, and the complete counter-key shape, but
+with `backend_kind=null`, `draw=false`, and `full_rate=false` and no completion
+activity. The
 adapter must fail closed for any unexpected renderer, two or zero focused GPU
-rows, a missing required focused row, a role transition across endpoints, a
+rows, a missing required focused row, a role transition anywhere in the
+selected span,
 changed slot set, or a headless row that has draw/full-rate/backend/completion
 signals inconsistent with the declaration. The focused GPU row must still pass
 all existing completion, pending, loss, counter, coverage, histogram, and
@@ -92,23 +97,27 @@ callback-versus-scanout checks.
 
 The role contract must be evaluated separately for each stable mode epoch and
 must not infer focus from slot ordinal or from the presence of the first row.
+Stability evidence must inspect interior rows throughout the selected span, not
+only its endpoints, so an away-and-back focus change cannot pass as stable.
 Focus-switch, reset, attach/detach, and pending-boundary cases must remain
 unavailable unless the selected endpoints are in one stable declared epoch;
 nonzero endpoint pending remains unavailable. A focused renderer disappearing
 must fail, while an intentionally headless slot remaining non-rendered must
-pass its role check. Background mode must continue to require all 16 GPU
-completion rows.
+pass its role check. Focused-plus-background mode must continue to require all
+16 GPU completion rows: one `focused_full_rate` row and 15 `background` rows.
 
 A useful regression fixture contract is therefore:
 
 1. Positive focused-one: 16 stable identities, exactly one GPU/full-rate row,
-   15 explicit headless rows, complete focused completion counters and zero
+   15 explicit headless rows with the observed zero-counter headless completion
+   shape, complete focused completion counters and zero
    boundary pending => focused GPU gate available when the focused row meets
    its target.
 2. Negative focused-one: remove or disable the focused GPU row, or mark a
    headless row `draw=true`, `full_rate=true`, or `backend_kind=gpu` =>
    unavailable; never pass by filtering that row.
-3. Positive background: 16 stable GPU/background rows => available only when
+3. Positive background: exactly one focused_full_rate row plus 15 stable
+   background GPU rows => available only when
    every row has complete cadence/completion evidence.
 4. Negative background: one missing backend/completion row => unavailable.
 5. Negative transitions: change a generation/slot identity, switch focused
@@ -127,11 +136,14 @@ The focused screen's current diagnostic results separate the issues:
   paired <=2 ms fine-p99 non-regression contract; the existing responsiveness
   contract explicitly keeps `paired_fine_p99_margin` diagnostic and unavailable
   until matched-run artifact/slot/endpoint binding exists.
-- Scheduling's process-wide reader is unavailable with
+- The process-wide scheduling reader is unavailable with
   `process_wide_only_cannot_satisfy_per_slot`; this is an accounting-shape
-  limitation, not evidence that the client has no scheduling activity. The
-  focused per-slot scheduling result also cannot supply complete qualified
-  per-slot proof from these samples.
+  limitation, not evidence that the client has no scheduling activity. In
+  contrast, `evaluate_scheduling_slots` is `available`, `target_verdict=meet`,
+  and has 16/16 available slots for both focused baseline and candidate (for
+  both `root` and `common_window`). That availability is still not the paired
+  fine-p99 contract: coverage and margin/identity-binding limits must remain
+  separate from reader availability, and no producer fields are inferred.
 - Input is unavailable on both focused sides with
   `no_slot_with_available_input_p99`. The raw focused cells contain no actual
   input events sufficient for a p99 bound; no input samples are inferred from
