@@ -11,6 +11,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 16:39 UTC
+
+- TUI1616 completed0; frontend1543 exited. Native archive93files verified,
+  SHA7612191cfe88f61303e1d0409952032a552c53ff87370f90b03fd4d17a2941c4,
+  localdiagnostics/current-tui-n16-1616/current-tui-n16-1616-final. No repeat.
+- All16workload-qualified with49..82stealgains; client mean49.479ticks/slot/s.
+  Qualification phase span600.042665854s; resource sample bracket598.91186859s.
+  Steady546076672bytes(520.779MiB), peak627003392(597.957MiB), CPU.561746cores.
+  Diagnostic median/CPU miss512MiB/.5core targets; no accepted comparison.
+- Native binding rejected host_conditions_invalid because frontend_processes:[]
+  explicitly observed no conflicting frontend before launch. Original raw and
+  rejected reader outputs preserved. t_17321283 proposes narrow typed-empty
+  semantics64eaf53, same-card review live. Root requested Linux scope/type
+  tightening. No raw normalization or live rerun; replay only after review.
+- 289 setup t_2b8506ea firstreview rejected PID/start-identity and readiness
+  handling; Luna correction active. Original setup did build and start local
+  isolated289 thenstopit; do not claim a currently ready server/client validation.
+
 ## Latest boundary — 2026-09-08 16:23 UTC
 
 - Sole native TUI calibration is RUNNING, controller1514/start112599,
