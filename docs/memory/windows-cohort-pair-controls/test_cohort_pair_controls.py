@@ -14,7 +14,7 @@ import run_managed_cell as rmc
 
 def controller_functions():
     tree = ast.parse((HERE / "run-cohort-pair.py").read_text())
-    names = {"diagnostic_argv", "validate_build_receipt", "validate_stimulus_plan"}
+    names = {"diagnostic_argv", "validate_build_receipt", "validate_stimulus_plan", "validate_stimulus_receipt"}
     nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
     namespace = {"re": __import__("re"), "json": __import__("json"), "pathlib": pathlib}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "run-cohort-pair.py", "exec"), namespace)
@@ -70,6 +70,22 @@ class CohortPairControls(unittest.TestCase):
         self.assertEqual(helper.read_bytes(), original.read_bytes())
         self.assertEqual(hashlib.sha256(helper.read_bytes()).hexdigest(), "04822c0e9f5ade2d555e408cc707722c234bc1e7b442676975a16e7efcaebbd1")
 
+    def test_stimulus_receipt_is_postrun_and_resource_bound(self):
+        fn = controller_functions()["validate_stimulus_receipt"]
+        plan = {"helperSha256": "04822c0e9f5ade2d555e408cc707722c234bc1e7b442676975a16e7efcaebbd1"}
+        sample = {"pid": 7, "start_identity": "start-7", "cpu_seconds": 1.0, "rss_bytes": 1024}
+        good = {"schema": "native-panel-input-stimulus-run-receipt-v1", "cellId": "baseline-focused-one-x", "outcome": "completed", "helperSha256": plan["helperSha256"], "cadenceMilliseconds": 1000, "pressMilliseconds": 80, "durationSeconds": 120, "startedUnix": 101, "captureEnabledVerified": True, "slotZeroFocusVerified": True, "helperPid": 7, "helperStartUtc": "2026-01-01T00:00:00Z", "targetPid": 8, "targetStartUtc": "2026-01-01T00:00:00Z", "triggerDelaySeconds": 60, "resourceAccounting": {"status": "available", "sampler": "root-managed windows_process_sample", "helper": sample, "target": dict(sample, pid=8), "samples": [sample]}, "performanceAcceptance": False, "inputCoveragePass": False}
+        path = HERE / "test-stimulus-receipt.json"
+        path.write_text(json.dumps(good))
+        try:
+            self.assertEqual(fn(path, plan=plan, cell_id=good["cellId"], run_started_unix=100), good)
+            for bad in ({"cellId": "candidate-focused-one-x"}, {"startedUnix": 99}, {"helperSha256": "pending"}, {"cadenceMilliseconds": 500}, {"resourceAccounting": {"status": "available"}}):
+                candidate = dict(good); candidate.update(bad); path.write_text(json.dumps(candidate))
+                with self.assertRaises(AssertionError):
+                    fn(path, plan=plan, cell_id=good["cellId"], run_started_unix=100)
+        finally:
+            path.unlink(missing_ok=True)
+
     def test_duration_and_tail_are_explicit_in_source(self):
         source = (HERE / "run-cohort-pair.py").read_text()
         self.assertIn('"warmup_s": 120', source)
@@ -77,6 +93,14 @@ class CohortPairControls(unittest.TestCase):
         self.assertIn('"cohort_tail_s": 5', source)
         self.assertIn('"teardown_grace_s": 60', source)
         self.assertIn('"stimulus_receipt"', source)
+
+    def test_scheduled_launcher_serializes_frozen_child_bindings(self):
+        source = (HERE / "launch-cohort.ps1").read_text()
+        for binding in ("COHORT_HOST_ROOT", "COHORT_REFERENCE_STAGE", "COHORT_CANDIDATE_STAGE", "COHORT_PREFLIGHT_DIR", "COHORT_BUILD_MANIFEST", "COHORT_BUILD_RECEIPT", "COHORT_STIMULUS_PLAN", "COHORT_STIMULUS_RECEIPT", "COHORT_PREPARE_RECEIPT"):
+            self.assertIn("`$env:" + binding, source)
+        self.assertIn("cohort-reference-e25f328", source)
+        self.assertIn("cohort-candidate-ca56e143", source)
+        self.assertIn("Exact no-launch prepare receipt is required before scheduling", source)
 
 
 if __name__ == "__main__":

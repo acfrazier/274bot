@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'
 if($env:USERNAME -eq 'BotTest'){throw 'Contract staging must run in the privileged host context'}
 $prefix="$BuildRole-$Mode-"; if(-not $CellId.StartsWith($prefix)){throw "CellId must start with $prefix"}
-$stage=if($BuildRole -eq 'baseline'){if($env:COHORT_REFERENCE_STAGE){$env:COHORT_REFERENCE_STAGE}else{'C:\ProgramData\274bot-Test\cohort-reference'}}else{if($env:COHORT_CANDIDATE_STAGE){$env:COHORT_CANDIDATE_STAGE}else{'C:\ProgramData\274bot-Test\cohort-candidate'}}
+$stage=if($BuildRole -eq 'baseline'){if($env:COHORT_REFERENCE_STAGE){$env:COHORT_REFERENCE_STAGE}else{'C:\ProgramData\274bot-Test\cohort-reference-e25f328'}}else{if($env:COHORT_CANDIDATE_STAGE){$env:COHORT_CANDIDATE_STAGE}else{'C:\ProgramData\274bot-Test\cohort-candidate-ca56e143'}}
 $preflightDir=if($env:COHORT_PREFLIGHT_DIR){$env:COHORT_PREFLIGHT_DIR}else{'C:\ProgramData\274bot-Test\cohort-preflight'}; $preflight=Join-Path $preflightDir ('preflight-cohort-'+$CellId+'.json')
 $source=Join-Path $PSScriptRoot 'run-cohort-pair.py'
 $contractId=$CellId+'-cohort-contractcheck'

@@ -8,7 +8,12 @@ param(
     [Parameter(Mandatory=$true)]
     [ValidatePattern('^[A-Za-z0-9_-]+$')]
     [string]$CellId,
-    [string]$HostRoot = (Join-Path $env:USERPROFILE '274bot-workspaces\3118e96\host')
+    [string]$HostRoot = (Join-Path $env:USERPROFILE '274bot-workspaces\3118e96\host'),
+    [Parameter(Mandatory=$true)][string]$BuildManifest,
+    [Parameter(Mandatory=$true)][string]$BuildReceipt,
+    [Parameter(Mandatory=$true)][string]$StimulusPlan,
+    [Parameter(Mandatory=$true)][string]$StimulusReceipt,
+    [Parameter(Mandatory=$true)][string]$PrepareReceipt
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -31,6 +36,14 @@ $env:COHORT_CELL_ID = $contractCellId
 $env:COHORT_TARGET_CELL_ID = $CellId
 $env:COHORT_PREFLIGHT_CELL_ID = $CellId
 $env:COHORT_HOST_ROOT = $HostRoot
+$env:COHORT_REFERENCE_STAGE = if($env:COHORT_REFERENCE_STAGE){$env:COHORT_REFERENCE_STAGE}else{'C:\ProgramData\274bot-Test\cohort-reference-e25f328'}
+$env:COHORT_CANDIDATE_STAGE = if($env:COHORT_CANDIDATE_STAGE){$env:COHORT_CANDIDATE_STAGE}else{'C:\ProgramData\274bot-Test\cohort-candidate-ca56e143'}
+$env:COHORT_BUILD_MANIFEST = $BuildManifest
+$env:COHORT_BUILD_RECEIPT = $BuildReceipt
+$env:COHORT_STIMULUS_PLAN = $StimulusPlan
+$env:COHORT_STIMULUS_RECEIPT = $StimulusReceipt
+$env:COHORT_PREPARE_RECEIPT = $PrepareReceipt
+if(-not (Test-Path $BuildManifest -PathType Leaf) -or -not (Test-Path $BuildReceipt -PathType Leaf) -or -not (Test-Path $StimulusPlan -PathType Leaf) -or -not (Test-Path $PrepareReceipt -PathType Leaf)){ throw 'Explicit contract provenance files are required' }
 Push-Location $HostRoot
 try { & $python (Join-Path $PSScriptRoot 'check-cohort-contract.py') }
 finally { Pop-Location }

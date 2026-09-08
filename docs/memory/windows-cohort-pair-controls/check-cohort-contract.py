@@ -44,7 +44,7 @@ def no_launch(argv):
     args = rmc.parse_diagnostic_argv(spec["diagnostic_argv"])
     rmc.require_argv_consistent_with_spec(spec, args)
     assert spec["count"] == 16 and spec["mode"] == "focused-one"
-    assert (spec["warmup_s"], spec["observe_s"], spec["teardown_grace_s"]) == (120, 600, 60)
+    assert (spec["warmup_s"], spec["observe_s"], spec["cohort_tail_s"], spec["teardown_grace_s"]) == (120, 600, 5, 60)
     assert spec["requested_backend"] == "gpu" and spec["requested_adapter"] == "Intel(R) Graphics"
     assert long_argv_contract_complete(args, spec["diagnostic_argv"]), "Long confirmation argv contract failed"
     server = json.loads(pathlib.Path(spec["server_identity_path"]).read_text())
@@ -53,7 +53,12 @@ def no_launch(argv):
     conditions = json.loads(pathlib.Path(spec["host_conditions_path"]).read_text())
     assert mea._native_windows_conditions_complete(conditions), "Incomplete native conditions"
     assert not os.environ.get("BOT_CPU")
+    assert not os.environ.get("BOT_DEBUG")
+    assert not os.environ.get("BOT_INPUT_SEAM_TRACE")
     assert os.environ.get("BOT_RENDER_OWNER_CENSUS") != "1"
+    assert spec["stimulus_plan"] and spec["stimulus_receipt"]
+    assert spec["stimulus_schema"] == "native-panel-input-stimulus-run-receipt-v1"
+    assert spec["prepare_receipt"]
 
     assert spec["cell_id"] == contract_id
     checks.append({"id": target_cell_id, "contract_cell_id": cell_id, "checked": True, "launched": False, "client_started": False,
@@ -63,7 +68,7 @@ def no_launch(argv):
 
 rmc.main = no_launch
 os.environ["COHORT_HOST_ROOT"] = str(root)
-stage = pathlib.Path(os.environ.get("COHORT_REFERENCE_STAGE" if role == "baseline" else "COHORT_CANDIDATE_STAGE", r"C:/ProgramData/274bot-Test/cohort-reference" if role == "baseline" else r"C:/ProgramData/274bot-Test/cohort-candidate"))
+stage = pathlib.Path(os.environ.get("COHORT_REFERENCE_STAGE" if role == "baseline" else "COHORT_CANDIDATE_STAGE", r"C:/ProgramData/274bot-Test/cohort-reference-e25f328" if role == "baseline" else r"C:/ProgramData/274bot-Test/cohort-candidate-ca56e143"))
 runner = stage / ("run-" + contract_id + ".py")
 try:
     runpy.run_path(str(runner), run_name="__main__")

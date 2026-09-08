@@ -9,7 +9,11 @@ param(
     [ValidatePattern('^[A-Za-z0-9_-]+$')]
     [string]$CellId,
     [string]$HostRoot = (Join-Path $env:USERPROFILE '274bot-workspaces\3118e96\host'),
-    [string]$ContractReceipt
+    [string]$ContractReceipt,
+    [Parameter(Mandatory=$true)][string]$BuildManifest,
+    [Parameter(Mandatory=$true)][string]$BuildReceipt,
+    [Parameter(Mandatory=$true)][string]$StimulusPlan,
+    [Parameter(Mandatory=$true)][string]$StimulusReceipt
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -18,6 +22,10 @@ $env:COHORT_BUILD_ROLE = $BuildRole
 $env:COHORT_MODE = $Mode
 $env:COHORT_CELL_ID = $CellId
 $env:COHORT_HOST_ROOT = $HostRoot
+$env:COHORT_BUILD_MANIFEST = $BuildManifest
+$env:COHORT_BUILD_RECEIPT = $BuildReceipt
+$env:COHORT_STIMULUS_PLAN = $StimulusPlan
+$env:COHORT_STIMULUS_RECEIPT = $StimulusReceipt
 if(-not $ContractReceipt){ $ContractReceipt = 'C:\Users\BotTest\274bot-runs\cohort-contract-' + $CellId + '-cohort-contractcheck.json' }
 
 # This is the privileged consume half of the no-launch gate. AST validation,
@@ -33,6 +41,7 @@ if($record.cell_id -ne $CellId){ throw 'Preflight cell binding mismatch' }
 if($record.stages | Where-Object {$_.role -eq $BuildRole -and $_.path -ne $expectedStage}){ throw 'Role stage binding mismatch' }
 [string]$contractReceiptPath = $ContractReceipt
 if(-not (Test-Path $contractReceiptPath -PathType Leaf)){ throw "BotTest contract receipt missing: $contractReceiptPath" }
+foreach($path in @($BuildManifest,$BuildReceipt,$StimulusPlan)){ if(-not (Test-Path $path -PathType Leaf)){throw "Required provenance file missing: $path"} }
 $contract = Get-Content $contractReceiptPath -Raw | ConvertFrom-Json
 if($contract.kind -ne 'no-launch contract test' -or $contract.performance_acceptance -ne $false){ throw 'Invalid no-launch contract receipt' }
 $expectedContractId = $CellId + '-cohort-contractcheck'
@@ -57,4 +66,8 @@ if(@($contract.checks).Count -ne 1 -or $contract.checks[0].id -ne $CellId -or $c
     client_started = $false
     scheduled_task_created = $false
     performanceAcceptance = $false
+    build_manifest = $BuildManifest
+    build_receipt = $BuildReceipt
+    stimulus_plan = $StimulusPlan
+    stimulus_receipt = $StimulusReceipt
 }|ConvertTo-Json -Depth 5

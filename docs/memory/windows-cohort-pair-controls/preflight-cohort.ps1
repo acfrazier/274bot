@@ -1,6 +1,6 @@
 param([Parameter(Mandatory=$true)][ValidatePattern('^[A-Za-z0-9_-]+$')][string]$CellId)
 $ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'
-$baselineStage=if($env:COHORT_REFERENCE_STAGE){$env:COHORT_REFERENCE_STAGE}else{'C:\ProgramData\274bot-Test\cohort-reference'}; $candidateStage=if($env:COHORT_CANDIDATE_STAGE){$env:COHORT_CANDIDATE_STAGE}else{'C:\ProgramData\274bot-Test\cohort-candidate'}
+$baselineStage=if($env:COHORT_REFERENCE_STAGE){$env:COHORT_REFERENCE_STAGE}else{'C:\ProgramData\274bot-Test\cohort-reference-e25f328'}; $candidateStage=if($env:COHORT_CANDIDATE_STAGE){$env:COHORT_CANDIDATE_STAGE}else{'C:\ProgramData\274bot-Test\cohort-candidate-ca56e143'}
 if(-not (Test-Path $baselineStage)){throw "Required baseline stage missing: $baselineStage"}
 $vm=Get-VM -Name '274bot-builder'; if([string]$vm.State -ne 'Off'){throw 'Builder VM is not off'}; if([int64]$vm.MemoryAssigned -ne 0){throw 'Builder VM has assigned memory'}
 if(Get-Process -Name cargo,rustc,panel-play,tui-play,qemu-system-x86_64,vmware-vmx -ErrorAction SilentlyContinue){throw 'Build/frontend/VM still running'}
