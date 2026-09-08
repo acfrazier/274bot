@@ -1,0 +1,49 @@
+{
+  "cell_id": "baseline-focused-plus-background-nativecheck-20260908-0103",
+  "qualification": {
+    "run": "diagnostics/windows-tile-boxed-clean-20260908/baseline-focused-plus-background-nativecheck-20260908-0103/raw-run-01",
+    "qualified": true,
+    "errors": [],
+    "qualification": {
+      "run": "diagnostics/windows-tile-boxed-clean-20260908/baseline-focused-plus-background-nativecheck-20260908-0103/raw-run-01",
+      "n": 16,
+      "counting": false,
+      "diagnostics": false,
+      "qualified": true,
+      "errors": [],
+      "observation_s": 118.4952611,
+      "cpu_seconds": 75.328125,
+      "cpu_cores": 0.6357058020778521,
+      "client_ticks_per_slot_s": 48.91967785199471,
+      "median_resident_bytes": 2278535168,
+      "steal_gains": {
+        "live430c0_0": 8,
+        "live430c0_1": 7,
+        "live430c0_2": 4,
+        "live430c0_3": 9,
+        "live430c0_4": 12,
+        "live430c0_5": 8,
+        "live430c0_6": 10,
+        "live430c0_7": 9,
+        "live430c0_8": 5,
+        "live430c0_9": 15,
+        "live430c0_10": 14,
+        "live430c0_11": 8,
+        "live430c0_12": 2,
+        "live430c0_13": 18,
+        "live430c0_14": 4,
+        "live430c0_15": 10
+      },
+      "diagnostic_only": true
+    },
+    "counting": false,
+    "diagnostics": false,
+    "workload": "active",
+    "pass_means": "workload qualification only; not performance or budget acceptance"
+  },
+  "archive_sha256": "06972a6d54e2294ab224b4f25348b78bc5b25c0db7a894377ce167ec6db2317f",
+  "verified_archive_files": 22,
+  "native_binding_status": "bound",
+  "native_match_keys_missing": null,
+  "performance_acceptance": false
+}

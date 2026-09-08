@@ -9,6 +9,25 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 05:13 UTC
+
+- First background baseline completed0 and native binding qualified16/16, no
+  missing match keys; actual Intel(R) Graphics Vulkan. Raw archive locally
+  diagnostics/windows-tile-boxed-clean-20260908/baseline-focused-plus-background-nativecheck-20260908-0103,
+  tarSHA06972a6d54e2294ab224b4f25348b78bc5b25c0db7a894377ce167ec6db2317f,
+  all22 manifestfiles verified. Native raw20260908T050336Z_panel_n16_active.
+  Local qualify_control --no-write passed; observation118.495s, RSS2278535168B,
+  CPU0.635705802cores,48.9197clientticks/slot/s; steal gains2..18. Input samples
+  unavailable. Resource reader remains diagnostic/unavailable-provenance for
+  absolute acceptance; these are raw observed metrics, no target pass or savings.
+- First background candidate launched05:09:51UTC with fresh preflight/receipt:
+  candidate-focused-plus-background-nativecheck-20260908-0103, PID10248,
+  native raw20260908T050952Z_panel_n16_active. Last actual boundaryobserve-start
+  elapsed136.667s:16running/noerrors/16GPU/ownerCensus0. Processresponding.
+  Await terminalcompletion/nativebinding/archive then remaining reverseBA.
+  Baseline observe-start102.653s means commonelapsedoverlap must be calculated;
+  equal120s requested observation does not establish equal startup age.
+
 ## Latest boundary — 2026-09-08 05:04 UTC
 
 - CPU tooling correction approved actual Grok 4.5/xai-oauth session
