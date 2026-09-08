@@ -11,6 +11,25 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 20:38 UTC
+
+- Failedcapture result eba3f97 APPROVED as bounded evidence only, actual
+  Grok4.5/xai session20260908_162927_e44af0 t_9d3ae118. Review retained at
+  current-owner-allocation-capture-review.md; no privateowner/savings claim.
+  Review notes stale template boot_id/purpose in hostconditions; live asserted
+  boot/serveridentities remainauthority. Preserveoriginalartifact; fixfuture
+  conditionstemplatewhennewworkisreleased, not by rewritingcapturehistory.
+- Existing-data replay design0bc2151 APPROVED actualGrok4.5/xai session
+  20260908_163127_7667b4 t_227f43d3. Rootreruns saved-smokeprobePASS exact
+ 5730024peak/4196352bytearray/407233EOF/34live; capturesprefix497ms correctly.
+  Rawnormalizedeventsequence equalsinterpreted; descriptorIDsaremultiplicities,
+  notobjects. FullfailedproductiontracehasNOTbeenreplayed.
+- Rootreleased formalparser taskt_2aba75a5 toconfiguredorch/Astra: approved
+  streamingraw+twointerpretedpasses, failclosedidentity/semantics/resourceguards,
+  fullsynthetic/adversarial/savedfixturetests. Localimplementationonly; no
+  productionreplay/nativejobs/WindowsVM/newcaptureuntilcodereview+rootsmoke.
+  Rootselectsexecutorafterreview. Remainingbroadercampaigngatesunchanged.
+
 ## Latest boundary — 2026-09-08 20:30 UTC
 
 - Sole N1capture2003 FAILED raw2GiB guard:2149010072bytes,frontend2096exit-15,
