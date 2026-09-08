@@ -8,9 +8,10 @@ The 0942 native injector completed successfully, but the run provides no host
 input coverage. This is an evidence-boundary failure, not proof that Windows
 `SendInput` failed and not proof of a Rust host drain defect.
 
-The immutable archive is `diagnostics/windows-input-smoke-0942-archive` with
-SHA-256 `c7ab1ae3bcfd3ceb7f373090a1e133e7e1d0dc08d6042641caa8bfc441e52fb6`.
-Its manifest verifies all 29 files. The root receipt reports 381 sample rows
+The immutable archive directory is `diagnostics/windows-input-smoke-0942-archive`.
+SHA-256 `c7ab1ae3bcfd3ceb7f373090a1e133e7e1d0dc08d6042641caa8bfc441e52fb6`
+is the hash of its `diagnostics/windows-input-smoke-0942.tar.gz` archive.
+That archive's manifest verifies all 29 files. The root receipt reports 381 sample rows
 and maxima of zero for every input field across the whole run:
 
 - `input_start_n=0`
@@ -52,7 +53,7 @@ remain the same slot/generation in observe phase with all input counters zero.
 so the source path below is present in the frozen binary's source history.
 The relevant path is:
 
-1. `crates/panel/src/window.rs:881-965` forwards ordinary `WindowEvent`s to
+1. `crates/panel/src/window.rs:1269-1350` forwards ordinary `WindowEvent`s to
    `dear_imgui_winit::WinitPlatform::handle_event`. It does not directly send
    native key events to a host slot.
 2. `crates/panel/src/app.rs:1093-1155` computes `should_capture`, requires the
@@ -64,14 +65,15 @@ The relevant path is:
 4. `crates/panel/src/session.rs:396-443` returns immediately when
    `capture_tx` is absent, stamps `input_start` only for left/right-down or
    key-down edges, then sends `Move`, `Down`, `Up`, and `Key` events.
-5. `crates/panel/src/session.rs:2371-2414` attaches `capture_tx` and enables
-   the focused slot only when capture is enabled and a focused slot exists.
+5. `crates/panel/src/session.rs:2328-2370` attaches `capture_tx` and enables the
+   focused slot only when capture is enabled and a focused slot exists.
 6. `crates/host/src/slot_io.rs:230-273` drains the receiver only when the
    slot input is enabled. `Down` and key-down are the actionable host edges.
-7. `crates/host/src/lib.rs` binds an actionable drained input to a mailbox
-   generation, while `crates/panel/src/app.rs` completes the panel metric only
-   after `GameView::present` of that generation. The published endpoint is a
-   host texture bind/upload, not display scanout.
+7. `crates/host/src/lib.rs` binds still-unbound focused starts to a mailbox
+   generation on mailbox store (including stores after a drain), while
+   `crates/panel/src/app.rs` completes the panel metric only after
+   `GameView::present` of that generation. The published endpoint is a host
+   texture bind/upload, not display scanout.
 
 The same source also handles the MultiBox focused cell through the analogous
 `app.rs:1221-1236` capture call. `memory_draw_policy` changes draw/focus cadence
@@ -81,14 +83,18 @@ and renderer selection; it does not enable or disable capture.
 
 The strongest source-supported conclusion is bounded:
 
-> The external key schedule never crossed the observable panel capture seam.
+> The external key schedule produced no published panel input-start samples.
 
-The first observable seam is `stream_capture_for`, not Windows `SendInput`.
-With zero `input_start_n` in all 381 rows, no actionable edge reached the
-instrumented panel helper. The remaining possible boundaries are native event
+The first intended observable seam is `stream_capture_for`, not Windows
+`SendInput`, but the zero counter does not prove that this helper was never
+called. `note_panel_input_start` returns early for an empty slot name, and
+`note_input_start` can admit/push a pending start even when its live registry
+lookup finds no matching row; the published counter is bumped only for a
+matching live row. Thus the remaining possibilities include native event
 delivery/platform translation, ImGui key-state production, the Game Image
-hover gate, or capture-channel attachment. The evidence does not distinguish
-those boundaries.
+hover gate, capture-channel attachment, or a missing/mismatched slot identity
+at the instrumentation seam. The evidence does not distinguish those
+boundaries.
 
 This is not established as a `wScan == 0` defect. The pinned dependency set is
 `dear-imgui-winit 0.15.1` and `winit 0.30.13`; the winit native mapping path
@@ -112,15 +118,21 @@ controlled run:
 2. corresponding ImGui key transition visible to `capture_keys` while the
    Game Image is hovered;
 3. `stream_capture_for` called with an actionable edge;
-4. `InputEv::Key`/`Down` drained by the focused slot.
+4. `InputEv::Key`/`Down` drained by the focused slot;
+5. at the instrumentation seam, record the slot name, `slot_id_for(name)`,
+   whether `with_live_slot_from` matched a live row, and whether
+   `note_input_start` admitted the start versus bumped a published counter.
 
 Keep the existing capture-enabled, slot-zero-focused, fixed Game Image point
-and record the four counts separately. A native-event count with zero ImGui
+and record the four event counts plus the identity/live-row outcome separately.
+A native-event count with zero ImGui
 transitions localizes the issue to platform translation; ImGui transitions with
 zero seam calls localize it to hover/capture gating; seam calls with zero host
-drain localize it to channel/slot attachment. Only a nonzero host drain can
-justify input coverage. Do not alter UI behavior to force the metric, and do
-not treat `GameView::present` as display-visible acknowledgement.
+drain localize it to channel/slot attachment. A drain count alone is not full
+coverage: require start, generation bind, present, and closed counts (with
+identity/live-row status) before claiming input coverage. Do not alter UI
+behavior to force the metric, and do not treat `GameView::present` as
+display-visible acknowledgement.
 
 ## Limits
 
