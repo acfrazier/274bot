@@ -204,32 +204,54 @@ def compact_gate(gate):
 
 def startup_render_inspection(cell: Path, meta: dict, bound: dict):
     """Extract actual startup/render records, never infer image proof."""
-    records = [meta, bound]
+    records = [(meta, "raw-run-01/metadata.json"), (bound, "managed-run/native-bound.json")]
     for rel in ("managed-run/completion.json", "managed-run/started.json",
                 "managed-run/host-conditions.json", "managed-run/server-identity.json"):
         p = cell / rel
         if p.is_file():
-            records.append(load(p))
+            records.append((load(p), rel))
+    # The panel's startup attribution is emitted only in the original run log,
+    # not in metadata or the managed receipt.  Parse the JSON payload rather
+    # than searching text so booleans and geometry cannot be confused with
+    # render-policy prose.
+    runlog = cell / "raw-run-01/run.log"
+    if runlog.is_file():
+        prefix = "[panel-render-attribution] "
+        for line in runlog.read_text(encoding="utf-8-sig").splitlines():
+            if not line.startswith(prefix):
+                continue
+            try:
+                record = json.loads(line[len(prefix):])
+            except json.JSONDecodeError:
+                continue
+            if record.get("event") == "startup":
+                records.append((record, "raw-run-01/run.log"))
+                break
     wanted = {"geometry", "scale", "visible", "focused", "focus", "minimized",
               "offscreen", "window", "requested_adapter", "actual_adapter",
               "adapter", "backend", "renderer", "renderer_settings",
               "render_policy", "render_policy_requested", "count", "n",
-              "drawing", "draw", "full_rate", "renderer_present"}
+              "drawing", "draw", "full_rate", "renderer_present",
+              "requested_width", "requested_height", "actual_width",
+              "actual_height", "scale_factor", "present_mode",
+              "desired_maximum_frame_latency", "offscreen_target",
+              "adapter_name", "adapter_backend", "adapter_driver",
+              "adapter_device_type", "adapter_vendor", "adapter_device"}
     found = []
-    def walk(obj, path="$"):
+    def walk(obj, source, path="$"):
         if isinstance(obj, dict):
             for key, value in obj.items():
                 if key in wanted:
                     if isinstance(value, (str, int, float, bool)) or value is None:
-                        found.append({"path": path + "." + key, "value": value})
+                        found.append({"source": source, "path": path + "." + key, "value": value})
                     elif key in {"geometry", "window", "renderer_settings"}:
-                        found.append({"path": path + "." + key, "value": value})
-                walk(value, path + "." + key)
+                        found.append({"source": source, "path": path + "." + key, "value": value})
+                walk(value, source, path + "." + key)
         elif isinstance(obj, list):
             for i, value in enumerate(obj):
-                walk(value, path + "[" + str(i) + "]")
-    for record in records:
-        walk(record)
+                walk(value, source, path + "[" + str(i) + "]")
+    for record, source in records:
+        walk(record, source)
     return found
 
 def main():
