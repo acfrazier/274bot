@@ -26,6 +26,13 @@ LOSS_REASONS = frozenset({
 })
 SURFACES = frozenset({"Decode", "Panel", "Tui"})
 TARGET_MS = 100
+U64_MAX = (1 << 64) - 1
+# Source: RenderPolicy::pins_focus — all except RotatingAll emit focused-one/[0].
+PINS_FOCUS_POLICIES = frozenset({
+    "fixed-one", "focused-one", "focused-plus-background",
+})
+SUPPORTED_FRONTENDS = frozenset({"panel", "tui"})
+TUI_INPUT_NOTE = "TUI flush endpoint; not panel texture present"
 
 # Windows drive path: C:\... or C:/...
 _WIN_ABS = re.compile(r"^[A-Za-z]:[\\/]")
@@ -42,13 +49,23 @@ def unavailable(reason: str, **extra: Any) -> dict:
     return out
 
 
+def _u64(v: Any) -> bool:
+    """Strict Rust u64: non-negative int in 0..=2**64-1; bool is not an integer."""
+    return type(v) is int and 0 <= v <= U64_MAX
+
+
 def _uint(v: Any) -> bool:
-    """Strict non-negative integer; bool is not an integer."""
-    return type(v) is int and v >= 0
+    """Alias for bounded u64 field checks (legacy name kept for call sites)."""
+    return _u64(v)
 
 
 def _u16_schema(v: Any) -> bool:
     return type(v) is int and 0 <= v <= 0xFFFF
+
+
+def _usize(v: Any) -> bool:
+    """JSON usize from Rust — reject bool/negative/over-u64."""
+    return _u64(v)
 
 
 def _finite(v: Any) -> bool:
@@ -477,14 +494,218 @@ def _surface_for_gate(gate: str, frontend: str) -> str:
     return "Panel"
 
 
+def _resolve_render_policy(meta: dict, settings: Optional[dict]) -> Optional[str]:
+    if isinstance(settings, dict):
+        pol = settings.get("render_policy_requested")
+        if isinstance(pol, str):
+            return pol
+    pol = meta.get("render_policy")
+    return pol if isinstance(pol, str) else None
+
+
+def _derive_input_population(
+    frontend: str, policy: Optional[str], n: int,
+) -> tuple[Optional[dict], Optional[str]]:
+    """Source policy → input_population (host-play arm_cohort_at_observe_start)."""
+    if frontend not in SUPPORTED_FRONTENDS:
+        return None, "unsupported_frontend"
+    if frontend == "tui":
+        # Panel-only render policies cannot apply to TUI.
+        if policy is not None and policy not in (None, "rotating-all"):
+            # TUI leaves policy at RotatingAll; explicit panel policies are invalid.
+            if policy in PINS_FOCUS_POLICIES or policy == "rotating-all":
+                if policy != "rotating-all":
+                    return None, "tui_render_policy_invalid"
+        return {
+            "kind": "tui-endpoint",
+            "note": TUI_INPUT_NOTE,
+        }, None
+    # panel
+    if policy in PINS_FOCUS_POLICIES:
+        return {"kind": "focused-one", "slots": [0]}, None
+    if policy in (None, "rotating-all"):
+        return {"kind": "all-run-slots", "n": n}, None
+    return None, "unsupported_render_policy"
+
+
+def _input_pop_matches(header_pop: Any, derived: dict) -> bool:
+    if not isinstance(header_pop, dict):
+        return False
+    if header_pop.get("kind") != derived.get("kind"):
+        return False
+    kind = derived["kind"]
+    if kind == "focused-one":
+        slots = header_pop.get("slots")
+        return slots == [0]
+    if kind == "all-run-slots":
+        return header_pop.get("n") == derived.get("n")
+    if kind == "tui-endpoint":
+        note = header_pop.get("note")
+        return note == TUI_INPUT_NOTE or note is None or isinstance(note, str)
+    return False
+
+
+def _mono_pair(obj: dict, lo_k: str, hi_k: str) -> tuple[Optional[int], Optional[int], Optional[str]]:
+    """Inclusive mono-ns bracket; structural only (no invented tolerance)."""
+    lo, hi = obj.get(lo_k), obj.get(hi_k)
+    if lo is None and hi is None:
+        return None, None, "missing"
+    if not _u64(lo) or not _u64(hi):
+        return None, None, "malformed"
+    if hi < lo:
+        return None, None, "inverted"
+    if lo == 0 and hi == 0:
+        return None, None, "unset"
+    return int(lo), int(hi), None
+
+
+def _validate_sample_clock(clock: Any) -> tuple[Optional[dict], Optional[str]]:
+    """Validate responsiveness_clock structural/domain consistency."""
+    if clock is None:
+        return None, "sample_clock_missing"
+    if not isinstance(clock, dict):
+        return None, "sample_clock_malformed"
+    domain = clock.get("domain")
+    if domain != CLOCK_DOMAIN:
+        return None, "sample_clock_domain_mismatch"
+    s_lo, s_hi, s_err = _mono_pair(clock, "sample_mono_ns_lower", "sample_mono_ns_upper")
+    r_lo, r_hi, r_err = _mono_pair(clock, "read_mono_ns_lower", "read_mono_ns_upper")
+    if s_err or r_err:
+        return None, f"sample_clock_bracket_{s_err or r_err}"
+    assert s_lo is not None and s_hi is not None and r_lo is not None and r_hi is not None
+    elapsed = clock.get("elapsed_mono_ns")
+    if not _u64(elapsed):
+        return None, "sample_elapsed_mono_malformed"
+    elapsed_i = int(elapsed)
+    if r_lo < s_lo or r_hi > s_hi:
+        return None, "sample_read_outside_sample_bracket"
+    if elapsed_i < s_lo or elapsed_i > s_hi:
+        return None, "sample_elapsed_outside_sample_bracket"
+    return {
+        "sample_lo": s_lo,
+        "sample_hi": s_hi,
+        "read_lo": r_lo,
+        "read_hi": r_hi,
+        "elapsed_ns": elapsed_i,
+    }, None
+
+
+def _validate_capture_brackets(
+    row: dict, gate: str,
+) -> Optional[str]:
+    """Per-slot capture brackets when present — structural containment only."""
+    prefix = "decode" if gate == "decode" else "input"
+    lo_k = f"{prefix}_capture_mono_ns_lower"
+    hi_k = f"{prefix}_capture_mono_ns_upper"
+    if lo_k not in row and hi_k not in row:
+        return "capture_bracket_missing"
+    c_lo, c_hi, c_err = _mono_pair(row, lo_k, hi_k)
+    if c_err:
+        return f"capture_bracket_{c_err}"
+    assert c_lo is not None and c_hi is not None
+    return None
+
+
+def _validate_cohort_clock_lifecycle(
+    samples: list[dict],
+    boundaries: tuple[int, int, int],
+    gate: str,
+    expected_sids: set[int],
+) -> Optional[str]:
+    """Process-mono clock + first/final observe publication (not harness elapsed).
+
+    Does not require aggregate pending=0 at edges. Harness elapsed_s is a
+    distinct clock validated elsewhere; mono brackets prove containment.
+    """
+    start, end, tail = boundaries
+    observe_clocks: list[dict] = []
+    drain_clocks: list[dict] = []
+    prev_elapsed_mono: Optional[int] = None
+
+    for sample in samples:
+        if not isinstance(sample, dict):
+            continue
+        cohort = sample.get("cohort")
+        if not (isinstance(cohort, dict) and cohort.get("present") is True):
+            continue
+        phase = sample.get("phase")
+        parsed, err = _validate_sample_clock(sample.get("responsiveness_clock"))
+        if err:
+            return err
+        assert parsed is not None
+        elapsed_ns = parsed["elapsed_ns"]
+        if prev_elapsed_mono is not None and elapsed_ns < prev_elapsed_mono:
+            return "sample_mono_time_regression"
+        prev_elapsed_mono = elapsed_ns
+
+        rows = sample.get("responsiveness_profile")
+        if not isinstance(rows, list):
+            return "sample_responsiveness_malformed"
+        by_sid = {}
+        for row in rows:
+            if not isinstance(row, dict) or not _u64(row.get("slot_id")):
+                return "sample_responsiveness_malformed"
+            by_sid[int(row["slot_id"])] = row
+        for sid in expected_sids:
+            row = by_sid.get(sid)
+            if row is None:
+                return "sample_population_incomplete"
+            cap_err = _validate_capture_brackets(row, gate)
+            if cap_err:
+                return cap_err
+            # Capture must sit at/before sample upper (source read encloses capture end).
+            prefix = "decode" if gate == "decode" else "input"
+            c_lo, c_hi, _ = _mono_pair(
+                row, f"{prefix}_capture_mono_ns_lower", f"{prefix}_capture_mono_ns_upper",
+            )
+            assert c_lo is not None and c_hi is not None
+            if c_hi > parsed["read_hi"] or c_hi > parsed["sample_hi"] or c_lo > parsed["sample_hi"]:
+                return "capture_outside_sample_bracket"
+
+        if phase == "observe":
+            # Observe samples live in the fixed window mono domain.
+            if parsed["sample_hi"] < start or parsed["sample_lo"] > end:
+                return "observe_sample_outside_window"
+            observe_clocks.append(parsed)
+        elif phase == "drain":
+            # Drain may complete included work through END+tail.
+            if parsed["sample_lo"] < start:
+                return "drain_sample_before_window"
+            if parsed["elapsed_ns"] > end + tail:
+                return "drain_sample_past_tail"
+            drain_clocks.append(parsed)
+        # Other phases with cohort refs are unusual but still clock-checked above.
+
+    if not observe_clocks:
+        return "observe_samples_missing"
+    # Required first/final observe publication: ≥2 observe rows, final encloses END.
+    if len(observe_clocks) < 2:
+        return "observe_boundary_samples_missing"
+    first, final = observe_clocks[0], observe_clocks[-1]
+    if first["elapsed_ns"] < start or first["sample_lo"] < start:
+        # First observe is after arm; mono must not precede immutable START.
+        if first["sample_hi"] < start:
+            return "observe_first_before_start"
+    if not (final["sample_lo"] <= end <= final["sample_hi"]):
+        # Source forces a final observe row at mono END before drain.
+        return "observe_final_missing_or_misaligned"
+    if drain_clocks and drain_clocks[0]["elapsed_ns"] < end:
+        return "drain_before_observe_end"
+    return None
+
+
 def _meta_profile_ok(
     meta: dict,
     settings_list: list[dict],
     header_frontend: str,
 ) -> Optional[str]:
     """Require profile/fine/frontend/N agreement across meta and EVERY qual settings."""
+    if header_frontend not in SUPPORTED_FRONTENDS:
+        return "unsupported_frontend"
     if meta.get("frontend") != header_frontend:
         return "cohort_frontend_mismatch"
+    if meta.get("frontend") not in SUPPORTED_FRONTENDS:
+        return "unsupported_frontend"
     if meta.get("responsiveness_profile") is not True:
         return "responsiveness_profile_disabled"
     # Fine buckets drive the <=100ms cohort verdict; meta alone is not enough —
@@ -500,6 +721,8 @@ def _meta_profile_ok(
         frontend = settings.get("frontend")
         if frontend is not None and frontend != header_frontend:
             return "qualification_frontend_mismatch"
+        if frontend is not None and frontend not in SUPPORTED_FRONTENDS:
+            return "unsupported_frontend"
         n_set = settings.get("n")
         if n_set is not None and n_set != meta.get("n"):
             return "qualification_n_mismatch"
@@ -514,12 +737,18 @@ def _expected_population(
     generations: dict[int, int],
     settings: Optional[dict],
 ) -> tuple[Optional[set[tuple[int, int]]], Optional[str]]:
-    """Build declared (slot_id, generation) population from qual ordinals + sample gens."""
+    """Build population from source policy; header must match derived shape."""
     n = meta.get("n")
     if not _uint(n) or n == 0:
         return None, "meta_n_invalid"
     if len(qual_slots) != n:
         return None, "qualification_population_n_mismatch"
+    frontend = header.get("frontend")
+    if not isinstance(frontend, str) or frontend not in SUPPORTED_FRONTENDS:
+        return None, "unsupported_frontend"
+    if meta.get("frontend") != frontend:
+        return None, "cohort_frontend_mismatch"
+
     # Decode always all-run-slots with n.
     if gate == "decode":
         pop = header.get("decode_population")
@@ -536,60 +765,62 @@ def _expected_population(
             return None, "decode_population_identity_collision"
         return expected, None
 
+    policy = _resolve_render_policy(meta, settings)
+    # Meta vs qualification policy agreement when both present.
+    meta_pol = meta.get("render_policy") if isinstance(meta.get("render_policy"), str) else None
+    qual_pol = None
+    if isinstance(settings, dict) and isinstance(settings.get("render_policy_requested"), str):
+        qual_pol = settings.get("render_policy_requested")
+    if meta_pol is not None and qual_pol is not None and meta_pol != qual_pol:
+        return None, "render_policy_meta_qualification_disagree"
+
+    derived, derr = _derive_input_population(frontend, policy, int(n))
+    if derr or derived is None:
+        return None, derr or "unsupported_input_population"
+
     pop = header.get("input_population")
-    if not isinstance(pop, dict) or not isinstance(pop.get("kind"), str):
-        return None, "input_population_missing"
-    kind = pop["kind"]
-    frontend = header.get("frontend")
+    if not _input_pop_matches(pop, derived):
+        # Header claims must match source policy — not arbitrary ordinals/kinds.
+        if not isinstance(pop, dict):
+            return None, "input_population_missing"
+        kind = pop.get("kind")
+        if kind == "focused-one":
+            slots = pop.get("slots")
+            if not isinstance(slots, list) or not slots:
+                return None, "input_population_empty"
+            if any(not _uint(x) for x in slots):
+                return None, "input_population_malformed"
+            if len(slots) != len(set(slots)):
+                return None, "input_population_duplicate_ordinal"
+            if slots != [0]:
+                # pins_focus always ordinal 0; alternate/extra ordinals are forged.
+                return None, "input_population_ordinal_mismatch"
+            if derived.get("kind") != "focused-one":
+                return None, "input_population_policy_mismatch"
+        if kind != derived.get("kind"):
+            return None, "input_population_policy_mismatch"
+        return None, "input_population_mismatch"
 
+    kind = derived["kind"]
     if kind == "focused-one":
-        slots = pop.get("slots")
-        if not isinstance(slots, list) or not slots or any(not _uint(x) for x in slots):
-            return None, "input_population_malformed"
-        # slots are fixture ordinals, not EventId.slot_id.
-        policy = None
-        if isinstance(settings, dict):
-            policy = settings.get("render_policy_requested")
-        if policy is None:
-            policy = meta.get("render_policy")
-        # Header kind is focused-one; when policy is present it must agree.
-        if policy is not None and policy != "focused-one":
-            return None, "input_render_policy_mismatch"
-        expected = set()
-        for ordinal in slots:
-            if ordinal >= len(qual_slots):
-                return None, "input_ordinal_out_of_range"
-            sid = qual_slots[ordinal]["responsiveness_slot_id"]
-            if sid not in generations:
-                return None, "missing_generation_for_slot"
-            expected.add((sid, generations[sid]))
-        if not expected:
-            return None, "input_population_empty"
-        return expected, None
+        # pins_focus: exactly fixture ordinal 0 → FNV slot id.
+        ordinal = 0
+        if ordinal >= len(qual_slots):
+            return None, "input_ordinal_out_of_range"
+        sid = qual_slots[ordinal]["responsiveness_slot_id"]
+        if sid not in generations:
+            return None, "missing_generation_for_slot"
+        return {(sid, generations[sid])}, None
 
-    if kind == "all-run-slots":
-        if pop.get("n") != n:
-            return None, "input_population_n_mismatch"
+    if kind in ("all-run-slots", "tui-endpoint"):
         expected = set()
         for slot in qual_slots:
             sid = slot["responsiveness_slot_id"]
             if sid not in generations:
                 return None, "missing_generation_for_slot"
             expected.add((sid, generations[sid]))
-        if len(expected) != n:
+        if kind == "all-run-slots" and len(expected) != n:
             return None, "input_population_identity_collision"
-        return expected, None
-
-    if kind == "tui-endpoint":
-        if frontend != "tui" or meta.get("frontend") != "tui":
-            return None, "input_endpoint_mismatch"
-        # TUI is a distinct endpoint population — all run slots' Tui surface.
-        expected = set()
-        for slot in qual_slots:
-            sid = slot["responsiveness_slot_id"]
-            if sid not in generations:
-                return None, "missing_generation_for_slot"
-            expected.add((sid, generations[sid]))
         return expected, None
 
     return None, "unsupported_input_population"
@@ -639,10 +870,12 @@ def _read_cohort_impl(run_dir: pathlib.Path, meta: dict, samples: list[dict], ga
 
     if (not _u16_schema(header.get("schema_version")) or header.get("schema_version") != SCHEMA_VERSION
             or header.get("clock_domain") != CLOCK_DOMAIN
-            or not _uint(header.get("observe_ns")) or not _uint(header.get("capacity"))
+            or not _u64(header.get("observe_ns")) or not _usize(header.get("capacity"))
             or header.get("capacity") == 0
             or not isinstance(header.get("frontend"), str)):
         return unavailable("unknown_cohort_schema", gate=gate)
+    if header.get("frontend") not in SUPPORTED_FRONTENDS:
+        return unavailable("unsupported_frontend", gate=gate)
 
     boundaries = _validate_boundaries(header.get("boundaries"))
     if boundaries is None or header.get("tail_name") != TAIL_NAME or header.get("tail_ns") != boundaries[2]:
@@ -658,6 +891,8 @@ def _read_cohort_impl(run_dir: pathlib.Path, meta: dict, samples: list[dict], ga
 
     if header.get("frontend") != meta.get("frontend"):
         return unavailable("cohort_frontend_mismatch", gate=gate)
+    if meta.get("frontend") not in SUPPORTED_FRONTENDS:
+        return unavailable("unsupported_frontend", gate=gate)
 
     qualification, qerr = _load_qualification(run_dir)
     if qerr:
@@ -716,6 +951,13 @@ def _read_cohort_impl(run_dir: pathlib.Path, meta: dict, samples: list[dict], ga
             present.add(int(row["slot_id"]))
         if not expected_sids.issubset(present):
             return unavailable("sample_population_incomplete", gate=gate)
+
+    # Process-mono clock + first/final observe + capture brackets (not harness).
+    clock_err = _validate_cohort_clock_lifecycle(
+        samples, boundaries, gate, expected_sids,
+    )
+    if clock_err:
+        return unavailable(clock_err, gate=gate)
 
     # Provenance refs on samples + qualification must agree with sidecar.
     sample_refs = []

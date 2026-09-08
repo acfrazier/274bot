@@ -5,6 +5,10 @@ gates in `reference_metrics.py`, focused tests, this report). No Rust, native,
 SSH, launcher, STATE, or archive rewrite. This is **not** a native latency or
 performance acceptance claim.
 
+Corrective card `t_25c2eb89` after `t_829c6804` / ec5dda2: close remaining
+endpoint/population and clock/bounds provenance gaps reproduced by root
+(`diagnostics/cohort-reader-ec5dda2-root-probes.json`).
+
 ## Frozen reader contract
 
 ### Entry points
@@ -40,6 +44,62 @@ Required shape (source: `host::responsiveness_cohort` + host-play publisher):
    `tail_name=DEFAULT_TAIL_NS` (5_000_000_000 ns), immutable boundaries,
    `observe_ns == end - start`
 6. `producers_joined=true`, finite `observe_end_elapsed_s` on terminal
+7. Strict typed bounds: u16 schema version; u64 fields in `0..=2**64-1`
+   (bool is not an integer); capacity as bounded usize/u64; valid enum
+   shapes for surface/outcome/loss reason. Values such as `sequence=2**64`
+   are rejected (`malformed_event_identity`).
+
+### Endpoint and population (source policy)
+
+Supported frontends only: `panel` | `tui`. Headless and other labels are
+`unsupported_frontend` (no UI endpoint → never meet with Panel/Tui events).
+
+Input population is **derived from source policy**, not trusted from arbitrary
+header claims. Header must match the derived shape exactly:
+
+| frontend | render policy | header `input_population` |
+| --- | --- | --- |
+| panel | `fixed-one`, `focused-one`, `focused-plus-background` (`RenderPolicy::pins_focus`) | `{"kind":"focused-one","slots":[0]}` |
+| panel | `rotating-all` (or unset → rotating) | `{"kind":"all-run-slots","n":N}` |
+| tui | rotating-all only | `{"kind":"tui-endpoint","note":"TUI flush endpoint; not panel texture present"}` |
+
+- pins_focus always fixture **ordinal 0** → FNV `responsiveness_slot_id`;
+  alternate/duplicate/empty ordinals → `input_population_ordinal_mismatch` (etc.).
+- Decode population remains `all-run-slots` with `n == meta.n`.
+- Panel vs Tui surfaces are distinct; input gate selects `Panel` or `Tui` by
+  frontend. Mixed/forged endpoint success is rejected.
+- Meta `render_policy` and qual `render_policy_requested` must agree when both set.
+
+### Process-mono clock and sample lifecycle
+
+Harness `elapsed_s` and process mono are **independent clocks**. Do not equate
+them or invent float tolerances against mono when brackets exist.
+
+Every cohort-bearing sample must publish:
+
+- `responsiveness_clock` with `domain=responsiveness_process_mono`
+- valid sample/read mono brackets (`lo<=hi`, non-unset), `elapsed_mono_ns` u64
+  contained in the sample bracket; read contained in sample
+- per-population-slot capture brackets for the gate prefix
+  (`decode_capture_mono_*` / `input_capture_mono_*`) contained at/before
+  sample/read upper
+
+Observe lifecycle (source publisher):
+
+- ≥2 observe samples with clocks (first + final publication)
+- final observe sample mono bracket **encloses** immutable `end_mono_ns`
+  (forced final observe at END before drain)
+- observe samples not outside `[START, END]` mono domain
+- drain samples after END, not past `END+tail`
+- mono elapsed non-decreasing across cohort-bearing samples
+
+Missing/malformed/inverted/domain-mismatched clocks, missing capture brackets,
+and misaligned final observe fail closed. Aggregate edge `pending==0` is **not**
+required (cohort identity/loss/terminal accounting is).
+
+Positive fixtures use source-faithful 600s observe mono window, first/mid/final
+observe + drain samples, capture brackets, and harness qualification 120..720
+independently of mono.
 
 ### Provenance and path binding
 
@@ -79,14 +139,9 @@ Required shape (source: `host::responsiveness_cohort` + host-play publisher):
 - Every cohort-bearing sample must expose the same slot set; declared gate
   population slot ids must be a subset of each sample's profile
 - Interior `observe`/`drain` samples without a present cohort ref →
-  `cohort_sample_ref_missing_interior` (cannot hide reset/disappearance)
+  `cohort_sample_ref_missing_interior`
 - Header `focused-one.slots:[0]` means **fixture ordinal 0**, resolved through
   qualification `responsiveness_slot_id` (nonzero FNV), not `EventId.slot_id=0`
-- Decode population: `all-run-slots` with `n == meta.n` — every slot identity
-- Input `focused-one`: declared ordinals only; other slots are outside the input
-  population (not failures/passes)
-- Input `all-run-slots` and `tui-endpoint` supported when declared; TUI requires
-  `frontend=tui` and uses surface `Tui` (not panel texture-present)
 
 ### Membership and accounting
 
@@ -103,6 +158,8 @@ Required shape (source: `host::responsiveness_cohort` + host-play publisher):
   unavailable
 - Terminal `pending_n` is post-finalize (often 0); nonzero → unavailable
 - `records_n` must equal serialized EventRecords
+- Preserve counted loss vs retained receipts; pending0/finalized≠success;
+  per-slot p99 (no fleet pool-away)
 
 ### Meta / settings agreement
 
@@ -115,8 +172,6 @@ Requires **meta and every qualification settings object**:
 - critical settings keys agree across **all** qualification boundary rows
   (`qualification_settings_disagree` otherwise)
 - Frontend and N must agree across meta/header/settings when present
-- Focused-one header requires `render_policy`/`render_policy_requested` ==
-  `focused-one` when set
 
 ### p99 math (frozen)
 
@@ -125,7 +180,7 @@ Requires **meta and every qualification settings object**:
 `ade46732007625b4ddd83f7895e38350646c7799879ed8f9030c8ceb41a9d8f3`
 
 Root independent check (640 deterministic cases, seed 274) validated this
-exact hash. Verified **unchanged** after R2 provenance harden. Compare
+exact hash. Verified **unchanged** after endpoint/clock harden. Compare
 durations in **nanoseconds** to inclusive integer ms upper edges (do not floor
 1.1 ms into 1 ms). Coarse bounds `(5,10,20,25,40,50,100,250,500,1000)`; fine
 `1..100`. Overflow bucket has lower bound only (`upper_ms=None`). Per-slot fine
@@ -151,42 +206,31 @@ and a stable `reason` string (see tests for the enumerated set).
 
 ## Reason codes (non-exhaustive, stable)
 
-`cohort_schema_missing`, `cohort_header_missing`, `multiple_cohort_headers`,
-`unknown_cohort_schema`, `malformed_cohort_boundaries`, `observe_duration_mismatch`,
-`sidecar_provenance_mismatch`, `cohort_frontend_mismatch`,
-`responsiveness_profile_disabled`, `responsiveness_fine_disabled`,
-`qualification_fine_disabled`, `qualification_profile_disabled`,
-`qualification_settings_disagree` / `_missing` / `_malformed`,
-`qualification_observe_start_missing`, `qualification_observe_end_missing`,
-`qualification_boundary_duplicate`, `qualification_elapsed_order`,
-`observe_end_elapsed_mismatch`,
-`qualification_missing` / `_malformed` / `_slots_*` / `_unexpected_generation`,
-`sample_generations_missing`, `sample_generation_reset`,
-`sample_slot_ended`, `sample_slot_disappeared`, `sample_population_incomplete`,
-`sample_cursor_malformed` / `_mismatch` / `_hwm_mismatch` / `_missing`,
-`sample_elapsed_before_observe`,
-`cohort_sample_ref_missing` / `_missing_interior` / `_mismatch`,
-`cohort_qualification_ref_*`,
-`decode_population_mismatch`, `input_population_*`, `missing_generation_for_slot`,
-`cursor_regression`, `cursor_accounting_mismatch`, `loss_counter_regression`,
-`record_after_terminal`, `cohort_terminal_missing`, `producers_not_joined`,
-`final_batch_incomplete`, `cohort_accounting_unavailable`,
-`declared_population_incomplete`, `unexpected_slot_identity`,
-`noncompleted_member`, `event_start_out_of_window`,
-`malformed_completion_timestamp`, `overflow_bucket`, `empty_cohort`,
-`malformed_cohort_input`, …
+Prior codes retained. Additive / tightened for this card:
+
+`unsupported_frontend`, `input_population_ordinal_mismatch`,
+`input_population_policy_mismatch`, `input_population_duplicate_ordinal`,
+`input_population_mismatch`, `render_policy_meta_qualification_disagree`,
+`tui_render_policy_invalid`, `unsupported_render_policy`,
+`sample_clock_missing`, `sample_clock_malformed`, `sample_clock_domain_mismatch`,
+`sample_clock_bracket_*`, `sample_elapsed_mono_malformed`,
+`sample_read_outside_sample_bracket`, `sample_elapsed_outside_sample_bracket`,
+`sample_mono_time_regression`, `capture_bracket_missing` / `_malformed` /
+`_inverted` / `_unset`, `capture_outside_sample_bracket`,
+`observe_samples_missing`, `observe_boundary_samples_missing`,
+`observe_first_before_start`, `observe_final_missing_or_misaligned`,
+`observe_sample_outside_window`, `drain_sample_before_window`,
+`drain_sample_past_tail`, `drain_before_observe_end`, …
 
 ## Verification commands and counts
 
 ```
 cd /Users/acfrazier/experiments/274bot/.worktrees/latency-cohort-reader
 python3 -m unittest discover -s docs/memory -p 'test_cohort_reader.py' -v
-# → 42 tests, 0 fail, 0 err
+# → 52 tests, 0 fail, 0 err
 
 python3 -m unittest discover -s docs/memory -p 'test_reference_metrics.py' -v
 # → 100 tests, 0 fail, 0 err
-#   (untracked diagnostic fixture symlinks present in this checkout for local
-#    reuse only — not production reader artifacts; do not commit them)
 
 python3 -m unittest discover -s docs/memory -p 'test_matched_evidence_adapter.py' -v
 # → 46 tests, 0 fail, 0 err, 1 skip
@@ -195,11 +239,25 @@ python3 -m unittest discover -s docs/memory -p 'test_instrumentation_overhead.py
 # → 29 tests, 0 fail, 0 err, 1 skip
 ```
 
-p99 freeze hash verified unchanged after R2 provenance harden.
+p99 freeze hash verified unchanged:
+`ade46732007625b4ddd83f7895e38350646c7799879ed8f9030c8ceb41a9d8f3`
 
-### R2 false-meet probes (now fail-closed)
+cohort_reader SHA-256 after this card:
+`573cf29ab7397254bbf8f925d94f89c574848fe4b4b4ec4d5450d3a9008af20a`
 
-Independently required by root/reviewer on ef879aa; each must be unavailable:
+### Root false-meet probes (now fail-closed)
+
+From `cohort-reader-ec5dda2-root-probes.json` remaining false meets:
+
+1. headless frontend + Panel events → `unsupported_frontend`
+2. focused-one `slots:[1]` → `input_population_ordinal_mismatch`
+3. `EventId.sequence=2**64` → `malformed_event_identity`
+4. missing `responsiveness_clock` → `sample_clock_missing`
+
+Prior R2 six + interior ref still fail-closed. Control happy path meets with
+source-faithful clocks/observe publication.
+
+### R2 false-meet probes (retained)
 
 1. qual `responsiveness_fine_enabled=False` while meta fine true →
    `qualification_fine_disabled`
@@ -211,14 +269,8 @@ Independently required by root/reviewer on ef879aa; each must be unavailable:
 5. forged `sample.cohort.cursor=99999` → `sample_cursor_mismatch`
 6. observe-end `responsiveness_profile_enabled=False` while start true →
    `qualification_settings_disagree`
-7. (extra) interior observe without cohort ref →
+7. interior observe without cohort ref →
    `cohort_sample_ref_missing_interior`
-
-Positive fixtures use observe+drain multi-sample sequence with harness elapsed
-inside the qualification interval (120..720+) and sample cursor = batch HWM.
-
-R1 blockers retained: N16 single-slot incomplete; counter-only loss unavailable;
-post-terminal batch unavailable; malformed types unavailable not exception.
 
 ## Mandatory scenario coverage (tests)
 
@@ -235,7 +287,10 @@ focused-one ordinal0→FNV id; qualification shape is `slots` not
 bool rejected as uint; pre-arm seed gen ignored; in-cohort generation reset;
 quiet-inner-span not selected; malformed surface and fuzzed scalar types →
 unavailable without exception; N=16 single-slot cannot meet; ns boundary /
-exact 100ms / 100ms+1ns overflow; all six R2 provenance probes + interior ref.
+exact 100ms / 100ms+1ns overflow; all six R2 provenance probes + interior ref;
+**headless unsupported; wrong ordinal; u64 overflow sequence; missing/inverted/
+domain-mismatched clock; missing capture; final observe misaligned; pins_focus
+fixed-one + focused-plus-background meet; TUI endpoint distinct from Panel.**
 
 ## Limitations (honest)
 
