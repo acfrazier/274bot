@@ -9,6 +9,31 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 09:08 UTC
+
+- Splash audit b7ccbf3 APPROVED t_8c2b78ce, actual Grok4.5/xai-oauth
+  20260908_045805_9de268. Core native scene1 correlation preserved; fixture
+  p12 valid but runtime font/compositing still unobserved. Coverage-ordering
+  hypothesis also exists in public stable4f2048, not established memory
+  regression. No splash fix or repeat native run from this audit.
+- Cohort plan d90f530 APPROVED t_bceae2a5 actual Grok4.5/xai-oauth
+  20260908_045605_aeade7. Root amendment452936c APPROVED t_fa409c1b actual
+  Grok4.5/xai-oauth20260908_050106_d1c764: oldnativehashes are parentlineages;
+  common instrumentation needs newlybuilt/frozen binaries and integration
+  review; real GameImage capture input helper prerequisite, not Teleschrome.
+- NEW producer t_844175ba Luna running in isolated
+  .worktrees/latency-cohort-ledger branch codex/latency-cohort-ledger,
+  base452936c+STATEsetup14c2366, client3456edc initialized. Scope host
+  bounded opt-in event journal/API plus real producer tests/report only;
+  legacy aggregates unchanged, no host-play/reader/native work yet.
+- NEW stimulus t_abf0c59f Luna source-only two new helper/report files on
+  primary. Guarded alternating camera-arrow pulses only if source confirms
+  fixture preservation; explicit identities/rect/GameImage point, no focus
+  steal or native actions by worker. Root native dryinterop/smoke follows
+  same-card review. Both tasks are prerequisites, not latency acceptance.
+- Windows idle. All full resource/latency/calibration/lifecycle/scaling and
+  final whole-branch Grok gates remain open. Native0830 evidence retained.
+
 ## Latest boundary — 2026-09-08 08:49 UTC
 
 - Synchronized visual report 0c1e438+b1dd88f APPROVED t_9b57233d, actual
