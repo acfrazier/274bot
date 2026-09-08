@@ -9,6 +9,27 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 10:33 UTC
+
+- Input trace0627dc0 APPROVED t_fedf29c8 actual Grok4.5/xai-oauth session
+  20260908_062920_041377, completed10:31 UTC. Root cold checked corrected
+  disabled-path/row identity/actionable capacity, independently ran7 focused
+  tests, integrated source-only as188e168 (isolated STATE16bf32e excluded).
+  Root primary verification: host --lib205passed/0failed/1existingignored;
+  panel --lib --features memory-profile capture15passed/0failed. No native
+  trace binary/run or established input root cause yet.
+- Publisher t_5992fd7a corrective implementer run remains verified live,
+  ~18min. Draft now fixes activation (root five activation tests passed),
+  sample-ref write ordering and absolute tail. Root queued review requirements
+  for actual production lifecycle/shutdown/final-row tests and counter-only
+  overflow publication; draft undergoing additions, no accepted publisher.
+- Reader waits for frozen reviewed publisher schema. Before native comparison,
+  integrate/review the complete instrumentation and build/freeze both original
+  parent roles identically. Trace is diagnostic-only under BOT_DEBUG, and the
+  unresolved0942 zero-input result still requires one controlled seam proof.
+  Windows remains idle. Full performance/final matrix/lifecycle/scaling and
+  whole-branch Grok gates remain incomplete.
+
 ## Latest boundary — 2026-09-08 10:20 UTC
 
 - Publisher t_5992fd7a corrective run remains live; draft now arms OPT_IN before
