@@ -11,6 +11,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 13:40 UTC
+
+- Both final native roles built/tested/staged. Candidate ca56e14 checks match
+  reference: host215 PASS/1 existing GPU ignore, publisher6 plus child,
+  panel25 PASS. windows-cohort-final-native-builds.json binds all receipts.
+- Current native nav/catalog hashes refreshed with no frontend/build processes
+  present. New windows-cohort-paired-build-manifest.json records exact final
+  binaries, source/client hashes, feature/allocator evidence and fixture paths.
+  No-launch native verification of that manifest still pending.
+- Stimulus schedule predeclared in native-cohort-pair-execution-protocol.md:
+  one120-pulse sequence per role, start60–90s after observe-start publication,
+  no retry; actual source cohort membership remains authoritative.
+- Controls t_5bb0cbaf draft was reclaimed for stale bindings and impossible
+  prelaunch completed-receipt requirement. Corrective63bfed6 is now under
+  same-card reviewer, actual20260908_093840_ea1285 grok-4.5/xai-oauth.
+  Root integration withheld pending review and cross-process binding checks.
+  No matched N16 run launched; campaign acceptance remains open.
+
 ## Latest boundary — 2026-09-08 13:28 UTC
 
 - Grok4.6 correction/evidence gate BOUNDED ACCEPT, t_5b03b1fe completed,
