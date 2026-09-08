@@ -9,6 +9,29 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 01:49 UTC
+
+- Owner census actual native cell launched 01:47:05.424 UTC:
+  native-render-owner-census-focused-plus-background-20260908-0150.
+  Frozen host66/client9f binary with d89c4a7 controls; full BotTest native
+  no-launch parser/spec/argv/build/server/strict-condition/census-opt-in passed.
+  Stage8files verified, archive SHA f8ef981d0e73850e7cd8fa6dabed9350fb3d753a34b4773bfa024e57e7083057.
+  d89 corrective review545 APPROVED actual Grok4.5 xai-oauth. Contract and stage
+  receipts copied docs/memory/diagnostics/windows-owner-census-20260908.
+  Poll01:48:35 RUNNING controller14996,launcher13448,panel15116,collector8320.
+  No Windows build/tests or other frontend overlap. Complete this cell once;
+  preserve raw-run paths as well as managed receipts (census archive helper
+  omits external raw dirs; use reviewed lazy archive pattern adapted by root).
+- Four-cell analysis f9291da now Grok review547 running. Root found expected
+  tar hash typo introduced by analyzer (original card/archive agree), wrong
+  report durations, omitted actual time-alignment and nested cadence/latency
+  calculations. Commented same card t_7cf76634; no report acceptance yet.
+- Linux9452b89 review546 approved import/env fixes, actualGrok4.5. Root found
+  more dropped source-runner contract: Mac-only receipt paths, missing complete
+  immutable fixture equality and client-proof check. New corrective t_af7aeded
+  Luna actually running01:49. Scope controls/protocol only; native Linux stays
+  unlaunched until corrected review plus actual prepare-only passes.
+
 ## Latest boundary — 2026-09-08 01:41 UTC
 
 - FOURTH candidate background0126 completed0, Intel/Vulkan, qualifies16/16 and
