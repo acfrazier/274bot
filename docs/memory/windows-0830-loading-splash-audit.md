@@ -13,8 +13,10 @@ The captured native subject is the candidate recorded by
 - executable SHA-256
   `a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f`
 
-The 08:30 capture records repeat that path and hash. The current root is not the
-frozen source tree: it is host `0c4b1c6` with client gitlink `3456edc`. The
+The 08:30 capture records repeat that path and hash. The current root snapshot
+used for the audit is host
+`0c4b1cdebfb367104785ebc47ffcbbaa8791357d` (`0c4b1cd`) with client gitlink
+`3456edc`. The
 frozen host commit is the sibling `windows-render-owner-census` checkout, whose
 client is exactly `fd956c9`; `git merge-base --is-ancestor 3456edc fd956c9`
 passes there. Source behavior below is therefore cited from the frozen client,
@@ -52,10 +54,18 @@ unknown.
 The operator also identified a concrete source discriminator for the bounded
 follow-up: frozen `draw.rs:4222` calls `check_minimap`/`scene_loading_splash`
 before `game_draw`, while frozen `gpu.rs:1068-1076` draws scene overlays, clears
-`overlay_coverage`, and installs coverage tracking for later overlays. The audit
-does not claim this ordering is a bug; it identifies the call/coverage boundary
-to inspect, including whether the splash is re-run and represented in the final
-atlas coverage at `gpu.rs:1350-1390` / `finish`.
+`overlay_coverage`, and installs coverage tracking for later overlays.
+The audit does not claim this ordering is a bug; it identifies the call/coverage
+boundary to inspect, including whether the splash is re-run and represented in the
+final atlas coverage at `gpu.rs:1350-1390` / `finish`.
+
+This coverage-ordering hypothesis is not yet a memory-candidate regression. The
+public stable client at
+`4f2048ea10f75b3bb92ff45610b35ba7313b0308` has the same
+`overlay_coverage.fill(0)` plus guarded-later-overlays pattern and no
+`scene_loading_splash` call in `gpu.rs`. Any correction decision therefore needs
+a bounded baseline-versus-candidate comparison of the exact render path; this
+audit does not attribute the omission to tile storage or authorize a patch.
 
 ## What the 08:30 evidence establishes
 
