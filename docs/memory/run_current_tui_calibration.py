@@ -10,10 +10,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import math
 import os
 import pathlib
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -95,6 +95,57 @@ def validate_server_identity(path: pathlib.Path, expected_pid: int, expected_sta
     return data
 
 
+def _server_public_environment(server_root: pathlib.Path) -> Dict[str, str]:
+    """Bind launch credentials to the declared public server artifact only."""
+    root = server_root.resolve(strict=True)
+    if not root.is_dir():
+        raise CalibrationError("server root must be a directory")
+    public_path = root / "server-login-public.json"
+    try:
+        public = json.loads(public_path.read_text())
+        modulus = public["modulus_decimal"]
+        exponent = public["exponent_decimal"]
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise CalibrationError(f"server public login artifact is unreadable: {exc}") from exc
+    if not all(isinstance(value, str) and value for value in (modulus, exponent)):
+        raise CalibrationError("server public login artifact is incomplete")
+    return {"ENGINE_DIR": str(root), "LOGIN_RSAN": modulus, "LOGIN_RSAE": exponent}
+
+
+def launch_environment(args: argparse.Namespace) -> Dict[str, str]:
+    env = clean_environment()
+    env.update({"LIVE": "1", "BOT_TARGET": "local", "RS2B0T": str(args.rs2b0t.resolve()),
+                "NAV_PACK": str(args.nav_pack.resolve()), "NAV_FLAGS": str(args.nav_flags.resolve())})
+    env.update(_server_public_environment(args.server_root))
+    return env
+
+
+def validate_feature_contract(manifest_path: pathlib.Path) -> None:
+    try:
+        features = json.loads(manifest_path.resolve(strict=True).read_text())["features"]
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise CalibrationError(f"build feature contract is unreadable: {exc}") from exc
+    if (not isinstance(features, dict) or features.get("requested") != "memory-profile-no-alloc"
+            or features.get("locked") is not True or features.get("allocation_counting") is not False
+            or "snapshot-dedup" in str(features.get("enabled", ""))
+            or "snapshot-dedup" in str(features.get("requested", ""))):
+        raise CalibrationError("build manifest is not the locked memory-profile-no-alloc/System feature contract")
+
+
+def validate_server_artifact_hashes(server_root: pathlib.Path, identity: Mapping[str, Any]) -> None:
+    root = server_root.resolve(strict=True)
+    config = identity["configuration"]
+    bindings = (("config_sha256", root / "data/config/world.json"),
+                ("fixture_manifest_sha256", root / "concord-fixture-manifest.json"),
+                ("public_key_sha256", root / "data/config/public.pem"))
+    for key, path in bindings:
+        expected = identity[key]
+        if not path.is_file() or sha256(path) != expected:
+            raise CalibrationError(f"server {key} is not bound to the declared artifact")
+    if config["world_json_sha256"] != identity["config_sha256"]:
+        raise CalibrationError("server configuration world hash is inconsistent")
+
+
 def diagnostic_argv(binary: pathlib.Path, manifest: pathlib.Path, role: str) -> list[str]:
     return [
         "tui", "16", "active",
@@ -153,12 +204,14 @@ def build_spec(args: argparse.Namespace, source: Mapping[str, Any]) -> Dict[str,
 
 def validate_inputs(args: argparse.Namespace) -> Dict[str, Any]:
     source = check_source(args.host_checkout, args.expected_host_commit, args.expected_client_commit)
-    validate_server_identity(args.server_identity, args.server_pid, args.server_start_identity)
+    identity = validate_server_identity(args.server_identity, args.server_pid, args.server_start_identity)
     for label, path in (("binary", args.binary), ("build manifest", args.build_manifest), ("host conditions", args.host_conditions), ("nav pack", args.nav_pack), ("nav flags", args.nav_flags), ("catalog", args.catalog), ("server root", args.server_root), ("rs2b0t", args.rs2b0t)):
         if not path.exists():
             raise CalibrationError(f"{label} does not exist: {path}")
     # This is the same reviewed manifest verifier used by run_managed_cell.
     bp.verify_build(args.build_manifest, args.build_role, "tui", args.binary, args.nav_pack, args.nav_flags, args.catalog)
+    validate_feature_contract(args.build_manifest)
+    validate_server_artifact_hashes(args.server_root, identity)
     return source
 
 
@@ -182,8 +235,9 @@ class MemoryGuard:
     def _run(self) -> None:
         while not self.stop.wait(MEM_GUARD_INTERVAL_S):
             available = self.reader()
-            if available is not None and available < MEM_AVAILABLE_GUARD_BYTES:
-                self.triggered = f"MemAvailable {available} < {MEM_AVAILABLE_GUARD_BYTES}"
+            if available is None or available < MEM_AVAILABLE_GUARD_BYTES:
+                self.triggered = ("MemAvailable unavailable" if available is None else
+                                  f"MemAvailable {available} < {MEM_AVAILABLE_GUARD_BYTES}")
                 self.on_trigger(self.triggered)
                 return
 
@@ -209,19 +263,30 @@ def run(args: argparse.Namespace, spec: Dict[str, Any]) -> int:
     _exclusive_json(spec_path, spec)
     triggered: Dict[str, str] = {}
     def cleanup(reason: str) -> None:
-        # The managed runner owns launcher/collector teardown. This callback is
-        # deliberately injectable and records the guard event without signaling
-        # any server or ambient PID.
         triggered["reason"] = reason
+        if hasattr(signal, "SIGUSR1"):
+            os.kill(os.getpid(), signal.SIGUSR1)
     guard = MemoryGuard(cleanup)
     report: Dict[str, Any]
+    previous_handler = signal.getsignal(signal.SIGUSR1) if hasattr(signal, "SIGUSR1") else None
+    def abort_from_guard(signum: int, frame: Any) -> None:
+        raise RuntimeError("predeclared host memory guard: owned managed cell cancelled")
+    if hasattr(signal, "SIGUSR1"):
+        signal.signal(signal.SIGUSR1, abort_from_guard)
+    previous_env = os.environ.copy()
+    os.environ.clear()
+    os.environ.update(launch_environment(args))
     guard.start()
     try:
-        report = rmc.run_managed_cell(spec_path, cells_root)
+        report = rmc.run_managed_cell(spec_path, cells_root, cwd=args.host_checkout)
     except Exception as exc:  # preserve a durable failed artifact
         report = {"status": "failed_or_unavailable", "launched": False, "attempts": 1, "error": str(exc)}
     finally:
         guard.close()
+        os.environ.clear()
+        os.environ.update(previous_env)
+        if hasattr(signal, "SIGUSR1"):
+            signal.signal(signal.SIGUSR1, previous_handler)
     if triggered:
         report["status"] = "failed_or_unavailable"
         report["memory_guard"] = {"status": "triggered", "reason": triggered["reason"], "cleanup": "owned runner cleanup requested"}

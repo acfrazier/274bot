@@ -46,12 +46,12 @@ turning it into acceptance evidence.
 
 Verification
 
-`python3 -m unittest docs/memory/test_current_tui_calibration.py -v` — 7 tests
+`python3 -m unittest docs/memory/test_current_tui_calibration.py -v` — 11 tests
 passed. `python3 -m py_compile` passed for both Python files. Tests cover exact
 flags/spec, hot-flag scrubbing, source mismatch before launch, server identity
-hash/port validation, no-launch preflight behavior, memory-guard cleanup
-callback, output collision behavior, and incomplete native state remaining
-failed/unaccepted.
+hash/port validation, no-launch preflight behavior, explicit launch-environment
+binding, feature-contract rejection, fail-closed memory guard cancellation and
+owned-child cleanup, and incomplete native state remaining failed/unaccepted.
 
 Root-owned next steps
 

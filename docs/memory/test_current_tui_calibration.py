@@ -5,6 +5,7 @@ import pathlib
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -60,6 +61,39 @@ class CurrentTuiCalibrationControls(unittest.TestCase):
         self.assertEqual(len(seen), 1)
         self.assertIn("MemAvailable", seen[0])
 
+    def test_memory_guard_fails_closed_when_meminfo_unavailable(self):
+        seen = []
+        guard = runner.MemoryGuard(seen.append, reader=lambda: None)
+        guard.start()
+        guard.thread.join(timeout=2)
+        guard.close()
+        self.assertEqual(len(seen), 1)
+        self.assertIn("unavailable", seen[0])
+
+    def test_launch_environment_binds_explicit_operator_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            server = root / "server"
+            (server / "data/config").mkdir(parents=True)
+            (server / "server-login-public.json").write_text(json.dumps({
+                "modulus_decimal": "123", "exponent_decimal": "65537"}))
+            args = argparse.Namespace(server_root=server, rs2b0t=root / "rs2b0t",
+                                     nav_pack=root / "nav", nav_flags=root / "flags")
+            env = runner.launch_environment(args)
+            self.assertEqual(env["ENGINE_DIR"], str(server.resolve()))
+            self.assertEqual(env["RS2B0T"], str((root / "rs2b0t").resolve()))
+            self.assertEqual(env["NAV_PACK"], str((root / "nav").resolve()))
+            self.assertEqual(env["LOGIN_RSAN"], "123")
+
+    def test_feature_contract_rejects_counting_or_snapshot_dedup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "manifest.json"
+            path.write_text(json.dumps({"features": {
+                "requested": "memory-profile-no-alloc", "locked": True,
+                "allocation_counting": True, "enabled": "snapshot-dedup"}}))
+            with self.assertRaises(runner.CalibrationError):
+                runner.validate_feature_contract(path)
+
     def test_preflight_only_has_no_launch_or_output_reservation(self):
         with tempfile.TemporaryDirectory() as tmp:
             args = mock.Mock(output=pathlib.Path(tmp) / "future.json")
@@ -79,12 +113,40 @@ class CurrentTuiCalibrationControls(unittest.TestCase):
             output = pathlib.Path(tmp) / "result.json"
             args = mock.Mock(output=output)
             spec = {"id": "result"}
-            with mock.patch.object(runner.rmc, "run_managed_cell", return_value={"status": "failed_or_unavailable", "launched": True, "attempts": 1}):
+            with mock.patch.object(runner, "launch_environment", return_value={}), \
+                 mock.patch.object(runner.rmc, "run_managed_cell", return_value={"status": "failed_or_unavailable", "launched": True, "attempts": 1}):
                 self.assertEqual(runner.run(args, spec), 1)
             report = json.loads(output.read_text())
             self.assertEqual(report["status"], "failed_or_unavailable")
             self.assertFalse(report["performance_acceptance"])
             self.assertEqual(report["memory_guard"]["status"], "not_triggered")
+
+    def test_memory_guard_interrupts_managed_call_and_owned_child_is_cleaned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp) / "result.json"
+            child = []
+            args = mock.Mock(output=output, host_checkout=pathlib.Path(tmp),
+                             rs2b0t=pathlib.Path(tmp), nav_pack=pathlib.Path(tmp),
+                             nav_flags=pathlib.Path(tmp), server_root=pathlib.Path(tmp))
+            def managed(*_args, **_kwargs):
+                import subprocess
+                proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+                child.append(proc)
+                try:
+                    time.sleep(30)
+                finally:
+                    proc.terminate()
+                    proc.wait(timeout=2)
+                return {"status": "completed", "attempts": 1}
+            args.host_checkout = pathlib.Path(tmp)
+            with mock.patch.object(runner, "launch_environment", return_value={}), \
+                 mock.patch.object(runner.rmc, "run_managed_cell", side_effect=managed), \
+                 mock.patch.object(runner, "MEM_GUARD_INTERVAL_S", 0.01), \
+                 mock.patch.object(runner, "read_mem_available", return_value=None):
+                self.assertEqual(runner.run(args, {"id": "result"}), 1)
+            self.assertTrue(child)
+            self.assertIsNotNone(child[0].poll())
+            self.assertEqual(json.loads(output.read_text())["memory_guard"]["status"], "triggered")
 
     def test_source_mismatch_fails_before_build_or_launch(self):
         with tempfile.TemporaryDirectory() as tmp:
