@@ -9,6 +9,22 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 11:38 UTC
+
+- Reader run727 remains live (~15min); complete rewrite and expanded tests
+  are in progress, no accepted commit or review handoff. Root independent
+  p99_ns sorted-order-statistic check passed640cases; exact function hash/raw
+  diagnostic recorded in cohort-reader-independent-p99-math.json.
+- Root real native row-shape audit found seed generation1 ends before warmup;
+  observe/drain runtime uses generation2 without reset. Draft unions ALL sample
+  phases and falsely returns sample_generation_reset. Source-backed corrective
+  comment added: bind generation validation to publisher-declared cohort span,
+  preserve all resets inside it, and test pre-arm seed restart separately.
+  Raw groups+source hash: diagnostics/cohort-reader-seed-generation-shape.json.
+  Old0942 archive has no cohort schema and is only row-shape evidence.
+- Existing role source/compile/lifecycle evidence unchanged. No native actions
+  or acceptance; reader and combined review still prerequisite.
+
 ## Latest boundary — 2026-09-08 11:30 UTC
 
 - Reader implementer run727 verified live8min; bounded worker log confirms
