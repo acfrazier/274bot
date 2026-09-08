@@ -31,7 +31,10 @@ verify it on resume because a worker may finish after this snapshot.
 - New controller preparation t_9def0dca assigned Luna on isolated Linux branch;
   await actual same-card review before native preflight/launch. Build receipts
   and hashes recorded in hyperv-native-timing-build.json.
-- VM currently RUNNING4vCPU8GiB for builds/tests. DefaultSwitch DHCP address
+- VM shut down cleanly after tests and binary retrieval; Windows verifies
+  Off/state3 with0 assigned memory. New binary and pre/post receipts staged
+  and hashverified on Concord under linux-failure-timing-20260908; ldd resolves
+  all dependencies. No frontend launch yet. DefaultSwitch DHCP address
   now172.27.0.153; strict old pinned guest key verified before alias update.
   Current kernel unchanged; installed three pinned6.8.0-138.138 cloud-tools
   packages and activated KVP for native IP discovery. fcopy/vss disabled;
