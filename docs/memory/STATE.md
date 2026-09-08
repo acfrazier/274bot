@@ -9,6 +9,28 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 00:08 UTC
+
+- Native lazy-upload build3118e96/client5ee9 completed0 in23.60s at00:03:54.
+  Source pre/post852files match aggregate
+  2a1a551539e254abbd22914c965eb451a347e409955d0e6e53a76bbd9fd04ff8.
+  Binary SHA1937663506e3f0b243f5a9a742de3ae8d86ded66867bf2db38f9f882ec76e2e3
+  copied to new ProgramData/274bot-Test/panel-3118e96 and hashverified. Six
+  build-evidence files copied locally; some JSON is UTF16 BOM. Isolated candidate
+  f5e2c6b records native manifest and warnings. No candidate workload launched.
+- Operator unlocked console; fresh preflight00:05:44 passed. Remote viewer
+  discussion only: Sunshine/Moonlight recommended for ordinary viewing, stop
+  before measurements; PiKVM alternative needs display-routing baseline.
+  No viewer installed/configured and no zero-impact claim.
+- New t_13aa7d6e Luna actively prepares four fresh N16 comparison cells
+  (baseline then candidate for each existing mode), identical reviewed tools,
+  strict server binding with bdb producer correction, preserved failed archives.
+  New controls only; root executes after actual review. Timing30/120/60 stays
+  diagnostic, with elapsed-aligned RSS and no plateau/accepted-saving claim.
+- Census corrective t_7280bc28 handed off to reviewer after4min; review running.
+  Root still holds client commit/gitlink pending correction verification.
+  Snapshot t_cc437480 actualPID21460/run491 heartbeat00:07 remains running.
+
 ## Latest boundary — 2026-09-08 00:04 UTC
 
 - Lazy-upload follow-up t_f6265320 approved actual Grok4.6 session
