@@ -27,6 +27,29 @@ class RunDiagnosticCli(unittest.TestCase):
     def test_capture_frontend_bound_preserves_960_second_live_budget(self):
         self.assertEqual(rd._CAPTURE_FRONTEND_MAX_WALL_S, 960)
 
+    def test_capture_frontend_timeout_is_failed_even_when_child_exits_zero(self):
+        class Child:
+            def __init__(self):
+                self.calls = []
+
+            def wait(self, *, timeout):
+                self.calls.append(('wait', timeout))
+                if len(self.calls) == 1:
+                    raise subprocess.TimeoutExpired(['frontend'], timeout)
+                return 0
+
+            def terminate(self):
+                self.calls.append(('terminate',))
+
+            def kill(self):
+                self.calls.append(('kill',))
+
+        child = Child()
+        rc, timed_out = rd.wait_for_capture_frontend(child)
+        self.assertEqual(rc, 0)
+        self.assertTrue(timed_out)
+        self.assertEqual(child.calls, [('wait', 960), ('terminate',), ('wait', 15)])
+
     def test_help_survives_windows_redirected_output_encoding(self):
         proc = subprocess.run(
             [sys.executable, str(SCRIPT), '--help'],

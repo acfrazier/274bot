@@ -280,6 +280,24 @@ def conpty_helper_handoff(*, launcher_pid, frontend_pid, platform=None):
                         'parent_pid': int(launcher_pid), 'image_name': 'conhost.exe'})
     return helpers
 
+
+def wait_for_capture_frontend(child, *, timeout_s=_CAPTURE_FRONTEND_MAX_WALL_S):
+    """Wait for the captured frontend and report a live-wall timeout.
+
+    The child may handle SIGTERM and exit successfully; the timeout remains a
+    failed capture condition and must be propagated independently of its rc.
+    """
+    try:
+        return child.wait(timeout=timeout_s), False
+    except subprocess.TimeoutExpired:
+        child.terminate()
+        try:
+            rc = child.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            rc = child.wait(timeout=15)
+        return rc, True
+
 def main(argv=None):
     p = build_parser()
     a = p.parse_args(argv)
@@ -454,21 +472,22 @@ def main(argv=None):
         signal.signal(signal.SIGTERM, stop)
         signal.signal(signal.SIGINT, stop)
         # Keep the frontend lifecycle bound independent from post-exit analysis.
+        frontend_live_timeout = False
         if capture:
-            try:
-                rc = child.wait(timeout=_CAPTURE_FRONTEND_MAX_WALL_S)
-            except subprocess.TimeoutExpired:
-                child.terminate()
-                try:
-                    rc = child.wait(timeout=15)
-                except subprocess.TimeoutExpired:
-                    child.kill()
-                    rc = child.wait(timeout=15)
+            rc, frontend_live_timeout = wait_for_capture_frontend(child)
+            if frontend_live_timeout:
+                meta['heaptrack']['live_timeout'] = {
+                    'status': 'failed',
+                    'reason': 'frontend_live_timeout',
+                    'timeout_s': _CAPTURE_FRONTEND_MAX_WALL_S,
+                }
         else:
             rc = child.wait()
         if capture:
             guard_stop.set()
             guard_thread.join(timeout=2)
+            if frontend_live_timeout and not guard_state.get('reason'):
+                guard_state['reason'] = 'frontend_live_timeout'
             meta['heaptrack']['guard'] = guard_state
         if probe:
             probe.close()
@@ -518,6 +537,8 @@ def main(argv=None):
         if not isinstance(heaptrack_result, dict) or heaptrack_result.get('status') == 'failed':
             sys.exit(1)
         guard_meta = heaptrack_meta.get('guard')
+        if frontend_live_timeout:
+            sys.exit(1)
         if isinstance(guard_meta, dict) and guard_meta.get('reason'):
             sys.exit(1)
     sys.exit(rc if rc >= 0 else 128-rc)
