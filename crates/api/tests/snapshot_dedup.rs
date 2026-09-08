@@ -1,207 +1,26 @@
-//! Production snapshot-dedup candidate tests (feature `snapshot-dedup`).
-//! Empty under feature-off so default `cargo test -p api` stays green.
+//! Slot-instance family body sharing tests (feature `snapshot-dedup`).
+//!
+//! Three corrective roots: true slot-instance ownership, exclusive
+//! capacity/header/scratch accounting, multi-owner CX/lifecycle coverage.
 
 #![cfg(feature = "snapshot-dedup")]
 
-use api::snapshot::{Family, GameSnapshot, WidgetView};
+use api::snapshot::{LocLayer, LocView, SideTabView, WidgetKind, WidgetRoot, WidgetView, WorldTile};
 use api::snapshot_dedup::{
-    account_allocations_arcs, attach_owner_for_slot, process_slot_table, widgets_eq,
-    SlotFamilyRegistry,
+    account_allocations_arcs, widgets_eq, AllocationAccount, DedupHandle, FamilyCounters,
+    SlotDedupDirectory, SlotDedupInstance, SlotFamilyRegistry,
 };
-use client::client::{Client, ClientConfig};
-use client::config::if_type::{ComponentType, IfType, IfTypeMut};
-use client::config::LocType;
-use client::dash3d::ClientPlayer;
-use client::io::ServerProt;
-use std::sync::Arc;
+use api::snapshot::GameSnapshot;
+use std::sync::{Arc, Mutex};
 
-fn cfg() -> ClientConfig {
-    ClientConfig {
-        host: "127.0.0.1".into(),
-        port: 43594,
-        cache_dir: "/tmp".into(),
-        members: true,
-        lowmem: false,
-    }
-}
-
-fn base_client() -> Client {
-    Client::new(cfg())
-}
-
-fn set_iface(c: &mut Client, id: usize, com: IfType) {
-    c.set_iface(id, com);
-}
-
-fn set_iface_mut(c: &mut Client, id: usize, m: IfTypeMut) {
-    c.set_iface_mut(id, m);
-}
-
-/// Populated widgets + side tabs + one loc (from approved prototype fixture).
-fn plant_populated(c: &mut Client) {
-    set_iface(
-        c,
-        1000,
-        IfType {
-            id: 1000,
-            layer_id: 1000,
-            r#type: ComponentType::TYPE_LAYER,
-            children: Some(vec![1001, 1002]),
-            ..Default::default()
-        },
-    );
-    set_iface(
-        c,
-        1001,
-        IfType {
-            id: 1001,
-            layer_id: 1000,
-            r#type: ComponentType::TYPE_TEXT,
-            ..Default::default()
-        },
-    );
-    set_iface_mut(
-        c,
-        1001,
-        IfTypeMut {
-            text: "Hello".into(),
-            colour: 0x00FF00,
-            ..Default::default()
-        },
-    );
-    set_iface(
-        c,
-        1002,
-        IfType {
-            id: 1002,
-            layer_id: 1000,
-            r#type: ComponentType::TYPE_GRAPHIC,
-            button_text: "Select".into(),
-            ..Default::default()
-        },
-    );
-    set_iface_mut(
-        c,
-        1002,
-        IfTypeMut {
-            scroll_pos: 7,
-            ..Default::default()
-        },
-    );
-    c.main_modal_id = 1000;
-
-    set_iface(
-        c,
-        1100,
-        IfType {
-            id: 1100,
-            layer_id: 1100,
-            r#type: ComponentType::TYPE_LAYER,
-            children: Some(vec![1101]),
-            ..Default::default()
-        },
-    );
-    set_iface(
-        c,
-        1101,
-        IfType {
-            id: 1101,
-            layer_id: 1100,
-            r#type: ComponentType::TYPE_TEXT,
-            ..Default::default()
-        },
-    );
-    set_iface_mut(
-        c,
-        1101,
-        IfTypeMut {
-            text: "tab3".into(),
-            ..Default::default()
-        },
-    );
-    set_iface(
-        c,
-        1500,
-        IfType {
-            id: 1500,
-            layer_id: 1500,
-            r#type: ComponentType::TYPE_LAYER,
-            children: Some(vec![1501]),
-            ..Default::default()
-        },
-    );
-    set_iface(
-        c,
-        1501,
-        IfType {
-            id: 1501,
-            layer_id: 1500,
-            r#type: ComponentType::TYPE_TEXT,
-            ..Default::default()
-        },
-    );
-    set_iface_mut(
-        c,
-        1501,
-        IfTypeMut {
-            text: "tab5".into(),
-            ..Default::default()
-        },
-    );
-    c.side_icon[3] = 1100;
-    c.side_icon[5] = 1500;
-    c.active_icon = 3;
-
-    c.map_build_base_x = 3200;
-    c.map_build_base_z = 3200;
-    c.local_player = Some(ClientPlayer::at(20, 12));
-    let id = {
-        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
-        let id = cache.locs.len() as i32;
-        cache.locs.push(LocType {
-            id,
-            name: "Large door".into(),
-            desc: "A sturdy wooden door.".into(),
-            op: vec![Some("Open".into()), None],
-            width: 2,
-            length: 3,
-            blockwalk: false,
-            blockrange: false,
-            active: true,
-            ..Default::default()
-        });
-        id
-    };
-    let typecode = 0x4000_0000 + (id << 14) + 3 + (4 << 7);
-    c.world
-        .set_wall(0, 3, 4, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
-}
-
-fn bump_iface_inv(c: &mut Client) {
-    c.bump_gens(ServerProt::IF_SETTEXT);
-    c.bump_gens(ServerProt::UPDATE_INV_FULL);
-}
-
-fn bump_scene(c: &mut Client) {
-    c.bump_gens(ServerProt::REBUILD_NORMAL);
-}
-
-fn owner_pair(slot: &str) -> (GameSnapshot, GameSnapshot) {
-    let mut a = GameSnapshot::new();
-    let mut b = GameSnapshot::new();
-    a.attach_dedup(attach_owner_for_slot(slot));
-    b.attach_dedup(attach_owner_for_slot(slot));
-    (a, b)
-}
-
-fn bare_widget(component_id: i32, text: &str) -> WidgetView {
+fn w(component_id: i32) -> WidgetView {
     WidgetView {
-        kind: api::snapshot::WidgetKind::Widget,
+        kind: WidgetKind::Widget,
         component_id,
         layer_id: 0,
         parent_id: -1,
-        root_component_id: 0,
-        root: api::snapshot::WidgetRoot::Main,
+        root_component_id: component_id,
+        root: WidgetRoot::Main,
         type_: 0,
         button_type: 0,
         client_code: 0,
@@ -212,7 +31,7 @@ fn bare_widget(component_id: i32, text: &str) -> WidgetView {
         scroll_height: 0,
         scroll_position: 0,
         hidden: false,
-        text: Some(text.into()),
+        text: None,
         alternate_text: None,
         button_text: None,
         target_verb: None,
@@ -225,183 +44,373 @@ fn bare_widget(component_id: i32, text: &str) -> WidgetView {
         scripts: None,
         script_comparators: None,
         script_operands: None,
-        varp_bindings: vec![],
+        varp_bindings: Vec::new(),
         colour: 0,
-        actions: vec![],
-        items: vec![],
+        actions: Vec::new(),
+        items: Vec::new(),
     }
 }
 
-#[test]
-fn registry_equal_bodies_share_arc_and_unequal_do_not() {
-    let mut reg = SlotFamilyRegistry::new();
-    let c0 = reg.register();
-    let c1 = reg.register();
-    let mut counters = Default::default();
+fn st(index: i32) -> SideTabView {
+    SideTabView {
+        index,
+        root_component_id: index,
+        available: true,
+        active: false,
+        visible: true,
+        widgets: vec![w(index)],
+    }
+}
 
-    let body = vec![bare_widget(1, "a")];
-    let a = reg.intern_widgets(c0, body.clone(), &mut counters);
-    let b = reg.intern_widgets(c1, body, &mut counters);
-    assert!(Arc::ptr_eq(&a, &b), "equal content must share Arc");
-    assert_eq!(counters.equality_hits, 1);
-    assert_eq!(counters.publishes, 1);
+fn loc(id: i32) -> LocView {
+    LocView {
+        typecode: 0,
+        info: 0,
+        id,
+        name: Some(format!("loc-{id}")),
+        description: None,
+        actions: Vec::new(),
+        tile: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        distance: 0,
+        layer: LocLayer::Ground,
+        shape: 0,
+        angle: 0,
+        width: 1,
+        length: 1,
+        footprint_width: 1,
+        footprint_length: 1,
+        block_walk: false,
+        block_range: false,
+        active: true,
+        animation: -1,
+        map_function: -1,
+        map_scene: -1,
+        force_approach: -1,
+    }
+}
 
-    let other = vec![bare_widget(2, "b")];
-    let c = reg.intern_widgets(c1, other, &mut counters);
-    assert!(!Arc::ptr_eq(&a, &c), "unequal content must not share");
-    assert_eq!(counters.equality_misses, 1);
-    assert_eq!(counters.publishes, 2);
+fn attach_pair(inst: &SlotDedupInstance) -> (GameSnapshot, GameSnapshot) {
+    let mut a = GameSnapshot::new();
+    let mut b = GameSnapshot::new();
+    a.attach_dedup(inst.attach());
+    b.attach_dedup(inst.attach());
+    (a, b)
+}
+
+fn put_widgets(s: &mut GameSnapshot, body: Vec<WidgetView>) {
+    s.proto_put_widgets(body);
+}
+
+fn put_side_tabs(s: &mut GameSnapshot, body: Vec<SideTabView>) {
+    s.proto_put_side_tabs(body);
+}
+
+fn put_locs(s: &mut GameSnapshot, body: Vec<LocView>) {
+    s.proto_put_locs(body);
 }
 
 #[test]
-fn quiet_rebuild_skips_equality_and_walks() {
-    let mut c = base_client();
-    plant_populated(&mut c);
-    bump_iface_inv(&mut c);
-    bump_scene(&mut c);
+fn widgets_eq_is_byte_exact() {
+    assert!(widgets_eq(&[w(1), w(2)], &[w(1), w(2)]));
+    let mut x = w(1);
+    x.x = 9;
+    assert!(!widgets_eq(&[x], &[w(1)]));
+}
 
+#[test]
+fn two_owners_share_identical_widgets_body() {
+    let inst = SlotDedupInstance::new();
+    let (mut a, mut b) = attach_pair(&inst);
+    let body = vec![w(1), w(2), w(3)];
+    put_widgets(&mut a, body.clone());
+    put_widgets(&mut b, body);
+    a.intern_widgets_for_test();
+    b.intern_widgets_for_test();
+    assert!(
+        Arc::ptr_eq(&a.widgets_arc(), &b.widgets_arc()),
+        "identical widgets must share one Arc body"
+    );
+    assert_eq!(a.dedup_counters().widgets.equality_hits, 0);
+    assert_eq!(b.dedup_counters().widgets.equality_hits, 1);
+    assert_eq!(b.dedup_counters().widgets.equality_comparisons, 1);
+}
+
+#[test]
+fn two_owners_keep_distinct_bodies_on_miss() {
+    let inst = SlotDedupInstance::new();
+    let (mut a, mut b) = attach_pair(&inst);
+    put_widgets(&mut a, vec![w(1)]);
+    put_widgets(&mut b, vec![w(2)]);
+    a.intern_widgets_for_test();
+    b.intern_widgets_for_test();
+    assert!(!Arc::ptr_eq(&a.widgets_arc(), &b.widgets_arc()));
+    assert_eq!(b.dedup_counters().widgets.equality_misses, 1);
+    assert_eq!(b.dedup_counters().widgets.publishes, 1);
+}
+
+#[test]
+fn side_tabs_and_loc_share_on_hit() {
+    let inst = SlotDedupInstance::new();
+    let (mut a, mut b) = attach_pair(&inst);
+    put_side_tabs(&mut a, vec![st(10), st(11)]);
+    put_side_tabs(&mut b, vec![st(10), st(11)]);
+    put_locs(&mut a, vec![loc(100)]);
+    put_locs(&mut b, vec![loc(100)]);
+    a.intern_side_tabs_for_test();
+    b.intern_side_tabs_for_test();
+    a.intern_loc_for_test();
+    b.intern_loc_for_test();
+    assert!(Arc::ptr_eq(&a.side_tabs_arc(), &b.side_tabs_arc()));
+    assert!(Arc::ptr_eq(&a.locs_arc(), &b.locs_arc()));
+}
+
+#[test]
+fn cursor_unregister_releases_weak_and_allows_reclaim() {
+    let inst = SlotDedupInstance::new();
+    let mut a = GameSnapshot::new();
+    a.attach_dedup(inst.attach());
+    put_widgets(&mut a, vec![w(1); 8]);
+    a.intern_widgets_for_test();
+    let body = a.widgets_arc();
+    assert_eq!(Arc::strong_count(&body), 2);
+    drop(a);
+    assert_eq!(Arc::strong_count(&body), 1);
+    let reg = inst.registry();
+    let g = reg.lock().unwrap();
+    assert_eq!(g.live_owner_count(), 0);
+    assert!(g.unique_widget_bodies().is_empty());
+}
+
+#[test]
+fn allocation_account_counts_headers_and_duplicate_savings() {
+    let reg = Arc::new(Mutex::new(SlotFamilyRegistry::new()));
+    let ha = DedupHandle::additional_owner(&reg);
+    let hb = DedupHandle::additional_owner(&reg);
+    let (shared, hit) = {
+        let mut g = reg.lock().unwrap();
+        let mut c = FamilyCounters::default();
+        let shared = g.intern_widgets(ha.cursor, vec![w(1), w(2), w(3)], &mut c);
+        let hit = g.intern_widgets(hb.cursor, vec![w(1), w(2), w(3)], &mut c);
+        assert!(Arc::ptr_eq(&shared, &hit));
+        (shared, hit)
+    };
+    let empty_s = Arc::new(Vec::new());
+    let empty_l = Arc::new(Vec::new());
+    let holders = vec![
+        (
+            Arc::clone(&shared),
+            Arc::clone(&empty_s),
+            Arc::clone(&empty_l),
+        ),
+        (hit, empty_s, empty_l),
+    ];
+    let g = reg.lock().unwrap();
+    let acct = account_allocations_arcs(&holders, &g, 0);
+    assert!(acct.old_per_owner_payload_bytes > 0);
+    assert_eq!(acct.unique_body_count, 1);
+    assert!(acct.unique_body_payload_bytes > 0);
+    assert!(acct.arc_header_bytes > 0);
+    assert!(acct.registry_metadata_bytes > 0);
+    assert!(
+        acct.duplicate_nested_payload_bytes > 0,
+        "expected duplicate savings, got {acct:?}"
+    );
+}
+
+#[test]
+fn directory_isolates_same_username_across_plays() {
+    let d1 = SlotDedupDirectory::new_shared();
+    let d2 = SlotDedupDirectory::new_shared();
+    let i1 = SlotDedupInstance::new();
+    let i2 = SlotDedupInstance::new();
+    d1.install("alice", i1.clone());
+    d2.install("alice", i2.clone());
+    assert!(!Arc::ptr_eq(&i1.registry(), &i2.registry()));
+    assert!(Arc::ptr_eq(
+        &d1.get("alice").unwrap().registry(),
+        &i1.registry()
+    ));
+    d1.remove("alice");
+    assert!(d1.get("alice").is_none());
+    assert!(d2.get("alice").is_some());
+}
+
+#[test]
+fn slot_restart_replaces_instance_without_process_global_leak() {
+    let dir = SlotDedupDirectory::new_shared();
+    let first = SlotDedupInstance::new();
+    dir.install("bob", first.clone());
     let mut snap = GameSnapshot::new();
-    snap.attach_dedup(attach_owner_for_slot("quiet-prod"));
-    assert!(snap.rebuild_family(&c, Family::Widgets));
-    assert!(snap.rebuild_family(&c, Family::SideTabs));
-    assert!(snap.rebuild_family(&c, Family::Loc));
-    let walks_after = snap.dedup_counters().walks();
-    let eq_after = snap.dedup_counters().equality_comparisons();
-    assert!(walks_after >= 3);
+    snap.attach_dedup(first.attach());
+    put_widgets(&mut snap, vec![w(42)]);
+    snap.intern_widgets_for_test();
+    drop(snap);
+    dir.remove("bob");
+    assert!(dir.get("bob").is_none());
 
-    assert!(!snap.rebuild_family(&c, Family::Widgets));
-    assert!(!snap.rebuild_family(&c, Family::SideTabs));
-    assert!(!snap.rebuild_family(&c, Family::Loc));
-    assert_eq!(snap.dedup_counters().walks(), walks_after);
-    assert_eq!(snap.dedup_counters().equality_comparisons(), eq_after);
-    let quiet = snap.dedup_counters().widgets.quiet_skips
-        + snap.dedup_counters().side_tabs.quiet_skips
-        + snap.dedup_counters().loc.quiet_skips;
-    assert!(quiet >= 3);
+    let second = SlotDedupInstance::new();
+    dir.install("bob", second.clone());
+    assert!(!Arc::ptr_eq(&first.registry(), &second.registry()));
+    let mut snap2 = GameSnapshot::new();
+    snap2.attach_dedup(second.attach());
+    put_widgets(&mut snap2, vec![w(42)]);
+    snap2.intern_widgets_for_test();
+    assert_eq!(snap2.dedup_counters().widgets.equality_hits, 0);
+    assert_eq!(snap2.dedup_counters().widgets.publishes, 1);
 }
 
 #[test]
-fn two_owners_equal_rebuild_share_family_arcs() {
-    let slot = "share-prod";
-    process_slot_table().remove(slot);
-    let mut c = base_client();
-    plant_populated(&mut c);
-    bump_iface_inv(&mut c);
-    bump_scene(&mut c);
+fn diagnostic_json_reports_cursors_and_accounting_fields() {
+    let inst = SlotDedupInstance::new();
+    let mut a = GameSnapshot::new();
+    let mut b = GameSnapshot::new();
+    a.attach_dedup(inst.attach());
+    b.attach_dedup(inst.attach());
+    put_widgets(&mut a, vec![w(1); 4]);
+    put_widgets(&mut b, vec![w(1); 4]);
+    a.intern_widgets_for_test();
+    b.intern_widgets_for_test();
 
-    let (mut a, mut b) = owner_pair(slot);
-    assert!(a.rebuild_family(&c, Family::Widgets));
-    assert!(a.rebuild_family(&c, Family::SideTabs));
-    assert!(a.rebuild_family(&c, Family::Loc));
-    assert!(b.rebuild_family(&c, Family::Widgets));
-    assert!(b.rebuild_family(&c, Family::SideTabs));
-    assert!(b.rebuild_family(&c, Family::Loc));
+    let dir = SlotDedupDirectory::new_shared();
+    dir.install("cx", inst);
+    let rows = dir.diagnostics(0);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].slot_name, "cx");
+    assert_eq!(rows[0].live_owner_count, 2);
+    assert_eq!(rows[0].unique_body_count, 1);
+    assert!(rows[0].duplicate_nested_payload_bytes > 0);
+    assert!(rows[0].widgets.equality_hits >= 1);
+    let v = serde_json::to_value(&rows).expect("serialize");
+    assert!(v[0].get("slot_name").is_some());
+    assert!(v[0].get("arc_header_bytes").is_some());
+    assert!(v[0].get("unique_body_payload_bytes").is_some());
+    assert!(v[0]["widgets"].get("equality_hits").is_some());
+    let agg = dir.aggregate_diagnostic(64);
+    assert_eq!(agg.scratch_peak_bytes, 64);
+    assert!(agg.duplicate_nested_payload_bytes > 0);
+}
 
-    assert!(!a.widgets().is_empty());
-    assert!(!a.side_tabs().is_empty());
-    assert!(!a.locs().is_empty());
+/// CX1: two owners, identical widgets → one unique body, positive savings.
+#[test]
+fn cx1_two_owners_identical_widgets_savings() {
+    let inst = SlotDedupInstance::new();
+    let (mut a, mut b) = attach_pair(&inst);
+    let body = vec![w(7); 16];
+    put_widgets(&mut a, body.clone());
+    put_widgets(&mut b, body);
+    a.intern_widgets_for_test();
+    b.intern_widgets_for_test();
+    let empty_s = Arc::new(Vec::new());
+    let empty_l = Arc::new(Vec::new());
+    let holders = vec![
+        (a.widgets_arc(), Arc::clone(&empty_s), Arc::clone(&empty_l)),
+        (b.widgets_arc(), empty_s, empty_l),
+    ];
+    let g = inst.registry().lock().unwrap();
+    let acct = account_allocations_arcs(&holders, &g, 0);
+    assert_eq!(acct.unique_body_count, 1);
+    assert!(acct.duplicate_nested_payload_bytes > 0);
+}
+
+/// CX2: three owners, two share / one diverges.
+#[test]
+fn cx2_three_owners_partial_share() {
+    let inst = SlotDedupInstance::new();
+    let mut a = GameSnapshot::new();
+    let mut b = GameSnapshot::new();
+    let mut c = GameSnapshot::new();
+    a.attach_dedup(inst.attach());
+    b.attach_dedup(inst.attach());
+    c.attach_dedup(inst.attach());
+    put_widgets(&mut a, vec![w(1), w(2)]);
+    put_widgets(&mut b, vec![w(1), w(2)]);
+    put_widgets(&mut c, vec![w(9)]);
+    a.intern_widgets_for_test();
+    b.intern_widgets_for_test();
+    c.intern_widgets_for_test();
+    assert!(Arc::ptr_eq(&a.widgets_arc(), &b.widgets_arc()));
+    assert!(!Arc::ptr_eq(&a.widgets_arc(), &c.widgets_arc()));
+    let g = inst.registry().lock().unwrap();
+    assert_eq!(g.unique_widget_bodies().len(), 2);
+}
+
+/// CX3: multi-family concurrent share (widgets + side_tabs + loc).
+#[test]
+fn cx3_multi_family_share() {
+    let inst = SlotDedupInstance::new();
+    let (mut a, mut b) = attach_pair(&inst);
+    put_widgets(&mut a, vec![w(1)]);
+    put_widgets(&mut b, vec![w(1)]);
+    put_side_tabs(&mut a, vec![st(2)]);
+    put_side_tabs(&mut b, vec![st(2)]);
+    put_locs(&mut a, vec![loc(3)]);
+    put_locs(&mut b, vec![loc(3)]);
+    a.intern_widgets_for_test();
+    b.intern_widgets_for_test();
+    a.intern_side_tabs_for_test();
+    b.intern_side_tabs_for_test();
+    a.intern_loc_for_test();
+    b.intern_loc_for_test();
     assert!(Arc::ptr_eq(&a.widgets_arc(), &b.widgets_arc()));
     assert!(Arc::ptr_eq(&a.side_tabs_arc(), &b.side_tabs_arc()));
     assert!(Arc::ptr_eq(&a.locs_arc(), &b.locs_arc()));
-    process_slot_table().remove(slot);
 }
 
+/// CX4: miss path keeps independent bodies + miss counters.
 #[test]
-fn two_owners_unequal_widgets_do_not_share() {
-    let slot = "unequal-prod";
-    process_slot_table().remove(slot);
-    let mut c = base_client();
-    plant_populated(&mut c);
-    bump_iface_inv(&mut c);
-
-    let (mut a, mut b) = owner_pair(slot);
-    assert!(a.rebuild_family(&c, Family::Widgets));
-
-    set_iface_mut(
-        &mut c,
-        1001,
-        IfTypeMut {
-            text: "Changed".into(),
-            colour: 0xFF0000,
-            ..Default::default()
-        },
-    );
-    bump_iface_inv(&mut c);
-    assert!(b.rebuild_family(&c, Family::Widgets));
+fn cx4_miss_keeps_independent_bodies() {
+    let inst = SlotDedupInstance::new();
+    let (mut a, mut b) = attach_pair(&inst);
+    put_widgets(&mut a, vec![w(1)]);
+    put_widgets(&mut b, vec![w(2)]);
+    a.intern_widgets_for_test();
+    b.intern_widgets_for_test();
+    assert_eq!(b.dedup_counters().widgets.equality_misses, 1);
     assert!(!Arc::ptr_eq(&a.widgets_arc(), &b.widgets_arc()));
-    assert!(!widgets_eq(a.widgets(), b.widgets()));
-    process_slot_table().remove(slot);
 }
 
+/// CX5: directory remove + reinstall is a clean lifetime boundary.
 #[test]
-fn owner_teardown_unregisters_and_allows_reregister() {
-    let slot = "teardown-prod";
-    process_slot_table().remove(slot);
-    {
-        let mut a = GameSnapshot::new();
-        a.attach_dedup(attach_owner_for_slot(slot));
-        let reg = process_slot_table().get(slot).expect("installed");
-        assert_eq!(reg.lock().unwrap().live_owner_count(), 1);
-        drop(a);
-        assert_eq!(reg.lock().unwrap().live_owner_count(), 0);
-    }
-    let mut b = GameSnapshot::new();
-    b.attach_dedup(attach_owner_for_slot(slot));
-    let reg = process_slot_table().get(slot).expect("reinstalled");
-    assert_eq!(reg.lock().unwrap().live_owner_count(), 1);
-    process_slot_table().remove(slot);
+fn cx5_directory_lifetime_boundary() {
+    let dir = SlotDedupDirectory::new_shared();
+    let a = SlotDedupInstance::new();
+    dir.install("s", a.clone());
+    dir.remove("s");
+    let b = SlotDedupInstance::new();
+    dir.install("s", b.clone());
+    assert!(!Arc::ptr_eq(&a.registry(), &b.registry()));
 }
 
+/// CX6: allocation account includes capacity-aware payload + arc headers (not RSS).
 #[test]
-fn allocation_account_counts_unique_arcs_not_per_owner_copies() {
-    let mut reg = SlotFamilyRegistry::new();
-    let c0 = reg.register();
-    let c1 = reg.register();
-    let c2 = reg.register();
-    let mut counters = Default::default();
-    let body: Vec<WidgetView> = (0..20).map(|i| bare_widget(i, &format!("w{i}"))).collect();
-    let a = reg.intern_widgets(c0, body.clone(), &mut counters);
-    let b = reg.intern_widgets(c1, body.clone(), &mut counters);
-    let c = reg.intern_widgets(c2, body, &mut counters);
-    assert!(Arc::ptr_eq(&a, &b) && Arc::ptr_eq(&b, &c));
-
-    let empty_side = Arc::new(Vec::new());
-    let empty_loc = Arc::new(Vec::new());
-    let holders = [
-        (
-            Arc::clone(&a),
-            Arc::clone(&empty_side),
-            Arc::clone(&empty_loc),
-        ),
-        (
-            Arc::clone(&b),
-            Arc::clone(&empty_side),
-            Arc::clone(&empty_loc),
-        ),
-        (
-            Arc::clone(&c),
-            Arc::clone(&empty_side),
-            Arc::clone(&empty_loc),
-        ),
+fn cx6_account_has_capacity_headers_not_rss_claims() {
+    let inst = SlotDedupInstance::new();
+    let (mut a, mut b) = attach_pair(&inst);
+    let mut body = Vec::with_capacity(64);
+    body.extend([w(1), w(2), w(3)]);
+    put_widgets(&mut a, body.clone());
+    put_widgets(&mut b, body);
+    a.intern_widgets_for_test();
+    b.intern_widgets_for_test();
+    let empty_s = Arc::new(Vec::new());
+    let empty_l = Arc::new(Vec::new());
+    let holders = vec![
+        (a.widgets_arc(), Arc::clone(&empty_s), Arc::clone(&empty_l)),
+        (b.widgets_arc(), empty_s, empty_l),
     ];
-    let acct = account_allocations_arcs(&holders, &reg, 0);
-    assert_eq!(acct.live_owner_count, 3);
-    assert!(
-        acct.unique_body_payload_bytes < acct.old_per_owner_payload_bytes,
-        "unique={} old={}",
-        acct.unique_body_payload_bytes,
-        acct.old_per_owner_payload_bytes
-    );
-    assert_eq!(reg.unique_widget_bodies().len(), 1);
-}
-
-#[test]
-fn process_table_isolates_slots() {
-    process_slot_table().remove("slot-a");
-    process_slot_table().remove("slot-b");
-    let ha = attach_owner_for_slot("slot-a");
-    let hb = attach_owner_for_slot("slot-b");
-    assert!(!Arc::ptr_eq(&ha.registry, &hb.registry));
-    process_slot_table().remove("slot-a");
-    process_slot_table().remove("slot-b");
+    let g = inst.registry().lock().unwrap();
+    let acct: AllocationAccount = account_allocations_arcs(&holders, &g, 128);
+    // Capacity-aware unique payload (widgets_payload_bytes_vec uses capacity).
+    assert!(acct.unique_body_payload_bytes >= 3 * std::mem::size_of::<WidgetView>());
+    assert!(acct.arc_header_bytes > 0);
+    assert_eq!(acct.scratch_peak_bytes, 128);
+    let json = serde_json::to_value(&acct).unwrap();
+    assert!(json.get("rss").is_none());
+    assert!(json.get("unique_body_payload_bytes").is_some());
+    assert!(json.get("arc_header_bytes").is_some());
+    assert!(json.get("weak_slot_bytes").is_some());
 }

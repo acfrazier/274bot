@@ -163,6 +163,8 @@ impl Host {
                 None,
                 None,
                 None,
+                #[cfg(feature = "snapshot-dedup")]
+                None,
                 |_, _, _, _| false,
                 |_| false,
                 |_| RandomClaim::Host,
@@ -217,6 +219,9 @@ impl Host {
         input: Option<Arc<SlotInput>>,
         mailbox: Option<Arc<FrameBuf>>,
         ctl: Option<Arc<SlotPark>>,
+        #[cfg(feature = "snapshot-dedup")] dedup_instance: Option<
+            api::snapshot_dedup::SlotDedupInstance,
+        >,
         mut observe: F,
         mut probe: P,
         mut knock: K,
@@ -236,11 +241,16 @@ impl Host {
             )),
             ..SlotLoop::new()
         };
+        // Slot-instance token: use the caller's instance when shared with
+        // host-play/panel owners; otherwise a run-local instance so direct
+        // Host::run_client exits free the registry (no process-wide name leak).
         #[cfg(feature = "snapshot-dedup")]
-        {
-            slot.snapshot
-                .attach_dedup(api::snapshot_dedup::attach_owner_for_slot(username));
-        }
+        let _dedup_keep_alive = {
+            let instance =
+                dedup_instance.unwrap_or_else(api::snapshot_dedup::SlotDedupInstance::new);
+            slot.snapshot.attach_dedup(instance.attach());
+            instance
+        };
         let mut run_sends = 0u32;
         // The last published random-event status: `client_frame` returns it
         // and the next observe copies it onto the slot's status row and
@@ -2152,6 +2162,8 @@ mod tests {
                 None,
                 None,
                 Some(Arc::new(park)),
+                #[cfg(feature = "snapshot-dedup")]
+                None,
                 |c, _, _, _| {
                     let mut v = mirror.lock().unwrap();
                     v.0 = c.loop_cycle;
@@ -2224,6 +2236,8 @@ mod tests {
                 Some(inp),
                 None,
                 None,
+                #[cfg(feature = "snapshot-dedup")]
+                None,
                 |c, _, _, _| {
                     mirror.lock().unwrap().0 = c.loop_cycle;
                     false
@@ -2284,6 +2298,8 @@ mod tests {
                 None,
                 None,
                 None,
+                #[cfg(feature = "snapshot-dedup")]
+                None,
                 |c, _, _, _| {
                     mirror.lock().unwrap().0 = c.loop_cycle;
                     true // script/cheat/nav work due: never park
@@ -2340,6 +2356,8 @@ mod tests {
                 None,
                 Some(buf2),
                 Some(Arc::new(park)),
+                #[cfg(feature = "snapshot-dedup")]
+                None,
                 |c, _, _, _| {
                     mirror.lock().unwrap().0 = c.loop_cycle;
                     false
@@ -2423,6 +2441,8 @@ mod tests {
                 None,
                 None,
                 Some(Arc::new(park)),
+                #[cfg(feature = "snapshot-dedup")]
+                None,
                 |_, _, _, _| false,
                 |_| stop2.load(Ordering::Relaxed),
                 |_| RandomClaim::Host,
@@ -2471,6 +2491,8 @@ mod tests {
                 Some(Arc::clone(&inp)),
                 None,
                 Some(Arc::new(park)),
+                #[cfg(feature = "snapshot-dedup")]
+                None,
                 |c, _, _, _| {
                     let on = want2.load(Ordering::Relaxed);
                     c.set_draw(on);
@@ -2544,6 +2566,8 @@ mod tests {
                 None,
                 None,
                 Some(Arc::new(park)),
+                #[cfg(feature = "snapshot-dedup")]
+                None,
                 |c, _, _, _| {
                     mirror.lock().unwrap().0 = c.loop_cycle;
                     false // stays idle after the kick

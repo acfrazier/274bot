@@ -1636,7 +1636,12 @@ impl Session {
         // audio device must not re-open cpal (or re-log) every frame.
         let audio_fail: Arc<Mutex<Option<(String, Instant)>>> = Arc::new(Mutex::new(None));
         let options = self.options.clone();
-        let play = run_with_io(
+        #[cfg(feature = "snapshot-dedup")]
+        let dedup_dir = api::snapshot_dedup::SlotDedupDirectory::new_shared();
+        #[cfg(feature = "snapshot-dedup")]
+        let nav_dedup = Arc::clone(&dedup_dir);
+        #[cfg_attr(not(feature = "snapshot-dedup"), allow(unused_mut))]
+        let mut play = run_with_io(
             &options,
             Vec::new(),
             |_| (None, None),
@@ -1822,9 +1827,12 @@ impl Session {
                             let mut snap = GameSnapshot::new();
                             #[cfg(feature = "snapshot-dedup")]
                             {
-                                snap.attach_dedup(
-                                    api::snapshot_dedup::attach_owner_for_slot(name),
-                                );
+                                // Join the Play-local slot instance when present
+                                // (installed at spawn). Do not mint a process-
+                                // global username registry.
+                                if let Some(inst) = nav_dedup.get(name) {
+                                    snap.attach_dedup(inst.attach());
+                                }
                             }
                             (snap, WorldState::empty())
                         });
@@ -1919,6 +1927,11 @@ impl Session {
                 }
             },
         );
+
+        #[cfg(feature = "snapshot-dedup")]
+        {
+            play.replace_dedup_directory(dedup_dir);
+        }
         *self.script_start_handle.lock().unwrap() = Some(play.script_start_handle());
         *self.script_nav_paint.lock().unwrap() = Some(play.script_nav_paint());
         self.play = Some(play);
@@ -2967,6 +2980,9 @@ impl Session {
         if let Some(play) = &mut self.play {
             play.stop_slot(name);
         }
+        self.nav_states.lock().unwrap().remove(name);
+        self.travellers.lock().unwrap().remove(name);
+        self.tick_latch.lock().unwrap().remove(name);
         // Flat model: each member owns its own framebuffer; stop means drop.
         self.slots.remove(name);
         self.audio.release(name);

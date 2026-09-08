@@ -1135,6 +1135,26 @@ impl GameSnapshot {
         Arc::clone(&self.loc)
     }
 
+    /// Test/mechanism: force intern of current widgets body into the attached
+    /// slot registry (bypasses rebuild gates).
+    #[cfg(feature = "snapshot-dedup")]
+    #[doc(hidden)]
+    pub fn intern_widgets_for_test(&mut self) {
+        self.intern_widgets_if_attached();
+    }
+
+    #[cfg(feature = "snapshot-dedup")]
+    #[doc(hidden)]
+    pub fn intern_side_tabs_for_test(&mut self) {
+        self.intern_side_tabs_if_attached();
+    }
+
+    #[cfg(feature = "snapshot-dedup")]
+    #[doc(hidden)]
+    pub fn intern_loc_for_test(&mut self) {
+        self.intern_loc_if_attached();
+    }
+
     /// Mechanism/test support: take the owned widgets body after a real
     /// rebuild without changing production gate/rebuild behavior.
     #[doc(hidden)]
@@ -1293,11 +1313,11 @@ impl GameSnapshot {
             Ok(v) => v,
             Err(arc) => (*arc).clone(),
         };
-        let shared = handle
-            .registry
-            .lock()
-            .unwrap()
-            .intern_widgets(handle.cursor, candidate, &mut self.dedup_counters.widgets);
+        let shared = {
+            let mut reg = handle.registry.lock().unwrap();
+            reg.counters_mut().widgets.walks += 1;
+            reg.intern_widgets(handle.cursor, candidate, &mut self.dedup_counters.widgets)
+        };
         self.widgets = shared;
     }
 
@@ -1314,11 +1334,11 @@ impl GameSnapshot {
             Ok(v) => v,
             Err(arc) => (*arc).clone(),
         };
-        let shared = handle.registry.lock().unwrap().intern_side_tabs(
-            handle.cursor,
-            candidate,
-            &mut self.dedup_counters.side_tabs,
-        );
+        let shared = {
+            let mut reg = handle.registry.lock().unwrap();
+            reg.counters_mut().side_tabs.walks += 1;
+            reg.intern_side_tabs(handle.cursor, candidate, &mut self.dedup_counters.side_tabs)
+        };
         self.side_tabs = shared;
     }
 
@@ -1335,11 +1355,11 @@ impl GameSnapshot {
             Ok(v) => v,
             Err(arc) => (*arc).clone(),
         };
-        let shared = handle
-            .registry
-            .lock()
-            .unwrap()
-            .intern_loc(handle.cursor, candidate, &mut self.dedup_counters.loc);
+        let shared = {
+            let mut reg = handle.registry.lock().unwrap();
+            reg.counters_mut().loc.walks += 1;
+            reg.intern_loc(handle.cursor, candidate, &mut self.dedup_counters.loc)
+        };
         self.loc = shared;
     }
 
@@ -1790,6 +1810,11 @@ impl GameSnapshot {
             #[cfg(feature = "snapshot-dedup")]
             {
                 self.dedup_counters.widgets.quiet_skips += 1;
+                if let Some(h) = &self.dedup {
+                    if let Ok(mut g) = h.registry.lock() {
+                        g.bump_quiet_skip_widgets();
+                    }
+                }
             }
             return false;
         }
@@ -1824,6 +1849,11 @@ impl GameSnapshot {
             #[cfg(feature = "snapshot-dedup")]
             {
                 self.dedup_counters.side_tabs.quiet_skips += 1;
+                if let Some(h) = &self.dedup {
+                    if let Ok(mut g) = h.registry.lock() {
+                        g.bump_quiet_skip_side_tabs();
+                    }
+                }
             }
             return false;
         }
@@ -2146,6 +2176,11 @@ impl GameSnapshot {
             #[cfg(feature = "snapshot-dedup")]
             {
                 self.dedup_counters.loc.quiet_skips += 1;
+                if let Some(h) = &self.dedup {
+                    if let Ok(mut g) = h.registry.lock() {
+                        g.bump_quiet_skip_loc();
+                    }
+                }
             }
             return false;
         }

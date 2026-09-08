@@ -1096,6 +1096,17 @@ impl Run {
             value["single_renderer"] = self.single_renderer.into();
             value["render_policy"] = self.render_policy.as_str().into();
             value["render_policy_requested"] = true.into();
+            #[cfg(feature = "snapshot-dedup")]
+            {
+                // Bounded allocation-style diagnostics (not RSS). Play-local
+                // directory only — no process-global username table walk.
+                let slots = play.dedup_directory().diagnostics(0);
+                let aggregate = play.dedup_directory().aggregate_diagnostic(0);
+                value["snapshot_dedup"] = serde_json::json!({
+                    "slots": slots,
+                    "aggregate": aggregate,
+                });
+            }
             value["gpu_buffer_bytes"] = gpu.buffers.into();
             value["gpu_texture_bytes"] = gpu.textures.into();
             value["gpu_peak_tracked_bytes"] = gpu.peak.into();

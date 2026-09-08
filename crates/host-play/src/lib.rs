@@ -3091,6 +3091,28 @@ pub struct Play {
     /// thread (focus/draw/stop/spawn), which re-reads the shared state on
     /// its next tick. Inserted at spawn, removed after `stop_slot` joins.
     wakes: HashMap<String, SlotWake>,
+    /// Play-local slot-instance dedup directory (feature `snapshot-dedup`).
+    /// Not process-global — concurrent Play values never share by username.
+    #[cfg(feature = "snapshot-dedup")]
+    dedup_directory: Arc<api::snapshot_dedup::SlotDedupDirectory>,
+}
+
+impl Play {
+    /// Shared Arc for panel / memory-profile owners that attach by slot name.
+    #[cfg(feature = "snapshot-dedup")]
+    pub fn dedup_directory(&self) -> Arc<api::snapshot_dedup::SlotDedupDirectory> {
+        Arc::clone(&self.dedup_directory)
+    }
+
+    /// Replace the Play-local directory (panel builds the Arc before `run_with_io`
+    /// so the per-frame hook can capture the same handle).
+    #[cfg(feature = "snapshot-dedup")]
+    pub fn replace_dedup_directory(
+        &mut self,
+        dir: Arc<api::snapshot_dedup::SlotDedupDirectory>,
+    ) {
+        self.dedup_directory = dir;
+    }
 }
 
 /// Cloneable isolate-start handle for slot-thread live pumps that cannot
@@ -3155,6 +3177,8 @@ impl Play {
             navs: Arc::new(Mutex::new(HashMap::new())),
             world: NavWorld::load_pack(&default_pack_path()).ok().map(Arc::new),
             wakes: HashMap::new(),
+            #[cfg(feature = "snapshot-dedup")]
+            dedup_directory: api::snapshot_dedup::SlotDedupDirectory::new_shared(),
         }
     }
 
@@ -3439,7 +3463,7 @@ impl Play {
         self.wakes.remove(name);
         #[cfg(feature = "snapshot-dedup")]
         {
-            api::snapshot_dedup::process_slot_table().remove(name);
+            self.dedup_directory.remove(name);
         }
     }
 
@@ -3502,6 +3526,13 @@ impl Play {
         // focus/draw/stop/spawn changes; the slot thread polls the park end.
         let (wake, park) = wake_channel();
         self.wakes.insert(profile.username.clone(), wake);
+        #[cfg(feature = "snapshot-dedup")]
+        let dedup_instance = {
+            let inst = api::snapshot_dedup::SlotDedupInstance::new();
+            self.dedup_directory
+                .install(&profile.username, inst.clone());
+            inst
+        };
         spawn_slot_thread(
             &self.options,
             profile,
@@ -3521,6 +3552,8 @@ impl Play {
             self.world.clone(),
             Arc::clone(&self.obj_names),
             Arc::clone(&self.per_frame),
+            #[cfg(feature = "snapshot-dedup")]
+            dedup_instance,
             &mut self.handles,
         );
     }
@@ -3651,6 +3684,8 @@ fn spawn_slot_thread(
     slot_world: Option<Arc<NavWorld>>,
     slot_obj_names: Arc<api::obj_names::ObjNames>,
     slot_frame: SlotFrame,
+    #[cfg(feature = "snapshot-dedup")]
+    dedup_instance: api::snapshot_dedup::SlotDedupInstance,
     handles: &mut HashMap<String, thread::JoinHandle<()>>,
 ) {
     let username = profile.username.clone();
@@ -3777,6 +3812,8 @@ fn spawn_slot_thread(
                     slot_input.clone(),
                     slot_mailbox.clone(),
                     park.clone(),
+                    #[cfg(feature = "snapshot-dedup")]
+                    Some(dedup_instance.clone()),
                     {
                         let slot_frame = Arc::clone(&slot_frame);
                         let slot_statuses = Arc::clone(&slot_statuses);
@@ -3799,9 +3836,7 @@ fn spawn_slot_thread(
                         let mut nav_snapshot = GameSnapshot::new();
                         #[cfg(feature = "snapshot-dedup")]
                         {
-                            nav_snapshot.attach_dedup(
-                                api::snapshot_dedup::attach_owner_for_slot(&username),
-                            );
+                            nav_snapshot.attach_dedup(dedup_instance.attach());
                         }
                         // The random status `client_frame` published last
                         // frame: copied onto the slot status row, and its

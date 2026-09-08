@@ -64,15 +64,36 @@ impl DedupCounters {
 }
 
 /// Allocation-style accounting in bytes (not RSS).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+///
+/// Exclusive capacity includes spare `Vec` capacity on unique bodies.
+/// Arc header uses the real `ArcInner` layout estimate (strong + weak + data).
+/// Weak slots are counted once per live cursor registration, not double-counted
+/// against payload.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 pub struct AllocationAccount {
     pub old_per_owner_payload_bytes: usize,
     pub unique_body_payload_bytes: usize,
+    /// Sum of unique payloads replicated once per holder that would own a private copy.
+    pub duplicate_nested_payload_bytes: usize,
     pub scratch_peak_bytes: usize,
     pub registry_metadata_bytes: usize,
     pub live_owner_count: usize,
+    pub unique_body_count: usize,
     pub arc_header_bytes: usize,
     pub weak_slot_bytes: usize,
+    pub equality_comparisons: u64,
+    pub equality_hits: u64,
+    pub equality_misses: u64,
+    pub walks: u64,
+    pub quiet_skips: u64,
+    pub publishes: u64,
+}
+
+/// Real Arc allocation header estimate: strong count, weak count, and data.
+#[inline]
+pub fn arc_inner_header_bytes() -> usize {
+    // Layout matches std's ArcInner { strong, weak, data } on the heap.
+    std::mem::size_of::<usize>() * 2 + std::mem::align_of::<usize>()
 }
 
 struct CursorSlot {
@@ -90,6 +111,9 @@ struct CursorSlot {
 pub struct SlotFamilyRegistry {
     next_id: u32,
     cursors: Vec<CursorSlot>,
+    /// Aggregate equality/walk counters for this instance (memory-profile).
+    /// Updated on intern and optional quiet-skip bumps; not a strong history.
+    counters: DedupCounters,
 }
 
 impl SlotFamilyRegistry {
@@ -117,6 +141,28 @@ impl SlotFamilyRegistry {
 
     pub fn live_owner_count(&self) -> usize {
         self.cursors.len()
+    }
+
+    pub fn counters(&self) -> &DedupCounters {
+        &self.counters
+    }
+
+    pub fn counters_mut(&mut self) -> &mut DedupCounters {
+        &mut self.counters
+    }
+
+    /// Quiet gate miss (no equality work). Feature-on only; memory-profile
+    /// consumers read the aggregate. Does not walk bodies.
+    pub fn bump_quiet_skip_widgets(&mut self) {
+        self.counters.widgets.quiet_skips += 1;
+    }
+
+    pub fn bump_quiet_skip_side_tabs(&mut self) {
+        self.counters.side_tabs.quiet_skips += 1;
+    }
+
+    pub fn bump_quiet_skip_loc(&mut self) {
+        self.counters.loc.quiet_skips += 1;
     }
 
     fn slot_mut(&mut self, cursor_id: CursorId) -> Option<&mut CursorSlot> {
@@ -168,18 +214,22 @@ impl SlotFamilyRegistry {
             if let Some(weak) = &c.widgets {
                 if let Some(existing) = weak.upgrade() {
                     counters.equality_comparisons += 1;
+                    self.counters.widgets.equality_comparisons += 1;
                     if widgets_eq(existing.as_slice(), candidate.as_slice()) {
                         counters.equality_hits += 1;
+                        self.counters.widgets.equality_hits += 1;
                         if let Some(slot) = self.slot_mut(cursor_id) {
                             slot.widgets = Some(Arc::downgrade(&existing));
                         }
                         return existing;
                     }
                     counters.equality_misses += 1;
+                    self.counters.widgets.equality_misses += 1;
                 }
             }
         }
         counters.publishes += 1;
+        self.counters.widgets.publishes += 1;
         let arc = Arc::new(candidate);
         if let Some(slot) = self.slot_mut(cursor_id) {
             slot.widgets = Some(Arc::downgrade(&arc));
@@ -201,18 +251,22 @@ impl SlotFamilyRegistry {
             if let Some(weak) = &c.side_tabs {
                 if let Some(existing) = weak.upgrade() {
                     counters.equality_comparisons += 1;
+                    self.counters.side_tabs.equality_comparisons += 1;
                     if side_tabs_eq(existing.as_slice(), candidate.as_slice()) {
                         counters.equality_hits += 1;
+                        self.counters.side_tabs.equality_hits += 1;
                         if let Some(slot) = self.slot_mut(cursor_id) {
                             slot.side_tabs = Some(Arc::downgrade(&existing));
                         }
                         return existing;
                     }
                     counters.equality_misses += 1;
+                    self.counters.side_tabs.equality_misses += 1;
                 }
             }
         }
         counters.publishes += 1;
+        self.counters.side_tabs.publishes += 1;
         let arc = Arc::new(candidate);
         if let Some(slot) = self.slot_mut(cursor_id) {
             slot.side_tabs = Some(Arc::downgrade(&arc));
@@ -234,18 +288,22 @@ impl SlotFamilyRegistry {
             if let Some(weak) = &c.loc {
                 if let Some(existing) = weak.upgrade() {
                     counters.equality_comparisons += 1;
+                    self.counters.loc.equality_comparisons += 1;
                     if locs_eq(existing.as_slice(), candidate.as_slice()) {
                         counters.equality_hits += 1;
+                        self.counters.loc.equality_hits += 1;
                         if let Some(slot) = self.slot_mut(cursor_id) {
                             slot.loc = Some(Arc::downgrade(&existing));
                         }
                         return existing;
                     }
                     counters.equality_misses += 1;
+                    self.counters.loc.equality_misses += 1;
                 }
             }
         }
         counters.publishes += 1;
+        self.counters.loc.publishes += 1;
         let arc = Arc::new(candidate);
         if let Some(slot) = self.slot_mut(cursor_id) {
             slot.loc = Some(Arc::downgrade(&arc));
@@ -298,9 +356,7 @@ impl DedupHandle {
 
     /// Create a fresh registry and register the first cursor.
     pub fn new_slot_owner() -> Self {
-        let registry = Arc::new(Mutex::new(SlotFamilyRegistry::new()));
-        let cursor = registry.lock().unwrap().register();
-        Self { registry, cursor }
+        SlotDedupInstance::new().attach()
     }
 
     /// Register an additional owner on an existing slot registry.
@@ -319,14 +375,61 @@ impl DedupHandle {
     }
 }
 
-/// Process-wide name→registry map so UI per-frame hooks share the slot thread
-/// registry installed at spawn. Entries live only while the slot thread runs.
-#[derive(Default)]
-pub struct SlotDedupTable {
-    inner: Mutex<std::collections::HashMap<String, Arc<Mutex<SlotFamilyRegistry>>>>,
+/// Slot-instance token: one weak family registry for the lifetime of a single
+/// slot run. Clone among that instance's real owners (host SlotLoop, host-play
+/// nav_snapshot, panel nav_states). Not keyed by username — two concurrent
+/// instances with the same display name hold independent tokens.
+///
+/// Dropping every clone releases the last strong refs to the registry once
+/// owner cursors unregister; there is no process-wide name table.
+#[derive(Clone)]
+pub struct SlotDedupInstance {
+    registry: Arc<Mutex<SlotFamilyRegistry>>,
 }
 
-impl SlotDedupTable {
+impl SlotDedupInstance {
+    pub fn new() -> Self {
+        Self {
+            registry: Arc::new(Mutex::new(SlotFamilyRegistry::new())),
+        }
+    }
+
+    /// Register a new owner cursor on this instance's registry.
+    pub fn attach(&self) -> DedupHandle {
+        DedupHandle::additional_owner(&self.registry)
+    }
+
+    pub fn registry(&self) -> &Arc<Mutex<SlotFamilyRegistry>> {
+        &self.registry
+    }
+
+    pub fn live_owner_count(&self) -> usize {
+        self.registry.lock().unwrap().live_owner_count()
+    }
+
+    /// Same underlying registry (same slot instance).
+    pub fn same_instance(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.registry, &other.registry)
+    }
+}
+
+impl Default for SlotDedupInstance {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Play-local (or test-local) name → instance map. Not process-global: each
+/// [`Play`] / harness owns its own directory so concurrent same-name
+/// instances across plays never collide. Preferred production path still
+/// passes [`SlotDedupInstance`] tokens through owner boundaries; this map
+/// only bridges owners that cannot hold the token directly (panel per-frame).
+#[derive(Default)]
+pub struct SlotDedupDirectory {
+    inner: Mutex<std::collections::HashMap<String, SlotDedupInstance>>,
+}
+
+impl SlotDedupDirectory {
     pub fn new() -> Self {
         Self::default()
     }
@@ -335,42 +438,38 @@ impl SlotDedupTable {
         Arc::new(Self::new())
     }
 
-    pub fn install(&self, name: &str, registry: Arc<Mutex<SlotFamilyRegistry>>) {
+    pub fn install(&self, name: &str, instance: SlotDedupInstance) {
         self.inner
             .lock()
             .unwrap()
-            .insert(name.to_string(), registry);
+            .insert(name.to_string(), instance);
     }
 
-    pub fn get(&self, name: &str) -> Option<Arc<Mutex<SlotFamilyRegistry>>> {
-        self.inner.lock().unwrap().get(name).map(Arc::clone)
+    pub fn get(&self, name: &str) -> Option<SlotDedupInstance> {
+        self.inner.lock().unwrap().get(name).cloned()
     }
 
-    pub fn remove(&self, name: &str) {
-        self.inner.lock().unwrap().remove(name);
+    pub fn remove(&self, name: &str) -> Option<SlotDedupInstance> {
+        self.inner.lock().unwrap().remove(name)
     }
 
-    /// Get-or-create a registry for `name` (UI path before spawn is rare).
-    pub fn get_or_create(&self, name: &str) -> Arc<Mutex<SlotFamilyRegistry>> {
-        let mut g = self.inner.lock().unwrap();
-        g.entry(name.to_string())
-            .or_insert_with(|| Arc::new(Mutex::new(SlotFamilyRegistry::new())))
-            .clone()
+    pub fn len(&self) -> usize {
+        self.inner.lock().unwrap().len()
     }
-}
 
-/// Process-wide table shared by host / host-play / panel owners for one slot
-/// name. Not a body cache — only registry handles keyed by slot username.
-pub fn process_slot_table() -> &'static SlotDedupTable {
-    use std::sync::OnceLock;
-    static TABLE: OnceLock<SlotDedupTable> = OnceLock::new();
-    TABLE.get_or_init(SlotDedupTable::new)
-}
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 
-/// Register a new owner cursor on the process table for `slot_name`.
-pub fn attach_owner_for_slot(slot_name: &str) -> DedupHandle {
-    let reg = process_slot_table().get_or_create(slot_name);
-    DedupHandle::additional_owner(&reg)
+    /// Snapshot of live instances for memory-profile publication.
+    pub fn instances(&self) -> Vec<(String, SlotDedupInstance)> {
+        self.inner
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
 }
 
 /// Total field equality for WidgetView slices (PartialEq already derived).
@@ -495,9 +594,27 @@ pub fn locs_payload_bytes_vec(body: &Vec<LocView>) -> usize {
 /// Compare old per-owner private capacities vs unique shared bodies + overhead.
 /// `holders` is a list of (widgets_arc, side_tabs_arc, loc_arc) per live owner.
 pub fn account_allocations_arcs(
-    holders: &[(Arc<Vec<WidgetView>>, Arc<Vec<SideTabView>>, Arc<Vec<LocView>>)],
+    holders: &[(
+        Arc<Vec<WidgetView>>,
+        Arc<Vec<SideTabView>>,
+        Arc<Vec<LocView>>,
+    )],
     reg: &SlotFamilyRegistry,
     scratch_peak_bytes: usize,
+) -> AllocationAccount {
+    account_allocations_arcs_with_counters(holders, reg, scratch_peak_bytes, None)
+}
+
+/// Like [`account_allocations_arcs`] with optional equality/walk counters.
+pub fn account_allocations_arcs_with_counters(
+    holders: &[(
+        Arc<Vec<WidgetView>>,
+        Arc<Vec<SideTabView>>,
+        Arc<Vec<LocView>>,
+    )],
+    reg: &SlotFamilyRegistry,
+    scratch_peak_bytes: usize,
+    counters: Option<&DedupCounters>,
 ) -> AllocationAccount {
     let mut old_private = 0usize;
     let mut unique = 0usize;
@@ -537,18 +654,189 @@ pub fn account_allocations_arcs(
     }
 
     let live = reg.live_owner_count();
-    let unique_arc_count =
-        widget_bodies.len() + side_bodies.len() + loc_bodies.len();
-    // Approximate Arc heap header overhead (strong/weak counts + data ptr).
-    let arc_header = unique_arc_count * (std::mem::size_of::<usize>() * 3);
+    let unique_arc_count = widget_bodies.len() + side_bodies.len() + loc_bodies.len();
+    // ArcInner { strong: AtomicUsize, weak: AtomicUsize, data: T } header only
+    // (data payload is counted separately in unique_body_payload_bytes).
+    let arc_header = unique_arc_count * arc_inner_header_bytes();
+    // One Option<Weak<Vec<_>>> per family per live cursor — not per unique body.
+    let weak_slot = live * 3 * std::mem::size_of::<Option<Weak<Vec<()>>>>();
 
-    AllocationAccount {
+    let mut acct = AllocationAccount {
         old_per_owner_payload_bytes: old_private,
         unique_body_payload_bytes: unique,
+        duplicate_nested_payload_bytes: old_private.saturating_sub(unique),
         scratch_peak_bytes,
         registry_metadata_bytes: reg.metadata_bytes(),
         live_owner_count: live,
+        unique_body_count: unique_arc_count,
         arc_header_bytes: arc_header,
-        weak_slot_bytes: live * 3 * std::mem::size_of::<Option<Weak<Vec<()>>>>(),
+        weak_slot_bytes: weak_slot,
+        ..AllocationAccount::default()
+    };
+    if let Some(c) = counters {
+        acct.equality_comparisons = c.equality_comparisons();
+        acct.equality_hits = c.equality_hits();
+        acct.equality_misses = c.equality_misses();
+        acct.walks = c.walks();
+        acct.quiet_skips = c.widgets.quiet_skips + c.side_tabs.quiet_skips + c.loc.quiet_skips;
+        acct.publishes =
+            c.widgets.publishes + c.side_tabs.publishes + c.loc.publishes;
+    }
+    acct
+}
+
+/// Account live unique bodies from a registry without holder arcs (uses
+/// strong_count on each unique body as the would-be private replication factor).
+pub fn account_registry_live(
+    reg: &SlotFamilyRegistry,
+    scratch_peak_bytes: usize,
+    counters: Option<&DedupCounters>,
+) -> AllocationAccount {
+    let mut holders: Vec<(
+        Arc<Vec<WidgetView>>,
+        Arc<Vec<SideTabView>>,
+        Arc<Vec<LocView>>,
+    )> = Vec::new();
+    let empty_w = Arc::new(Vec::new());
+    let empty_s = Arc::new(Vec::new());
+    let empty_l = Arc::new(Vec::new());
+    // Synthesize holder rows from unique bodies × strong_count so old_private
+    // reflects live Arc clones without requiring external owner lists.
+    let w_bodies = reg.unique_widget_bodies();
+    let s_bodies = reg.unique_side_tab_bodies();
+    let l_bodies = reg.unique_loc_bodies();
+    let max_n = reg.live_owner_count().max(1);
+    for i in 0..max_n {
+        let w = w_bodies
+            .iter()
+            .find(|b| Arc::strong_count(b) > i)
+            .cloned()
+            .unwrap_or_else(|| Arc::clone(&empty_w));
+        let s = s_bodies
+            .iter()
+            .find(|b| Arc::strong_count(b) > i)
+            .cloned()
+            .unwrap_or_else(|| Arc::clone(&empty_s));
+        let l = l_bodies
+            .iter()
+            .find(|b| Arc::strong_count(b) > i)
+            .cloned()
+            .unwrap_or_else(|| Arc::clone(&empty_l));
+        holders.push((w, s, l));
+    }
+    if holders.is_empty() {
+        holders.push((empty_w, empty_s, empty_l));
+    }
+    account_allocations_arcs_with_counters(&holders, reg, scratch_peak_bytes, counters)
+}
+
+/// Serde-friendly family counter bag for memory-profile JSON.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct FamilyCountersJson {
+    pub walks: u64,
+    pub quiet_skips: u64,
+    pub equality_comparisons: u64,
+    pub equality_hits: u64,
+    pub equality_misses: u64,
+    pub publishes: u64,
+}
+
+impl From<&FamilyCounters> for FamilyCountersJson {
+    fn from(c: &FamilyCounters) -> Self {
+        Self {
+            walks: c.walks,
+            quiet_skips: c.quiet_skips,
+            equality_comparisons: c.equality_comparisons,
+            equality_hits: c.equality_hits,
+            equality_misses: c.equality_misses,
+            publishes: c.publishes,
+        }
+    }
+}
+
+/// One slot-instance row for memory-profile (allocation bytes, not RSS).
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct SlotDedupDiagnostic {
+    pub slot_name: String,
+    pub live_owner_count: usize,
+    pub unique_body_count: usize,
+    pub unique_body_payload_bytes: usize,
+    pub duplicate_nested_payload_bytes: usize,
+    pub old_per_owner_payload_bytes: usize,
+    pub scratch_peak_bytes: usize,
+    pub registry_metadata_bytes: usize,
+    pub arc_header_bytes: usize,
+    pub weak_slot_bytes: usize,
+    pub equality_comparisons: u64,
+    pub equality_hits: u64,
+    pub equality_misses: u64,
+    pub walks: u64,
+    pub quiet_skips: u64,
+    pub publishes: u64,
+    pub widgets: FamilyCountersJson,
+    pub side_tabs: FamilyCountersJson,
+    pub loc: FamilyCountersJson,
+}
+
+impl SlotDedupInstance {
+    /// Bounded diagnostic sample for this instance (unique-body accounting only).
+    pub fn diagnostic(&self, slot_name: &str, scratch_peak_bytes: usize) -> SlotDedupDiagnostic {
+        let reg = self.registry.lock().unwrap();
+        let acct = account_registry_live(&reg, scratch_peak_bytes, Some(reg.counters()));
+        SlotDedupDiagnostic {
+            slot_name: slot_name.to_string(),
+            live_owner_count: acct.live_owner_count,
+            unique_body_count: acct.unique_body_count,
+            unique_body_payload_bytes: acct.unique_body_payload_bytes,
+            duplicate_nested_payload_bytes: acct.duplicate_nested_payload_bytes,
+            old_per_owner_payload_bytes: acct.old_per_owner_payload_bytes,
+            scratch_peak_bytes: acct.scratch_peak_bytes,
+            registry_metadata_bytes: acct.registry_metadata_bytes,
+            arc_header_bytes: acct.arc_header_bytes,
+            weak_slot_bytes: acct.weak_slot_bytes,
+            equality_comparisons: acct.equality_comparisons,
+            equality_hits: acct.equality_hits,
+            equality_misses: acct.equality_misses,
+            walks: acct.walks,
+            quiet_skips: acct.quiet_skips,
+            publishes: acct.publishes,
+            widgets: FamilyCountersJson::from(&reg.counters().widgets),
+            side_tabs: FamilyCountersJson::from(&reg.counters().side_tabs),
+            loc: FamilyCountersJson::from(&reg.counters().loc),
+        }
+    }
+}
+
+impl SlotDedupDirectory {
+    /// All live instances as diagnostic rows (memory-profile path).
+    pub fn diagnostics(&self, scratch_peak_bytes: usize) -> Vec<SlotDedupDiagnostic> {
+        self.instances()
+            .into_iter()
+            .map(|(name, inst)| inst.diagnostic(&name, scratch_peak_bytes))
+            .collect()
+    }
+
+    /// Aggregate across the play-local directory for one sample line.
+    pub fn aggregate_diagnostic(&self, scratch_peak_bytes: usize) -> AllocationAccount {
+        let rows = self.diagnostics(scratch_peak_bytes);
+        let mut agg = AllocationAccount::default();
+        for r in &rows {
+            agg.old_per_owner_payload_bytes += r.old_per_owner_payload_bytes;
+            agg.unique_body_payload_bytes += r.unique_body_payload_bytes;
+            agg.duplicate_nested_payload_bytes += r.duplicate_nested_payload_bytes;
+            agg.scratch_peak_bytes = agg.scratch_peak_bytes.max(r.scratch_peak_bytes);
+            agg.registry_metadata_bytes += r.registry_metadata_bytes;
+            agg.live_owner_count += r.live_owner_count;
+            agg.unique_body_count += r.unique_body_count;
+            agg.arc_header_bytes += r.arc_header_bytes;
+            agg.weak_slot_bytes += r.weak_slot_bytes;
+            agg.equality_comparisons += r.equality_comparisons;
+            agg.equality_hits += r.equality_hits;
+            agg.equality_misses += r.equality_misses;
+            agg.walks += r.walks;
+            agg.quiet_skips += r.quiet_skips;
+            agg.publishes += r.publishes;
+        }
+        agg
     }
 }
