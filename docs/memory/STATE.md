@@ -11,6 +11,33 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 18:34 UTC
+
+- Corrected ownership design bc713b9 approved by actual Grok4.5/xai-oauth,
+  session20260908_141911_56d43d (t_1bb2dfd4). Current action is O1 Phase A in
+  [current-per-bot-owner-attribution-plan.md](current-per-bot-owner-attribution-plan.md).
+  Luna t_debbacca is running the bounded source/archive ledger; same-card review
+  required. No new live measurement or optimization is released by this plan.
+- Root native compile-only layout proof verified all1113 frozen c0709ab/client3456
+  source files and selected exact Cargo rlibs for 56 size/alignment entries.
+  Artifact: diagnostics/current-per-bot-owner-layout/owner-layout-1827.
+  Headers and fixed formulas do not establish actual heap occupancy or RSS.
+- Concord user package updates and reboot complete; current boot2217ec26-dc3e-
+  47a3-a700-d3fafb34163f, kernel6.8.0-139. New server726/start595; old start1761
+  receipts remain historical. Post-update proof verifies1113 source and688 server
+  files, binary/cache hashes; records current packages and dynamic library hashes
+  under diagnostics/concord-post-updates-1823. Future cells need fresh identities.
+- User installed Heaptrack1.5 and configured root-owned group-restricted perf with
+  cap_perfmon. Root one-second owned Python smoke collected99 cpu-clock samples,
+  zero lost, readable Python stacks, record/report exit0. Preserved under
+  diagnostics/perf-smoke-1836. This proves tool access only, not client stack
+  coverage or CPU attribution. No global perf/ptrace settings changed.
+- 289 df1be34 review requested changes: enclosed zones still used274 inner IDs;
+  ordered startup regression and stale report/comment cleanups also required.
+  Luna t_82d212a4 run822 is correcting offline. No fresh client live proof until
+  actual Grok4.5 approval. Original isolated server remains separately owned;
+  host integration planning stays parked.
+
 ## Latest boundary — 2026-09-08 17:57 UTC
 
 - N1/N16 report8b786b9 independently APPROVED actualGrok4.5/xai-oauth,
