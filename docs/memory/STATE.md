@@ -23,7 +23,8 @@ verify it on resume because a worker may finish after this snapshot.
   both fresh0250 preflight/stagedcontract/limitedBotTest no-launch passed0.
   Receipts windows-tile-boxed-long-contract-native-7a9eb03.json.
 - SINGLE LONGER STAGE STARTED baseline-focused-one-long-native-20260908-0250
-  at06:50:12UTC, native raw20260908T065013Z_panel_n16_active PID2432. Await
+  at06:50:12UTC, native raw20260908T065013Z_panel_n16_active PID2432.
+  Observe-start124.1967s confirms16Running/noerrors/oneGPU/ownerCensus0. Await
   actual600s observation/completion/binding/qualification/archive before candidate
   same0250 ID. Candidate unlaunched. Root helper prefix managed-tile-boxed-long-.
   Controls C:/ProgramData/274bot-Test/tile-boxed-long-controls-7a9eb03;
