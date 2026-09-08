@@ -23,9 +23,9 @@ From the host checkout:
 
 - python3 docs/memory/windows-tile-boxed-controls/test_tile_boxed_controls.py
 - powershell -NoProfile -File docs/memory/windows-tile-boxed-controls/validate-tile-boxed-ast.ps1 -ControlDirectory docs/memory/windows-tile-boxed-controls
-- On the Windows host, run prepare-tile-probe.ps1 for the declared cell, then run-contractcheck-tile-probe.ps1 as BotTest Interactive Limited.
+- On the Windows host, run `prepare-tile-probe.ps1 -BuildRole baseline|candidate -Mode focused-plus-background|focused-one -CellId <fresh role-mode id>`, then run `run-contractcheck-tile-probe.ps1` with the same role, mode, and cell as BotTest Interactive Limited.
 - For a supervised cell, launch-tile-boxed.ps1 -BuildRole baseline|candidate -Mode focused-plus-background|focused-one -CellId <fresh role-mode id>; poll-tile-boxed.ps1 -CellId <id> [-Final]; archive-tile-boxed.ps1 -CellId <id> -Destination <archive-root>.
 
 Verification status
 
-Local Python tests exercise the generated controller spec expression, role/identity bindings, warmup/observation argv, no-navigation/no-owner-census clean settings, no-launch contract seams, and archive raw-run inclusion. PowerShell parser validation and native contract/launch remain Windows/root-owned gates. No native action was taken here.
+Local Python tests exercise the controller's actual argv/environment helper seams, role/identity bindings, no-navigation clean settings, package-local no-launch wiring, and archive raw-run inclusion. PowerShell parser validation and the native preflight/contract execution remain Windows/root-owned gates; no native action was taken here.

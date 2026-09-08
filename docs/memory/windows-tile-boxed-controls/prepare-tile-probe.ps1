@@ -1,6 +1,12 @@
 param(
     [Parameter(Mandatory=$true)]
-    [ValidatePattern('^native-render-owner-census-focused-plus-background-[A-Za-z0-9_.-]+$')]
+    [ValidateSet('baseline','candidate')]
+    [string]$BuildRole,
+    [Parameter(Mandatory=$true)]
+    [ValidateSet('focused-one','focused-plus-background')]
+    [string]$Mode,
+    [Parameter(Mandatory=$true)]
+    [ValidatePattern('^[A-Za-z0-9_-]+$')]
     [string]$CellId,
     [string]$HostRoot = (Join-Path $env:USERPROFILE '274bot-workspaces\3118e96\host'),
     [string]$ContractReceipt
@@ -8,30 +14,31 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $controls = $PSScriptRoot
-$env:RENDER_OWNER_CENSUS_HOST_ROOT = $HostRoot
-if(-not $ContractReceipt){ $ContractReceipt = Join-Path ([Environment]::GetFolderPath('UserProfile')) ('274bot-runs\owner-contractcheck-tile-probe-' + $CellId + '-contractcheck-tile.json') }
+$env:TILE_BOXED_BUILD_ROLE = $BuildRole
+$env:TILE_BOXED_MODE = $Mode
+$env:TILE_BOXED_CELL_ID = $CellId
+$env:TILE_BOXED_HOST_ROOT = $HostRoot
+if(-not $ContractReceipt){ $ContractReceipt = Join-Path ([Environment]::GetFolderPath('UserProfile')) ('274bot-runs\tile-boxed-contract-' + $CellId + '.json') }
 
 # This is the privileged host half of the no-launch gate.  Get-VM and the
 # native preflight must run in Austen's SSH/admin context; the real controller
 # contract check is run separately as BotTest Interactive Limited.
-& (Join-Path $controls 'validate-controls-ast.ps1') -ControlDirectory $controls
-& (Join-Path $controls 'preflight-tile-probe.ps1') -CellId $CellId
-$contractId = $CellId + '-contractcheck-tile'
-& (Join-Path $controls 'preflight-tile-probe.ps1') -CellId $contractId
-$stage = 'C:\ProgramData\274bot-Test\renderer-owner-census-9268890'
-$preflight = Join-Path $stage ('preflight-tile-probe-'+$CellId+'.json')
+& (Join-Path $controls 'validate-tile-boxed-ast.ps1') -ControlDirectory $controls
+& (Join-Path $controls 'preflight-tile-boxed.ps1') -CellId $CellId
+$stage = if($BuildRole -eq 'baseline'){'C:\ProgramData\274bot-Test\renderer-owner-census-9268890'}else{'C:\ProgramData\274bot-Test\tile-boxed-fb3589a'}
+$preflight = Join-Path 'C:\ProgramData\274bot-Test\renderer-owner-census-9268890' ('preflight-tile-boxed-'+$CellId+'.json')
 if(-not (Test-Path $preflight -PathType Leaf)){ throw 'No-launch preflight receipt missing' }
 $record = Get-Content $preflight -Raw | ConvertFrom-Json
 if($record.cell_id -ne $CellId){ throw 'Preflight cell binding mismatch' }
-if($record.strict_binding -ne '9268890-only'){ throw 'Frozen native binding mismatch' }
-if($record.binary_sha256 -ne 'e2deb1db371366f674c18e39d04f7309480310072ade224ffa1433c84d4559b5'){ throw 'Frozen binary identity mismatch' }
+[string]$expectedStage = $stage
+if($record.stages | Where-Object {$_.role -eq $BuildRole -and $_.path -ne $expectedStage}){ throw 'Role stage binding mismatch' }
 [string]$contractReceiptPath = $ContractReceipt
 if(-not (Test-Path $contractReceiptPath -PathType Leaf)){ throw "BotTest contract receipt missing: $contractReceiptPath" }
 $contract = Get-Content $contractReceiptPath -Raw | ConvertFrom-Json
 if($contract.kind -ne 'no-launch contract test' -or $contract.performance_acceptance -ne $false){ throw 'Invalid no-launch contract receipt' }
 if(@($contract.checks).Count -ne 1 -or $contract.checks[0].launched -ne $false -or $contract.checks[0].client_started -ne $false -or $contract.checks[0].native_conditions_complete -ne $true){ throw 'No-launch contract evidence is incomplete' }
 [ordered]@{
-    schema = 'renderer-tile-probe-prepare-no-launch-v2'
+    schema = 'tile-boxed-prepare-no-launch-v2'
     cell_id = $CellId
     host_root = $HostRoot
     stage = $stage

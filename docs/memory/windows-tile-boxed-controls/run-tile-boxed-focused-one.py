@@ -38,6 +38,10 @@ ROLES = {
         "host_commit": "9268890217d968cfeb7c66ebb11dd5c3dd2c084f",
         "host_sources_sha256_pre": "84054d9c02394d959cd84681dd85f3589d3a559b94bb37856c6f87cb0629269a",
         "host_sources_sha256_post": "84054d9c02394d959cd84681dd85f3589d3a559b94bb37856c6f87cb0629269a",
+        "host_sources_file_count": 871,
+        "host_sources_aggregate_sha256": "84054d9c02394d959cd84681dd85f3589d3a559b94bb37856c6f87cb0629269a",
+        "client_sources_file_count": 183,
+        "client_sources_aggregate_sha256": "ea6402702a56dc29359bf4effd9ca87407734fc9d940bfabdefb92cec8bf41ee",
         "branch": "codex/windows-submit-attribution",
     },
     "candidate": {
@@ -50,6 +54,8 @@ ROLES = {
         "host_sources_sha256_post": "189dac149beb6f258f5a79bdf09de43818556a5f06ffa783a608f0113a64d8a4",
         "host_sources_file_count": 876,
         "host_sources_aggregate_sha256": "189dac149beb6f258f5a79bdf09de43818556a5f06ffa783a608f0113a64d8a4",
+        "client_sources_file_count": 183,
+        "client_sources_aggregate_sha256": "fad2e79248c8d62cff2ceba5c757ef555705e85d3dc6797586c9841d9dbfb53e",
         "branch": "codex/memory-diagnostics",
     },
 }
@@ -70,6 +76,15 @@ server = home / "274bot-server-4c95f87"
 launch = json.loads((server / "server-launch.json").read_text(encoding="utf-8-sig"))
 pid = int(launch["pid"])
 sample = wps.sample_process(pid)
+def clean_environment():
+    """Remove inherited diagnostics so clean cells cannot opt into census."""
+    for key in ["BOT_RENDER_OWNER_CENSUS", "BOT_CPU", "BOT_DEBUG", "BOT_MEMORY_RENDER_POLICY", "BOT_MEMORY_SINGLE_RENDERER", "BOT_MEMORY_N", "BOT_MEMORY_WORKLOAD", "BOT_MEMORY_OUTPUT"]:
+        os.environ.pop(key, None)
+
+def diagnostic_argv(binary_path, manifest_path, build_role, run_mode):
+    mode_flag = "--focused-one" if run_mode == "focused-one" else "--focused-background"
+    argv = ["panel", "16", "active", "--binary", str(binary_path), "--build-manifest", str(manifest_path), "--build-role", build_role, "--sustain", "--warmup", "30", "--observe", "120", mode_flag, "--no-diagnostics", "--render-profile", "--gpu-completion-profile", "--scheduling-profile", "--responsiveness-profile", "--responsiveness-fine", "--failure-capture"]
+    return argv
 public = json.loads((server / "server-login-public.json").read_text())
 os.environ.update({
     "LIVE": "1", "BOT_TARGET": "local", "ENGINE_DIR": str(server),
@@ -82,22 +97,19 @@ os.environ.update({
 })
 catalog = home / ".274bot/js-scripts.json"
 assert json.loads(catalog.read_text()) == [{"name": "trade_bot", "path": str(home / "274bot-workspaces/b4b686f/host/crates/script/tests/fixtures/trade_bot.ts")}]
-for key in ["BOT_CPU", "BOT_DEBUG", "BOT_MEMORY_RENDER_POLICY", "BOT_MEMORY_SINGLE_RENDERER", "BOT_MEMORY_N", "BOT_MEMORY_WORKLOAD", "BOT_MEMORY_OUTPUT"]:
-    os.environ.pop(key, None)
+clean_environment()
 preflight = pathlib.Path(r"C:\ProgramData\274bot-Test\renderer-owner-census-9268890") / ("preflight-tile-boxed-" + cell_id + ".json")
 assert preflight.is_file(), "run paired preflight first"
 preflight_record = json.loads(preflight.read_text(encoding="utf-8-sig"))
 manifest = out / "build-manifest.json"
 server_id = out / "server-identity.json"
 conditions = out / "host-conditions.json"
-side = {"commit": role_info["host_commit"], "branch": role_info["branch"], "build_exit": 0, "sources_sha256_pre": role_info["host_sources_sha256_pre"], "sources_sha256_post": role_info["host_sources_sha256_post"], "host_sources_file_count": role_info.get("host_sources_file_count"), "host_sources_aggregate_sha256": role_info.get("host_sources_aggregate_sha256"), "sources_stable_across_build": True, "client": {"commit": "abb811bd0afa1acd99319ccd5bc36bfb241080f9", "sources_sha256": "ea6402702a56dc29359bf4effd9ca87407734fc9d940bfabdefb92cec8bf41ee"} if role == "baseline" else {"commit": "fd956c91bf09e059359c8e182a33583e2c626cd3", "sources_sha256": "fad2e79248c8d62cff2ceba5c757ef555705e85d3dc6797586c9841d9dbfb53e"}}
+side = {"commit": role_info["host_commit"], "branch": role_info["branch"], "build_exit": 0, "sources_sha256_pre": role_info["host_sources_sha256_pre"], "sources_sha256_post": role_info["host_sources_sha256_post"], "host_sources_file_count": role_info["host_sources_file_count"], "host_sources_aggregate_sha256": role_info["host_sources_aggregate_sha256"], "sources_stable_across_build": True, "client": {"commit": "abb811bd0afa1acd99319ccd5bc36bfb241080f9", "sources_sha256": "ea6402702a56dc29359bf4effd9ca87407734fc9d940bfabdefb92cec8bf41ee", "sources_file_count": 183, "sources_aggregate_sha256": "ea6402702a56dc29359bf4effd9ca87407734fc9d940bfabdefb92cec8bf41ee"} if role == "baseline" else {"commit": "fd956c91bf09e059359c8e182a33583e2c626cd3", "sources_sha256": "fad2e79248c8d62cff2ceba5c757ef555705e85d3dc6797586c9841d9dbfb53e", "sources_file_count": 183, "sources_aggregate_sha256": "fad2e79248c8d62cff2ceba5c757ef555705e85d3dc6797586c9841d9dbfb53e"}}
 dump(manifest, {role_info["manifest_side"]: side, "features": {"requested": "memory-profile-no-alloc", "locked": True, "allocation_counting": False, "allocator": "std::alloc::System"}, "binaries": {role_info["manifest_side"] + "_panel_play": {"path": str(binary), "sha256": sha(binary)}}, "nav": {"nav_pack": os.environ["NAV_PACK"], "nav_flags": os.environ["NAV_FLAGS"], "nav_pack_sha256": sha(os.environ["NAV_PACK"]), "nav_flags_sha256": sha(os.environ["NAV_FLAGS"])}, "catalog": {"js_scripts_json": str(catalog), "js_scripts_json_sha256": sha(catalog)}, "performance_acceptance": False})
 dump(server_id, {"configuration": {"world_json_sha256": sha(server / "data/config/world.json"), "maps_addition_sha256": sha(server / "native-server-maps-addition.json"), "wordenc_addition_sha256": sha(server / "native-server-wordenc-addition.json"), "bind_host": "127.0.0.1", "node_version": "24.19.0"}, "pid": pid, "start_identity": sample["start_identity"], "port_listen": 43594, "server_commit": "4c95f87efe00b068cadbd229d94736626907bd1a", "launch": launch, "sample": sample, "config_sha256": sha(server / "data/config/world.json"), "public_key_sha256": sha(server / "data/config/public.pem")})
 dump(conditions, {"purpose": "Native N16 boxed-tile paired diagnostic", "terminal_transport_expected": False, "panel_render_attribution": True, "platform": platform.platform(), "user": os.environ["USERNAME"], "role": role, "mode": mode, "cell_id": cell_id, "performance_acceptance": False, "builds_stopped_before_run": True, "native_preflight": preflight_record, "checked_server": preflight_record["server"]})
-mode_flag = "--focused-one" if mode == "focused-one" else "--focused-background"
-diag = ["panel", "16", "active", "--binary", str(binary), "--build-manifest", str(manifest), "--build-role", role_info["manifest_role"], "--sustain", "--warmup", "30"]
 # Clean comparison deliberately avoids navigation PNG capture.
-diag += ["--observe", "120", mode_flag, "--render-profile", "--gpu-completion-profile", "--scheduling-profile", "--responsiveness-profile", "--responsiveness-fine", "--failure-capture"]
+diag = diagnostic_argv(binary, manifest, role_info["manifest_role"], mode)
 spec = {"id": "native-panel-tile-boxed-" + cell_id, "index": 1, "cell_id": cell_id, "build_role": role_info["manifest_role"], "mode": mode, "kind": "diagnostic", "frontend": "panel", "count": 16, "requested_adapter": "Intel(R) Graphics", "configured_background_fps": 1 if mode == "focused-plus-background" else None, "binary": str(binary), "build_manifest": str(manifest), "server_identity_path": str(server_id), "host_conditions_path": str(conditions), "nav_pack": os.environ["NAV_PACK"], "nav_flags": os.environ["NAV_FLAGS"], "catalog_path": str(catalog), "launcher_argv": [sys.executable, str(mem / "run_diagnostic.py"), *diag], "diagnostic_argv": diag, "game_server_pid": pid, "ambient_helpers": {"bootstrap": os.getppid()}, "sampler_interval_s": 0.5, "max_wall_s": 900, "observe_s": 120, "warmup_s": 30, "teardown_grace_s": 60, "process_backend": "system", "cache_dir": str(server / "data/pack/client"), "unpack_root": str(home / ".274bot/unpack"), "performance_acceptance": False}
 sp = out / "spec.json"
 dump(sp, spec)

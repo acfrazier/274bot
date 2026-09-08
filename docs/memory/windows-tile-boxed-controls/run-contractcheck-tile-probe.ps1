@@ -1,25 +1,34 @@
 param(
     [Parameter(Mandatory=$true)]
-    [ValidatePattern('^native-render-owner-census-focused-plus-background-[A-Za-z0-9_.-]+$')]
+    [ValidateSet('baseline','candidate')]
+    [string]$BuildRole,
+    [Parameter(Mandatory=$true)]
+    [ValidateSet('focused-one','focused-plus-background')]
+    [string]$Mode,
+    [Parameter(Mandatory=$true)]
+    [ValidatePattern('^[A-Za-z0-9_-]+$')]
     [string]$CellId,
     [string]$HostRoot = (Join-Path $env:USERPROFILE '274bot-workspaces\3118e96\host')
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 if($env:USERNAME -ne 'BotTest'){ throw 'Contract check must run as BotTest Interactive Limited' }
-$contractId = $CellId + '-contractcheck-tile'
-$stage = 'C:\ProgramData\274bot-Test\renderer-owner-census-9268890'
-$preflight = Join-Path $stage ('preflight-tile-probe-'+$contractId+'.json')
+$prefix="$BuildRole-$Mode-"; if(-not $CellId.StartsWith($prefix)){throw "CellId must start with $prefix"}
+$contractId = $CellId + '-contractcheck'
+$stage = if($BuildRole -eq 'baseline'){'C:\ProgramData\274bot-Test\renderer-owner-census-9268890'}else{'C:\ProgramData\274bot-Test\tile-boxed-fb3589a'}
+$preflight = Join-Path 'C:\ProgramData\274bot-Test\renderer-owner-census-9268890' ('preflight-tile-boxed-'+$CellId+'.json')
 if(-not (Test-Path $preflight -PathType Leaf)){ throw "Privileged host preflight receipt missing: $preflight" }
-Copy-Item (Join-Path $PSScriptRoot 'run-panel-tile-probe-focused-one.py') (Join-Path $stage 'run-panel-tile-probe-focused-one.py') -Force
+Copy-Item (Join-Path $PSScriptRoot 'run-tile-boxed-focused-one.py') (Join-Path $stage ("run-$CellId.py")) -Force
 $python = 'C:\Program Files\Python314\python.exe'
-$env:RENDER_OWNER_CENSUS_CONTRACT_ID = $contractId
-$env:RENDER_OWNER_CENSUS_CELL_ID = $CellId
-$env:RENDER_OWNER_CENSUS_HOST_ROOT = $HostRoot
+$env:TILE_BOXED_CONTRACT_ID = $contractId
+$env:TILE_BOXED_BUILD_ROLE = $BuildRole
+$env:TILE_BOXED_MODE = $Mode
+$env:TILE_BOXED_CELL_ID = $CellId
+$env:TILE_BOXED_HOST_ROOT = $HostRoot
 Push-Location $HostRoot
 try { & $python (Join-Path $PSScriptRoot 'check-tile-probe-contract.py') }
 finally { Pop-Location }
 if($LASTEXITCODE -ne 0){ throw "Native no-launch contract failed: $LASTEXITCODE" }
-$receipt = Join-Path ([Environment]::GetFolderPath('UserProfile')) ('274bot-runs\owner-contractcheck-tile-probe-'+$contractId+'.json')
+$receipt = Join-Path ([Environment]::GetFolderPath('UserProfile')) ('274bot-runs\tile-boxed-contract-'+$contractId+'.json')
 if(-not (Test-Path $receipt -PathType Leaf)){ throw "Contract receipt missing: $receipt" }
 Get-Content $receipt -Raw
