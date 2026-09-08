@@ -78,7 +78,8 @@ pub enum LossReason {
 pub struct LossReceipt {
     pub sequence: u64,
     pub slot_id: u64,
-    pub generation: u64,
+    /// `None` when the producer had no live registry generation (not invented 0).
+    pub generation: Option<u64>,
     pub start_mono_ns: Option<u64>,
     pub surface: Surface,
     pub outcome: Outcome,
@@ -270,7 +271,7 @@ pub fn start(
                 LossReceipt {
                     sequence: seq,
                     slot_id,
-                    generation,
+                    generation: Some(generation),
                     start_mono_ns: Some(start_mono_ns),
                     surface,
                     outcome: Outcome::Dropped,
@@ -326,7 +327,44 @@ pub fn dropped_start(slot_id: u64, generation: u64, start_mono_ns: u64, surface:
         LossReceipt {
             sequence: seq,
             slot_id,
-            generation,
+            generation: Some(generation),
+            start_mono_ns: Some(start_mono_ns),
+            surface,
+            outcome: Outcome::Dropped,
+            reason,
+        },
+    );
+}
+
+/// In-window start with known slot/surface/time but no live registry generation.
+/// Does not invent generation 0; records `generation: None` and fails the cohort.
+/// Out-of-window mono is excluded. Full shared capacity counts a gap only.
+pub fn missing_generation_start(slot_id: u64, start_mono_ns: u64, surface: Surface) {
+    if !enabled() {
+        return;
+    }
+    let mut s = state().lock().unwrap();
+    let Some(b) = s.boundaries else { return };
+    if start_mono_ns < b.start_mono_ns || start_mono_ns >= b.end_mono_ns {
+        return;
+    }
+    let seq = s.next_sequence;
+    s.next_sequence = seq.wrapping_add(1);
+    if occupied(&s) >= s.capacity {
+        capacity_overflow(&mut s);
+        return;
+    }
+    let reason = if s.finalized || s.producers_closed {
+        LossReason::LateEvent
+    } else {
+        LossReason::MissingIdentity
+    };
+    loss(
+        &mut s,
+        LossReceipt {
+            sequence: seq,
+            slot_id,
+            generation: None,
             start_mono_ns: Some(start_mono_ns),
             surface,
             outcome: Outcome::Dropped,
@@ -347,7 +385,7 @@ fn terminal(id: EventId, complete: Option<u64>, outcome: Outcome) {
             LossReceipt {
                 sequence: id.sequence,
                 slot_id: id.slot_id,
-                generation: id.generation,
+                generation: Some(id.generation),
                 start_mono_ns: Some(id.start_mono_ns),
                 surface: id.surface,
                 outcome,
@@ -368,7 +406,7 @@ fn terminal(id: EventId, complete: Option<u64>, outcome: Outcome) {
                 LossReceipt {
                     sequence: id.sequence,
                     slot_id: id.slot_id,
-                    generation: id.generation,
+                    generation: Some(id.generation),
                     start_mono_ns: Some(id.start_mono_ns),
                     surface: id.surface,
                     outcome,
@@ -383,7 +421,7 @@ fn terminal(id: EventId, complete: Option<u64>, outcome: Outcome) {
                 LossReceipt {
                     sequence: id.sequence,
                     slot_id: id.slot_id,
-                    generation: id.generation,
+                    generation: Some(id.generation),
                     start_mono_ns: Some(id.start_mono_ns),
                     surface: id.surface,
                     outcome,
@@ -440,7 +478,7 @@ pub fn generation_lost(id: EventId, generation: u64) {
             LossReceipt {
                 sequence: seq,
                 slot_id: id.slot_id,
-                generation,
+                generation: Some(generation),
                 start_mono_ns: Some(id.start_mono_ns),
                 surface: id.surface,
                 outcome: Outcome::Lost,
@@ -507,7 +545,7 @@ pub fn finalize(now_mono_ns: u64) -> Result<TerminalSummary, CohortError> {
             LossReceipt {
                 sequence: p.id.sequence,
                 slot_id: p.id.slot_id,
-                generation: p.id.generation,
+                generation: Some(p.id.generation),
                 start_mono_ns: Some(p.id.start_mono_ns),
                 surface: p.id.surface,
                 outcome: Outcome::Lost,
@@ -887,7 +925,7 @@ mod tests {
     }
 
     #[test]
-    fn finalize_race_after_barrier_records_late_producer_start() {
+    fn sequential_finalize_race_after_barrier_records_late_producer_start() {
         let _g = isolate();
         crate::responsiveness_profile::enable();
         let t0 = std::time::Instant::now();
@@ -905,6 +943,7 @@ mod tests {
         .unwrap();
         let mut local = crate::responsiveness_profile::Local::new(0xface).unwrap();
         // Barrier closed while a producer could still publish with in-window time.
+        // This test is sequential (same thread after barrier), not concurrent.
         acknowledge_producers_closed().unwrap();
         // Actual decode entrypoint after barrier: in-window start must be LateEvent, not silent.
         local.note_decode_edge(t0);
@@ -922,7 +961,98 @@ mod tests {
     }
 
     #[test]
-    fn missing_generation_input_admits_legacy_without_cohort_identity() {
+    fn concurrent_producer_start_after_barrier_records_late_event() {
+        let _g = isolate();
+        crate::responsiveness_profile::enable();
+        let t0 = std::time::Instant::now();
+        let start_ns = crate::responsiveness_profile::mono_ns(t0);
+        let end_ns = start_ns + 5_000_000_000;
+        let tail_ns = 1_000_000;
+        begin(
+            Boundaries {
+                start_mono_ns: start_ns.saturating_sub(1),
+                end_mono_ns: end_ns,
+                tail_ns,
+            },
+            8,
+        )
+        .unwrap();
+        let mut local = crate::responsiveness_profile::Local::new(0xc0ffee).unwrap();
+        let sid = local.slot_id();
+        crate::responsiveness_profile::set_input_surface(
+            crate::responsiveness_profile::InputSurface::Tui,
+        );
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let b_prod = barrier.clone();
+        let handle = std::thread::spawn(move || {
+            b_prod.wait();
+            // Publish after the main thread closes the producer barrier.
+            assert!(crate::responsiveness_profile::note_input_start(
+                sid,
+                std::time::Instant::now(),
+                0
+            ));
+        });
+        // Close producers, then release the concurrent start.
+        acknowledge_producers_closed().unwrap();
+        barrier.wait();
+        handle.join().expect("producer thread");
+        let batch = extract_since(0).unwrap();
+        assert_eq!(batch.records.len(), 0);
+        assert_eq!(batch.losses.len(), 1);
+        assert_eq!(batch.losses[0].reason, LossReason::LateEvent);
+        assert_eq!(batch.losses[0].surface, Surface::Tui);
+        assert_eq!(batch.losses[0].slot_id, sid);
+        assert_eq!(batch.losses[0].generation, Some(local.generation()));
+        crate::responsiveness_profile::note_input_canceled(sid);
+        silence_local_drop(&mut local);
+        test_reset();
+    }
+
+    #[test]
+    fn missing_generation_input_admits_legacy_and_records_identity_loss() {
+        let _g = isolate();
+        crate::responsiveness_profile::enable();
+        let t0 = std::time::Instant::now();
+        let start_ns = crate::responsiveness_profile::mono_ns(t0);
+        let end_ns = start_ns + 1_000_000_000;
+        let tail_ns = 50_000_000;
+        begin(
+            Boundaries {
+                start_mono_ns: start_ns.saturating_sub(1),
+                end_mono_ns: end_ns,
+                tail_ns,
+            },
+            8,
+        )
+        .unwrap();
+        crate::responsiveness_profile::set_input_surface(
+            crate::responsiveness_profile::InputSurface::Tui,
+        );
+        // No Local/registry row for this slot → live_generation_for is None.
+        let orphan = 0x0f_fa_u64;
+        assert!(crate::responsiveness_profile::note_input_start(
+            orphan, t0, 0
+        ));
+        // Legacy admits without a live slot row (start returns true; pending held).
+        crate::responsiveness_profile::note_tui_draw_flush(orphan, t0 + Duration::from_millis(1));
+        let batch = extract_since(0).unwrap();
+        assert!(batch.records.is_empty());
+        assert_eq!(batch.losses.len(), 1);
+        assert_eq!(batch.losses[0].reason, LossReason::MissingIdentity);
+        assert_eq!(batch.losses[0].generation, None);
+        assert_eq!(batch.losses[0].slot_id, orphan);
+        assert_eq!(batch.losses[0].surface, Surface::Tui);
+        assert!(batch.losses[0].start_mono_ns.is_some());
+        acknowledge_producers_closed().unwrap();
+        let summary = finalize(end_ns + tail_ns).unwrap();
+        assert!(!summary.available);
+        assert!(summary.losses_n >= 1);
+        test_reset();
+    }
+
+    #[test]
+    fn missing_generation_drop_before_admit_records_identity_loss() {
         let _g = isolate();
         crate::responsiveness_profile::enable();
         let t0 = std::time::Instant::now();
@@ -939,15 +1069,116 @@ mod tests {
         crate::responsiveness_profile::set_input_surface(
             crate::responsiveness_profile::InputSurface::Tui,
         );
-        // No Local/registry row for this slot → live_generation_for is None.
-        let orphan = 0x0f_fa_u64;
-        assert!(crate::responsiveness_profile::note_input_start(
+        let orphan = 0xdead_u64;
+        // Fill legacy input queue to force drop-before-admit.
+        for _ in 0..256 {
+            assert!(crate::responsiveness_profile::note_input_start(
+                orphan, t0, 0
+            ));
+        }
+        // 257th is refused by legacy queue, still must publish missing-gen loss.
+        assert!(!crate::responsiveness_profile::note_input_start(
             orphan, t0, 0
         ));
-        crate::responsiveness_profile::note_tui_draw_flush(orphan, t0 + Duration::from_millis(1));
+        let batch = extract_since(0).unwrap();
+        assert!(batch.records.is_empty());
+        // 256 admits + 1 drop-before-admit = 257 MissingIdentity losses (cap 8 journal).
+        assert!(!batch.losses.is_empty());
+        assert!(batch.losses.iter().all(|l| {
+            l.reason == LossReason::MissingIdentity
+                && l.generation.is_none()
+                && l.slot_id == orphan
+                && l.surface == Surface::Tui
+        }));
+        assert!(batch.loss_count >= 257);
+        // Shared capacity 8: excess counted as overflow gaps, not unbounded retain.
+        assert!(test_occupied() <= 8);
+        assert!(batch.journal_overflow_n >= 1);
+        test_reset();
+    }
+
+    #[test]
+    fn missing_generation_out_of_window_excluded() {
+        let _g = isolate();
+        crate::responsiveness_profile::enable();
+        let t0 = std::time::Instant::now();
+        let end_ns = crate::responsiveness_profile::mono_ns(t0).max(1);
+        begin(
+            Boundaries {
+                start_mono_ns: 0,
+                end_mono_ns: end_ns,
+                tail_ns: 50_000_000,
+            },
+            8,
+        )
+        .unwrap();
+        crate::responsiveness_profile::set_input_surface(
+            crate::responsiveness_profile::InputSurface::Tui,
+        );
+        let orphan = 0xb0b_u64;
+        let later = t0 + Duration::from_millis(2);
+        assert!(crate::responsiveness_profile::note_input_start(
+            orphan, later, 0
+        ));
         let batch = extract_since(0).unwrap();
         assert!(batch.records.is_empty());
         assert!(batch.losses.is_empty());
+        assert_eq!(batch.loss_count, 0);
+        test_reset();
+    }
+
+    #[test]
+    fn incomplete_pending_at_finalize_records_incomplete_loss() {
+        let _g = isolate();
+        begin(
+            Boundaries {
+                start_mono_ns: 1,
+                end_mono_ns: 10,
+                tail_ns: 2,
+            },
+            8,
+        )
+        .unwrap();
+        let id = start(7, 3, 4, Surface::Panel).unwrap();
+        acknowledge_producers_closed().unwrap();
+        let summary = finalize(12).unwrap();
+        assert!(!summary.available);
+        assert_eq!(summary.losses_n, 1);
+        assert_eq!(summary.records_n, 0);
+        assert_eq!(summary.pending_n, 0);
+        let batch = extract_since(0).unwrap();
+        assert_eq!(batch.losses.len(), 1);
+        assert_eq!(batch.losses[0].reason, LossReason::Incomplete);
+        assert_eq!(batch.losses[0].generation, Some(3));
+        assert_eq!(batch.losses[0].slot_id, 7);
+        assert_eq!(batch.losses[0].sequence, id.sequence);
+        assert!(batch.records.is_empty());
+        test_reset();
+    }
+
+    #[test]
+    fn generation_mismatch_terminal_fails_closed() {
+        let _g = isolate();
+        begin(
+            Boundaries {
+                start_mono_ns: 1,
+                end_mono_ns: 10,
+                tail_ns: 2,
+            },
+            8,
+        )
+        .unwrap();
+        let id = start(1, 10, 2, Surface::Decode).unwrap();
+        generation_lost(id, 99); // mismatched generation
+        let batch = extract_since(0).unwrap();
+        assert!(batch.records.is_empty());
+        assert_eq!(batch.losses.len(), 1);
+        assert_eq!(batch.losses[0].reason, LossReason::GenerationMismatch);
+        assert_eq!(batch.losses[0].generation, Some(99));
+        assert_eq!(batch.losses[0].slot_id, id.slot_id);
+        acknowledge_producers_closed().unwrap();
+        let summary = finalize(12).unwrap();
+        assert!(!summary.available);
         test_reset();
     }
 

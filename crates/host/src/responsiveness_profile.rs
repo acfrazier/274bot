@@ -844,20 +844,26 @@ pub fn note_input_start(slot_id: u64, at: Instant, require_gen: u64) -> bool {
     // Bracket lower must precede pending cut + counter bump.
     let t0 = Instant::now();
     let surface = *INPUT_SURFACE.lock().unwrap();
+    let cohort_surface = match surface {
+        InputSurface::Panel => crate::responsiveness_cohort::Surface::Panel,
+        _ => crate::responsiveness_cohort::Surface::Tui,
+    };
     let mut q = INPUT_PENDING.lock().unwrap();
     if q.len() >= MAX_INPUT_PENDING {
         drop(q);
         if crate::responsiveness_cohort::enabled() {
-            if let Some(generation) = live_generation_for(slot_id) {
-                crate::responsiveness_cohort::dropped_start(
+            match live_generation_for(slot_id) {
+                Some(generation) => crate::responsiveness_cohort::dropped_start(
                     slot_id,
                     generation,
                     mono_ns(at),
-                    match surface {
-                        InputSurface::Panel => crate::responsiveness_cohort::Surface::Panel,
-                        _ => crate::responsiveness_cohort::Surface::Tui,
-                    },
-                );
+                    cohort_surface,
+                ),
+                None => crate::responsiveness_cohort::missing_generation_start(
+                    slot_id,
+                    mono_ns(at),
+                    cohort_surface,
+                ),
             }
         }
         with_live_slot_from(t0, slot_id, |s| {
@@ -866,20 +872,26 @@ pub fn note_input_start(slot_id: u64, at: Instant, require_gen: u64) -> bool {
         });
         return false;
     }
-    let cohort_id = crate::responsiveness_cohort::enabled()
-        .then(|| live_generation_for(slot_id))
-        .flatten()
-        .and_then(|generation| {
-            crate::responsiveness_cohort::start(
+    let cohort_id = if crate::responsiveness_cohort::enabled() {
+        match live_generation_for(slot_id) {
+            Some(generation) => crate::responsiveness_cohort::start(
                 slot_id,
                 generation,
                 mono_ns(at),
-                match surface {
-                    InputSurface::Panel => crate::responsiveness_cohort::Surface::Panel,
-                    _ => crate::responsiveness_cohort::Surface::Tui,
-                },
-            )
-        });
+                cohort_surface,
+            ),
+            None => {
+                crate::responsiveness_cohort::missing_generation_start(
+                    slot_id,
+                    mono_ns(at),
+                    cohort_surface,
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
     q.push_back(InputPending {
         slot_id,
         at,
