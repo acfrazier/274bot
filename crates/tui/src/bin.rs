@@ -575,6 +575,21 @@ impl TuiSession {
 
     /// `--live script_*` boot: minted ephemeral vault + spawn + runner.
     fn live_prepare_script(&mut self, scenario: scenario::Scenario) -> Result<(), String> {
+        self.live_prepare_script_inner(scenario, true)
+    }
+
+    #[cfg(test)]
+    /// Test-only live preparation: exercise vault/catalog/scenario setup while
+    /// leaving slot workers to the live harness, not unit-test teardown.
+    fn live_prepare_script_fixture(&mut self, scenario: scenario::Scenario) -> Result<(), String> {
+        self.live_prepare_script_inner(scenario, false)
+    }
+
+    fn live_prepare_script_inner(
+        &mut self,
+        scenario: scenario::Scenario,
+        spawn_slots: bool,
+    ) -> Result<(), String> {
         let name = scenario.name.to_string();
         let start_script = scenario.settings.start_script;
         let settings_inject = scenario.settings.script_settings_inject;
@@ -597,8 +612,10 @@ impl TuiSession {
         *self.scenario.lock().unwrap() = Some(runner);
         self.script_settings_inject = scenario::settings_inject_map(settings_inject);
         self.names = names.clone();
-        for n in &names {
-            self.spawn(n);
+        if spawn_slots {
+            for n in &names {
+                self.spawn(n);
+            }
         }
         self.focus(&names[0]);
         // A scenario that names a script card selects the real `$RS2B0T`
@@ -1621,7 +1638,7 @@ ScriptRegistry.register({
         iso.set_rs2b0t(&root);
         let mut session = TuiSession::new(dummy_options());
         session
-            .live_prepare_script(scenario::get("bone_burier").expect("registered"))
+            .live_prepare_script_fixture(scenario::get("bone_burier").expect("registered"))
             .expect("prepare");
         let name = session.names.first().expect("minted name").clone();
         assert_ne!(name, "test", "live must not log in `test`");
@@ -1663,7 +1680,7 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
         iso.set_rs2b0t(&root);
         let mut session = TuiSession::new(dummy_options());
         session
-            .live_prepare_script(scenario::get("thiever").expect("registered"))
+            .live_prepare_script_fixture(scenario::get("thiever").expect("registered"))
             .expect("prepare");
         let bag = session
             .pending_script
