@@ -9,6 +9,39 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 07:52 UTC
+
+- Longer focused analysis 37aca9a APPROVED actual Grok4.5/xai-oauth session
+  20260908_033953_7cbca7. Root verified generic analysis.py/table.json exactly
+  restored to e87abb1^; new artifacts use windows-tile-boxed-long-screen names.
+  Root parks the focused RSS claim: common +0.592%, final300 +8.02%; no extra
+  longer/reverse/short reruns. Short background evidence does not establish a
+  steady-state benefit. Candidate source remains isolated; no accepted saving.
+- Reader t_02027ed2 a4b1483 and 20709f7 rejected for incomplete interior GPU
+  epoch validation. Second root finding: attach/detach/backend epochs still
+  unchecked. Same-card Luna correction active; no integration. Six native
+  archives must be recomputed read-only via absolute primary path.
+- Single capture helper ea7fe6f APPROVED actual Grok4.5/xai-oauth
+  20260908_033151_6222cc. Native PS5.1 AST0/C# compile succeeded; sha3e5ade93.
+  First capture correctly refused non-foreground target; root brought only the
+  verified panel forward, then captured and directly inspected its PNGs.
+- Native null_raster visual session running: task
+  274bot-BotTest-visual-nullraster-20260908-0742, PID14692 start
+  2026-09-08T07:41:13.5554029Z, frozen candidate a9b581ba, BotTest console2.
+  Output C:/Users/BotTest/274bot-runs/visual-proof-nullraster-20260908-0742;
+  local diagnostics/windows-visual-proof-nullraster-20260908-0742.
+  Supervisor closes this process after20min (08:01UTC); task limit22min.
+  Actual harness PASS both accounts scene2. Inspected focus Test→Test2→Test,
+  none→GPU and GPU→CPU→GPU captures, scene/modal/minimap restored, bothrunning.
+  These are qualitative snapshots; no attach counters/cadence/G1/fullG2 claim.
+  Ordinary Accept-design clicks did not close initial modal; preserved, no fix.
+  Root now using existing Lumbridge control for distinct test-account scenes.
+- NEW t_0e21a98c Luna active: bounded foreground-target burst capture helper,
+  no native/input work by worker, same-card Grok review before root native use.
+  Needed to capture transient G1 with timestamps; no scene1 proof yet. No
+  original four measurement runtime changes, no clean performance run active.
+  Full latency/input/calibration/visual/lifecycle/scaling/targets/wholeGrok pending.
+
 ## Latest boundary — 2026-09-08 07:34 UTC
 
 - Focused GPUcoverage audit4af1348 APPROVED actualGrok4.5/xai-oauth

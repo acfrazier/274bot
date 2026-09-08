@@ -29,7 +29,7 @@ All deltas below are candidate minus baseline. RSS is current resident RSS; peak
 | Common intersection | 565.3652344 MiB | 568.7128906 MiB | +3.3476563 MiB (+0.592%) | 0.5187953 | 0.5097892 | -1.736% |
 | Final 300 s | 512.0273438 MiB | 553.0820313 MiB | +41.0546875 MiB (+8.02%) | 0.5174851 | 0.4959294 | -4.169% |
 
-The final-300 endpoints are baseline 403.3442026–702.5677778 s (299 samples) and candidate 403.6954652–702.9757121 s (299 samples). The predeclared 100 s bins are anchored at the common lower bound, with each side's actual contained sample endpoints retained in `table.json`:
+The final-300 endpoints are baseline 403.3442026–702.5677778 s (299 samples) and candidate 403.6954652–702.9757121 s (299 samples). The predeclared 100 s bins are anchored at the common lower bound, with each side's actual contained sample endpoints retained in `windows-tile-boxed-long-screen-table.json`:
 
 | Bin | Baseline RSS median | Candidate RSS median | Candidate minus baseline |
 | --- | ---: | ---: | ---: |
@@ -50,7 +50,7 @@ The actual reviewed readers were rerun on the contained common-window rows for b
 - Scheduling per-slot reader: available for 16/16 slots.
 - Process-wide scheduling reader: unavailable because it only has process-wide evidence and cannot satisfy the per-slot gate. This is not evidence that per-slot scheduling is unavailable.
 - Fine decode reader: baseline available for 16/16 slots; candidate available for 12/16, with 4 unavailable (`boundary_pending_incomplete`). The top-level candidate status remains `available`, but that does not make every slot available.
-- Input reader: unavailable for 0/16 slots (`no_slot_with_available_input_p99`); no input samples are invented.
+- Input reader: available for 0/16 slots; aggregate unavailable (`no_slot_with_available_input_p99`); no input samples are invented.
 - GPU reader: unavailable as a complete qualified stable interval (`no_complete_qualified_stable_interval`); one slot has available diagnostic data, while the focused mode intentionally has 15 headless slots. The aggregation does not apply the pending-audit headless-slot expectation to call the reader passed, and no reader fix is proposed or accepted here.
 
 Conservation, lost/dropped/pending counters, per-slot identities, ordinals, and p99 bucket fields are preserved in `windows-tile-boxed-long-screen-table.json`. Histogram arrays are compacted to `*_count` and `*_bucket_count`; the raw arrays are not claimed to be present. GPU callback timing remains CPU callback-delivery evidence, not physical presentation, scanout, or visual proof. Managed resource accounting is `available`; that does not mean instrumentation-overhead calibration or the separate resource-provenance gate is complete. Calibration missing is not treated as managed-resource accounting missing.
