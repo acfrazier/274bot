@@ -40,13 +40,14 @@ Required execution order
 1. Austen/admin performs AST validation and fresh per-cell privileged preflight
    (server/native conditions, stages, and no overlap).
 2. Austen/admin stages the reviewed controller into the selected ProgramData
-   binary stage, then runs `stage-contract-tile-cpu.ps1` to copy the separate
-   contract checker and verify its SHA-256 against the controls source. Root must
+   binary stage, then runs `stage-contract-tile-cpu.ps1` to copy the same
+   controller into `run-<CellId>-contractcheck.py` and verify its SHA-256 against
+   the controls source. Root must
    stage the already-reviewed CPU runtime files only after the clean GPU cells;
    this task does not stage them.
 3. BotTest Interactive Limited runs the distinct `-contractcheck` controller,
    which binds `TILE_CPU_PREFLIGHT_CELL_ID` to the target cell, verifies the
-   staged checker hash, assembles and validates the real spec/parser namespace
+   staged contract-runner hash, assembles and validates the real spec/parser namespace
    and complete native-conditions schema without starting the client, and writes
    a separate contract receipt.
 4. Austen/admin consumes and verifies that receipt, then root performs one

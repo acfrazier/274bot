@@ -4,7 +4,7 @@ if($env:USERNAME -eq 'BotTest'){throw 'Contract staging must run in the privileg
 $prefix="$BuildRole-$Mode-"; if(-not $CellId.StartsWith($prefix)){throw "CellId must start with $prefix"}
 $stage=if($BuildRole -eq 'baseline'){'C:\ProgramData\274bot-Test\renderer-owner-census-9268890'}else{'C:\ProgramData\274bot-Test\tile-boxed-fb3589a'}
 $preflight=Join-Path 'C:\ProgramData\274bot-Test\renderer-owner-census-9268890' ('preflight-tile-cpu-'+$CellId+'.json')
-$source=Join-Path $PSScriptRoot 'check-tile-cpu-contract.py'; $contractId=$CellId+'-contractcheck'; $destination=Join-Path $stage ('check-tile-cpu-contract-'+$contractId+'.py')
+$source=Join-Path $PSScriptRoot 'run-tile-cpu-focused-one.py'; $contractId=$CellId+'-contractcheck'; $destination=Join-Path $stage ('run-'+$contractId+'.py')
 if(-not(Test-Path $stage -PathType Container)){throw "Role stage missing: $stage"}; if(-not(Test-Path (Join-Path $stage 'panel-play.exe') -PathType Leaf)){throw 'Role binary missing'}; if(-not(Test-Path $preflight -PathType Leaf)){throw 'Privileged preflight receipt missing'}
 Copy-Item $source $destination -Force
 $sourceSha=(Get-FileHash $source -Algorithm SHA256).Hash.ToLower(); $stagedSha=(Get-FileHash $destination -Algorithm SHA256).Hash.ToLower(); if($sourceSha -ne $stagedSha){throw 'Staged contract checker hash mismatch'}

@@ -64,9 +64,28 @@ class CpuControls(unittest.TestCase):
         self.assertIn("out.write_text", source)
         self.assertIn('"launched": False', source)
         self.assertIn('"functional_only":True', source)
+        self.assertIn("run-tile-cpu-focused-one.py", stage)
+        self.assertIn("('run-'+$contractId+'.py')", stage)
         self.assertIn("Copy-Item $source $destination", stage)
-        self.assertIn("Get-FileHash $checker", runner)
+        self.assertIn("Get-FileHash $runner", runner)
+        self.assertIn("run-tile-cpu-focused-one.py", runner)
+        self.assertNotIn("Staged contract checker missing", runner)
         self.assertIn("$env:TILE_CPU_PREFLIGHT_CELL_ID=$CellId", runner)
+
+    def test_contract_stage_chain_uses_target_and_contract_runner_names(self):
+        stage = (HERE / "stage-tile-cpu.ps1").read_text()
+        contract_stage = (HERE / "stage-contract-tile-cpu.ps1").read_text()
+        contract_run = (HERE / "run-contractcheck-tile-cpu.ps1").read_text()
+        target = "baseline-focused-one"
+        contract = target + "-contractcheck"
+        self.assertIn("('run-'+$CellId+'.py')", stage)
+        self.assertIn("('preflight-tile-cpu-'+$CellId+'.json')", stage)
+        self.assertIn("('run-'+$contractId+'.py')", contract_stage)
+        self.assertIn("$source=Join-Path $PSScriptRoot 'run-tile-cpu-focused-one.py'", contract_stage)
+        self.assertIn("$runner=Join-Path $stage ('run-'+$contract+'.py')", contract_run)
+        self.assertIn("(Join-Path $PSScriptRoot 'check-tile-cpu-contract.py')", contract_run)
+        self.assertNotIn("check-tile-cpu-contract-$contract", contract_stage)
+        self.assertEqual(contract, "baseline-focused-one-contractcheck")
 
     def test_contract_executes_no_launch_and_writes_receipt(self):
         import sys
