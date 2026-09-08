@@ -1,0 +1,402 @@
+{
+  "schema": "native-nullraster-visual-proof-root-v1",
+  "archive": "diagnostics/windows-visual-proof-nullraster-20260908-0742.tar.gz",
+  "archive_sha256": "f718ff2dcf6c55278bfd0cad97f15a905fd0a49e95b4893b0d7f873e583c5968",
+  "manifest_sha256": "3ae95aed5ed84218f8a441b587ccb0556d1e2915a3840d27763b8e388e4635f3",
+  "verified_manifest_files": 78,
+  "root_read_all_listed_pngs": true,
+  "captures": [
+    {
+      "schema": "native-panel-window-capture-v1",
+      "label": "focused-scene2",
+      "pid": 14692,
+      "startUtc": "2026-09-08T07:41:13.5554029Z",
+      "sessionId": 2,
+      "binary": "C:\\ProgramData\\274bot-Test\\tile-boxed-fb3589a\\panel-play.exe",
+      "binarySha256": "a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f",
+      "windowHandle": 5047406,
+      "rect": [
+        152,
+        152,
+        2250,
+        1078
+      ],
+      "captureStartedUtc": "2026-09-08T07:42:36.3729926Z",
+      "captureEndedUtc": "2026-09-08T07:42:36.4408824Z",
+      "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-nullraster-20260908-0742\\focused-scene2.png",
+      "pngSha256": "4cd0386477d8d4232c9b1054cc48b5b685f736001cd64e3144a912c9eded8be6",
+      "sceneState": "not inferred from capture",
+      "performanceAcceptance": false
+    },
+    {
+      "schema": "native-panel-window-capture-v1",
+      "label": "test2-selected",
+      "pid": 14692,
+      "startUtc": "2026-09-08T07:41:13.5554029Z",
+      "sessionId": 2,
+      "binary": "C:\\ProgramData\\274bot-Test\\tile-boxed-fb3589a\\panel-play.exe",
+      "binarySha256": "a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f",
+      "windowHandle": 5047406,
+      "rect": [
+        152,
+        152,
+        2250,
+        1078
+      ],
+      "captureStartedUtc": "2026-09-08T07:44:02.4939729Z",
+      "captureEndedUtc": "2026-09-08T07:44:02.5550379Z",
+      "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-nullraster-20260908-0742\\test2-selected.png",
+      "pngSha256": "cc0c53dac4a451b6a0487b94b92fbc900f4d1aff1caa5ac4dd9207c9fc8ee479",
+      "sceneState": "not inferred from capture",
+      "performanceAcceptance": false
+    },
+    {
+      "schema": "native-panel-window-capture-v1",
+      "label": "general-config",
+      "pid": 14692,
+      "startUtc": "2026-09-08T07:41:13.5554029Z",
+      "sessionId": 2,
+      "binary": "C:\\ProgramData\\274bot-Test\\tile-boxed-fb3589a\\panel-play.exe",
+      "binarySha256": "a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f",
+      "windowHandle": 5047406,
+      "rect": [
+        152,
+        152,
+        2250,
+        1078
+      ],
+      "captureStartedUtc": "2026-09-08T07:45:15.9952119Z",
+      "captureEndedUtc": "2026-09-08T07:45:16.0617386Z",
+      "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-nullraster-20260908-0742\\general-config.png",
+      "pngSha256": "0d207d8760b219bef2ae8482a9efa03fb36ca3e3aa244ba5dd4252552eb9a5b3",
+      "sceneState": "not inferred from capture",
+      "performanceAcceptance": false
+    },
+    {
+      "schema": "native-panel-window-capture-v1",
+      "label": "collapse-global",
+      "pid": 14692,
+      "startUtc": "2026-09-08T07:41:13.5554029Z",
+      "sessionId": 2,
+      "binary": "C:\\ProgramData\\274bot-Test\\tile-boxed-fb3589a\\panel-play.exe",
+      "binarySha256": "a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f",
+      "windowHandle": 5047406,
+      "rect": [
+        152,
+        152,
+        2250,
+        1078
+      ],
+      "captureStartedUtc": "2026-09-08T07:45:40.7115928Z",
+      "captureEndedUtc": "2026-09-08T07:45:40.7909394Z",
+      "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-nullraster-20260908-0742\\collapse-global.png",
+      "pngSha256": "64fd4ea1fc8c1dea1f8176188754bf06dfe579a1b712dc3ca05e5dff83a7fba6",
+      "sceneState": "not inferred from capture",
+      "performanceAcceptance": false
+    },
+    {
+      "schema": "native-panel-window-capture-v1",
+      "label": "raster-none",
+      "pid": 14692,
+      "startUtc": "2026-09-08T07:41:13.5554029Z",
+      "sessionId": 2,
+      "binary": "C:\\ProgramData\\274bot-Test\\tile-boxed-fb3589a\\panel-play.exe",
+      "binarySha256": "a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f",
+      "windowHandle": 5047406,
+      "rect": [
+        152,
+        152,
+        2250,
+        1078
+      ],
+      "captureStartedUtc": "2026-09-08T07:46:09.8049406Z",
+      "captureEndedUtc": "2026-09-08T07:46:09.8660422Z",
+      "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-nullraster-20260908-0742\\raster-none.png",
+      "pngSha256": "909f1f22c769a2600bbc2e5c2e8223e0f62562fcc2e8aa826afc606e5a45c5d5",
+      "sceneState": "not inferred from capture",
+      "performanceAcceptance": false
+    },
+    {
+      "schema": "native-panel-window-capture-v1",
+      "label": "raster-gpu-restored",
+      "pid": 14692,
+      "startUtc": "2026-09-08T07:41:13.5554029Z",
+      "sessionId": 2,
+      "binary": "C:\\ProgramData\\274bot-Test\\tile-boxed-fb3589a\\panel-play.exe",
+      "binarySha256": "a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f",
+      "windowHandle": 5047406,
+      "rect": [
+        152,
+        152,
+        2250,
+        1078
+      ],
+      "captureStartedUtc": "2026-09-08T07:46:34.6638310Z",
+      "captureEndedUtc": "2026-09-08T07:46:34.7366126Z",
+      "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-nullraster-20260908-0742\\raster-gpu-restored.png",
+      "pngSha256": "f7bc90db41495fabb63b1ce85f190391f913aa092985e42c5560a82b744e9736",
+      "sceneState": "not inferred from capture",
+      "performanceAcceptance": false
+    },
+    {
+      "schema": "native-panel-window-capture-v1",
+      "label": "raster-cpu",
+      "pid": 14692,
+      "startUtc": "2026-09-08T07:41:13.5554029Z",
+      "sessionId": 2,
+      "binary": "C:\\ProgramData\\274bot-Test\\tile-boxed-fb3589a\\panel-play.exe",
+      "binarySha256": "a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f",
+      "windowHandle": 5047406,
+      "rect": [
+        152,
+        152,
+        2250,
+        1078
+      ],
+      "captureStartedUtc": "2026-09-08T07:47:24.0653067Z",
+      "captureEndedUtc": "2026-09-08T07:47:24.1265446Z",
+      "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-nullraster-20260908-0742\\raster-cpu.png",
+      "pngSha256": "4757e47b8a1e3fc5b0d0a774f175a0df6da62beb06806503424bcbc66f970eab",
+      "sceneState": "not inferred from capture",
+      "performanceAcceptance": false
+    },
+    {
+      "schema": "native-panel-window-capture-v1",
+      "label": "gpu-after-cpu",
+      "pid": 14692,
+      "startUtc": "2026-09-08T07:41:13.5554029Z",
+      "sessionId": 2,
+      "binary": "C:\\ProgramData\\274bot-Test\\tile-boxed-fb3589a\\panel-play.exe",
+      "binarySha256": "a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f",
+      "windowHandle": 5047406,
+      "rect": [
+        152,
+        152,
+        2250,
+        1078
+      ],
+      "captureStartedUtc": "2026-09-08T07:48:05.0086629Z",
+      "captureEndedUtc": "2026-09-08T07:48:05.0772870Z",
+      "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-nullraster-20260908-0742\\gpu-after-cpu.png",
+      "pngSha256": "c3b5586772951ca1296678ae914576eb0c42a23e5dfab0b4076eaa033678c88b",
+      "sceneState": "not inferred from capture",
+      "performanceAcceptance": false
+    },
+    {
+      "schema": "native-panel-window-capture-v1",
+      "label": "close-config",
+      "pid": 14692,
+      "startUtc": "2026-09-08T07:41:13.5554029Z",
+      "sessionId": 2,
+      "binary": "C:\\ProgramData\\274bot-Test\\tile-boxed-fb3589a\\panel-play.exe",
+      "binarySha256": "a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f",
+      "windowHandle": 5047406,
+      "rect": [
+        152,
+        152,
+        2250,
+        1078
+      ],
+      "captureStartedUtc": "2026-09-08T07:48:36.1604779Z",
+      "captureEndedUtc": "2026-09-08T07:48:36.2298081Z",
+      "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-nullraster-20260908-0742\\close-config.png",
+      "pngSha256": "8a09fbaaf559df84eab2015688e5ec1c751be949513f606932e97c8b32f176c2",
+      "sceneState": "not inferred from capture",
+      "performanceAcceptance": false
+    },
+    {
+      "schema": "native-panel-window-capture-v1",
+      "label": "test1-returned",
+      "pid": 14692,
+      "startUtc": "2026-09-08T07:41:13.5554029Z",
+      "sessionId": 2,
+      "binary": "C:\\ProgramData\\274bot-Test\\tile-boxed-fb3589a\\panel-play.exe",
+      "binarySha256": "a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f",
+      "windowHandle": 5047406,
+      "rect": [
+        152,
+        152,
+        2250,
+        1078
+      ],
+      "captureStartedUtc": "2026-09-08T07:49:23.4837484Z",
+      "captureEndedUtc": "2026-09-08T07:49:23.5449525Z",
+      "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-nullraster-20260908-0742\\test1-returned.png",
+      "pngSha256": "f5f80127ba8fbeb6eebee7df71494d0df253a12c7a06ef42e7a90a89c0dd96c2",
+      "sceneState": "not inferred from capture",
+      "performanceAcceptance": false
+    },
+    {
+      "schema": "native-panel-window-capture-v1",
+      "label": "test1-accept-design",
+      "pid": 14692,
+      "startUtc": "2026-09-08T07:41:13.5554029Z",
+      "sessionId": 2,
+      "binary": "C:\\ProgramData\\274bot-Test\\tile-boxed-fb3589a\\panel-play.exe",
+      "binarySha256": "a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f",
+      "windowHandle": 5047406,
+      "rect": [
+        152,
+        152,
+        2250,
+        1078
+      ],
+      "captureStartedUtc": "2026-09-08T07:49:49.5180633Z",
+      "captureEndedUtc": "2026-09-08T07:49:49.5936022Z",
+      "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-nullraster-20260908-0742\\test1-accept-design.png",
+      "pngSha256": "d428e361d237c0fc7f8f37a963a1933a16e41b8b94653375c5c4e68f1c641a78",
+      "sceneState": "not inferred from capture",
+      "performanceAcceptance": false
+    },
+    {
+      "schema": "native-panel-window-capture-v1",
+      "label": "test1-accept-held",
+      "pid": 14692,
+      "startUtc": "2026-09-08T07:41:13.5554029Z",
+      "sessionId": 2,
+      "binary": "C:\\ProgramData\\274bot-Test\\tile-boxed-fb3589a\\panel-play.exe",
+      "binarySha256": "a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f",
+      "windowHandle": 5047406,
+      "rect": [
+        152,
+        152,
+        2250,
+        1078
+      ],
+      "captureStartedUtc": "2026-09-08T07:50:44.0114654Z",
+      "captureEndedUtc": "2026-09-08T07:50:44.0813358Z",
+      "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-nullraster-20260908-0742\\test1-accept-held.png",
+      "pngSha256": "2130405433f89052f15c2f6c006123c6bf9d3967c4d963c12092e3d3ed60d52f",
+      "sceneState": "not inferred from capture",
+      "performanceAcceptance": false
+    },
+    {
+      "schema": "native-panel-window-capture-v1",
+      "label": "test1-lumbridge",
+      "pid": 14692,
+      "startUtc": "2026-09-08T07:41:13.5554029Z",
+      "sessionId": 2,
+      "binary": "C:\\ProgramData\\274bot-Test\\tile-boxed-fb3589a\\panel-play.exe",
+      "binarySha256": "a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f",
+      "windowHandle": 5047406,
+      "rect": [
+        152,
+        152,
+        2250,
+        1078
+      ],
+      "captureStartedUtc": "2026-09-08T07:52:29.0130334Z",
+      "captureEndedUtc": "2026-09-08T07:52:29.0814474Z",
+      "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-nullraster-20260908-0742\\test1-lumbridge.png",
+      "pngSha256": "7861d471aefe2791bd3c6ee6626ee99002ac8cfb91487ec846e28bd9b7ccac88",
+      "sceneState": "not inferred from capture",
+      "performanceAcceptance": false
+    },
+    {
+      "schema": "native-panel-window-capture-v1",
+      "label": "test1-home-ready",
+      "pid": 14692,
+      "startUtc": "2026-09-08T07:41:13.5554029Z",
+      "sessionId": 2,
+      "binary": "C:\\ProgramData\\274bot-Test\\tile-boxed-fb3589a\\panel-play.exe",
+      "binarySha256": "a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f",
+      "windowHandle": 5047406,
+      "rect": [
+        152,
+        152,
+        2250,
+        1078
+      ],
+      "captureStartedUtc": "2026-09-08T07:53:28.7423983Z",
+      "captureEndedUtc": "2026-09-08T07:53:28.8092890Z",
+      "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-nullraster-20260908-0742\\test1-home-ready.png",
+      "pngSha256": "b92901c6decc2de96e9848ae3ebedcf57aa3a12afb83a6aef502621d2e224675",
+      "sceneState": "not inferred from capture",
+      "performanceAcceptance": false
+    },
+    {
+      "schema": "native-panel-window-capture-v1",
+      "label": "test2-distinct",
+      "pid": 14692,
+      "startUtc": "2026-09-08T07:41:13.5554029Z",
+      "sessionId": 2,
+      "binary": "C:\\ProgramData\\274bot-Test\\tile-boxed-fb3589a\\panel-play.exe",
+      "binarySha256": "a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f",
+      "windowHandle": 5047406,
+      "rect": [
+        152,
+        152,
+        2250,
+        1078
+      ],
+      "captureStartedUtc": "2026-09-08T07:54:08.2458540Z",
+      "captureEndedUtc": "2026-09-08T07:54:08.3118387Z",
+      "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-nullraster-20260908-0742\\test2-distinct.png",
+      "pngSha256": "e5a49d3757e9bc2f6aae6c934a47f8bda21ec2d03a06b3a6f5e2e7ca62caa253",
+      "sceneState": "not inferred from capture",
+      "performanceAcceptance": false
+    },
+    {
+      "schema": "native-panel-window-capture-v1",
+      "label": "test1-distinct-return",
+      "pid": 14692,
+      "startUtc": "2026-09-08T07:41:13.5554029Z",
+      "sessionId": 2,
+      "binary": "C:\\ProgramData\\274bot-Test\\tile-boxed-fb3589a\\panel-play.exe",
+      "binarySha256": "a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f",
+      "windowHandle": 5047406,
+      "rect": [
+        152,
+        152,
+        2250,
+        1078
+      ],
+      "captureStartedUtc": "2026-09-08T07:54:32.2779721Z",
+      "captureEndedUtc": "2026-09-08T07:54:32.3604369Z",
+      "png": "C:\\Users\\BotTest\\274bot-runs\\visual-proof-nullraster-20260908-0742\\test1-distinct-return.png",
+      "pngSha256": "000fbc0a3405bb2711aed7e1e8214b842e93297763f1293afedfb464fd2ddbe1",
+      "sceneState": "not inferred from capture",
+      "performanceAcceptance": false
+    }
+  ],
+  "panel_attribution_configs": [
+    {
+      "adapter_name": "Intel(R) Graphics",
+      "adapter_backend": "Vulkan",
+      "adapter_driver_info": "101.8991",
+      "actual_width": 1680,
+      "actual_height": 870,
+      "scale_factor": 1.5,
+      "present_mode": "Fifo"
+    }
+  ],
+  "launch": {
+    "schema": "native-nullraster-visual-launch-v1",
+    "pid": 14692,
+    "startUtc": "2026-09-08T07:41:13.5554029Z",
+    "sessionId": 2,
+    "binary": "C:/ProgramData/274bot-Test/tile-boxed-fb3589a/panel-play.exe",
+    "binarySha256": "a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f",
+    "argv": [
+      "--live",
+      "null_raster"
+    ],
+    "temporaryVault": true,
+    "performanceAcceptance": false
+  },
+  "terminal": {
+    "utc": "2026-09-08T07:55:20.6699910Z",
+    "exitCode": null
+  },
+  "close_request": {
+    "utc": "2026-09-08T07:55:19.9261219Z",
+    "pid": 14692,
+    "startUtc": "2026-09-08T07:41:13.5554029Z",
+    "normalCloseRequested": true
+  },
+  "child_exit_code_available": false,
+  "scene1_freeze_proven": false,
+  "cadence_proven": false,
+  "full_lifecycle_proven": false,
+  "performance_acceptance": false
+}
