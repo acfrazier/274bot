@@ -11,6 +11,19 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 13:50 UTC
+
+- Grok4.5 rejected controls1c2d8bd, independently confirming the circular
+  prepare/contract dependency plus inconsistent stage defaults and missing
+  full chronological-chain tests. Corrective Luna run6 on t_5bb0cbaf is active;
+  integration remains withheld. No native execution of rejected controls.
+- Sampler t_7394914d Luna is active; root supplied current controller schema
+  context, requiring helper and sampler cost separately and no double-count
+  of the already managed frontend. Same-card review remains required.
+- Both final binaries, native tests, stages and canonical build provenance
+  remain verified. The next native action is reviewed no-launch contract and
+  preflight verification, followed by the predeclared pair only after release.
+
 ## Latest boundary — 2026-09-08 13:47 UTC
 
 - Native canonical manifest verification passed for both final roles using the
