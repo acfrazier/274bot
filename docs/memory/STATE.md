@@ -9,6 +9,39 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 00:47 UTC
+
+- Root restored omitted strict-reader producer fields in cdf65b3: conditions
+  purpose/terminal/panel booleans, server configuration, and explicitly sourced
+  saved console DxDiag. Added actual controller-expression regression (2 pass,
+  four role/mode cases plus omitted-field negatives). Reader stays unchanged.
+  Corrective t_92c98e27 is running actual Grok4.5/xai-oauth session
+  20260907_204553_0b7cb9. Prior t_13aa7d6e approved 7f75849, now superseded for
+  launch. Do not launch before current review and new immutable control stage.
+- Native readiness preflight cdf65b3 completed at 00:45:46. Fresh generated
+  conditions pass the actual strict shape validator. AC1, brightness20, console
+  unlocked, builder off, quiet services stopped, server6728. Saved DxDiag source
+  explicitly dated21:00:43; not a fresh routing observation. Raw readiness under
+  docs/memory/diagnostics/lazy-controls-readiness-cdf65b3. Full cell binding still
+  requires actual run; this readiness is not a measurement or full binding.
+- Runtime48 Python tools3a25 are staged at default3118e96 host root, separate
+  from binary lineage. Native runtime tests passed95 with4platform skips as
+  Austen, not BotTest; receipts remain on Windows pending local collection.
+  Six old controls7f75849 staged separately; cdf65b3 requires seven-file package.
+  Candidate3118e96/client5ee9 remains hashverified; no paired cell launched yet.
+- Snapshot integration27d1fe7/client3456 approved actual Grok4.6/xai-oauth
+  session20260907_203051_c5af50, report e5ca847. No native overlap/RSS claim.
+  Operator-approved real-client-frame tests t_d5a87488 running implementer in
+  isolated snapshot-frame-equivalence checkout; await actual review and proof.
+- Operator-approved private-commit companion60af766 in isolated renderer-owner
+  census checkout passed actual Grok4.5/xai-oauth20260907_203852_6f14ba. Native
+  Windows API/build proof remains outstanding; preceding census7d/client9f had
+  already passed Grok4.6. No historical private-commit inference is permitted.
+- Linux VPS remains available; last native candidate failure stays parked until
+  a changed candidate or targeted attribution is ready. No unchanged rerun.
+  Final budgets, matched savings, latency/lifecycle/scaling and whole-branch
+  Grok4.6 remain incomplete. No Sunshine installation performed.
+
 ## Latest boundary — 2026-09-08 00:15 UTC
 
 - Operator explicitly authorized clamshell awake configuration. Root verified
