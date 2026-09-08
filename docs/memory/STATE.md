@@ -11,6 +11,27 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 21:10 UTC
+
+- Formal saved-trace replay is implemented at `378e634b103d525aef33b86d22e8238fa1bddc79`.
+  Same-card task `t_2aba75a5` is now running under actual Grok 4.5 / xai-oauth,
+  review session `20260908_170931_3239c3`. No review verdict yet.
+- Submitted verification: 21 tests, comprising 19 passes and two explicit
+  Linux-only skips. Root independently checked the portable smoke's complete
+  output hashes, exact peak/EOF populations, selected 497/507 ms bracket, three
+  phases and child reaping. Committed engine/runner hashes match that smoke.
+  Root receipt: `diagnostics/heaptrack-owner-replay-implementation-smoke/root-readback.json`.
+- Production input bindings are prepared at
+  `diagnostics/owner-replay-executor-preflight-2042/input-binding-preparation.json`.
+  The saved metadata receipt uses analysis path `heaptrack.analysis`; conversion
+  and printer both exited zero. Included metadata/oracle/stderr hashes were
+  verified locally; raw/interpreted hashes remain inventory values until replay.
+- Next release gate: actual code approval, then stage the exact reviewed files
+  and small saved fixtures on Concord, verify Linux guards and fresh admission,
+  and only then execute the bounded existing-data replay. No new capture or
+  reinterpretation. Failed capture status, owner/lifecycle limits and all broader
+  campaign acceptance gates remain unchanged. Windows is available again.
+
 ## Latest boundary — 2026-09-08 20:52 UTC
 
 - Operator confirms Windows restarted and BotTest console signed in; Windows
