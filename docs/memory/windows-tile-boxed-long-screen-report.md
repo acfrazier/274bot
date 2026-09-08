@@ -11,11 +11,11 @@ This report uses exactly the two predeclared archives from the single allowed lo
 - `diagnostics/windows-tile-boxed-long-20260908/candidate-focused-one-long-native-20260908-0250.tar.gz`
   - SHA-256 `f651fbda0fe19539512bf81cc2ad2b665aa686844c011af124c76bf50a3374ad`
 
-Each extracted sibling has 22 manifest files. `python3 docs/memory/analysis.py` independently hashes both tarballs and every manifest file, recomputes the metrics from `raw-run-01/samples.jsonl`, and writes `docs/memory/table.json`. Both tar hashes and all 22-file manifest checks pass.
+Each extracted sibling has 22 manifest files. `python3 docs/memory/windows-tile-boxed-long-screen-analysis.py` independently hashes both tarballs and every manifest file, recomputes the metrics from `raw-run-01/samples.jsonl`, and writes `docs/memory/windows-tile-boxed-long-screen-table.json`. Both tar hashes and all 22-file manifest checks pass.
 
 The archived native-bound records independently show exit code 0, `binding_ok=true`, `qualified=true`, no missing match keys, and the intended workload `active`, N=16, focused-one panel. `qualify_control` was rerun locally with `--no-write` semantics for both cells and returned qualified with no errors. Both qualification boundaries contain 16/16 Running slots without errors.
 
-The comparison preserves recorded Windows paths as evidence; it does not reopen them or manufacture a local binding. Native provenance is retained exactly: original restored measurement runtime, controls `7a9eb03`, Intel(R) Graphics/Vulkan, focused visible geometry 1120x580 requested / 1680x870 actual at scale 1.5, Fifo, and one focused GPU renderer. The run logs identify the same Intel adapter/driver (`32.0.101.8991`) and Vulkan backend. The baseline and candidate use their recorded binary/source identities; shared fixture, cache, server identity/configuration, renderer settings, and allocator provenance are retained in `table.json` rather than normalized or inferred.
+The comparison preserves recorded Windows paths as evidence; it does not reopen them or manufacture a local binding. Native provenance is retained exactly: original restored measurement runtime, controls `7a9eb03`, Intel(R) Graphics/Vulkan, focused visible geometry 1120x580 requested / 1680x870 actual at scale 1.5, Fifo, and one focused GPU renderer. The run logs identify the same Intel adapter/driver (`32.0.101.8991`) and Vulkan backend. The archive-backed side-by-side provenance is: baseline role binary SHA `e2deb1db…`, client commit `abb811bd…`, client-source SHA `ea640270…`, manifest build commit `9268890…`, and manifest-source aggregate `84054d9c…`; candidate role binary SHA `a9b581ba…`, client commit `fd956c91…`, client-source SHA `fad2e792…`, manifest build commit `fb3589ac…`, and manifest-source aggregate `189dac14…`. Thus binaries, client sources, and build commits differ as intended role inputs; they are not claimed identical. Shared fixture/catalog/cache, server identity/configuration, renderer settings, allocator, adapter/backend, geometry, scale, Fifo, and workload conditions are compared from archived `match_keys`/`run.log` evidence and retained in the long table rather than normalized or inferred.
 
 ## Elapsed windows and recomputed metrics
 
@@ -45,15 +45,15 @@ Other separately recomputed common-window deltas are: current RSS maximum -60.00
 
 ## Per-slot reviewed readers and limits
 
-The actual reviewed readers were rerun on the contained common-window rows for both sides and retained in compact form in `table.json`:
+The actual reviewed readers were rerun on the contained common-window rows for both sides and retained in compact form in `windows-tile-boxed-long-screen-table.json`:
 
 - Scheduling per-slot reader: available for 16/16 slots.
 - Process-wide scheduling reader: unavailable because it only has process-wide evidence and cannot satisfy the per-slot gate. This is not evidence that per-slot scheduling is unavailable.
-- Fine decode reader: available for 16/16 slots.
+- Fine decode reader: baseline available for 16/16 slots; candidate available for 12/16, with 4 unavailable (`boundary_pending_incomplete`). The top-level candidate status remains `available`, but that does not make every slot available.
 - Input reader: unavailable for 0/16 slots (`no_slot_with_available_input_p99`); no input samples are invented.
 - GPU reader: unavailable as a complete qualified stable interval (`no_complete_qualified_stable_interval`); one slot has available diagnostic data, while the focused mode intentionally has 15 headless slots. The aggregation does not apply the pending-audit headless-slot expectation to call the reader passed, and no reader fix is proposed or accepted here.
 
-Conservation, lost/dropped/pending counters, per-slot identities, ordinals, and p99 bucket fields are preserved in `table.json`. GPU callback timing remains CPU callback-delivery evidence, not physical presentation, scanout, or visual proof. Managed resource accounting is `available`; that does not mean instrumentation-overhead calibration or the separate resource-provenance gate is complete. Calibration missing is not treated as managed-resource accounting missing.
+Conservation, lost/dropped/pending counters, per-slot identities, ordinals, and p99 bucket fields are preserved in `windows-tile-boxed-long-screen-table.json`. Histogram arrays are compacted to `*_count` and `*_bucket_count`; the raw arrays are not claimed to be present. GPU callback timing remains CPU callback-delivery evidence, not physical presentation, scanout, or visual proof. Managed resource accounting is `available`; that does not mean instrumentation-overhead calibration or the separate resource-provenance gate is complete. Calibration missing is not treated as managed-resource accounting missing.
 
 ## Decision and remaining gates
 
