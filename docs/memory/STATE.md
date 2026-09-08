@@ -9,6 +9,34 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 11:05 UTC
+
+- Publisher d6c10ae APPROVED t_5992fd7a actual Grok4.5/xai-oauth session
+  20260908_065724_a4b0da. Root integrated bf614b9/216f676/b6a073c/d6c10ae
+  as c1bbe37/a5af63a/ceb8d39/b8ae3ea; isolated STATE67e9a17 excluded.
+  Earlier review722 was reclaimed because scheduler started nine seconds before
+  root documentation commit; no acceptance from that moving-HEAD pass.
+- Root report d6c10ae explicitly separates event-start IDs from private append
+  journal cursor, counted losses from retained receipts, and inclusive completion
+  deadline. Finalized/pending0 never implies available. Actual poll fixture now
+  verifies both final observe sample and poll-written qualification metadata.
+- Combined primary checks: host --lib210pass/0fail/1existingignored; host-play
+  memory-profile six cohort/poll/meta fixtures pass (plus isolated child1pass);
+  cargo check panel+tui with memory-profile passes. Previously observed full
+  host-play suite failures remain inherited username truncation collisions;
+  neither full-suite result is relabeled green.
+- NEW reader t_829c6804 configured luna, actual run live since11:04 UTC,
+  isolated .worktrees/latency-cohort-reader branch codex/latency-cohort-reader,
+  baseb8ae3ea plus root-only STATE6b87370. Scope Python reader/tests/report only.
+  Add decode_cohort/input_cohort gates to analyze_run and existing --require,
+  preserve legacy gates, fail closed on missing/partial evidence, exact population,
+  cursor/identity/count/clock/provenance/bucket rules. No Rust or native work.
+- Combined integration review remains required after reader integration and before
+  new matched native comparison; both parent roles need identical instrumented
+  source and freshly frozen binaries. Input0942 still has zero host coverage;
+  approved trace is integrated but no native diagnostic binary/run yet. Windows
+  remains idle. Full resource targets/matrix/lifecycle/scaling/whole-Grok open.
+
 ## Latest boundary — 2026-09-08 10:52 UTC
 
 - Publisher216f676 t_5992fd7a round2 REJECTED actual Grok4.5/xai-oauth
