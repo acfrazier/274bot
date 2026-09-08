@@ -1,0 +1,530 @@
+{
+  "purpose": "Root descriptive four-cell screen; independent review pending",
+  "performance_acceptance": false,
+  "shared_elapsed_range_s": [
+    137.3414382,
+    221.7025809
+  ],
+  "cells": {
+    "baseline_forward": {
+      "whole": {
+        "sample_n": 119,
+        "start_elapsed_s": 103.2073198,
+        "end_elapsed_s": 221.7025809,
+        "duration_s": 118.4952611,
+        "median_resident_bytes": 2278535168,
+        "max_current_resident_bytes": 2605486080,
+        "median_private_commit_bytes": 2763915264,
+        "cpu_cores": 0.6357058020778521
+      },
+      "common": {
+        "sample_n": 85,
+        "start_elapsed_s": 137.3841274,
+        "end_elapsed_s": 221.7025809,
+        "duration_s": 84.31845349999998,
+        "median_resident_bytes": 2017333248,
+        "max_current_resident_bytes": 2455453696,
+        "median_private_commit_bytes": 2778738688,
+        "cpu_cores": 0.6354258501669509
+      },
+      "common_endpoint_summary": {
+        "scheduling_status": "unavailable",
+        "worst_scheduling_p99_upper_ms": 21,
+        "decode_status": "available",
+        "worst_decode_fine_p99_upper_ms": 26,
+        "input_status": "unavailable",
+        "gpu_status": "available",
+        "gpu_slots": [
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9962232051611338,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9962232051611338,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "focused_full_rate",
+            "status": "available",
+            "observed_fps": 48.47100285111374,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 1.008083005222576,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9962232051611338,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9843634050996918,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9962232051611338,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9962232051611338,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 1.008083005222576,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 1.008083005222576,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9843634050996918,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9843634050996918,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 1.008083005222576,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9962232051611338,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 1.008083005222576,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9962232051611338,
+            "target_verdict": "meet"
+          }
+        ]
+      }
+    },
+    "candidate_forward": {
+      "whole": {
+        "sample_n": 119,
+        "start_elapsed_s": 137.3414382,
+        "end_elapsed_s": 255.9378206,
+        "duration_s": 118.59638240000001,
+        "median_resident_bytes": 1466499072,
+        "max_current_resident_bytes": 1739694080,
+        "median_private_commit_bytes": 1954598912,
+        "cpu_cores": 0.6056519056183285
+      },
+      "common": {
+        "sample_n": 84,
+        "start_elapsed_s": 137.3414382,
+        "end_elapsed_s": 220.7727661,
+        "duration_s": 83.43132790000001,
+        "median_resident_bytes": 1571850240.0,
+        "max_current_resident_bytes": 1739694080,
+        "median_private_commit_bytes": 1953792000.0,
+        "cpu_cores": 0.6092210957126573
+      },
+      "common_endpoint_summary": {
+        "scheduling_status": "available",
+        "worst_scheduling_p99_upper_ms": 21,
+        "decode_status": "available",
+        "worst_decode_fine_p99_upper_ms": 26,
+        "input_status": "unavailable",
+        "gpu_status": "available",
+        "gpu_slots": [
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9948301446128606,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9948301446128606,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "focused_full_rate",
+            "status": "available",
+            "observed_fps": 49.01036700387936,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9948301446128606,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9948301446128606,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9948301446128606,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9948301446128606,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9948301446128606,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9828442392560791,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9948301446128606,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9948301446128606,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9948301446128606,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9948301446128606,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9948301446128606,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9948301446128606,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9948301446128606,
+            "target_verdict": "meet"
+          }
+        ]
+      }
+    },
+    "baseline_reverse": {
+      "whole": {
+        "sample_n": 119,
+        "start_elapsed_s": 103.2066542,
+        "end_elapsed_s": 221.7968501,
+        "duration_s": 118.5901959,
+        "median_resident_bytes": 2243723264,
+        "max_current_resident_bytes": 2611904512,
+        "median_private_commit_bytes": 2765549568,
+        "cpu_cores": 0.6405989080586383
+      },
+      "common": {
+        "sample_n": 84,
+        "start_elapsed_s": 137.3551819,
+        "end_elapsed_s": 220.7790941,
+        "duration_s": 83.42391220000002,
+        "median_resident_bytes": 2000447488.0,
+        "max_current_resident_bytes": 2461081600,
+        "median_private_commit_bytes": 2779688960.0,
+        "cpu_cores": 0.6383061953788352
+      },
+      "common_endpoint_summary": {
+        "scheduling_status": "available",
+        "worst_scheduling_p99_upper_ms": 21,
+        "decode_status": "available",
+        "worst_decode_fine_p99_upper_ms": 27,
+        "input_status": "unavailable",
+        "gpu_status": "available",
+        "gpu_slots": [
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9949185768346163,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9949185768346163,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9709446352241436,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9829316060293799,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9949185768346163,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 1.0069055476398525,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 1.0069055476398525,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "focused_full_rate",
+            "status": "available",
+            "observed_fps": 48.96677573939045,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9949185768346163,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9829316060293799,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9949185768346163,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 1.0069055476398525,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9949185768346163,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9949185768346163,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9949185768346163,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9949185768346163,
+            "target_verdict": "meet"
+          }
+        ]
+      }
+    },
+    "candidate_reverse": {
+      "whole": {
+        "sample_n": 120,
+        "start_elapsed_s": 112.240838,
+        "end_elapsed_s": 231.9926042,
+        "duration_s": 119.75176619999999,
+        "median_resident_bytes": 1608146944.0,
+        "max_current_resident_bytes": 1802358784,
+        "median_private_commit_bytes": 1972862976.0,
+        "cpu_cores": 0.6199021305123765
+      },
+      "common": {
+        "sample_n": 84,
+        "start_elapsed_s": 137.3478955,
+        "end_elapsed_s": 220.9088534,
+        "duration_s": 83.5609579,
+        "median_resident_bytes": 1564065792.0,
+        "max_current_resident_bytes": 1713184768,
+        "median_private_commit_bytes": 1974206464.0,
+        "cpu_cores": 0.6077150295568835
+      },
+      "common_endpoint_summary": {
+        "scheduling_status": "available",
+        "worst_scheduling_p99_upper_ms": 21,
+        "decode_status": "available",
+        "worst_decode_fine_p99_upper_ms": 26,
+        "input_status": "unavailable",
+        "gpu_status": "available",
+        "gpu_slots": [
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9932868421557431,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 1.0052541535070172,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9932868421557431,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9932868421557431,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9932868421557431,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9932868421557431,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9932868421557431,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 1.0052541535070172,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9932868421557431,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "focused_full_rate",
+            "status": "available",
+            "observed_fps": 49.042041917520905,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9932868421557431,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9932868421557431,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9932868421557431,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9932868421557431,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9932868421557431,
+            "target_verdict": "meet"
+          },
+          {
+            "role": "background",
+            "status": "available",
+            "observed_fps": 0.9932868421557431,
+            "target_verdict": "meet"
+          }
+        ]
+      }
+    }
+  },
+  "forward_common_delta": {
+    "median_rss_percent": -22.08276735842506,
+    "cpu_percent": -4.123967327959443
+  },
+  "reverse_common_delta": {
+    "median_rss_percent": -21.81420400273961,
+    "cpu_percent": -4.792553486621854
+  }
+}

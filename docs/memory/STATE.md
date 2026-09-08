@@ -9,6 +9,30 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 05:34 UTC
+
+- Background ABBA completed: all4 native exit0/IntelVulkan/bound/qualified16,
+  no missing matchkeys, all22files perarchive verified. Root receipts+startup
+  geometry identities: windows-tile-boxed-background-root-receipts.json.
+  Reversecandidate tarDCAE9B20593B8D8CDBC92E84EB5490463EEE28439E0EE03074B09A4C70A040C8;
+  reversebaseline tar10230C08B6C4FAF37340E006D62555C6CB2B34CC8045E5F64350B415E6164F28.
+- Root common4-window descriptive screen windows-tile-boxed-abba-root-screen.json
+  gives forwardRSS-22.08%/CPU-4.12%, reverseRSS-21.81%/CPU-4.79%; GPUcadence
+  meet, worstfineDecode26ms bothcandidates/baselineforward. Common scheduling
+  baselineforward is unavailable despite21ms available-slot bound; input absent.
+  No acceptance from these partial gates. Independent recomputation t_5c5fc347
+  actualLuna running since05:30, then same-cardGrok review required.
+- Focused-one baseline launched05:31:53UTC using existing0103 focused contract
+  and freshpreflight: baseline-focused-one-nativecheck-20260908-0103; actual
+  Running05:33:54. Await terminal/binding/qualification/archive then focused
+  candidate same0103 namespace (unlaunched). Native clean controls unchanged.
+- CPU controls initialb74f33a caught at handoff; rootreclaimed14sreview and
+  reopened correct implementation lane. Corrective17b880e now reviewer changes
+  requested for broken preflight/contract handling. Rootcomment also requires
+  real native_conditions validation and complete server/config evidence rather
+  than fabricated complete boolean. Await samecardLuna correction thenGrok;
+  no CPU controls/runtime staged and no CPU frontend launched.
+
 ## Latest boundary — 2026-09-08 05:20 UTC
 
 - First candidate completed0; native Intel Vulkan and strict native binding
