@@ -18,7 +18,8 @@ if(-not(Test-Path $out -PathType Container)){throw 'Prepared output directory mi
 if(-not $out.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'Output must be in a dedicated visual-proof directory'}
 $burstReceipt=Join-Path $out ($Label+'.burst.json')
 $readyMarker=Join-Path $out ($Label+'.ready')
-if((Test-Path $burstReceipt) -or (Test-Path $readyMarker)){throw 'Burst label already exists'}
+$existingFrame=Get-ChildItem -LiteralPath $out -Filter ($Label+'-frame-*') -Force -ErrorAction SilentlyContinue | Select-Object -First 1
+if((Test-Path $burstReceipt) -or (Test-Path $readyMarker) -or $null -ne $existingFrame){throw 'Burst label already exists'}
 
 $captureStarted=$null;$captureEnded=$null;$frameCount=0;$outcome='not-started';$failure=$null
 $frameReceipts=New-Object System.Collections.Generic.List[object]
@@ -79,12 +80,25 @@ try {
   if((Test-Path $png) -or (Test-Path $receipt)){throw 'Frame output already exists'}
   $bitmap=New-Object Drawing.Bitmap($width,$height)
   $graphics=[Drawing.Graphics]::FromImage($bitmap)
-  try {$graphics.CopyFromScreen($rect.Left,$rect.Top,0,0,$bitmap.Size,[Drawing.CopyPixelOperation]::SourceCopy);$bitmap.Save($png,[Drawing.Imaging.ImageFormat]::Png)} finally {$graphics.Dispose();$bitmap.Dispose()}
-  if([PanelBurstCaptureNative]::GetForegroundWindow() -ne $window){throw 'Foreground changed during capture'}
+  $frameStarted=[DateTime]::UtcNow.ToString('o')
+  try {
+   $graphics.CopyFromScreen($rect.Left,$rect.Top,0,0,$bitmap.Size,[Drawing.CopyPixelOperation]::SourceCopy)
+   $process.Refresh()
+   if($process.HasExited -or $process.ProcessName -ne 'panel-play' -or $process.Path -ne $expectedBinary){throw 'Target process identity changed during capture'}
+   if($process.StartTime.ToUniversalTime().ToString('o') -ne $ExpectedStartUtc -or $process.SessionId -ne $sessionId){throw 'Target process start/session identity changed during capture'}
+   if([PanelBurstCaptureNative]::GetForegroundWindow() -ne $window){throw 'Foreground changed during capture'}
+   if([PanelBurstCaptureNative]::IsIconic($window)){throw 'Target window became minimized during capture'}
+   $ownerPid=0;[void][PanelBurstCaptureNative]::GetWindowThreadProcessId($window,[ref]$ownerPid)
+   if($ownerPid -ne $PanelPid){throw 'Target window identity changed during capture'}
+   $postRect=New-Object PanelBurstCaptureNative+RECT
+   if(-not [PanelBurstCaptureNative]::GetWindowRect($window,[ref]$postRect)){throw 'Window bounds unavailable during capture'}
+   if($postRect.Left -ne $initialRect.Left -or $postRect.Top -ne $initialRect.Top -or $postRect.Right -ne $initialRect.Right -or $postRect.Bottom -ne $initialRect.Bottom){throw 'Window rectangle changed during capture'}
+   $bitmap.Save($png,[Drawing.Imaging.ImageFormat]::Png)
+  } finally {$graphics.Dispose();$bitmap.Dispose()}
   $frameEnd=[DateTime]::UtcNow.ToString('o')
   $pngHash=(Get-FileHash $png -Algorithm SHA256).Hash.ToLower()
-  [ordered]@{schema='native-panel-burst-frame-v1';label=$Label;frame=$index;pid=$PanelPid;startUtc=$ExpectedStartUtc;sessionId=$sessionId;binary=$expectedBinary;binarySha256=$binaryHash;windowHandle=$window.ToInt64();rect=@($rect.Left,$rect.Top,$rect.Right,$rect.Bottom);captureUtc=$frameEnd;png=$png;pngSha256=$pngHash;sceneState='not inferred from capture';performanceAcceptance=$false}|ConvertTo-Json -Depth 5|Set-Content $receipt -Encoding UTF8
-  $frameReceipts.Add([ordered]@{frame=$index;png=$png;receipt=$receipt;captureUtc=$frameEnd;pngSha256=$pngHash})
+  [ordered]@{schema='native-panel-burst-frame-v1';label=$Label;frame=$index;pid=$PanelPid;startUtc=$ExpectedStartUtc;sessionId=$sessionId;binary=$expectedBinary;binarySha256=$binaryHash;windowHandle=$window.ToInt64();rect=@($rect.Left,$rect.Top,$rect.Right,$rect.Bottom);captureStartedUtc=$frameStarted;captureEndedUtc=$frameEnd;captureUtc=$frameEnd;png=$png;pngSha256=$pngHash;sceneState='not inferred from capture';performanceAcceptance=$false}|ConvertTo-Json -Depth 5|Set-Content $receipt -Encoding UTF8
+  $frameReceipts.Add([ordered]@{frame=$index;png=$png;receipt=$receipt;captureStartedUtc=$frameStarted;captureEndedUtc=$frameEnd;captureUtc=$frameEnd;pngSha256=$pngHash})
   $frameCount=$index
   if($frameCount -eq 1){if(Test-Path $readyMarker){throw 'Ready marker already exists'};Set-Content $readyMarker ('readyUtc='+[DateTime]::UtcNow.ToString('o')) -Encoding UTF8}
   $remaining=$deadline-$stopwatch.ElapsedMilliseconds
@@ -101,7 +115,7 @@ try {
  $windowValue=$null;if($window -ne [IntPtr]::Zero){$windowValue=$window.ToInt64()}
  $rectValue=$null;if($initialRect){$rectValue=@($initialRect.Left,$initialRect.Top,$initialRect.Right,$initialRect.Bottom)}
  $readyValue=$null;if(Test-Path $readyMarker){$readyValue=$readyMarker}
- [ordered]@{schema='native-panel-burst-v1';label=$Label;pid=$PanelPid;startUtc=$ExpectedStartUtc;sessionId=$sessionId;binary=$expectedBinary;binarySha256=$binaryHash;windowHandle=$windowValue;rect=$rectValue;requestedDurationSeconds=$DurationSeconds;maxFrames=$MaxFrames;delayMilliseconds=$DelayMilliseconds;captureStartedUtc=$captureStarted;captureEndedUtc=$captureEnded;durationMilliseconds=$durationMs;frameCount=$frameCount;outcome=$outcome;failure=$failure;readyMarker=$readyValue;frames=@($frameReceipts);sceneState='not inferred from capture';performanceAcceptance=$false}|ConvertTo-Json -Depth 8|Set-Content $burstReceipt -Encoding UTF8
+ [ordered]@{schema='native-panel-burst-v1';label=$Label;pid=$PanelPid;startUtc=$ExpectedStartUtc;sessionId=$sessionId;binary=$expectedBinary;binarySha256=$binaryHash;windowHandle=$windowValue;rect=$rectValue;requestedDurationSeconds=$DurationSeconds;maxFrames=$MaxFrames;delayMilliseconds=$DelayMilliseconds;captureStartedUtc=$captureStarted;captureEndedUtc=$captureEnded;durationMilliseconds=$durationMs;frameCount=$frameCount;outcome=$outcome;failure=$failure;readyMarker=$readyValue;frames=$frameReceipts.ToArray();sceneState='not inferred from capture';performanceAcceptance=$false}|ConvertTo-Json -Depth 8|Set-Content $burstReceipt -Encoding UTF8
 }
 Get-Content $burstReceipt -Raw
 if($outcome -eq 'failed' -or $outcome -eq 'no-frame'){throw ('Capture burst '+$outcome+': '+$failure)}
