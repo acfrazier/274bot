@@ -26,10 +26,17 @@ def no_launch(argv):
     assert not args.gpu_completion_profile
     assert rmc.rd.requested_backend(args) == "cpu_fallback"
     assert spec["requested_backend"] == "cpu_fallback" and spec["cpu_fallback"] is True
-    checks.append({"id": target, "contract_cell_id": contract_id, "checked": True, "launched": False, "client_started": False, "cpu_intent": True, "gpu_completion": False})
+    preflight = rmc.preflight(spec, args)
+    conditions = json.loads(pathlib.Path(spec["host_conditions_path"]).read_text())
+    assert preflight["server_pid"] == spec["game_server_pid"]
+    assert conditions["backend"] == "cpu_fallback"
+    checks.append({"id": target, "contract_cell_id": contract_id, "checked": True, "launched": False, "client_started": False, "cpu_intent": True, "gpu_completion": False, "server_pid": preflight["server_pid"], "native_conditions_complete": True})
     return 0
 rmc.main = no_launch
-runpy.run_path(str(runner), run_name="__main__")
+try:
+    runpy.run_path(str(runner), run_name="__main__")
+except SystemExit as exc:
+    assert exc.code == 0, exc.code
 out = pathlib.Path.home() / "274bot-runs" / ("tile-cpu-contract-" + contract_id + ".json")
 out.write_text(json.dumps({"kind":"no-launch CPU functional contract", "cell_id":target, "contract_id":contract_id, "checks":checks, "performance_acceptance":False, "functional_only":True}, indent=2))
 print(out.read_text())

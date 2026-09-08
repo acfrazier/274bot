@@ -2,6 +2,7 @@ import ast
 import pathlib
 import types
 import unittest
+import tempfile
 HERE = pathlib.Path(__file__).parent
 CONTROLLER = HERE / "run-tile-cpu-focused-one.py"
 class CpuControls(unittest.TestCase):
@@ -44,9 +45,38 @@ class CpuControls(unittest.TestCase):
         source = (HERE / "check-tile-cpu-contract.py").read_text()
         self.assertIn("rmc.validate_spec", source)
         self.assertIn("rmc.parse_diagnostic_argv", source)
+        self.assertIn("rmc.preflight", source)
         self.assertIn("isinstance(args, __import__(\"argparse\").Namespace)", source)
         self.assertIn("rmc.require_argv_consistent_with_spec", source)
         self.assertIn("launched\": False", source)
+        self.assertIn("except SystemExit as exc", source)
+
+    def test_real_validate_spec_and_preflight_seam(self):
+        import sys
+        sys.path.insert(0, str(HERE.parents[1]))
+        import run_managed_cell as rmc
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            paths = {name: root / name for name in ("binary", "manifest", "server", "conditions", "nav", "flags", "catalog")}
+            for path in paths.values():
+                path.write_text("{}\n")
+            diag = ["panel", "1", "active", "--binary", str(paths["binary"]), "--build-manifest", str(paths["manifest"]), "--build-role", "reference", "--sustain", "--warmup", "30", "--observe", "120", "--cpu-fallback", "--focused-one", "--nav-captures", "--failure-capture", "--no-diagnostics", "--render-profile", "--scheduling-profile", "--responsiveness-profile", "--responsiveness-fine"]
+            args = rmc.parse_diagnostic_argv(diag)
+            spec = {"id": "cpu-contract-test", "index": 1, "kind": "diagnostic", "frontend": "panel", "binary": str(paths["binary"]), "build_manifest": str(paths["manifest"]), "server_identity_path": str(paths["server"]), "host_conditions_path": str(paths["conditions"]), "nav_pack": str(paths["nav"]), "nav_flags": str(paths["flags"]), "catalog_path": str(paths["catalog"]), "build_role": "reference", "launcher_argv": [sys.executable, str(HERE.parents[1] / "run_diagnostic.py"), *diag], "diagnostic_argv": diag, "game_server_pid": 101, "ambient_helpers": {"bootstrap": 202}, "sampler_interval_s": 0.5, "max_wall_s": 900, "observe_s": 120, "warmup_s": 30, "teardown_grace_s": 60, "requested_backend": "cpu_fallback", "cache_dir": str(root / "cache"), "unpack_root": str(root / "unpack")}
+            (root / "cache").mkdir()
+            (root / "unpack").mkdir()
+            normalized = rmc.validate_spec(spec)
+            rmc.require_argv_consistent_with_spec(normalized, args, _test_launcher=True)
+            seen = []
+            original = rmc.preflight
+            rmc.preflight = lambda actual_spec, actual_args: seen.append((actual_spec, actual_args)) or {"server_pid": actual_spec["game_server_pid"]}
+            try:
+                result = rmc.preflight(normalized, args)
+            finally:
+                rmc.preflight = original
+            self.assertEqual(result["server_pid"], 101)
+            self.assertEqual(len(seen), 1)
+            self.assertIsInstance(seen[0][1], __import__("argparse").Namespace)
     def test_all_python_controls_parse(self):
         for path in HERE.glob("*.py"):
             ast.parse(path.read_text())
