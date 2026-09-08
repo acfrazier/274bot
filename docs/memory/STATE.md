@@ -9,6 +9,28 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 04:32 UTC
+
+- Grok4.6 milestone t_037ff8fd APPROVED exactfb3589a/clientfd956c9;
+  actualsession20260908_002323_df2c86. Bounded source/protocol gate only.
+- Native Windows fb build PASSED0 32.95s; binary
+  a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f.
+  Native17layout +35clientintegration +2hostcensus tests PASSED. All build/test
+  pre/post876sources identicalaggregate189dac149beb6f258f5a79bdf09de43818556a5f06ffa783a608f0113a64d8a4.
+  Native TileModels64B, OptionBoxScene8B, SceneModel/OptionScene664B confirmed.
+  Moved occupied boxes still charged full664B; no RSS savings claim.
+  Twelve receipts hashed windows-tile-boxed-native-freeze.json; binary staged
+  and reverified ProgramData/274bot-Test/tile-boxed-fb3589a. All native test/build
+  sessions19941/56472 done; VM Off, no frontend active.
+- Paired clean controls t_10e7c701 actualLuna RUNNING primary. Exactbothrole source
+  andclientdigests, baseline926/candidatefb binaries, fullnativecontract required.
+  Explicit --no-diagnostics/ownerOFF, same boundedprofile flags, no navPNG in
+  clean cells; separate visual/CPU/lifecycle proof stays required. Await
+  worker/review then root nativecontract and onecell launch. No measurements yet.
+- Linux evidence correction6f8477e approved per-taskGrok4.5; clock/food corrected.
+  Successful native diagnostic remains non-reproduction only; repeated unchanged
+  diagnostic parked. Root nativebindingpassed separately, oldfailure preserved.
+
 ## Latest boundary — 2026-09-08 04:24 UTC
 
 - Tile corrective source fd956c9/host260f163 approved actualGrok4.5/xai-oauth

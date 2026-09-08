@@ -1,0 +1,107 @@
+{
+  "host": "fb3589ac28583242b999ac864ea69c4ef8fa5923",
+  "client": "fd956c91bf09e059359c8e182a33583e2c626cd3",
+  "binary_sha256": "a9b581bab780d2868035941d799d416f0ef9ec68d5eb5a4fe0a62fa29670667f",
+  "source": {
+    "verified_files": 876,
+    "sources_sha256": "189dac149beb6f258f5a79bdf09de43818556a5f06ffa783a608f0113a64d8a4"
+  },
+  "build": {
+    "hostCommit": "fb3589ac28583242b999ac864ea69c4ef8fa5923",
+    "clientCommit": "fd956c91bf09e059359c8e182a33583e2c626cd3",
+    "source": "C:\\Users\\Austen\\274bot-campaign\\host-fb3589a",
+    "exitCode": 0,
+    "startedUtc": "2026-09-08T04:27:50.3330830Z",
+    "endedUtc": "2026-09-08T04:28:23.6290577Z",
+    "command": "cargo build --locked --release -p panel --bin panel-play --features memory-profile-no-alloc",
+    "jobs": 4
+  },
+  "native_tests": {
+    "hostCommit": "fb3589ac28583242b999ac864ea69c4ef8fa5923",
+    "clientCommit": "fd956c91bf09e059359c8e182a33583e2c626cd3",
+    "startedUtc": "2026-09-08T04:29:00.4026293Z",
+    "endedUtc": "2026-09-08T04:29:42.6872618Z",
+    "clientLayoutExit": 0,
+    "clientIntegrationExit": 0,
+    "hostCensusExit": 0,
+    "performanceAcceptance": false
+  },
+  "native_layout": {
+    "tile_models_bytes": 64,
+    "option_box_scene_model_bytes": 8,
+    "scene_model_bytes": 664,
+    "option_scene_model_bytes": 664,
+    "option_box_tile_models_bytes": 8,
+    "pointer_bytes": 8
+  },
+  "test_counts": {
+    "client_layout": 17,
+    "client_integration": 35,
+    "host_census": 2
+  },
+  "integration_review": {
+    "task": "t_037ff8fd",
+    "session": "20260908_002323_df2c86",
+    "model": "grok-4.6",
+    "provider": "xai-oauth",
+    "scope": "pre-native integration only"
+  },
+  "stage": "C:/ProgramData/274bot-Test/tile-boxed-fb3589a",
+  "staged_hash_verified_utc": "2026-09-08T04:31:18.8381400Z",
+  "receipts": {
+    "diagnostics/windows-tile-boxed-build-fb3589a/source-post.json": {
+      "bytes": 114,
+      "sha256": "f3689abf6ebe6ad94fd2123c2763ba4c621c546ea0d1b867c7c8f7641dca24fa"
+    },
+    "diagnostics/windows-tile-boxed-build-fb3589a/rustc.txt": {
+      "bytes": 204,
+      "sha256": "74e2aedc1e7a1158a156783d68c0c0dc5e87eb42dde71587c79dc7c69627de48"
+    },
+    "diagnostics/windows-tile-boxed-build-fb3589a/binary.json": {
+      "bytes": 208,
+      "sha256": "3a16435de4a748249206f2adba91be8e200a1dc5ed32a882a607e3b201507670"
+    },
+    "diagnostics/windows-tile-boxed-build-fb3589a/source-pre.json": {
+      "bytes": 114,
+      "sha256": "f3689abf6ebe6ad94fd2123c2763ba4c621c546ea0d1b867c7c8f7641dca24fa"
+    },
+    "diagnostics/windows-tile-boxed-build-fb3589a/receipt.json": {
+      "bytes": 912,
+      "sha256": "8b2ea9c8b084155cff5b27e0d72a4eec647e22a65c4afe9899cab3499018f2ae"
+    },
+    "diagnostics/windows-tile-boxed-build-fb3589a/build.log": {
+      "bytes": 4636,
+      "sha256": "18e263dfff9a93080a1656861da6cc5d64fb81d3b41a56757d759edd80f7695a"
+    },
+    "diagnostics/windows-tile-boxed-tests-fb3589a/source-post.json": {
+      "bytes": 114,
+      "sha256": "f3689abf6ebe6ad94fd2123c2763ba4c621c546ea0d1b867c7c8f7641dca24fa"
+    },
+    "diagnostics/windows-tile-boxed-tests-fb3589a/client-integration.log": {
+      "bytes": 7182,
+      "sha256": "b53a1d2f4a05ef1c6b8d631d6952227a829e7a255f1ff8376e1e5b0567945512"
+    },
+    "diagnostics/windows-tile-boxed-tests-fb3589a/host-census.log": {
+      "bytes": 2886,
+      "sha256": "79033b5fd855f14ed4f513b983aa6c88f6f4def4c4a5067c4e6695e150050386"
+    },
+    "diagnostics/windows-tile-boxed-tests-fb3589a/client-layout.log": {
+      "bytes": 5362,
+      "sha256": "9e7d1689949f4fc178fabb407e117a5e8012d54f65925dfe815f029717d0d178"
+    },
+    "diagnostics/windows-tile-boxed-tests-fb3589a/source-pre.json": {
+      "bytes": 114,
+      "sha256": "f3689abf6ebe6ad94fd2123c2763ba4c621c546ea0d1b867c7c8f7641dca24fa"
+    },
+    "diagnostics/windows-tile-boxed-tests-fb3589a/receipt.json": {
+      "bytes": 732,
+      "sha256": "86536d67f7fba860adeed19c143eeb6b7c3a514671b5e205b8b2c74ca53d86ff"
+    }
+  },
+  "performance_acceptance": false,
+  "pending": [
+    "Native live CPU/GPU visual and last-FBO/focus/detach proof",
+    "Clean paired/reverse comparison and bounded confirmation",
+    "Campaign final budgets/scaling/lifecycle and whole-branch review"
+  ]
+}
