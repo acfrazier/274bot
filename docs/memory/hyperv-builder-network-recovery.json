@@ -25,8 +25,23 @@
     "client_commit": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
     "source_files": 852,
     "aggregate_sha256": "2ce61b110fe97fb22e8a9dd0ce7b21307c7bfba53c86df1a551df59035a78f5f",
-    "status": "running",
+    "status": "passed",
     "cargo_build_jobs": 2,
-    "native_output": "~/274bot-campaign/source-57d5229/output"
+    "native_output": "~/274bot-campaign/source-57d5229/output",
+    "binary_sha256": "8af5089ddc296bfe978f9edda795ee8ac456f3aae0a24fe2309d0f9633749cf7",
+    "started_utc": "2026-09-08T02:39:48Z",
+    "ended_utc": "2026-09-08T02:43:54Z",
+    "cargo_elapsed": "4m05s",
+    "source_post_verified": true,
+    "evidence_files": {
+      "binary.sha256": "0b43903e8862a37694adb7bc3289f4b73690d5920eb6dd060e5046db25c2a600",
+      "build.log": "2e2f7fa7f1e17ef4ebf926e4076bdb16bc4d1b7a579da5504c82913ba4c7dac9",
+      "ended.txt": "4863b95b8b0b915f66bffb03ec63dba78b90d89f27ed705c42b36a95a359f4d1",
+      "exit-code.txt": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "rustc.txt": "3975d062e234a9f3921955bf6ae5b90f5819df94fa825d057f76b34a35ed0f4d",
+      "source-post.json": "89908739ba63f51ade4bac6d0e7bfbca1d9aa8773c2274d70d5f42fc154825eb",
+      "source-pre.json": "89908739ba63f51ade4bac6d0e7bfbca1d9aa8773c2274d70d5f42fc154825eb",
+      "started.txt": "1a0bffa6ce1041c20fa37d55bc1f40eb9efc1c200db47f5d87b1ccf449af414f"
+    }
   }
 }

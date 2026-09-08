@@ -9,6 +9,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 02:45 UTC
+
+- First native Hyper-V project release build PASSED0 in4m05s; source57d5229
+  pre/post852files identical. Binary SHA8af5089ddc296bfe978f9edda795ee8ac456f3aae0a24fe2309d0f9633749cf7.
+  Eight build receipts copied locally under docs/memory/diagnostics/hyperv-native-build-57d5229;
+  their hashes recorded in hyperv-builder-network-recovery.json. No raw binary
+  copied locally yet. Source toolchain differs from earlier Docker binarye451;
+  do not assume binary equality or a matched comparison from source equality.
+- Native release focused script memory_profile::tests RUNNING, localexec52525,
+  output~/274bot-campaign/source-57d5229/output/test-attribution.log and exitfile.
+  Featurememory-profile, --locked --offline, jobs2; no live frontend/test fixture.
+- Tile probe t_99a0f554 actual implementer running5min, source changes underway
+  in isolated census checkout; no handoff yet. Root has not accepted moving diff.
+- Root independently reran Linux archive verifier successfully with default path;
+  source verifier unchanged. Archive lives campaign diagnostics/linux-failure-attribution-20260908
+  (not docs/memory/diagnostics). Terminal log contains Unknownerror, no persisted
+  slow-tick duration; no additional causal conclusion from log.
+
 ## Latest boundary — 2026-09-08 02:41 UTC
 
 - Hyper-V network recovery completed. Native strict SSH verified original pinned
