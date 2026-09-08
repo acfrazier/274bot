@@ -1,0 +1,23 @@
+{
+  "strict_records_preserve_string_bytes": ["NativeSeams.test_all_record_adversaries", "Differential.test_chunk_splits_inside_fields_and_utf8"],
+  "three_pass_baseline_and_first_peak": ["OriginalFixtures.test_three_pass_baseline_and_first_peak"],
+  "saved_smoke_full_canonical_multiset": ["OriginalFixtures.test_saved_smoke_full_canonical_multiset", "NativeParity.test_saved_smoke"],
+  "lossless_output_and_fail_closed_output_budget": ["NativeParity.test_saved_smoke", "NativeGuards.test_native_output_table_scratch_fail_closed"],
+  "owned_portable_runner_smoke": ["NativeParity.test_saved_smoke"],
+  "synthetic_realloc_multiplicity_zero_and_survivor": ["OriginalFixtures.test_synthetic_realloc_multiplicity_zero_and_survivor"],
+  "time_rejections_and_unbounded_event_tail": ["OriginalFixtures.test_time_rejections_and_unbounded_event_tail"],
+  "record_adversaries": ["NativeSeams.test_all_record_adversaries"],
+  "reference_and_session_adversaries": ["OriginalFixtures.test_reference_and_session_adversaries"],
+  "conversion_hash_suffix_and_canonical_not_sum": ["OriginalFixtures.test_conversion_hash_suffix_and_canonical_not_sum", "core::migration_tests::frozen_identity_hash_suffix_and_midpass_mutation", "core::migration_tests::interpreted_mutation_between_passes"],
+  "each_table_numeric_input_and_depth_cap": ["OriginalFixtures.test_each_table_numeric_input_and_depth_cap", "NativeSeams.test_zero_and_depth", "core::tests::checked_numeric_limits"],
+  "suppression_does_not_change_population": ["OriginalFixtures.test_suppression_does_not_change_population"],
+  "normalization_collisions_new_stop_inline_unresolved": ["NativeSeams.test_original_normalization", "NativeSeams.test_zero_and_depth"],
+  "resource_guards_and_parent_unchanged": ["NativeGuards.test_all_external_samples_and_admission", "NativeGuards.test_native_output_table_scratch_fail_closed", "NativeGuards.test_native_cpu"],
+  "real_owned_wall_kill_reap_and_bounded_failure": ["NativeGuards.test_native_wall_reap"],
+  "resource_failure_reports_exact_guard_and_usage": ["NativeGuards.test_native_output_table_scratch_fail_closed", "NativeGuards.test_native_rss"],
+  "ownership_unknown_callers_are_not_lost": ["NativeSeams.test_original_ownership", "Differential.test_whole_stack_inline_output"],
+  "real_owned_cpu_guard": ["NativeGuards.test_native_cpu"],
+  "manifest_and_receipt_rejections": ["NativeContract.test_duplicate_keys_and_provenance", "NativeContract.test_receipt_warning_options_and_counters"],
+  "linux_native_memory_guard_small_child": ["NativeGuards.test_native_rss"],
+  "linux_native_as_is_bytes_in_owned_child": ["NativeGuards.test_native_address"]
+}

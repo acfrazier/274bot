@@ -552,7 +552,13 @@ DOMAINS = (
 def classify(tables, trace, frozen):
     frames = stack(tables, trace)
     fallback = None
-    unknown_symbol = not frames or any(len(tables.ip(i)) < 3 or not tables.ip(i)[2] for i in frames)
+    # Coverage belongs to the whole original stack, not the owner-selection
+    # prefix. A useful primary frame may precede unresolved inline/caller groups.
+    unknown_symbol = not frames or any(
+        len(tables.ip(i)) < 3 or any(
+            not tables.string(tables.ip(i)[index])
+            for index in range(2, len(tables.ip(i)), 3))
+        for i in frames)
     for ip_id in frames:
         ip = tables.ip(ip_id)
         if len(ip) < 3 or not ip[2]:

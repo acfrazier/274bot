@@ -1,0 +1,25 @@
+[package]
+name = "heaptrack-owner-native"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "heaptrack-owner-child"
+path = "src/main.rs"
+
+[[bin]]
+name = "heaptrack-owner-fixture"
+path = "src/fixture.rs"
+
+[dependencies]
+libc = "=0.2.175"
+serde = { version = "=1.0.219", features = ["derive"] }
+serde_json = { version = "=1.0.143", features = ["preserve_order"] }
+sha2 = "=0.10.9"
+
+[profile.release]
+overflow-checks = true
+panic = "abort"

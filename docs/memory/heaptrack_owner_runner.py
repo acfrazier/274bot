@@ -8,6 +8,7 @@ Linux executor before releasing any production replay.
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -203,7 +204,7 @@ def directory_size(path):
     return total
 
 
-def supervise(command, output, limits, linux) -> dict[str, Any]:
+def supervise(command, output, limits, linux, pass_fds=()) -> dict[str, Any]:
     pending = output/'.pending'
     pending.mkdir(mode=0o700)
     started = time.monotonic()
@@ -213,12 +214,13 @@ def supervise(command, output, limits, linux) -> dict[str, Any]:
     buffer = b''
     done = False
     failure = None
+    progress = None
     child_proc = None
     try:
         # DEVNULL bounds diagnostics; child sends only fixed protocol/error codes.
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', OMP_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1')
         child_proc = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                      stderr=subprocess.DEVNULL, env=env, close_fds=True)
+                                      stderr=subprocess.DEVNULL, env=env, close_fds=True, pass_fds=pass_fds)
         assert child_proc.stdout is not None
         with selectors.DefaultSelector() as selector:
             selector.register(child_proc.stdout, selectors.EVENT_READ)
@@ -242,6 +244,17 @@ def supervise(command, output, limits, linux) -> dict[str, Any]:
                             require(phase == 4 and not done, 'child done protocol')
                             done = True
                         else:
+                            candidate = value.get('progress')
+                            if isinstance(candidate, dict):
+                                progress = {}
+                                for field in ('line', 'offset', 'records', 'charged_bytes'):
+                                    n = candidate.get(field)
+                                    if type(n) is int and 0 <= n <= replay.U64:
+                                        progress[field] = n
+                                for field in ('cpu_s', 'wall_s'):
+                                    n = candidate.get(field)
+                                    if isinstance(n, (int, float)) and not isinstance(n, bool) and math.isfinite(n) and 0 <= n <= 900:
+                                        progress[field] = n
                             raise Invalid('child: '+str(value.get('error', 'validation failure'))[:200])
                 now = time.monotonic()
                 require(now-started <= 3*limits['wall'], 'total wall guard')
@@ -264,7 +277,8 @@ def supervise(command, output, limits, linux) -> dict[str, Any]:
         failure = exc
         setattr(exc, 'replay_resources', dict(child_pid=child_proc.pid if child_proc else None,
             wall_s=time.monotonic()-started, peak_rss_bytes=peak_rss if linux else None,
-            peak_address_bytes=peak_as if linux else None, phase=phase, linux_proc_monitor=linux))
+            peak_address_bytes=peak_as if linux else None, phase=phase, linux_proc_monitor=linux,
+            progress=progress))
         raise
     finally:
         if child_proc is not None:
@@ -292,6 +306,7 @@ def save_json(path, value):
 def run(args):
     output = Path(args.output)
     output.mkdir(mode=0o700)  # fresh path only; never remove or overwrite user files
+    native_fd = None
     try:
         limits = replay.Budget(json.loads(args.limits)).limits
         load_manifest(args.manifest, args.manifest_sha256, args.portable_fixture)
@@ -300,12 +315,41 @@ def run(args):
             admit(limits, linux_memory(), shutil.disk_usage(output).free)
         else:
             require(shutil.disk_usage(output).free >= limits['admission_disk'], 'admission disk guard')
-        command = [sys.executable, '-B', str(Path(__file__).resolve()), '--child',
+        engine = getattr(args, 'engine', 'python')
+        native_path = getattr(args, 'native_executable', None)
+        native_hash = getattr(args, 'native_sha256', None)
+        if engine == 'native':
+            if not isinstance(native_path, str) or not isinstance(native_hash, str):
+                raise Invalid('explicit native executable and hash required')
+            executable = Path(native_path)
+            require(executable.is_absolute() and executable.is_file() and not executable.is_symlink(), 'native executable path')
+            require(len(native_hash) == 64 and all(c in '0123456789abcdef' for c in native_hash), 'native executable hash format')
+            native_fd = os.open(executable, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            def identity(info):
+                return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+            before = identity(os.fstat(native_fd))
+            require(before[2] <= 64*MIB, 'native executable size cap')
+            with os.fdopen(os.dup(native_fd), 'rb') as stream:
+                binary = stream.read(64*MIB+1)
+            require(len(binary) == before[2] and hashlib.sha256(binary).hexdigest() == native_hash, 'native executable hash mismatch')
+            del binary
+            require(identity(os.fstat(native_fd)) == before, 'native executable changed while hashing')
+            # Linux release executes the retained hashed descriptor. macOS
+            # fixture execution also checks the pathname identity at completion.
+            prefix = [f'/proc/self/fd/{native_fd}' if sys.platform == 'linux' else str(executable)]
+        else:
+            require(native_path is None and native_hash is None, 'native identity requires explicit engine')
+            prefix = [sys.executable, '-B', str(Path(__file__).resolve()), '--child']
+        command = prefix + [
             '--manifest', args.manifest, '--manifest-sha256', args.manifest_sha256,
             '--output', str(output), '--limits', args.limits]
         if args.portable_fixture:
             command.append('--portable-fixture')
-        result = supervise(command, output, limits, sys.platform == 'linux')
+        result = supervise(command, output, limits, sys.platform == 'linux',
+                           (native_fd,) if native_fd is not None and sys.platform == 'linux' else ())
+        if native_fd is not None:
+            require(identity(os.fstat(native_fd)) == before and identity(executable.stat()) == before,
+                    'native executable changed during replay')
         # Parent independently verifies every bounded output before publication.
         pending = output/'.pending'
         receipt_data = bounded_bytes(pending/'receipt.json', MIB)
@@ -316,7 +360,8 @@ def run(args):
             require(Path(name).name == name, 'output name')
             data = bounded_bytes(pending/name, limits['output'])
             require(len(data) == entry['bytes'] and hashlib.sha256(data).hexdigest() == entry['sha256'], 'output integrity')
-        result.update(status='validated_prefix_diagnostic', capture_complete=False, acceptance=False,
+        result.update(engine=engine, native_executable_sha256=native_hash,
+            status='validated_prefix_diagnostic', capture_complete=False, acceptance=False,
             manifest_sha256=args.manifest_sha256, receipt_sha256=hashlib.sha256(receipt_data).hexdigest(),
             tooling_sha256={name: hashlib.sha256(bounded_bytes(Path(__file__).with_name(name), MIB)).hexdigest()
                 for name in ('heaptrack_owner_runner.py', 'heaptrack_owner_replay.py')})
@@ -338,6 +383,9 @@ def run(args):
             resources=getattr(exc, 'replay_resources', {}),
             campaign_capture_status='failed_raw_size_guard'))
         return 1
+    finally:
+        if native_fd is not None:
+            os.close(native_fd)
 
 
 def main():
@@ -348,9 +396,13 @@ def main():
     parser.add_argument('--portable-fixture', action='store_true')
     parser.add_argument('--limits', default='{}', help='JSON lower-only guard overrides for small tests')
     parser.add_argument('--child', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('--engine', choices=('python', 'native'), default='python')
+    parser.add_argument('--native-executable')
+    parser.add_argument('--native-sha256')
     args = parser.parse_args()
     if args.child:
         try:
+            require(args.engine == 'python' and args.native_executable is None and args.native_sha256 is None, 'native child cannot use Python wrapper')
             return child(args)
         except BaseException as exc:
             # Invalid messages are internal static reason codes, never raw lines.

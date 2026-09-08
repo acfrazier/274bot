@@ -1,0 +1,1561 @@
+{
+  "status": "portable_probe_passed",
+  "production_read": false,
+  "production_retry_authorized": false,
+  "portable_probe": true,
+  "cases": [
+    {
+      "size_bound": 250000,
+      "wide": false,
+      "bytes": [
+        249990,
+        142886,
+        142886
+      ],
+      "records": [
+        35712,
+        35714
+      ],
+      "repeats": [
+        {
+          "resources": {
+            "wall_s": 0.10707199999999872,
+            "samples": 1,
+            "max_sample_interval_s": 0.001487874999998695,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.0038869997952133417,
+              "cpu_s": 0.0038859999999999997,
+              "cumulative_peak_rss_bytes": 4063232,
+              "charged_capacity_bytes": 1855951,
+              "high_charged_capacity_bytes": 2244024,
+              "line": 35712,
+              "offset": 249990,
+              "records": 35712
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.008175000082701445,
+              "cpu_s": 0.00817,
+              "cumulative_peak_rss_bytes": 4243456,
+              "charged_capacity_bytes": 1868406,
+              "high_charged_capacity_bytes": 2244024,
+              "line": 35714,
+              "offset": 142886,
+              "records": 35714
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.010001000016927719,
+              "cpu_s": 0.009996999999999999,
+              "cumulative_peak_rss_bytes": 4571136,
+              "charged_capacity_bytes": 1887697,
+              "high_charged_capacity_bytes": 2244024,
+              "line": 1,
+              "offset": 6,
+              "records": 35715
+            }
+          ],
+          "bytes_per_cpu_s": [
+            64330931.5491508,
+            17489106.487148102,
+            14292887.86635991
+          ]
+        },
+        {
+          "resources": {
+            "wall_s": 0.10693458300000103,
+            "samples": 1,
+            "max_sample_interval_s": 0.0013374160000001467,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.003800000064074993,
+              "cpu_s": 0.0038,
+              "cumulative_peak_rss_bytes": 4063232,
+              "charged_capacity_bytes": 1855951,
+              "high_charged_capacity_bytes": 2244024,
+              "line": 35712,
+              "offset": 249990,
+              "records": 35712
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.008274999912828207,
+              "cpu_s": 0.008275,
+              "cumulative_peak_rss_bytes": 4079616,
+              "charged_capacity_bytes": 1868406,
+              "high_charged_capacity_bytes": 2244024,
+              "line": 35714,
+              "offset": 142886,
+              "records": 35714
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.009766000090166926,
+              "cpu_s": 0.009766,
+              "cumulative_peak_rss_bytes": 4194304,
+              "charged_capacity_bytes": 1887697,
+              "high_charged_capacity_bytes": 2244024,
+              "line": 1,
+              "offset": 6,
+              "records": 35715
+            }
+          ],
+          "bytes_per_cpu_s": [
+            65786842.10526316,
+            17267190.332326286,
+            14630964.570960475
+          ]
+        },
+        {
+          "resources": {
+            "wall_s": 0.10678091700000003,
+            "samples": 1,
+            "max_sample_interval_s": 0.001228250000000486,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.0038120001554489136,
+              "cpu_s": 0.0038109999999999997,
+              "cumulative_peak_rss_bytes": 4063232,
+              "charged_capacity_bytes": 1855951,
+              "high_charged_capacity_bytes": 2244024,
+              "line": 35712,
+              "offset": 249990,
+              "records": 35712
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.008344999980181456,
+              "cpu_s": 0.008345000000000002,
+              "cumulative_peak_rss_bytes": 4079616,
+              "charged_capacity_bytes": 1868406,
+              "high_charged_capacity_bytes": 2244024,
+              "line": 35714,
+              "offset": 142886,
+              "records": 35714
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.009711999911814928,
+              "cpu_s": 0.009713,
+              "cumulative_peak_rss_bytes": 4194304,
+              "charged_capacity_bytes": 1887697,
+              "high_charged_capacity_bytes": 2244024,
+              "line": 1,
+              "offset": 6,
+              "records": 35715
+            }
+          ],
+          "bytes_per_cpu_s": [
+            65596956.179480456,
+            17122348.71180347,
+            14710799.95881808
+          ]
+        }
+      ],
+      "median_bytes_per_cpu_s": [
+        65596956.179480456,
+        17267190.332326286,
+        14630964.570960475
+      ],
+      "necessary_rate_pass": true
+    },
+    {
+      "size_bound": 250000,
+      "wide": true,
+      "bytes": [
+        249990,
+        47670,
+        47670
+      ],
+      "records": [
+        11908,
+        11910
+      ],
+      "repeats": [
+        {
+          "resources": {
+            "wall_s": 0.10490529099999968,
+            "samples": 1,
+            "max_sample_interval_s": 0.0015029159999997432,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.0017760000191628933,
+              "cpu_s": 0.0017760000000000002,
+              "cumulative_peak_rss_bytes": 3751936,
+              "charged_capacity_bytes": 1665519,
+              "high_charged_capacity_bytes": 2052357,
+              "line": 11908,
+              "offset": 249990,
+              "records": 11908
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.002753000007942319,
+              "cpu_s": 0.0027530000000000002,
+              "cumulative_peak_rss_bytes": 3768320,
+              "charged_capacity_bytes": 1677974,
+              "high_charged_capacity_bytes": 2052357,
+              "line": 11910,
+              "offset": 47670,
+              "records": 11910
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.004201000090688467,
+              "cpu_s": 0.004200999999999999,
+              "cumulative_peak_rss_bytes": 3883008,
+              "charged_capacity_bytes": 1697252,
+              "high_charged_capacity_bytes": 2052357,
+              "line": 1,
+              "offset": 6,
+              "records": 11911
+            }
+          ],
+          "bytes_per_cpu_s": [
+            140760135.1351351,
+            17315655.64838358,
+            11347298.262318498
+          ]
+        },
+        {
+          "resources": {
+            "wall_s": 0.10693924999999993,
+            "samples": 1,
+            "max_sample_interval_s": 0.001368333000000277,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.00178799987770617,
+              "cpu_s": 0.0017879999999999997,
+              "cumulative_peak_rss_bytes": 3751936,
+              "charged_capacity_bytes": 1665519,
+              "high_charged_capacity_bytes": 2052357,
+              "line": 11908,
+              "offset": 249990,
+              "records": 11908
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.0027110001537948847,
+              "cpu_s": 0.002711,
+              "cumulative_peak_rss_bytes": 3768320,
+              "charged_capacity_bytes": 1677974,
+              "high_charged_capacity_bytes": 2052357,
+              "line": 11910,
+              "offset": 47670,
+              "records": 11910
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.00393799995072186,
+              "cpu_s": 0.003938,
+              "cumulative_peak_rss_bytes": 3883008,
+              "charged_capacity_bytes": 1697252,
+              "high_charged_capacity_bytes": 2052357,
+              "line": 1,
+              "offset": 6,
+              "records": 11911
+            }
+          ],
+          "bytes_per_cpu_s": [
+            139815436.24161077,
+            17583917.373662855,
+            12105129.507364145
+          ]
+        },
+        {
+          "resources": {
+            "wall_s": 0.10614200000000018,
+            "samples": 1,
+            "max_sample_interval_s": 0.001331750000000298,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.0017820000648498535,
+              "cpu_s": 0.001781,
+              "cumulative_peak_rss_bytes": 3751936,
+              "charged_capacity_bytes": 1665519,
+              "high_charged_capacity_bytes": 2052357,
+              "line": 11908,
+              "offset": 249990,
+              "records": 11908
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.002722000004723668,
+              "cpu_s": 0.0027220000000000005,
+              "cumulative_peak_rss_bytes": 3768320,
+              "charged_capacity_bytes": 1677974,
+              "high_charged_capacity_bytes": 2052357,
+              "line": 11910,
+              "offset": 47670,
+              "records": 11910
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.004018000094220042,
+              "cpu_s": 0.004015,
+              "cumulative_peak_rss_bytes": 4227072,
+              "charged_capacity_bytes": 1697252,
+              "high_charged_capacity_bytes": 2052357,
+              "line": 1,
+              "offset": 6,
+              "records": 11911
+            }
+          ],
+          "bytes_per_cpu_s": [
+            140364963.50364962,
+            17512858.19250551,
+            11872976.338729762
+          ]
+        }
+      ],
+      "median_bytes_per_cpu_s": [
+        140364963.50364962,
+        17512858.19250551,
+        11872976.338729762
+      ],
+      "necessary_rate_pass": true
+    },
+    {
+      "size_bound": 500000,
+      "wide": false,
+      "bytes": [
+        499988,
+        285742,
+        285742
+      ],
+      "records": [
+        71426,
+        71428
+      ],
+      "repeats": [
+        {
+          "resources": {
+            "wall_s": 0.10704616700000003,
+            "samples": 1,
+            "max_sample_interval_s": 0.0015740419999996647,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.007713999832049012,
+              "cpu_s": 0.0077139999999999995,
+              "cumulative_peak_rss_bytes": 6520832,
+              "charged_capacity_bytes": 3690235,
+              "high_charged_capacity_bytes": 4471524,
+              "line": 71426,
+              "offset": 499988,
+              "records": 71426
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.016402000095695257,
+              "cpu_s": 0.016402,
+              "cumulative_peak_rss_bytes": 6537216,
+              "charged_capacity_bytes": 3702690,
+              "high_charged_capacity_bytes": 4471524,
+              "line": 71428,
+              "offset": 285742,
+              "records": 71428
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.018272999906912446,
+              "cpu_s": 0.018274000000000002,
+              "cumulative_peak_rss_bytes": 6651904,
+              "charged_capacity_bytes": 3721981,
+              "high_charged_capacity_bytes": 4471524,
+              "line": 1,
+              "offset": 6,
+              "records": 71429
+            }
+          ],
+          "bytes_per_cpu_s": [
+            64815659.83925331,
+            17421168.150225583,
+            15636532.778811425
+          ]
+        },
+        {
+          "resources": {
+            "wall_s": 0.10605950000000064,
+            "samples": 1,
+            "max_sample_interval_s": 0.0016177500000011946,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.007702999981120229,
+              "cpu_s": 0.007703000000000001,
+              "cumulative_peak_rss_bytes": 6520832,
+              "charged_capacity_bytes": 3690235,
+              "high_charged_capacity_bytes": 4471524,
+              "line": 71426,
+              "offset": 499988,
+              "records": 71426
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.01622799993492663,
+              "cpu_s": 0.016228,
+              "cumulative_peak_rss_bytes": 6537216,
+              "charged_capacity_bytes": 3702690,
+              "high_charged_capacity_bytes": 4471524,
+              "line": 71428,
+              "offset": 285742,
+              "records": 71428
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.017970000160858035,
+              "cpu_s": 0.017971000000000004,
+              "cumulative_peak_rss_bytes": 6651904,
+              "charged_capacity_bytes": 3721981,
+              "high_charged_capacity_bytes": 4471524,
+              "line": 1,
+              "offset": 6,
+              "records": 71429
+            }
+          ],
+          "bytes_per_cpu_s": [
+            64908217.577567175,
+            17607961.54794183,
+            15900172.50013911
+          ]
+        },
+        {
+          "resources": {
+            "wall_s": 0.10691324999999985,
+            "samples": 1,
+            "max_sample_interval_s": 0.0014729580000008013,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.007660000119358301,
+              "cpu_s": 0.007659999999999999,
+              "cumulative_peak_rss_bytes": 6520832,
+              "charged_capacity_bytes": 3690235,
+              "high_charged_capacity_bytes": 4471524,
+              "line": 71426,
+              "offset": 499988,
+              "records": 71426
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.016482000006362796,
+              "cpu_s": 0.016482000000000004,
+              "cumulative_peak_rss_bytes": 6537216,
+              "charged_capacity_bytes": 3702690,
+              "high_charged_capacity_bytes": 4471524,
+              "line": 71428,
+              "offset": 285742,
+              "records": 71428
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.01823799987323582,
+              "cpu_s": 0.018239,
+              "cumulative_peak_rss_bytes": 6651904,
+              "charged_capacity_bytes": 3721981,
+              "high_charged_capacity_bytes": 4471524,
+              "line": 1,
+              "offset": 6,
+              "records": 71429
+            }
+          ],
+          "bytes_per_cpu_s": [
+            65272584.85639688,
+            17336609.63475306,
+            15666538.7356763
+          ]
+        }
+      ],
+      "median_bytes_per_cpu_s": [
+        64908217.577567175,
+        17421168.150225583,
+        15666538.7356763
+      ],
+      "necessary_rate_pass": true
+    },
+    {
+      "size_bound": 500000,
+      "wide": true,
+      "bytes": [
+        499974,
+        95286,
+        95286
+      ],
+      "records": [
+        23812,
+        23814
+      ],
+      "repeats": [
+        {
+          "resources": {
+            "wall_s": 0.107287083000001,
+            "samples": 1,
+            "max_sample_interval_s": 0.0017257500000003034,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.0035539998207241297,
+              "cpu_s": 0.003555,
+              "cumulative_peak_rss_bytes": 6144000,
+              "charged_capacity_bytes": 3309295,
+              "high_charged_capacity_bytes": 4089349,
+              "line": 23812,
+              "offset": 499974,
+              "records": 23812
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.005436000181362033,
+              "cpu_s": 0.005435000000000001,
+              "cumulative_peak_rss_bytes": 6160384,
+              "charged_capacity_bytes": 3321750,
+              "high_charged_capacity_bytes": 4089349,
+              "line": 23814,
+              "offset": 95286,
+              "records": 23814
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.006711999885737896,
+              "cpu_s": 0.006712000000000001,
+              "cumulative_peak_rss_bytes": 6275072,
+              "charged_capacity_bytes": 3341034,
+              "high_charged_capacity_bytes": 4089349,
+              "line": 1,
+              "offset": 6,
+              "records": 23815
+            }
+          ],
+          "bytes_per_cpu_s": [
+            140639662.44725737,
+            17531922.723091073,
+            14196364.719904646
+          ]
+        },
+        {
+          "resources": {
+            "wall_s": 0.10546645799999865,
+            "samples": 1,
+            "max_sample_interval_s": 0.0014138329999990873,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.0035550000611692667,
+              "cpu_s": 0.003555,
+              "cumulative_peak_rss_bytes": 6144000,
+              "charged_capacity_bytes": 3309295,
+              "high_charged_capacity_bytes": 4089349,
+              "line": 23812,
+              "offset": 499974,
+              "records": 23812
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.005478000035509467,
+              "cpu_s": 0.005478,
+              "cumulative_peak_rss_bytes": 6160384,
+              "charged_capacity_bytes": 3321750,
+              "high_charged_capacity_bytes": 4089349,
+              "line": 23814,
+              "offset": 95286,
+              "records": 23814
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.006780999945476651,
+              "cpu_s": 0.006781000000000001,
+              "cumulative_peak_rss_bytes": 6275072,
+              "charged_capacity_bytes": 3341034,
+              "high_charged_capacity_bytes": 4089349,
+              "line": 1,
+              "offset": 6,
+              "records": 23815
+            }
+          ],
+          "bytes_per_cpu_s": [
+            140639662.44725737,
+            17394304.490690034,
+            14051909.747824803
+          ]
+        },
+        {
+          "resources": {
+            "wall_s": 0.10541329199999971,
+            "samples": 1,
+            "max_sample_interval_s": 0.0016635830000009122,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.0036459998227655888,
+              "cpu_s": 0.003646,
+              "cumulative_peak_rss_bytes": 6750208,
+              "charged_capacity_bytes": 3309295,
+              "high_charged_capacity_bytes": 4089349,
+              "line": 23812,
+              "offset": 499974,
+              "records": 23812
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.00544500001706183,
+              "cpu_s": 0.005438999999999999,
+              "cumulative_peak_rss_bytes": 6930432,
+              "charged_capacity_bytes": 3321750,
+              "high_charged_capacity_bytes": 4089349,
+              "line": 23814,
+              "offset": 95286,
+              "records": 23814
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.00724199996329844,
+              "cpu_s": 0.007211,
+              "cumulative_peak_rss_bytes": 7438336,
+              "charged_capacity_bytes": 3341034,
+              "high_charged_capacity_bytes": 4089349,
+              "line": 1,
+              "offset": 6,
+              "records": 23815
+            }
+          ],
+          "bytes_per_cpu_s": [
+            137129456.93911135,
+            17519029.23331495,
+            13213978.643738732
+          ]
+        }
+      ],
+      "median_bytes_per_cpu_s": [
+        140639662.44725737,
+        17519029.23331495,
+        14051909.747824803
+      ],
+      "necessary_rate_pass": true
+    },
+    {
+      "size_bound": 1850048,
+      "wide": false,
+      "bytes": [
+        1850036,
+        1057198,
+        1057198
+      ],
+      "records": [
+        264290,
+        264292
+      ],
+      "repeats": [
+        {
+          "resources": {
+            "wall_s": 0.20950316599999752,
+            "samples": 2,
+            "max_sample_interval_s": 0.10507000000000133,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.028356000082567334,
+              "cpu_s": 0.028357,
+              "cumulative_peak_rss_bytes": 18169856,
+              "charged_capacity_bytes": 14224699,
+              "high_charged_capacity_bytes": 17365284,
+              "line": 264290,
+              "offset": 1850036,
+              "records": 264290
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.06011299998499453,
+              "cpu_s": 0.060107,
+              "cumulative_peak_rss_bytes": 18350080,
+              "charged_capacity_bytes": 14237154,
+              "high_charged_capacity_bytes": 17365284,
+              "line": 264292,
+              "offset": 1057198,
+              "records": 264292
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.06460399995557964,
+              "cpu_s": 0.06460500000000001,
+              "cumulative_peak_rss_bytes": 18776064,
+              "charged_capacity_bytes": 14256467,
+              "high_charged_capacity_bytes": 17365284,
+              "line": 1,
+              "offset": 6,
+              "records": 264293
+            }
+          ],
+          "bytes_per_cpu_s": [
+            65240892.90122368,
+            17588600.329412546,
+            16364027.552047053
+          ]
+        },
+        {
+          "resources": {
+            "wall_s": 0.20829195800000022,
+            "samples": 2,
+            "max_sample_interval_s": 0.10080058400000169,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.02821699995547533,
+              "cpu_s": 0.028214000000000003,
+              "cumulative_peak_rss_bytes": 18677760,
+              "charged_capacity_bytes": 14224699,
+              "high_charged_capacity_bytes": 17365284,
+              "line": 264290,
+              "offset": 1850036,
+              "records": 264290
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.05988200008869171,
+              "cpu_s": 0.05988399999999999,
+              "cumulative_peak_rss_bytes": 18907136,
+              "charged_capacity_bytes": 14237154,
+              "high_charged_capacity_bytes": 17365284,
+              "line": 264292,
+              "offset": 1057198,
+              "records": 264292
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.06176099996082485,
+              "cpu_s": 0.061754,
+              "cumulative_peak_rss_bytes": 19382272,
+              "charged_capacity_bytes": 14256467,
+              "high_charged_capacity_bytes": 17365284,
+              "line": 1,
+              "offset": 6,
+              "records": 264293
+            }
+          ],
+          "bytes_per_cpu_s": [
+            65571560.218331315,
+            17654097.92265046,
+            17119506.42873336
+          ]
+        },
+        {
+          "resources": {
+            "wall_s": 0.21101150000000146,
+            "samples": 2,
+            "max_sample_interval_s": 0.10506345800000005,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.027661999920383096,
+              "cpu_s": 0.027662,
+              "cumulative_peak_rss_bytes": 18169856,
+              "charged_capacity_bytes": 14224699,
+              "high_charged_capacity_bytes": 17365284,
+              "line": 264290,
+              "offset": 1850036,
+              "records": 264290
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.05983699997887015,
+              "cpu_s": 0.059838,
+              "cumulative_peak_rss_bytes": 18186240,
+              "charged_capacity_bytes": 14237154,
+              "high_charged_capacity_bytes": 17365284,
+              "line": 264292,
+              "offset": 1057198,
+              "records": 264292
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.06424400000832975,
+              "cpu_s": 0.06409999999999999,
+              "cumulative_peak_rss_bytes": 19136512,
+              "charged_capacity_bytes": 14256467,
+              "high_charged_capacity_bytes": 17365284,
+              "line": 1,
+              "offset": 6,
+              "records": 264293
+            }
+          ],
+          "bytes_per_cpu_s": [
+            66880052.056973465,
+            17667669.373976402,
+            16492948.51794072
+          ]
+        }
+      ],
+      "median_bytes_per_cpu_s": [
+        65571560.218331315,
+        17654097.92265046,
+        16492948.51794072
+      ],
+      "necessary_rate_pass": true
+    },
+    {
+      "size_bound": 1850048,
+      "wide": true,
+      "bytes": [
+        1850022,
+        352438,
+        352438
+      ],
+      "records": [
+        88100,
+        88102
+      ],
+      "repeats": [
+        {
+          "resources": {
+            "wall_s": 0.10612516599999822,
+            "samples": 1,
+            "max_sample_interval_s": 0.0024401659999995218,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.013290999922901392,
+              "cpu_s": 0.013290999999999999,
+              "cumulative_peak_rss_bytes": 15351808,
+              "charged_capacity_bytes": 12815151,
+              "high_charged_capacity_bytes": 15954501,
+              "line": 88100,
+              "offset": 1850022,
+              "records": 88100
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.019821000052616,
+              "cpu_s": 0.019821000000000002,
+              "cumulative_peak_rss_bytes": 15368192,
+              "charged_capacity_bytes": 12827606,
+              "high_charged_capacity_bytes": 15954501,
+              "line": 88102,
+              "offset": 352438,
+              "records": 88102
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.0218149998690933,
+              "cpu_s": 0.021814999999999994,
+              "cumulative_peak_rss_bytes": 15482880,
+              "charged_capacity_bytes": 12846898,
+              "high_charged_capacity_bytes": 15954501,
+              "line": 1,
+              "offset": 6,
+              "records": 88103
+            }
+          ],
+          "bytes_per_cpu_s": [
+            139193589.64712965,
+            17781040.310781494,
+            16155764.382305758
+          ]
+        },
+        {
+          "resources": {
+            "wall_s": 0.10780291700000078,
+            "samples": 1,
+            "max_sample_interval_s": 0.0024367919999974674,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.013196000130847096,
+              "cpu_s": 0.013196000000000001,
+              "cumulative_peak_rss_bytes": 15351808,
+              "charged_capacity_bytes": 12815151,
+              "high_charged_capacity_bytes": 15954501,
+              "line": 88100,
+              "offset": 1850022,
+              "records": 88100
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.019985999912023544,
+              "cpu_s": 0.019986999999999998,
+              "cumulative_peak_rss_bytes": 15368192,
+              "charged_capacity_bytes": 12827606,
+              "high_charged_capacity_bytes": 15954501,
+              "line": 88102,
+              "offset": 352438,
+              "records": 88102
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.021779000060632825,
+              "cpu_s": 0.021778000000000006,
+              "cumulative_peak_rss_bytes": 15482880,
+              "charged_capacity_bytes": 12846898,
+              "high_charged_capacity_bytes": 15954501,
+              "line": 1,
+              "offset": 6,
+              "records": 88103
+            }
+          ],
+          "bytes_per_cpu_s": [
+            140195665.3531373,
+            17633361.685095314,
+            16183212.416199831
+          ]
+        },
+        {
+          "resources": {
+            "wall_s": 0.10784766699999793,
+            "samples": 1,
+            "max_sample_interval_s": 0.002449999999999619,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.01293299999088049,
+              "cpu_s": 0.012934,
+              "cumulative_peak_rss_bytes": 15351808,
+              "charged_capacity_bytes": 12815151,
+              "high_charged_capacity_bytes": 15954501,
+              "line": 88100,
+              "offset": 1850022,
+              "records": 88100
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.02000600006431341,
+              "cpu_s": 0.020005,
+              "cumulative_peak_rss_bytes": 15368192,
+              "charged_capacity_bytes": 12827606,
+              "high_charged_capacity_bytes": 15954501,
+              "line": 88102,
+              "offset": 352438,
+              "records": 88102
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.021763999946415424,
+              "cpu_s": 0.021765,
+              "cumulative_peak_rss_bytes": 15482880,
+              "charged_capacity_bytes": 12846898,
+              "high_charged_capacity_bytes": 15954501,
+              "line": 1,
+              "offset": 6,
+              "records": 88103
+            }
+          ],
+          "bytes_per_cpu_s": [
+            143035565.17705274,
+            17617495.626093477,
+            16192878.474615209
+          ]
+        }
+      ],
+      "median_bytes_per_cpu_s": [
+        140195665.3531373,
+        17633361.685095314,
+        16183212.416199831
+      ],
+      "necessary_rate_pass": true
+    },
+    {
+      "size_bound": 1000,
+      "wide": "diversity",
+      "bytes": [
+        20961,
+        32689,
+        32689
+      ],
+      "records": [
+        2005,
+        4005
+      ],
+      "repeats": [
+        {
+          "resources": {
+            "wall_s": 0.11041583299999758,
+            "samples": 1,
+            "max_sample_interval_s": 0.002209666999998916,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.0003349999897181988,
+              "cpu_s": 0.0003349999999999998,
+              "cumulative_peak_rss_bytes": 2375680,
+              "charged_capacity_bytes": 260003,
+              "high_charged_capacity_bytes": 641868,
+              "line": 2005,
+              "offset": 20961,
+              "records": 2005
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.0008720001205801964,
+              "cpu_s": 0.0008720000000000004,
+              "cumulative_peak_rss_bytes": 2490368,
+              "charged_capacity_bytes": 459914,
+              "high_charged_capacity_bytes": 755257,
+              "line": 4005,
+              "offset": 32689,
+              "records": 4005
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.016580000054091215,
+              "cpu_s": 0.016281,
+              "cumulative_peak_rss_bytes": 6258688,
+              "charged_capacity_bytes": 4028220,
+              "high_charged_capacity_bytes": 4112232,
+              "line": 1,
+              "offset": 10,
+              "records": 4006
+            }
+          ],
+          "bytes_per_cpu_s": [
+            62570149.253731385,
+            37487385.3211009,
+            2007800.5036545666
+          ]
+        },
+        {
+          "resources": {
+            "wall_s": 0.11064958299999716,
+            "samples": 1,
+            "max_sample_interval_s": 0.002435915999999594,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.0003309999592602253,
+              "cpu_s": 0.0003309999999999997,
+              "cumulative_peak_rss_bytes": 2375680,
+              "charged_capacity_bytes": 260003,
+              "high_charged_capacity_bytes": 641868,
+              "line": 2005,
+              "offset": 20961,
+              "records": 2005
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.0008849999867379665,
+              "cpu_s": 0.0008849999999999999,
+              "cumulative_peak_rss_bytes": 2490368,
+              "charged_capacity_bytes": 459914,
+              "high_charged_capacity_bytes": 755257,
+              "line": 4005,
+              "offset": 32689,
+              "records": 4005
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.01600399985909462,
+              "cpu_s": 0.015743999999999998,
+              "cumulative_peak_rss_bytes": 6258688,
+              "charged_capacity_bytes": 4028220,
+              "high_charged_capacity_bytes": 4112232,
+              "line": 1,
+              "offset": 10,
+              "records": 4006
+            }
+          ],
+          "bytes_per_cpu_s": [
+            63326283.987915464,
+            36936723.163841814,
+            2076283.028455285
+          ]
+        },
+        {
+          "resources": {
+            "wall_s": 0.11059658299999953,
+            "samples": 1,
+            "max_sample_interval_s": 0.002493458000000004,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.0003269999288022518,
+              "cpu_s": 0.00032700000000000003,
+              "cumulative_peak_rss_bytes": 2375680,
+              "charged_capacity_bytes": 260003,
+              "high_charged_capacity_bytes": 641868,
+              "line": 2005,
+              "offset": 20961,
+              "records": 2005
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.0008640000596642494,
+              "cpu_s": 0.0008639999999999998,
+              "cumulative_peak_rss_bytes": 2490368,
+              "charged_capacity_bytes": 459914,
+              "high_charged_capacity_bytes": 755257,
+              "line": 4005,
+              "offset": 32689,
+              "records": 4005
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.015912999864667654,
+              "cpu_s": 0.015542,
+              "cumulative_peak_rss_bytes": 6553600,
+              "charged_capacity_bytes": 4028220,
+              "high_charged_capacity_bytes": 4112232,
+              "line": 1,
+              "offset": 10,
+              "records": 4006
+            }
+          ],
+          "bytes_per_cpu_s": [
+            64100917.43119265,
+            37834490.74074075,
+            2103268.5626045554
+          ]
+        }
+      ],
+      "median_bytes_per_cpu_s": [
+        63326283.987915464,
+        37487385.3211009,
+        2076283.028455285
+      ],
+      "necessary_rate_pass": null
+    },
+    {
+      "size_bound": 65530,
+      "wide": "symbol",
+      "bytes": [
+        57,
+        65609,
+        65609
+      ],
+      "records": [
+        7,
+        9
+      ],
+      "repeats": [
+        {
+          "resources": {
+            "wall_s": 0.10516179200000053,
+            "samples": 1,
+            "max_sample_interval_s": 0.0026483339999998634,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 2.4999957531690598e-05,
+              "cpu_s": 2.499999999999985e-05,
+              "cumulative_peak_rss_bytes": 3014656,
+              "charged_capacity_bytes": 939373,
+              "high_charged_capacity_bytes": 1198983,
+              "line": 7,
+              "offset": 57,
+              "records": 7
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.00018500001169741154,
+              "cpu_s": 0.00018500000000000027,
+              "cumulative_peak_rss_bytes": 3211264,
+              "charged_capacity_bytes": 1017383,
+              "high_charged_capacity_bytes": 1405161,
+              "line": 9,
+              "offset": 65609,
+              "records": 9
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.002434000140056014,
+              "cpu_s": 0.0024349999999999997,
+              "cumulative_peak_rss_bytes": 3604480,
+              "charged_capacity_bytes": 1171377,
+              "high_charged_capacity_bytes": 1491652,
+              "line": 1,
+              "offset": 131071,
+              "records": 10
+            }
+          ],
+          "bytes_per_cpu_s": [
+            2280000.000000014,
+            354643243.24324274,
+            26944147.843942508
+          ]
+        },
+        {
+          "resources": {
+            "wall_s": 0.10821091700000096,
+            "samples": 1,
+            "max_sample_interval_s": 0.0024632500000016933,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 2.5999965146183968e-05,
+              "cpu_s": 2.599999999999998e-05,
+              "cumulative_peak_rss_bytes": 3014656,
+              "charged_capacity_bytes": 939373,
+              "high_charged_capacity_bytes": 1198983,
+              "line": 7,
+              "offset": 57,
+              "records": 7
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.00018400000408291817,
+              "cpu_s": 0.00018499999999999983,
+              "cumulative_peak_rss_bytes": 3211264,
+              "charged_capacity_bytes": 1017383,
+              "high_charged_capacity_bytes": 1405161,
+              "line": 9,
+              "offset": 65609,
+              "records": 9
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.0022910002153366804,
+              "cpu_s": 0.002291,
+              "cumulative_peak_rss_bytes": 3604480,
+              "charged_capacity_bytes": 1171377,
+              "high_charged_capacity_bytes": 1491652,
+              "line": 1,
+              "offset": 131071,
+              "records": 10
+            }
+          ],
+          "bytes_per_cpu_s": [
+            2192307.692307694,
+            354643243.2432436,
+            28637712.789175034
+          ]
+        },
+        {
+          "resources": {
+            "wall_s": 0.10761654200000237,
+            "samples": 1,
+            "max_sample_interval_s": 0.00250029200000057,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 2.7999980375170708e-05,
+              "cpu_s": 2.7999999999999813e-05,
+              "cumulative_peak_rss_bytes": 3014656,
+              "charged_capacity_bytes": 939373,
+              "high_charged_capacity_bytes": 1198983,
+              "line": 7,
+              "offset": 57,
+              "records": 7
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.0001860000193119049,
+              "cpu_s": 0.00018599999999999997,
+              "cumulative_peak_rss_bytes": 3211264,
+              "charged_capacity_bytes": 1017383,
+              "high_charged_capacity_bytes": 1405161,
+              "line": 9,
+              "offset": 65609,
+              "records": 9
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.002306999871507287,
+              "cpu_s": 0.0023070000000000005,
+              "cumulative_peak_rss_bytes": 3604480,
+              "charged_capacity_bytes": 1171377,
+              "high_charged_capacity_bytes": 1491652,
+              "line": 1,
+              "offset": 131071,
+              "records": 10
+            }
+          ],
+          "bytes_per_cpu_s": [
+            2035714.2857142992,
+            352736559.139785,
+            28439098.396185517
+          ]
+        }
+      ],
+      "median_bytes_per_cpu_s": [
+        2192307.692307694,
+        354643243.24324274,
+        28439098.396185517
+      ],
+      "necessary_rate_pass": null
+    },
+    {
+      "size_bound": 1048574,
+      "wide": "near-line-cap",
+      "bytes": [
+        1048633,
+        1048642,
+        1048642
+      ],
+      "records": [
+        8,
+        10
+      ],
+      "repeats": [
+        {
+          "resources": {
+            "wall_s": 0.10800204200000252,
+            "samples": 1,
+            "max_sample_interval_s": 0.002581084000002676,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.0023880000226199627,
+              "cpu_s": 0.0023879999999999995,
+              "cumulative_peak_rss_bytes": 16547840,
+              "charged_capacity_bytes": 12604781,
+              "high_charged_capacity_bytes": 16008299,
+              "line": 8,
+              "offset": 1048633,
+              "records": 8
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.0024690001737326384,
+              "cpu_s": 0.00247,
+              "cumulative_peak_rss_bytes": 16564224,
+              "charged_capacity_bytes": 12617236,
+              "high_charged_capacity_bytes": 16014586,
+              "line": 10,
+              "offset": 1048642,
+              "records": 10
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.0035119999665766954,
+              "cpu_s": 0.0035120000000000012,
+              "cumulative_peak_rss_bytes": 16695296,
+              "charged_capacity_bytes": 12640166,
+              "high_charged_capacity_bytes": 16026216,
+              "line": 1,
+              "offset": 6,
+              "records": 11
+            }
+          ],
+          "bytes_per_cpu_s": [
+            439126046.90117264,
+            424551417.0040486,
+            298588268.7927106
+          ]
+        },
+        {
+          "resources": {
+            "wall_s": 0.10824645799999999,
+            "samples": 1,
+            "max_sample_interval_s": 0.002678082999999276,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.0024609998799860477,
+              "cpu_s": 0.0024600000000000004,
+              "cumulative_peak_rss_bytes": 16547840,
+              "charged_capacity_bytes": 12604781,
+              "high_charged_capacity_bytes": 16008299,
+              "line": 8,
+              "offset": 1048633,
+              "records": 8
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.0024330001324415207,
+              "cpu_s": 0.0024339999999999987,
+              "cumulative_peak_rss_bytes": 16564224,
+              "charged_capacity_bytes": 12617236,
+              "high_charged_capacity_bytes": 16014586,
+              "line": 10,
+              "offset": 1048642,
+              "records": 10
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.003530999878421426,
+              "cpu_s": 0.0035309999999999994,
+              "cumulative_peak_rss_bytes": 16695296,
+              "charged_capacity_bytes": 12640166,
+              "high_charged_capacity_bytes": 16026216,
+              "line": 1,
+              "offset": 6,
+              "records": 11
+            }
+          ],
+          "bytes_per_cpu_s": [
+            426273577.2357723,
+            430830731.3064916,
+            296981591.61710566
+          ]
+        },
+        {
+          "resources": {
+            "wall_s": 0.10824429199999841,
+            "samples": 1,
+            "max_sample_interval_s": 0.002646374999997647,
+            "peak_rss_bytes": null,
+            "peak_address_bytes": null,
+            "owned_child_reaped": true
+          },
+          "phases": [
+            {
+              "phase": 1,
+              "wall_s": 0.0024510000366717577,
+              "cpu_s": 0.002451,
+              "cumulative_peak_rss_bytes": 16547840,
+              "charged_capacity_bytes": 12604781,
+              "high_charged_capacity_bytes": 16008299,
+              "line": 8,
+              "offset": 1048633,
+              "records": 8
+            },
+            {
+              "phase": 2,
+              "wall_s": 0.0023560000117868185,
+              "cpu_s": 0.0023560000000000005,
+              "cumulative_peak_rss_bytes": 16564224,
+              "charged_capacity_bytes": 12617236,
+              "high_charged_capacity_bytes": 16014586,
+              "line": 10,
+              "offset": 1048642,
+              "records": 10
+            },
+            {
+              "phase": 3,
+              "wall_s": 0.003462999826297164,
+              "cpu_s": 0.003464,
+              "cumulative_peak_rss_bytes": 16695296,
+              "charged_capacity_bytes": 12640166,
+              "high_charged_capacity_bytes": 16026216,
+              "line": 1,
+              "offset": 6,
+              "records": 11
+            }
+          ],
+          "bytes_per_cpu_s": [
+            427838841.2892697,
+            445094227.5042444,
+            302725750.5773672
+          ]
+        }
+      ],
+      "median_bytes_per_cpu_s": [
+        427838841.2892697,
+        430830731.3064916,
+        298588268.7927106
+      ],
+      "necessary_rate_pass": null
+    }
+  ],
+  "required_bytes_per_cpu_s": [
+    11938945,
+    4503128,
+    4503128
+  ],
+  "executable_sha256": {
+    "child": "ef72a0f204e720dccc58afa41a26fcaefc26cdf7a2605cea5e3703fd67348df0",
+    "fixture": "332f1a2e1ea74f21aa5cd9f87f091e77dbaa530790153164b5fa756462bf0220",
+    "core_tests": "7e3bbc3b512482348f071a234622e0926cbec07207484a359547fdb64464dd0a"
+  },
+  "core_tests": "\nrunning 11 tests\ntest core::migration_tests::actual_stream_open_counts ... ok\ntest core::migration_tests::frozen_identity_hash_suffix_and_midpass_mutation ... ok\ntest core::migration_tests::interpreted_mutation_between_passes ... ok\ntest core::migration_tests::normalized_batching_exact_bytes ... ok\ntest core::tests::capacity_accounts_for_transient_buffers ... ok\ntest core::tests::checked_numeric_limits ... ok\ntest core::tests::hard_collision_probe_bound ... ok\ntest core::tests::inner_work_pulse_observes_expiry ... ok\ntest core::tests::phase_end_must_check_before_reset ... ok\ntest core::tests::rehash_tombstones_and_seeded_churn ... ok\ntest core::tests::render_and_sort_stalls_fail_closed ... ok\n\ntest result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.11s\n\n",
+  "tests": "test_baseline_zero_multiplicity_and_tail (test_differential.Differential) ... ok\ntest_chunk_boundaries (test_differential.Differential) ... ok\ntest_chunk_splits_inside_fields_and_utf8 (test_differential.Differential) ... ok\ntest_lower_caps (test_differential.Differential) ... ok\ntest_native_grammar (test_differential.Differential) ... ok\ntest_reference_adversaries (test_differential.Differential) ... ok\ntest_seeded_random_pairs (test_differential.Differential) ... ok\ntest_whole_stack_inline_output (test_differential.Differential) ... ok\ntest_duplicate_keys_and_provenance (test_native_contract.NativeContract) ... ok\ntest_receipt_warning_options_and_counters (test_native_contract.NativeContract) ... ok\ntest_all_external_samples_and_admission (test_native_guards.NativeGuards) ... ok\ntest_explicit_hash_and_no_fallback (test_native_guards.NativeGuards) ... ok\ntest_native_address (test_native_guards.NativeGuards) ... skipped 'Linux native RLIMIT_AS requires root qualification'\ntest_native_cpu (test_native_guards.NativeGuards) ... ok\ntest_native_output_table_scratch_fail_closed (test_native_guards.NativeGuards) ... ok\ntest_native_phase_end (test_native_guards.NativeGuards) ... ok\ntest_native_protocol_failures (test_native_guards.NativeGuards) ... ok\ntest_native_rss (test_native_guards.NativeGuards) ... ok\ntest_native_wall_reap (test_native_guards.NativeGuards) ... ok\ntest_saved_smoke (test_native_parity.NativeParity) ... ok\ntest_all_record_adversaries (test_native_seams.NativeSeams) ... ok\ntest_original_normalization (test_native_seams.NativeSeams) ... ok\ntest_original_ownership (test_native_seams.NativeSeams) ... ok\ntest_zero_and_depth (test_native_seams.NativeSeams) ... ok\ntest_conversion_hash_suffix_and_canonical_not_sum (test_original_fixtures.OriginalFixtures) ... ok\ntest_each_table_numeric_input_and_depth_cap (test_original_fixtures.OriginalFixtures) ... ok\ntest_lossless_output_and_fail_closed_output_budget (test_original_fixtures.OriginalFixtures) ... ok\ntest_reference_and_session_adversaries (test_original_fixtures.OriginalFixtures) ... ok\ntest_saved_smoke_full_canonical_multiset (test_original_fixtures.OriginalFixtures) ... ok\ntest_suppression_does_not_change_population (test_original_fixtures.OriginalFixtures) ... ok\ntest_synthetic_realloc_multiplicity_zero_and_survivor (test_original_fixtures.OriginalFixtures) ... ok\ntest_three_pass_baseline_and_first_peak (test_original_fixtures.OriginalFixtures) ... ok\ntest_time_rejections_and_unbounded_event_tail (test_original_fixtures.OriginalFixtures) ... ok\ntest_unresolved_inline_caller_is_not_lost (test_reference_contract.WholeStackUnknownContract) ... ok\ntest_unresolved_inline_owner_is_not_lost (test_reference_contract.WholeStackUnknownContract) ... ok\ntest_unresolved_primary_caller_control (test_reference_contract.WholeStackUnknownContract) ... ok\n\n----------------------------------------------------------------------\nRan 36 tests in 9.190s\n\nOK (skipped=1)\n",
+  "capacity": "unproven: small warm fixtures do not bound production live population, tables, symbols, output or I/O",
+  "wall_s": 19.031362125
+}
