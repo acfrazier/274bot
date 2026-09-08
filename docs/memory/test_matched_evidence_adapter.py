@@ -863,6 +863,8 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
         keys["terminal_size"] = None
         keys["sampler_duration_mode"] = "fixed"
         keys["sampler_duration_s_requested"] = 1
+        keys["cpu_fallback"] = False
+        keys["requested_backend"] = "gpu"
         keys["host_conditions"] = value
         self.assertFalse(mea._deep_missing(value))
         self.assertEqual(mea.match_keys_complete(keys), "host_conditions")
@@ -1365,6 +1367,164 @@ class MatchedEvidenceAdapterTests(unittest.TestCase):
             diff,
         )
 
+    def test_backend_match_fields_fail_closed_not_normalized_to_gpu(self):
+        """Malformed/partial/contradictory backend meta must not look like legacy GPU."""
+        legit_panel = {"frontend": "panel"}
+        legit_keys = rm.resource_match_keys_from_meta(legit_panel)
+        self.assertEqual(
+            rm.backend_match_fields_from_meta(legit_panel), (False, "gpu"))
+        self.assertEqual(
+            rm.backend_match_fields_from_meta({"frontend": "tui"}), (False, "none"))
+        # Missing frontend is not invented as panel.
+        self.assertEqual(rm.backend_match_fields_from_meta({}), (False, "none"))
+        self.assertFalse(legit_keys["cpu_fallback"])
+        self.assertEqual(legit_keys["requested_backend"], "gpu")
+
+        valid_cpu = {
+            "frontend": "panel",
+            "cpu_fallback": True,
+            "requested_backend": "cpu_fallback",
+        }
+        valid_gpu = {
+            "frontend": "panel",
+            "cpu_fallback": False,
+            "requested_backend": "gpu",
+        }
+        self.assertEqual(
+            rm.backend_match_fields_from_meta(valid_cpu), (True, "cpu_fallback"))
+        self.assertEqual(
+            rm.backend_match_fields_from_meta(valid_gpu), (False, "gpu"))
+        self.assertEqual(
+            mea.construct_match_keys(valid_cpu)["requested_backend"], "cpu_fallback")
+        self.assertEqual(
+            mea.construct_match_keys(valid_gpu)["requested_backend"], "gpu")
+
+        # Root proof bug: string bool + gpu label must NOT become False/gpu.
+        bad = {
+            "frontend": "panel",
+            "cpu_fallback": "true",
+            "requested_backend": "gpu",
+        }
+        self.assertEqual(rm.backend_match_fields_from_meta(bad), (None, None))
+        bad_keys = rm.resource_match_keys_from_meta(bad)
+        self.assertIsNone(bad_keys["cpu_fallback"])
+        self.assertIsNone(bad_keys["requested_backend"])
+        self.assertNotEqual(
+            (bad_keys["cpu_fallback"], bad_keys["requested_backend"]),
+            (legit_keys["cpu_fallback"], legit_keys["requested_backend"]),
+        )
+        self.assertIsNone(mea.construct_match_keys(bad)["cpu_fallback"])
+        # match_keys_complete: null/non-bool cpu_fallback and contradictory backend fail.
+        filled: dict = {k: "ok" for k in mea.MATCH_KEY_FIELDS}
+        filled.update({
+            "frontend": "panel",
+            "n": 1,
+            "workload": "idle",
+            "terminal": False,
+            "terminal_size": None,
+            "sampler_duration_mode": "fixed",
+            "sampler_duration_s_requested": 1.0,
+            "host_conditions": {"ok": True},
+            "cpu_fallback": None,
+            "requested_backend": "gpu",
+        })
+        self.assertEqual(mea.match_keys_complete(filled), "cpu_fallback")
+        filled["cpu_fallback"] = "true"
+        self.assertEqual(mea.match_keys_complete(filled), "cpu_fallback")
+        filled["cpu_fallback"] = False
+        filled["requested_backend"] = "cpu_fallback"  # contradictory
+        self.assertEqual(mea.match_keys_complete(filled), "requested_backend")
+        filled["requested_backend"] = "gpu"
+        self.assertIsNone(mea.match_keys_complete(filled))
+
+        cases = [
+            {"frontend": "panel", "cpu_fallback": None, "requested_backend": "gpu"},
+            {"frontend": "panel", "cpu_fallback": True, "requested_backend": None},
+            {"frontend": "panel", "cpu_fallback": "false", "requested_backend": "gpu"},
+            {"frontend": "panel", "cpu_fallback": 1, "requested_backend": "cpu_fallback"},
+            {"frontend": "panel", "cpu_fallback": False, "requested_backend": "vulkan"},
+            {"frontend": "panel", "cpu_fallback": False, "requested_backend": "cpu"},
+            {"frontend": "panel", "cpu_fallback": True},  # partial
+            {"frontend": "panel", "requested_backend": "gpu"},  # partial
+            {"frontend": "panel", "cpu_fallback": True, "requested_backend": "gpu"},  # contradictory
+            {"frontend": "panel", "cpu_fallback": False, "requested_backend": "cpu_fallback"},
+            {"frontend": "panel", "cpu_fallback": True, "requested_backend": "none"},
+        ]
+        for meta in cases:
+            with self.subTest(meta=meta):
+                cpu_fb, rb = rm.backend_match_fields_from_meta(meta)
+                self.assertIsNone(cpu_fb)
+                self.assertIsNone(rb)
+                keys = rm.resource_match_keys_from_meta(meta)
+                self.assertIsNone(keys["cpu_fallback"])
+                self.assertIsNone(keys["requested_backend"])
+                ckeys = mea.construct_match_keys(meta)
+                self.assertIsNone(ckeys["cpu_fallback"])
+                self.assertIsNone(ckeys["requested_backend"])
+
+        # Resource gate: malformed backend → unavailable, not GPU-shaped metadata.
+        samples = [
+            {
+                "phase": "observe", "elapsed_s": 0.0,
+                "process_cpu_user_s": 0.0, "process_cpu_system_s": 0.0,
+                "resident_bytes": 100, "peak_resident_bytes": 100,
+            },
+            {
+                "phase": "observe", "elapsed_s": 10.0,
+                "process_cpu_user_s": 1.0, "process_cpu_system_s": 0.5,
+                "resident_bytes": 100, "peak_resident_bytes": 100,
+            },
+        ]
+        res = rm.evaluate_resources(bad, samples, workload_qualification={"qualified": True})
+        self.assertEqual(res["status"], "unavailable")
+        self.assertEqual(res["reason"], "invalid_backend_match_fields")
+        self.assertIsNone(res["match_metadata"]["cpu_fallback"])
+        self.assertIsNone(res["match_metadata"]["requested_backend"])
+
+        # CPU-versus-GPU comparison rejection via match_metadata.
+        base_md = {
+            "frontend": "panel",
+            "n": 1,
+            "workload": "active",
+            "nav_pack_sha256": "np",
+            "nav_flags_sha256": "nf",
+            "renderer_settings": {"a": 1},
+            "cache_settings": {"b": 2},
+            "catalog_sha256": "cat",
+            "feature_flags": {"f": True},
+            "allocator_provenance": "system",
+            "client_sources_sha256": "client",
+            "cpu_fallback": False,
+            "requested_backend": "gpu",
+        }
+        gpu_run = {
+            "status": "available",
+            "overhead": "measured",
+            "cpu_cores": 0.1,
+            "resident_median_bytes": 100,
+            "contaminated": False,
+            "match_metadata": dict(base_md),
+            "side_provenance": {
+                "binary_sha256": _tag("bin-a"),
+                "host_sources_sha256": _tag("host-a"),
+            },
+        }
+        cpu_run = dict(gpu_run)
+        cpu_run["match_metadata"] = dict(
+            base_md, cpu_fallback=True, requested_backend="cpu_fallback")
+        cpu_run["side_provenance"] = dict(
+            gpu_run["side_provenance"], binary_sha256=_tag("bin-b"))
+        out = rm.compare_matched_runs(cpu_run, gpu_run)
+        self.assertEqual(out["reason"], "mismatched_provenance_or_settings")
+        self.assertNotEqual(out.get("cpu_non_regression"), True)
+
+        malformed_run = dict(gpu_run)
+        malformed_run["match_metadata"] = dict(
+            base_md, cpu_fallback=None, requested_backend=None)
+        out_bad = rm.compare_matched_runs(malformed_run, gpu_run)
+        self.assertEqual(out_bad["reason"], "invalid_backend_match_fields")
+        self.assertNotEqual(out_bad.get("cpu_non_regression"), True)
+
     def test_failure_capture_mismatch_not_dropped_by_whitelist(self):
         """compare_matched_runs must not drop instrumentation flags from equality."""
         base = {
@@ -1799,6 +1959,7 @@ class NativeRuntimeContractTests(unittest.TestCase):
         base.update(
             frontend='panel', n=1, terminal=False, terminal_size=None,
             sampler_duration_mode='fixed', sampler_duration_s_requested=1,
+            cpu_fallback=False, requested_backend='gpu',
         )
         base['host_conditions'] = HOST_CONDITIONS
         self.assertIsNone(

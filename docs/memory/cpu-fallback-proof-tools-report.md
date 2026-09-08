@@ -35,12 +35,27 @@ misread as a GPU target or paired against a GPU control.
 
 - `cpu_fallback` and `requested_backend` are match keys so GPU control cannot
   pair with a CPU candidate.
-- Legacy metadata without the fields defaults to `cpu_fallback=False` and
-  frontend-derived backend (`panel`→`gpu`, else `none`).
-- CLI↔metadata validation accepts legacy absence only when the CLI is not
-  requesting CPU; explicit `--cpu-fallback` requires recorded metadata.
+- Shared `backend_match_fields_from_meta`: legacy defaults (`False` +
+  panel→`gpu` / else `none`) apply **only when both fields are absent**.
+  Missing frontend is never invented as panel.
+- Explicit presence (null, non-bool, string bool, unknown backend, partial
+  fields, contradictory CPU/GPU intent) resolves to `(None, None)` fail-closed
+  through helpers, `match_keys_complete`, `evaluate_resources`
+  (`invalid_backend_match_fields`), and `compare_matched_runs` — never coerced
+  to legacy GPU `(False, gpu)`.
+- CLI↔metadata validation accepts legacy absence only when both fields are
+  absent and the CLI is not requesting CPU; any explicit presence must resolve
+  coherently.
 - GPU cadence / backend rejection paths unchanged (CPU still fails GPU interval
   adapter).
+
+## Correction (t_8d302a38)
+
+Root proof: `resource_match_keys_from_meta({frontend:panel,cpu_fallback:"true",
+requested_backend:gpu})` previously returned `cpu_fallback=False` /
+`requested_backend=gpu`, indistinguishable from legitimate legacy GPU.
+`construct_match_keys` shared the non-bool→False coercion. Fixed so malformed
+metadata stays unavailable at helper and gate paths.
 
 ## Tests run
 
@@ -50,6 +65,7 @@ python3 -m unittest test_run_diagnostic -v
 python3 -m unittest \
   test_run_managed_cell.ManagedCellTests.test_requested_backend_spec_matches_diagnostic_argv \
   test_matched_evidence_adapter.MatchedEvidenceAdapterTests.test_cpu_fallback_requested_backend_match_keys \
+  test_matched_evidence_adapter.MatchedEvidenceAdapterTests.test_backend_match_fields_fail_closed_not_normalized_to_gpu \
   -v
 python3 -m unittest test_run_managed_cell test_matched_evidence_adapter -v
 ```
@@ -59,12 +75,20 @@ Results:
 - `test_run_diagnostic`: 22 tests OK (includes inherited scrub, explicit set,
   TUI reject, GPU-completion reject, focused-one+nav with CPU).
 - Managed + matched adapter suites: OK (requested_backend argv consistency;
-  GPU/CPU pair mismatch).
+  GPU/CPU pair mismatch; fail-closed malformed backend cases).
+- Exact fail-closed coverage in
+  `test_backend_match_fields_fail_closed_not_normalized_to_gpu`:
+  legacy both-absent panel/tui/missing-frontend; valid CPU True/cpu_fallback and
+  GPU False/gpu; string-bool+gpu root proof; null/non-bool/unknown backend;
+  partial fields; contradictory intent; `evaluate_resources` unavailable;
+  CPU-vs-GPU `compare_matched_runs` rejection; malformed compare rejection.
 - Full `test_reference_metrics` also exercised: two failures from missing
   historical diagnostic fixtures on this worktree
   (`low-end-reference-screen-…`, `input-interior-conservation-mismatch.json`);
   not caused by this change. Synthetic
   `test_gpu_interval_adapter_rejects_cpu_fallback_backend` passed.
+  Primary fixture / full-reference tests remain honestly not passed until root
+  integration with fixtures.
 
 ## Limits
 

@@ -2584,6 +2584,42 @@ RESOURCE_PROVENANCE_FIELDS = (
     "host_sources_sha256", "client_sources_sha256", "binary_sha256",
 )
 
+VALID_REQUESTED_BACKENDS = frozenset({"cpu_fallback", "gpu", "none"})
+
+
+def backend_match_fields_from_meta(meta: dict) -> tuple[Any, Any]:
+    """Resolve ``cpu_fallback`` + ``requested_backend`` for match keys.
+
+    Legacy defaults apply ONLY when both fields are absent: ``False`` and
+    frontend-derived backend (``panel``→``gpu``, otherwise ``none``). Missing
+    frontend is not invented as panel.
+
+    Any explicit presence (including null/partial) must be a coherent bool plus
+    known backend with matching intent; otherwise ``(None, None)`` fail-closed —
+    never coerce non-bool/unknown/contradictory values to GPU.
+    """
+    if not isinstance(meta, dict):
+        return None, None
+    has_cpu = "cpu_fallback" in meta
+    has_rb = "requested_backend" in meta
+    if not has_cpu and not has_rb:
+        if meta.get("frontend") == "panel":
+            return False, "gpu"
+        return False, "none"
+    if not has_cpu or not has_rb:
+        return None, None
+    cpu_fb = meta.get("cpu_fallback")
+    rb = meta.get("requested_backend")
+    if type(cpu_fb) is not bool:
+        return None, None
+    if type(rb) is not str or rb not in VALID_REQUESTED_BACKENDS:
+        return None, None
+    if cpu_fb and rb != "cpu_fallback":
+        return None, None
+    if (not cpu_fb) and rb == "cpu_fallback":
+        return None, None
+    return cpu_fb, rb
+
 
 def resource_match_keys_from_meta(meta: dict) -> dict:
     """Equality-checked match keys only (no binary/host source side digests).
@@ -2591,20 +2627,9 @@ def resource_match_keys_from_meta(meta: dict) -> dict:
     Never default TUI null render_policy to \"none\" — absent stays None/unavailable.
     """
     out = {key: meta.get(key) for key in RESOURCE_MATCH_KEY_FIELDS}
-    # Legacy launcher omitted explicit backend request fields.
-    cpu_fb = out.get('cpu_fallback')
-    if type(cpu_fb) is not bool:
-        cpu_fb = False
-    out['cpu_fallback'] = cpu_fb
-    rb = out.get('requested_backend')
-    if rb is None:
-        if cpu_fb:
-            rb = 'cpu_fallback'
-        elif meta.get('frontend') == 'panel':
-            rb = 'gpu'
-        else:
-            rb = 'none'
-    out['requested_backend'] = rb
+    cpu_fb, rb = backend_match_fields_from_meta(meta if isinstance(meta, dict) else {})
+    out["cpu_fallback"] = cpu_fb
+    out["requested_backend"] = rb
     return out
 
 
@@ -2640,6 +2665,9 @@ def evaluate_resources(
             "overhead": "unknown"}
     if not isinstance(meta, dict) or not isinstance(samples, list):
         return {**base, "status": "unavailable", "reason": "malformed_resource_input"}
+    match_md = base.get("match_metadata") or {}
+    if match_md.get("cpu_fallback") is None or match_md.get("requested_backend") is None:
+        return {**base, "status": "unavailable", "reason": "invalid_backend_match_fields"}
     qualification_reason = None
     if workload_qualification is None:
         qualification_reason = "missing_workload_qualification"
@@ -2772,6 +2800,27 @@ def compare_matched_runs(candidate: dict, reference: dict, *, cpu_margin: float 
             return {}
         side = set(RESOURCE_SIDE_PROVENANCE_FIELDS)
         return {k: v for k, v in md.items() if k not in side}
+
+    for run in (candidate, reference):
+        md = run.get("match_metadata")
+        if not isinstance(md, dict):
+            continue
+        # Synthetics may omit both keys (pre-backend tooling). Once either key is
+        # present, values must be coherent — never treat None/malformed as GPU.
+        if "cpu_fallback" not in md and "requested_backend" not in md:
+            continue
+        cpu_fb = md.get("cpu_fallback")
+        rb = md.get("requested_backend")
+        if cpu_fb is None or rb is None or type(cpu_fb) is not bool or (
+                type(rb) is not str or rb not in VALID_REQUESTED_BACKENDS):
+            out["reason"] = "invalid_backend_match_fields"
+            return out
+        if cpu_fb and rb != "cpu_fallback":
+            out["reason"] = "invalid_backend_match_fields"
+            return out
+        if (not cpu_fb) and rb == "cpu_fallback":
+            out["reason"] = "invalid_backend_match_fields"
+            return out
 
     if _match_only(candidate.get("match_metadata")) != _match_only(reference.get("match_metadata")):
         out["reason"] = "mismatched_provenance_or_settings"

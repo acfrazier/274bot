@@ -460,19 +460,9 @@ def construct_match_keys(meta: dict, *, extras: Optional[dict] = None) -> dict:
     out: dict[str, Any] = {}
     # Legacy launcher lacked this opt-in flag; its validated CLI proves off.
     out['tui_input_probes'] = meta.get('tui_input_probes', False)
-    # Legacy launcher lacked explicit backend request; default from frontend.
-    cpu_fb = meta.get('cpu_fallback', False)
-    if type(cpu_fb) is not bool:
-        cpu_fb = False
+    # Backend fields: legacy defaults only when both absent; else fail-closed.
+    cpu_fb, rb = rm.backend_match_fields_from_meta(meta if isinstance(meta, dict) else {})
     out['cpu_fallback'] = cpu_fb
-    rb = meta.get('requested_backend')
-    if rb is None:
-        if cpu_fb:
-            rb = 'cpu_fallback'
-        elif meta.get('frontend') == 'panel':
-            rb = 'gpu'
-        else:
-            rb = 'none'
     out['requested_backend'] = rb
     for key in MATCH_KEY_FIELDS:
         if key in (
@@ -547,6 +537,20 @@ def match_keys_complete(keys: dict) -> Optional[str]:
         if key == "host_conditions":
             if not _host_conditions_complete(val):
                 return key
+            continue
+        if key == "cpu_fallback":
+            if type(val) is not bool:
+                return key
+            continue
+        if key == "requested_backend":
+            if type(val) is not str or val not in rm.VALID_REQUESTED_BACKENDS:
+                return key
+            cpu_fb = keys.get("cpu_fallback")
+            if type(cpu_fb) is bool:
+                if cpu_fb and val != "cpu_fallback":
+                    return key
+                if (not cpu_fb) and val == "cpu_fallback":
+                    return key
             continue
         if _deep_missing(val):
             return key
@@ -637,19 +641,25 @@ def _validate_effective_cli(receipt: dict, meta: dict) -> Optional[str]:
     probe_flag = meta.get('tui_input_probes', False)
     if type(probe_flag) is not bool or probe_flag != args.tui_input_probes:
         return 'receipt_cli_metadata_mismatch:tui_input_probes'
-    # Legacy launcher omitted cpu_fallback/requested_backend; CLI default proves GPU/none.
+    # Legacy launcher omitted both backend fields; CLI default proves GPU/none.
+    # Any explicit presence must resolve coherently — never coerce malformed→GPU.
     cpu_flag = bool(getattr(args, 'cpu_fallback', False))
-    meta_cpu = meta.get('cpu_fallback', False)
-    if type(meta_cpu) is not bool or meta_cpu != cpu_flag:
-        return 'receipt_cli_metadata_mismatch:cpu_fallback'
     expected_backend = rd.requested_backend(args)
-    meta_backend = meta.get('requested_backend')
-    if meta_backend is None:
+    has_cpu = 'cpu_fallback' in meta
+    has_rb = 'requested_backend' in meta
+    if not has_cpu and not has_rb:
         if cpu_flag:
+            return 'receipt_cli_metadata_mismatch:cpu_fallback'
+    else:
+        meta_cpu, meta_backend = rm.backend_match_fields_from_meta(meta)
+        if meta_cpu is None or meta_backend is None:
+            if has_cpu and type(meta.get('cpu_fallback')) is not bool:
+                return 'receipt_cli_metadata_mismatch:cpu_fallback'
             return 'receipt_cli_metadata_mismatch:requested_backend'
-        meta_backend = expected_backend
-    if meta_backend != expected_backend:
-        return 'receipt_cli_metadata_mismatch:requested_backend'
+        if meta_cpu != cpu_flag:
+            return 'receipt_cli_metadata_mismatch:cpu_fallback'
+        if meta_backend != expected_backend:
+            return 'receipt_cli_metadata_mismatch:requested_backend'
     if args.build_manifest is not None:
         if canonical_path(args.build_manifest) != canonical_path(receipt.get('manifest_path')):
             return 'receipt_cli_manifest_mismatch'
