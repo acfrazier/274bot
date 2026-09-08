@@ -11,6 +11,23 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 20:43 UTC
+
+- Replay implementation t_2aba75a5 is live under actual gpt-6-astra/openai-codex,
+  session20260908_163728_6cc611. No formal code approval or production replay yet.
+- Read-only Concord executor preparation confirms boot2217ec26-dc3e-47a3-a700-d3fafb34163f,
+  MemAvailable1047093248 bytes and disk11838119936 bytes; no detected frontend,
+  cargo/rustc, panel or profiler process. Existing raw/interpreted sizes match
+  inventory; hashes were not rechecked by this preflight. Receipt:
+  diagnostics/owner-replay-executor-preflight-2042/receipt.json.
+  This passes current headroom thresholds only, not native executor release.
+  After exact-code review: stage tooling, prove Linux guards with small fixtures,
+  then recheck admission before any existing-data replay. No new capture released.
+- Operator is restarting Windows again after a personal FFXIV task. Continue
+  Windows/Hyper-V hold until operator confirms finished; no work launched there.
+- Separate 289 B corrective commits4543271/efa0169 remain under actual Grok4.5/xai
+  review session20260908_163828_81eb89; do not release C before accepted completion.
+
 ## Latest boundary — 2026-09-08 20:38 UTC
 
 - Failedcapture result eba3f97 APPROVED as bounded evidence only, actual
