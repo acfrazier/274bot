@@ -78,7 +78,20 @@ class BoxedTileControls(unittest.TestCase):
         self.assertIn("performanceAcceptance=$false", archive)
         check = (HERE / "check-tile-probe-contract.py").read_text()
         self.assertIn('os.environ.get("BOT_RENDER_OWNER_CENSUS") != "1"', check)
-        self.assertIn('contract_id == cell_id + "-contractcheck"', check)
+        self.assertIn('contract_id == target_cell_id + "-contractcheck"', check)
+        self.assertIn('args.no_diagnostics', check)
+        self.assertIn('args.failure_capture', check)
+        self.assertIn('TILE_BOXED_TARGET_CELL_ID', check)
+        self.assertIn('TILE_BOXED_PREFLIGHT_CELL_ID', contract)
+        self.assertIn('run-$contractCellId.py', contract)
+
+    def test_prepare_default_receipt_matches_contract_writer(self):
+        prepare = (HERE / "prepare-tile-probe.ps1").read_text()
+        contract = (HERE / "run-contractcheck-tile-probe.ps1").read_text()
+        expected = "tile-boxed-contract-' + $CellId + '-contractcheck.json"
+        self.assertIn(expected, prepare)
+        self.assertIn("tile-boxed-contract-'+$contractId+'.json", contract)
+        self.assertIn("C:\\Users\\BotTest\\274bot-runs", prepare)
 
     def test_each_control_is_present_and_python_parses(self):
         for path in HERE.iterdir():

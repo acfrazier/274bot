@@ -18,12 +18,15 @@ $contractId = $CellId + '-contractcheck'
 $stage = if($BuildRole -eq 'baseline'){'C:\ProgramData\274bot-Test\renderer-owner-census-9268890'}else{'C:\ProgramData\274bot-Test\tile-boxed-fb3589a'}
 $preflight = Join-Path 'C:\ProgramData\274bot-Test\renderer-owner-census-9268890' ('preflight-tile-boxed-'+$CellId+'.json')
 if(-not (Test-Path $preflight -PathType Leaf)){ throw "Privileged host preflight receipt missing: $preflight" }
-Copy-Item (Join-Path $PSScriptRoot 'run-tile-boxed-focused-one.py') (Join-Path $stage ("run-$CellId.py")) -Force
+$contractCellId = $CellId + '-contractcheck'
+Copy-Item (Join-Path $PSScriptRoot 'run-tile-boxed-focused-one.py') (Join-Path $stage ("run-$contractCellId.py")) -Force
 $python = 'C:\Program Files\Python314\python.exe'
 $env:TILE_BOXED_CONTRACT_ID = $contractId
 $env:TILE_BOXED_BUILD_ROLE = $BuildRole
 $env:TILE_BOXED_MODE = $Mode
-$env:TILE_BOXED_CELL_ID = $CellId
+$env:TILE_BOXED_CELL_ID = $contractCellId
+$env:TILE_BOXED_TARGET_CELL_ID = $CellId
+$env:TILE_BOXED_PREFLIGHT_CELL_ID = $CellId
 $env:TILE_BOXED_HOST_ROOT = $HostRoot
 Push-Location $HostRoot
 try { & $python (Join-Path $PSScriptRoot 'check-tile-probe-contract.py') }

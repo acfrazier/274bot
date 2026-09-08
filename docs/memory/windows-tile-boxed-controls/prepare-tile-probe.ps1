@@ -18,7 +18,7 @@ $env:TILE_BOXED_BUILD_ROLE = $BuildRole
 $env:TILE_BOXED_MODE = $Mode
 $env:TILE_BOXED_CELL_ID = $CellId
 $env:TILE_BOXED_HOST_ROOT = $HostRoot
-if(-not $ContractReceipt){ $ContractReceipt = Join-Path ([Environment]::GetFolderPath('UserProfile')) ('274bot-runs\tile-boxed-contract-' + $CellId + '.json') }
+if(-not $ContractReceipt){ $ContractReceipt = 'C:\Users\BotTest\274bot-runs\tile-boxed-contract-' + $CellId + '-contractcheck.json' }
 
 # This is the privileged host half of the no-launch gate.  Get-VM and the
 # native preflight must run in Austen's SSH/admin context; the real controller

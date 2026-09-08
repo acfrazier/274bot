@@ -98,7 +98,8 @@ os.environ.update({
 catalog = home / ".274bot/js-scripts.json"
 assert json.loads(catalog.read_text()) == [{"name": "trade_bot", "path": str(home / "274bot-workspaces/b4b686f/host/crates/script/tests/fixtures/trade_bot.ts")}]
 clean_environment()
-preflight = pathlib.Path(r"C:\ProgramData\274bot-Test\renderer-owner-census-9268890") / ("preflight-tile-boxed-" + cell_id + ".json")
+preflight_cell_id = os.environ.get("TILE_BOXED_PREFLIGHT_CELL_ID", cell_id)
+preflight = pathlib.Path(r"C:\ProgramData\274bot-Test\renderer-owner-census-9268890") / ("preflight-tile-boxed-" + preflight_cell_id + ".json")
 assert preflight.is_file(), "run paired preflight first"
 preflight_record = json.loads(preflight.read_text(encoding="utf-8-sig"))
 manifest = out / "build-manifest.json"
