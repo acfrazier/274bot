@@ -1,0 +1,96 @@
+{
+  "schema": "current-per-bot-owner-ledger/v1",
+  "phase": "O1-Phase-A",
+  "status": "diagnostic_only",
+  "acceptance": false,
+  "frozen": {
+    "host": "c0709aba2f8b45e42193225cf8f4e7325b5ca9bf",
+    "client": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+    "binary_sha256": "a0c6eb0bed428fefad58530b177caae16ba2df6c7153544bb0852e16485591f9",
+    "allocator": "System",
+    "features": ["memory-profile-no-alloc"],
+    "snapshot_dedup": false,
+    "source_delta": "diagnostics/current-per-bot-owner-preflight/current-source-delta.json"
+  },
+  "native_layout": {
+    "receipt": "diagnostics/current-per-bot-owner-layout/owner-layout-1827/layout-receipt.json",
+    "kind": "compile_only_native_type_layout_not_heap_occupancy",
+    "target": "x86_64-unknown-linux-gnu",
+    "rustc": "1.98.0",
+    "llvm": "22.1.8",
+    "verified_source_files": 1113,
+    "no_program_executed": true,
+    "executed_client": false,
+    "types": {
+      "Client": {"size": 28048, "align": 8},
+      "World": {"size": 248, "align": 8},
+      "Packet": {"size": 2112, "align": 8},
+      "SlotScript": {"size": 1272, "align": 8},
+      "SnapshotFingerprint": {"size": 752, "align": 8},
+      "Square": {"size": 184, "align": 8},
+      "Sprite": {"size": 84, "align": 4},
+      "ClientPlayer": {"size": 496, "align": 8},
+      "ClientNpc": {"size": 360, "align": 8},
+      "CollisionMap": {"size": 40, "align": 8},
+      "GameSnapshot": {"size": 1384, "align": 8},
+      "WidgetView": {"size": 344, "align": 8},
+      "SideTabView": {"size": 40, "align": 8},
+      "LocView": {"size": 144, "align": 8},
+      "ItemView": {"size": 88, "align": 8},
+      "NpcView": {"size": 184, "align": 8},
+      "PlayerView": {"size": 160, "align": 8},
+      "SceneView": {"size": 48, "align": 8},
+      "ChatLineView": {"size": 56, "align": 8},
+      "StatView": {"size": 48, "align": 8},
+      "GroundItemView": {"size": 96, "align": 8},
+      "Option_Box_Square": {"size": 8, "align": 8},
+      "Option_ClientPlayer": {"size": 496, "align": 8},
+      "Option_ClientNpc": {"size": 360, "align": 8},
+      "Option_SnapshotFingerprint": {"size": 752, "align": 8}
+    }
+  },
+  "archives": {
+    "n1": {"verified_payload_files": 101, "steady_rss_bytes": 184887296, "peak_rss_bytes": 185495552, "process_cpu_cores": 0.048992949, "after_script_stop_rss_bytes": 171008000, "after_script_stop_active": 0, "after_script_stop_v8_isolates": 0},
+    "n16": {"verified_payload_files": 93, "steady_rss_bytes": 546076672, "peak_rss_bytes": 627003392, "process_cpu_cores": 0.561746044, "after_script_stop_rss_bytes": 433799168, "after_script_stop_active": 0, "after_script_stop_v8_isolates": 0}
+  },
+  "descriptive_pair_only": {
+    "rss_per_added_active_bot_mib": 22.963802,
+    "cpu_per_added_active_bot_cores": 0.03418354,
+    "intercept_is_extrapolation": true,
+    "raw_resource_provenance": "missing_resource_provenance",
+    "helper_overhead": "unmeasured",
+    "post_stop_is_post_join": false
+  },
+  "formulas": {
+    "vec_element_reservation": "capacity * size_of::<T>()",
+    "world_grid_slots": "max_level * max_tile_x * max_tile_z",
+    "world_squares_slot_bytes": "world_grid_slots * 8",
+    "world_dynamic_sprite_slot_bytes": "5000 * size_of::<Option<usize>>()",
+    "world_occluder_slot_bytes": "(4 * 500) * size_of::<Option<Occlude>>()",
+    "world_occlusion_cycle_bytes": "max_level * (max_tile_x + 1) * (max_tile_z + 1) * 4",
+    "limits": ["nested allocations excluded", "allocator rounding excluded", "RSS page retention excluded", "serialized length is not vector capacity"]
+  },
+  "owners": [
+    {"id":"shared_cache","scope":"shared","lifetime":"process/client lifetime","measured_occupancy":"unknown","next_discriminator":"shared_vs_private allocation families"},
+    {"id":"shared_ifaces_template","scope":"shared plus per-client COW","lifetime":"process plus client overlays","measured_occupancy":"unknown","next_discriminator":"COW count and nested capacities"},
+    {"id":"client_world_entities","scope":"per_bot","lifetime":"slot thread through join","fixed_headers_bytes":{"Client":28048,"World":248,"Square":184,"ClientPlayer":496,"ClientNpc":360},"measured_occupancy":"unknown","next_discriminator":"live capacities and occupied boxes"},
+    {"id":"game_snapshot_and_families","scope":"per_bot","lifetime":"slot through join","fixed_headers_bytes":{"GameSnapshot":1384,"WidgetView":344,"LocView":144,"ItemView":88,"NpcView":184,"PlayerView":160},"measured_occupancy":"unknown","next_discriminator":"family capacities and two-epoch overlap"},
+    {"id":"script_isolate_fingerprint_ipc","scope":"per_bot","lifetime":"Start through script Stop; client survives","fixed_headers_bytes":{"SlotScript":1272,"SnapshotFingerprint":752,"Packet":2112},"measured_occupancy":"unknown","next_discriminator":"Rust capacities separated from V8/native"},
+    {"id":"nav_status_queues","scope":"per_bot maps plus shared NavWorld","lifetime":"until consumed/slot join","measured_occupancy":"unknown","next_discriminator":"queue capacities and Arc counts"},
+    {"id":"tui_harness","scope":"process","lifetime":"process lifetime","measured_occupancy":"unknown","next_discriminator":"keep out of per-bot ranking"}
+  ],
+  "selected_discriminator": "actual live allocation families and capacities, with snapshot equality/retention as secondary",
+  "prohibited_claims": ["causal RSS owner", "CPU owner from elapsed spans", "post-join observation", "dedup saving with snapshot-dedup OFF", "performance acceptance", "linear scaling"],
+  "source_anchors": [
+    "crates/host-play/src/lib.rs:2925-2935",
+    "crates/host-play/src/lib.rs:3046-3092",
+    "crates/host-play/src/lib.rs:3373-3379",
+    "crates/host-play/src/memory.rs:1014-1078",
+    "crates/api/src/snapshot.rs:532-687",
+    "crates/script/src/slot.rs:26-52",
+    "crates/script/src/slot.rs:174-185",
+    "crates/script/src/isolate_fb.rs:1386-1448",
+    "vendor/fr-client-rust/crates/client/src/client/client.rs:291-379",
+    "vendor/fr-client-rust/crates/client/src/core/world.rs:39-104"
+  ]
+}
