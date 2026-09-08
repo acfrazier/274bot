@@ -11,6 +11,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 17:10 UTC
+
+- Independent Grok4.5 evidence review t_d6305d97 completed; report commitdeae538
+  approves currentN16 only as diagnostic calibration, numbers/hashes reproduced.
+  See current-native-tui-calibration-review.md. One samebuildN1 paired with the
+  preservedN16 is supported for approximate fixed/incremental RSS+CPU attribution.
+- New bounded controller option t_3070776b actualLuna running in isolated
+  codex/tui-n1-attribution-controller. Root will test native and launch only after
+  samecard review. No N1 cell launched; originalN16 must not be rerun.
+  Read-only VPS check17:09 confirms kernel139/server726start1761/binarya0c6eb0b
+  unchanged and no conflicting frontends/builds.
+- 289 setup c236b0e corrected falseRSA blocker (test cursor reset) and local-save
+  login semantics; samecardt_2b8506ea actualGrok4.5review live.
+- Standaloneclient preparation t_1e031c52 actualLuna running inFR-client-289:
+  add explicit --revision 274|289 with274default, existing library construction.
+  This enables standalone verification; host-stack integration stays parked.
+  Parentt_95bef768 remains parked pending setup/revision-option review/liveproof.
+
 ## Operator sequencing — 2026-09-08 16:57 UTC
 
 Continue standalone289 server/client verification as the authorized sidebar.
