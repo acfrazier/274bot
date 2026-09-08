@@ -1,0 +1,24 @@
+{
+  "controls_commit": "bbf26a0756598c396443b7ee1eb379d8f71f0359",
+  "review": {
+    "model": "grok-4.5",
+    "provider": "xai-oauth",
+    "session": "20260908_005228_fb5bd1",
+    "verdict": "approved bounded contract review"
+  },
+  "native_ast": "pass 6 PowerShell scripts",
+  "privileged_preflights": "pass both roles and both modes",
+  "native_contract": "failed before frontend launch: BotTest Copy-Item access denied to protected binary stage",
+  "client_started": false,
+  "performance_acceptance": false,
+  "corrective_task": "t_44aafe61",
+  "files": {
+    "tile-boxed-contractcheck-all-0055.log": "f9392f33198921c45788558c1179d0b8fcbba4275dcf7d03d5a83d656ece65a3",
+    "tile-boxed-contractcheck-all-0055-exit.txt": "f1b2f662800122bed0ff255693df89c4487fbdcf453d3524a42d4ec20c3d9c04",
+    "preflight-tile-boxed-baseline-focused-one-nativecheck-20260908-0055.json": "e307d3165053b6144aab7d0b17880bac261863bc2059698853b4023476bf7825",
+    "preflight-tile-boxed-baseline-focused-plus-background-nativecheck-20260908-0055.json": "e3dc893621d369c0112bec8facee2b5f66262a2ded0d150521b977916a21acf5",
+    "transfer-receipt.json": "7bf480716f374b8addb9e49ba1657accff9abd32cbda5fda63c93e09a08e57f9",
+    "preflight-tile-boxed-candidate-focused-plus-background-nativecheck-20260908-0055.json": "ddb4e7b11edf8dec8313c720dcc8f4722c66a9742f12c34c638e60c0ae432067",
+    "preflight-tile-boxed-candidate-focused-one-nativecheck-20260908-0055.json": "7418fb16e744319d85c20d6d41cddcd5e1d3c271e79906ce09957724dd4b13f2"
+  }
+}
