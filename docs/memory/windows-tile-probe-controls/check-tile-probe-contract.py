@@ -24,7 +24,7 @@ def no_launch(argv):
     assert mea._native_windows_conditions_complete(conditions), "Incomplete native conditions"
     assert os.environ["BOT_RENDER_OWNER_CENSUS"] == "1"
     assert os.environ["BOT_RENDER_PROFILE"] == "1"
-    checks.append({"id": spec["id"], "checked": True, "launched": False,
+    checks.append({"id": spec["id"], "checked": True, "launched": False, "client_started": False,
                    "server_pid": pf["server_pid"], "native_conditions_complete": True,
                    "owner_census_opt_in": True})
     return 0

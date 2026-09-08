@@ -19,7 +19,8 @@ Frozen inputs
 
 Controls
 
-- `prepare-tile-probe.ps1`: no-launch gate. Runs the real PowerShell AST parser, native preflight, Python producer tests, and `check-tile-probe-contract.py`. The latter is adapted from the previously executed BotTest hook: it runs the actual controller with `run_managed_cell.main` replaced by a no-launch function that loads the emitted spec, invokes the real spec validator, diagnostic argv parser/consistency checks, `managed.preflight` against actual files/environment/server, and the actual native binding-condition reader. It uses a distinct `...-contractcheck-tile` ID and explicitly proves no client and no scheduled task were started.
+- `prepare-tile-probe.ps1`: privileged host half of the no-launch gate. It runs the real PowerShell AST parser and native preflight for both the live cell and distinct `...-contractcheck-tile` cell, then refuses readiness unless the separate BotTest contract receipt proves `launched=false`, `client_started=false`, and complete native conditions.
+- `run-contractcheck-tile-probe.ps1`: bounded BotTest Interactive Limited half. It reads the privileged preflight receipt, then runs `check-tile-probe-contract.py` against the actual controller with `run_managed_cell.main` replaced by a no-launch function. That invokes the real spec validator, diagnostic argv parser/consistency checks, `managed.preflight`, and native binding-condition reader without creating a task or starting the client.
 - `preflight-tile-probe.ps1`: requires the frozen stage, builder VM Off/0 assigned memory, no build/frontend/VM overlap, quiet services stopped, active unlocked BotTest console, AC/display/brightness/power/DxDiag evidence, Intel Vulkan route evidence, and fresh server PID/name/creation identity on port 43594. It writes a per-cell preflight receipt.
 - `launch-tile-probe.ps1`: requires the per-cell preflight and frozen stage, rejects existing output/task names, and launches one bounded scheduled task with an 18-minute execution limit.
 - `poll-tile-probe.ps1`: receipt-based completion/startup reader. `-Final` requires completion exit 0 and an emitted startup record whose requested and selected adapter are both `Intel(R) Graphics`.
@@ -33,8 +34,10 @@ Exact root execution sequence
 2. Confirm no old task/cell is running and preserve all old stages and archives.
 3. Transfer only this directory and `windows-tile-probe-native-freeze.json` to the BotTest context.
 4. Choose one externally supplied fresh ID matching `native-render-owner-census-focused-plus-background-[A-Za-z0-9_.-]+`, distinct from `...-0150`.
-5. Run `prepare-tile-probe.ps1 -CellId <fresh-id> -HostRoot C:\Users\BotTest\274bot-workspaces\3118e96\host`; require all checks and no-launch output to pass.
-6. Run `launch-tile-probe.ps1 -CellId <fresh-id>` once.
-7. Poll the same ID with `poll-tile-probe.ps1 -CellId <fresh-id>` until its receipt-based completion is available; do not restart on a timeout. Run `-Final` only after completion.
-8. Run `archive-tile-probe.ps1 -CellId <fresh-id> -Destination <new-archive-root>` once. Verify the generated archive manifest and `raw-run-sources.json`, then preserve the raw and managed artifacts.
-9. Report process exit, workload qualification, binding evidence, and tile occupancy observations separately. Do not turn this diagnostic into a performance or representation claim.
+5. In the Austen SSH/admin session, run `prepare-tile-probe.ps1 -CellId <fresh-id> -HostRoot C:\Users\BotTest\274bot-workspaces\3118e96\host -ContractReceipt C:\Users\BotTest\274bot-runs\owner-contractcheck-tile-probe-<fresh-id>-contractcheck-tile.json`; it writes both fresh preflight receipts but must not be considered ready yet.
+6. As BotTest Interactive Limited, create one bounded scheduled task that runs `run-contractcheck-tile-probe.ps1 -CellId <fresh-id> -HostRoot C:\Users\BotTest\274bot-workspaces\3118e96\host` and captures its JSON receipt. Do not grant BotTest additional group privileges. This step launches neither the client nor the diagnostic task.
+7. Re-run the same Austen `prepare-tile-probe.ps1` command; require its receipt gate to report complete binding conditions, `client_started=false`, and `scheduled_task_created=false`. Refuse launch if the BotTest receipt is absent or any check is false.
+8. Run `launch-tile-probe.ps1 -CellId <fresh-id>` once.
+9. Poll the same ID with `poll-tile-probe.ps1 -CellId <fresh-id>` until its receipt-based completion is available; do not restart on a timeout. Run `-Final` only after completion.
+10. Run `archive-tile-probe.ps1 -CellId <fresh-id> -Destination <new-archive-root>` once. Verify the generated archive manifest and `raw-run-sources.json`, then preserve the raw and managed artifacts.
+11. Report process exit, workload qualification, binding evidence, and tile occupancy observations separately. Do not turn this diagnostic into a performance or representation claim.

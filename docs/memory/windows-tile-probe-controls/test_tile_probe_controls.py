@@ -22,6 +22,8 @@ sys.path.insert(0, str(ROOT))
 import matched_evidence_adapter as reader
 
 CONTROLLER = pathlib.Path(__file__).with_name("run-panel-tile-probe-focused-one.py")
+PREPARE = pathlib.Path(__file__).with_name("prepare-tile-probe.ps1")
+CONTRACT_RUNNER = pathlib.Path(__file__).with_name("run-contractcheck-tile-probe.ps1")
 
 
 def expression(name, namespace):
@@ -42,6 +44,15 @@ def digest(path):
 
 
 class GeneratedContractTests(unittest.TestCase):
+    def test_prepare_splits_privileged_preflight_from_bot_test_contract(self):
+        prepare = PREPARE.read_text()
+        runner = CONTRACT_RUNNER.read_text()
+        self.assertIn("preflight-tile-probe.ps1') -CellId $contractId", prepare)
+        self.assertIn("$contract.checks[0].client_started -ne $false", prepare)
+        self.assertIn("$env:USERNAME -ne 'BotTest'", runner)
+        self.assertIn("check-tile-probe-contract.py", runner)
+        self.assertNotIn("check-tile-probe-contract.py", prepare)
+
     def test_frozen_identity_and_stage_constants_reject_old_census_values(self):
         source = CONTROLLER.read_text()
         self.assertIn('renderer-owner-census-9268890', source)
