@@ -1,0 +1,69 @@
+{
+  "host_commit": "60ca4b7d523bb255c7c6dbc61f71ebf1a19e6e88",
+  "client_commit": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+  "binary_sha256": "0695a7bfd31122c17a93b9f79d2ffcfbb2eb0c2296d3fd08edc178bc726d5163",
+  "build_exit": 0,
+  "script_lib_exit": 0,
+  "failure_capture_exit": 0,
+  "script_lib_passed": 48,
+  "failure_capture_passed": 4,
+  "source_pre": {
+    "verified_files": 856,
+    "aggregate_sha256": "5b1f33d5a3c6adcbc2069eebacf439e2f6ef62bda2281da90b0bfed9c16c81a9"
+  },
+  "source_post": {
+    "verified_files": 856,
+    "aggregate_sha256": "5b1f33d5a3c6adcbc2069eebacf439e2f6ef62bda2281da90b0bfed9c16c81a9"
+  },
+  "receipts": {
+    "binary.sha256": {
+      "bytes": 127,
+      "sha256": "1678e4ded23ecf5e870965f92fec66f58307b9d242875fe3e36c202d221b1ba7"
+    },
+    "build.log": {
+      "bytes": 1236,
+      "sha256": "dbaf11b6322b49f06f03be61d83250307239e0b9a779e82330641efc3d3d661f"
+    },
+    "ended.txt": {
+      "bytes": 21,
+      "sha256": "098565ea633028cc9f8662eaecb0d7a18ce9e7da5f89f87fdabf041d054f3eb8"
+    },
+    "exit-code.txt": {
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    "rustc.txt": {
+      "bytes": 196,
+      "sha256": "3975d062e234a9f3921955bf6ae5b90f5819df94fa825d057f76b34a35ed0f4d"
+    },
+    "source-post.json": {
+      "bytes": 112,
+      "sha256": "c9293ecca115ebb603d574f5f247e3fb896006e0f9caa594cf3fb87a24fd3ba8"
+    },
+    "source-pre.json": {
+      "bytes": 112,
+      "sha256": "c9293ecca115ebb603d574f5f247e3fb896006e0f9caa594cf3fb87a24fd3ba8"
+    },
+    "started.txt": {
+      "bytes": 21,
+      "sha256": "03e3781124a68d8d38394c14d0a55f7a02878a149aadcc11ec1fe3c3818d39bf"
+    },
+    "test-failure-capture.exit": {
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    "test-failure-capture.log": {
+      "bytes": 671,
+      "sha256": "44f6ff0b2dfc1434be8db63a41c84a32ae282bc9d7e2c92c5d0d30d0e3ef3551"
+    },
+    "test-script-lib.exit": {
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    "test-script-lib.log": {
+      "bytes": 4258,
+      "sha256": "5bbea6435281b50541816e07efa6d1f3400d5a2cf07910bcc2ee41c08960a032"
+    }
+  },
+  "limits": "Native build and functional diagnostic tests only; no live run or performance acceptance."
+}

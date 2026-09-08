@@ -9,6 +9,38 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-08 03:59 UTC
+
+- Native tile probe completed and qualified16/16, native binding passes; archive
+  4df57f7ff87d17a4392a9d7faa208978a2b7f3786fc3458689279827fe2e8745,
+  46 files verified. Root b8b731b records both16-slot boundaries: tile capacity
+  790201600B, Some36429, None1145283. These are logical owners, not RSS savings.
+- Revised private-field design438ae5d approved actualGrok4.5/xai-oauth
+  session20260907_235018_766ae2. Root read proposal; implementation card
+  t_598d9469 assigned implementer in isolated windows-render-owner-census.
+  Only seven private TileModels fields become Option<Box<SceneModel>>;
+  public enum/API and sprite storage preserved. Complete moved-box accounting,
+  all8variants/COW/linked/CPU/GPU regression evidence required. Await actual
+  implementation and same-card review; native paired comparison remains later.
+- Linux timing source60ca4b7 approved Grok4.5, native Hyper-V build PASSED0
+  21.08s. Pre/post856 source files aggregate
+  5b1f33d5a3c6adcbc2069eebacf439e2f6ef62bda2281da90b0bfed9c16c81a9.
+  Binary0695a7bfd31122c17a93b9f79d2ffcfbb2eb0c2296d3fd08edc178bc726d5163.
+  Native release48 script-lib and4 failure-capture tests PASSED; outputs at guest
+  ~/274bot-campaign/source-60ca4b7/output. No new Linux frontend run yet.
+- New controller preparation t_9def0dca assigned Luna on isolated Linux branch;
+  await actual same-card review before native preflight/launch. Build receipts
+  and hashes recorded in hyperv-native-timing-build.json.
+- VM currently RUNNING4vCPU8GiB for builds/tests. DefaultSwitch DHCP address
+  now172.27.0.153; strict old pinned guest key verified before alias update.
+  Current kernel unchanged; installed three pinned6.8.0-138.138 cloud-tools
+  packages and activated KVP for native IP discovery. fcopy/vss disabled;
+  Windows Get-VMNetworkAdapter now reports IPv4. Secondary integration protocol
+  mismatch remains; do not claim full integration compatibility. Future boot:
+  discover current IP through adapter, update only pinned builder mapping.
+  Temporary0345 relay disabled/exited; no recovery switch or permanent proxy
+  change. Stop VM before subsequent clean Windows measurements.
+
 ## Latest boundary — 2026-09-08 03:00 UTC
 
 - Tile probe final correction b9c5e74/clientabb811b APPROVED actual Grok4.5
