@@ -16,6 +16,17 @@ Codex using the CLI or a Hermes `orch` session; it is not required to impersonat
 another model/profile. Do not change working provider credentials to satisfy a
 stale document. Inspect only non-secret settings.
 
+Operator-authorized additional profiles (2026-09-09): `sol` uses
+`gpt-5.6-sol` / `openai-codex` with high reasoning; `grok46` uses `grok-4.6` /
+`xai-oauth` with high reasoning. Configured defaults and completed routing probes
+were verified (`20260909_114546_d7beb0`, `20260909_114547_6b4443`). Use `luna`
+for small mechanical tasks, `sol` for demanding implementation across files or
+lifecycle/protocol boundaries, and `grok46` for architecture/fidelity review or
+escalation after two substantive rejections. Apply this guidance at a task
+boundary; preserve active valid workers and measurements. These additional
+profiles do not replace same-card `reviewer` handoff, independent milestone
+reviews, the final `branchreviewer` pass, or the evidence requirements below.
+
 Create scoped cards without `--model` or `--provider`. Those overrides persist
 through review reassignment and can silently replace the reviewer's model.
 For an existing pin, use `hermes kanban --board 274bot set-model TASK none`
