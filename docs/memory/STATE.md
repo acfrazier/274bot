@@ -11,6 +11,17 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 20:50 UTC
+
+- Independent2791b6a APPROVED actualGrok4.6/xai163753_d59927 (670s). Root read
+  full report/audit/verdict and reconciled archive/log identities. Native affected
+  generated transcript proof accepted; original GPU defect may remain open for
+  bounded draw-off/no-renderer TUI diagnostic after remaining prerequisites.
+- No blanket19-green/nativehelperflag, GPU qualification, live release or savings
+  claim. Controller implementation/review/native lifecycle proof and root runtime
+  source/build/private/server/headroom admission remain required.
+- Controller resumedSol164554_dc4e67 and navigation Sol continue. No native job.
+
 ## Latest boundary — 2026-09-09 20:46 UTC
 
 - Root observed controller run1038 in actual delegate_task despite explicit
