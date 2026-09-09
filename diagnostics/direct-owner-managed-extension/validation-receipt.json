@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "captured_utc": "2026-09-09T21:35:08Z",
+  "captured_utc": "2026-09-09T21:59:33Z",
   "scope": "generated direct-owner managed extension validation; not native target or live qualification",
   "host": {
     "os": "macOS 15.7.9 (24G830)",
@@ -18,20 +18,30 @@
   "results": [
     {
       "name": "linux_generated_focused_subset",
-      "tests": 140,
+      "tests": 141,
       "failures": 0,
       "errors": 0,
       "skips": 2,
       "excluded_tests": [
-        "docs.memory.test_current_tui_calibration.CurrentCalibration.test_resolve_rs2b0t_commit_real_git_when_path_ok"
+        "docs.memory.test_run_diagnostic.RunDiagnosticCli.test_resolve_rs2b0t_commit_real_git_when_path_ok"
       ],
       "reason_for_exclusion": "the local pre-existing Python container image has no git binary; the excluded real-git test passed in the macOS non-collector run",
-      "log": "docker-linux-generated-unittest-rerun.log",
-      "sha256": "8dbe66a1b5ad108bc8bbaed8e56f6adc3553a9a114cffcfc36631bf6a6c3db3e",
-      "bytes": 35671
+      "log": "docker-linux-generated-unittest-review-fix.log",
+      "sha256": "224eff9280223e4130fdf7cb5c06c08e1f09eaf6fea2238893789e370c6be13e",
+      "bytes": 35707
     },
     {
-      "name": "macos_complete_focused_suite",
+      "name": "linux_managed_cell_review_fix",
+      "tests": 52,
+      "failures": 0,
+      "errors": 0,
+      "skips": 2,
+      "log": "docker-linux-managed-cell-review-fix.log",
+      "sha256": "a26249e7b8634729c359e930760ab2a41104162cd538a564526ba08ba36ebb5a",
+      "bytes": 9231
+    },
+    {
+      "name": "macos_pre_review_complete_focused_suite",
       "tests": 141,
       "failures": 9,
       "errors": 0,
@@ -60,6 +70,16 @@
       "log": "macos-managed-direct-unit.log",
       "sha256": "827d3c7802fb99f1176cbc2a55e429e49f6316f15d272961bb52cdce04fd0979",
       "bytes": 1250
+    },
+    {
+      "name": "macos_collector_lifecycle_review_fix",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skips": 1,
+      "log": "macos-collector-lifecycle-review-fix.log",
+      "sha256": "71fc664e9feeb87b1e3dba1a4f5a3f55d2d4ca1211f5059c90a8ce5976555ceb",
+      "bytes": 417
     },
     {
       "name": "macos_reused_owner_validator",
@@ -99,7 +119,7 @@
   ],
   "limitations": [
     "The Linux container run is generated functional evidence, not native target qualification and not live/private admission evidence.",
-    "The Linux green result is an explicit 140-test subset, not a full-suite pass.",
+    "The Linux green result is an explicit 141-test subset, not a full-suite pass.",
     "No release/live capture was attempted and no private root admission artifact was fabricated.",
     "The unchanged default path remains covered by Linux generated tests; the macOS full-suite failures are retained rather than weakened or skipped."
   ]

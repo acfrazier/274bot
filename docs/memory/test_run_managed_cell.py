@@ -196,6 +196,10 @@ def main():
         print(json.dumps(meta), flush=True)
         (run / "metadata.json").write_text(json.dumps(dict(meta)) + "\n")
         (run / "samples.jsonl").write_text("{}\n")
+        lifecycle = run / "samples.lifecycle.jsonl"
+        def mark(event):
+            with lifecycle.open("a") as out:
+                out.write(json.dumps({"event": event, "monotonic_s": time.monotonic()}) + "\n")
         qual = run / "samples.qualification.jsonl"
         # Partial line then complete after short delay (tests retain partials).
         with qual.open("ab") as q:
@@ -216,13 +220,22 @@ def main():
                 q.write(b'{"phase":"observe-end","elapsed_s":1,"slots":[{}]}\n')
             if mode == 'duplicate_end':
                 q.write(b'{"phase":"observe-end","elapsed_s":1,"slots":[{}]}\n')
+        if mode == 'lifecycle':
+            mark('observe-end')
         if mode == "early_fail":
             rc = child.wait(timeout=5)
             meta.update(exit_code=rc, ended_unix=time.time())
             (run / "metadata.json").write_text(json.dumps(meta) + "\n")
             print(json.dumps({"run_dir": str(run), "exit_code": rc}), flush=True)
             sys.exit(0)
-        time.sleep(teardown)
+        if mode == 'lifecycle':
+            time.sleep(0.4)
+            mark('Stop')
+            time.sleep(0.3)
+            mark('C')
+            time.sleep(max(0.0, teardown - 0.7))
+        else:
+            time.sleep(teardown)
         rc = child.wait(timeout=max(5, teardown + 2))
         if helper is not None:
             helper.terminate()
@@ -230,6 +243,8 @@ def main():
         meta.update(exit_code=rc, ended_unix=time.time())
         (run / "metadata.json").write_text(json.dumps(meta) + "\n")
         print(json.dumps({"run_dir": str(run), "exit_code": rc}), flush=True)
+        if mode == 'lifecycle':
+            mark('launcher-exit')
         sys.exit(0 if rc == 0 else 0)  # launcher stays 0 when frontend ok/fail distinct
     sys.exit(1)
 
@@ -875,6 +890,44 @@ class ManagedCellTests(unittest.TestCase):
                 (pathlib.Path(report['cell_dir'])/'process_accounting.jsonl').read_text().splitlines()]
         self.assertGreater(rows[-1]['elapsed_s'], 1.5)
 
+    def test_default_collector_stops_after_pad_before_generated_stop_and_c(self):
+        stop_requests = []
+        real_request = rmc._request_collector_stop
+
+        def record_request(collector, stop_path, **kwargs):
+            stop_requests.append({
+                'monotonic_s': time.monotonic(),
+                'collector_alive': collector is not None and collector.poll() is None,
+            })
+            return real_request(collector, stop_path, **kwargs)
+
+        spec = self.fx.base_spec(
+            observe=.3, teardown=1.2, mode='lifecycle', interval=.1,
+            cell_id='default_lifecycle',
+        )
+        with mock.patch.object(
+            rmc, '_request_collector_stop', side_effect=record_request
+        ):
+            report = self._run(spec)
+        self.assertEqual(report['status'], 'completed', report)
+        self.assertEqual(len(stop_requests), 1, stop_requests)
+        self.assertTrue(stop_requests[0]['collector_alive'], stop_requests)
+        events = {
+            row['event']: row['monotonic_s']
+            for row in (
+                json.loads(line)
+                for line in (pathlib.Path(report['run_dir']) / 'samples.lifecycle.jsonl')
+                .read_text().splitlines()
+            )
+        }
+        self.assertEqual(set(events), {'observe-end', 'Stop', 'C', 'launcher-exit'})
+        self.assertGreaterEqual(
+            stop_requests[0]['monotonic_s'], events['observe-end'] + .2
+        )
+        self.assertLess(stop_requests[0]['monotonic_s'], events['Stop'])
+        self.assertLess(stop_requests[0]['monotonic_s'], events['C'])
+        self.assertLess(stop_requests[0]['monotonic_s'], events['launcher-exit'])
+
     def test_short_teardown_before_pad_fails_honestly(self):
         # Teardown shorter than 2*interval: launcher dies while the required
         # post-observe collector hold is still running. Launcher remains a
@@ -1478,7 +1531,7 @@ class ManagedCellTests(unittest.TestCase):
         self.assertTrue(_alive(helper_pid))
 
     @unittest.skipUnless(sys.platform.startswith('linux'), 'direct lifecycle qualification is Linux-only')
-    def test_linux_direct_lifecycle_generates_owned_guard_and_handoff_evidence(self):
+    def test_linux_direct_lifecycle_keeps_collector_through_stop_c_and_exit(self):
         launcher = self.fx.root / 'direct_launcher.py'
         launcher.write_text(textwrap.dedent('''\
             #!/usr/bin/env python3
@@ -1493,7 +1546,7 @@ class ManagedCellTests(unittest.TestCase):
             p.add_argument('frontend'); p.add_argument('n'); p.add_argument('workload')
             a = p.parse_args()
             before = time.monotonic()
-            child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(.15)'])
+            child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(1.4)'])
             after = time.monotonic()
             stat = (pathlib.Path('/proc') / str(child.pid) / 'stat').read_text()
             start = stat[stat.rfind(')') + 2:].split()[19]
@@ -1511,6 +1564,23 @@ class ManagedCellTests(unittest.TestCase):
                     'capture_mode': 'direct-owner-v1', 'direct_owner_spawn': spawn}
             (a.run_dir / 'metadata.json').write_text(json.dumps(meta, sort_keys=True) + '\\n')
             print('BOT_DIAGNOSTIC_METADATA=' + json.dumps(meta, sort_keys=True), flush=True)
+            qualification = a.run_dir / 'samples.qualification.jsonl'
+            qualification.write_text(json.dumps(
+                {'phase': 'observe-start', 'elapsed_s': 0, 'slots': [{}]}) + '\\n')
+            lifecycle = a.run_dir / 'samples.lifecycle.jsonl'
+            def mark(event):
+                with lifecycle.open('a') as out:
+                    out.write(json.dumps(
+                        {'event': event, 'monotonic_s': time.monotonic()}) + '\\n')
+            time.sleep(.1)
+            with qualification.open('a') as out:
+                out.write(json.dumps(
+                    {'phase': 'observe-end', 'elapsed_s': 1, 'slots': [{}]}) + '\\n')
+            mark('observe-end')
+            time.sleep(.3)
+            mark('Stop')
+            time.sleep(.7)
+            mark('C')
             rc = child.wait(); wait_return = time.monotonic()
             exited = dict(handoff, state='exited', frontend_start_identity=spawn['frontend_start_identity'],
                           exit_code=rc, wait_return_monotonic_s=wait_return)
@@ -1522,6 +1592,7 @@ class ManagedCellTests(unittest.TestCase):
                 'wait_return_monotonic_s': wait_return})
             (a.run_dir / 'metadata.json').write_text(json.dumps(meta, sort_keys=True) + '\\n')
             print('BOT_DIAGNOSTIC_METADATA=' + json.dumps(meta, sort_keys=True), flush=True)
+            mark('launcher-exit')
         '''))
         launcher.chmod(0o755)
         result_path = self.fx.root / 'direct.json'
@@ -1562,8 +1633,19 @@ class ManagedCellTests(unittest.TestCase):
                    'ambient_identities': {'ambient_helper': {
                        'pid': self.fx.helper.pid, 'sample': helper_sample}},
                    'direct_preflight': {}}
+        stop_requests = []
+        real_request = rmc._request_collector_stop
+
+        def record_request(collector, stop_path, **kwargs):
+            stop_requests.append({
+                'monotonic_s': time.monotonic(),
+                'collector_alive': collector is not None and collector.poll() is None,
+            })
+            return real_request(collector, stop_path, **kwargs)
+
         with mock.patch.object(rmc, 'preflight', return_value=fake_pf), \
-             mock.patch.object(rmc.mr, 'complete', return_value={'status': 'ok', 'binding_errors': []}):
+             mock.patch.object(rmc.mr, 'complete', return_value={'status': 'ok', 'binding_errors': []}), \
+             mock.patch.object(rmc, '_request_collector_stop', side_effect=record_request):
             report = rmc.run_managed_cell(
                 spec_path, result_path.with_suffix(result_path.suffix + '.cells'),
                 _test_launcher=True)
@@ -1573,6 +1655,22 @@ class ManagedCellTests(unittest.TestCase):
         self.assertEqual(report['direct_owner']['exit']['exit_code'], 0)
         self.assertTrue(report['collector_stop_requested'])
         self.assertEqual(report['collector_exit_code'], 0)
+        self.assertGreaterEqual(len(stop_requests), 1, stop_requests)
+        self.assertTrue(stop_requests[0]['collector_alive'], stop_requests)
+        events = {
+            row['event']: row['monotonic_s']
+            for row in (
+                json.loads(line)
+                for line in (run_dir / 'samples.lifecycle.jsonl').read_text().splitlines()
+            )
+        }
+        self.assertEqual(set(events), {'observe-end', 'Stop', 'C', 'launcher-exit'})
+        self.assertTrue(all(
+            request['monotonic_s'] >= events['launcher-exit']
+            and request['monotonic_s'] >= events['C']
+            for request in stop_requests
+        ), stop_requests)
+        self.assertGreater(events['launcher-exit'] - events['observe-end'], 1.0)
         self.assertTrue((cell_dir / 'direct-owner-guard.jsonl').is_file())
         self.assertTrue((cell_dir / 'direct-owner-guard-summary.json').is_file())
         self.assertEqual(json.loads(handoff.read_text())['state'], 'exited')
