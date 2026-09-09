@@ -2060,6 +2060,7 @@ class ManagedCellTests(unittest.TestCase):
             'frontend_rss_limit_bytes': 536870912, 'owned_output_limit_bytes': 67108864,
             'frontend_wall_limit_s': 360, 'outer_wall_limit_s': 365,
             'source_lineage': {'fixture': True},
+            'release_contract': str(self.fx.root / 'private-root-release.json'),
             'admission_receipts': {
                 name: str(self.fx.root / ('private-' + name + '.json'))
                 for name in ('conflict', 'account', 'population', 'cache', 'server_health')}}
