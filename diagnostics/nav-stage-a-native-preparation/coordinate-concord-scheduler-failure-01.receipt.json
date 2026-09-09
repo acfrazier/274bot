@@ -1,0 +1,32 @@
+{
+  "archive": "coordinate-concord-scheduler-failure-01.tar.gz",
+  "sha256": "7c500748ace8bae33fd449452df5f0b9e8377d3ec4c3a70abe8925d2728a68de",
+  "bytes": 429242,
+  "files": 5770,
+  "uncompressed_bytes": 3956521,
+  "scheduler_receipt": {
+    "address_guard_active": true,
+    "command": [
+      "/usr/bin/python3",
+      "-m",
+      "unittest",
+      "-v",
+      "test_sharded",
+      "test_sharded_guards"
+    ],
+    "cwd": "/home/acfrazier/274bot-campaign/nav-coordinate-a44a930-concord-01/host/docs/memory/nav-tiled-stage-a",
+    "failure": "exit",
+    "limits": {
+      "address": 4294967296,
+      "cpu": 300,
+      "file_size": 1048576,
+      "output": 1048576,
+      "rss": 536870912,
+      "wall": 360
+    },
+    "output_bytes": 1829,
+    "returncode": -9,
+    "sampled_group_peak_bytes": 46628864,
+    "wall_seconds": 302.84893203599495
+  }
+}

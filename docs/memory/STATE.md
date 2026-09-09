@@ -11,6 +11,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 23:11 UTC
+
+- Concord scheduler FAILED:guard exit-9 after302.849s,300CPU/360wall cap;last test
+  legacy full_generated_protocol. Coordinate full-matrix hadpassed. Overall native
+  Concord qualification fails; no GQ smoke/private child followed. Earlier clean/
+  counting/integration passed. Session74529complete1; do not retry unchanged.
+- Root retained/archive-verified5770files SHA7c500748. Bounded builder-only cProfile
+  isolated2.85million repeated admission checks (63.282sof67.714inbind_entries).
+  Diagnostic only. See nav-coordinate-native-result-report.md.
+- Fixture-only corrective t_481b2857 profileluna dispatched; preserve all matrix
+  assertions/real final binding validation, no production or limit changes, same
+  card reviewer required then root fresh native. Owner correctiont_5c2087e1Sol
+  remains active. Both real NAV and owner live release withheld.
+
 ## Latest boundary — 2026-09-09 23:05 UTC
 
 - Fresh native full-byte differential passed all6 steps and13 admission/extension

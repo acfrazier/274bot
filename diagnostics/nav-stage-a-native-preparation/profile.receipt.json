@@ -1,0 +1,28 @@
+{
+  "address_guard_active": true,
+  "command": [
+    "/usr/bin/python3",
+    "-m",
+    "cProfile",
+    "-o",
+    "/home/builder/nav-coordinate-a44a930-native-01/root-scheduler-profile-01/legacy.prof",
+    "-m",
+    "unittest",
+    "-v",
+    "test_sharded.Metrics.test_full_generated_protocol"
+  ],
+  "cwd": "/home/builder/nav-coordinate-a44a930-native-01/host/docs/memory/nav-tiled-stage-a",
+  "failure": null,
+  "limits": {
+    "address": 4294967296,
+    "cpu": 90,
+    "file_size": 1048576,
+    "output": 1048576,
+    "rss": 536870912,
+    "wall": 100
+  },
+  "output_bytes": 308,
+  "returncode": 0,
+  "sampled_group_peak_bytes": 44531712,
+  "wall_seconds": 67.74708992300111
+}
