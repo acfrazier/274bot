@@ -11,6 +11,19 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 16:52 UTC
+
+- Reference admission t_00284081 APPROVED038313e, actualGrok4.5/xai
+  20260909_124305_0f8762. Independent original-archive byte/admission checks
+  confirmed all12Linux references and reviewed007tool/probe spans/full comparisons.
+- Root chooses the review's operator-guidance option(b): native launch guidance
+  uses nav-native-reference-boundary.md and native-reference-manifest.json;
+  fixed run-05 is an alias for original f24Linux outputs in this package, never
+  evidence of macOS continuity. Do not infer reference identity from README/path.
+- Concord corrected scheduler qualification04 remains active; no real F1
+  admission is issued until successful completion and fresh native preflight.
+  Sol frozen owner preparation also remains active; no native owner release.
+
 ## Latest boundary — 2026-09-09 16:47 UTC
 
 - Concord clean/counting generated checks passed212.590/215.131s. Integration
