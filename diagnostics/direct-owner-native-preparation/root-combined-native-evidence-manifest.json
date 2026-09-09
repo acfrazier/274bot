@@ -1,0 +1,277 @@
+{
+  "schema": "root-direct-owner-native-evidence-v1",
+  "review_status": "pending",
+  "live_qualified": false,
+  "evidence": [
+    {
+      "path": "diagnostics/direct-owner-native-preparation/artifact/frozen/frozen-direct-owner-source.tar.gz",
+      "bytes": 5075876,
+      "sha256": "2c36d254c37c5ed56a55f78728357296d62be602f8653ed9ec041cd37d099d5d"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/artifact/frozen/frozen-source-manifest.json",
+      "bytes": 327668,
+      "sha256": "ca69e70352c5f6f8d1c9db026959af6ba8fd64886be533a0095c3ca94bb5732e"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/binary.json",
+      "bytes": 2601,
+      "sha256": "1bd04349371064ca68354799ef15ceaf2695b72629219ae0ee4211617490034e"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/environment.json",
+      "bytes": 3158,
+      "sha256": "0c554853d4344648e0aa92fbcdd5b57b45d2dc58a447ba5a516d41c96383986c"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/generated-observer.json",
+      "bytes": 581,
+      "sha256": "bbf8818c88b67411218216e95e3da5943b06e03c9a25b724848d45b14c3d7773"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/logs/api-owner-integration.log",
+      "bytes": 940,
+      "sha256": "9ba4a49239741674766ca7bce787c0a7e29523fbf57b9861b12df219b473b558"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/logs/api-owner-lib.log",
+      "bytes": 3766,
+      "sha256": "15bd5311bae23816021e28bc468b06c824d46ff0a3ed923611b4b280891c9960"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/logs/cargo-build-tui.log",
+      "bytes": 15703,
+      "sha256": "758c4f85f43e483c6cf3362c8cb4368c7cf33d8eb29d6050ea84f41534e99566"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/logs/cargo-check-tui.log",
+      "bytes": 12829,
+      "sha256": "7d38997cfc4adca2cdc64821b1347bb58c0f018d0396d5f3a73e6210b05306c9"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/logs/cargo-feature-tree.log",
+      "bytes": 328856,
+      "sha256": "4dd8161d47dc53b7b7d2db4abb339e20e019c163a5f181817c8ae3ad08d77d86"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/logs/client-packet-integration.log",
+      "bytes": 1366,
+      "sha256": "48df1a24f75618bdb69558ca127f6fa9594d022db4d4216672efbcba40cbbce2"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/logs/client-world-owner-lib.log",
+      "bytes": 1364,
+      "sha256": "1cbbc58bd7409d37e81e17c3a23faa9e0ecf45d5ddb3c89b429b2d36a345f682"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/logs/host-owner-lib.log",
+      "bytes": 2597,
+      "sha256": "ab19b1d543482f2dc58ed61cc7fa996f8eb3888f0cf8d77ff689e7baac5a8a72"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/logs/host-play-generated-observer.log",
+      "bytes": 1677,
+      "sha256": "dac53bacf48ed36fb0a29a6ddefc3e91b9887a1cc21a8d3f7e24738033bcd119"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/logs/host-play-owner-lib.log",
+      "bytes": 2941,
+      "sha256": "d383e55807c3883073465d5edefb68e2ec50e0173681da36722904d39a64c7f5"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/logs/managed-guard-cleanup-generated.log",
+      "bytes": 1313,
+      "sha256": "c0d31cc9099404fd2ccfffa81441bd7a515aa53da96e55ca4216d2fa99739761"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/logs/protocol-validator-generated.log",
+      "bytes": 681,
+      "sha256": "9c910c00e01bd55f74b3f983bae5fccbe971f8a73e46b36a2cea8b6b1ef25562"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/logs/script-fingerprint-lib.log",
+      "bytes": 4522,
+      "sha256": "3ab9fcfc185e6c343145f0364061983be872457d46ff28413011ce7f40b83ff2"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/logs/script-stop-integration.log",
+      "bytes": 1700,
+      "sha256": "2d6cb5bbbc39eafb835030798c8bc7519df46cc29e652fee1b626f36ac7fc561"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/logs/tui-feature-tests.log",
+      "bytes": 3433,
+      "sha256": "0bbd588d1ed2b292fc2c9cb9c48d1c7d1cf82d45e5c51b31f5ffcbc66a62ca3c"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/qualification.json",
+      "bytes": 2895,
+      "sha256": "9ae794d2dbb1ffd869161caad63ff110d7da7f59474b672a628b70b69d9a8996"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/root-failure-evidence-manifest.json",
+      "bytes": 3474,
+      "sha256": "a520985e1aa10e6e20f997be22e959ba11511ae32ee9d5bdc59b1b7f799b9903"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/root-tui-fixture-stop.json",
+      "bytes": 531,
+      "sha256": "6119cd98bd6db0649ea427e65a7e6cee37975ce989056157f0fa781a2c0a12e2"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/root-tui-hang-stack.txt",
+      "bytes": 291,
+      "sha256": "af38f5a281bad7ecfc6a408a262f3b3df2d4aa63b395bb9440722f7afe086844"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/source-verification.json",
+      "bytes": 578,
+      "sha256": "d9fe56bb366218586c64c52a7fa6187bbcf1a456f8e417d9360a98b6f0dc6a0e"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure/steps.json",
+      "bytes": 11607,
+      "sha256": "7c0bd15f67b6b680afe2a1d6987009f46d7e19307a208d632cb79a0068ef64d0"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/linux-qualification-01-failure.tar.gz",
+      "bytes": 42525,
+      "sha256": "06059fae5610cf32f705648e27224d29aba776a7015204e95277e32e0f811977"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-corrections-and-release-receipts/root-client-correction-02/logs/client-packet-integration.log",
+      "bytes": 985,
+      "sha256": "75b52aee303f3ca016cad6bb30f38e0fbd7f32a237827cec81e125d0a637137d"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-corrections-and-release-receipts/root-client-correction-02/logs/client-world-owner-lib.log",
+      "bytes": 1776,
+      "sha256": "ca3e87fc62abef78ba488b4b724bf7036a2d67c491f4ddde95dd1e062f7de2a6"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-corrections-and-release-receipts/root-client-correction-02/logs/fetch-exact-client-lock.log",
+      "bytes": 2066,
+      "sha256": "ea37256011f05393c552fb0900ce706d24710024046c83769e3695249576c4dc"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-corrections-and-release-receipts/root-client-correction-02/preserved-generated-files/docs/memory/__pycache__/build_provenance.cpython-312.pyc",
+      "bytes": 8063,
+      "sha256": "d8572f4eb354ef7249b965876e21f61f89008b9f09090a548bc69c7f0b10c2f8"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-corrections-and-release-receipts/root-client-correction-02/preserved-generated-files/docs/memory/__pycache__/cache_provenance.cpython-312.pyc",
+      "bytes": 7254,
+      "sha256": "893241fc633e6a01acb5c4f863d979ffe98768ad68a8a45cc08069905c096cf1"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-corrections-and-release-receipts/root-client-correction-02/preserved-generated-files/docs/memory/__pycache__/managed_receipt.cpython-312.pyc",
+      "bytes": 13104,
+      "sha256": "4c842c30524e5473714990833e214f70d8bb4b9807ba9de1a3702d9c840de883"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-corrections-and-release-receipts/root-client-correction-02/preserved-generated-files/docs/memory/__pycache__/operator_home.cpython-312.pyc",
+      "bytes": 3483,
+      "sha256": "21468b52c703a43c6a47f87cadebf43efb6ac7123b6374ae3cad3d726305c105"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-corrections-and-release-receipts/root-client-correction-02/preserved-generated-files/docs/memory/__pycache__/process_accounting.cpython-312.pyc",
+      "bytes": 38309,
+      "sha256": "cd6fdc6ab0af821b4d5645184894346939442f485e1e4ba988f71d0899b3a422"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-corrections-and-release-receipts/root-client-correction-02/preserved-generated-files/docs/memory/__pycache__/run_diagnostic.cpython-312.pyc",
+      "bytes": 31687,
+      "sha256": "a1da4bdfe125f1f2cbba98127d15625cb9b21d735191f7bc51e8637d65b40e90"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-corrections-and-release-receipts/root-client-correction-02/preserved-generated-files/docs/memory/__pycache__/run_managed_cell.cpython-312.pyc",
+      "bytes": 68269,
+      "sha256": "6acc6bbc716b645b62b07f100c9905b1bc78b098e7d36cb83fcbe2b7b30c2415"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-corrections-and-release-receipts/root-client-correction-02/preserved-generated-files/docs/memory/__pycache__/server_resources.cpython-312.pyc",
+      "bytes": 18950,
+      "sha256": "975bc8b5edd80a95acca21fbb0567391d98b74b5b553751c7394b06488b2bb59"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-corrections-and-release-receipts/root-client-correction-02/preserved-generated-files/docs/memory/__pycache__/test_run_managed_cell.cpython-312.pyc",
+      "bytes": 82937,
+      "sha256": "cd547023ac5debfc550450099537f1efd4c8dcf2a2f1e95d75158259bd459665"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-corrections-and-release-receipts/root-client-correction-02/result.json",
+      "bytes": 3201,
+      "sha256": "b769254c433f99b67ed088aa6a8dc09dcd7ffe5aba0d9124609448643361dac3"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-corrections-and-release-receipts/root-client-correction-02/source-bytecode-relocation.json",
+      "bytes": 3305,
+      "sha256": "34f73e40e3548ec06cda64e239227513dbceb0d4de0f18ced8c5e7e64230faa7"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-corrections-and-release-receipts/root-client-correction-02/steps.json",
+      "bytes": 2238,
+      "sha256": "6526c9310a7576ff12986ecf4fe69b85edc3076814f72d86b9d426cbcbde2dd5"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-corrections-and-release-receipts/root-release-build-01/logs/cargo-build-release-tui.log",
+      "bytes": 15706,
+      "sha256": "e514f33784fe3292f3272dde4fe1dee70a293cd505ced7ee6cbea32a94a958be"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-corrections-and-release-receipts/root-release-build-01/result.json",
+      "bytes": 5253,
+      "sha256": "998ba2f148e0f1e81bb0a064c8de1781df0f6bce04a2f8e8961a9bf99feca92b"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-corrections-and-release-receipts/root-release-build-01/step.json",
+      "bytes": 720,
+      "sha256": "688d32f98af06b65866810e3197fd023d692bcda145f6d2c5160377930e1acc9"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-corrections-and-release-receipts.tar.gz",
+      "bytes": 128730,
+      "sha256": "70eda2037c2ae073797f0e392fb8797515f7e8e422c74db302f6d39e18e12346"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-tui-test-overlay-01-receipts/root-tui-test-overlay-01/overlay-receipt.json",
+      "bytes": 3437,
+      "sha256": "b7a02f1e36e0f25cf4fa3dd4685643365bae2fbab53d8ca27155e5dc4b042004"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-tui-test-overlay-01-receipts/root-tui-test-overlay-01/tui-tests.log",
+      "bytes": 21881,
+      "sha256": "801a28843c4d170bc9c812c105374078e507afd1f634282e3a7287996db02843"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-tui-test-overlay-01-receipts/root-tui-test-overlay-01-launch.log",
+      "bytes": 3437,
+      "sha256": "b7a02f1e36e0f25cf4fa3dd4685643365bae2fbab53d8ca27155e5dc4b042004"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-tui-test-overlay-01-receipts.tar.gz",
+      "bytes": 7766,
+      "sha256": "a82eccc84c6a978b948c924994dda10ac95df7526bf86c94fcf7d78b3decdedf"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root_build_release.py",
+      "bytes": 2481,
+      "sha256": "29666169c61bcee3552e44f8f594925440b221c4102e6cdcb6ea476146d16af5"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root_correct_client_dependencies.py",
+      "bytes": 3235,
+      "sha256": "69be5d73fffeab51346118c2053663b33759a92ad1672c4bd726e00bd6c6f47c"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/tui-test-overlay/stage_tui_test_overlay.py",
+      "bytes": 13235,
+      "sha256": "c21b38ecce6ae3d7afa93c83651a104f97f13d4f4bb6fe090dbdac2ee70661ea"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/tui-test-overlay/tui-test-only.patch",
+      "bytes": 3091,
+      "sha256": "3bf08949fee5f44a2c6dc82525004a9cc0f47759526d43bda6f77cc9f33a51e4"
+    }
+  ]
+}
