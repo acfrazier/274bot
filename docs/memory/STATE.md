@@ -35,6 +35,13 @@ verify it on resume because a worker may finish after this snapshot.
   still calls default/empty_table and reserves 1000 inline optional Sound slots;
   this supports the shared empty-table allocation lead, not populated sounds,
   per-bot cost, an exact native field binding, or accepted RSS savings.
+- User clarified live lowmem/highmem toggling is intended and their current
+  testing vault profile is highmem despite the lowmem default. Preserve this
+  capability. Source confirms the empty table is process-wide, loaded tables
+  are shared per cache-directory key, and private synthesis scratch is already
+  lazy per client. High-to-low does not release loaded tables. Avoiding the
+  empty inline reservation is a possible later design, not a released second
+  experiment or proof that the current user profile runs lowmem.
 
 ## Latest boundary — 2026-09-09 01:39 UTC
 
