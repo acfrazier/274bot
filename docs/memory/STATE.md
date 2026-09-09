@@ -11,6 +11,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 11:22 UTC
+
+- Tool760d3acbc429931447454af41902e43de8ac5b2e APPROVED same-card
+  t_3393f351 actualGrok4.5/xai20260909_071823_626354,2m31s. Root now releases
+  nativeLinux staging/build/GENERATED differential and guard qualification
+  only. No realpack, StageA/B, productionstartup or resident-saving acceptance.
+- Approved run03 archive18250929B SHA18ff7444bfda411d6f245ee3c06cee384
+  bb937f034a719580a8a5dfb454b8317,13428regularfiles637075111B. Native restore
+  must use a NEW owned directory, exact archived source/corpus bytes, fresh
+  native admissions/results; preserve all Mac evidence. Do not recompile an
+  admitted Mac run in place or treat Mac AS skip as Linux qualification.
+- Ground diagnostic t_f8eda60b continues actualAstra/openai071823_e31bdd;
+  no cause/fix acceptance yet. Native menu/logout proof remains separate.
+
 ## Latest boundary — 2026-09-09 11:20 UTC
 
 - Differential tool760d3ac completed implementation; same-cardt_3393f351
