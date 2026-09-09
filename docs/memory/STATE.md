@@ -11,6 +11,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 18:57 UTC
+
+- Coverage followup local run preserved failures: stale enqueue expectedWrongEpoch
+  but returnedOk; incomplete/delayed raw-fragment tests expected empty output;
+  feature-off host renderer flip test expectedpaint2 but observed1. Other listed
+  feature-off suites passed so far. No new native coverage admission.
+- Root traced mailbox token selection and PhasePublisher failure latching. Empty
+  failed logs and enqueue-time rejection may be stronger than the approved
+  contract, which preserves failed partial facts. Review must prove actual
+  stale-token isolation/deadline/terminal failure before classifying production
+  defects or changing tests. Renderer failure needs baseline attribution.
+- Root added that source-based assessment to t_420c2fae for its review. Worker
+  remains active; no production source changed. Controller correction t_59c6d6f5
+  and navigation tooling t_4474ac39 continue; no root native/Concord process.
+
 ## Latest boundary — 2026-09-09 18:53 UTC
 
 - Controller design0149711 completed, but same-card actualGrok4.5/xai
