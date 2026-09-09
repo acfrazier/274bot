@@ -11,6 +11,18 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 02:09 UTC
+
+- Census d0120da failed round2 actual Grok4.5/xai20260908_215658_4d2c7d:
+  successful leader exit leaves a same-group descendant, portable fixture has
+  Darwin-only assertions, and the report source digest is stale. Prior source,
+  accounting, output-budget and race fixes passed independent probes. Same card
+  t_c20cf6f3 resumed Luna run930. No native build/real input released.
+- 289 H0406ceb APPROVED actual Grok4.5/xai20260908_220159_daf89a, including
+  independent focused reruns and950-test receipt reconciliation. Aggregate
+  cleanup review t_82bfdbb6 now active actual Grok4.5/xai20260908_220659_2e28d6
+  on frozen0b89fc3..0406ceb. Final Grok4.6 and authentic live remain required.
+
 ## Latest boundary — 2026-09-09 02:06 UTC
 
 - Census fixes d0120da are in same-card round-2 review t_c20cf6f3, actual
