@@ -1,0 +1,18 @@
+test_coordinate_binding_is_externally_hashed_and_strict (test_admission.Admission.test_coordinate_binding_is_externally_hashed_and_strict) ... ok
+test_coordinate_external_binding_mutation_rejected_between_admissions (test_admission.Admission.test_coordinate_external_binding_mutation_rejected_between_admissions) ... ok
+test_coordinate_materialization_binds_complete_base_plus_one_overlay (test_admission.Admission.test_coordinate_materialization_binds_complete_base_plus_one_overlay) ... ok
+test_coordinate_overlay_replaces_only_admitted_collision_bytes (test_admission.Admission.test_coordinate_overlay_replaces_only_admitted_collision_bytes) ... ok
+test_coordinate_run_requires_binding_hash_and_rejects_legacy_admission (test_admission.Admission.test_coordinate_run_requires_binding_hash_and_rejects_legacy_admission) ... ok
+test_executable_mutation_rejected (test_admission.Admission.test_executable_mutation_rejected) ... ok
+test_extra_original_source_suffix_rejected (test_admission.Admission.test_extra_original_source_suffix_rejected) ... ok
+test_frozen_collision_mutation_rejected (test_admission.Admission.test_frozen_collision_mutation_rejected) ... ok
+test_frozen_host_helper_mutation_rejected (test_admission.Admission.test_frozen_host_helper_mutation_rejected) ... ok
+test_named_extension_presets_admitted (test_admission.Admission.test_named_extension_presets_admitted) ... ok
+test_output_truncation_missing_completion_count (test_admission.Admission.test_output_truncation_missing_completion_count) ... ok
+test_selector_malformed_and_bounds (test_admission.Admission.test_selector_malformed_and_bounds) ... ok
+test_independent_full_stream_assertions (test_extension.Extension.test_independent_full_stream_assertions) ... ok
+
+----------------------------------------------------------------------
+Ran 13 tests in 3.172s
+
+OK

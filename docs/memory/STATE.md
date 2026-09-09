@@ -11,6 +11,18 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 23:05 UTC
+
+- Fresh native full-byte differential passed all6 steps and13 admission/extension
+  tests:12,954 generated inputs,328,120,731 bytes per arm equal; generated protocol
+  80,987 bytes equal. No private input. Root downloaded/archive-audited13,436
+  members and independent effective Git/source/host-span/output bindings.
+  Archivebaa98510, result/report nav-coordinate-native-result-report.md.
+- Concord generated clean/counting and integration passed. Existing scheduler
+  qualification still running under session74529; do not restart it.
+- Admission correction t_5c2087e1 remains active onSol; owner live hold remains.
+- Private exact59, CF1/CF2/CA and performance acceptance remain unreleased.
+
 ## Latest boundary — 2026-09-09 22:59 UTC
 
 - Concord generated-clean passed after real toolchain prerequisite correction;

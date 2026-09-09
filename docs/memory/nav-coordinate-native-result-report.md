@@ -39,3 +39,28 @@ Fresh guards in coordinate-concord-native-guards-02 passed after the dependency
 correction. The remaining generated clean/counting/integration/scheduler stages
 are currently running with new continuation logs. The first failure is unchanged.
 Root must audit their final results before any later private-input phase.
+
+## Fresh native full-byte differential
+
+The separate builder workflow for the same reviewed `a44a930` tooling passed
+all six steps: guards, prepare, build, generated comparison, audit, and 13
+admission/extension tests. It exercised 12,954 generated inputs and compared
+328,120,731 complete output bytes per arm, plus 80,987 bytes per arm for the
+generated protocol fixture. Both pairs are identical. No private input was read.
+
+The reviewed archiver produced an 18,765,670-byte archive, SHA256
+`baa98510e1c4044bf817e9ceffddfcee4dcf3178ce4f94ba3d37d42e291c7524`.
+Root downloaded it and independently checked all 13,436 members (681,424,323
+uncompressed bytes), every corpus hash, output hashes, reviewed launch tools,
+admission source bindings, all 209 dense and 210 refined effective source files
+against actual Git objects, the sole collision overlay, and frozen host spans.
+The first root audit helper retained only files below 2 MiB and therefore omitted
+the larger corpus manifest; correcting that readback-only retention threshold
+to 16 MiB completed verification. No production tool, test, or evidence changed.
+
+Evidence is in diagnostics/native-nav-differential-preparation/
+`coordinate-a44a930-native-01/`: progress.json, audit.log,
+admission-extension-tests.log, audit_archive.py, root-archive-audit.json, and the
+retained raw archive and archive manifest. Native binaries remain on the builder;
+the reviewed evidence archive excludes compiler targets. This is generated
+correctness qualification, not exact-59 private validation or performance.

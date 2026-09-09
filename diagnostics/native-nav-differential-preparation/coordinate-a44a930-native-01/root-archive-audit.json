@@ -1,0 +1,26 @@
+{
+  "verified": true,
+  "archive_sha256": "baa98510e1c4044bf817e9ceffddfcee4dcf3178ce4f94ba3d37d42e291c7524",
+  "archive_files": 13436,
+  "archive_uncompressed_bytes": 681424323,
+  "input_count": 12954,
+  "comparison": {
+    "bytes": 328120731,
+    "equal": true
+  },
+  "protocol_comparison": {
+    "bytes": 80987,
+    "equal": true
+  },
+  "source_counts": {
+    "dense": 209,
+    "refined": 210
+  },
+  "source_binding": {
+    "candidate_id": "coordinate-ebf0f30",
+    "filename": "coordinate-source-binding.json",
+    "schema": "nav-coordinate-source-v1",
+    "sha256": "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb"
+  },
+  "scope": "native generated correctness only; no private input, CF1 or performance acceptance"
+}

@@ -1,0 +1,80 @@
+{
+  "verified": true,
+  "input_count": 12954,
+  "input_bytes": 10601143,
+  "max_input_bytes": 19053,
+  "sources": {
+    "dense": {
+      "commit": "29b7aea779322c8611f83dc193e939ca7d756f75",
+      "files": 209,
+      "original_bytes": 4457777,
+      "executable_sha256": "6c9aaabfe0936fdb152f938a103821ba4225f5d695786e98737b68b571d9680c",
+      "admission_sha256": "79bfb63e7735a213f8e700b92ccd712bd04c37291a1ae3b72a8d001ae33e81ac",
+      "source_manifest_sha256": "ec2e0644a6c30fbb9b765c7409ad88d05220579b0b804a83fc99cb83830dc7e1",
+      "lock_sha256": "d88e21b7b478b24d670dc979f59498e39dada27aa125adbfd9625ba23444fa66"
+    },
+    "refined": {
+      "commit": "8385babb23fd15b876506d4a3f6154984a6b2df1",
+      "files": 210,
+      "original_bytes": 4506538,
+      "executable_sha256": "3acc40b060aabbef72fe2126eb10f6463d685e0373751b8df72ec34b45316b35",
+      "admission_sha256": "046cf683c9172857873ff34a7cccdc6a83710dece96d79f887a930f2e04450fe",
+      "source_manifest_sha256": "714feec0c91181fa7456d95aed4ecfb779e83542fdbaa091c36b15e2bded4a7d",
+      "lock_sha256": "d88e21b7b478b24d670dc979f59498e39dada27aa125adbfd9625ba23444fa66"
+    }
+  },
+  "route_results": {
+    "Ok": 472486,
+    "BudgetExhausted": 21816,
+    "NoPath": 624510,
+    "leg-Door": 35544,
+    "leg-Stairs": 87964,
+    "leg-Teleport": 74910,
+    "leg-Ladder": 52884,
+    "leg-EssenceExit": 2556,
+    "leg-Boat": 16
+  },
+  "noncanonical_inputs": [
+    "inputs/ordered.bin",
+    "inputs/trailing.bin"
+  ],
+  "corpus_sha256": "42b62bb013818aa3e88ad5a3164e624bbac61a2f10ac97e72ddafd91f3729d79",
+  "result_sha256": "0262aaf81172453eaa7c9a2b767f33b98a293b46448f26bf3f8d5117a3cd8bf7",
+  "extension": {
+    "dense": {
+      "generated": {
+        "Teleport": 12,
+        "BankSession": 8,
+        "Boat": 8,
+        "NoPath": 52
+      },
+      "protocol": {
+        "Teleport": 12,
+        "BankSession": 8,
+        "Boat": 8,
+        "NoPath": 52
+      }
+    },
+    "refined": {
+      "generated": {
+        "Teleport": 12,
+        "BankSession": 8,
+        "Boat": 8,
+        "NoPath": 52
+      },
+      "protocol": {
+        "Teleport": 12,
+        "BankSession": 8,
+        "Boat": 8,
+        "NoPath": 52
+      }
+    }
+  },
+  "candidate_id": "coordinate-ebf0f30",
+  "source_binding": {
+    "schema": "nav-coordinate-source-v1",
+    "candidate_id": "coordinate-ebf0f30",
+    "filename": "coordinate-source-binding.json",
+    "sha256": "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb"
+  }
+}
