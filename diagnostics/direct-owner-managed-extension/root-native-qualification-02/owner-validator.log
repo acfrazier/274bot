@@ -1,0 +1,8 @@
+test_complete_generated_protocol (test_validate_direct_owner_capture.ValidationTests.test_complete_generated_protocol) ... ok
+test_file_identity_truncation_and_duplicate_keys (test_validate_direct_owner_capture.ValidationTests.test_file_identity_truncation_and_duplicate_keys) ... ok
+test_negative_mutations (test_validate_direct_owner_capture.ValidationTests.test_negative_mutations) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.010s
+
+OK

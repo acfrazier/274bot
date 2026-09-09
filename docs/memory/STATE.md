@@ -11,6 +11,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 23:48 UTC
+
+- Fresh controller 9344d75 Linux qualification FAILED: 148 tests, one failure,
+  two platform skips. Linux-only lifecycle fixture omits required release_contract
+  and stops before dummy launch. Owner-validator passes. Root verified downloaded
+  log hashes/source receipts in root-native-qualification-02; do not relabel green.
+- Bounded fixture correction t_a6d0e3df is actually running on profile luna;
+  same-card reviewer required. Scope test fixture only, preserve actual lifecycle
+  and six-file admission rechecks; no production, caps, or native/private action.
+  Root will run fresh Linux qualification after review. Live owner hold remains.
+- Concord session13659 remains active: clean generated passed in203.0011s,
+  counting generated now running. No private NAV release. Original scheduler
+  failure and all previous raw artifacts are retained.
+
 ## Latest boundary — 2026-09-09 23:44 UTC
 
 - Scheduler fixture correction 113ce05 independently APPROVED by same-card

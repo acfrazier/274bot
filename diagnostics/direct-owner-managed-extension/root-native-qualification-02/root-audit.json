@@ -1,0 +1,12 @@
+{
+  "verified": true,
+  "qualified": false,
+  "commit": "9344d75196956164dabd34d539c02adb487fe2d5",
+  "failure": "Linux lifecycle fixture omits required release_contract; preflight fails before dummy frontend launch",
+  "full_tests_run": 148,
+  "full_failures": 1,
+  "full_skipped": 2,
+  "logs_hash_verified": true,
+  "source_verified_before_after": true,
+  "private_or_live": false
+}
