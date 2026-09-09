@@ -11,6 +11,22 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09: operator accepts the startup tradeoff
+
+- Operator answered the pending question: the allocation tradeoff is worth the
+  extra344ms unless root disagrees. Root agrees; provisionally RETAIN tiled
+  candidate and continue qualification. This supersedes the cold-only park
+  disposition, not its measured failure under the original10%gate. Explicit
+  scoped exception is recorded in nav-tiled-storage-design.md operator section.
+- All CPU/latency/peak/RSS/lifecycle/absolute/finalreview gates remain unchanged.
+  No resident saving or fullroute pass claimed. The59case baseline hit90CPUcap;
+  no retry/cap increase is released. Next prepare a reviewed routing resource/
+  phase plan, preserving every input, original semantics and failed attempt.
+- Cold evidence t_8693907a review may still describe historical park under the
+  original gate; reconcile with this new operator decision, do not erase facts
+  or demand another confirmation. Directperbot design t_360cbcc9 continues
+  independently; it may not interpret the exception as a capture release.
+
 ## Latest boundary — 2026-09-09 14:17 UTC
 
 - Cold result/disposition report492e485 is in independent evidence review

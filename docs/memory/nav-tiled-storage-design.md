@@ -343,6 +343,30 @@ N32/lifecycle, target-hardware and absolute resource gates remain governed by
 `performance-finish-plan.md`; this bounded representation experiment does not
 claim to close them or authorize them on this card.
 
+## Operator decision — 2026-09-09: measured cold-load exception
+
+The operator accepted the measured allocation/startup tradeoff: “I think the
+allocation tradeoff is worth the extra 344ms here, unless you disagree.” Root
+agrees this justifies continued qualification and provisional retention.
+
+This is a specific exception to the original Stage A +10% cold-load gate for
+frozen tiled8385babb versus dense29b7aea on the measured274 pack. The completed
+six-pair screen measured108.637ms versus452.555ms median (+343.919ms), with
+69,217,024 fewer requested collision-element bytes (66.0105MiB). See
+[the measured report](nav-stage-a-cold-screen-report.md). The original failure
+classification and raw evidence remain accurate under the original gate;
+the operator has explicitly accepted this particular startup cost.
+
+The exception permits provisional retention and further testing. It does not
+establish deployed resident savings, accept the one-row route metrics as the
+full routing gate, permit unbounded future startup regressions, change process
+resource caps, or waive CPU/latency, startup-peak, Stage B, lifecycle, target
+hardware, absolute campaign budgets or final review. The interrupted59-case
+routing run remains incomplete. A separately reviewed resource/phase plan is
+required before another full-routing measurement; do not retry the old release
+or silently raise its caps. No source reversion is required on the basis of
+this accepted cold-load tradeoff alone.
+
 ## 7. Risk and next authorization
 
 Extra division/indexing, a data-dependent descriptor branch and another memory
