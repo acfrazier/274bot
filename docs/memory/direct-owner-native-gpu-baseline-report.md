@@ -52,3 +52,25 @@ controller review plus native lifecycle tests; independent acceptance of the
 functional evidence and explicit original GPU failure disposition before live
 release. Final GPU target qualification remains required. No new live capture,
 performance comparison, savings claim, or campaign completion is established.
+
+## Proposed disposition for independent readiness review
+
+Root proposes retaining the exact failed GPU test as an original-client defect
+while allowing the bounded TUI owner diagnostic only after the remaining
+transcript/controller/native prerequisites pass. This is a proposal for review,
+not a release or a conversion of failed commands into passing qualification.
+
+The admitted diagnostic source supports this separation: host/src/lib.rs
+slot_want_cpu (lines665-668 in the clean materialization) combines the per-slot
+preference with BOT_CPU=1, and Renderer::new_prefer receives !want_cpu at line533.
+The same host loop lazily creates renderers only for drawing slots and detaches
+them for draw-off slots (lines456 onward). Client render/renderer.rs:40-45 also
+makes BOT_CPU=1 override the GPU preference. The TUI diagnostic must retain its
+reviewed draw/renderer/environment contract; these source facts do not prove a
+future runtime followed it. Runtime receipt/qualification must confirm that.
+
+The original-client reproduction, byte-identical GPU source and complete client
+inventory support a pre-existing defect disposition for this one TUI diagnostic.
+They do not admit GPU panel measurements, waive final GPU regression/cadence/
+visual requirements, or authorize a renderer fix under owner instrumentation.
+Independent readiness review must explicitly accept or reject this distinction.
