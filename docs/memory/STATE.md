@@ -11,6 +11,29 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 15:29 UTC
+
+- Sharded tooling5324f41 t_500f341e REJECTED round1 actualGrok4.5/xai
+  20260909_112156_84dda5 after root reproduced unguarded setup CPU. Scaled
+  generated proof .03s CPU ceiling consumed .15071s in setup before alarm;
+  root-singleton-setup-cpu.json and reproducible helper retained. No real/native
+  probe was launched. Same-card Astra correction running; global remaining CPU
+  must be armed before heavy setup and honor prior-phase spending.
+- Root independently verified all26973 archive members/26615564payload bytes,
+  archive6700772B SHAbd3d00bd4365b4f7b2e76457820e03cf6ff467ad39e16c0c01f8ce9e5f2c3444.
+  This is rejected-tool evidence, not native qualification. Root prepared only
+  package_reviewed_singleton_tool.py for later approved commit (15 tool/doc files
+  plus existing verified originalGit packs); no payload/native release yet.
+- Read-only Concord counter diagnostic:60x50ms samples,6below90percent while
+  aggregate98percent idle. SC_CLK_TCK100/2CPU means~10ticks/window. Separate3x1s
+  samples195/199,194/199,197/199 idle,zero steal. Rawbothchecks in native-preparation.
+  Root requires a fixed longer idle window (1s), same90percent/zero-steal rule,
+  no sampling-until-pass, fully charged to existing budgets and bound in contract;
+  correction/review before first native release. No apps/probes/server changes.
+- Coordinate design aa2d740 APPROVED9e91692 t_96a6b960 actualGrok4.5/xai
+  20260909_110554_521a86. No implementation release; F1 evidence still first.
+  Direct owner correction t_ce3310e4 remains running with native/live withheld.
+
 ## Latest boundary — 2026-09-09 15:06 UTC
 
 - Root source inspection found coordinate reads form a flat index then recover
