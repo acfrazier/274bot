@@ -1,0 +1,49 @@
+{
+  "schema": "heaptrack-owner-input/v1",
+  "inputs": {
+    "raw": {
+      "path": "/home/acfrazier/274bot-campaign/current-owner-heaptrack-n1-2003/allocation/alloc.raw",
+      "bytes": 2149010072,
+      "sha256": "16f51266e56bd065f891ad822a00659a3bd0803aef8f748c82cde5e492b5ca29"
+    },
+    "interpreted": {
+      "path": "/home/acfrazier/274bot-campaign/current-owner-heaptrack-n1-2003/allocation/alloc.interpreted",
+      "bytes": 810563095,
+      "sha256": "cb005f5e7bae1869fbd5c5552fb4e5499fed6b25c43b74c9964c1d11f0ed076e"
+    },
+    "peak": {
+      "path": "/home/acfrazier/274bot-campaign/current-owner-heaptrack-n1-2003/allocation/peak-stacks.txt",
+      "bytes": 38699685,
+      "sha256": "92b33eac544a6b3f082058fcc1d4c23655f2eea457b1578d0a3f47e03c51ce6e"
+    },
+    "stderr": {
+      "path": "/home/acfrazier/274bot-campaign/current-owner-heaptrack-n1-2003/allocation/interpret-stderr.txt",
+      "bytes": 114,
+      "sha256": "3f7302f986ebb27f095faae6423bfbba8f966f67847cadf14aab87ffa5a1910a"
+    },
+    "receipt": {
+      "path": "/home/acfrazier/274bot-campaign/profile-tooling-stage-1915/docs/memory/diagnostics/20260908T200229Z_tui_n1_active/metadata.json",
+      "bytes": 7467,
+      "sha256": "17ba7c4aac04a6fcc641f2a7173895611be838cb4312b1259d36ab2937aa6907"
+    }
+  },
+  "analysis_path": [
+    "heaptrack",
+    "analysis"
+  ],
+  "provenance": {
+    "scope": "failed_saved_production_prefix",
+    "host": "c0709aba2f8b45e42193225cf8f4e7325b5ca9bf",
+    "client": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+    "binary_sha256": "a0c6eb0bed428fefad58530b177caae16ba2df6c7153544bb0852e16485591f9",
+    "capture_tooling": "1fe21610b6446779133b5ff0dc229ba93599ecc0",
+    "process_role": "client_tui",
+    "collection_mode": "direct-preload",
+    "intentional_pause": false,
+    "reinitialized": false,
+    "capture_status": "failed_raw_size_guard",
+    "campaign_capture_status": "failed_raw_size_guard"
+  },
+  "suppression_policy": "unsuppressed_replay_canonical_default_leaks_not_comparable",
+  "requested_time": null
+}

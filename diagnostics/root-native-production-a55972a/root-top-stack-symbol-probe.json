@@ -1,0 +1,281 @@
+[
+  {
+    "trace": {
+      "trace_id": "3862",
+      "family_id": "bb0fa3bf187a4315b9b3035e5b4f705851fdbf523b3e98364ddc3b9280791a97",
+      "requested_bytes": "73438581",
+      "live_count": "1",
+      "allocation_calls_full_trace": "1"
+    },
+    "frames": [
+      {
+        "symbol": "_RNvNvNtCs6ZjlLoI6YmX_3std2fs4read5inner",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNvNvNtCs6ZjlLoI6YmX_3std2fs4read5inner"
+      },
+      {
+        "symbol": "_RNvMNtCsdO8rEf1jYGK_3nav5worldNtB2_8NavWorld9load_pack",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNvMNtCsdO8rEf1jYGK_3nav5worldNtB2_8NavWorld9load_pack"
+      },
+      {
+        "symbol": "_RNvMs6_Cs3JBA3HkGT3V_9host_playNtB5_4Play3new",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNvMs6_Cs3JBA3HkGT3V_9host_playNtB5_4Play3new"
+      },
+      {
+        "symbol": "_RINvCs3JBA3HkGT3V_9host_play11run_with_ioNCNvMNtCsh45fz8A1of3_3tui3binNtBI_10TuiSession10start_play0NCBF_s_0EBK_",
+        "file": "",
+        "line": 0,
+        "demangled": "_RINvCs3JBA3HkGT3V_9host_play11run_with_ioNCNvMNtCsh45fz8A1of3_3tui3binNtBI_10TuiSession10start_play0NCBF_s_0EBK_"
+      },
+      {
+        "symbol": "_RNvMNtCsh45fz8A1of3_3tui3binNtB2_10TuiSession9unlock_at",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNvMNtCsh45fz8A1of3_3tui3binNtB2_10TuiSession9unlock_at"
+      },
+      {
+        "symbol": "_RNvNtCsh45fz8A1of3_3tui3bin3run",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNvNtCsh45fz8A1of3_3tui3bin3run"
+      },
+      {
+        "symbol": "_RNvNtCsh45fz8A1of3_3tui3bin4main",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNvNtCsh45fz8A1of3_3tui3bin4main"
+      },
+      {
+        "symbol": "_RINvNtNtCs6ZjlLoI6YmX_3std3sys9backtrace28___rust_begin_short_backtraceFENtNtB6_7process8ExitCodeB19_ECs4LgEStMLG6c_8tui_play",
+        "file": "",
+        "line": 0,
+        "demangled": "_RINvNtNtCs6ZjlLoI6YmX_3std3sys9backtrace28___rust_begin_short_backtraceFENtNtB6_7process8ExitCodeB19_ECs4LgEStMLG6c_8tui_play"
+      },
+      {
+        "symbol": "_RNCINvNtCs6ZjlLoI6YmX_3std2rt10lang_startNtNtB6_7process8ExitCodeE0Cs4LgEStMLG6c_8tui_play",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNCINvNtCs6ZjlLoI6YmX_3std2rt10lang_startNtNtB6_7process8ExitCodeE0Cs4LgEStMLG6c_8tui_play"
+      },
+      {
+        "symbol": "_RNvNtCs6ZjlLoI6YmX_3std2rt19lang_start_internal",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNvNtCs6ZjlLoI6YmX_3std2rt19lang_start_internal"
+      },
+      {
+        "symbol": "main",
+        "file": "",
+        "line": 0,
+        "demangled": "main"
+      },
+      {
+        "symbol": "__libc_start_main",
+        "file": "",
+        "line": 0,
+        "demangled": "__libc_start_main"
+      },
+      {
+        "symbol": "_start",
+        "file": "",
+        "line": 0,
+        "demangled": "_start"
+      }
+    ]
+  },
+  {
+    "trace": {
+      "trace_id": "3865",
+      "family_id": "bd4c43e256c8cea50aaf6ab0d6f2eff8787801fb5ae6f698d68730b97704844e",
+      "requested_bytes": "65142784",
+      "live_count": "1",
+      "allocation_calls_full_trace": "1"
+    },
+    "frames": [
+      {
+        "symbol": "_RINvXs1_NtNtCscHgRw1M2fX5_5alloc3vec14spec_from_elemhNtB6_12SpecFromElem9from_elemNtNtBa_5alloc6GlobalECsdO8rEf1jYGK_3nav",
+        "file": "",
+        "line": 0,
+        "demangled": "_RINvXs1_NtNtCscHgRw1M2fX5_5alloc3vec14spec_from_elemhNtB6_12SpecFromElem9from_elemNtNtBa_5alloc6GlobalECsdO8rEf1jYGK_3nav"
+      },
+      {
+        "symbol": "_RNvNtCsdO8rEf1jYGK_3nav4pack6decode",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNvNtCsdO8rEf1jYGK_3nav4pack6decode"
+      },
+      {
+        "symbol": "_RNvMNtCsdO8rEf1jYGK_3nav5worldNtB2_8NavWorld9load_pack",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNvMNtCsdO8rEf1jYGK_3nav5worldNtB2_8NavWorld9load_pack"
+      },
+      {
+        "symbol": "_RNvMs6_Cs3JBA3HkGT3V_9host_playNtB5_4Play3new",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNvMs6_Cs3JBA3HkGT3V_9host_playNtB5_4Play3new"
+      },
+      {
+        "symbol": "_RINvCs3JBA3HkGT3V_9host_play11run_with_ioNCNvMNtCsh45fz8A1of3_3tui3binNtBI_10TuiSession10start_play0NCBF_s_0EBK_",
+        "file": "",
+        "line": 0,
+        "demangled": "_RINvCs3JBA3HkGT3V_9host_play11run_with_ioNCNvMNtCsh45fz8A1of3_3tui3binNtBI_10TuiSession10start_play0NCBF_s_0EBK_"
+      },
+      {
+        "symbol": "_RNvMNtCsh45fz8A1of3_3tui3binNtB2_10TuiSession9unlock_at",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNvMNtCsh45fz8A1of3_3tui3binNtB2_10TuiSession9unlock_at"
+      },
+      {
+        "symbol": "_RNvNtCsh45fz8A1of3_3tui3bin3run",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNvNtCsh45fz8A1of3_3tui3bin3run"
+      },
+      {
+        "symbol": "_RNvNtCsh45fz8A1of3_3tui3bin4main",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNvNtCsh45fz8A1of3_3tui3bin4main"
+      },
+      {
+        "symbol": "_RINvNtNtCs6ZjlLoI6YmX_3std3sys9backtrace28___rust_begin_short_backtraceFENtNtB6_7process8ExitCodeB19_ECs4LgEStMLG6c_8tui_play",
+        "file": "",
+        "line": 0,
+        "demangled": "_RINvNtNtCs6ZjlLoI6YmX_3std3sys9backtrace28___rust_begin_short_backtraceFENtNtB6_7process8ExitCodeB19_ECs4LgEStMLG6c_8tui_play"
+      },
+      {
+        "symbol": "_RNCINvNtCs6ZjlLoI6YmX_3std2rt10lang_startNtNtB6_7process8ExitCodeE0Cs4LgEStMLG6c_8tui_play",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNCINvNtCs6ZjlLoI6YmX_3std2rt10lang_startNtNtB6_7process8ExitCodeE0Cs4LgEStMLG6c_8tui_play"
+      },
+      {
+        "symbol": "_RNvNtCs6ZjlLoI6YmX_3std2rt19lang_start_internal",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNvNtCs6ZjlLoI6YmX_3std2rt19lang_start_internal"
+      },
+      {
+        "symbol": "main",
+        "file": "",
+        "line": 0,
+        "demangled": "main"
+      },
+      {
+        "symbol": "__libc_start_main",
+        "file": "",
+        "line": 0,
+        "demangled": "__libc_start_main"
+      },
+      {
+        "symbol": "_start",
+        "file": "",
+        "line": 0,
+        "demangled": "_start"
+      }
+    ]
+  },
+  {
+    "trace": {
+      "trace_id": "3867",
+      "family_id": "a7f7ef1d33c50f587dbba5e68d5c9d91edbbe1a9d61ab71aa1e83f3fd5478cd7",
+      "requested_bytes": "8142848",
+      "live_count": "1",
+      "allocation_calls_full_trace": "1"
+    },
+    "frames": [
+      {
+        "symbol": "_RNvMs5_NtCscHgRw1M2fX5_5alloc7raw_vecNtB5_11RawVecInner15try_allocate_inCsdO8rEf1jYGK_3nav",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNvMs5_NtCscHgRw1M2fX5_5alloc7raw_vecNtB5_11RawVecInner15try_allocate_inCsdO8rEf1jYGK_3nav"
+      },
+      {
+        "symbol": "_RNvNtCsdO8rEf1jYGK_3nav4pack6decode",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNvNtCsdO8rEf1jYGK_3nav4pack6decode"
+      },
+      {
+        "symbol": "_RNvMNtCsdO8rEf1jYGK_3nav5worldNtB2_8NavWorld9load_pack",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNvMNtCsdO8rEf1jYGK_3nav5worldNtB2_8NavWorld9load_pack"
+      },
+      {
+        "symbol": "_RNvMs6_Cs3JBA3HkGT3V_9host_playNtB5_4Play3new",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNvMs6_Cs3JBA3HkGT3V_9host_playNtB5_4Play3new"
+      },
+      {
+        "symbol": "_RINvCs3JBA3HkGT3V_9host_play11run_with_ioNCNvMNtCsh45fz8A1of3_3tui3binNtBI_10TuiSession10start_play0NCBF_s_0EBK_",
+        "file": "",
+        "line": 0,
+        "demangled": "_RINvCs3JBA3HkGT3V_9host_play11run_with_ioNCNvMNtCsh45fz8A1of3_3tui3binNtBI_10TuiSession10start_play0NCBF_s_0EBK_"
+      },
+      {
+        "symbol": "_RNvMNtCsh45fz8A1of3_3tui3binNtB2_10TuiSession9unlock_at",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNvMNtCsh45fz8A1of3_3tui3binNtB2_10TuiSession9unlock_at"
+      },
+      {
+        "symbol": "_RNvNtCsh45fz8A1of3_3tui3bin3run",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNvNtCsh45fz8A1of3_3tui3bin3run"
+      },
+      {
+        "symbol": "_RNvNtCsh45fz8A1of3_3tui3bin4main",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNvNtCsh45fz8A1of3_3tui3bin4main"
+      },
+      {
+        "symbol": "_RINvNtNtCs6ZjlLoI6YmX_3std3sys9backtrace28___rust_begin_short_backtraceFENtNtB6_7process8ExitCodeB19_ECs4LgEStMLG6c_8tui_play",
+        "file": "",
+        "line": 0,
+        "demangled": "_RINvNtNtCs6ZjlLoI6YmX_3std3sys9backtrace28___rust_begin_short_backtraceFENtNtB6_7process8ExitCodeB19_ECs4LgEStMLG6c_8tui_play"
+      },
+      {
+        "symbol": "_RNCINvNtCs6ZjlLoI6YmX_3std2rt10lang_startNtNtB6_7process8ExitCodeE0Cs4LgEStMLG6c_8tui_play",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNCINvNtCs6ZjlLoI6YmX_3std2rt10lang_startNtNtB6_7process8ExitCodeE0Cs4LgEStMLG6c_8tui_play"
+      },
+      {
+        "symbol": "_RNvNtCs6ZjlLoI6YmX_3std2rt19lang_start_internal",
+        "file": "",
+        "line": 0,
+        "demangled": "_RNvNtCs6ZjlLoI6YmX_3std2rt19lang_start_internal"
+      },
+      {
+        "symbol": "main",
+        "file": "",
+        "line": 0,
+        "demangled": "main"
+      },
+      {
+        "symbol": "__libc_start_main",
+        "file": "",
+        "line": 0,
+        "demangled": "__libc_start_main"
+      },
+      {
+        "symbol": "_start",
+        "file": "",
+        "line": 0,
+        "demangled": "_start"
+      }
+    ]
+  }
+]

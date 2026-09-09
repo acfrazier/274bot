@@ -1,0 +1,104 @@
+{
+  "schema": "heaptrack-owner-native-production-prefix-report/v1",
+  "status": "validated_prefix_diagnostic",
+  "source_commit": "a55972aa5cce2902c2b09aa098ee825d84a5957a",
+  "review": {
+    "qualification_report": "4ab8c7e",
+    "smoke_report": "edcf3bb",
+    "model": "grok-4.5",
+    "provider": "xai-oauth",
+    "qualification_session": "20260908_204848_8a67a0"
+  },
+  "decision": {
+    "attempts": 1,
+    "new_capture": false,
+    "input_manifest_sha256": "7fcd08aed20e44c81dd495f83ae663b167f4392b84c39a79ce927b45165e1595",
+    "native_sha256": "98b5a2a20b0daf66057024f4618972fb34219b34568a09fa3be89a674d265b7f",
+    "capture_status": "failed_raw_size_guard",
+    "automatic_retry": false
+  },
+  "execution": {
+    "engine": "native",
+    "exit_code": 0,
+    "owned_child_pid": 3965,
+    "owned_child_reaped": true,
+    "wall_s": 167.13247063299787,
+    "pids_absent_at_export": [3963, 3964, 3965],
+    "capture_complete": false,
+    "acceptance": false
+  },
+  "raw": {
+    "allocations": 57857548,
+    "frees": 57648265,
+    "unknown_frees": 2,
+    "bytes": 132028404,
+    "count": 209283,
+    "lines": 115681026
+  },
+  "cutoffs": {
+    "peak": {
+      "timestamp_ms": 940,
+      "requested_bytes": 160842811,
+      "objects": 89122,
+      "unknown_ownership_bytes": 160842811,
+      "unknown_symbol_bytes": 160842811
+    },
+    "last_mark": {
+      "timestamp_ms": 589611,
+      "requested_bytes": 132027090,
+      "objects": 209263,
+      "unknown_ownership_bytes": 132027090,
+      "unknown_symbol_bytes": 132026994
+    },
+    "eof": {
+      "requested_bytes": 132028404,
+      "objects": 209283,
+      "unknown_ownership_bytes": 132028404,
+      "unknown_symbol_bytes": 132028308,
+      "event_tail_time_unbounded": true
+    }
+  },
+  "phases": [
+    {"phase": 1, "cpu_s": 72.296205772, "wall_s": 72.30912320900097},
+    {"phase": 2, "cpu_s": 45.877838647000004, "wall_s": 45.88573304300007},
+    {"phase": 3, "cpu_s": 48.91947867399999, "wall_s": 48.933855588998995}
+  ],
+  "resource_measurements": {
+    "sparse_proc_peak_rss_bytes": 23871488,
+    "cumulative_child_peak_rss_bytes": 44568576,
+    "highest_recorded_charged_capacity_bytes": 31736666,
+    "interpretation": "different measurements; not savings or comparable peaks"
+  },
+  "local_recomputation": {
+    "export_manifest_entries": 20,
+    "export_manifest_entries_validated": true,
+    "cutoff_aggregate_totals_match_stacks_families_descriptors": true,
+    "descriptor_size_times_count_matches_requested_bytes": true,
+    "canonical_full_positive_multiset_equality": "runner_attested_only",
+    "tar_sha256": "62dc105b3095f274176a3ee9b84e31b53606cac504f6149f59930c420ef70cbd"
+  },
+  "attribution_boundary": {
+    "all_cutoffs_unknown_ownership": true,
+    "source_owner_ranking": false,
+    "per_instance_or_epoch_ownership": false,
+    "source_symbol_coverage": "nearly all unresolved; family symbols have empty file and line fields",
+    "conservative_rule": "do not infer ownership from generic allocator templates or crate substrings"
+  },
+  "campaign_gates": {
+    "qualification": "passed bounded fixture qualification only",
+    "saved_smoke": "passed separately; functional proof only",
+    "production_capacity": "unproven",
+    "absolute_memory_budgets": "unresolved",
+    "per_bot_scaling": "unresolved",
+    "lifecycle_and_post_stop": "unresolved",
+    "rendering_and_responsiveness": "unresolved",
+    "target_hardware_validation": "unresolved",
+    "final_grok_4_6_branch_review": "required"
+  },
+  "evidence": {
+    "root": "diagnostics/root-native-production-a55972a/",
+    "replay_export": "diagnostics/root-native-production-a55972a/production-replay-1-export.tar.gz",
+    "replay_export_sha256": "62dc105b3095f274176a3ee9b84e31b53606cac504f6149f59930c420ef70cbd",
+    "root_arithmetic": "diagnostics/root-native-production-a55972a/root-arithmetic.json"
+  }
+}

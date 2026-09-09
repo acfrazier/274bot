@@ -1,0 +1,81 @@
+{
+  "status": "runner_finished",
+  "wrapper_pid": 3963,
+  "started_unix": 1788915413.1031508,
+  "attempt_limit": 1,
+  "production_capture": false,
+  "limits_changed": false,
+  "admission_unix": 1788915413.1395159,
+  "boot_id": "2217ec26-dc3e-47a3-a700-d3fafb34163f",
+  "mem_available": 1011859456,
+  "disk_free": 11810811904,
+  "conflicts": [],
+  "stage_files_hashed": 41,
+  "input_stat": {
+    "raw": {
+      "path": "/home/acfrazier/274bot-campaign/current-owner-heaptrack-n1-2003/allocation/alloc.raw",
+      "bytes": 2149010072,
+      "inode": 2925050,
+      "device": 2051,
+      "mtime_ns": 1788898344592784866,
+      "ctime_ns": 1788898344592784866
+    },
+    "interpreted": {
+      "path": "/home/acfrazier/274bot-campaign/current-owner-heaptrack-n1-2003/allocation/alloc.interpreted",
+      "bytes": 810563095,
+      "inode": 2925052,
+      "device": 2051,
+      "mtime_ns": 1788898411665025062,
+      "ctime_ns": 1788898411665025062
+    },
+    "peak": {
+      "path": "/home/acfrazier/274bot-campaign/current-owner-heaptrack-n1-2003/allocation/peak-stacks.txt",
+      "bytes": 38699685,
+      "inode": 2925056,
+      "device": 2051,
+      "mtime_ns": 1788898425121079465,
+      "ctime_ns": 1788898425121079465
+    },
+    "stderr": {
+      "path": "/home/acfrazier/274bot-campaign/current-owner-heaptrack-n1-2003/allocation/interpret-stderr.txt",
+      "bytes": 114,
+      "inode": 2925053,
+      "device": 2051,
+      "mtime_ns": 1788898411678025113,
+      "ctime_ns": 1788898411678025113
+    },
+    "receipt": {
+      "path": "/home/acfrazier/274bot-campaign/profile-tooling-stage-1915/docs/memory/diagnostics/20260908T200229Z_tui_n1_active/metadata.json",
+      "bytes": 7467,
+      "inode": 3054597,
+      "device": 2051,
+      "mtime_ns": 1788898426943086982,
+      "ctime_ns": 1788898426943086982
+    }
+  },
+  "argv": [
+    "/usr/bin/python3",
+    "-B",
+    "/home/acfrazier/owner-native-a55972a/docs/memory/heaptrack_owner_runner.py",
+    "--manifest",
+    "/home/acfrazier/owner-native-a55972a/production-input.json",
+    "--manifest-sha256",
+    "7fcd08aed20e44c81dd495f83ae663b167f4392b84c39a79ce927b45165e1595",
+    "--output",
+    "/home/acfrazier/owner-native-a55972a/production-replay-1",
+    "--engine",
+    "native",
+    "--native-executable",
+    "/home/acfrazier/owner-native-a55972a/docs/memory/heaptrack-owner-native/target/release/heaptrack-owner-child",
+    "--native-sha256",
+    "98b5a2a20b0daf66057024f4618972fb34219b34568a09fa3be89a674d265b7f"
+  ],
+  "cwd": "/home/acfrazier/owner-native-a55972a",
+  "manifest_sha256": "7fcd08aed20e44c81dd495f83ae663b167f4392b84c39a79ce927b45165e1595",
+  "native_sha256": "98b5a2a20b0daf66057024f4618972fb34219b34568a09fa3be89a674d265b7f",
+  "runner_pid": 3964,
+  "launched_unix": 1788915413.1405387,
+  "returncode": 0,
+  "runner_reaped": true,
+  "ended_unix": 1788915580.3818192
+}

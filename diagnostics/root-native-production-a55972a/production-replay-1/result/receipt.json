@@ -1,0 +1,306 @@
+{
+  "schema": "heaptrack-owner-replay/v1",
+  "status": "validated_prefix_diagnostic",
+  "capture_complete": false,
+  "acceptance": false,
+  "population": "recorded_tracked_requested_bytes",
+  "provenance": {
+    "scope": "failed_saved_production_prefix",
+    "host": "c0709aba2f8b45e42193225cf8f4e7325b5ca9bf",
+    "client": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+    "binary_sha256": "a0c6eb0bed428fefad58530b177caae16ba2df6c7153544bb0852e16485591f9",
+    "capture_tooling": "1fe21610b6446779133b5ff0dc229ba93599ecc0",
+    "process_role": "client_tui",
+    "collection_mode": "direct-preload",
+    "intentional_pause": false,
+    "reinitialized": false,
+    "capture_status": "failed_raw_size_guard",
+    "campaign_capture_status": "failed_raw_size_guard",
+    "manifest_sha256": "7fcd08aed20e44c81dd495f83ae663b167f4392b84c39a79ce927b45165e1595",
+    "input_hashes": {
+      "raw": {
+        "bytes": 2149010072,
+        "sha256": "16f51266e56bd065f891ad822a00659a3bd0803aef8f748c82cde5e492b5ca29"
+      },
+      "interpreted": {
+        "bytes": 810563095,
+        "sha256": "cb005f5e7bae1869fbd5c5552fb4e5499fed6b25c43b74c9964c1d11f0ed076e"
+      },
+      "peak": {
+        "bytes": 38699685,
+        "sha256": "92b33eac544a6b3f082058fcc1d4c23655f2eea457b1578d0a3f47e03c51ce6e"
+      },
+      "stderr": {
+        "bytes": 114,
+        "sha256": "3f7302f986ebb27f095faae6423bfbba8f966f67847cadf14aab87ffa5a1910a"
+      },
+      "receipt": {
+        "bytes": 7467,
+        "sha256": "17ba7c4aac04a6fcc641f2a7173895611be838cb4312b1259d36ab2937aa6907"
+      }
+    },
+    "requested_time": null,
+    "suppression_policy": "unsuppressed_replay_canonical_default_leaks_not_comparable"
+  },
+  "raw": {
+    "bytes": 132028404,
+    "count": 209283,
+    "allocations": 57857548,
+    "frees": 57648265,
+    "unknown_frees": 2,
+    "temporary": 34351941,
+    "max_live_pointers": 217058,
+    "events": "981ce9458b6cb0590196bdf0f4d3526f86999fc107167b70b2d989f829f404fd",
+    "traces": 59106,
+    "trace_digest": "6ffd18cf87f1e33bf715eb34cd591f1b876d1e9492856c05d0b381fd09efa66b",
+    "metadata": "8b175aa53eb0ff559f2f8d863020821377415ed9675b8323e6a5abaa4395d34a",
+    "lines": 115681026
+  },
+  "interpreted": {
+    "peak": {
+      "line": 891922,
+      "offset": 5496182,
+      "timestamp_ms": 940,
+      "bytes": 160842811,
+      "count": 89122
+    },
+    "last_mark": {
+      "line": 115727929,
+      "offset": 810525321,
+      "timestamp_ms": 589611,
+      "ordinal": 58044,
+      "bytes": 132027090,
+      "count": 209263
+    },
+    "requested": null,
+    "next_mark": null,
+    "last_event": {
+      "line": 115733320,
+      "offset": 810563059,
+      "previous_timestamp_ms": 589611
+    },
+    "eof": {
+      "line": 115733323,
+      "offset": 810563095,
+      "bytes": 132028404,
+      "count": 209283
+    },
+    "events": "981ce9458b6cb0590196bdf0f4d3526f86999fc107167b70b2d989f829f404fd",
+    "metadata": "8b175aa53eb0ff559f2f8d863020821377415ed9675b8323e6a5abaa4395d34a",
+    "trace_digest": "6ffd18cf87f1e33bf715eb34cd591f1b876d1e9492856c05d0b381fd09efa66b",
+    "allocations": 57857548,
+    "frees": 57648265,
+    "temporary": 34532515,
+    "max_multiplicity": 10984,
+    "definitions": {
+      "s": 3721,
+      "i": 9021,
+      "t": 59107,
+      "a": 39570
+    },
+    "sha256": "cb005f5e7bae1869fbd5c5552fb4e5499fed6b25c43b74c9964c1d11f0ed076e"
+  },
+  "cutoffs": {
+    "eof": {
+      "kind": "captured_prefix_end",
+      "actual_mark": null,
+      "position": {
+        "line": 115733323,
+        "offset": 810563095,
+        "bytes": 132028404,
+        "count": 209283
+      },
+      "next_mark": null,
+      "last_observed_mark": {
+        "line": 115727929,
+        "offset": 810525321,
+        "timestamp_ms": 589611,
+        "ordinal": 58044,
+        "bytes": 132027090,
+        "count": 209263
+      },
+      "event_tail_time_unbounded": true,
+      "requested_time": null,
+      "bytes": 132028404,
+      "count": 209283,
+      "unknown_ownership_bytes": 132028404,
+      "unknown_symbol_bytes": 132028308
+    },
+    "last_mark": {
+      "kind": "last_actual_timestamp_prefix",
+      "actual_mark": {
+        "line": 115727929,
+        "offset": 810525321,
+        "timestamp_ms": 589611,
+        "ordinal": 58044,
+        "bytes": 132027090,
+        "count": 209263
+      },
+      "position": {
+        "line": 115727929,
+        "offset": 810525321,
+        "timestamp_ms": 589611,
+        "ordinal": 58044,
+        "bytes": 132027090,
+        "count": 209263
+      },
+      "next_mark": null,
+      "last_observed_mark": null,
+      "event_tail_time_unbounded": false,
+      "requested_time": null,
+      "bytes": 132027090,
+      "count": 209263,
+      "unknown_ownership_bytes": 132027090,
+      "unknown_symbol_bytes": 132026994
+    },
+    "peak": {
+      "kind": "first_common_time_global_peak_validation",
+      "actual_mark": null,
+      "position": {
+        "line": 891922,
+        "offset": 5496182,
+        "timestamp_ms": 940,
+        "bytes": 160842811,
+        "count": 89122
+      },
+      "next_mark": null,
+      "last_observed_mark": null,
+      "event_tail_time_unbounded": false,
+      "requested_time": null,
+      "bytes": 160842811,
+      "count": 89122,
+      "unknown_ownership_bytes": 160842811,
+      "unknown_symbol_bytes": 160842811
+    }
+  },
+  "canonical_peak": {
+    "rows": 14903,
+    "positive_rows": 194,
+    "bytes": 160842811
+  },
+  "canonical_full_positive_multiset_equal": true,
+  "leak_comparison": "unsuppressed_replay_only_no_exact_canonical_leak_oracle",
+  "suppressions": [],
+  "suppressions_applied": false,
+  "tables": {
+    "strings": 3720,
+    "ips": 9020,
+    "traces": 59106,
+    "descriptors": 39570,
+    "high_charged_bytes": 31736666
+  },
+  "resources": {
+    "linux_release": true,
+    "qualification": "requires_root_native_guard_smoke",
+    "completed_passes": [
+      {
+        "phase": 1,
+        "wall_s": 72.30912320900097,
+        "cpu_s": 72.296205772,
+        "cumulative_peak_rss_bytes": 44568576,
+        "charged_capacity_bytes": 20303,
+        "high_charged_capacity_bytes": 31736666,
+        "line": 115681026,
+        "offset": 2149010072,
+        "records": 115681026
+      },
+      {
+        "phase": 2,
+        "wall_s": 45.88573304300007,
+        "cpu_s": 45.877838647000004,
+        "cumulative_peak_rss_bytes": 44568576,
+        "charged_capacity_bytes": 8043614,
+        "high_charged_capacity_bytes": 31736666,
+        "line": 115733323,
+        "offset": 810563095,
+        "records": 115733323
+      }
+    ],
+    "child_pid": 3965
+  },
+  "limits": {
+    "table_bytes": 268435456,
+    "traces": 2000000,
+    "ips": 500000,
+    "descriptors": 1000000,
+    "pointers": 2000000,
+    "strings": 200000,
+    "string_bytes": 67108864,
+    "line": 1048576,
+    "depth": 512,
+    "raw": 3221225472,
+    "interpreted": 1073741824,
+    "peak": 67108864,
+    "output": 33554432,
+    "scratch": 67108864,
+    "cpu": 180,
+    "wall": 300,
+    "rss": 536870912,
+    "address": 805306368,
+    "admission_memory": 805306368,
+    "admission_disk": 1073741824,
+    "free_disk": 536870912
+  },
+  "files": {
+    "strings.tsv": {
+      "bytes": 235151,
+      "sha256": "c59d6a85135735d5edec6453bbdb91bae28e5507d17ba75b92df2daec2b8e29c"
+    },
+    "ips.tsv": {
+      "bytes": 108807,
+      "sha256": "a4c55ccfb5925d38cac3b46dcac25dd271fc93965fd26921e8b1e061a1003f3c"
+    },
+    "traces.tsv": {
+      "bytes": 109937,
+      "sha256": "48cb0e78c909f6503c4707130911dbda8558290f573e640026f6dedb4ac6973c"
+    },
+    "families.tsv": {
+      "bytes": 141220,
+      "sha256": "3487b1a73f754581372a3adc16ce13a2d18376f3c059d99a25f0efee80519774"
+    },
+    "eof-stacks.tsv": {
+      "bytes": 163152,
+      "sha256": "aae71fbf1a2ee792e0bdc8894a6cae9523985ace30412291fbe27c5282419482"
+    },
+    "eof-families.tsv": {
+      "bytes": 30099,
+      "sha256": "87bc684850baf2bfdb11297f4c667b28baac6fb98cf5f4cb223cfcc5e3c5f2ca"
+    },
+    "eof-descriptors.tsv": {
+      "bytes": 207001,
+      "sha256": "2e984d6f77d752a5cfdb1575e89433910a7674685ad3cb3f113328cb74b610a1"
+    },
+    "last_mark-stacks.tsv": {
+      "bytes": 162012,
+      "sha256": "0a7e7545d1fa2b2c0239aaaff131beb3f93a41c124a9dbdfa3624966d8554358"
+    },
+    "last_mark-families.tsv": {
+      "bytes": 29744,
+      "sha256": "f1a90c0ddfbaeb46f504ea4a73500ab71c09508f71811a3785dcf338fad878d1"
+    },
+    "last_mark-descriptors.tsv": {
+      "bytes": 206622,
+      "sha256": "a937611a7f2ad6c21881d78ed1f35ec21c7441bce1475bc0de4b0f749b371691"
+    },
+    "peak-stacks.tsv": {
+      "bytes": 15604,
+      "sha256": "bfbf329ec6e0994a81d801b7a592a96318697d295a8b6a7915eeca733dd672da"
+    },
+    "peak-families.tsv": {
+      "bytes": 3462,
+      "sha256": "f26da11ba54edb4cf839be85325debb0d4be1d4c2b746f9325bf396abde0e783"
+    },
+    "peak-descriptors.tsv": {
+      "bytes": 18586,
+      "sha256": "6f48a7c0ea61bebee9629c44c1a13e02c188b8645237c2ea48183548e1b1bd6d"
+    }
+  },
+  "limitations": [
+    "Capture FAILED; missing observe-end/Stop/post-join is not repaired by replay.",
+    "Unknown frees and unrecorded/realloc-to-zero events remain missing coverage.",
+    "Hashes do not detect pre-manifest whole-record suffix loss; EOF is not shutdown.",
+    "Descriptor IDs are not pointers, instances, ages, snapshots or publication epochs.",
+    "Requested bytes are not RSS, allocator retained pages, V8/pool/mmap/GPU inventory.",
+    "Source domains are not per-instance ownership, private N1 attribution or N16 scaling."
+  ]
+}

@@ -1,0 +1,55 @@
+{
+  "child_pid": 3965,
+  "exit_code": 0,
+  "owned_child_reaped": true,
+  "wall_s": 167.13247063299787,
+  "peak_rss_bytes": 23871488,
+  "peak_address_bytes": 24989696,
+  "linux_proc_monitor": true,
+  "phases": [
+    {
+      "phase": 1,
+      "wall_s": 72.30912320900097,
+      "cpu_s": 72.296205772,
+      "cumulative_peak_rss_bytes": 44568576,
+      "charged_capacity_bytes": 20303,
+      "high_charged_capacity_bytes": 31736666,
+      "line": 115681026,
+      "offset": 2149010072,
+      "records": 115681026
+    },
+    {
+      "phase": 2,
+      "wall_s": 45.88573304300007,
+      "cpu_s": 45.877838647000004,
+      "cumulative_peak_rss_bytes": 44568576,
+      "charged_capacity_bytes": 8043614,
+      "high_charged_capacity_bytes": 31736666,
+      "line": 115733323,
+      "offset": 810563095,
+      "records": 115733323
+    },
+    {
+      "phase": 3,
+      "wall_s": 48.933855588998995,
+      "cpu_s": 48.91947867399999,
+      "cumulative_peak_rss_bytes": 44568576,
+      "charged_capacity_bytes": 9595091,
+      "high_charged_capacity_bytes": 31736666,
+      "line": 14903,
+      "offset": 38699685,
+      "records": 115748226
+    }
+  ],
+  "engine": "native",
+  "native_executable_sha256": "98b5a2a20b0daf66057024f4618972fb34219b34568a09fa3be89a674d265b7f",
+  "status": "validated_prefix_diagnostic",
+  "capture_complete": false,
+  "acceptance": false,
+  "manifest_sha256": "7fcd08aed20e44c81dd495f83ae663b167f4392b84c39a79ce927b45165e1595",
+  "receipt_sha256": "1672fc1a477f06f5d11c0bae5155378d9f446db6a7f26ac1891fcf44bcca6e67",
+  "tooling_sha256": {
+    "heaptrack_owner_runner.py": "6263255770ec0ff27022c06b00ad28ee68e48e212dadc6d574206d6da85f74d4",
+    "heaptrack_owner_replay.py": "6d7faa8cb70a90330f2df5943551e5841d084808f45c8d2c7e38bae338ed660e"
+  }
+}

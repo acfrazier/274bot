@@ -1,0 +1,18 @@
+{
+  "decision": "one native replay of identical saved failed capture prefix",
+  "qualification_review": "20260908_204848_8a67a0",
+  "reviewed_reports": [
+    "4ab8c7e",
+    "edcf3bb"
+  ],
+  "source_commit": "a55972aa5cce2902c2b09aa098ee825d84a5957a",
+  "native_sha256": "98b5a2a20b0daf66057024f4618972fb34219b34568a09fa3be89a674d265b7f",
+  "manifest_sha256": "7fcd08aed20e44c81dd495f83ae663b167f4392b84c39a79ce927b45165e1595",
+  "remote_output": "/home/acfrazier/owner-native-a55972a/production-replay-1",
+  "limits": "unchanged CPU180/wall300 perphase/RSS512MiB/AS768MiB/table256MiB/output32MiB/scratch64MiB; outer930s",
+  "fresh_admission_required": true,
+  "no_new_capture": true,
+  "stop_on_failure_no_automatic_retry": true,
+  "capacity": "unproven; bounded single attempt is the discriminator",
+  "capture_status_remains_failed": true
+}
