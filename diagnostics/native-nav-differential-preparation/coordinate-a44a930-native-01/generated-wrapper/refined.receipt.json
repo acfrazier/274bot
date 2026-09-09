@@ -1,0 +1,23 @@
+{
+  "address_guard_active": true,
+  "command": [
+    "/home/builder/nav-coordinate-differential-a44a930-01/host/docs/memory/nav-tiled-differential/coordinate-native-wrapper-generated-01/refined/target/debug/differential-probe",
+    "/home/builder/nav-coordinate-differential-a44a930-01/host/docs/memory/nav-tiled-differential/coordinate-native-wrapper-generated-01/real-release/routes.tsv",
+    "/home/builder/nav-coordinate-differential-a44a930-01/host/docs/memory/nav-tiled-differential/coordinate-native-wrapper-generated-01/real-release",
+    "real"
+  ],
+  "cwd": "/home/builder/nav-coordinate-differential-a44a930-01",
+  "failure": null,
+  "limits": {
+    "address": 4294967296,
+    "cpu": 800,
+    "file_size": 4294967296,
+    "output": 4294967296,
+    "rss": 1073741824,
+    "wall": 900
+  },
+  "output_bytes": 80987,
+  "returncode": 0,
+  "sampled_group_peak_bytes": 2797568,
+  "wall_seconds": 0.08051653399888892
+}

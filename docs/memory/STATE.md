@@ -11,6 +11,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 23:56 UTC
+
+- Fresh full-byte native wrapper qualification also PASS: generated337-byte
+  extension fixture through actual real_run admission/execution in a separately
+  copied immutable run, unchangedREAL caps/hardAS. Both outputs80,987bytes equal.
+  Root downloaded full outputs/receipts/input and independently verified them in
+  coordinate-a44a930-native-01/generated-wrapper/root-audit.json. Original run's
+  real-release remains unused; no private input read by this qualification.
+- Owner fixture revised bb267d1 adds the missing release_contract path. Same-card
+  reviewer is actually running (round2); no native rerun before its verdict.
+- Native generated navigation prerequisites now passed. Next root action is fresh
+  hardware/boot/memory/swap/idle/conflict preflight and separately hash-bound
+  exact59 real full-byte release under unchanged limits; this checkpoint itself
+  does not issue that release. CF1/CF2/CA and live owner remain unreleased.
+
 ## Latest boundary — 2026-09-09 23:54 UTC
 
 - Concord qualification03 COMPLETE PASS, session13659 terminal0. All five steps
