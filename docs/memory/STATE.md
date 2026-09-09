@@ -11,6 +11,28 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 12:39 UTC
+
+- Native ccff4bb generated PASS12954inputs/328120731fullbytes equal and MacSHA
+ 464fe7676fcd6edbc5b2e06ed24bda6a32137d37a5cb99932bb13b700eda73f1.
+ Unchanged fullaudit PASS originalGitobjects/allframes/inputs/extensioncounts.
+ Firstrootaudit invocation failed missing Gitmetadata on source-only stage;
+ preservednative-audit-attempt-01.json, supplied exact136originalcommit/tree/
+ hostCargoobjects, unchangedaudit rerun passed (NOprobe rerun/sourceedit).
+ Nativeguards18PASS0skip hardAS; newcopied337Bgeneratedfixture actualrealwrapper
+ admission PASS80987B equal,12Tele8BankSession8Boat52NoPath eacharm.
+- Root releases ONE realpack comparison of19approvedsource-backedselectors,
+ TSVSHA34a7d8ef78c8755dbe2ffc775977bdb4b8fc2ec8fd114fac3412b0a936d5edbc,
+ JSONSHA3255cd30f3ae6003a786394ed5a379cb5444ee2d5535f178fad3bbd3db458bcf.
+ Same73438581B274pack SHA2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30.
+ NativeauthSHAe2e5f9c16230575dde48269e099e5408ae629d65f65b42977f50bf8953997f32.
+ Freshbuilderpreflight no conflicts,44.5GBfree; runnative-run/real-release new.
+ Preserve900wall800CPU1GiBRSS4GiBAS4GiBoutput bounds, no retries or tuning.
+ Intentlabels notcoverage acceptance; no StageA/B/savings released.
+- StageA corrective t_fa5a3462 now actualAstra/openai083333_3ac036 running
+ afterGrok4.5rejection and rootreclaim/reassignment of secondLunarun. Samecard
+ preserved; rebuildingactualfrozenarms/guards/semantics/counting qualification.
+
 ## Latest boundary — 2026-09-09 12:31 UTC
 
 - Concord offload COMPLETE: all23capture2003files verified locally;21existing
