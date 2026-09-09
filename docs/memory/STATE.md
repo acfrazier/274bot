@@ -11,6 +11,18 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 19:14 UTC
+
+- Controller design5cb6374 APPROVED same-card round3 actualGrok4.5/xai
+  151026_1eaa26 (163s). Review closes earlier lifecycle holes as a design contract,
+  not executed implementation or live proof. Root verified full verdict/commit.
+- Independent fidelity escalation t_cd9d8639 now actualGrok4.6/xai
+  151335_5b9c51 running. Implementation remains withheld pending reconciliation.
+- Coverage corrected local run now passes five gap steps, full feature-off API,
+  host (213pass1ignored with only scoped test environment correction), and script
+  load suites. Remaining steps and review are pending; earlier failures retained.
+  Navigation tooling remains active. No root native/Concord work released.
+
 ## Latest boundary — 2026-09-09 19:11 UTC
 
 - Controller child-mask correction5cb6374 completed; same-card round3 actual
