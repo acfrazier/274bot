@@ -1,0 +1,11 @@
+{
+  "archive_verified": false,
+  "error": "reviewed overlay member mismatch",
+  "failed_members": [
+    "crates/host-play/src/lib.rs",
+    "crates/host-play/src/memory.rs"
+  ],
+  "prepared": false,
+  "production_tree_unchanged": true,
+  "schema": "direct-owner-preparation-result-v1"
+}

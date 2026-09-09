@@ -1,0 +1,506 @@
+{
+  "client": [
+    {
+      "materialized": {
+        "bytes": 929,
+        "sha256": "4197688f08ed259ad96f2dc43dda6aa8433960769d30b3e4be51c8f1fd3ce26e"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "vendor/fr-client-rust/crates/client/Cargo.toml",
+      "receipt": {
+        "bytes": 929,
+        "sha256": "4197688f08ed259ad96f2dc43dda6aa8433960769d30b3e4be51c8f1fd3ce26e"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 929,
+        "sha256": "4197688f08ed259ad96f2dc43dda6aa8433960769d30b3e4be51c8f1fd3ce26e"
+      },
+      "verified": true
+    },
+    {
+      "materialized": {
+        "bytes": 43192,
+        "sha256": "cd6cb7d14acc5f0406d217ae95691b6c1bffcb5089b53f7442bbe17ab8891d9e"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "vendor/fr-client-rust/crates/client/src/core/world.rs",
+      "receipt": {
+        "bytes": 43192,
+        "sha256": "cd6cb7d14acc5f0406d217ae95691b6c1bffcb5089b53f7442bbe17ab8891d9e"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 43192,
+        "sha256": "cd6cb7d14acc5f0406d217ae95691b6c1bffcb5089b53f7442bbe17ab8891d9e"
+      },
+      "verified": true
+    },
+    {
+      "materialized": {
+        "bytes": 9976,
+        "sha256": "7485b52922b60ec17f00e01e3dbd90280dfebdd3dd0021bf1b553ecfa361e718"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "vendor/fr-client-rust/crates/client/src/io/packet.rs",
+      "receipt": {
+        "bytes": 9976,
+        "sha256": "7485b52922b60ec17f00e01e3dbd90280dfebdd3dd0021bf1b553ecfa361e718"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 9976,
+        "sha256": "7485b52922b60ec17f00e01e3dbd90280dfebdd3dd0021bf1b553ecfa361e718"
+      },
+      "verified": true
+    },
+    {
+      "materialized": {
+        "bytes": 15734,
+        "sha256": "caafa9426d7cbbc2a870e41cb348f1e9189ed5cb8905fd5b6477f4d94f3da8e8"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "vendor/fr-client-rust/crates/client/src/core/world_owner_capture.rs",
+      "receipt": {
+        "bytes": 15734,
+        "sha256": "caafa9426d7cbbc2a870e41cb348f1e9189ed5cb8905fd5b6477f4d94f3da8e8"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 15734,
+        "sha256": "caafa9426d7cbbc2a870e41cb348f1e9189ed5cb8905fd5b6477f4d94f3da8e8"
+      },
+      "verified": true
+    },
+    {
+      "materialized": {
+        "bytes": 676,
+        "sha256": "0998c62ad4c44a1ff48eec084aa8e0fe3d58d28f8b38af75885f8fec6dc37d62"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "vendor/fr-client-rust/crates/client/tests/direct_owner_capture.rs",
+      "receipt": {
+        "bytes": 676,
+        "sha256": "0998c62ad4c44a1ff48eec084aa8e0fe3d58d28f8b38af75885f8fec6dc37d62"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 676,
+        "sha256": "0998c62ad4c44a1ff48eec084aa8e0fe3d58d28f8b38af75885f8fec6dc37d62"
+      },
+      "verified": true
+    }
+  ],
+  "client_original": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+  "client_reviewed": "5c73a4a27f3d72834c2c2a071668eb197eb39fd9",
+  "host": [
+    {
+      "materialized": {
+        "bytes": 569,
+        "sha256": "4f1ba390554854cd8dab2b509e374f759defbdbcba4cdae02571233541bf92fb"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "crates/api/Cargo.toml",
+      "receipt": {
+        "bytes": 569,
+        "sha256": "4f1ba390554854cd8dab2b509e374f759defbdbcba4cdae02571233541bf92fb"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 569,
+        "sha256": "4f1ba390554854cd8dab2b509e374f759defbdbcba4cdae02571233541bf92fb"
+      },
+      "verified": true
+    },
+    {
+      "materialized": {
+        "bytes": 723,
+        "sha256": "5fc311c7351f72d45e254e02287b061c4ab24ef6348c22f2a8eb19825d142502"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "crates/api/src/lib.rs",
+      "receipt": {
+        "bytes": 723,
+        "sha256": "5fc311c7351f72d45e254e02287b061c4ab24ef6348c22f2a8eb19825d142502"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 723,
+        "sha256": "5fc311c7351f72d45e254e02287b061c4ab24ef6348c22f2a8eb19825d142502"
+      },
+      "verified": true
+    },
+    {
+      "materialized": {
+        "bytes": 18714,
+        "sha256": "c613acdc792c3ec35d98f9cf0316d842edde27b1c69d3111d430b2cb7cc84914"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "crates/api/src/owner_capture.rs",
+      "receipt": {
+        "bytes": 18714,
+        "sha256": "c613acdc792c3ec35d98f9cf0316d842edde27b1c69d3111d430b2cb7cc84914"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 18714,
+        "sha256": "c613acdc792c3ec35d98f9cf0316d842edde27b1c69d3111d430b2cb7cc84914"
+      },
+      "verified": true
+    },
+    {
+      "materialized": {
+        "bytes": 119749,
+        "sha256": "f070179115b0de05cef9f6290d2807d81fe5bf5663e0187c3dd3ac4e31c528b4"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "crates/api/src/snapshot.rs",
+      "receipt": {
+        "bytes": 119749,
+        "sha256": "f070179115b0de05cef9f6290d2807d81fe5bf5663e0187c3dd3ac4e31c528b4"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 119749,
+        "sha256": "f070179115b0de05cef9f6290d2807d81fe5bf5663e0187c3dd3ac4e31c528b4"
+      },
+      "verified": true
+    },
+    {
+      "materialized": {
+        "bytes": 28341,
+        "sha256": "ec08fd9896568fa1c23a7558374103475184e6134c502ea45d4ff5d6ff52e9a5"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "crates/api/src/snapshot_owner_capture.rs",
+      "receipt": {
+        "bytes": 28341,
+        "sha256": "ec08fd9896568fa1c23a7558374103475184e6134c502ea45d4ff5d6ff52e9a5"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 28341,
+        "sha256": "ec08fd9896568fa1c23a7558374103475184e6134c502ea45d4ff5d6ff52e9a5"
+      },
+      "verified": true
+    },
+    {
+      "materialized": {
+        "bytes": 1663,
+        "sha256": "300d411f76e16af32cac428e9ee4306879f82776b9c5693ce1bb8778213d0ba9"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "crates/host-play/Cargo.toml",
+      "receipt": {
+        "bytes": 1663,
+        "sha256": "300d411f76e16af32cac428e9ee4306879f82776b9c5693ce1bb8778213d0ba9"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 1663,
+        "sha256": "300d411f76e16af32cac428e9ee4306879f82776b9c5693ce1bb8778213d0ba9"
+      },
+      "verified": true
+    },
+    {
+      "materialized": {
+        "bytes": 357877,
+        "sha256": "f997f22f00bb205cdad74eec70d9dfc5750c3f8f80d9ba52c024f5ea4ea9120f"
+      },
+      "materialized_matches_receipt": false,
+      "materialized_matches_reviewed": false,
+      "path": "crates/host-play/src/lib.rs",
+      "receipt": {
+        "bytes": 361346,
+        "sha256": "096753fc31636e829058e33f54770090810688346c9be47b4ed49193813801ee"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 361346,
+        "sha256": "096753fc31636e829058e33f54770090810688346c9be47b4ed49193813801ee"
+      },
+      "verified": false
+    },
+    {
+      "materialized": {
+        "bytes": 161591,
+        "sha256": "76e633acf9d4dcd1fd03f1a57ea722f5111025790071679119e7e5932ece2991"
+      },
+      "materialized_matches_receipt": false,
+      "materialized_matches_reviewed": false,
+      "path": "crates/host-play/src/memory.rs",
+      "receipt": {
+        "bytes": 161447,
+        "sha256": "74b7a18164f1b6861697ec8c651c2f81a400dbd41c8bf772cdab29ff4b3bb923"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 161447,
+        "sha256": "74b7a18164f1b6861697ec8c651c2f81a400dbd41c8bf772cdab29ff4b3bb923"
+      },
+      "verified": false
+    },
+    {
+      "materialized": {
+        "bytes": 21090,
+        "sha256": "f767b36e1fdbc96d9c50a18bea1a0c1be15682d0372bd68e5af693305d2c7415"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "crates/host-play/src/owner_capture.rs",
+      "receipt": {
+        "bytes": 21090,
+        "sha256": "f767b36e1fdbc96d9c50a18bea1a0c1be15682d0372bd68e5af693305d2c7415"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 21090,
+        "sha256": "f767b36e1fdbc96d9c50a18bea1a0c1be15682d0372bd68e5af693305d2c7415"
+      },
+      "verified": true
+    },
+    {
+      "materialized": {
+        "bytes": 693,
+        "sha256": "64eb03642d4b17da7f6001d686baf1274c1498bb2c8828bac824db0652b50f50"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "crates/host/Cargo.toml",
+      "receipt": {
+        "bytes": 693,
+        "sha256": "64eb03642d4b17da7f6001d686baf1274c1498bb2c8828bac824db0652b50f50"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 693,
+        "sha256": "64eb03642d4b17da7f6001d686baf1274c1498bb2c8828bac824db0652b50f50"
+      },
+      "verified": true
+    },
+    {
+      "materialized": {
+        "bytes": 109962,
+        "sha256": "47c513a9fd58697ee7f6e698390fb1ffa92693d535405f1ca013c094dfdca4ac"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "crates/host/src/lib.rs",
+      "receipt": {
+        "bytes": 109962,
+        "sha256": "47c513a9fd58697ee7f6e698390fb1ffa92693d535405f1ca013c094dfdca4ac"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 109962,
+        "sha256": "47c513a9fd58697ee7f6e698390fb1ffa92693d535405f1ca013c094dfdca4ac"
+      },
+      "verified": true
+    },
+    {
+      "materialized": {
+        "bytes": 27767,
+        "sha256": "1e744b159b940b2538c400b3dcab8ba7788d8deb262fb7e5c346222c1fe56d9c"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "crates/host/src/owner_capture.rs",
+      "receipt": {
+        "bytes": 27767,
+        "sha256": "1e744b159b940b2538c400b3dcab8ba7788d8deb262fb7e5c346222c1fe56d9c"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 27767,
+        "sha256": "1e744b159b940b2538c400b3dcab8ba7788d8deb262fb7e5c346222c1fe56d9c"
+      },
+      "verified": true
+    },
+    {
+      "materialized": {
+        "bytes": 1601,
+        "sha256": "2e14574f8ffa3da8e49ac27182d4e6e4b1e215c5e1d3e775d00713d21d516843"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "crates/script/Cargo.toml",
+      "receipt": {
+        "bytes": 1601,
+        "sha256": "2e14574f8ffa3da8e49ac27182d4e6e4b1e215c5e1d3e775d00713d21d516843"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 1601,
+        "sha256": "2e14574f8ffa3da8e49ac27182d4e6e4b1e215c5e1d3e775d00713d21d516843"
+      },
+      "verified": true
+    },
+    {
+      "materialized": {
+        "bytes": 14452,
+        "sha256": "dfc842f481ed5721648e44a4429191f1867e80dd04e9820ae9009f69cfbdfcbd"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "crates/script/src/fingerprint_owner_capture.rs",
+      "receipt": {
+        "bytes": 14452,
+        "sha256": "dfc842f481ed5721648e44a4429191f1867e80dd04e9820ae9009f69cfbdfcbd"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 14452,
+        "sha256": "dfc842f481ed5721648e44a4429191f1867e80dd04e9820ae9009f69cfbdfcbd"
+      },
+      "verified": true
+    },
+    {
+      "materialized": {
+        "bytes": 2369,
+        "sha256": "639d844c881a2ed44be90a9858a6d57be2b10c47998bf857e803a45e14e6dcb6"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "crates/script/src/lib.rs",
+      "receipt": {
+        "bytes": 2369,
+        "sha256": "639d844c881a2ed44be90a9858a6d57be2b10c47998bf857e803a45e14e6dcb6"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 2369,
+        "sha256": "639d844c881a2ed44be90a9858a6d57be2b10c47998bf857e803a45e14e6dcb6"
+      },
+      "verified": true
+    },
+    {
+      "materialized": {
+        "bytes": 26482,
+        "sha256": "9ef953c889f624dc697bdfd78ee04cb8bb68d283f214f0399b5abe9b9391b648"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "crates/script/src/slot.rs",
+      "receipt": {
+        "bytes": 26482,
+        "sha256": "9ef953c889f624dc697bdfd78ee04cb8bb68d283f214f0399b5abe9b9391b648"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 26482,
+        "sha256": "9ef953c889f624dc697bdfd78ee04cb8bb68d283f214f0399b5abe9b9391b648"
+      },
+      "verified": true
+    },
+    {
+      "materialized": {
+        "bytes": 987,
+        "sha256": "b678c628e59c57c36a8d22e6cffcdd016c3a9df4eb7429300056cc9f51a19496"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "crates/tui/Cargo.toml",
+      "receipt": {
+        "bytes": 987,
+        "sha256": "b678c628e59c57c36a8d22e6cffcdd016c3a9df4eb7429300056cc9f51a19496"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 987,
+        "sha256": "b678c628e59c57c36a8d22e6cffcdd016c3a9df4eb7429300056cc9f51a19496"
+      },
+      "verified": true
+    },
+    {
+      "materialized": {
+        "bytes": 715,
+        "sha256": "161c368f04f689bcc47209c51ebcab3d4b4c534ed07d7081bd43535d779f1d9c"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "crates/api/tests/direct_owner_capture.rs",
+      "receipt": {
+        "bytes": 715,
+        "sha256": "161c368f04f689bcc47209c51ebcab3d4b4c534ed07d7081bd43535d779f1d9c"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 715,
+        "sha256": "161c368f04f689bcc47209c51ebcab3d4b4c534ed07d7081bd43535d779f1d9c"
+      },
+      "verified": true
+    },
+    {
+      "materialized": {
+        "bytes": 10013,
+        "sha256": "d4a9a7800228c7e06f8e17103ce89dfe9f9141f82bb29c13c8e4bee74e2d8b23"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "crates/host-play/src/owner_capture_output.rs",
+      "receipt": {
+        "bytes": 10013,
+        "sha256": "d4a9a7800228c7e06f8e17103ce89dfe9f9141f82bb29c13c8e4bee74e2d8b23"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 10013,
+        "sha256": "d4a9a7800228c7e06f8e17103ce89dfe9f9141f82bb29c13c8e4bee74e2d8b23"
+      },
+      "verified": true
+    },
+    {
+      "materialized": {
+        "bytes": 5277,
+        "sha256": "907370881c83edb3e0c0372c9e18314797b8aa7dfd21ea51e633c817bfeacf93"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "crates/host-play/tests/direct_owner_capture.rs",
+      "receipt": {
+        "bytes": 5277,
+        "sha256": "907370881c83edb3e0c0372c9e18314797b8aa7dfd21ea51e633c817bfeacf93"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 5277,
+        "sha256": "907370881c83edb3e0c0372c9e18314797b8aa7dfd21ea51e633c817bfeacf93"
+      },
+      "verified": true
+    },
+    {
+      "materialized": {
+        "bytes": 842,
+        "sha256": "302b1e34550f57800f0262cccdeafd0bd3a8d908069dc583587b9042a332d309"
+      },
+      "materialized_matches_receipt": true,
+      "materialized_matches_reviewed": true,
+      "path": "crates/script/tests/direct_owner_capture.rs",
+      "receipt": {
+        "bytes": 842,
+        "sha256": "302b1e34550f57800f0262cccdeafd0bd3a8d908069dc583587b9042a332d309"
+      },
+      "receipt_matches_reviewed": true,
+      "reviewed_commit": {
+        "bytes": 842,
+        "sha256": "302b1e34550f57800f0262cccdeafd0bd3a8d908069dc583587b9042a332d309"
+      },
+      "verified": true
+    }
+  ],
+  "host_original": "c0709aba2f8b45e42193225cf8f4e7325b5ca9bf",
+  "host_reviewed": "3cdc3e4fbeb960fe4c270eb994ce22746787eb2d",
+  "schema": "direct-owner-frozen-provenance-audit-v1",
+  "verified": false
+}
