@@ -11,6 +11,25 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 10:48 UTC
+
+- Required final tutorial-input t_7fe3337b completed actual Grok4.6/xai
+  20260909_064019_cd1ea8, report6475746, reviewed production91fcadd.
+  Verdict is bounded OFFLINE input acceptance ONLY; pending-message drawing
+  precedence/colour is a material remaining finding and native-click confounder.
+  No live release or whole-client acceptance from that report.
+- Root explicitly authorized narrow presentation correction t_ea8cdf17,
+  actual orch Astra/openai20260909_064720_2e5741. Primary289 ordering is
+  social, amount, pending non-null message, chat IF, tutorial IF, ordinary chat;
+  pending cue DARKBLUE128 and chat dirty each pending frame. Preserve274 and
+  arrow/scene1 behavior; synthetic-font production pixel/scheduling tests,
+  same-card review then required corrective Grok4.6 before fresh native proof.
+- Main differentialt_3393f351 remains in implementation. Both frozen probes
+  now build after preserved preparation failure. Root reminded worker that
+  assigned real-mode admission/exhaustive comparison/selector support must
+  be implemented and generated-tested, not delivered as a permanently disabled
+  stub. Real input still forbidden until reviewed tool/native guard release.
+
 ## Latest boundary — 2026-09-09 10:42 UTC
 
 - User paused both Hermes workers for usage, then explicitly authorized resume.
