@@ -35,6 +35,20 @@ class CensusFixtures(unittest.TestCase):
             self.assertEqual(json.loads(result.stdout)["actual"]["width"], 32)
             self.assertNotEqual(path.read_bytes(), boundary.read_bytes())
 
+    def test_nonuniform_and_signed_accounting(self):
+        with tempfile.TemporaryDirectory() as name:
+            directory = Path(name)
+            path, result = self.run_fixture("nonuniform", directory)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(result.stdout)
+            accounting = report["accounting"]
+            self.assertGreater(accounting["nonuniform_tiles"], 0)
+            self.assertEqual(
+                accounting["hypothetical_element_storage_estimate"],
+                8 * accounting["tile_count"] + 1152 * accounting["nonuniform_tiles"],
+            )
+            self.assertLess(accounting["potential_element_reduction_estimate"], 0)
+
     def test_decoder_rejections_and_hash_binding(self):
         with tempfile.TemporaryDirectory() as name:
             directory = Path(name)
@@ -65,6 +79,33 @@ class CensusFixtures(unittest.TestCase):
             receipt = json.loads(receipts[0].read_text())
             self.assertFalse(receipt["linux_proc_guard"])
             self.assertTrue(receipt["sampled_rss_is_not_cumulative_peak"])
+            self.assertIsNone(receipt["sampled_peak_rss_bytes"])
+            self.assertEqual(receipt["sampled_memory_status"], "unavailable")
+
+    def test_symlink_and_identity_mismatches_rejected(self):
+        with tempfile.TemporaryDirectory() as name:
+            directory = Path(name)
+            path, _ = self.run_fixture("uniform", directory)
+            link = directory / "link.navpack"
+            link.symlink_to(path)
+            direct = subprocess.run([str(CENSUS), str(link)], capture_output=True)
+            self.assertNotEqual(direct.returncode, 0)
+            exe_hash = hashlib.sha256(CENSUS.read_bytes()).hexdigest()
+            source_hash = hashlib.sha256((ROOT / "build.rs").read_bytes()).hexdigest()
+            rejected = subprocess.run(
+                ["python3", str(SUPERVISOR), "--executable", str(CENSUS),
+                 "--input", str(path), "--source", str(ROOT / "build.rs"),
+                 "--input-sha256", hashlib.sha256(path.read_bytes()).hexdigest(),
+                 "--executable-sha256", "0" * 64, "--source-sha256", source_hash,
+                 "--output-root", str(directory / "bad-exe")], capture_output=True)
+            self.assertNotEqual(rejected.returncode, 0)
+            rejected = subprocess.run(
+                ["python3", str(SUPERVISOR), "--executable", str(CENSUS),
+                 "--input", str(path), "--source", str(ROOT / "build.rs"),
+                 "--input-sha256", hashlib.sha256(path.read_bytes()).hexdigest(),
+                 "--executable-sha256", exe_hash, "--source-sha256", "0" * 64,
+                 "--output-root", str(directory / "bad-source")], capture_output=True)
+            self.assertNotEqual(rejected.returncode, 0)
 
     def test_owned_failures_keep_receipts(self):
         with tempfile.TemporaryDirectory() as name:
@@ -73,6 +114,7 @@ class CensusFixtures(unittest.TestCase):
             cases = {
                 "nonzero": "#!/bin/sh\nexit 7\n",
                 "output": "#!/usr/bin/env python3\nimport sys\nsys.stdout.write('x' * 2000000)\n",
+                "split-output": "#!/usr/bin/env python3\nimport sys\nsys.stdout.write('x' * 600000)\nsys.stderr.write('y' * 600000)\n",
                 "timeout": "#!/usr/bin/env python3\nimport time\ntime.sleep(61)\n",
             }
             for label, source in cases.items():

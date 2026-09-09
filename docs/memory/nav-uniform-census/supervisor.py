@@ -92,6 +92,10 @@ def proc_sample(pid: int) -> dict[str, int]:
             "cpu_ticks": int(fields[11]) + int(fields[12]), "hz": ticks}
 
 
+def receipt_size(receipt: dict) -> int:
+    return len((json.dumps(receipt, sort_keys=True, indent=2) + "\n").encode())
+
+
 def limits_child() -> None:
     resource.setrlimit(resource.RLIMIT_CPU, (int(CPU_LIMIT) + 1, int(CPU_LIMIT) + 1))
     resource.setrlimit(resource.RLIMIT_FSIZE, (OUTPUT_LIMIT, OUTPUT_LIMIT))
@@ -114,8 +118,8 @@ def run(args: argparse.Namespace) -> int:
     if source is not None:
         source_size, source_hash = digest(source, 8 * 1024 * 1024)
     if not args.fixture and (not args.input_sha256 or not args.executable_sha256 or
-                            not args.source_sha256):
-        fail("REAL run requires expected input/executable/source identities")
+                            not args.source_sha256 or not args.source_manifest_sha256):
+        fail("REAL run requires expected input/executable/source/manifest identities")
     if args.executable_sha256 and args.executable_sha256 != executable_hash:
         fail("executable hash mismatch")
     if args.source_sha256 and args.source_sha256 != source_hash:
@@ -144,6 +148,10 @@ def run(args: argparse.Namespace) -> int:
         "output_dir": str(output), "linux_proc_guard": sys.platform == "linux",
     }
     child = None
+    stdout = bytearray()
+    stderr = bytearray()
+    result = None
+    receipt_overflow = False
     try:
         command = [str(executable), str(input_path)]
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", OMP_NUM_THREADS="1")
@@ -155,7 +163,7 @@ def run(args: argparse.Namespace) -> int:
         selector = selectors.DefaultSelector()
         selector.register(child.stdout, selectors.EVENT_READ, "stdout")
         selector.register(child.stderr, selectors.EVENT_READ, "stderr")
-        stdout = bytearray(); stderr = bytearray(); peak_rss = 0; peak_as = 0
+        peak_rss = None; peak_as = None
         while selector.get_map() or child.poll() is None:
             if time.monotonic() - started > WALL_LIMIT:
                 fail("wall guard")
@@ -165,14 +173,24 @@ def run(args: argparse.Namespace) -> int:
                     selector.unregister(key.fileobj)
                 elif key.data == "stdout":
                     stdout.extend(data)
-                    if len(stdout) > OUTPUT_LIMIT: fail("output cap breached")
                 else:
                     stderr.extend(data)
-                    if len(stderr) > OUTPUT_LIMIT: fail("stderr cap breached")
+                if len(stdout) + len(stderr) >= OUTPUT_LIMIT:
+                    fail("combined output cap breached")
             if sys.platform == "linux" and child.poll() is None:
-                sample = proc_sample(child.pid)
-                peak_rss = max(peak_rss, sample["rss"])
-                peak_as = max(peak_as, sample["address"])
+                try:
+                    sample = proc_sample(child.pid)
+                except (OSError, ValueError):
+                    # /proc can disappear between poll() and the read.  A
+                    # cleanly exiting child must be reaped and evaluated, not
+                    # converted into an observation failure.
+                    if child.poll() is None:
+                        raise
+                    sample = None
+                if sample is None:
+                    continue
+                peak_rss = sample["rss"] if peak_rss is None else max(peak_rss, sample["rss"])
+                peak_as = sample["address"] if peak_as is None else max(peak_as, sample["address"])
                 cpu = sample["cpu_ticks"] / sample["hz"]
                 if sample["rss"] > RSS_LIMIT: fail("RSS guard")
                 if sample["address"] > AS_LIMIT: fail("address-space guard")
@@ -180,16 +198,32 @@ def run(args: argparse.Namespace) -> int:
         returncode = child.wait()
         receipt.update({"returncode": returncode, "stdout_bytes": len(stdout),
                         "stderr_bytes": len(stderr), "sampled_peak_rss_bytes": peak_rss,
-                        "sampled_peak_address_bytes": peak_as, "sampled_rss_is_not_cumulative_peak": True})
+                        "sampled_peak_address_bytes": peak_as,
+                        "sampled_memory_status": "available" if peak_rss is not None else "unavailable",
+                        "sampled_rss_is_not_cumulative_peak": True})
         if returncode != 0: fail(f"child returned {returncode}")
         try:
             result = json.loads(stdout)
         except (UnicodeDecodeError, json.JSONDecodeError):
             fail("child output is not JSON")
-        if not isinstance(result, dict) or result.get("status") != "ok":
+        if not isinstance(result, dict):
+            fail("malformed child result")
+        assert isinstance(result, dict)
+        if result.get("status") != "ok":
             fail("malformed child result")
         if result.get("input", {}).get("sha256") != input_hash:
             fail("child input identity mismatch")
+        result_source = result.get("source")
+        if not isinstance(result_source, dict):
+            fail("child source identity missing")
+        assert isinstance(result_source, dict)
+        if not args.fixture:
+            if result_source.get("frozen_host") != "c0709aba2f8b45e42193225cf8f4e7325b5ca9bf":
+                fail("child frozen host identity mismatch")
+            if result_source.get("frozen_client") != "3456edc8dabf7b25ada78110ffa56327af9f67a4":
+                fail("child frozen client identity mismatch")
+            if result_source.get("source_manifest") != args.source_manifest_sha256:
+                fail("child source manifest identity mismatch")
         receipt["status"] = "ok"
         receipt["result"] = result
     except BaseException as exc:
@@ -204,7 +238,18 @@ def run(args: argparse.Namespace) -> int:
         raise
     finally:
         receipt["elapsed_seconds"] = time.monotonic() - started
+        # A successful receipt/result is part of the single output budget.  A
+        # failure receipt is retained even when the child already exhausted
+        # that budget, but never claim a successful oversized result.
+        if receipt.get("status") == "ok" and len(stdout) + len(stderr) + receipt_size(receipt) > OUTPUT_LIMIT:
+            receipt["status"] = "failed"
+            receipt.pop("result", None)
+            receipt["failure"] = "combined output plus receipt cap breached"
         (output / "receipt.json").write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n")
+        if receipt.get("failure") == "combined output plus receipt cap breached":
+            receipt_overflow = True
+    if receipt_overflow:
+        return 1
     return 0
 
 
@@ -217,6 +262,7 @@ def main() -> int:
     parser.add_argument("--input-sha256")
     parser.add_argument("--executable-sha256")
     parser.add_argument("--source-sha256")
+    parser.add_argument("--source-manifest-sha256")
     parser.add_argument("--fixture", action="store_true")
     args = parser.parse_args()
     try:
