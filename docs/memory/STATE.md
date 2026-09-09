@@ -11,6 +11,34 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 03:19 UTC
+
+- Arrow correction1b38f18 APPROVED actual Grok4.5/xai225610_906ad2. Root
+  test-onlyb03e633 marks GPU-required proof explicitly ignored by default;
+  explicit GPU invocation1pass/0ignored, default library79pass/1ignored.
+  Completed parent could not reopen through CLI; separate corrective
+  t_e042ff2a APPROVED actual230211_a86f50. Required whole-branch Grok4.6
+  t_e7dfd2e6 APPROVED bounded offline, actual230411_5b9c2c, report411ef132.
+- Fresh reviewed standalone build passed2.755s, SHA60d2b7f8...; temporary
+  byte-identical .app successfully made native CUA interaction possible.
+  Root viewed live arrow on/off and matching moved NPC positions. No numeric
+  presentation-latency claim. Session80927 reached14850cycles without T1/T2,
+  then bounded300s timeout terminated/reaped-15. No clean logout acceptance.
+- The live logout tab opened, but NPC/walk/menu/logout button clicks did not
+  act. Root traced handle_chat_if_clicks: it consumes every click while
+  tut_com_id!=-1, even without a pending message. Primary289 J6042-6046 instead
+  consumes only LEFT click with aString4!=null. This explains tabs working
+  before the handler while later menu actions are swallowed. Corrective
+  t_08298357 is assigned orch, actual run just started; model verification
+  pending. Keep nullable/empty message semantics and274 behavior, then reviews
+  and fresh live action/logout proof. No renderer rework or server changes.
+  Raw proof: lostcity-289/runtime/client-proof-arrow-0310/proof-manifest.json;
+  CUA images were directly viewed, not saved as local image files.
+- Nav t_797a8226 remains active. Root identified self-comparison route tests
+  and inadequate malformed-wire oracle coverage, recorded exact blockers on
+  card. Worker is replacing them with dense logic/full error coverage after
+  affected crate checks. No correctness acceptance or real input release yet.
+
 ## Latest boundary — 2026-09-09 02:47 UTC
 
 - Native census report/design29b7aea APPROVED t_71e88dd7, actual Grok4.5/xai
