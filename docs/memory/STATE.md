@@ -11,6 +11,26 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 12:31 UTC
+
+- Concord offload COMPLETE: all23capture2003files verified locally;21existing
+ matched plus raw2149010072B/interpreted810563095B downloaded+hashed. Remote
+ onlythose2traces rehashed/readerchecked/unlinked, relocationreceipt remains;
+ available now14766632960B (~14.77GB), freed2959585280B. Localfullcapture
+ diagnostics/owner-capture-evidence-2015/current-owner-heaptrack-n1-2003;
+ audit diagnostics/concord-storage-20260909; reportconcord-storage-offload-20260909.md.
+ Historicalremote rawpaths now archived: stage verifiedlocalcopy if needed,
+ no recapture. Preserve source/cache/server and ongoing user offload preference.
+- Nativeextension ccff4bb freshlystaged13418files on HyperVbuilder (NOTConcord),
+ /home/builder/274bot-campaign/nav-differential-ccff4bb-1228. Bothfrozenbuilds
+ passed30.553/30.018s, nativeaddressguardactive. Generatedcomparison running;
+ nativefullaudit/guards/newreal19selectors not accepted or released yet.
+- StageA toolingaab094f in same-card review actualreviewer; root independently
+ found major contract gaps (no frozenarmadmission, falseASactiveclaim, orphan
+ cleanup, ignoredradius/options/state/model, no counting/layout/hotreads,
+ no realadmission, incompletevalidation). Rootcomment preserves findings for
+ correctivehandback; do NOTaccept compilation as complete tooling or releaseit.
+
 ## Latest boundary — 2026-09-09 12:27 UTC
 
 - Extension ccff4bbe22d63cdb8b11612aaf97bbbadcb256dc APPROVED t_2aabed22
