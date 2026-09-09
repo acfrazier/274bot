@@ -11,6 +11,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 14:33 UTC
+
+- Direct per-bot design t_360cbcc9 APPROVED round2 at192da0d after root fixed
+  sole stale navigation-disposition paragraph. Original85f4828 source/ownership
+  audit approved; actual reviewer Grok4.5/xai,32s correction review. Navigation
+  remains provisionally retained under operator startup exception.
+- Root releases IMPLEMENTATION + GENERATED/OFFLINE TESTS only t_ce3310e4,
+  profileimplementer defaults verified grok-composer-2.5-fast/xai-oauth. Owned
+  files/test contract in direct-per-bot-owner-capture-plan.md section6; report
+  direct-owner-capture-implementation-report.md. No native/live/SSH/default or
+  optimization change released. Exact originalHc070/C3456 plus reviewed overlay
+  must be bound before later capture. Root owns client commit/gitlink after
+  review; worker may leave exact client diff for same-card reviewer audit.
+- Routing resource design6a2c566 t_4e422f9a awaits same-card review. Proposes
+  new singleton-warmed experiment, explicitly different from failed original
+  temporal schedule; raw quantiles/global budget protocol and feasibility first.
+  No new routing tooling, native probe or cap increase released yet.
+
 ## Latest boundary — 2026-09-09 14:27 UTC
 
 - Cold evidence review COMPLETE and APPROVED c1d4120, t_8693907a actual
