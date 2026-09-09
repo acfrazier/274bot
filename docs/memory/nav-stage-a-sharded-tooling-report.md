@@ -8,7 +8,9 @@ Independent same-card review is required.
 
 The original implementation snapshot below was submitted as `5324f41` and
 REJECTED for an unguarded setup-CPU prefix. Its evidence/hashes remain historical;
-the **Setup-CPU correction** section at the end is the current tooling freeze.
+the **Idle-window correction** section at the end is the current tooling freeze.
+The intervening `5c0ab7f` setup-CPU fix passed that regression but was rejected
+in round 2 because the separately required fixed idle-window correction was missing.
 
 ## Delivered
 
@@ -273,3 +275,108 @@ macOS qualification still explicitly reports `native_hard_as_qualified=false`.
 No native, SSH, real-pack or live execution occurred. Same-card Grok 4.5 review,
 root native qualification and separate F1/F2/new-method/acceptance releases remain
 required. The correction does not close any performance or whole-branch gate.
+
+## Idle-window correction — same-card review round 3
+
+Round 2 correctly found `native_preflight` still sleeping 0.05 seconds. The root's
+preserved counter observations show why that is inadequate on its two-CPU/HZ100
+target: 6 of 60 short samples fell below 90% idle, while the three fixed one-second
+samples had 195/199, 194/199 and 197/199 idle ticks with zero steal. These are
+root-produced historical host observations, not native work performed by this task.
+Both original JSON files remain untouched; hashes and counts are in this readback.
+The rejected first archive, setup correction archive and both old qualification
+results were rehashed against their historical identities and remain unchanged.
+
+The new scheduler uses fixed `NATIVE_IDLE_SECONDS=1.0`. Thresholds and method are
+unchanged: a single delta of the first eight `/proc/stat` counters, idle plus
+iowait at least 90%, no changed steal ticks, positive total elapsed ticks. A bad
+sample fails immediately; there is no retry-until-idle or cross-sample average.
+Version `stage-a-singleton-v2` binds `contract.native_idle_sample` with the exact
+window, `stage-a-native-idle-v1` method schema and thresholds. Old v1 authorization
+files are not upgraded or accepted in place. Raw probe schema stays v1 and all
+compiled probe/helper/production bytes stay unchanged. The contract reads the
+live window constant so an in-memory mutation also rejects at the next binding.
+
+### Actual sampling cost and unchanged ceilings
+
+Source control-flow readback found the review's one-sample-per-child estimate
+understated the existing frequency. Each successful phase has one fresh entry
+check, an initial bind, two binds per child, and two final aggregation binds:
+`2*N+4` fixed sleeps. No call site was removed. Computed nominal idle costs are
+12s F1, 232s F2, and 1420s acceptance; F1+F2 is 244s, total 1664s. Nominal room
+after idle alone is 468s under the F1 wall cap, 1556s under cumulative F1+F2,
+5780s under acceptance, and 7336s under the whole-release cap. The stricter F2
+projection permits 960s diagnostic wall total, leaving 716s for non-idle work.
+
+Idle alone fits, but this does NOT establish that routing plus hashing fits.
+Scheduling delays, setup, repeated binding, aggregation and all supervisor/helper
+CPU continue to count; there is no allowance increase or observer subtraction.
+The real F2 projection can still refuse acceptance. All sampling remains inside
+the already-corrected setup/global alarms, outside child route timing. A real
+one-second sleep with synthetic `/proc` charged 1.073978375s wall and positive
+supervisor CPU; a separate 0.08s alarm interrupted the window. This is generated
+budget proof, not a native CPU-idle measurement or performance claim.
+
+### Verification and preserved corrections
+
+Commands ran from the campaign checkout; `RUN` is the absolute
+`docs/memory/nav-tiled-stage-a/sharded-run-01` path.
+
+1. `PYTHONPATH=docs/memory/nav-tiled-stage-a python3 -m unittest -v test_sharded_guards.Guards.test_native_idle_fixed_window_contract`:
+   expected exit 1 before correction, `sleep(0.05)` instead of `sleep(1.0)`;
+   log `28-idle-window-red.log`. The same command passed after correction,
+   log `29-idle-window-green.log`.
+2. New loaded-window mutation regression initially failed because a cached
+   contract dictionary did not observe the changed execution constant. Log
+   `30-idle-mutation-red.log` and its complete generated fixture are preserved.
+   Contract construction now reads that constant directly. All four new tests
+   passed in 1.209s; exact test names/command operands are in log
+   `31-idle-tests-green.log`. They cover fixed schema/window, after-child loaded
+   window mutation stopping before the partner, single-shot exact-90% boundary /
+   below-threshold / zero-tick / steal rejection, and actual sleep/alarm accounting.
+3. `python3 docs/memory/nav-tiled-stage-a/qualify_sharded.py RUN singleton-qualification-04`:
+   exit 0, **23 tests passed in 113.196s**, no skips. The existing 19 tests include
+   setup CPU, near/exactly exhausted continuations, owned descendant cleanup,
+   complete 4/114/708 mocked matrix, mutation/raw/quantile/weighted CPU/noise
+   coverage. Then four ACTUAL tiny-generated clean-probe children and all 12
+   old/new clean/counting fixture comparisons passed. Log `32`.
+4. `python3 docs/memory/nav-tiled-stage-a/stage_a.py guards --run ABSOLUTE_STAGE/sharded-guards-03`:
+   exit 0, **17 legacy guard tests passed**, including between-repetition mutation.
+   Fresh retained receipts; log `33` is empty.
+5. `python3 diagnostics/nav-stage-a-sharded-tooling/export_idle_correction.py`:
+   exit 0; log `34` records both arms' 209/210 pinned original Git files, all four
+   unchanged binary/admission bindings, helper spans, raw aggregation readback,
+   one input copy, AST-checked bind frequency and computed cost table. The complete
+   mocked matrix used 1,962,809 release bytes and charged 113.438858458 wall /
+   106.778379 CPU seconds; these are controller fixture costs only.
+6. `python3 -m py_compile docs/memory/nav-tiled-stage-a/sharded.py docs/memory/nav-tiled-stage-a/test_sharded_guards.py`
+   and `git diff --check`: exit 0. A convenience arithmetic `python3 -c` command
+   was blocked by headless policy; the ordinary readback script computed the cost
+   table instead. No policy/configuration was changed.
+
+Only scheduler Python, tests, README, mutable proposed manifest and this report
+change in the commit. The new evidence/readback script and archive live under
+the task's diagnostics directory. The first-round four fresh clean/counting
+builds and generated fixture results are reused/revalidated, not rebuilt or
+re-admitted in place: this correction changes no compiled byte or build input.
+
+### Current freeze and remaining limitations
+
+- Scheduler SHA256 `8bfda30e744379d55a6abaef3dda31192487a534d0508cc41fd3a6ff0152267d`.
+- Guard tests SHA256 `45dd91f94b7c9128647e26d243666fd7ea658a82dce56c4dd19b6d2b01cae15b`.
+- Qualification `singleton-qualification-04/result.json` SHA256
+  `9244415c4f021acd840842b724288089cf3d5ef414f47efed8f3e0c2224552ae`.
+- Proposed manifest SHA256 `36fc057b0a371485420715fb339e58d11dab9eac7f4680e80124642a50d3179b`.
+- Fresh archive `diagnostics/nav-stage-a-sharded-tooling/idle-correction-01/evidence.tar.gz`:
+  **578,958 bytes**, SHA256 `72506e5f3626f04012eb082d2efc4d6db66469a7a8e8a574674c7db31975de7c`.
+  All **5,699 members** verified, including the archive manifest; 5,698 payloads
+  total 3,148,760 bytes. This supplements, never replaces, prior archives.
+- Readback SHA256 `97398aec6eed79e70d0d50d035294634e6a394a48f87bdb2713a90c029c154d8`.
+
+The platform remains macOS and `native_hard_as_qualified=false`. Synthetic
+`/proc` fixtures are explicitly not Linux host qualification. No native, SSH,
+real-pack, account, server or live access occurred. Root must still package and
+qualify the reviewed native tool, review/release each feasibility phase, accept
+the changed temporal method before any clean acceptance release, and own all
+remaining performance/lifecycle/whole-branch gates. Same-card Grok 4.5 review is
+requested; this report does not claim its verdict.

@@ -32,7 +32,77 @@ def setup_root(run):
     return auth,root
 
 
+@contextmanager
+def generated_preflight(delta=(10,0,0,190,0,0,0,0)):
+    # Exercise the real admission function without reading native /proc or
+    # invoking host inspection. Every input here is explicitly synthetic.
+    before=[1000]*8;after=[a+b for a,b in zip(before,delta)]
+    samples=iter(('cpu '+' '.join(map(str,v))+'\n' for v in (before,after)))
+    def read(path,*args,**kwargs):
+        if str(path)=='/proc/stat':return next(samples)
+        if str(path)=='/proc/meminfo':
+            return 'MemAvailable: 1048576 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n'
+        if str(path)=='/proc/sys/kernel/random/boot_id':return 'generated-boot\n'
+        raise AssertionError('unexpected external read: '+str(path))
+    pre=dict(hardware={'generated':True},no_competing_work=True,
+        boot_id='generated-boot',timestamp=time.time(),idle_percent=95,steal_percent=0)
+    with patch.object(sh,'read_ref',return_value=pre),patch.object(sh.stage,'hardware',return_value=pre['hardware']),\
+            patch.object(Path,'read_text',read),patch.object(sh.stage.subprocess,'check_output',return_value=''):
+        yield
+
+
 class Guards(unittest.TestCase):
+    def test_native_idle_fixed_window_contract(self):
+        with generated_preflight(),patch.object(sh.time,'sleep') as sleep:
+            sh.native_preflight({'preflight':{}},fresh=True)
+            sleep.assert_called_once_with(1.0)
+        self.assertEqual(sh.SCHEMA,'stage-a-singleton-v2')
+        expected=dict(schema='stage-a-native-idle-v1',seconds=1.0,
+            method='proc-stat-single-delta-idle-plus-iowait',minimum_idle_percent=90,
+            maximum_steal_ticks=0)
+        self.assertEqual(sh.contract([b'generated\n']*59)['native_idle_sample'],expected)
+
+    def test_native_idle_window_mutation_binding(self):
+        with retained_fixture() as run:
+            auth,_=setup_root(run);launches=[]
+            def launch(r,a,p,s,o,n,g):
+                launches.append(a)
+                sh.NATIVE_IDLE_SECONDS=.05
+                return mock_output(o,n)
+            with patch.object(sh,'NATIVE_IDLE_SECONDS',1.0),patch.object(sh.stage,'check_release'),\
+                    patch.object(sh,'launch',launch):
+                with self.assertRaisesRegex(ValueError,'tool/config mutation'):
+                    sh.run_phase(run,auth,sh.stage.sha(auth),standin=True)
+            self.assertEqual(launches,['dense'])
+
+    def test_native_idle_single_shot_fail_closed(self):
+        for delta,passes in [((20,0,0,180,0,0,0,0),True),
+                ((21,0,0,179,0,0,0,0),False),((0,)*8,False),
+                ((0,0,0,199,0,0,0,1),False)]:
+            with self.subTest(delta=delta),generated_preflight(delta),patch.object(sh.time,'sleep') as sleep:
+                if passes:sh.native_preflight({'preflight':{}})
+                else:
+                    with self.assertRaisesRegex(ValueError,'idle/steal'):
+                        sh.native_preflight({'preflight':{}})
+                sleep.assert_called_once_with(1.0)
+
+    def test_native_idle_wait_charged_and_interrupted(self):
+        # Real sleep + real supervisor alarm, synthetic /proc only. No native
+        # input/host admission or expensive probe is permitted by this fixture.
+        with retained_fixture() as run:
+            budget=sh.Budget(2,1);start=time.monotonic()
+            with generated_preflight(),sh.deadline(2),sh.cpu_deadline(1),budget.deadlines():
+                sh.native_preflight({'preflight':{}})
+            charged=budget.snapshot()
+            self.assertGreaterEqual(charged['wall'],1.0)
+            self.assertGreater(charged['supervisor_cpu'],0)
+            with generated_preflight(),sh.deadline(.08),sh.cpu_deadline(1):
+                with self.assertRaises(sh.Deadline):
+                    sh.native_preflight({'preflight':{}})
+            self.assertLess(time.monotonic()-start,1.8)
+            sh.write_json(run/'idle-budget-proof.json',dict(charged=charged,
+                interrupted_window=True,window_seconds=1.0,alarm_seconds=.08))
+
     def test_setup_cpu_budget_stops_admission(self):
         with retained_fixture() as run:
             with patch.dict(sh.CEILINGS,F1=[.75,.03,4]):

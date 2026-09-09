@@ -16,9 +16,10 @@ import platform
 import shutil
 import sys
 
-SCHEMA = 'stage-a-singleton-v1'
+SCHEMA = 'stage-a-singleton-v2'
 RAW_SCHEMA = 'stage-a-raw-v1'
 RAW_ORDER = 'sweep-row-lane/8/3'
+NATIVE_IDLE_SECONDS = 1.0
 CEILINGS = {'F1': [480,360,4], 'F2': [1800,1500,118], 'acceptance': [7200,6000,708]}
 STORAGE = dict(release_bytes=512*1024**2, free_reserve_bytes=1024**3,
                child_bytes=256*1024, record_bytes=16384, json_bytes=256*1024)
@@ -70,7 +71,10 @@ def contract(rows):
         shard_sha256=[digest(r) for r in rows],
         schedules={p:[list(x) for x in schedule(p)] for p in CEILINGS},
         ceilings=CEILINGS,total=[9000,7500],child_limits=stage.LIMITS,
-        headroom=[80,60],storage=STORAGE)
+        headroom=[80,60],storage=STORAGE,
+        native_idle_sample=dict(schema='stage-a-native-idle-v1',seconds=NATIVE_IDLE_SECONDS,
+            method='proc-stat-single-delta-idle-plus-iowait',minimum_idle_percent=90,
+            maximum_steal_ticks=0))
 
 
 def generated_authorization(run,pack,routes,destination):
@@ -121,7 +125,7 @@ def native_preflight(root,fresh=False):
     if memory['MemAvailable']<512*1024**2 or memory['SwapTotal']!=memory['SwapFree']:
         raise ValueError('native memory/swap admission')
     def counters():return list(map(int,Path('/proc/stat').read_text().splitlines()[0].split()[1:9]))
-    before=counters();time.sleep(.05);after=counters()
+    before=counters();time.sleep(NATIVE_IDLE_SECONDS);after=counters()
     elapsed=sum(after)-sum(before);idle=after[3]+after[4]-before[3]-before[4]
     if elapsed<=0 or idle/elapsed<.90 or after[7]!=before[7]:
         raise ValueError('native idle/steal admission')
