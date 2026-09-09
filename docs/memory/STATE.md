@@ -11,6 +11,22 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 16:33 UTC
+
+- Owner3cdc3e4 APPROVED same-card actualGrok4.5/xai122303_8ae7b8,442s. Root
+  verified exact5client files, committed5c73a4a27f3d72834c2c2a071668eb197eb39fd9
+  on codex/memory-direct-owner-capture and bound host gitlink atedc3a3e.
+  No owner native build/live capture yet; freeze originalH/C plus reviewed overlay.
+- Native007346f qualification passed24guards57.819s then FAILED historical
+  layout equality against macOS reference (allocator usable bytes). Original
+  Linux f24 references match all12new Linux outputs in all7required fields;
+  root reverified4original admissions and reference hashes. See
+  nav-native-reference-boundary.md. Both failed attempts remain preserved.
+- Root releases a fresh GENERATED qualification with original Linux references,
+  unchanged reviewed code/full comparisons/caps, verified binary reuse. New
+ 35-member source package1305502B SHA5ba2fdf224f9934c38b1a0d29ec7c1b9f17e69738d54e86643b22a3e5c054800.
+  No real F1/F2/acceptance release or performance conclusion.
+
 ## Latest boundary — 2026-09-09 16:24 UTC
 
 - Fixture correction007346ffc6a06993141a169bb099201d9cc11985 APPROVED t_53d40ff1
