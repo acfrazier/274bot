@@ -11,6 +11,16 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 17:15 UTC
+
+- Builder qualification05 passed32.133s with native hard-AS true. Root verified
+  all942 package members and exact7965c4c tool identity; archive SHA256
+  330985b48e016c96dc53455d730ef4bb41c307463c0f13869154e05c8644e8b1.
+- Fresh Concord nav-singleton-7965c4c-1714 admitted985583616B available,
+  zero swap/no competing work. Fresh generated guards/clean/count/integration/
+  scheduler06 now running; all older failures preserved in their original roots.
+  No real F1 authorization issued. Owner frozen compile preparation remains active.
+
 ## Latest boundary — 2026-09-09 17:12 UTC
 
 - Fixture correction7965c4c approved t_a8c976a6 by actual Grok4.5/xai run
