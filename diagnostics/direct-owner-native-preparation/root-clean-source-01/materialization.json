@@ -1,0 +1,39 @@
+{
+  "schema": "root-clean-owner-source-materialization-v1",
+  "archive": {
+    "bytes": 5075876,
+    "determinism": "sorted PAX tar; uid/gid/mtime zero; gzip filename empty and mtime zero",
+    "name": "frozen-direct-owner-source.tar.gz",
+    "root": "direct-owner-source",
+    "sha256": "2c36d254c37c5ed56a55f78728357296d62be602f8653ed9ec041cd37d099d5d"
+  },
+  "source_manifest_sha256": "ca69e70352c5f6f8d1c9db026959af6ba8fd64886be533a0095c3ca94bb5732e",
+  "source_provenance": {
+    "client_original": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+    "client_reviewed": "5c73a4a27f3d72834c2c2a071668eb197eb39fd9",
+    "host_original": "c0709aba2f8b45e42193225cf8f4e7325b5ca9bf",
+    "host_reviewed": "3cdc3e4fbeb960fe4c270eb994ce22746787eb2d",
+    "original_host_gitlink": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+    "overlay_receipt_current_host_is_non_authoritative": "007346ffc6a06993141a169bb099201d9cc11985",
+    "production_input": "original host/client Git objects plus only the three bound reviewed patches",
+    "reviewed_root_gitlink": "5c73a4a27f3d72834c2c2a071668eb197eb39fd9",
+    "root_gitlink_binding": "edc3a3e"
+  },
+  "source_member_count": 1124,
+  "all_source_bytes_modes_verified_before_after_git": true,
+  "checkout_host_commit": "dcdbeebf36665a1d07156402a5f64c823769e00d",
+  "checkout_client_commit": "b74dfb3c998b10371b263189774b055ecf880380",
+  "host_clean": true,
+  "client_clean": true,
+  "host_tree": "fda163ecac2a7fc74d81227115f35a9f4b2a6d18",
+  "client_tree": "b188a6723ad90b260a621863f37e441788b9f1f5",
+  "checkout_path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/root-clean-source-01/direct-owner-source",
+  "materialized_after_native_build": true,
+  "binary_rebound": false,
+  "live_qualified": false,
+  "limitations": [
+    "This source checkout was materialized after the native build; these were not Git HEADs present during compilation.",
+    "Existing production archive and binary are unchanged.",
+    "Design-reviewed derivative/build admission still required."
+  ]
+}
