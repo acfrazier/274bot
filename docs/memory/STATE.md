@@ -11,6 +11,18 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 20:46 UTC
+
+- Root observed controller run1038 in actual delegate_task despite explicit
+  no-delegation brief; reclaimed it with changes preserved and no SIGKILL.
+  Temporary unassigned state auto-dispatched implementer run1043; root reclaimed
+  that28s fallback and reassigned Sol atomically. Neither run is accepted review.
+- Controller now resumes actualSol/openai164554_dc4e67 on the same card, preserving
+  all10 scoped files and complete design/test requirements. No Docker helper
+  remained running. Required same-card reviewer handoff remains unchanged.
+- IndependentGrok4.6 t_82ed565a is finalizing its report; no root acceptance yet.
+  Navigation Sol continues. No native or live process currently active.
+
 ## Latest boundary — 2026-09-09 20:38 UTC
 
 - Independent combined functional review t_82ed565a now RUNNING actual
