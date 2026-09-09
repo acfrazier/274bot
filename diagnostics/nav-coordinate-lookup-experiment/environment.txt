@@ -1,0 +1,16 @@
+Task: t_8cdb3301
+Branch: codex/memory-diagnostics
+Frozen production source anchor: 8385babb23fd15b876506d4a3f6154984a6b2df1
+Host: arm64-apple-darwin, macOS 15.7.9
+rustc: 1.98.0 (88d9e12ae 2026-08-18), LLVM 22.1.8
+cargo: 1.98.0 (797e8a9bc 2026-08-05)
+Profile: release [optimized], default workspace release settings
+Test threads: 1
+Clock: std::time::Instant wall elapsed inside each phase
+Before target: /tmp/274bot-navcoord-before-t8cdb3301
+After target: /tmp/274bot-navcoord-after-t8cdb3301
+Before test binary: release/deps/nav-814fcbb7253862d7
+After test binary: release/deps/nav-814fcbb7253862d7
+Before test binary SHA256: 61d9c35801a7a36d4655dfb4188990984ed72e6cdef03021a7cc11022b6143bd (3376320 bytes)
+After test binary SHA256: 09ccf72752cb42dee7ef758435a0e6571d82adb2d1d0b81a497feb5047043ae1 (3376384 bytes)
+No cache flush, allocator purge, CPU pinning, native host, real pack, or acceptance gate.

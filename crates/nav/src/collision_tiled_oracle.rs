@@ -976,4 +976,381 @@ fn layout_accounting_sizes_are_exact_for_known_grids() {
     assert_eq!(tiled.directory_len(), 4);
     assert_eq!(tiled.dense_pool_len(), 0);
     assert_eq!(std::mem::size_of::<DenseTile>(), DENSE_TILE_BYTES);
+    assert_eq!(std::mem::size_of::<WorldCollision>(), 120);
+}
+
+#[test]
+fn coordinate_pair_read_matches_linear_pair_read() {
+    let width = 33usize;
+    let height = 17usize;
+    let cells = width * height;
+    let mut walk = vec![0u8; cells];
+    let mut blocked = vec![0u64; cells.div_ceil(64)];
+    let index = 16 * width + 32;
+    walk[index] = 0xa5;
+    blocked[index >> 6] |= 1u64 << (index & 63);
+    let (_, tiled) = freeze(
+        WorldTile {
+            x: -40,
+            z: 70,
+            level: 0,
+        },
+        width,
+        height,
+        walk,
+        blocked,
+        None,
+    );
+
+    assert_eq!(tiled.pair_at_coords(0, 32, 16), tiled.pair_at_index(index));
+}
+
+fn panic_payload(f: impl FnOnce()) -> String {
+    let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
+        .expect_err("operation must panic");
+    match payload.downcast::<String>() {
+        Ok(message) => *message,
+        Err(payload) => match payload.downcast::<&'static str>() {
+            Ok(message) => (*message).to_owned(),
+            Err(_) => panic!("panic payload was not a string"),
+        },
+    }
+}
+
+#[test]
+fn missing_synthetic_plane_preserves_coordinate_api_panics() {
+    let origin = WorldTile {
+        x: -7,
+        z: 11,
+        level: 3,
+    };
+    let (walk, blocked) = open_plane(2, 2, 1);
+    let (_, tiled) = freeze(origin, 2, 2, walk, blocked, None);
+    let absent = WorldTile {
+        x: origin.x,
+        z: origin.z,
+        level: 1,
+    };
+    let expected = "collision index 4 past logical length 4";
+
+    assert_eq!(
+        panic_payload(|| {
+            std::hint::black_box(tiled.walkable_word(absent.x, absent.z, absent.level));
+        }),
+        expected
+    );
+    assert_eq!(
+        panic_payload(|| {
+            std::hint::black_box(tiled.walkable(absent));
+        }),
+        expected
+    );
+    assert_eq!(
+        panic_payload(|| {
+            std::hint::black_box(tiled.standable(absent));
+        }),
+        expected
+    );
+
+    // Bounds and unknown-level rejection happen before the logical-length read.
+    assert_eq!(tiled.walkable_word(origin.x - 1, origin.z, 1), 0);
+    assert!(!tiled.walkable(WorldTile {
+        x: origin.x,
+        z: origin.z,
+        level: 4
+    }));
+    assert!(!tiled.standable(WorldTile {
+        x: origin.x,
+        z: origin.z,
+        level: -1
+    }));
+}
+
+#[test]
+fn short_raw_flags_keep_their_distinct_index_failure_order() {
+    let origin = WorldTile {
+        x: 20,
+        z: -30,
+        level: 2,
+    };
+    let (walk, blocked) = open_plane(2, 1, 4);
+    let (_, tiled) = freeze(origin, 2, 1, walk, blocked, Some(vec![0]));
+    let second = WorldTile {
+        x: origin.x + 1,
+        z: origin.z,
+        level: 0,
+    };
+    let expected = "index out of bounds: the len is 1 but the index is 1";
+
+    // walkable_word always ignores raw flags and reads the packed pair.
+    assert_eq!(tiled.walkable_word(second.x, second.z, second.level), 0);
+    assert_eq!(
+        panic_payload(|| {
+            std::hint::black_box(tiled.flag(second.x, second.z, 0));
+        }),
+        expected
+    );
+    assert_eq!(
+        panic_payload(|| {
+            std::hint::black_box(tiled.walkable(second));
+        }),
+        expected
+    );
+    assert_eq!(
+        panic_payload(|| {
+            std::hint::black_box(tiled.standable(second));
+        }),
+        expected
+    );
+
+    // Bounds and unknown levels still return before indexing the short sidecar.
+    assert_eq!(tiled.flag(origin.x + 2, origin.z, 0), 0);
+    assert!(!tiled.walkable(WorldTile {
+        x: second.x,
+        z: second.z,
+        level: 4
+    }));
+}
+
+#[test]
+fn every_dense_face_blocked_pair_matches_all_coordinate_apis() {
+    let width = 32usize;
+    let height = 32usize;
+    let mut walk = vec![0u8; width * height];
+    let mut blocked = vec![0u64; walk.len().div_ceil(64)];
+    for face in 0u16..=255 {
+        for blocked_value in 0usize..=1 {
+            let index = face as usize * 4 + blocked_value;
+            walk[index] = face as u8;
+            if blocked_value != 0 {
+                blocked[index >> 6] |= 1u64 << (index & 63);
+            }
+        }
+    }
+    let origin = WorldTile {
+        x: -400,
+        z: 900,
+        level: 3,
+    };
+    let (oracle, tiled) = freeze(origin, width, height, walk, blocked, None);
+    assert_eq!(tiled.dense_pool_len(), 1);
+    for face in 0u16..=255 {
+        for blocked_value in 0usize..=1 {
+            let index = face as usize * 4 + blocked_value;
+            let x = origin.x + (index % width) as i32;
+            let z = origin.z + (index / width) as i32;
+            let tile = WorldTile { x, z, level: 0 };
+            assert_eq!(tiled.packed_pair_at(index), oracle.pair_at(index));
+            assert_eq!(tiled.walkable_word(x, z, 0), oracle.walkable_word(x, z, 0));
+            assert_eq!(tiled.walkable(tile), oracle.walkable(tile));
+            assert_eq!(tiled.standable(tile), oracle.standable(tile));
+        }
+    }
+}
+
+#[test]
+fn one_through_four_planes_preserve_absolute_level_selection() {
+    for planes in 1usize..=4 {
+        let width = 33usize;
+        let height = 31usize;
+        let cells = width * height * planes;
+        let mut walk = vec![0u8; cells];
+        let mut blocked = vec![0u64; cells.div_ceil(64)];
+        for plane in 0..planes {
+            let index = plane * width * height + 30 * width + 32;
+            walk[index] = (plane as u8).wrapping_mul(61).wrapping_add(7);
+            if plane & 1 != 0 {
+                blocked[index >> 6] |= 1u64 << (index & 63);
+            }
+        }
+        let origin = WorldTile {
+            x: 55,
+            z: -89,
+            level: 3,
+        };
+        let (oracle, tiled) = freeze(origin, width, height, walk, blocked, None);
+        for level in 0..planes as i32 {
+            assert_eq!(
+                tiled.walkable_word(origin.x + 32, origin.z + 30, level),
+                oracle.walkable_word(origin.x + 32, origin.z + 30, level)
+            );
+        }
+    }
+}
+
+fn generated_read_sample(
+    collision: &WorldCollision,
+    probes: &[(i32, i32, i32)],
+    passes: usize,
+) -> (u128, u64) {
+    let start = std::time::Instant::now();
+    let mut checksum = 0u64;
+    for pass in 0..passes {
+        for &(x, z, level) in probes {
+            let word = std::hint::black_box(collision.walkable_word(x, z, level));
+            let walkable = std::hint::black_box(collision.walkable(WorldTile { x, z, level }));
+            let standable = std::hint::black_box(collision.standable(WorldTile { x, z, level }));
+            checksum = checksum
+                .rotate_left(7)
+                .wrapping_add(word as u64)
+                .wrapping_add((walkable as u64) << 32)
+                .wrapping_add((standable as u64) << 40)
+                .wrapping_add(pass as u64);
+        }
+    }
+    (start.elapsed().as_nanos(), std::hint::black_box(checksum))
+}
+
+fn generated_route_sample(
+    collision: &WorldCollision,
+    routes: &[(WorldTile, WorldTile)],
+) -> (u128, u64) {
+    let graph = TransportGraph::default();
+    let start = std::time::Instant::now();
+    let mut checksum = 0u64;
+    for &(from, to) in routes {
+        let route = find(collision, &graph, from, to).expect("generated open route");
+        checksum = checksum
+            .wrapping_mul(0x9e37_79b9)
+            .wrapping_add(route.dest.x as u64)
+            .wrapping_add((route.dest.z as u64).rotate_left(13))
+            .wrapping_add(route.ticks.to_bits());
+        for leg in route.legs {
+            match leg {
+                crate::router::Leg::Walk { tiles } => {
+                    checksum = checksum.wrapping_add(tiles.len() as u64);
+                    for tile in tiles {
+                        checksum = checksum
+                            .rotate_left(3)
+                            .wrapping_add(tile.x as u64)
+                            .wrapping_add((tile.z as u64).rotate_left(17))
+                            .wrapping_add((tile.level as u64).rotate_left(29));
+                    }
+                }
+                crate::router::Leg::Transport { .. } => panic!("generated graph is empty"),
+            }
+        }
+    }
+    (start.elapsed().as_nanos(), std::hint::black_box(checksum))
+}
+
+#[test]
+#[ignore = "bounded release-only coordinate lookup diagnostic"]
+fn generated_coordinate_lookup_benchmark() {
+    const READ_WIDTH: usize = 257;
+    const READ_HEIGHT: usize = 193;
+    const READ_PLANES: usize = 4;
+    const PROBES: usize = 65_536;
+    const READ_PASSES: usize = 24;
+    const ROUTE_WIDTH: usize = 96;
+    const ROUTE_HEIGHT: usize = 96;
+    const SAMPLES: usize = 7;
+
+    let read_cells = READ_WIDTH * READ_HEIGHT * READ_PLANES;
+    let mut walk = vec![0u8; read_cells];
+    let mut blocked = vec![0u64; read_cells.div_ceil(64)];
+    for (index, face) in walk.iter_mut().enumerate() {
+        *face = index.wrapping_mul(37).wrapping_add(index / READ_WIDTH) as u8;
+        if index.wrapping_mul(13).wrapping_add(17) % 11 == 0 {
+            blocked[index >> 6] |= 1u64 << (index & 63);
+        }
+    }
+    let read_origin = WorldTile {
+        x: -1_000,
+        z: 2_000,
+        level: 3,
+    };
+    let (_, read_world) = freeze(read_origin, READ_WIDTH, READ_HEIGHT, walk, blocked, None);
+    let mut probes = Vec::with_capacity(PROBES);
+    let mut state = 0x4d59_5df4_d0f3_3173u64;
+    for _ in 0..PROBES {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
+        let x = (state as usize) % READ_WIDTH;
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
+        let z = (state as usize) % READ_HEIGHT;
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
+        let level = (state as usize) % READ_PLANES;
+        probes.push((
+            read_origin.x + x as i32,
+            read_origin.z + z as i32,
+            level as i32,
+        ));
+    }
+
+    let route_origin = WorldTile {
+        x: 1_000,
+        z: 1_000,
+        level: 2,
+    };
+    let (route_walk, route_blocked) = open_plane(ROUTE_WIDTH, ROUTE_HEIGHT, 1);
+    let (_, route_world) = freeze(
+        route_origin,
+        ROUTE_WIDTH,
+        ROUTE_HEIGHT,
+        route_walk,
+        route_blocked,
+        None,
+    );
+    let tile = |x: i32, z: i32| WorldTile {
+        x: route_origin.x + x,
+        z: route_origin.z + z,
+        level: 0,
+    };
+    let routes = [
+        (tile(1, 1), tile(94, 94)),
+        (tile(94, 1), tile(1, 94)),
+        (tile(1, 48), tile(94, 48)),
+        (tile(48, 1), tile(48, 94)),
+        (tile(10, 10), tile(85, 70)),
+        (tile(85, 15), tile(12, 80)),
+        (tile(5, 90), tile(90, 5)),
+        (tile(20, 75), tile(75, 20)),
+    ];
+
+    let (_, warm_read_checksum) = generated_read_sample(&read_world, &probes, 2);
+    let (_, warm_route_checksum) = generated_route_sample(&route_world, &routes[..2]);
+    let mut read_ns = Vec::with_capacity(SAMPLES);
+    let mut route_ns = Vec::with_capacity(SAMPLES);
+    let mut read_checksum = 0;
+    let mut route_checksum = 0;
+    for _ in 0..SAMPLES {
+        let (elapsed, checksum) = generated_read_sample(&read_world, &probes, READ_PASSES);
+        read_ns.push(elapsed);
+        read_checksum = checksum;
+        let (elapsed, checksum) = generated_route_sample(&route_world, &routes);
+        route_ns.push(elapsed);
+        route_checksum = checksum;
+    }
+
+    let arm = std::env::var("NAV_COORD_ARM").unwrap_or_else(|_| "unspecified".to_owned());
+    println!(
+        "NAV_COORD_BENCH {{\"schema\":\"nav-coordinate-lookup-v1\",\"arm\":\"{}\",\"read\":{{\"width\":{},\"height\":{},\"planes\":{},\"probes\":{},\"passes\":{},\"samples_ns\":{:?},\"checksum\":{},\"warm_checksum\":{}}},\"route\":{{\"width\":{},\"height\":{},\"routes\":{},\"samples_ns\":{:?},\"checksum\":{},\"warm_checksum\":{}}},\"layout\":{{\"world_size\":{},\"dense_tile_size\":{},\"read_directory\":{},\"read_dense\":{},\"route_directory\":{},\"route_dense\":{}}}}}",
+        arm,
+        READ_WIDTH,
+        READ_HEIGHT,
+        READ_PLANES,
+        PROBES,
+        READ_PASSES,
+        read_ns,
+        read_checksum,
+        warm_read_checksum,
+        ROUTE_WIDTH,
+        ROUTE_HEIGHT,
+        routes.len(),
+        route_ns,
+        route_checksum,
+        warm_route_checksum,
+        std::mem::size_of::<WorldCollision>(),
+        std::mem::size_of::<DenseTile>(),
+        read_world.directory_len(),
+        read_world.dense_pool_len(),
+        route_world.directory_len(),
+        route_world.dense_pool_len(),
+    );
 }

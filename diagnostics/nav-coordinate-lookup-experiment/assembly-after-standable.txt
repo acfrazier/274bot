@@ -1,0 +1,100 @@
+
+/tmp/274bot-navcoord-after-t8cdb3301/release/deps/nav-814fcbb7253862d7:	file format mach-o arm64
+
+Disassembly of section __TEXT,__text:
+
+00000001000a2e14 <<nav::collision::WorldCollision>::standable>:
+1000a2e14: d10103ff    	sub	sp, sp, #0x40
+1000a2e18: a9037bfd    	stp	x29, x30, [sp, #0x30]
+1000a2e1c: 9100c3fd    	add	x29, sp, #0x30
+1000a2e20: b980082b    	ldrsw	x11, [x1, #0x8]
+1000a2e24: 71000d7f    	cmp	w11, #0x3
+1000a2e28: 54000168    	b.hi	0x1000a2e54 <<nav::collision::WorldCollision>::standable+0x40>
+1000a2e2c: 29402428    	ldp	w8, w9, [x1]
+1000a2e30: 294d300a    	ldp	w10, w12, [x0, #0x68]
+1000a2e34: 4b0a010a    	sub	w10, w8, w10
+1000a2e38: 4b0c0129    	sub	w9, w9, w12
+1000a2e3c: 2a0a0128    	orr	w8, w9, w10
+1000a2e40: 37f800a8    	tbnz	w8, #0x1f, 0x1000a2e54 <<nav::collision::WorldCollision>::standable+0x40>
+1000a2e44: a943b008    	ldp	x8, x12, [x0, #0x38]
+1000a2e48: eb0a011f    	cmp	x8, x10
+1000a2e4c: fa498180    	ccmp	x12, x9, #0x0, hi
+1000a2e50: 540000c8    	b.hi	0x1000a2e68 <<nav::collision::WorldCollision>::standable+0x54>
+1000a2e54: 52800008    	mov	w8, #0x0                ; =0
+1000a2e58: 12000100    	and	w0, w8, #0x1
+1000a2e5c: a9437bfd    	ldp	x29, x30, [sp, #0x30]
+1000a2e60: 910103ff    	add	sp, sp, #0x40
+1000a2e64: d65f03c0    	ret
+1000a2e68: 9b0b258c    	madd	x12, x12, x11, x9
+1000a2e6c: 9b082988    	madd	x8, x12, x8, x10
+1000a2e70: f940000c    	ldr	x12, [x0]
+1000a2e74: b100059f    	cmn	x12, #0x1
+1000a2e78: 54000160    	b.eq	0x1000a2ea4 <<nav::collision::WorldCollision>::standable+0x90>
+1000a2e7c: f9400801    	ldr	x1, [x0, #0x10]
+1000a2e80: eb01011f    	cmp	x8, x1
+1000a2e84: 540006c2    	b.hs	0x1000a2f5c <<nav::collision::WorldCollision>::standable+0x148>
+1000a2e88: f9400409    	ldr	x9, [x0, #0x8]
+1000a2e8c: b8687928    	ldr	w8, [x9, x8, lsl #2]
+1000a2e90: 52802009    	mov	w9, #0x100              ; =256
+1000a2e94: 72a00509    	movk	w9, #0x28, lsl #16
+1000a2e98: 6a09011f    	tst	w8, w9
+1000a2e9c: 1a9f17e8    	cset	w8, eq
+1000a2ea0: 17ffffee    	b	0x1000a2e58 <<nav::collision::WorldCollision>::standable+0x44>
+1000a2ea4: f90007e8    	str	x8, [sp, #0x8]
+1000a2ea8: aa0003ec    	mov	x12, x0
+1000a2eac: f8448d8d    	ldr	x13, [x12, #0x48]!
+1000a2eb0: eb0d011f    	cmp	x8, x13
+1000a2eb4: 540003e2    	b.hs	0x1000a2f30 <<nav::collision::WorldCollision>::standable+0x11c>
+1000a2eb8: a945200c    	ldp	x12, x8, [x0, #0x50]
+1000a2ebc: 9b0b7d08    	mul	x8, x8, x11
+1000a2ec0: 8b491508    	add	x8, x8, x9, lsr #5
+1000a2ec4: 9b0c7d08    	mul	x8, x8, x12
+1000a2ec8: 8b4a1508    	add	x8, x8, x10, lsr #5
+1000a2ecc: f9401001    	ldr	x1, [x0, #0x20]
+1000a2ed0: eb01011f    	cmp	x8, x1
+1000a2ed4: 540004c2    	b.hs	0x1000a2f6c <<nav::collision::WorldCollision>::standable+0x158>
+1000a2ed8: f9400c0b    	ldr	x11, [x0, #0x18]
+1000a2edc: f8687968    	ldr	x8, [x11, x8, lsl #3]
+1000a2ee0: b7f80068    	tbnz	x8, #0x3f, 0x1000a2eec <<nav::collision::WorldCollision>::standable+0xd8>
+1000a2ee4: d348fd08    	lsr	x8, x8, #8
+1000a2ee8: 14000010    	b	0x1000a2f28 <<nav::collision::WorldCollision>::standable+0x114>
+1000a2eec: 2a0803e8    	mov	w8, w8
+1000a2ef0: f9401801    	ldr	x1, [x0, #0x30]
+1000a2ef4: eb01011f    	cmp	x8, x1
+1000a2ef8: 54000422    	b.hs	0x1000a2f7c <<nav::collision::WorldCollision>::standable+0x168>
+1000a2efc: 9240114a    	and	x10, x10, #0x1f
+1000a2f00: d37be92b    	lsl	x11, x9, #5
+1000a2f04: f940140c    	ldr	x12, [x0, #0x28]
+1000a2f08: 5280900d    	mov	w13, #0x480             ; =1152
+1000a2f0c: 9bad3108    	umaddl	x8, w8, w13, x12
+1000a2f10: d3411129    	ubfx	x9, x9, #1, #4
+1000a2f14: 8b090d08    	add	x8, x8, x9, lsl #3
+1000a2f18: f9420108    	ldr	x8, [x8, #0x400]
+1000a2f1c: 927b0169    	and	x9, x11, #0x20
+1000a2f20: aa0a0129    	orr	x9, x9, x10
+1000a2f24: 9ac92508    	lsr	x8, x8, x9
+1000a2f28: 52000108    	eor	w8, w8, #0x1
+1000a2f2c: 17ffffcb    	b	0x1000a2e58 <<nav::collision::WorldCollision>::standable+0x44>
+1000a2f30: f00008e8    	adrp	x8, 0x1001c1000 <<i32 as core::fmt::Display>::fmt+0x28>
+1000a2f34: 911a1108    	add	x8, x8, #0x684
+1000a2f38: 910023e9    	add	x9, sp, #0x8
+1000a2f3c: a90123e9    	stp	x9, x8, [sp, #0x10]
+1000a2f40: a90223ec    	stp	x12, x8, [sp, #0x20]
+1000a2f44: f0000b60    	adrp	x0, 0x100211000 <_anon.923d0cdb19c6eeb4e9092151cec76f2f.327+0x5c5>
+1000a2f48: 91066400    	add	x0, x0, #0x199
+1000a2f4c: b0000e82    	adrp	x2, 0x100273000 <_anon.28d1750371b68995d722a50234dd01b8.2+0x5b8>
+1000a2f50: 910bc042    	add	x2, x2, #0x2f0
+1000a2f54: 910043e1    	add	x1, sp, #0x10
+1000a2f58: 9404e04e    	bl	0x1001db090 <core::panicking::panic_fmt>
+1000a2f5c: b0000e82    	adrp	x2, 0x100273000 <_anon.28d1750371b68995d722a50234dd01b8.2+0x5b8>
+1000a2f60: 910c8042    	add	x2, x2, #0x320
+1000a2f64: aa0803e0    	mov	x0, x8
+1000a2f68: 9404dfee    	bl	0x1001daf20 <core::panicking::panic_bounds_check>
+1000a2f6c: b0000e82    	adrp	x2, 0x100273000 <_anon.28d1750371b68995d722a50234dd01b8.2+0x5b8>
+1000a2f70: 91098042    	add	x2, x2, #0x260
+1000a2f74: aa0803e0    	mov	x0, x8
+1000a2f78: 9404dfea    	bl	0x1001daf20 <core::panicking::panic_bounds_check>
+1000a2f7c: b0000e82    	adrp	x2, 0x100273000 <_anon.28d1750371b68995d722a50234dd01b8.2+0x5b8>
+1000a2f80: 9109e042    	add	x2, x2, #0x278
+1000a2f84: aa0803e0    	mov	x0, x8
+1000a2f88: 9404dfe6    	bl	0x1001daf20 <core::panicking::panic_bounds_check>

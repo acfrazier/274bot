@@ -389,6 +389,11 @@ impl WorldCollision {
         let within = index % plane_cells;
         let lz = within / self.width;
         let lx = within % self.width;
+        self.pair_at_coords(plane, lx, lz)
+    }
+
+    #[inline]
+    fn pair_at_coords(&self, plane: usize, lx: usize, lz: usize) -> (u8, bool) {
         let tr = lz / TILE;
         let tc = lx / TILE;
         let local_z = lz % TILE;
@@ -410,11 +415,22 @@ impl WorldCollision {
     }
 
     /// Panic like the old dense index when a geometric cell is beyond the
-    /// retained synthetic short buffer.
+    /// retained synthetic short buffer, then read from validated coordinates.
     #[inline]
-    fn pair_at_index_or_panic(&self, index: usize) -> (u8, bool) {
-        self.packed_pair_at(index)
-            .unwrap_or_else(|| panic!("collision index {index} past logical length {}", self.logical_cells))
+    fn pair_at_coords_or_panic(
+        &self,
+        index: usize,
+        plane: usize,
+        lx: usize,
+        lz: usize,
+    ) -> (u8, bool) {
+        if index >= self.logical_cells {
+            panic!(
+                "collision index {index} past logical length {}",
+                self.logical_cells
+            );
+        }
+        self.pair_at_coords(plane, lx, lz)
     }
 
     /// The collision bitmask at `(x, z, level)`, `0` for tiles outside the
@@ -485,7 +501,7 @@ impl WorldCollision {
             return 0;
         }
         let idx = plane * self.plane_cells() + lz * self.width + lx;
-        let (face, blk) = self.pair_at_index_or_panic(idx);
+        let (face, blk) = self.pair_at_coords_or_panic(idx, plane, lx, lz);
         walk_word_from_parts(face, blk)
     }
 
@@ -512,7 +528,7 @@ impl WorldCollision {
         match &self.flags {
             Some(flags) => flags[idx] & WALK_BLOCK == 0,
             None => {
-                let (face, blk) = self.pair_at_index_or_panic(idx);
+                let (face, blk) = self.pair_at_coords_or_panic(idx, plane, lx, lz);
                 walk_word_from_parts(face, blk) & WALK_BLOCK == 0
             }
         }
@@ -544,7 +560,7 @@ impl WorldCollision {
             Some(flags) => flags[idx] & SQ_BLOCKED == 0,
             // The packed blocked bit is exactly the SQ_BLOCKED presence.
             None => {
-                let (_face, blk) = self.pair_at_index_or_panic(idx);
+                let (_face, blk) = self.pair_at_coords_or_panic(idx, plane, lx, lz);
                 !blk
             }
         }

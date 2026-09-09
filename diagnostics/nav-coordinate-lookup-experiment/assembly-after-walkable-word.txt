@@ -1,0 +1,87 @@
+
+/tmp/274bot-navcoord-after-t8cdb3301/release/deps/nav-814fcbb7253862d7:	file format mach-o arm64
+
+Disassembly of section __TEXT,__text:
+
+00000001000a2094 <<nav::collision::WorldCollision>::walkable_word>:
+1000a2094: d10103ff    	sub	sp, sp, #0x40
+1000a2098: a9037bfd    	stp	x29, x30, [sp, #0x30]
+1000a209c: 9100c3fd    	add	x29, sp, #0x30
+1000a20a0: 71000c7f    	cmp	w3, #0x3
+1000a20a4: 54000148    	b.hi	0x1000a20cc <<nav::collision::WorldCollision>::walkable_word+0x38>
+1000a20a8: 294d2408    	ldp	w8, w9, [x0, #0x68]
+1000a20ac: 4b08002a    	sub	w10, w1, w8
+1000a20b0: 4b090049    	sub	w9, w2, w9
+1000a20b4: 2a0a0128    	orr	w8, w9, w10
+1000a20b8: 37f800a8    	tbnz	w8, #0x1f, 0x1000a20cc <<nav::collision::WorldCollision>::walkable_word+0x38>
+1000a20bc: a943b00b    	ldp	x11, x12, [x0, #0x38]
+1000a20c0: eb0a017f    	cmp	x11, x10
+1000a20c4: fa498180    	ccmp	x12, x9, #0x0, hi
+1000a20c8: 540000a8    	b.hi	0x1000a20dc <<nav::collision::WorldCollision>::walkable_word+0x48>
+1000a20cc: 52800000    	mov	w0, #0x0                ; =0
+1000a20d0: a9437bfd    	ldp	x29, x30, [sp, #0x30]
+1000a20d4: 910103ff    	add	sp, sp, #0x40
+1000a20d8: d65f03c0    	ret
+1000a20dc: 93407c68    	sxtw	x8, w3
+1000a20e0: 9b08258c    	madd	x12, x12, x8, x9
+1000a20e4: 9b0b298c    	madd	x12, x12, x11, x10
+1000a20e8: f90007ec    	str	x12, [sp, #0x8]
+1000a20ec: aa0003eb    	mov	x11, x0
+1000a20f0: f8448d6d    	ldr	x13, [x11, #0x48]!
+1000a20f4: eb0d019f    	cmp	x12, x13
+1000a20f8: 540004a2    	b.hs	0x1000a218c <<nav::collision::WorldCollision>::walkable_word+0xf8>
+1000a20fc: a9452c0c    	ldp	x12, x11, [x0, #0x50]
+1000a2100: 9b087d68    	mul	x8, x11, x8
+1000a2104: 8b491508    	add	x8, x8, x9, lsr #5
+1000a2108: 9b0c7d08    	mul	x8, x8, x12
+1000a210c: 8b4a1508    	add	x8, x8, x10, lsr #5
+1000a2110: f9401001    	ldr	x1, [x0, #0x20]
+1000a2114: eb01011f    	cmp	x8, x1
+1000a2118: 54000502    	b.hs	0x1000a21b8 <<nav::collision::WorldCollision>::walkable_word+0x124>
+1000a211c: f9400c0b    	ldr	x11, [x0, #0x18]
+1000a2120: f8687968    	ldr	x8, [x11, x8, lsl #3]
+1000a2124: b7f80068    	tbnz	x8, #0x3f, 0x1000a2130 <<nav::collision::WorldCollision>::walkable_word+0x9c>
+1000a2128: d348fd09    	lsr	x9, x8, #8
+1000a212c: 14000011    	b	0x1000a2170 <<nav::collision::WorldCollision>::walkable_word+0xdc>
+1000a2130: 2a0803e8    	mov	w8, w8
+1000a2134: f9401801    	ldr	x1, [x0, #0x30]
+1000a2138: eb01011f    	cmp	x8, x1
+1000a213c: 54000462    	b.hs	0x1000a21c8 <<nav::collision::WorldCollision>::walkable_word+0x134>
+1000a2140: 9240114a    	and	x10, x10, #0x1f
+1000a2144: b37b112a    	bfi	x10, x9, #5, #5
+1000a2148: f940140b    	ldr	x11, [x0, #0x28]
+1000a214c: 5280900c    	mov	w12, #0x480             ; =1152
+1000a2150: 9bac2d0b    	umaddl	x11, w8, w12, x11
+1000a2154: 386a6968    	ldrb	w8, [x11, x10]
+1000a2158: d37b1129    	ubfiz	x9, x9, #5, #5
+1000a215c: d343fd29    	lsr	x9, x9, #3
+1000a2160: 927d0d29    	and	x9, x9, #0x78
+1000a2164: 8b090169    	add	x9, x11, x9
+1000a2168: f9420129    	ldr	x9, [x9, #0x400]
+1000a216c: 9aca2529    	lsr	x9, x9, x10
+1000a2170: 12001d0a    	and	w10, w8, #0xff
+1000a2174: 5280200b    	mov	w11, #0x100             ; =256
+1000a2178: 72a0050b    	movk	w11, #0x28, lsl #16
+1000a217c: 33001d0b    	bfxil	w11, w8, #0, #8
+1000a2180: 7200013f    	tst	w9, #0x1
+1000a2184: 1a8a1160    	csel	w0, w11, w10, ne
+1000a2188: 17ffffd2    	b	0x1000a20d0 <<nav::collision::WorldCollision>::walkable_word+0x3c>
+1000a218c: f00008e8    	adrp	x8, 0x1001c1000 <<i32 as core::fmt::Display>::fmt+0x28>
+1000a2190: 911a1108    	add	x8, x8, #0x684
+1000a2194: 910023e9    	add	x9, sp, #0x8
+1000a2198: a90123e9    	stp	x9, x8, [sp, #0x10]
+1000a219c: a90223eb    	stp	x11, x8, [sp, #0x20]
+1000a21a0: f0000b60    	adrp	x0, 0x100211000 <_anon.923d0cdb19c6eeb4e9092151cec76f2f.327+0x5c5>
+1000a21a4: 91066400    	add	x0, x0, #0x199
+1000a21a8: b0000e82    	adrp	x2, 0x100273000 <_anon.28d1750371b68995d722a50234dd01b8.2+0x5b8>
+1000a21ac: 910bc042    	add	x2, x2, #0x2f0
+1000a21b0: 910043e1    	add	x1, sp, #0x10
+1000a21b4: 9404e3b7    	bl	0x1001db090 <core::panicking::panic_fmt>
+1000a21b8: b0000e82    	adrp	x2, 0x100273000 <_anon.28d1750371b68995d722a50234dd01b8.2+0x5b8>
+1000a21bc: 91098042    	add	x2, x2, #0x260
+1000a21c0: aa0803e0    	mov	x0, x8
+1000a21c4: 9404e357    	bl	0x1001daf20 <core::panicking::panic_bounds_check>
+1000a21c8: b0000e82    	adrp	x2, 0x100273000 <_anon.28d1750371b68995d722a50234dd01b8.2+0x5b8>
+1000a21cc: 9109e042    	add	x2, x2, #0x278
+1000a21d0: aa0803e0    	mov	x0, x8
+1000a21d4: 9404e353    	bl	0x1001daf20 <core::panicking::panic_bounds_check>

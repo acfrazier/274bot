@@ -1,0 +1,9 @@
+Retained setup/tool failures; neither changed the experiment fixture or bounds.
+
+1. Baseline clean command attempted `rm -rf /tmp/274bot-navcoord-before` before build. Hermes blocked it as a dangerous root-path delete in headless mode. The run did not start. Resolution: use a unique previously absent target path without deletion.
+
+2. First six-process runner used shell variables and a loop. Hermes security scanning blocked the dynamically selected executable body. No benchmark process ran. Resolution: invoke each exact admitted binary path explicitly.
+
+3. First symbol-inspection command piped nm through `python3 -c`. Hermes blocked script execution via `-c`; no inspection ran. Resolution: use plain objdump output and search the retained tool-output file.
+
+4. execute_code subprocess-based symbol filtering was blocked in headless mode before any tool call. Resolution: use normal terminal objdump commands with exact demangled symbols.

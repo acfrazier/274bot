@@ -1,0 +1,78 @@
+{
+  "checksums_equal": true,
+  "input": {
+    "read": {
+      "height": 193,
+      "passes": 24,
+      "planes": 4,
+      "probes": 65536,
+      "width": 257
+    },
+    "route": {
+      "height": 96,
+      "routes": 8,
+      "width": 96
+    }
+  },
+  "layout": {
+    "dense_tile_size": 1152,
+    "read_dense": 248,
+    "read_directory": 252,
+    "route_dense": 0,
+    "route_directory": 9,
+    "world_size": 120
+  },
+  "layout_equal": true,
+  "metrics": {
+    "read": {
+      "after_flat_median_ns": 10072708.5,
+      "after_max_ns": 15098334,
+      "after_min_ns": 9944041,
+      "after_process_median_ns": 10089125.0,
+      "after_process_medians_ns": [
+        10693250,
+        10033542,
+        10029625,
+        10144708
+      ],
+      "before_flat_median_ns": 14561895.5,
+      "before_max_ns": 21191291,
+      "before_min_ns": 14307708,
+      "before_process_median_ns": 14530645.5,
+      "before_process_medians_ns": [
+        16851667,
+        14549833,
+        14461333,
+        14511458
+      ],
+      "change_percent": -30.82831489897726
+    },
+    "route": {
+      "after_flat_median_ns": 22989812.0,
+      "after_max_ns": 26591917,
+      "after_min_ns": 22420750,
+      "after_process_median_ns": 22959354.0,
+      "after_process_medians_ns": [
+        24286250,
+        22972416,
+        22871792,
+        22946292
+      ],
+      "before_flat_median_ns": 23685312.5,
+      "before_max_ns": 29584416,
+      "before_min_ns": 23039000,
+      "before_process_median_ns": 23638854.0,
+      "before_process_medians_ns": [
+        27642750,
+        23655500,
+        23622208,
+        23414500
+      ],
+      "change_percent": -2.936421041520987
+    }
+  },
+  "processes_per_arm": 4,
+  "record_count": 8,
+  "samples_per_process": 7,
+  "schema": "nav-coordinate-lookup-analysis-v1"
+}
