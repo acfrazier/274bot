@@ -11,6 +11,26 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 11:37 UTC
+
+- Native generated comparison PASS12953 inputs,306044401 bytes identical,
+  SHA cbb6f4e9e5fa4f8cc48ae811388a4f81f1f5a9d935a24361ef2ff5c3fbb3ffe0,
+  matching reviewed Mac output. Root independently rechecked full bytes, every
+  input, tool/source/executable admissions and frame inventory. Native guard
+  suite18 PASS0skip, qualified hard AS; separate copied generated459B fixture
+  passes actual real-wrapper admission/execution with unchanged REAL limits.
+- Root releases ONE real-pack correctness comparison, input73438581B SHA
+  2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30.
+  Frozen40 selectors SHA7ffaf7e73b02c79b3b079e57df99a31924f404a8cfdbae3bf7fe60a9c72b78b7.
+  Authorization SHA45351c23027d8d8558c3bb9d2e04634d8bb0267972ce5a167d3a7499702c44e2.
+  Same native-run, owned real-release new;900s wall/800sCPU/1GiBRSS/4GiBAS/
+  4GiBoutput per arm. No retries/cap relaxation, production startup, StageA/B
+  or savings acceptance. Root predeclared graph-derived routes and startup
+  overlap; intent labels are NOT coverage acceptance. Exact missing essence
+  quest state is disclosed; assess actual legs/bank/session results afterward.
+- Trace t_2ebebe02 actual Astra/openai073126_6c1daf in implementation;
+  required final t_99cec734 queued behind completed parent review, no run yet.
+
 ## Latest boundary — 2026-09-09 11:31 UTC
 
 - Native Linux exact-tool760d3ac staging verified13412 file hashes. Both frozen
