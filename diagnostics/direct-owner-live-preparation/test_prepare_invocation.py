@@ -12,7 +12,9 @@ class PreparationTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         archive = root / "direct-owner-native-preparation/artifact/frozen/frozen-direct-owner-source.tar.gz"
         manifest = root / "direct-owner-native-preparation/artifact/frozen/frozen-source-manifest.json"
-        self.assertEqual(prep.verify_source(archive, manifest)["host_commit"], prep.HOST_COMMIT)
+        source = prep.verify_source(archive, manifest)
+        self.assertEqual(source["host_original"], prep.HOST_COMMIT)
+        self.assertEqual(source["host_reviewed"], prep.HOST_REVIEWED_COMMIT)
 
     def test_placeholder_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -56,8 +58,18 @@ class PreparationTests(unittest.TestCase):
                     "path": str(binary), "sha256": prep.digest(binary),
                 }},
             }))
-            result = prep.verify_build(manifest, binary)
-            self.assertEqual(result["client_commit"], prep.CLIENT_COMMIT)
+            manifest_data = json.loads(manifest.read_text())
+            manifest_data["candidate"]["branch"] = "direct-owner-derivative"
+            manifest_data["candidate"]["client"]["sources_sha256"] = "b" * 64
+            manifest_data["features"]["requested"] = "memory-profile-no-alloc,memory-owner-capture"
+            manifest_data["features"]["allocator"] = "std::alloc::System"
+            manifest.write_text(json.dumps(manifest_data))
+            derivative = {
+                "checkout_host_commit": prep.HOST_COMMIT,
+                "checkout_client_commit": prep.CLIENT_COMMIT,
+            }
+            result = prep.verify_build(manifest, binary, derivative)
+            self.assertEqual(result["checkout_client_commit"], prep.CLIENT_COMMIT)
 
     def test_controller_requires_exact_reviewed_tool_digest(self):
         with tempfile.TemporaryDirectory() as directory:

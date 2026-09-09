@@ -7,7 +7,8 @@ Status: OFFLINE PREPARATION ONLY. No native qualification, account admission, ca
 `diagnostics/direct-owner-live-preparation/prepare_invocation.py` is a fail-closed source/provenance contract generator. It requires explicit root-supplied paths and verifies, without reading private account material:
 
 - frozen source archive SHA-256 `2c36d254c37c5ed56a55f78728357296d62be602f8653ed9ec041cd37d099d5d`;
-- original host `c0709aba2f8b45e42193225cf8f4e7325b5ca9bf` and client `3456edc8dabf7b25ada78110ffa56327af9f67a4` identities;
+- original host `c0709aba2f8b45e42193225cf8f4e7325b5ca9bf` / client `3456edc8dabf7b25ada78110ffa56327af9f67a4` and reviewed overlay host `3cdc3e4fbeb960fe4c270eb994ce22746787eb2d` / client `5c73a4a27f3d72834c2c2a071668eb197eb39fd9` provenance;
+- a separate root-supplied derivative admission binding that archive to clean checkout identities used for the build; the build checkout identities remain distinct from original-H/C provenance;
 - native generated qualification schema and `linux_generated_qualified: true`, while requiring `live_qualified: false` and `frontend_launched: false`;
 - schema-faithful direct-owner build manifest/binary identity (`candidate.commit`, nested `candidate.client.commit`, `binaries.candidate_tui_play`), with the locked `memory-profile-no-alloc` + `memory-owner-capture` feature pair, `allocation_counting: false`, and `snapshot_dedup: false`;
 - existing N1 controller review identity `e707e2d`, exact reviewed controller digest `8634665855d87aa93d27f10bc386f87d04be4c522b24e5379174f45cc2f37312`, and nav pack SHA-256 `2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30`.
@@ -30,8 +31,12 @@ Narrow fix required before any release: add a reviewed controller/managed-launch
 ## Root steps still required
 
 1. Complete and independently review Linux generated qualification on the exact frozen source archive; this task cannot mark it qualified.
-2. Materialize the original H/C objects plus only the reviewed owner overlay, exact lockfiles/features/tool identities, and build the direct-owner binary. Recheck source, binary, controller, nav, catalog, cache, and server identities.
+2. Materialize a clean diagnostic derivative from the exact archive plus its bound reviewed overlay, and emit `direct-owner-derivative-admission-v1` with its actual clean checkout HEADs. Keep original H/C as provenance-only values; do not relabel the derivative checkout as original H/C. Build the direct-owner binary with the exact manifest schema and recheck source, binary, controller, nav, catalog, cache, and server identities.
 3. Supply private root-only disposable account/owner fixture admission. Do not use the operator highmem vault and do not write account names/passwords to the owner ledger or this report.
 4. Supply exact cache snapshot/version/file hashes, canonical unpack root, server PID/start identity/health and public artifact hashes, and host preflight receipts: MemAvailable >=768 MiB, free output >=256 MiB, no swap, no conflicting owned work.
 5. Apply the narrow launcher guard/timing extension and run exactly one real 120x40 PTY attempt using e707e2d. Require ingame and `scene_state==2`, seeded/XP-proved active Thiever workload, A/B/C frame matching, natural initial-keyframe/first-delta metadata, normal Stop, final Idle/fingerprint absence, zero required inflight/isolate gauges, and ready=1.
 6. On any failure, stop/reap only the owned tree, preserve all artifacts and receipts, verify no owned descendants remain, and do not retry or signal the server/unrelated helpers. Validate owner JSONL separately with the existing validator; do not turn its `native_qualified: false` or `rss_reconciliation: false` fields into success booleans.
+
+## Unresolved source/feature dependency
+
+The existing controller's default source contract still requires clean Git HEADs equal to the original expected H/C commits, while the frozen owner archive is original-H/C provenance plus reviewed overlays and has no usable Git metadata. The existing feature contract also accepts only the string `memory-profile-no-alloc`, while this procedure requires the string form of the locked pair `memory-profile-no-alloc,memory-owner-capture`. Before release, the narrow reviewed extension must accept the validated derivative admission and this exact feature pair without weakening clean-source, allocator, no-snapshot-dedup, one-attempt, or cleanup guards. A build manifest that merely copies original H/C into `candidate.commit` is invalid and must be refused.
