@@ -1,0 +1,90 @@
+{
+  "archive_sha256": "9c9b5c785b6cb065ad7f0d9562b159076c6e1beddc39575c99d3770a4f4437a8",
+  "archive_bytes": 5337021,
+  "source_members_verified": 1124,
+  "derived_members": {
+    "crates/tui/src/bin.rs": "aee97345c86cff0eb3253ef56b3e64fd123991f57bebbe5fcb750d899839e28c",
+    "crates/api/src/owner_capture.rs": "5d91a1a70dcf1b1954931cc168d0344c1b6e010dfb2016e5d01244e71a052a06",
+    "crates/host/src/owner_capture.rs": "138a88380bcebc078c571e13be21f382d79e2316fc49b2bc9941ad60c4ea438e",
+    "crates/host-play/src/owner_capture.rs": "b758ca4740f3210a411b0b4643d13f6589d98b6ebbadb40bb70bd0901f29ee2a",
+    "crates/host-play/src/owner_capture_output.rs": "59421d88f652236c2c1aa4757c3b6c77632a47752ac82a98f8febdae19f33c3e",
+    "vendor/fr-client-rust/crates/client/src/core/world_owner_capture.rs": "7b572b26ada4e8135d0513975678106285e8f2a3b3d36d7a5cfe8ca65f765599",
+    "crates/host-play/tests/snapshot_frame_equivalence.rs": "90abb21d1a3ec7f91c6bcffc59dd9312ae5d962a08c9d4d59a2f02a09ebc5d66"
+  },
+  "source_before_after_equal": true,
+  "steps": [
+    {
+      "name": "original-empty-ambient-probe",
+      "exit": 101,
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0,
+      "log_sha256": "69ddf51d91ed87dad8222139c27ff50c187134a67980eac51a0b7b0265b44baf"
+    },
+    {
+      "name": "original-prepopulated-ambient-probe",
+      "exit": 101,
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0,
+      "log_sha256": "10f7c75fb56d88b124156b80de9d1f988c8903adcad8a133a26694584c31db4e"
+    },
+    {
+      "name": "snapshot-empty-feature-off",
+      "exit": 0,
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "09a4f5146783b989902e2984a3d81b6bb3c3968a9fba0eca65160032ad3b673e"
+    },
+    {
+      "name": "snapshot-empty-feature-on",
+      "exit": 0,
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "4a21d9ff562924f9f448870f01acfd9657605b40a88958a9081193bd978882b1"
+    },
+    {
+      "name": "snapshot-prepopulated-feature-off",
+      "exit": 0,
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "8f29148314097d6ee661a8712b65b13bdfd04e74836f69e284e04cb62445645d"
+    },
+    {
+      "name": "snapshot-prepopulated-feature-on",
+      "exit": 0,
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "55eec8b35527a1e86c4e6357884a216360483dbb73052d7070737cb1df9359d8"
+    },
+    {
+      "name": "feature-off-host-play-profile",
+      "exit": 0,
+      "passed": 197,
+      "failed": 0,
+      "ignored": 7,
+      "log_sha256": "54eaf3c0118bc2b220e6f1fd4c236c1a7a0704b5a72d9a791c632b0253ae1715"
+    },
+    {
+      "name": "feature-on-host-play-profile",
+      "exit": 0,
+      "passed": 212,
+      "failed": 0,
+      "ignored": 7,
+      "log_sha256": "018ab4463efbe4d91cfd8dab7a57b08a76ae4c10f84295364d47af2772bc4ddc"
+    },
+    {
+      "name": "snapshot-dedup-full-integration",
+      "exit": 0,
+      "passed": 16,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "bf3b4d4db94acdcb7b9ffc6dfda76e6da3e76c1ca8a0e4be4c8b3c75c3f5b9b7"
+    }
+  ],
+  "conclusion": "Two expected original failures and all seven corrected native commands verified; affected transcript suites passed, prior GPU failure remains open, no live/performance qualification"
+}

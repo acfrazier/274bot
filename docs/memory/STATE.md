@@ -11,6 +11,18 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 20:36 UTC
+
+- Native transcript01 COMPLETE0:2 original controls reproduce0/13 IDs;
+  all4 corrected focused pass; fullhostplay off197/on212 harness passes with
+  7 existing ignored each; fullsnapshot-dedup16pass. No failures/timeouts/orphans.
+- Root independently audited all1124 source bytes/modes plus7 reviewed-derived
+  members,9 log hashes, unchanged before/after and locks. Full archive9c9b5c78
+  preserved; see direct-owner-native-transcript-result.md. No duplicate source
+  extraction or new local build cache. Prior GPU failures remain open.
+- Controller and navigation workers continue; independent combined functional
+  review and explicit TUI/GPU defect disposition precede live readiness.
+
 ## Latest boundary — 2026-09-09 20:32 UTC
 
 - Transcript a3abbdd APPROVED actualGrok4.5/xai162751_9bdc09. Root reconciled
