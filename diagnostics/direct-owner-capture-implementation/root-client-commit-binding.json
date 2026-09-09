@@ -1,0 +1,35 @@
+{
+  "reviewed_host": "3cdc3e4fbeb960fe4c270eb994ce22746787eb2d",
+  "original_client": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+  "client_commit": "5c73a4a27f3d72834c2c2a071668eb197eb39fd9",
+  "client_branch": "codex/memory-direct-owner-capture",
+  "members": [
+    {
+      "path": "crates/client/Cargo.toml",
+      "bytes": 929,
+      "sha256": "4197688f08ed259ad96f2dc43dda6aa8433960769d30b3e4be51c8f1fd3ce26e"
+    },
+    {
+      "path": "crates/client/src/core/world.rs",
+      "bytes": 43192,
+      "sha256": "cd6cb7d14acc5f0406d217ae95691b6c1bffcb5089b53f7442bbe17ab8891d9e"
+    },
+    {
+      "path": "crates/client/src/io/packet.rs",
+      "bytes": 9976,
+      "sha256": "7485b52922b60ec17f00e01e3dbd90280dfebdd3dd0021bf1b553ecfa361e718"
+    },
+    {
+      "path": "crates/client/src/core/world_owner_capture.rs",
+      "bytes": 15734,
+      "sha256": "caafa9426d7cbbc2a870e41cb348f1e9189ed5cb8905fd5b6477f4d94f3da8e8"
+    },
+    {
+      "path": "crates/client/tests/direct_owner_capture.rs",
+      "bytes": 676,
+      "sha256": "0998c62ad4c44a1ff48eec084aa8e0fe3d58d28f8b38af75885f8fec6dc37d62"
+    }
+  ],
+  "verified": true,
+  "scope": "reviewed client commit binding; no native qualification"
+}
