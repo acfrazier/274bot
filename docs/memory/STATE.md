@@ -11,6 +11,22 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 15:06 UTC
+
+- Root source inspection found coordinate reads form a flat index then recover
+  the same plane/x/z by division. Candidate collision.rs exactly matches8385.
+  This is a source-level opportunity, NOT measured executed cost or route failure.
+  Root design aa2d740 nav-coordinate-lookup-design.md proposes reusing validated
+  coordinates with identical logical-length panic/rawflags/bounds semantics.
+- Independent DESIGN review t_96a6b960 requested. No implementation/new candidate
+  or test release; current routing tool still binds29b/8385 and proceeds unchanged.
+  Design requires F1 evidence review before deciding whether to refine or continue.
+  No source reversion, unsafe indexing, caching, router or representation change.
+- Current capture correction actualAstra/openai20260909_105753_372d24 running;
+  root confirmed existing template can be borrowed into synchronous observe
+  without another Arc clone. Stage tooling t_500f341e still qualifying generated
+  scheduler/probe/guard paths. No native/live phase currently released.
+
 ## Latest boundary — 2026-09-09 14:57 UTC
 
 - Owner instrumentation70a0954 REJECTED same-card Grok4.5/xai review
