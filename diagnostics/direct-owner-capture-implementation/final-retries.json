@@ -1,0 +1,34 @@
+[
+  {
+    "name": "host-play-on",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "-p",
+      "host-play",
+      "--features",
+      "memory-profile-no-alloc,memory-owner-capture",
+      "--",
+      "--test-threads=1"
+    ],
+    "exit": 0,
+    "log": "host-play-on-final.log"
+  },
+  {
+    "name": "tui-on",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "-p",
+      "tui",
+      "--features",
+      "memory-profile-no-alloc,memory-owner-capture",
+      "--",
+      "--test-threads=1"
+    ],
+    "exit": 0,
+    "log": "tui-on-final.log"
+  }
+]

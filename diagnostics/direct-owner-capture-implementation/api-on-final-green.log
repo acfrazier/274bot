@@ -1,0 +1,250 @@
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/crates/api)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.54s
+     Running unittests src/lib.rs (target/debug/deps/api-b0e660d1a9dffa91)
+
+running 14 tests
+test content::tests::cook_stands_include_catherby_range_house ... ok
+test content::tests::cow_fields_include_lumbridge_pen ... ok
+test content::tests::fire_plots_are_the_four_named_stands ... ok
+test content::tests::items_include_alcher_gold_rune_chainbody ... ok
+test content::tests::pickpocket_guard_is_ardougne_market_gold_tile ... ok
+test owner_capture::tests::actions_vec_counts_capacity_not_only_len ... ok
+test owner_capture::tests::budget_stops_on_visit_cap ... ok
+test owner_capture::tests::collision_flags_use_array_stride ... ok
+test owner_capture::tests::fragment_row_storage_is_fixed_before_first_push ... ok
+test owner_capture::tests::unknown_is_not_zero ... ok
+test owner_capture::tests::vec_capacity_counts_spare ... ok
+test snapshot::snapshot_owner_capture::owner_regressions::independent_shells_keep_distinct_epochs_and_spare_capacity ... ok
+test snapshot::snapshot_owner_capture::owner_regressions::nested_action_storage_charges_spare_option_headers_and_strings ... ok
+test snapshot::snapshot_owner_capture::tests::item_actions_charge_spare_element_storage ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/direct_owner_capture.rs (target/debug/deps/direct_owner_capture-bddc1643b7ff1c4c)
+
+running 1 test
+test census_does_not_mutate_or_retain_empty_snapshot ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/interact.rs (target/debug/deps/interact-a9f340847213e400)
+
+running 58 tests
+test answer_choice_presses_the_chat_option_button_and_refuses_without_one ... ok
+test answer_count_writes_count_dialog ... ok
+test answer_count_writes_resume_p_countdialog_and_refuses_bad_states ... ok
+test bank_withdraw_sends_while_count_dialog_open ... ok
+test cheat_allowed_only_on_local_target ... ok
+test cheat_writes_client_cheat_without_colon_prefix ... ok
+test clear_local_modal_refuses_when_modal_not_open_and_closes_when_open ... ok
+test click_side_tab_dispatches_driver_hook_and_refuses_unavailable_tab ... ok
+test client_driver_cheat_matches_java_client_cheat ... ok
+test client_driver_click_side_tab_flips_active_icon ... ok
+test client_driver_close_button_clears_local_modal_state ... ok
+test client_driver_set_run_writes_if_button_payload ... ok
+test client_driver_walk_writes_move_gameclick ... ok
+test close_modal_dispatches_close_button_and_refuses_with_none_open ... ok
+test close_modal_sends_while_count_dialog_open ... ok
+test close_modal_writes_close_modal_opcode ... ok
+test continue_dialog_sends_pause_button_and_refuses_without_chat_modal ... ok
+test create_interactions_wires_snapshot_and_driver ... ok
+test interact_dispatches_ground_item_op_through_scene_coords ... ok
+test interact_dispatches_loc_op_through_scene_coords ... ok
+test interact_dispatches_npc_op_through_menu ... ok
+test interact_dispatches_prepared_slot ... ok
+test interact_refuses_invalid_action_stale_target_and_unsupported ... ok
+test interact_refuses_when_not_attached_not_ingame_or_count_dialog_open ... ok
+test interactions_walk_refuses_off_scene_and_sends_when_ok ... ok
+test legal_send_covers_every_client_prot ... ok
+test login_dispatches_driver_login ... ok
+test login_refuses_when_ingame_and_sends_when_logged_out ... ok
+test logout_presses_cc_logout_iface_and_missing_is_false ... ok
+test mainland_hop_queues_tele_and_tutorial_setvar ... ok
+test offers_operation_guards_range_and_usable_slots ... ok
+test op_loc_sets_menu_oploc1_then_do_action ... ok
+test op_loc_translates_absolute_loc_into_scene_coords ... ok
+test op_loc_uses_scene_typecode_as_menu_param_a ... ok
+test open_nearest_booth_clicks_use_quickly_on_the_same_plane ... ok
+test open_nearest_booth_walks_when_not_adjacent ... ok
+test operation_of_matches_label_case_insensitively_skipping_hidden ... ok
+test pending_door_packet_matches_client_one_tile_walk ... ok
+test pending_door_step_is_one_cardinal_packet_with_normal_gates ... ok
+test press_dispatches_button_and_refuses_target_client_side_only ... ok
+test press_dispatches_if_button_on_child ... ok
+test seed_at_sends_tutorial_setvar_then_tele ... ok
+test set_note_mode_presses_bank_note_toggle_and_refuses_without_controls ... ok
+test set_note_mode_presses_select_graphics_under_note_item_labels ... ok
+test set_run_and_retaliate_press_the_toggle_components ... ok
+test set_run_false_presses_run_off_orb ... ok
+test set_run_presses_run_orb_via_if_button_do_action ... ok
+test still_present_matches_identity_per_kind ... ok
+test tele_args_splits_world_tile_into_mapsquare ... ok
+test use_item_on_selects_held_item_then_aims_target ... ok
+test use_widget_on_aims_target_after_target_button ... ok
+test walk_calls_try_move_from_local_route ... ok
+test walk_translates_absolute_dest_into_scene_coords ... ok
+test walk_without_local_route_is_not_sent ... ok
+test wear_accepts_a_wield_weapon_menu ... ok
+test wear_dispatches_the_held_wear_op ... ok
+test wear_refuses_non_wearable_and_missing_items ... ok
+test wire_command_kinds_and_reasons_compile_and_match ... ok
+
+test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.87s
+
+     Running tests/obj_names.rs (target/debug/deps/obj_names-c9f01982c5fc7fad)
+
+running 7 tests
+test item_def_view_maps_empty_name_and_cert_links ... ok
+test item_def_view_pins_id_and_flags ... ok
+test loc_defs_maps_name_ops_and_flags ... ok
+test name_and_by_name_still_resolve_off_the_view_table ... ok
+test table_resolves_id_to_name_and_missing_id_to_none ... ok
+test table_resolves_name_to_id_for_has_item_lookups ... ok
+test unnoted_item_certificate_link_is_the_note_sibling ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/query.rs (target/debug/deps/query-697c7e2a4a849670)
+
+running 22 tests
+test actor_filters_read_actor_state ... ok
+test chat_filters_read_lines_and_sequences ... ok
+test combat_style_labels_prefers_parenthetical_style_name ... ok
+test entity_filters_match_name_terms_and_wildcards ... ok
+test entity_filters_match_names_ids_and_actions ... ok
+test flood_reach_matches_one_shot_can_reach_without_step_cap ... ok
+test ground_item_filters_read_item_def ... ok
+test item_and_world_filters_compose ... ok
+test item_filters_by_slot_and_total_sum ... ok
+test loc_approach_operability ... ok
+test local_filters_read_loc_shape_and_state ... ok
+test npc_filters_read_level_size_and_local_target ... ok
+test packed_combat_unarmed_posts_aggressive_from_tab_0 ... ok
+test player_filters_read_combat_and_skill_levels ... ok
+test scene_query_collision_and_reach ... ok
+test side_tab_filters_read_tab_state ... ok
+test stat_filters_read_skill_state ... ok
+test varp_filters_read_values ... ok
+test widget_filters_read_component_state ... ok
+test widget_items_subquery_filters_component_slots ... ok
+test widget_search_finds_buttons_and_styles ... ok
+test world_filters_use_distance_and_tiles ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.94s
+
+     Running tests/settle.rs (target/debug/deps/settle-f01ac86cc52bd20e)
+
+running 14 tests
+test arrived_gates_on_level_and_radius ... ok
+test engaged_detects_target_and_health_drop ... ok
+test inventory_changed_detects_slot_moves ... ok
+test item_delta_folds_container_totals ... ok
+test modal_opened_and_closed_match_roots ... ok
+test option_gone_detects_loc_and_action_gone ... ok
+test said_matches_new_chat_lines ... ok
+test scene_ready_gates_on_state_and_base ... ok
+test server_refused_detects_a_dropped_flag_off_destination ... ok
+test settle_poll_expires_on_disconnect_or_not_ingame ... ok
+test settle_poll_expires_on_the_ms_budget ... ok
+test settle_poll_keeps_two_arrived_arms_isolated ... ok
+test settle_poll_matches_arrived_then_expires ... ok
+test xp_gained_reads_skill_xp ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.66s
+
+     Running tests/snapshot.rs (target/debug/deps/snapshot-4b09bfe1dc807838)
+
+running 60 tests
+test actor_in_combat_clears_when_combat_cycle_expires ... ok
+test bank_side_and_equipment_read_their_components ... ok
+test camera_view_rebuild_reads_client_camera ... ok
+test chat_burst_in_one_gen_gets_distinct_sequences ... ok
+test chat_continue_walks_nested_pause_button ... ok
+test chat_lines_read_the_full_ring_in_order ... ok
+test chat_options_and_continue_read_the_chat_modal ... ok
+test chat_rebuild_reads_the_ring_head ... ok
+test controls_read_the_player_controls_overlay ... ok
+test family_enum_covers_all_client_gens ... ok
+test ground_item_view_rebuild_reads_ground_obj ... ok
+test iface_families_rebuild_on_iface_and_inv_gens ... ok
+test inv_ids_match_inventory_def_ids ... ok
+test inv_rebuild_prefers_the_side_tab_container_over_an_earlier_type_inv ... ok
+test inv_rebuild_reads_the_type_inv_iface ... ok
+test inventory_size_and_bank_component_id_derive_from_the_ifaces ... ok
+test item_view_reads_inventory_and_bank_containers ... ok
+test loc_view_is_always_fresh_without_a_gen_bump ... ok
+test loc_view_reads_all_four_layers ... ok
+test loc_view_rebuild_reads_world_locs ... ok
+test loc_view_unknown_id_reads_defaults ... ok
+test make_products_ignores_mysterious_cube_obj_models ... ok
+test make_products_read_the_make_modal ... ok
+test map_flag_view_reads_minimap_flag ... ok
+test modals_menu_and_modal_texts_read_client_state ... ok
+test npc_bump_copies_list_once_then_idempotent ... ok
+test npc_face_target_encodes_npc_and_player_kinds ... ok
+test npc_rebuild_reads_full_actor_view ... ok
+test npc_rebuild_skips_out_of_range_index ... ok
+test other_family_bump_leaves_npc_rebuild_untouched ... ok
+test packed_shop_template_posts_main_and_stock_inv ... ok
+test player_rebuild_reads_local_and_remote_players ... ok
+test player_rebuild_reads_self_slot_and_bumps_tick ... ok
+test player_rebuild_records_base_and_tile ... ok
+test queries_borrow_by_index_and_tile ... ok
+test quest_statuses_read_the_quest_tab ... ok
+test read_context_round_trips_every_family ... ok
+test rebuild_all_families_reports_dirty_once ... ok
+test rebuild_reads_a_shared_client_borrow ... ok
+test scene_rebuild_reads_attached_from_the_socket ... ok
+test scene_rebuild_records_ingame_and_scene_state ... ok
+test scene_status_is_always_fresh_without_a_gen_bump ... ok
+test scene_view_rebuild_reads_collision_flags ... ok
+test second_bump_refreshes_copied_data ... ok
+test shop_view_empty_when_no_shop_modal ... ok
+test shop_view_stock_when_modal_open ... ok
+test side_tabs_report_available_active_visible_and_widgets ... ok
+test snapshot_tracks_family_generations ... ok
+test stat_rebuild_copies_runenergy ... ok
+test stat_view_rebuild_reads_full_skills ... ok
+test tile_types_are_plain_copy_data ... ok
+test trade_view_reads_offer_confirm_and_containers ... ok
+test unchanged_npc_gen_reuses_last_rebuild ... ok
+test unchanged_scene_gen_skips_loc_resweep ... ok
+test varp_family_rebuild_reads_the_varp_table ... ok
+test walk_in_place_does_not_clone_for_previous_readers ... ok
+test widget_items_read_inv_component_slots ... ok
+test widget_roots_cover_main_side_chat_and_tutorial ... ok
+test widget_view_reads_iface_fields_and_varp_bindings ... ok
+test world_view_rebuild_reads_client_state ... ok
+
+test result: ok. 60 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.80s
+
+     Running tests/snapshot_dedup.rs (target/debug/deps/snapshot_dedup-932410fe75036d65)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/snapshot_dedup_proto.rs (target/debug/deps/snapshot_dedup_proto-a6160911c067b5ee)
+
+running 12 tests
+test cx1_tab_click_unequal_gate_history_no_share ... ok
+test cx2_scroll_without_gen_no_share ... ok
+test cx3_local_inv_drag_without_gen_no_share ... ok
+test cx4_text_without_gen_no_share ... ok
+test cx5_tutorial_root_without_gen_no_share ... ok
+test cx6_loc_distance_player_move_no_share ... ok
+test drop_restart_identity ... ok
+test equal_populated_bodies_share ... ok
+test equality_and_walk_counts_recorded ... ok
+test older_publication_immutability ... ok
+test prototype_matches_independent_game_snapshot_builders ... ok
+test quiet_read_zero_work ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.35s
+
+   Doc-tests api
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

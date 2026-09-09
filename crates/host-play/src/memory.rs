@@ -655,6 +655,8 @@ pub struct Run {
     diagnostic_output: Option<std::fs::File>,
     qualification_output: std::fs::File,
     cohort: Option<CohortPublisher>,
+    #[cfg(feature = "memory-owner-capture")]
+    owner_phases: Option<crate::owner_capture::PhasePublisher>,
 }
 
 /// Where non-idle seed runners get their [`nav::world::NavWorld`].
@@ -824,6 +826,10 @@ impl Run {
             config.workload.as_str(),
             output_path.display()
         );
+        #[cfg(feature = "memory-owner-capture")]
+        let owner_phases = if crate::owner_capture::enabled() {
+            Some(crate::owner_capture::PhasePublisher::with_output(&output_path.with_extension("owners.jsonl"))?)
+        } else { None };
         Ok(Self {
             config,
             names,
@@ -849,6 +855,8 @@ impl Run {
             single_renderer,
             render_policy,
             cohort: None,
+            #[cfg(feature = "memory-owner-capture")]
+            owner_phases,
         })
     }
 
@@ -920,6 +928,15 @@ impl Run {
     /// Drive warmup/observe/lifecycle. `Ok(true)` when teardown finished.
     pub fn poll(&mut self, play: &mut Play) -> Result<bool, String> {
         let now = Instant::now();
+        #[cfg(feature = "memory-owner-capture")]
+        if crate::owner_capture::enabled() {
+            if let Some(phases) = self.owner_phases.as_mut() {
+                if phases.token.is_none() { phases.token = host::owner_capture::registered_token(); }
+                phases.observe_start = self.observing;
+                phases.teardown_start = self.teardown;
+                phases.poll(self.observing.is_some() && !self.stopped, self.teardown.is_some());
+            }
+        }
         let statuses = play.statuses();
         let ready = statuses
             .iter()
@@ -1028,14 +1045,7 @@ impl Run {
             // Arm first so immutable START matches this observe-start boundary.
             self.arm_cohort_at_observe_start()?;
             self.write_qualification(play, "observe-start")?;
-            #[cfg(feature = "memory-owner-capture")]
-            {
-                // Phase A: observe-start boundary request (nonblocking).
-                let _ = crate::owner_capture::request_phase(
-                    0,
-                    host::owner_capture::SlotToken(0),
-                );
-            }
+
             // Prefer the Instant used for mono START when cohort-on so wall
             // observe duration tracks the same immutable window.
             self.observing = Some(self.cohort.as_ref().map(|_| Instant::now()).unwrap_or(now));
@@ -1077,21 +1087,20 @@ impl Run {
                     }
                 }
                 self.write_qualification(play, "observe-end")?;
-                #[cfg(feature = "memory-owner-capture")]
-                {
-                    // Phase B: observe-end boundary request (nonblocking).
-                    let _ = crate::owner_capture::request_phase(
-                        1,
-                        host::owner_capture::SlotToken(0),
-                    );
-                }
+
                 if self.cohort.is_some() {
                     // Keep ordinary runtime for the finite tail; scripts stay up
                     // through this sample, then drain begins after the write.
                     enter_drain_after_sample = true;
                 } else {
+                    #[cfg(feature = "memory-owner-capture")]
+                    let owner_stop_begin = self.owner_phases.as_ref().map(|_| api::owner_capture::mono_ns());
                     for name in &self.names {
                         play.script_stop(name);
+                    }
+                    #[cfg(feature = "memory-owner-capture")]
+                    if let (Some(phases), Some(begin)) = (&mut self.owner_phases, owner_stop_begin) {
+                        phases.record_stop(begin, api::owner_capture::mono_ns());
                     }
                     self.stopped = true;
                     self.teardown = Some(now);
@@ -1115,14 +1124,7 @@ impl Run {
                 }
                 self.stopped = true;
                 self.teardown = Some(now);
-                #[cfg(feature = "memory-owner-capture")]
-                {
-                    // Phase C: post-stop / teardown boundary (nonblocking).
-                    let _ = crate::owner_capture::request_phase(
-                        2,
-                        host::owner_capture::SlotToken(0),
-                    );
-                }
+
             }
         }
 
@@ -1606,6 +1608,8 @@ impl Run {
             // Before returning true (panel/TUI process::exit), prove producer
             // stop/join and emit terminal cohort summary when cohort-on.
             self.finish_cohort_shutdown(play)?;
+            #[cfg(feature = "memory-owner-capture")]
+            if let Some(phases) = &mut self.owner_phases { phases.finish()?; }
             return Ok(true);
         }
         Ok(false)
@@ -2707,6 +2711,8 @@ None,
             diagnostic_output: diagnostics.then(|| sink.try_clone().expect("diag sink")),
             qualification_output,
             cohort: None,
+            #[cfg(feature = "memory-owner-capture")]
+            owner_phases: None,
         }
     }
 

@@ -2,8 +2,8 @@
 //! `memory-owner-capture`). Thread-local scalars only — no Client/Arc retention.
 
 use api::owner_capture::{
-    Budget, CaptureConfig, EncodedBufMeta, FieldRow, OwnerFragment, Reason, COW_SCRATCH_CAP,
-    MAILBOX_BYTES_CAP, MAX_FIELD_ROWS,
+    Budget, CaptureConfig, EncodedBufMeta, FieldRow, FieldRows, OwnerFragment, Reason,
+    COW_SCRATCH_CAP, MAILBOX_BYTES_CAP,
 };
 use api::snapshot::GameSnapshot;
 use client::client::Client;
@@ -15,9 +15,17 @@ use std::sync::{Mutex, OnceLock};
 static CAPTURE_ENABLED: AtomicBool = AtomicBool::new(false);
 static FRAME_SERIAL: AtomicU64 = AtomicU64::new(0);
 
+pub fn current_frame() -> u64 {
+    FRAME_SERIAL.load(Ordering::Relaxed)
+}
+
 /// Resolve runtime switch once at initialization.
 pub fn init_from_env() {
-    let cfg = CaptureConfig::from_env();
+    static CONFIG: OnceLock<CaptureConfig> = OnceLock::new();
+    let cfg = CONFIG.get_or_init(CaptureConfig::from_env);
+    if cfg.enabled {
+        let _ = global_mailbox();
+    }
     CAPTURE_ENABLED.store(cfg.enabled, Ordering::SeqCst);
 }
 
@@ -35,9 +43,17 @@ pub fn enabled() -> bool {
 pub struct SlotToken(pub u64);
 
 static NEXT_TOKEN: AtomicU64 = AtomicU64::new(1);
+static REGISTERED_TOKEN: AtomicU64 = AtomicU64::new(0);
+
+pub fn registered_token() -> Option<SlotToken> {
+    let token = REGISTERED_TOKEN.load(Ordering::Acquire);
+    (token != 0).then_some(SlotToken(token))
+}
 
 pub fn register_slot_token() -> SlotToken {
-    SlotToken(NEXT_TOKEN.fetch_add(1, Ordering::Relaxed))
+    let token = SlotToken(NEXT_TOKEN.fetch_add(1, Ordering::Relaxed));
+    REGISTERED_TOKEN.store(token.0, Ordering::Release);
+    token
 }
 
 /// Phase request published by the harness (nonblocking).
@@ -59,16 +75,20 @@ struct MailboxInner {
     fragments: Vec<OwnerFragment>,
     encoded: Vec<EncodedBufMeta>,
     bytes_est: usize,
+    request_count: usize,
+    encoded_count: usize,
 }
 
 impl OwnerMailbox {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(MailboxInner {
-                requests: Vec::with_capacity(8),
-                fragments: Vec::with_capacity(32),
-                encoded: Vec::with_capacity(8),
+                requests: Vec::with_capacity(3),
+                fragments: Vec::with_capacity(2),
+                encoded: Vec::with_capacity(4),
                 bytes_est: 0,
+                request_count: 0,
+                encoded_count: 0,
             }),
         }
     }
@@ -78,10 +98,11 @@ impl OwnerMailbox {
         let Ok(mut g) = self.inner.try_lock() else {
             return Err(Reason::MailboxFull);
         };
-        if g.bytes_est >= MAILBOX_BYTES_CAP {
+        if g.request_count >= 3 || g.requests.len() >= 3 || g.bytes_est >= MAILBOX_BYTES_CAP {
             return Err(Reason::MailboxFull);
         }
         g.requests.push(req);
+        g.request_count += 1;
         g.bytes_est = g
             .bytes_est
             .saturating_add(std::mem::size_of::<OwnerRequest>());
@@ -93,6 +114,7 @@ impl OwnerMailbox {
             return None;
         };
         if let Some(i) = g.requests.iter().position(|r| r.slot_token == token) {
+            g.bytes_est -= std::mem::size_of::<OwnerRequest>();
             Some(g.requests.remove(i))
         } else {
             None
@@ -103,9 +125,8 @@ impl OwnerMailbox {
         let Ok(mut g) = self.inner.try_lock() else {
             return Err(Reason::MailboxFull);
         };
-        let est = std::mem::size_of::<OwnerFragment>()
-            .saturating_add(frag.rows.len() * std::mem::size_of::<FieldRow>());
-        if g.bytes_est.saturating_add(est) > MAILBOX_BYTES_CAP {
+        let est = std::mem::size_of::<OwnerFragment>();
+        if g.fragments.len() >= 2 || g.bytes_est.saturating_add(est) > MAILBOX_BYTES_CAP {
             return Err(Reason::MailboxFull);
         }
         g.bytes_est = g.bytes_est.saturating_add(est);
@@ -117,13 +138,18 @@ impl OwnerMailbox {
         let Ok(mut g) = self.inner.try_lock() else {
             return Err(Reason::MailboxFull);
         };
-        if g.bytes_est.saturating_add(std::mem::size_of::<EncodedBufMeta>()) > MAILBOX_BYTES_CAP {
+        if g.encoded_count >= 4
+            || g.bytes_est
+                .saturating_add(std::mem::size_of::<EncodedBufMeta>())
+                > MAILBOX_BYTES_CAP
+        {
             return Err(Reason::MailboxFull);
         }
         g.bytes_est = g
             .bytes_est
             .saturating_add(std::mem::size_of::<EncodedBufMeta>());
         g.encoded.push(meta);
+        g.encoded_count += 1;
         Ok(())
     }
 
@@ -132,15 +158,16 @@ impl OwnerMailbox {
         let Ok(mut g) = self.inner.lock() else {
             return Vec::new();
         };
-        g.bytes_est = 0;
-        std::mem::take(&mut g.fragments)
+        g.bytes_est -= g.fragments.len() * std::mem::size_of::<OwnerFragment>();
+        g.fragments.drain(..).collect()
     }
 
     pub fn drain_encoded(&self) -> Vec<EncodedBufMeta> {
         let Ok(mut g) = self.inner.lock() else {
             return Vec::new();
         };
-        std::mem::take(&mut g.encoded)
+        g.bytes_est -= g.encoded.len() * std::mem::size_of::<EncodedBufMeta>();
+        g.encoded.drain(..).collect()
     }
 }
 
@@ -160,17 +187,44 @@ thread_local! {
     /// Diagnostic-only scalar staging (never holds Client/snapshot refs).
     static STAGING: RefCell<Option<StagingRow>> = const { RefCell::new(None) };
     static SLOT_TOKEN: RefCell<Option<SlotToken>> = const { RefCell::new(None) };
+    static SCRIPT_REQUEST: RefCell<Option<(SlotToken, u32, u8, u64)>> = const { RefCell::new(None) };
 }
 
-#[derive(Debug, Clone)]
+pub fn take_script_request() -> Option<(SlotToken, u32, u8, u64)> {
+    if !enabled() {
+        return None;
+    }
+    SCRIPT_REQUEST.with(|r| r.borrow_mut().take())
+}
+
+pub fn current_slot_token() -> Option<SlotToken> {
+    SLOT_TOKEN.with(|t| *t.borrow())
+}
+
+pub fn arm_script_request(fragment: &OwnerFragment) {
+    SCRIPT_REQUEST.with(|r| {
+        *r.borrow_mut() = Some((
+            SlotToken(fragment.slot_token),
+            fragment.request_id,
+            fragment.phase,
+            fragment.frame_serial,
+        ))
+    });
+}
+
 struct StagingRow {
+    budget: Budget,
+    epochs: [Option<api::owner_capture::OwnerEpoch>; 3],
+    begin_ns: u64,
+    end_ns: u64,
+    visits: u32,
     frame_serial: u64,
     request_id: u32,
     phase: u8,
     token: SlotToken,
     host_tick: u32,
-    client_rows: Vec<FieldRow>,
-    host_snap_rows: Vec<FieldRow>,
+    client_rows: FieldRows,
+    host_snap_rows: FieldRows,
     complete: bool,
     reason: Reason,
 }
@@ -190,20 +244,25 @@ pub fn pre_observe_hook(client: &Client, host_snapshot: &GameSnapshot) {
 
     // Clear previous partial staging.
     STAGING.with(|s| *s.borrow_mut() = None);
+    SCRIPT_REQUEST.with(|r| *r.borrow_mut() = None);
 
     let Some(req) = req else {
         return;
     };
 
+    let begin_ns = api::owner_capture::mono_ns();
     let mut budget = Budget::new();
-    let mut client_rows = Vec::with_capacity(MAX_FIELD_ROWS);
+    let mut client_rows = FieldRows::default();
     let mut complete = true;
     let mut reason = Reason::Ok;
 
     // World via client feature method.
     {
         let mut wb = WorldOwnerBudget::new(262_144, 5_000_000);
+        wb.start = budget.started_at();
+        wb.visits = budget.visits();
         let wrows = client.world.owner_payload(&mut wb);
+        budget.import_visits(wb.visits);
         for wr in wrows {
             let row = world_row_to_field(wr);
             if !row.complete {
@@ -236,10 +295,9 @@ pub fn pre_observe_hook(client: &Client, host_snapshot: &GameSnapshot) {
     }
 
     // Host snapshot shell.
-    let mut host_snap_rows = Vec::new();
+    let mut host_snap_rows = FieldRows::default();
     if complete {
-        let mut snap_budget = Budget::new();
-        let frag = host_snapshot.owner_payload(&mut snap_budget);
+        let frag = host_snapshot.owner_payload(&mut budget);
         host_snap_rows = frag.rows;
         if !frag.complete {
             complete = false;
@@ -249,6 +307,31 @@ pub fn pre_observe_hook(client: &Client, host_snapshot: &GameSnapshot) {
 
     STAGING.with(|s| {
         *s.borrow_mut() = Some(StagingRow {
+            epochs: [
+                Some(api::owner_capture::OwnerEpoch {
+                    source: "client",
+                    tick: host_snapshot.tick(),
+                    gens: api::owner_capture::generation_values(&client.gens),
+                    family_gates: None,
+                    base: Some((client.map_build_base_x, client.map_build_base_z)),
+                    tile: client.local_player.as_ref().and_then(|p| {
+                        Some((
+                            *p.entity.route_x.first()? + client.map_build_base_x,
+                            *p.entity.route_z.first()? + client.map_build_base_z,
+                            client.minusedlevel,
+                        ))
+                    }),
+                    ingame: client.ingame,
+                    scene_state: client.scene_state,
+                    draw: Some(client.draw),
+                    loop_cycle: Some(client.loop_cycle),
+                }),
+                Some(host_snapshot.owner_epoch("host_snapshot")),
+                None,
+            ],
+            begin_ns,
+            end_ns: api::owner_capture::mono_ns(),
+            visits: budget.visits(),
             frame_serial: frame,
             request_id: req.request_id,
             phase: req.phase,
@@ -258,6 +341,7 @@ pub fn pre_observe_hook(client: &Client, host_snapshot: &GameSnapshot) {
             host_snap_rows,
             complete,
             reason,
+            budget,
         });
     });
 }
@@ -292,9 +376,9 @@ fn world_row_to_field(wr: WorldOwnerRow) -> FieldRow {
 fn account_client_public(
     client: &Client,
     budget: &mut Budget,
-    rows: &mut Vec<FieldRow>,
+    rows: &mut FieldRows,
 ) -> Result<(), Reason> {
-    use api::owner_capture::{grid3_capacity_bytes, collision_flags_bytes, v_bytes};
+    use api::owner_capture::{collision_flags_bytes, grid3_capacity_bytes, v_bytes};
 
     let header = std::mem::size_of::<Client>() as u64;
     let _ = budget.push_row(
@@ -399,7 +483,7 @@ fn account_client_public(
         client.player_count as u64,
         budget,
         rows,
-        true,
+        |p| Ok((player_nested_bytes(p)?, u64::from(p.loc_model.is_some()))),
     )?;
     account_entity_table(
         "npc",
@@ -407,7 +491,7 @@ fn account_client_public(
         client.npc_count as u64,
         budget,
         rows,
-        false,
+        |p| Ok((entity_nested_bytes(&p.entity)?, 0)),
     )?;
 
     for (name, v) in [
@@ -474,7 +558,7 @@ fn account_client_public(
                 (v.capacity() as u64).saturating_mul(elem),
                 nested,
                 boxes,
-                box_bytes.saturating_add(nested),
+                box_bytes,
                 budget.elapsed_ns(),
             ),
         );
@@ -508,25 +592,28 @@ fn account_entity_table<T>(
     table: &Vec<Option<Box<T>>>,
     reported_count: u64,
     budget: &mut Budget,
-    rows: &mut Vec<FieldRow>,
-    _is_player: bool,
+    rows: &mut FieldRows,
+    descendants: impl Fn(&T) -> Result<(u64, u64), Reason>,
 ) -> Result<(), Reason> {
     let elem = std::mem::size_of::<Option<Box<T>>>() as u64;
     let mut occupied = 0u64;
     let mut boxes = 0u64;
     let mut box_bytes = 0u64;
+    let mut nested = 0u64;
+    let mut model_presence = 0u64;
     for slot in table {
         if !budget.visit() {
             return Err(budget.failed().unwrap_or(Reason::BudgetVisits));
         }
-        if slot.is_some() {
+        if let Some(value) = slot {
             occupied += 1;
             boxes += 1;
             box_bytes = Budget::checked_add(box_bytes, std::mem::size_of::<T>() as u64)?;
+            let (bytes, models) = descendants(value)?;
+            nested = Budget::checked_add(nested, bytes)?;
+            model_presence = Budget::checked_add(model_presence, models)?;
         }
     }
-    // Note: nested entity descendants accounted separately when T is known;
-    // host-play deep-walks players/npc after this shallow table row.
     let mut row = FieldRow::ok(
         "client",
         field,
@@ -535,7 +622,7 @@ fn account_entity_table<T>(
         occupied,
         (table.len() as u64).saturating_mul(elem),
         (table.capacity() as u64).saturating_mul(elem),
-        0,
+        nested,
         boxes,
         box_bytes,
         budget.elapsed_ns(),
@@ -543,14 +630,39 @@ fn account_entity_table<T>(
     // Retain both reported counts and occupied.
     row.holder_count = Some(reported_count);
     let _ = budget.push_row(rows, row);
+    if field == "players" {
+        let mut models = FieldRow::unknown(
+            "client",
+            "players.loc_model",
+            Reason::OpaqueUnknown,
+            budget.elapsed_ns(),
+        );
+        models.occupied_count = Some(model_presence);
+        let _ = budget.push_row(rows, models);
+    }
     Ok(())
+}
+
+fn entity_nested_bytes(p: &client::dash3d::client_entity::ClientEntity) -> Result<u64, Reason> {
+    use api::owner_capture::{opt_string_capacity_bytes, v_bytes};
+    let mut bytes = opt_string_capacity_bytes(&p.chat_message);
+    bytes = Budget::checked_add(bytes, v_bytes(&p.route_x)?)?;
+    bytes = Budget::checked_add(bytes, v_bytes(&p.route_z)?)?;
+    Budget::checked_add(bytes, v_bytes(&p.route_run)?)
+}
+
+fn player_nested_bytes(p: &client::dash3d::client_player::ClientPlayer) -> Result<u64, Reason> {
+    Budget::checked_add(
+        entity_nested_bytes(&p.entity)?,
+        api::owner_capture::opt_string_capacity_bytes(&p.name),
+    )
 }
 
 fn account_player_desc(
     field: &'static str,
     p: &client::dash3d::client_player::ClientPlayer,
     budget: &mut Budget,
-    rows: &mut Vec<FieldRow>,
+    rows: &mut FieldRows,
 ) -> Result<(), Reason> {
     use api::owner_capture::{opt_string_capacity_bytes, v_bytes};
     if !budget.visit() {
@@ -570,8 +682,8 @@ fn account_player_desc(
         1,
         1,
         1,
-        std::mem::size_of::<client::dash3d::client_player::ClientPlayer>() as u64,
-        std::mem::size_of::<client::dash3d::client_player::ClientPlayer>() as u64,
+        0, // Inline in Client, not another allocated player payload.
+        0,
         nested,
         boxes,
         if loc_model {
@@ -601,10 +713,14 @@ fn account_player_desc(
 }
 
 /// Consume staging into a host fragment after observe path joins nav/script.
-pub fn take_staging_fragment() -> Option<OwnerFragment> {
+pub fn take_staging_fragment() -> Option<(OwnerFragment, Budget)> {
     STAGING.with(|s| {
         s.borrow_mut().take().map(|st| {
             let mut frag = OwnerFragment::new("host_pre_observe");
+            frag.epochs = st.epochs;
+            frag.begin_ns = st.begin_ns;
+            frag.end_ns = st.end_ns;
+            frag.visits = st.visits;
             frag.slot_token = st.token.0;
             frag.request_id = st.request_id;
             frag.frame_serial = st.frame_serial;
@@ -613,41 +729,62 @@ pub fn take_staging_fragment() -> Option<OwnerFragment> {
             frag.complete = st.complete;
             frag.reason = st.reason;
             frag.rows = st.client_rows;
-            frag.rows.extend(st.host_snap_rows);
-            frag
+            frag.rows
+                .extend(st.host_snap_rows.into_iter().map(|mut row| {
+                    row.owner = "host_snapshot";
+                    row
+                }));
+            (frag, st.budget)
         })
     })
 }
 
 /// COW scratch identity table (fixed cap, preallocate before login).
 pub struct CowScratch {
-    addrs: Vec<usize>,
+    addrs: Vec<(usize, bool)>,
+    used: usize,
 }
 
 impl CowScratch {
     pub fn new() -> Self {
-        let mut addrs = Vec::new();
-        addrs.reserve_exact(COW_SCRATCH_CAP);
-        Self { addrs }
+        Self {
+            addrs: vec![(0, false); COW_SCRATCH_CAP],
+            used: 0,
+        }
     }
 
     pub fn clear(&mut self) {
-        self.addrs.clear();
+        self.addrs.fill((0, false));
+        self.used = 0;
     }
 
-    pub fn insert(&mut self, addr: usize) -> Result<bool, Reason> {
-        if let Some(_) = self.addrs.iter().position(|&a| a == addr) {
-            return Ok(false); // already seen
+    pub fn classify(
+        &mut self,
+        addr: usize,
+        template: bool,
+        budget: &mut Budget,
+    ) -> Result<(bool, bool), Reason> {
+        let start = addr.wrapping_mul(0x9e3779b9) >> 4;
+        for probe in 0..COW_SCRATCH_CAP {
+            if !budget.visit() {
+                return Err(budget.failed().unwrap_or(Reason::BudgetVisits));
+            }
+            let index = (start.wrapping_add(probe)) & (COW_SCRATCH_CAP - 1);
+            let entry = &mut self.addrs[index];
+            if entry.0 == addr {
+                return Ok((false, entry.1));
+            }
+            if entry.0 == 0 {
+                *entry = (addr, template);
+                self.used += 1;
+                return Ok((true, template));
+            }
         }
-        if self.addrs.len() >= COW_SCRATCH_CAP {
-            return Err(Reason::CowScratchFull);
-        }
-        self.addrs.push(addr);
-        Ok(true)
+        Err(Reason::CowScratchFull)
     }
 
     pub fn reserved_bytes(&self) -> usize {
-        self.addrs.capacity() * std::mem::size_of::<usize>()
+        self.addrs.capacity() * std::mem::size_of::<(usize, bool)>()
     }
 }
 
@@ -660,6 +797,75 @@ impl Default for CowScratch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn entity_table_counts_descendants_not_just_boxes() {
+        use client::dash3d::client_player::ClientPlayer;
+        let mut player = ClientPlayer::default();
+        player.name = Some(String::with_capacity(71));
+        player.entity.chat_message = Some(String::with_capacity(53));
+        player.entity.route_x.reserve(37);
+        player.entity.route_run.reserve(83);
+        let expected = player_nested_bytes(&player).unwrap();
+        let mut players = Vec::with_capacity(8);
+        players.push(Some(Box::new(player)));
+        players.push(None);
+        let mut rows = FieldRows::default();
+        account_entity_table("players", &players, 1, &mut Budget::new(), &mut rows, |p| {
+            Ok((player_nested_bytes(p)?, 0))
+        })
+        .unwrap();
+        let row = &rows[0];
+        assert_eq!(row.nested_capacity_bytes, Some(expected));
+        assert_eq!(
+            row.box_bytes,
+            Some(std::mem::size_of::<ClientPlayer>() as u64)
+        );
+        assert_eq!(
+            row.capacity_bytes,
+            Some((players.capacity() * std::mem::size_of::<Option<Box<ClientPlayer>>>()) as u64)
+        );
+    }
+
+    #[test]
+    fn mailbox_requests_are_limited_to_three() {
+        let mb = OwnerMailbox::new();
+        for request_id in 1..=3 {
+            mb.try_publish_request(OwnerRequest {
+                request_id,
+                phase: (request_id - 1) as u8,
+                slot_token: SlotToken(1),
+                armed_frame: 0,
+            })
+            .unwrap();
+        }
+        assert_eq!(
+            mb.try_publish_request(OwnerRequest {
+                request_id: 4,
+                phase: 0,
+                slot_token: SlotToken(1),
+                armed_frame: 0
+            }),
+            Err(Reason::MailboxFull)
+        );
+    }
+
+    #[test]
+    fn draining_fragments_preserves_undrained_accounting() {
+        let mb = OwnerMailbox::new();
+        mb.try_publish_request(OwnerRequest {
+            request_id: 1,
+            phase: 0,
+            slot_token: SlotToken(1),
+            armed_frame: 0,
+        })
+        .unwrap();
+        mb.drain_fragments();
+        assert_eq!(
+            mb.inner.lock().unwrap().bytes_est,
+            std::mem::size_of::<OwnerRequest>()
+        );
+    }
 
     #[test]
     fn runtime_off_skips_hook_work() {

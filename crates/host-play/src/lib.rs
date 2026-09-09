@@ -692,16 +692,22 @@ fn script_observe(
     // entry (or cancel when the edge will not dispatch).
     let mut resp_dispatched = false;
     let mut resp_cancel_edge = false;
+    #[cfg(feature = "memory-owner-capture")]
+    let mut owner_fragment = None;
     if let Some(slot) = script_slot(scripts, name) {
         let mut slot = slot.lock().unwrap();
         slot.on_is_up(up);
         #[cfg(feature = "memory-owner-capture")]
         {
             // Existing lock only: fingerprint census after gate, before encode/tick.
-            if crate::owner_capture::enabled() {
+            if let Some((token, request, phase, frame)) = host::owner_capture::take_script_request() {
                 let mut budget = api::owner_capture::Budget::new();
-                let frag = slot.owner_payload(&mut budget);
-                let _ = host::owner_capture::global_mailbox().try_push_fragment(frag);
+                let mut frag = slot.owner_payload(&mut budget);
+                frag.slot_token = token.0;
+                frag.request_id = request;
+                frag.phase = phase;
+                frag.frame_serial = frame;
+                owner_fragment = Some(frag);
             }
         }
         // Post the snapshot only while the slot script is Running.
@@ -730,6 +736,8 @@ fn script_observe(
                     .unwrap()
                     .get(name)
                     .is_some_and(|b| b.allow_teleports);
+                #[cfg(feature = "memory-owner-capture")]
+                let owner_initial_keyframe = crate::owner_capture::enabled() && !slot.owner_has_fingerprint();
                 let bytes = with_script_snapshot_input(
                     tick,
                     here,
@@ -747,7 +755,7 @@ fn script_observe(
                 {
                     // Natural encoded Vec metadata before move into post_snapshot.
                     crate::owner_capture::note_encoded(
-                        api::owner_capture::EncodedBufKind::FirstPostInWindow,
+                        owner_initial_keyframe,
                         bytes.len(),
                         bytes.capacity(),
                     );
@@ -839,6 +847,10 @@ fn script_observe(
     } else if tick_edge {
         // No script slot: PLAYER_INFO edge still exists at host; cancel for coverage.
         resp_cancel_edge = true;
+    }
+    #[cfg(feature = "memory-owner-capture")]
+    if let Some(fragment) = owner_fragment {
+        let _ = host::owner_capture::global_mailbox().try_push_fragment(fragment);
     }
     if resp_dispatched {
         host::responsiveness_profile::note_script_dispatch_global(
@@ -3751,6 +3763,9 @@ fn spawn_slot_thread(
             .name(username.clone())
             .stack_size(THREAD_STACK)
             .spawn(move || {
+            #[cfg(feature = "memory-owner-capture")]
+            let mut owner_capture_slot = crate::owner_capture::enabled().then(|| (
+                crate::owner_capture::register_slot(), host::owner_capture::CowScratch::new()));
             {
                 // Publish the row before `prepare_client`/`maininit`
                 // (a slow cache fetch can stall for seconds), so the
@@ -3892,19 +3907,19 @@ fn spawn_slot_thread(
                         // The random status `client_frame` published last
                         // frame: copied onto the slot status row, and its
                         // hold freezes script tick and the nav follow.
+                        #[cfg(feature = "memory-owner-capture")]
+                        let owner_template = &ifaces_mut_template;
+                        #[cfg(feature = "memory-owner-capture")]
+                        let owner_slot = &mut owner_capture_slot;
                         move |c, _ignored, run_sends, status: &RandomStatus| {
                             let name = &obs_name;
                             #[cfg(feature = "memory-owner-capture")]
                             {
                                 // Closure ENTRY: actual retained nav_snapshot before rebuilds.
-                                crate::owner_capture::observe_entry_nav(
-                                    &nav_snapshot,
-                                    host::owner_capture::SlotToken(
-                                        crate::owner_capture::enabled()
-                                            .then_some(1u64)
-                                            .unwrap_or(0),
-                                    ),
-                                );
+                                if let Some((token, scratch)) = owner_slot.as_mut() {
+                                    crate::owner_capture::observe_entry_nav(&nav_snapshot, *token,
+                                        owner_template, &c.ifaces_mut, scratch);
+                                }
                             }
                             // Panel/TUI WalkArm + scenario follow gate on the
                             // same hold as step_nav_bot (prev-frame status).

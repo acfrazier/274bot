@@ -1,0 +1,2 @@
+{"cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f", "command": ["cargo", "test", "--offline", "-p", "tui-play", "--features", "memory-profile-no-alloc", "--", "--test-threads=1"]}
+error: cannot specify features for packages outside of workspace

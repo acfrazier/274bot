@@ -2,11 +2,13 @@
 //! `memory-owner-capture`).
 
 use api::owner_capture::{
-    owned_string_capacity_bytes, v_bytes, Budget, CaptureConfig, EncodedBufKind, EncodedBufMeta,
-    FieldRow, OwnerFragment, Reason, SCHEMA, COW_SCRATCH_CAP,
+    owned_string_capacity_bytes, v_bytes, Budget, EncodedBufKind, EncodedBufMeta, FieldRow,
+    OwnerFragment, Reason, SCHEMA,
 };
 use client::config::IfTypeMut;
 use host::owner_capture::{self, CowScratch, OwnerRequest, SlotToken};
+#[path = "owner_capture_output.rs"]
+mod output;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
@@ -42,29 +44,59 @@ pub fn request_phase(phase: u8, token: SlotToken) -> Result<u32, Reason> {
 }
 
 /// At observe-closure entry: census retained nav_snapshot (actual shell).
-pub fn observe_entry_nav(nav_snapshot: &api::snapshot::GameSnapshot, token: SlotToken) {
+pub fn observe_entry_nav(
+    nav_snapshot: &api::snapshot::GameSnapshot,
+    token: SlotToken,
+    template: &Arc<Vec<Option<Arc<IfTypeMut>>>>,
+    overlay: &Arc<Vec<Option<Arc<IfTypeMut>>>>,
+    scratch: &mut CowScratch,
+) {
     if !enabled() {
         return;
     }
-    let _ = token;
-    let mut budget = Budget::new();
+    let Some((mut host_frag, mut budget)) = owner_capture::take_staging_fragment() else {
+        return;
+    };
+    if host_frag.slot_token != token.0 {
+        return;
+    }
+    owner_capture::arm_script_request(&host_frag);
+    if host_frag.phase < 2 {
+        ENCODED_CAPTURE.with(|state| {
+            state.borrow_mut().window = Some((host_frag.request_id, host_frag.frame_serial))
+        });
+    }
     let mut frag = nav_snapshot.owner_payload(&mut budget);
     frag.source = "nav_snapshot";
+    frag.epochs = host_frag.epochs;
+    frag.epochs[2] = Some(nav_snapshot.owner_epoch("nav_snapshot"));
+    frag.begin_ns = host_frag.begin_ns;
     frag.slot_token = token.0;
     // Join with pre-observe staging if present (same frame best-effort).
-    if let Some(mut host_frag) = owner_capture::take_staging_fragment() {
+    {
         frag.request_id = host_frag.request_id;
         frag.phase = host_frag.phase;
         frag.frame_serial = host_frag.frame_serial;
         // Keep each shell's rows; do not claim content equality.
         let mut combined = std::mem::take(&mut host_frag.rows);
-        combined.append(&mut frag.rows);
+        combined.extend(std::mem::take(&mut frag.rows).into_iter().map(|mut row| {
+            row.owner = "nav_snapshot";
+            row
+        }));
         frag.rows = combined;
         frag.complete = frag.complete && host_frag.complete;
         if !host_frag.complete {
             frag.reason = host_frag.reason;
         }
     }
+    let cow = account_ifaces_cow(template, overlay, scratch, &mut budget);
+    frag.complete &= cow.complete;
+    if !cow.complete {
+        frag.reason = cow.reason;
+    }
+    frag.rows.extend(cow.rows);
+    frag.visits = budget.visits();
+    frag.end_ns = api::owner_capture::mono_ns();
     let _ = owner_capture::global_mailbox().try_push_fragment(frag);
 }
 
@@ -82,6 +114,14 @@ pub fn account_ifaces_cow(
     let outer_shared = Arc::ptr_eq(template, overlay);
     let outer_cap = overlay.capacity() as u64;
     let outer_len = overlay.len() as u64;
+    let template_bytes = match v_bytes(template.as_ref()) {
+        Ok(bytes) => bytes,
+        Err(reason) => {
+            frag.complete = false;
+            frag.reason = reason;
+            return frag;
+        }
+    };
     let outer_bytes = match v_bytes(overlay.as_ref()) {
         Ok(b) => b,
         Err(r) => {
@@ -96,9 +136,17 @@ pub fn account_ifaces_cow(
         outer_len,
         outer_cap,
         outer_len,
-        outer_bytes,
-        outer_bytes,
-        0,
+        if outer_shared {
+            0
+        } else {
+            (overlay.len() * std::mem::size_of::<Option<Arc<IfTypeMut>>>()) as u64
+        },
+        if outer_shared { 0 } else { outer_bytes },
+        if outer_shared {
+            0
+        } else {
+            std::mem::size_of::<Vec<Option<Arc<IfTypeMut>>>>() as u64
+        },
         0,
         0,
         budget.elapsed_ns().saturating_sub(t0),
@@ -106,19 +154,19 @@ pub fn account_ifaces_cow(
     row.shared = Some(outer_shared);
     let _ = budget.push_row(&mut frag.rows, row);
 
-    // Count template storage once when shared outer.
-    if outer_shared {
+    // The template remains alive even after the overlay diverges.
+    {
         let _ = budget.push_row(
             &mut frag.rows,
             FieldRow::ok(
                 "ifaces_mut",
                 "template_outer_shared",
-                outer_len,
-                outer_cap,
-                outer_len,
-                outer_bytes,
-                outer_bytes,
-                0,
+                template.len() as u64,
+                template.capacity() as u64,
+                template.len() as u64,
+                (template.len() * std::mem::size_of::<Option<Arc<IfTypeMut>>>()) as u64,
+                template_bytes,
+                std::mem::size_of::<Vec<Option<Arc<IfTypeMut>>>>() as u64,
                 0,
                 0,
                 budget.elapsed_ns().saturating_sub(t0),
@@ -131,81 +179,65 @@ pub fn account_ifaces_cow(
     let mut private_entries = 0u64;
     let mut holders_dup = 0u64;
 
-    let n = overlay.len().min(template.len());
-    for i in 0..n {
-        if !budget.visit() {
-            frag.complete = false;
-            frag.reason = budget.failed().unwrap_or(Reason::BudgetVisits);
-            break;
-        }
-        let o = &overlay[i];
-        let t = &template[i];
-        match (o, t) {
-            (Some(oa), Some(ta)) if Arc::ptr_eq(oa, ta) => {
-                shared_entries += 1;
-                // Count once in template only — record identity in scratch.
-                let addr = Arc::as_ptr(oa) as usize;
-                match scratch.insert(addr) {
-                    Ok(true) => {
-                        // first holder of this identity (template side)
-                    }
-                    Ok(false) => holders_dup += 1,
-                    Err(r) => {
-                        frag.complete = false;
-                        frag.reason = r;
-                        break;
-                    }
+    let mut template_entries = 0u64;
+    let mut template_bytes = 0u64;
+    let result = (|| {
+        // Index the complete template first, including aliases at other indices.
+        for entry in template.iter() {
+            if !budget.visit() {
+                return Err(budget.failed().unwrap_or(Reason::BudgetVisits));
+            }
+            if let Some(entry) = entry {
+                let (new, _) = scratch.classify(Arc::as_ptr(entry) as usize, true, budget)?;
+                if new {
+                    template_entries = Budget::checked_add(template_entries, 1)?;
+                    template_bytes =
+                        Budget::checked_add(template_bytes, iftype_mut_bytes(entry, budget)?)?;
                 }
             }
-            (Some(oa), _) => {
-                // Private or diverged — check alias to another template entry first.
-                let addr = Arc::as_ptr(oa) as usize;
-                let mut aliased = false;
-                for tj in template.iter().flatten() {
-                    if Arc::as_ptr(tj) as usize == addr {
-                        aliased = true;
-                        break;
-                    }
-                }
-                if aliased {
-                    shared_entries += 1;
-                    match scratch.insert(addr) {
-                        Ok(false) => holders_dup += 1,
-                        Ok(true) => {}
-                        Err(r) => {
-                            frag.complete = false;
-                            frag.reason = r;
-                            break;
-                        }
-                    }
-                    continue;
-                }
-                match scratch.insert(addr) {
-                    Ok(true) => {
-                        private_entries += 1;
-                        match iftype_mut_bytes(oa, budget) {
-                            Ok(b) => private_bytes = private_bytes.saturating_add(b),
-                            Err(r) => {
-                                frag.complete = false;
-                                frag.reason = r;
-                                break;
-                            }
-                        }
-                    }
-                    Ok(false) => {
-                        // Duplicate private identity — count one allocation, bump holders.
-                        holders_dup += 1;
-                    }
-                    Err(r) => {
-                        frag.complete = false;
-                        frag.reason = r;
-                        break;
-                    }
+        }
+        // Do not truncate a longer overlay to template.len().
+        for entry in overlay.iter() {
+            if !budget.visit() {
+                return Err(budget.failed().unwrap_or(Reason::BudgetVisits));
+            }
+            if let Some(entry) = entry {
+                let (new, shared) = scratch.classify(Arc::as_ptr(entry) as usize, false, budget)?;
+                if shared {
+                    shared_entries = Budget::checked_add(shared_entries, 1)?;
+                } else if new {
+                    private_entries = Budget::checked_add(private_entries, 1)?;
+                    private_bytes =
+                        Budget::checked_add(private_bytes, iftype_mut_bytes(entry, budget)?)?;
+                } else {
+                    holders_dup = Budget::checked_add(holders_dup, 1)?;
                 }
             }
-            (None, _) => {}
         }
+        Ok::<(), Reason>(())
+    })();
+    // Addresses never survive this read, including failed walks.
+    scratch.clear();
+    if let Err(reason) = result {
+        frag.complete = false;
+        frag.reason = reason;
+        return frag;
     }
+    let mut template_row = FieldRow::ok(
+        "ifaces_mut",
+        "template_entries",
+        template_entries,
+        template_entries,
+        template_entries,
+        template_bytes,
+        template_bytes,
+        0,
+        0,
+        0,
+        budget.elapsed_ns(),
+    );
+    template_row.shared = Some(true);
+    let _ = budget.push_row(&mut frag.rows, template_row);
 
     let mut priv_row = FieldRow::ok(
         "ifaces_mut",
@@ -213,11 +245,11 @@ pub fn account_ifaces_cow(
         private_entries,
         private_entries,
         private_entries,
-        private_bytes,
-        private_bytes,
-        private_bytes,
-        private_entries,
-        private_bytes,
+        private_entries * std::mem::size_of::<IfTypeMut>() as u64,
+        private_entries * std::mem::size_of::<IfTypeMut>() as u64,
+        private_bytes - private_entries * std::mem::size_of::<IfTypeMut>() as u64,
+        0,
+        0,
         budget.elapsed_ns().saturating_sub(t0),
     );
     priv_row.holder_count = Some(holders_dup.saturating_add(private_entries));
@@ -276,19 +308,56 @@ fn iftype_mut_bytes(m: &IfTypeMut, budget: &mut Budget) -> Result<u64, Reason> {
     Ok(n)
 }
 
-/// Record natural encoded buffer metadata (no clone of bytes).
-pub fn note_encoded(kind: EncodedBufKind, len: usize, capacity: usize) {
+#[derive(Default)]
+struct EncodedCapture {
+    initial: bool,
+    delta: bool,
+    window: Option<(u32, u64)>,
+}
+
+thread_local! {
+    static ENCODED_CAPTURE: std::cell::RefCell<EncodedCapture> = std::cell::RefCell::new(EncodedCapture::default());
+}
+
+/// Record only naturally encountered keyframe/delta/window metadata.
+pub fn note_encoded(keyframe: bool, len: usize, capacity: usize) {
     if !enabled() {
         return;
     }
-    let meta = EncodedBufMeta {
-        kind,
-        len: len as u64,
-        capacity: capacity as u64,
-        frame_serial: 0,
-        request_id: 0,
-    };
-    let _ = owner_capture::global_mailbox().try_push_encoded(meta);
+    ENCODED_CAPTURE.with(|state| {
+        let mut state = state.borrow_mut();
+        let kind = if keyframe && !state.initial {
+            state.initial = true;
+            Some(EncodedBufKind::InitialKeyframe)
+        } else if !keyframe && state.initial && !state.delta {
+            state.delta = true;
+            Some(EncodedBufKind::FirstDelta)
+        } else {
+            None
+        };
+        if let Some(kind) = kind {
+            let _ = owner_capture::global_mailbox().try_push_encoded(EncodedBufMeta {
+                kind,
+                mono_ns: api::owner_capture::mono_ns(),
+                slot_token: owner_capture::current_slot_token().map_or(0, |t| t.0),
+                len: len as u64,
+                capacity: capacity as u64,
+                frame_serial: owner_capture::current_frame(),
+                request_id: 0,
+            });
+        }
+        if let Some((request_id, _)) = state.window.take() {
+            let _ = owner_capture::global_mailbox().try_push_encoded(EncodedBufMeta {
+                kind: EncodedBufKind::FirstPostInWindow,
+                mono_ns: api::owner_capture::mono_ns(),
+                slot_token: owner_capture::current_slot_token().map_or(0, |t| t.0),
+                len: len as u64,
+                capacity: capacity as u64,
+                frame_serial: owner_capture::current_frame(),
+                request_id,
+            });
+        }
+    });
 }
 
 /// Serialize drained fragments after borrows end (harness poll).
@@ -356,6 +425,8 @@ fn opt_u(v: Option<u64>) -> String {
 /// Harness phase publisher used from memory::Run::poll.
 #[derive(Debug, Default)]
 pub struct PhasePublisher {
+    output: Option<output::Output>,
+    requests: [Option<u64>; 3],
     pub token: Option<SlotToken>,
     pub a_at_s: f64,
     pub b_at_s: f64,
@@ -365,9 +436,17 @@ pub struct PhasePublisher {
     pub c_sent: bool,
     pub observe_start: Option<std::time::Instant>,
     pub teardown_start: Option<std::time::Instant>,
+    pub failure: Option<Reason>,
 }
 
 impl PhasePublisher {
+    pub fn with_output(path: &std::path::Path) -> Result<Self, String> {
+        Ok(Self {
+            token: None,
+            output: Some(output::Output::new(path)?),
+            ..Self::new(SlotToken(0))
+        })
+    }
     pub fn new(token: SlotToken) -> Self {
         Self {
             token: Some(token),
@@ -380,32 +459,80 @@ impl PhasePublisher {
 
     /// Nonblocking: publish A/B at observe offsets; C during teardown. Never waits.
     pub fn poll(&mut self, observing: bool, teardown: bool) {
-        if !enabled() {
+        if !enabled() || self.failure.is_some() {
             return;
         }
+        self.poll_at(
+            std::time::Instant::now(),
+            observing,
+            teardown,
+            request_phase,
+        );
+        if let (Some(output), Some(token)) = (&mut self.output, self.token) {
+            if let Err(reason) = output.poll(self.requests, token.0, api::owner_capture::mono_ns())
+            {
+                self.failure = Some(reason);
+            }
+        }
+    }
+
+    pub fn record_stop(&mut self, begin: u64, end: u64) {
+        if let Some(output) = &mut self.output {
+            if let Err(reason) = output.record_stop(begin, end) {
+                self.failure.get_or_insert(reason);
+            }
+        }
+    }
+
+    pub fn finish(&mut self) -> Result<(), String> {
+        self.output
+            .as_mut()
+            .ok_or("owner output missing")?
+            .finish(self.failure)
+            .map_err(|reason| format!("owner capture unqualified: {}", reason.as_str()))
+    }
+
+    fn poll_at(
+        &mut self,
+        now: std::time::Instant,
+        observing: bool,
+        teardown: bool,
+        mut publish: impl FnMut(u8, SlotToken) -> Result<u32, Reason>,
+    ) {
         let Some(token) = self.token else {
             return;
         };
         if observing {
-            let start = *self
-                .observe_start
-                .get_or_insert_with(std::time::Instant::now);
-            let s = start.elapsed().as_secs_f64();
+            let Some(start) = self.observe_start else {
+                return;
+            };
+            let s = now.saturating_duration_since(start).as_secs_f64();
             if !self.a_sent && s >= self.a_at_s {
-                let _ = request_phase(0, token);
+                self.requests[0] = Some(api::owner_capture::mono_ns());
+                if let Err(reason) = publish(0, token) {
+                    self.failure = Some(reason);
+                }
                 self.a_sent = true;
             }
             if !self.b_sent && s >= self.b_at_s {
-                let _ = request_phase(1, token);
+                self.requests[1] = Some(api::owner_capture::mono_ns());
+                if let Err(reason) = publish(1, token) {
+                    self.failure = Some(reason);
+                }
                 self.b_sent = true;
             }
         }
         if teardown {
-            let start = *self
-                .teardown_start
-                .get_or_insert_with(std::time::Instant::now);
-            if !self.c_sent && start.elapsed().as_secs_f64() >= self.c_at_teardown_s {
-                let _ = request_phase(2, token);
+            let Some(start) = self.teardown_start else {
+                return;
+            };
+            if !self.c_sent
+                && now.saturating_duration_since(start).as_secs_f64() >= self.c_at_teardown_s
+            {
+                if let Err(reason) = publish(2, token) {
+                    self.failure = Some(reason);
+                }
+                self.requests[2] = Some(api::owner_capture::mono_ns());
                 self.c_sent = true;
             }
         }
@@ -415,7 +542,48 @@ impl PhasePublisher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use api::owner_capture::{CaptureConfig, COW_SCRATCH_CAP};
     use std::sync::Arc;
+
+    #[test]
+    fn phases_use_existing_boundaries_and_never_retry_busy_mailbox() {
+        use std::time::{Duration, Instant};
+        let start = Instant::now();
+        let mut phases = PhasePublisher::new(SlotToken(42));
+        phases.observe_start = Some(start);
+        let mut requests = Vec::new();
+        for seconds in [0, 29, 30, 31, 89, 90, 119] {
+            phases.poll_at(
+                start + Duration::from_secs(seconds),
+                true,
+                false,
+                |phase, token| {
+                    requests.push((phase, token));
+                    Err(Reason::MailboxFull)
+                },
+            );
+        }
+        assert_eq!(requests, [(0, SlotToken(42)), (1, SlotToken(42))]);
+        let stop = start + Duration::from_secs(120);
+        phases.teardown_start = Some(stop);
+        for seconds in [0, 29, 30, 31, 60] {
+            phases.poll_at(
+                stop + Duration::from_secs(seconds),
+                false,
+                true,
+                |phase, token| {
+                    requests.push((phase, token));
+                    Ok(3)
+                },
+            );
+        }
+        assert_eq!(
+            requests,
+            [(0, SlotToken(42)), (1, SlotToken(42)), (2, SlotToken(42))]
+        );
+        assert_eq!(phases.failure, Some(Reason::MailboxFull));
+        assert_eq!(phases.teardown_start, Some(stop));
+    }
 
     #[test]
     fn cow_shared_outer_marked() {

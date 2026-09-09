@@ -1,0 +1,83 @@
+{"cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/vendor/fr-client-rust", "command": ["cargo", "test", "--offline", "-p", "client", "--lib", "--", "--test-threads=1"]}
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running unittests src/lib.rs (target/debug/deps/client-116207f0c42a23ac)
+
+running 75 tests
+test bot_target::tests::content_sits_next_to_engine ... ok
+test bot_target::tests::operator_home_never_queries_profile_for_explicit_home ... ok
+test bot_target::tests::operator_home_prefers_explicit_home_including_empty ... ok
+test bot_target::tests::prod_and_live_alias_are_the_public_world ... ok
+test bot_target::tests::prod_cache_dir_is_home_unpack_not_engine_pack ... ok
+test client::client::audio_toggle::set_lowmem_false_loads_sound_and_opens_gates ... ok
+test client::client::dead_server_watchdog::fresh_last_response_does_not_trip_the_watchdog ... ok
+test client::client::dead_server_watchdog::reading_a_full_packet_restamps_the_watchdog ... ok
+test client::client::dead_server_watchdog::stale_last_response_fires_lost_con_in_one_game_loop_pass ... ok
+test client::client::dead_server_watchdog::watchdog_stays_quiet_until_the_bound_elapses ... ok
+test client::client::ground_obj_size_tests::empty_ground_obj_grid_is_under_400kb ... ok
+test client::client::try_move_path::run_enabled_reads_varp_173 ... ok
+test client::client::try_move_path::run_enabled_reads_visible_run_off_orb ... ok
+test client::client::try_move_path::try_move_tiles_records_a_long_bfs_not_nine ... ok
+test client::client::try_move_path::try_move_tiles_records_every_step_src_to_dest ... ok
+test client::client::zone_post_build::loc_change_post_build_keeps_permanent_and_drops_timed ... ok
+test config::if_type::iface_size_tests::iface_holes_are_pointer_sized ... ok
+test config::if_type::iface_size_tests::mut_overlay_is_much_smaller_than_the_decode ... ok
+test config::if_type::iface_size_tests::mut_template_inv_arrays_are_bounded ... ok
+test config::obj_type::tests::get_sprite_resolves_owi_ohi_and_count_variants ... ok
+test config::obj_type::tests::sprite_cache_evicts_at_capacity_100 ... ok
+test config::obj_type::tests::sprite_cache_hits_same_key_and_unlinks_stale_counts ... ok
+test config::obj_type::tests::sprite_drop_shadow_only_when_outline_zero ... ok
+test core::world::size_tests::empty_tile_grid_is_pointer_sized ... ok
+test core::world::size_tests::fill_base_level_does_not_materialize_empty_squares ... ok
+test core::world::sprite_reuse_tests::dynamic_sprite_slots_stay_bounded_across_frames ... ok
+test dash3d::anim_frame::tests::private_arc_shared_within_unpack_not_across_and_get_detaches ... ok
+test dash3d::anim_frame::tests::private_partial_replace_keeps_old_arc_until_final_owner_drops ... ok
+test dash3d::anim_frame::tests::public_get_results_are_independent_nested_and_transforms ... ok
+test dash3d::anim_frame::tests::public_init_high_id_missing_and_struct_construction ... ok
+test dash3d::anim_frame::tests::public_multi_frame_defaults_origin_signed_and_transparency ... ok
+test dash3d::anim_frame::tests::public_partial_republish_preserves_old_result_and_sibling ... ok
+test dash3d::wrapping_cross_tests::overflow_matches_java_int_not_i64 ... ok
+test graphics::pix2d::tests::mark_pixel_is_opaque_and_alpha_is_the_coverage_byte ... ok
+test io::client_stream::tests::reader_handle_tracks_the_socket_and_wakes_on_data ... ok
+test io::ondemand::tests::model_use_priority_matches_java ... ok
+test login_rsa::tests::java_defaults_are_the_lost_city_pair ... ok
+test login_rsa::tests::openssl_pkcs1_pem_roundtrip_n_e ... ok
+test login_rsa::tests::prod_modulus_is_decimal_and_long ... ok
+test profiling::tests::allocation_replacement_and_drop_release_only_their_bytes ... ok
+test render::backend::gpu::tests::draw_area_rgba_title_is_fully_opaque ... ok
+test render::backend::gpu::tests::draw_area_rgba_uses_coverage_as_scene_window_alpha ... ok
+test render::backend::gpu::tests::freeze_does_not_cls_the_frozen_viewport ... ok
+test render::backend::gpu::tests::freeze_last_scene_only_while_the_game_is_loading ... ok
+test render::backend::gpu::tests::sealed_scene_window_uploads_modal_rgb_without_chrome_redraw ... ok
+test render::backend::gpu::tests::viewport_overlay_moves_and_clears_without_chrome_redraw ... ok
+test render::backend::gpu_atlas::tests::atlas_growth_stops_at_the_cap ... ok
+test render::backend::gpu_atlas::tests::downsample_rgba_averages_a_2x2_checker ... ok
+test render::backend::gpu_atlas::tests::evicted_regions_are_reused_from_the_next_epoch ... ok
+test render::backend::gpu_atlas::tests::layer_atlas_spills_without_overflow ... ok
+test render::backend::gpu_atlas::tests::model_atlas_texture_reports_eight_mips ... ok
+test render::backend::gpu_atlas::tests::region_cache_evicts_the_lru_entry ... ok
+test render::backend::gpu_atlas::tests::rgba_mip_chain_from_128_has_eight_levels ... ok
+test render::backend::gpu_atlas::tests::stale_sprite_sources_stop_growing_the_atlas ... ok
+test render::nav_debug::tests::face_only_cell_has_letters_but_no_fill ... ok
+test render::nav_debug::tests::nsew_letters_sit_on_the_right_edges ... ok
+test render::nav_debug::tests::overlay_pixel_writes_source_rgb_and_coverage_alpha ... ok
+test render::nav_debug::tests::reach_fill_colours_only_unreached_standable_cells ... ok
+test render::store::tests::dynamic_sprite_does_not_reresolve_wall ... ok
+test render::store::tests::model_store_shared_across_renderers ... ok
+test render::store::tests::render_worlds_share_one_decode_per_model_id ... ok
+test render::store::tests::tile_mutation_reresolves_lazy_models ... ok
+test render::world::near_plane_tests::a_behind_clips_in_abc_order ... ok
+test render::world::near_plane_tests::all_behind_clips_to_nothing ... ok
+test render::world::near_plane_tests::intersection_lands_on_the_near_plane_with_interpolated_xy ... ok
+test render::world::near_plane_tests::two_behind_clips_to_a_triangle ... ok
+test sound::jagfx::jagfx_size_tests::default_does_not_allocate_wave_scratch ... ok
+test sound::jagfx::jagfx_size_tests::default_tables_are_one_process_arc ... ok
+test unpack::tests::corrupt_gzip_payload_is_an_error ... ok
+test unpack::tests::decode_rejects_truncated_body ... ok
+test unpack::tests::decode_rejects_truncated_header ... ok
+test unpack::tests::gunzip_rejects_truncated_stream ... ok
+test unpack::tests::load_snapshot_once_injects_only_the_first_call ... ok
+test unpack::tests::record_round_trip ... ok
+test unpack::tests::version_hash_is_stable_and_short ... ok
+
+test result: ok. 75 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.09s
+

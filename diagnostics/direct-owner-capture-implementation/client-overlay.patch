@@ -1,0 +1,576 @@
+diff --git a/crates/client/Cargo.toml b/crates/client/Cargo.toml
+index f9aa4c8..df62acf 100644
+--- a/crates/client/Cargo.toml
++++ b/crates/client/Cargo.toml
+@@ -7,6 +7,8 @@ edition = "2021"
+ default = []
+ window = ["dep:winit", "dep:softbuffer"]
+ audio = ["dep:rustysynth", "dep:cpal"]
++# Opt-in World/Packet owner-capture diagnostic methods (default off).
++memory-owner-capture = []
+ 
+ [dependencies]
+ bzip2 = "0.4"
+diff --git a/crates/client/src/core/world.rs b/crates/client/src/core/world.rs
+index 605a056..f3a70e3 100644
+--- a/crates/client/src/core/world.rs
++++ b/crates/client/src/core/world.rs
+@@ -32,6 +32,12 @@ pub const MAX_OCCLUDERS: usize = 500;
+ pub const MAX_DYNAMIC_SPRITES: usize = 5000;
+ pub const MAX_ACTIVE_OCCLUDERS: usize = 500;
+ 
++#[cfg(feature = "memory-owner-capture")]
++#[path = "world_owner_capture.rs"]
++mod world_owner_capture;
++#[cfg(feature = "memory-owner-capture")]
++pub use world_owner_capture::{WorldOwnerBudget, WorldOwnerRow, WorldOwnerRows};
++
+ /// `levelHeightmaps[level][x][z]` ground heights, sized
+ /// `[maxLevel][maxTileX + 1][maxTileZ + 1]` (one extra row/column of corners).
+ pub type LevelHeightmaps = Vec<Vec<Vec<i32>>>;
+diff --git a/crates/client/src/io/packet.rs b/crates/client/src/io/packet.rs
+index 06741ce..7208534 100644
+--- a/crates/client/src/io/packet.rs
++++ b/crates/client/src/io/packet.rs
+@@ -76,6 +76,12 @@ impl Packet {
+         self.data.len()
+     }
+ 
++    /// Feature-gated: data Vec capacity (slice getters cannot recover this).
++    #[cfg(feature = "memory-owner-capture")]
++    pub fn owner_data_capacity(&self) -> usize {
++        self.data.capacity()
++    }
++
+     pub fn available(&self) -> usize {
+         self.data.len() - self.pos
+     }
+diff --git a/crates/client/src/core/world_owner_capture.rs b/crates/client/src/core/world_owner_capture.rs
+new file mode 100644
+index 0000000..7ee6494
+--- /dev/null
++++ b/crates/client/src/core/world_owner_capture.rs
+@@ -0,0 +1,498 @@
++//! World owner-payload census (feature `memory-owner-capture`).
++
++use crate::core::world::World;
++use crate::dash3d::Square;
++
++/// Scalar field accounting row produced by [`World::owner_payload`].
++#[derive(Debug, Clone, Copy)]
++pub struct WorldOwnerRow {
++    pub field: &'static str,
++    pub complete: bool,
++    pub reason: &'static str,
++    pub element_len: Option<u64>,
++    pub element_capacity: Option<u64>,
++    pub occupied_count: Option<u64>,
++    pub occupied_element_bytes: Option<u64>,
++    pub capacity_bytes: Option<u64>,
++    pub nested_capacity_bytes: Option<u64>,
++    pub box_count: Option<u64>,
++    pub box_bytes: Option<u64>,
++    pub elapsed_observer_ns: u64,
++}
++
++/// Budgeted walk state shared with the host observer.
++#[derive(Debug)]
++pub struct WorldOwnerRows {
++    rows: [WorldOwnerRow; 16],
++    len: usize,
++}
++
++impl WorldOwnerRows {
++    fn new() -> Self {
++        Self {
++            rows: std::array::from_fn(|_| row_fail("unused", "missing", 0)),
++            len: 0,
++        }
++    }
++
++    fn push(&mut self, row: WorldOwnerRow) {
++        if self.len < self.rows.len() {
++            self.rows[self.len] = row;
++            self.len += 1;
++        } else {
++            self.rows[15] = row_fail("coverage", "budget_rows", 0);
++        }
++    }
++}
++
++impl std::ops::Deref for WorldOwnerRows {
++    type Target = [WorldOwnerRow];
++    fn deref(&self) -> &Self::Target {
++        &self.rows[..self.len]
++    }
++}
++
++impl IntoIterator for WorldOwnerRows {
++    type Item = WorldOwnerRow;
++    type IntoIter = std::iter::Take<std::array::IntoIter<WorldOwnerRow, 16>>;
++    fn into_iter(self) -> Self::IntoIter {
++        self.rows.into_iter().take(self.len)
++    }
++}
++
++pub struct WorldOwnerBudget {
++    pub start: std::time::Instant,
++    pub visits: u32,
++    pub max_visits: u32,
++    pub deadline_ns: u64,
++    pub failed: Option<&'static str>,
++}
++
++impl WorldOwnerBudget {
++    pub fn new(max_visits: u32, deadline_ns: u64) -> Self {
++        Self {
++            start: std::time::Instant::now(),
++            visits: 0,
++            max_visits,
++            deadline_ns,
++            failed: None,
++        }
++    }
++
++    fn elapsed_ns(&self) -> u64 {
++        self.start.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64
++    }
++
++    fn visit(&mut self) -> bool {
++        if self.failed.is_some() {
++            return false;
++        }
++        self.visits = self.visits.saturating_add(1);
++        if self.visits > self.max_visits {
++            self.failed = Some("budget_visits");
++            return false;
++        }
++        if self.visits % 256 == 0 && self.elapsed_ns() > self.deadline_ns {
++            self.failed = Some("budget_deadline");
++            return false;
++        }
++        true
++    }
++
++    fn check_deadline(&mut self) -> bool {
++        if self.failed.is_some() {
++            return false;
++        }
++        if self.elapsed_ns() > self.deadline_ns {
++            self.failed = Some("budget_deadline");
++            return false;
++        }
++        true
++    }
++}
++
++fn grid3_bytes<T>(
++    grid: &Vec<Vec<Vec<T>>>,
++    budget: &mut WorldOwnerBudget,
++) -> Result<u64, &'static str> {
++    let mut total = (grid.capacity() as u64)
++        .checked_mul(std::mem::size_of::<Vec<Vec<T>>>() as u64)
++        .ok_or("overflow")?;
++    for level in grid {
++        if !budget.visit() {
++            return Err(budget.failed.unwrap_or("budget_visits"));
++        }
++        total = total
++            .checked_add(
++                (level.capacity() as u64)
++                    .checked_mul(std::mem::size_of::<Vec<T>>() as u64)
++                    .ok_or("overflow")?,
++            )
++            .ok_or("overflow")?;
++        for row in level {
++            if !budget.visit() {
++                return Err(budget.failed.unwrap_or("budget_visits"));
++            }
++            total = total
++                .checked_add(
++                    (row.capacity() as u64)
++                        .checked_mul(std::mem::size_of::<T>() as u64)
++                        .ok_or("overflow")?,
++                )
++                .ok_or("overflow")?;
++        }
++    }
++    Ok(total)
++}
++
++fn square_box_bytes(
++    sq: &Square,
++    budget: &mut WorldOwnerBudget,
++) -> Result<(u64, u64), &'static str> {
++    let mut boxes = 0u64;
++    let mut bytes = 0u64;
++    let mut current = Some(sq);
++    while let Some(square) = current {
++        if !budget.check_deadline() || !budget.visit() {
++            return Err(budget.failed.unwrap_or("budget_deadline"));
++        }
++        let (count, payload) = square_own_boxes(square)?;
++        boxes = boxes.checked_add(count).ok_or("overflow")?;
++        bytes = bytes.checked_add(payload).ok_or("overflow")?;
++        current = square.linked_square.as_deref();
++    }
++    Ok((boxes, bytes))
++}
++
++fn square_own_boxes(sq: &Square) -> Result<(u64, u64), &'static str> {
++    // B(Some(Box<T>)) = size_of::<T>() + nested owned boxes.
++    let mut boxes = 1u64;
++    let mut bytes = std::mem::size_of::<Square>() as u64;
++    if sq.ground.is_some() {
++        boxes += 1;
++        bytes = bytes
++            .checked_add(std::mem::size_of::<crate::dash3d::Ground>() as u64)
++            .ok_or("overflow")?;
++    }
++    if sq.overlay_stamp.is_some() {
++        boxes += 1;
++        bytes = bytes
++            .checked_add(std::mem::size_of::<crate::dash3d::GroundStamp>() as u64)
++            .ok_or("overflow")?;
++    }
++    if sq.wall.is_some() {
++        boxes += 1;
++        bytes = bytes
++            .checked_add(std::mem::size_of::<crate::dash3d::Wall>() as u64)
++            .ok_or("overflow")?;
++    }
++    if sq.decor.is_some() {
++        boxes += 1;
++        bytes = bytes
++            .checked_add(std::mem::size_of::<crate::dash3d::Decor>() as u64)
++            .ok_or("overflow")?;
++    }
++    if sq.ground_decor.is_some() {
++        boxes += 1;
++        bytes = bytes
++            .checked_add(std::mem::size_of::<crate::dash3d::GroundDecor>() as u64)
++            .ok_or("overflow")?;
++    }
++    if sq.ground_object.is_some() {
++        boxes += 1;
++        bytes = bytes
++            .checked_add(std::mem::size_of::<crate::dash3d::GroundObject>() as u64)
++            .ok_or("overflow")?;
++    }
++    Ok((boxes, bytes))
++}
++
++fn row_ok(
++    field: &'static str,
++    len: u64,
++    cap: u64,
++    occupied: u64,
++    occ_bytes: u64,
++    cap_bytes: u64,
++    nested: u64,
++    box_count: u64,
++    box_bytes: u64,
++    elapsed: u64,
++) -> WorldOwnerRow {
++    WorldOwnerRow {
++        field,
++        complete: true,
++        reason: "ok",
++        element_len: Some(len),
++        element_capacity: Some(cap),
++        occupied_count: Some(occupied),
++        occupied_element_bytes: Some(occ_bytes),
++        capacity_bytes: Some(cap_bytes),
++        nested_capacity_bytes: Some(nested),
++        box_count: Some(box_count),
++        box_bytes: Some(box_bytes),
++        elapsed_observer_ns: elapsed,
++    }
++}
++
++fn row_fail(field: &'static str, reason: &'static str, elapsed: u64) -> WorldOwnerRow {
++    WorldOwnerRow {
++        field,
++        complete: false,
++        reason,
++        element_len: None,
++        element_capacity: None,
++        occupied_count: None,
++        occupied_element_bytes: None,
++        capacity_bytes: None,
++        nested_capacity_bytes: None,
++        box_count: None,
++        box_bytes: None,
++        elapsed_observer_ns: elapsed,
++    }
++}
++
++impl World {
++    /// Borrowed budgeted World counters only (no host private-field access).
++    pub fn owner_payload(&self, budget: &mut WorldOwnerBudget) -> WorldOwnerRows {
++        let mut out = WorldOwnerRows::new();
++        let t0 = budget.elapsed_ns();
++
++        // struct header
++        out.push(row_ok(
++            "struct_header",
++            1,
++            1,
++            1,
++            std::mem::size_of::<World>() as u64,
++            std::mem::size_of::<World>() as u64,
++            0,
++            0,
++            0,
++            budget.elapsed_ns().saturating_sub(t0),
++        ));
++
++        // groundh grid
++        match grid3_bytes(&self.groundh, budget) {
++            Ok(bytes) => out.push(row_ok(
++                "groundh",
++                self.groundh.len() as u64,
++                self.groundh.capacity() as u64,
++                self.groundh.len() as u64,
++                bytes,
++                bytes,
++                0,
++                0,
++                0,
++                budget.elapsed_ns().saturating_sub(t0),
++            )),
++            Err(r) => out.push(row_fail(
++                "groundh",
++                r,
++                budget.elapsed_ns().saturating_sub(t0),
++            )),
++        }
++
++        // squares grid + Box chains
++        match grid3_bytes(&self.squares, budget) {
++            Ok(mut grid_bytes) => {
++                let mut occupied = 0u64;
++                let mut boxes = 0u64;
++                let mut box_bytes = 0u64;
++                let mut incomplete = None;
++                'outer: for level in &self.squares {
++                    for row in level {
++                        for cell in row {
++                            if !budget.visit() {
++                                incomplete = Some(budget.failed.unwrap_or("budget_visits"));
++                                break 'outer;
++                            }
++                            if let Some(sq) = cell {
++                                occupied += 1;
++                                match square_box_bytes(sq, budget) {
++                                    Ok((b, by)) => {
++                                        boxes = boxes.saturating_add(b);
++                                        box_bytes = box_bytes.saturating_add(by);
++                                    }
++                                    Err(r) => {
++                                        incomplete = Some(r);
++                                        break 'outer;
++                                    }
++                                }
++                            }
++                        }
++                    }
++                }
++                // grid_bytes already includes Option<Box<Square>> slots; nested boxes separate
++                let _ = &mut grid_bytes;
++                if let Some(r) = incomplete {
++                    out.push(row_fail(
++                        "squares",
++                        r,
++                        budget.elapsed_ns().saturating_sub(t0),
++                    ));
++                } else {
++                    out.push(row_ok(
++                        "squares",
++                        self.squares.len() as u64,
++                        self.squares.capacity() as u64,
++                        occupied,
++                        grid_bytes,
++                        grid_bytes,
++                        box_bytes,
++                        boxes,
++                        box_bytes,
++                        budget.elapsed_ns().saturating_sub(t0),
++                    ));
++                }
++            }
++            Err(r) => out.push(row_fail(
++                "squares",
++                r,
++                budget.elapsed_ns().saturating_sub(t0),
++            )),
++        }
++
++        // sprites arena
++        {
++            let len = self.sprites.len() as u64;
++            let cap = self.sprites.capacity() as u64;
++            let elem = std::mem::size_of::<Option<crate::dash3d::Sprite>>() as u64;
++            let occupied = self.sprites.iter().filter(|s| s.is_some()).count() as u64;
++            out.push(row_ok(
++                "sprites",
++                len,
++                cap,
++                occupied,
++                len.saturating_mul(elem),
++                cap.saturating_mul(elem),
++                0,
++                0,
++                0,
++                budget.elapsed_ns().saturating_sub(t0),
++            ));
++        }
++
++        // free_dynamic_sprites
++        {
++            let v = &self.free_dynamic_sprites;
++            let elem = std::mem::size_of::<usize>() as u64;
++            out.push(row_ok(
++                "free_dynamic_sprites",
++                v.len() as u64,
++                v.capacity() as u64,
++                v.len() as u64,
++                (v.len() as u64).saturating_mul(elem),
++                (v.capacity() as u64).saturating_mul(elem),
++                0,
++                0,
++                0,
++                budget.elapsed_ns().saturating_sub(t0),
++            ));
++        }
++
++        // dynamic_sprites
++        {
++            let v = &self.dynamic_sprites;
++            let elem = std::mem::size_of::<Option<usize>>() as u64;
++            let occupied = v.iter().filter(|s| s.is_some()).count() as u64;
++            out.push(row_ok(
++                "dynamic_sprites",
++                v.len() as u64,
++                v.capacity() as u64,
++                occupied,
++                (v.len() as u64).saturating_mul(elem),
++                (v.capacity() as u64).saturating_mul(elem),
++                0,
++                0,
++                0,
++                budget.elapsed_ns().saturating_sub(t0),
++            ));
++        }
++
++        // occluders
++        {
++            let v = &self.occluders;
++            let elem = std::mem::size_of::<Option<crate::dash3d::Occlude>>() as u64;
++            let occupied = v.iter().filter(|s| s.is_some()).count() as u64;
++            out.push(row_ok(
++                "occluders",
++                v.len() as u64,
++                v.capacity() as u64,
++                occupied,
++                (v.len() as u64).saturating_mul(elem),
++                (v.capacity() as u64).saturating_mul(elem),
++                0,
++                0,
++                0,
++                budget.elapsed_ns().saturating_sub(t0),
++            ));
++        }
++
++        // occlusion_cycle
++        {
++            let v = &self.occlusion_cycle;
++            let elem = std::mem::size_of::<i32>() as u64;
++            out.push(row_ok(
++                "occlusion_cycle",
++                v.len() as u64,
++                v.capacity() as u64,
++                v.len() as u64,
++                (v.len() as u64).saturating_mul(elem),
++                (v.capacity() as u64).saturating_mul(elem),
++                0,
++                0,
++                0,
++                budget.elapsed_ns().saturating_sub(t0),
++            ));
++        }
++
++        out
++    }
++}
++
++#[cfg(test)]
++mod owner_capture_tests {
++    use super::*;
++    use crate::core::world::World;
++
++    #[test]
++    fn empty_world_rows_complete() {
++        let w = World::new(vec![vec![vec![0; 2]; 2]; 1], 2, 1, 2);
++        let mut b = WorldOwnerBudget::new(262_144, 5_000_000);
++        let rows = w.owner_payload(&mut b);
++        assert!(rows.iter().all(|r| r.complete), "{rows:?}");
++        assert!(rows.iter().any(|r| r.field == "squares"));
++        assert!(rows.iter().any(|r| r.field == "groundh"));
++    }
++
++    #[test]
++    fn spare_sprite_capacity_counted() {
++        let mut w = World::new(vec![vec![vec![0; 4]; 4]; 1], 4, 1, 4);
++        w.sprites.reserve(32);
++        let mut b = WorldOwnerBudget::new(262_144, 5_000_000);
++        let rows = w.owner_payload(&mut b);
++        let sprites = rows.iter().find(|r| r.field == "sprites").unwrap();
++        assert!(sprites.element_capacity.unwrap() >= 32);
++        assert!(
++            sprites.capacity_bytes.unwrap()
++                >= 32 * std::mem::size_of::<Option<crate::dash3d::Sprite>>() as u64
++        );
++    }
++
++    #[test]
++    fn linked_square_chain_counts_boxes() {
++        let mut w = World::new(vec![vec![vec![0; 2]; 2]; 1], 2, 1, 2);
++        let mut root = Square::new(0, 0, 0);
++        let mut middle = Square::new(0, 0, 0);
++        middle.linked_square = Some(Box::new(Square::new(0, 0, 0)));
++        root.linked_square = Some(Box::new(middle));
++        w.squares[0][0][0] = Some(Box::new(root));
++        let mut b = WorldOwnerBudget::new(262_144, 5_000_000);
++        let rows = w.owner_payload(&mut b);
++        let sq = rows.iter().find(|r| r.field == "squares").unwrap();
++        assert!(sq.complete);
++        assert_eq!(sq.box_count, Some(3));
++        assert_eq!(sq.box_bytes, Some(3 * std::mem::size_of::<Square>() as u64));
++    }
++}
+diff --git a/crates/client/tests/direct_owner_capture.rs b/crates/client/tests/direct_owner_capture.rs
+new file mode 100644
+index 0000000..d3cc8db
+--- /dev/null
++++ b/crates/client/tests/direct_owner_capture.rs
+@@ -0,0 +1,19 @@
++//! Generated ownership probes; no cache, account, connection or renderer.
++use client::io::Packet;
++
++#[test]
++fn packet_probe_preserves_bytes_and_cursor() {
++    let mut bytes = Vec::with_capacity(257);
++    bytes.extend_from_slice(&[1, 2, 3]);
++    let expected_capacity = bytes.capacity();
++    let packet = Packet::new(bytes);
++    #[cfg(feature = "memory-owner-capture")]
++    {
++        assert_eq!(packet.owner_data_capacity(), expected_capacity);
++        assert!(packet.owner_data_capacity() > packet.data().len());
++    }
++    #[cfg(not(feature = "memory-owner-capture"))]
++    let _ = expected_capacity;
++    assert_eq!(packet.data(), &[1, 2, 3]);
++    assert_eq!(packet.pos, 0);
++}

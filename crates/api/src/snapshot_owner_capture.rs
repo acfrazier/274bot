@@ -1,13 +1,99 @@
 //! Capacity-aware GameSnapshot owner census (plan §3 both shells).
 //! Child of `snapshot` so private fields are visible. Feature-gated.
 
+#[cfg(test)]
+mod owner_regressions {
+    use super::*;
+
+    #[test]
+    fn independent_shells_keep_distinct_epochs_and_spare_capacity() {
+        let host = GameSnapshot::new();
+        let mut nav = GameSnapshot::new();
+        assert_eq!(
+            host.owner_epoch("host_snapshot").tick,
+            nav.owner_epoch("nav_snapshot").tick
+        );
+        nav.tick = 17;
+        nav.chat_lines.reserve(19);
+        let host_rows = host.owner_payload(&mut Budget::new());
+        let nav_rows = nav.owner_payload(&mut Budget::new());
+        assert!(host_rows.complete && nav_rows.complete);
+        assert_ne!(
+            host.owner_epoch("host_snapshot").tick,
+            nav.owner_epoch("nav_snapshot").tick
+        );
+        let bytes = |f: &OwnerFragment| {
+            f.rows
+                .iter()
+                .find(|r| r.field == "chat_lines")
+                .unwrap()
+                .capacity_bytes
+                .unwrap()
+        };
+        assert!(bytes(&nav_rows) > bytes(&host_rows));
+        assert_eq!(nav.chat_lines.len(), 0);
+    }
+
+    #[test]
+    fn nested_action_storage_charges_spare_option_headers_and_strings() {
+        let mut actions = Vec::with_capacity(11);
+        actions.push(Some(String::with_capacity(103)));
+        actions.push(None);
+        let expected = (actions.capacity() * std::mem::size_of::<Option<String>>()) as u64 + 103;
+        assert_eq!(
+            account_actions_nested(&actions, &mut Budget::new()).unwrap(),
+            expected
+        );
+    }
+}
+
 use super::*;
 use crate::owner_capture::{
-    actions_capacity_bytes_vec, opt_string_capacity_bytes, owned_string_capacity_bytes,
-    strings_capacity_bytes_vec, v_bytes, Budget, FieldRow, OwnerFragment, Reason,
+    opt_string_capacity_bytes, owned_string_capacity_bytes, strings_capacity_bytes_budgeted,
+    v_bytes, Budget, FieldRow, OwnerFragment, Reason,
 };
 
 impl GameSnapshot {
+    pub fn owner_epoch(&self, source: &'static str) -> crate::owner_capture::OwnerEpoch {
+        crate::owner_capture::OwnerEpoch {
+            source,
+            tick: self.tick,
+            gens: crate::owner_capture::generation_values(&self.gens),
+            family_gates: Some([
+                self.loc_gen,
+                self.loc_model_stamp,
+                self.ground_item_gen,
+                self.inventory_gate.iface,
+                self.inventory_gate.inv,
+                self.equipment_gate.iface,
+                self.equipment_gate.inv,
+                self.bank_gate.iface,
+                self.bank_gate.inv,
+                self.bank_side_gate.iface,
+                self.bank_side_gate.inv,
+                self.trade_gate.iface,
+                self.trade_gate.inv,
+                self.shop_gate.iface,
+                self.shop_gate.inv,
+                self.widgets_gate.iface,
+                self.widgets_gate.inv,
+                self.side_tabs_gate.iface,
+                self.side_tabs_gate.inv,
+                self.chat_options_gate,
+                self.make_products_gate,
+                self.quest_statuses_gate,
+                self.modals_gate,
+                self.controls_gate,
+                self.menu_gate,
+            ]),
+            base: self.base,
+            tile: self.tile,
+            ingame: self.ingame,
+            scene_state: self.scene_state,
+            draw: None,
+            loop_cycle: None,
+        }
+    }
     /// Borrowed budgeted census of heap-bearing snapshot fields.
     /// Returns a fixed family array of scalar rows; never clones the snapshot.
     pub fn owner_payload(&self, budget: &mut Budget) -> OwnerFragment {
@@ -48,7 +134,12 @@ impl GameSnapshot {
         account_item_vec("bank", &self.bank, budget, &mut frag);
         account_item_vec("bank_side", &self.bank_side, budget, &mut frag);
         account_item_vec("trade.my_offer", &self.trade.my_offer, budget, &mut frag);
-        account_item_vec("trade.their_offer", &self.trade.their_offer, budget, &mut frag);
+        account_item_vec(
+            "trade.their_offer",
+            &self.trade.their_offer,
+            budget,
+            &mut frag,
+        );
         account_item_vec("trade.side_pack", &self.trade.side_pack, budget, &mut frag);
         {
             let nested = opt_string_capacity_bytes(&self.trade.partner);
@@ -77,8 +168,18 @@ impl GameSnapshot {
         account_make_products(self, budget, &mut frag);
         account_quest_statuses(self, budget, &mut frag);
         account_string_vec("menu_entries", &self.menu_entries, budget, &mut frag);
-        account_string_vec("main_modal_texts", &self.main_modal_texts, budget, &mut frag);
-        account_string_vec("chat_modal_texts", &self.chat_modal_texts, budget, &mut frag);
+        account_string_vec(
+            "main_modal_texts",
+            &self.main_modal_texts,
+            budget,
+            &mut frag,
+        );
+        account_string_vec(
+            "chat_modal_texts",
+            &self.chat_modal_texts,
+            budget,
+            &mut frag,
+        );
         {
             let cap = owned_string_capacity_bytes(&self.login_message);
             let _ = budget.push_row(
@@ -141,9 +242,55 @@ fn push_vec_row(
     );
 }
 
-fn account_actions_nested(actions: &Vec<Option<String>>) -> Result<(u64, u64), Reason> {
-    let (_l, _c, header, nested) = actions_capacity_bytes_vec(actions)?;
-    Ok((header, nested))
+fn account_actions_nested(
+    actions: &Vec<Option<String>>,
+    budget: &mut Budget,
+) -> Result<u64, Reason> {
+    let mut bytes = v_bytes(actions)?;
+    for action in actions {
+        if !budget.visit() {
+            return Err(budget.failed().unwrap_or(Reason::BudgetVisits));
+        }
+        bytes = Budget::checked_add(bytes, opt_string_capacity_bytes(action))?;
+    }
+    Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn item_actions_charge_spare_element_storage() {
+        let mut actions = Vec::with_capacity(9);
+        actions.push(Some(String::with_capacity(17)));
+        let item = ItemView {
+            def: ItemDefView {
+                id: 0,
+                name: None,
+                stackable: false,
+                members: false,
+                base_value: 0,
+                noted: false,
+                certificate_link: -1,
+                certificate_template: -1,
+            },
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 1,
+            component_id: 0,
+            actions,
+        };
+        let expected =
+            v_bytes(&item.actions).unwrap() + item.actions[0].as_ref().unwrap().capacity() as u64;
+        let mut snap = GameSnapshot::new();
+        snap.inventory.push(item);
+        let frag = snap.owner_payload(&mut Budget::new());
+        assert!(frag.complete);
+        let row = frag.rows.iter().find(|r| r.field == "inventory").unwrap();
+        assert_eq!(row.nested_capacity_bytes, Some(expected));
+    }
 }
 
 fn account_item_nested(item: &ItemView, budget: &mut Budget) -> Result<(u64, u64), Reason> {
@@ -151,9 +298,9 @@ fn account_item_nested(item: &ItemView, budget: &mut Budget) -> Result<(u64, u64
         return Err(budget.failed().unwrap_or(Reason::BudgetVisits));
     }
     let mut nested = opt_string_capacity_bytes(&item.def.name);
-    let (ah, an) = account_actions_nested(&item.actions)?;
+    let an = account_actions_nested(&item.actions, budget)?;
     nested = Budget::checked_add(nested, an)?;
-    Ok((ah, nested))
+    Ok((0, nested))
 }
 
 fn account_item_vec(
@@ -213,7 +360,7 @@ fn account_actor_nested(a: &ActorView, budget: &mut Budget) -> Result<u64, Reaso
     }
     let mut n = opt_string_capacity_bytes(&a.name);
     n = Budget::checked_add(n, opt_string_capacity_bytes(&a.overhead_text))?;
-    let (_h, an) = account_actions_nested(&a.actions)?;
+    let an = account_actions_nested(&a.actions, budget)?;
     Budget::checked_add(n, an)
 }
 
@@ -234,7 +381,7 @@ fn account_npc_vec(snap: &GameSnapshot, budget: &mut Budget, frag: &mut OwnerFra
         nested = match (|| {
             let mut t = opt_string_capacity_bytes(&n.name);
             t = Budget::checked_add(t, opt_string_capacity_bytes(&n.overhead_text))?;
-            let (_h, an) = account_actions_nested(&n.actions)?;
+            let an = account_actions_nested(&n.actions, budget)?;
             Budget::checked_add(t, an)
         })() {
             Ok(v) => match Budget::checked_add(nested, v) {
@@ -443,8 +590,15 @@ fn account_locs(snap: &GameSnapshot, budget: &mut Budget, frag: &mut OwnerFragme
         }
         nested = nested.saturating_add(opt_string_capacity_bytes(&loc.name));
         nested = nested.saturating_add(opt_string_capacity_bytes(&loc.description));
-        if let Ok((_h, an)) = account_actions_nested(&loc.actions) {
-            nested = nested.saturating_add(an);
+        match account_actions_nested(&loc.actions, budget)
+            .and_then(|n| Budget::checked_add(nested, n))
+        {
+            Ok(n) => nested = n,
+            Err(reason) => {
+                frag.complete = false;
+                frag.reason = reason;
+                return;
+            }
         }
         // Capacity correction vs legacy actions_bytes (len-only): include spare
         // slot headers via actions_capacity_bytes_vec inside account_actions_nested.
@@ -480,8 +634,15 @@ fn account_ground_items(snap: &GameSnapshot, budget: &mut Budget, frag: &mut Own
             return;
         }
         nested = nested.saturating_add(opt_string_capacity_bytes(&g.def.name));
-        if let Ok((_h, an)) = account_actions_nested(&g.actions) {
-            nested = nested.saturating_add(an);
+        match account_actions_nested(&g.actions, budget)
+            .and_then(|n| Budget::checked_add(nested, n))
+        {
+            Ok(n) => nested = n,
+            Err(reason) => {
+                frag.complete = false;
+                frag.reason = reason;
+                return;
+            }
         }
     }
     push_vec_row(
@@ -518,6 +679,9 @@ fn widget_nested(w: &WidgetView, budget: &mut Budget) -> Result<u64, Reason> {
             )?,
         )?;
         for s in scripts {
+            if !budget.visit() {
+                return Err(budget.failed().unwrap_or(Reason::BudgetVisits));
+            }
             if let Some(v) = s {
                 n = Budget::checked_add(n, v_bytes(v)?)?;
             }
@@ -530,8 +694,7 @@ fn widget_nested(w: &WidgetView, budget: &mut Budget) -> Result<u64, Reason> {
         n = Budget::checked_add(n, v_bytes(v)?)?;
     }
     n = Budget::checked_add(n, v_bytes(&w.varp_bindings)?)?;
-    let (ah, an) = account_actions_nested(&w.actions)?;
-    n = Budget::checked_add(n, ah)?;
+    let an = account_actions_nested(&w.actions, budget)?;
     n = Budget::checked_add(n, an)?;
     n = Budget::checked_add(n, v_bytes(&w.items)?)?;
     for it in &w.items {
@@ -753,18 +916,11 @@ fn account_string_vec(
     budget: &mut Budget,
     frag: &mut OwnerFragment,
 ) {
-    let Ok((len, cap, header, nested)) = strings_capacity_bytes_vec(v) else {
+    let Ok((len, cap, header, nested)) = strings_capacity_bytes_budgeted(v, budget) else {
         frag.complete = false;
-        frag.reason = Reason::Overflow;
+        frag.reason = budget.failed().unwrap_or(Reason::Overflow);
         return;
     };
-    for _ in v {
-        if !budget.visit() {
-            frag.complete = false;
-            frag.reason = budget.failed().unwrap_or(Reason::BudgetVisits);
-            return;
-        }
-    }
     push_vec_row(
         frag,
         budget,

@@ -1,0 +1,178 @@
+{
+  "original_host": "c0709aba2f8b45e42193225cf8f4e7325b5ca9bf",
+  "original_client": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+  "initial_failed_host": "70a09540bb554cf28d07ecc2c9afd0f7b0157542",
+  "current_host": "007346ffc6a06993141a169bb099201d9cc11985",
+  "client_head": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+  "patches": {
+    "host-initial.patch": {
+      "bytes": 104314,
+      "sha256": "5229bab8d7c59046dbb8e134daca2bd9e570043c3016e3277e2db6369fdbb8a9"
+    },
+    "host-correction.patch": {
+      "bytes": 104127,
+      "sha256": "d2646cc175a376a295de2bd9261c4c8d8c7a2af57bbeb52171732b73480f4917"
+    },
+    "client-overlay.patch": {
+      "bytes": 19104,
+      "sha256": "0a5d43ed382c43d293e17824b1565dc4a5258d5b17971edaea55ad6a58324430"
+    }
+  },
+  "frozen_index_checks": {
+    "host": [
+      {
+        "patch": "host-initial.patch",
+        "exit": 0,
+        "stderr": ""
+      },
+      {
+        "patch": "host-correction.patch",
+        "exit": 0,
+        "stderr": ""
+      }
+    ],
+    "client": [
+      {
+        "patch": "client-overlay.patch",
+        "exit": 0,
+        "stderr": ""
+      }
+    ]
+  },
+  "members": {
+    "host": [
+      {
+        "path": "crates/api/Cargo.toml",
+        "bytes": 569,
+        "sha256": "4f1ba390554854cd8dab2b509e374f759defbdbcba4cdae02571233541bf92fb"
+      },
+      {
+        "path": "crates/api/src/lib.rs",
+        "bytes": 723,
+        "sha256": "5fc311c7351f72d45e254e02287b061c4ab24ef6348c22f2a8eb19825d142502"
+      },
+      {
+        "path": "crates/api/src/owner_capture.rs",
+        "bytes": 18714,
+        "sha256": "c613acdc792c3ec35d98f9cf0316d842edde27b1c69d3111d430b2cb7cc84914"
+      },
+      {
+        "path": "crates/api/src/snapshot.rs",
+        "bytes": 119749,
+        "sha256": "f070179115b0de05cef9f6290d2807d81fe5bf5663e0187c3dd3ac4e31c528b4"
+      },
+      {
+        "path": "crates/api/src/snapshot_owner_capture.rs",
+        "bytes": 28341,
+        "sha256": "ec08fd9896568fa1c23a7558374103475184e6134c502ea45d4ff5d6ff52e9a5"
+      },
+      {
+        "path": "crates/host-play/Cargo.toml",
+        "bytes": 1663,
+        "sha256": "300d411f76e16af32cac428e9ee4306879f82776b9c5693ce1bb8778213d0ba9"
+      },
+      {
+        "path": "crates/host-play/src/lib.rs",
+        "bytes": 361346,
+        "sha256": "096753fc31636e829058e33f54770090810688346c9be47b4ed49193813801ee"
+      },
+      {
+        "path": "crates/host-play/src/memory.rs",
+        "bytes": 161447,
+        "sha256": "74b7a18164f1b6861697ec8c651c2f81a400dbd41c8bf772cdab29ff4b3bb923"
+      },
+      {
+        "path": "crates/host-play/src/owner_capture.rs",
+        "bytes": 21090,
+        "sha256": "f767b36e1fdbc96d9c50a18bea1a0c1be15682d0372bd68e5af693305d2c7415"
+      },
+      {
+        "path": "crates/host/Cargo.toml",
+        "bytes": 693,
+        "sha256": "64eb03642d4b17da7f6001d686baf1274c1498bb2c8828bac824db0652b50f50"
+      },
+      {
+        "path": "crates/host/src/lib.rs",
+        "bytes": 109962,
+        "sha256": "47c513a9fd58697ee7f6e698390fb1ffa92693d535405f1ca013c094dfdca4ac"
+      },
+      {
+        "path": "crates/host/src/owner_capture.rs",
+        "bytes": 27767,
+        "sha256": "1e744b159b940b2538c400b3dcab8ba7788d8deb262fb7e5c346222c1fe56d9c"
+      },
+      {
+        "path": "crates/script/Cargo.toml",
+        "bytes": 1601,
+        "sha256": "2e14574f8ffa3da8e49ac27182d4e6e4b1e215c5e1d3e775d00713d21d516843"
+      },
+      {
+        "path": "crates/script/src/fingerprint_owner_capture.rs",
+        "bytes": 14452,
+        "sha256": "dfc842f481ed5721648e44a4429191f1867e80dd04e9820ae9009f69cfbdfcbd"
+      },
+      {
+        "path": "crates/script/src/lib.rs",
+        "bytes": 2369,
+        "sha256": "639d844c881a2ed44be90a9858a6d57be2b10c47998bf857e803a45e14e6dcb6"
+      },
+      {
+        "path": "crates/script/src/slot.rs",
+        "bytes": 26482,
+        "sha256": "9ef953c889f624dc697bdfd78ee04cb8bb68d283f214f0399b5abe9b9391b648"
+      },
+      {
+        "path": "crates/tui/Cargo.toml",
+        "bytes": 987,
+        "sha256": "b678c628e59c57c36a8d22e6cffcdd016c3a9df4eb7429300056cc9f51a19496"
+      },
+      {
+        "path": "crates/api/tests/direct_owner_capture.rs",
+        "bytes": 715,
+        "sha256": "161c368f04f689bcc47209c51ebcab3d4b4c534ed07d7081bd43535d779f1d9c"
+      },
+      {
+        "path": "crates/host-play/src/owner_capture_output.rs",
+        "bytes": 10013,
+        "sha256": "d4a9a7800228c7e06f8e17103ce89dfe9f9141f82bb29c13c8e4bee74e2d8b23"
+      },
+      {
+        "path": "crates/host-play/tests/direct_owner_capture.rs",
+        "bytes": 5277,
+        "sha256": "907370881c83edb3e0c0372c9e18314797b8aa7dfd21ea51e633c817bfeacf93"
+      },
+      {
+        "path": "crates/script/tests/direct_owner_capture.rs",
+        "bytes": 842,
+        "sha256": "302b1e34550f57800f0262cccdeafd0bd3a8d908069dc583587b9042a332d309"
+      }
+    ],
+    "client": [
+      {
+        "path": "crates/client/Cargo.toml",
+        "bytes": 929,
+        "sha256": "4197688f08ed259ad96f2dc43dda6aa8433960769d30b3e4be51c8f1fd3ce26e"
+      },
+      {
+        "path": "crates/client/src/core/world.rs",
+        "bytes": 43192,
+        "sha256": "cd6cb7d14acc5f0406d217ae95691b6c1bffcb5089b53f7442bbe17ab8891d9e"
+      },
+      {
+        "path": "crates/client/src/io/packet.rs",
+        "bytes": 9976,
+        "sha256": "7485b52922b60ec17f00e01e3dbd90280dfebdd3dd0021bf1b553ecfa361e718"
+      },
+      {
+        "path": "crates/client/src/core/world_owner_capture.rs",
+        "bytes": 15734,
+        "sha256": "caafa9426d7cbbc2a870e41cb348f1e9189ed5cb8905fd5b6477f4d94f3da8e8"
+      },
+      {
+        "path": "crates/client/tests/direct_owner_capture.rs",
+        "bytes": 676,
+        "sha256": "0998c62ad4c44a1ff48eec084aa8e0fe3d58d28f8b38af75885f8fec6dc37d62"
+      }
+    ]
+  }
+}

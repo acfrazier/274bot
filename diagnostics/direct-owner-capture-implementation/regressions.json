@@ -1,0 +1,222 @@
+[
+  {
+    "name": "api-off",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "-p",
+      "api",
+      "--",
+      "--test-threads=1"
+    ],
+    "exit": 0,
+    "wall_s": 20.502907083
+  },
+  {
+    "name": "host-off",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "-p",
+      "host",
+      "--",
+      "--test-threads=1"
+    ],
+    "exit": 0,
+    "wall_s": 17.996553125
+  },
+  {
+    "name": "script-off",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "-p",
+      "script",
+      "--features",
+      "load",
+      "--",
+      "--test-threads=1"
+    ],
+    "exit": 0,
+    "wall_s": 19.674595417
+  },
+  {
+    "name": "host-play-off",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "-p",
+      "host-play",
+      "--features",
+      "memory-profile-no-alloc",
+      "--",
+      "--test-threads=1"
+    ],
+    "exit": 0,
+    "wall_s": 88.9081735
+  },
+  {
+    "name": "tui-off",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "-p",
+      "tui",
+      "--features",
+      "memory-profile-no-alloc",
+      "--",
+      "--test-threads=1"
+    ],
+    "exit": 0,
+    "wall_s": 24.35616833399999
+  },
+  {
+    "name": "client-unit-off",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "-p",
+      "client",
+      "--lib",
+      "--",
+      "--test-threads=1"
+    ],
+    "exit": 0,
+    "wall_s": 3.1916870000000017
+  },
+  {
+    "name": "client-integration-off",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "-p",
+      "client",
+      "--tests",
+      "--",
+      "--test-threads=1"
+    ],
+    "exit": 0,
+    "wall_s": 241.905068625
+  },
+  {
+    "name": "api-on",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "-p",
+      "api",
+      "--features",
+      "memory-owner-capture",
+      "--",
+      "--test-threads=1"
+    ],
+    "exit": 0,
+    "wall_s": 25.051115916000015
+  },
+  {
+    "name": "host-on",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "-p",
+      "host",
+      "--features",
+      "memory-owner-capture",
+      "--",
+      "--test-threads=1"
+    ],
+    "exit": 0,
+    "wall_s": 24.71340170900004
+  },
+  {
+    "name": "script-on",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "-p",
+      "script",
+      "--features",
+      "load,memory-owner-capture",
+      "--",
+      "--test-threads=1"
+    ],
+    "exit": 0,
+    "wall_s": 35.872688083000014
+  },
+  {
+    "name": "host-play-on",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "-p",
+      "host-play",
+      "--features",
+      "memory-profile-no-alloc,memory-owner-capture",
+      "--",
+      "--test-threads=1"
+    ],
+    "exit": 101,
+    "wall_s": 0.5830510000000118
+  },
+  {
+    "name": "tui-on",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "-p",
+      "tui",
+      "--features",
+      "memory-profile-no-alloc,memory-owner-capture",
+      "--",
+      "--test-threads=1"
+    ],
+    "exit": 101,
+    "wall_s": 9.888260499999944
+  },
+  {
+    "name": "client-unit-on",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "-p",
+      "client",
+      "--lib",
+      "--features",
+      "memory-owner-capture",
+      "--",
+      "--test-threads=1"
+    ],
+    "exit": 0,
+    "wall_s": 6.191839415999993
+  },
+  {
+    "name": "client-integration-on",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "-p",
+      "client",
+      "--tests",
+      "--features",
+      "memory-owner-capture",
+      "--",
+      "--test-threads=1"
+    ],
+    "exit": 0,
+    "wall_s": 267.808824542
+  }
+]

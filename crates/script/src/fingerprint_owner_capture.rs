@@ -1,12 +1,10 @@
 //! Fingerprint capacity walker for owner capture (feature `memory-owner-capture`).
 //! Lives adjacent to isolate_fb fingerprint types; feature-gated census only.
 
-use crate::isolate_fb::{
-    ItemRowFp, SceneEntityFp, SnapshotFingerprint,
-};
+use crate::isolate_fb::{ItemRowFp, SceneEntityFp, SnapshotFingerprint};
 use api::owner_capture::{
-    opt_string_capacity_bytes, owned_string_capacity_bytes, strings_capacity_bytes_vec, v_bytes,
-    Budget, FieldRow, OwnerFragment, Reason,
+    opt_string_capacity_bytes, owned_string_capacity_bytes, strings_capacity_bytes_budgeted,
+    v_bytes, Budget, FieldRow, OwnerFragment, Reason,
 };
 
 fn push_ok(
@@ -43,9 +41,19 @@ fn item_row_nested(r: &ItemRowFp, budget: &mut Budget) -> Result<u64, Reason> {
         return Err(budget.failed().unwrap_or(Reason::BudgetVisits));
     }
     let mut n = opt_string_capacity_bytes(&r.name);
-    let (_l, _c, _h, ops_nested) = strings_capacity_bytes_vec(&r.ops)?;
-    n = Budget::checked_add(n, ops_nested)?;
+    n = Budget::checked_add(n, strings_nested(&r.ops, budget)?)?;
     Ok(n)
+}
+
+fn strings_nested(v: &Vec<String>, budget: &mut Budget) -> Result<u64, Reason> {
+    let mut bytes = v_bytes(v)?;
+    for value in v {
+        if !budget.visit() {
+            return Err(budget.failed().unwrap_or(Reason::BudgetVisits));
+        }
+        bytes = Budget::checked_add(bytes, value.capacity() as u64)?;
+    }
+    Ok(bytes)
 }
 
 fn items_e(v: &Vec<ItemRowFp>, budget: &mut Budget) -> Result<(u64, u64, u64, u64), Reason> {
@@ -62,8 +70,7 @@ fn scene_nested(e: &SceneEntityFp, budget: &mut Budget) -> Result<u64, Reason> {
         return Err(budget.failed().unwrap_or(Reason::BudgetVisits));
     }
     let mut n = opt_string_capacity_bytes(&e.name);
-    let (_l, _c, _h, acts) = strings_capacity_bytes_vec(&e.actions)?;
-    n = Budget::checked_add(n, acts)?;
+    n = Budget::checked_add(n, strings_nested(&e.actions, budget)?)?;
     Ok(n)
 }
 
@@ -137,6 +144,46 @@ fn account_plain_vec<T>(
     }
 }
 
+fn account_nested_vec<T>(
+    frag: &mut OwnerFragment,
+    budget: &mut Budget,
+    field: &'static str,
+    values: &Vec<T>,
+    nested_bytes: impl Fn(&T) -> Result<u64, Reason>,
+) {
+    let result = (|| {
+        let mut nested = 0;
+        for value in values {
+            if !budget.visit() {
+                return Err(budget.failed().unwrap_or(Reason::BudgetVisits));
+            }
+            nested = Budget::checked_add(nested, nested_bytes(value)?)?;
+        }
+        Ok((
+            api::owner_capture::occ_bytes(values)?,
+            v_bytes(values)?,
+            nested,
+        ))
+    })();
+    match result {
+        Ok((occupied, capacity, nested)) => push_ok(
+            frag,
+            budget,
+            field,
+            values.len() as u64,
+            values.capacity() as u64,
+            values.len() as u64,
+            occupied,
+            capacity,
+            nested,
+        ),
+        Err(reason) => {
+            frag.complete = false;
+            frag.reason = reason;
+        }
+    }
+}
+
 /// Capacity-aware fingerprint census (plan §3 script fingerprint).
 pub fn fingerprint_owner_payload(fp: &SnapshotFingerprint, budget: &mut Budget) -> OwnerFragment {
     let mut frag = OwnerFragment::new("fingerprint");
@@ -144,13 +191,25 @@ pub fn fingerprint_owner_payload(fp: &SnapshotFingerprint, budget: &mut Budget) 
 
     let header = std::mem::size_of::<SnapshotFingerprint>() as u64;
     push_ok(
-        &mut frag, budget, "struct_header", 1, 1, 1, header, header, 0,
+        &mut frag,
+        budget,
+        "struct_header",
+        1,
+        1,
+        1,
+        header,
+        header,
+        0,
     );
 
     account_items(&mut frag, budget, "inv", &fp.inv);
     account_items(&mut frag, budget, "bank", &fp.bank);
     account_items(&mut frag, budget, "bank_side", &fp.bank_side);
     account_items(&mut frag, budget, "equipment", &fp.equipment);
+    account_items(&mut frag, budget, "trade_mine", &fp.trade_mine);
+    account_items(&mut frag, budget, "trade_theirs", &fp.trade_theirs);
+    account_items(&mut frag, budget, "trade_side", &fp.trade_side);
+    account_items(&mut frag, budget, "shop_stock", &fp.shop_stock);
 
     account_scenes(&mut frag, budget, "npcs", &fp.npcs);
     account_scenes(&mut frag, budget, "locs", &fp.locs);
@@ -160,8 +219,21 @@ pub fn fingerprint_owner_payload(fp: &SnapshotFingerprint, budget: &mut Budget) 
     account_plain_vec(&mut frag, budget, "booths", &fp.booths);
     account_plain_vec(&mut frag, budget, "varps", &fp.varps);
     account_plain_vec(&mut frag, budget, "side_tab_ifaces", &fp.side_tab_ifaces);
-    account_plain_vec(&mut frag, budget, "banks", &fp.banks);
-    account_plain_vec(&mut frag, budget, "stats", &fp.stats);
+    account_nested_vec(&mut frag, budget, "banks", &fp.banks, |b| {
+        Budget::checked_add(
+            Budget::checked_add(b.name.capacity() as u64, b.kind.capacity() as u64)?,
+            opt_string_capacity_bytes(&b.choose),
+        )
+    });
+    account_nested_vec(&mut frag, budget, "stats", &fp.stats, |s| {
+        Ok(s.1.capacity() as u64)
+    });
+    account_nested_vec(&mut frag, budget, "chat_lines", &fp.chat_lines, |s| {
+        Ok(s.1.capacity() as u64)
+    });
+    account_nested_vec(&mut frag, budget, "spell_buttons", &fp.spell_buttons, |s| {
+        Ok(s.label.capacity() as u64)
+    });
 
     // combat_styles: Vec + nested String labels
     {
@@ -208,8 +280,8 @@ pub fn fingerprint_owner_payload(fp: &SnapshotFingerprint, budget: &mut Budget) 
                         break;
                     }
                     nested = nested.saturating_add(owned_string_capacity_bytes(&p.name));
-                    nested = nested
-                        .saturating_add((p.buttons.capacity() as u64).saturating_mul(btn_sz));
+                    nested =
+                        nested.saturating_add((p.buttons.capacity() as u64).saturating_mul(btn_sz));
                 }
                 push_ok(
                     &mut frag,
@@ -251,7 +323,7 @@ pub fn fingerprint_owner_payload(fp: &SnapshotFingerprint, budget: &mut Budget) 
     }
 
     // chat_options
-    match strings_capacity_bytes_vec(&fp.chat_options) {
+    match strings_capacity_bytes_budgeted(&fp.chat_options, budget) {
         Ok((_len, _cap, header, nested)) => {
             push_ok(
                 &mut frag,
@@ -299,6 +371,29 @@ pub fn fingerprint_owner_payload(fp: &SnapshotFingerprint, budget: &mut Budget) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn borrowed_slot_probe_preserves_next_flatbuffer_and_stop_absence() {
+        let mut control = crate::slot::SlotScript::new();
+        let mut observed = crate::slot::SlotScript::new();
+        let input = crate::isolate_fb::tests::empty_input;
+        assert_eq!(
+            control.encode_snapshot_delta(&input(1), false),
+            observed.encode_snapshot_delta(&input(1), false)
+        );
+        let frag = observed.owner_payload(&mut Budget::new());
+        assert!(frag.complete);
+        assert_eq!(frag.fingerprint_present, Some(true));
+        assert_eq!(
+            control.encode_snapshot_delta(&input(2), false),
+            observed.encode_snapshot_delta(&input(2), false)
+        );
+        observed.stop();
+        let stopped = observed.owner_payload(&mut Budget::new());
+        assert!(stopped.complete);
+        assert_eq!(stopped.fingerprint_present, Some(false));
+        assert_eq!(stopped.script_state, Some("Idle"));
+    }
     use api::owner_capture::Budget;
 
     #[test]
@@ -310,6 +405,40 @@ mod tests {
         assert!(
             frag.rows.iter().any(|r| r.field == "struct_header"),
             "header row required"
+        );
+    }
+
+    #[test]
+    fn every_owned_fingerprint_family_is_measured() {
+        let fp = SnapshotFingerprint::default();
+        let frag = fingerprint_owner_payload(&fp, &mut Budget::new());
+        for field in [
+            "trade_mine",
+            "trade_theirs",
+            "trade_side",
+            "shop_stock",
+            "spell_buttons",
+            "chat_lines",
+            "banks",
+            "stats",
+        ] {
+            assert!(
+                frag.rows.iter().any(|r| r.field == field),
+                "missing {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn chat_options_charge_the_callers_visit_budget() {
+        let mut fp = SnapshotFingerprint::default();
+        fp.chat_options = vec![String::new(); 257];
+        let mut budget = Budget::new();
+        let frag = fingerprint_owner_payload(&fp, &mut budget);
+        assert!(frag.complete);
+        assert!(
+            budget.visits() >= 257,
+            "chat option traversal escaped the fragment budget"
         );
     }
 
@@ -333,7 +462,10 @@ mod tests {
         let frag = fingerprint_owner_payload(&fp, &mut budget);
         let inv = frag.rows.iter().find(|r| r.field == "inv").expect("inv");
         assert!(
-            inv.nested_capacity_bytes.unwrap_or(0) > 0,
+            inv.nested_capacity_bytes.unwrap_or(0)
+                == fp.inv[0].name.as_ref().unwrap().capacity() as u64
+                    + (fp.inv[0].ops.capacity() * std::mem::size_of::<String>()) as u64
+                    + fp.inv[0].ops[0].capacity() as u64,
             "ops capacity nested"
         );
         assert!(frag.complete);

@@ -1,0 +1,34 @@
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/crates/api)
+error[E0599]: no method named `reserve` found for enum `std::option::Option<T>` in the current scope
+  --> crates/api/src/snapshot_owner_capture.rs:17:18
+   |
+17 |         nav.chat.reserve(19);
+   |                  ^^^^^^^ method not found in `std::option::Option<String>`
+   |
+note: the method `reserve` exists on the type `String`
+  --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/alloc/src/string.rs:1224:4
+help: consider using `Option::expect` to unwrap the `String` value, panicking if the value is an `Option::None`
+   |
+17 |         nav.chat.expect("REASON").reserve(19);
+   |                 +++++++++++++++++
+
+error[E0624]: method `len` is private
+  --> crates/api/src/snapshot_owner_capture.rs:34:29
+   |
+34 |         assert_eq!(nav.chat.len(), 0);
+   |                             ^^^ private method
+   |
+  --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/core/src/option.rs:808:4
+   |
+   = note: private method defined here
+note: the method `len` exists on the type `String`
+  --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/alloc/src/string.rs:1865:4
+help: consider using `Option::expect` to unwrap the `String` value, panicking if the value is an `Option::None`
+   |
+34 |         assert_eq!(nav.chat.expect("REASON").len(), 0);
+   |                            +++++++++++++++++
+
+Some errors have detailed explanations: E0599, E0624.
+For more information about an error, try `rustc --explain E0599`.
+error: could not compile `api` (lib test) due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...

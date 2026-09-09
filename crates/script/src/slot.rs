@@ -207,6 +207,12 @@ impl SlotScript {
     }
 
     /// Borrowed fingerprint + slot buffer census (feature `memory-owner-capture`).
+    #[cfg(feature = "memory-owner-capture")]
+    pub fn owner_has_fingerprint(&self) -> bool {
+        self.last_snapshot.is_some()
+    }
+
+    /// Borrowed fingerprint + slot buffer census (feature `memory-owner-capture`).
     /// Call under the existing slot lock after `on_is_up`, before encode/tick.
     #[cfg(feature = "memory-owner-capture")]
     pub fn owner_payload(
@@ -214,21 +220,17 @@ impl SlotScript {
         budget: &mut api::owner_capture::Budget,
     ) -> api::owner_capture::OwnerFragment {
         use api::owner_capture::{
-            owned_string_capacity_bytes, strings_capacity_bytes_vec, FieldRow, Reason,
+            owned_string_capacity_bytes, strings_capacity_bytes_budgeted, FieldRow, Reason,
         };
 
+        let begin_ns = api::owner_capture::mono_ns();
         let mut frag = if let Some(fp) = self.last_snapshot.as_ref() {
             crate::fingerprint_owner_capture::fingerprint_owner_payload(fp, budget)
         } else {
             let mut f = api::owner_capture::OwnerFragment::new("fingerprint");
             let _ = budget.push_row(
                 &mut f.rows,
-                FieldRow::unknown(
-                    "fingerprint",
-                    "absent",
-                    Reason::Missing,
-                    budget.elapsed_ns(),
-                ),
+                FieldRow::ok("fingerprint", "absent", 0, 0, 0, 0, 0, 0, 0, 0, budget.elapsed_ns()),
             );
             // Builder capacity remains unknown after Stop / when absent.
             let _ = budget.push_row(
@@ -243,9 +245,15 @@ impl SlotScript {
             f
         };
         frag.source = "slotscript";
+        frag.begin_ns = begin_ns;
+        frag.fingerprint_present = Some(self.last_snapshot.is_some());
+        frag.script_state = Some(match self.state {
+            RunState::Idle => "Idle", RunState::Running => "Running", RunState::Paused => "Paused",
+            RunState::Stopping => "Stopping", RunState::Error => "Error",
+        });
 
         // pending_logs + last_error
-        match strings_capacity_bytes_vec(&self.pending_logs) {
+        match strings_capacity_bytes_budgeted(&self.pending_logs, budget) {
             Ok((_len, _cap, header, nested)) => {
                 let _ = budget.push_row(
                     &mut frag.rows,
@@ -319,6 +327,7 @@ impl SlotScript {
             frag.reason = r;
         }
         frag.visits = budget.visits();
+        frag.end_ns = api::owner_capture::mono_ns();
         frag
     }
 

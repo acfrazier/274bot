@@ -1,0 +1,25 @@
+warning: methods `generation` and `slot_id` are never used
+   --> crates/host/src/cadence.rs:384:12
+    |
+360 | impl Local {
+    | ---------- methods in this implementation
+...
+384 |     pub fn generation(&self) -> u64 {
+    |            ^^^^^^^^^^
+...
+388 |     pub fn slot_id(&self) -> u64 {
+    |            ^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `host` (lib) generated 1 warning
+   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/crates/host-play)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.10s
+     Running unittests src/lib.rs (target/debug/deps/host_play-e1a4990c2c2538eb)
+
+running 2 tests
+test owner_capture::output::tests::completed_fragments_alone_never_certify_missing_encoded_rows ... ok
+test owner_capture::output::tests::cumulative_owner_output_cap_is_not_the_run_cap ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 190 filtered out; finished in 0.00s
+

@@ -19,7 +19,8 @@ pub const OWNER_JSONL_MAX: usize = 256 * 1024;
 pub const RUN_OUTPUT_MAX: usize = 64 * 1024 * 1024;
 
 /// Why a field is incomplete or unknown. Never encode unknown as zero.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 #[repr(u8)]
 pub enum Reason {
     Ok = 0,
@@ -70,7 +71,7 @@ impl Reason {
 }
 
 /// One fixed family/field accounting row (scalar only).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, serde::Serialize)]
 pub struct FieldRow {
     pub owner: &'static str,
     pub field: &'static str,
@@ -122,7 +123,12 @@ impl FieldRow {
         }
     }
 
-    pub fn unknown(owner: &'static str, field: &'static str, reason: Reason, elapsed_ns: u64) -> Self {
+    pub const fn unknown(
+        owner: &'static str,
+        field: &'static str,
+        reason: Reason,
+        elapsed_ns: u64,
+    ) -> Self {
         Self {
             owner,
             field,
@@ -152,6 +158,60 @@ impl FieldRow {
     }
 }
 
+/// Inline bounded storage; moving or cloning scalar rows cannot allocate.
+#[derive(Debug, Clone)]
+pub struct FieldRows {
+    storage: [FieldRow; MAX_FIELD_ROWS],
+    len: usize,
+}
+
+impl Default for FieldRows {
+    fn default() -> Self {
+        Self {
+            storage: [FieldRow::unknown("", "", Reason::Missing, 0); MAX_FIELD_ROWS],
+            len: 0,
+        }
+    }
+}
+
+impl FieldRows {
+    pub fn capacity(&self) -> usize {
+        MAX_FIELD_ROWS
+    }
+    pub fn push(&mut self, row: FieldRow) {
+        assert!(self.len < MAX_FIELD_ROWS, "unbudgeted field row");
+        self.storage[self.len] = row;
+        self.len += 1;
+    }
+    pub fn append(&mut self, other: &mut Self) {
+        self.extend(other.iter().copied());
+        other.len = 0;
+    }
+}
+
+impl std::ops::Deref for FieldRows {
+    type Target = [FieldRow];
+    fn deref(&self) -> &Self::Target {
+        &self.storage[..self.len]
+    }
+}
+
+impl Extend<FieldRow> for FieldRows {
+    fn extend<T: IntoIterator<Item = FieldRow>>(&mut self, rows: T) {
+        for row in rows {
+            self.push(row);
+        }
+    }
+}
+
+impl IntoIterator for FieldRows {
+    type Item = FieldRow;
+    type IntoIter = std::iter::Take<std::array::IntoIter<FieldRow, MAX_FIELD_ROWS>>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.storage.into_iter().take(self.len)
+    }
+}
+
 /// Cooperative walk budget for one fragment.
 #[derive(Debug)]
 pub struct Budget {
@@ -177,6 +237,20 @@ impl Budget {
 
     pub fn visits(&self) -> u32 {
         self.visits
+    }
+
+    pub fn started_at(&self) -> Instant {
+        self.start
+    }
+
+    pub fn import_visits(&mut self, visits: u32) {
+        self.visits = visits;
+        if visits > MAX_VISITS {
+            self.failed = Some(Reason::BudgetVisits);
+        }
+        if self.elapsed_ns() > FRAGMENT_DEADLINE_NS {
+            self.failed = Some(Reason::BudgetDeadline);
+        }
     }
 
     pub fn elapsed_ns(&self) -> u64 {
@@ -212,7 +286,7 @@ impl Budget {
         true
     }
 
-    pub fn push_row(&mut self, rows: &mut Vec<FieldRow>, row: FieldRow) -> bool {
+    pub fn push_row(&mut self, rows: &mut FieldRows, row: FieldRow) -> bool {
         if self.failed.is_some() {
             return false;
         }
@@ -287,11 +361,20 @@ pub fn actions_capacity_bytes(actions: &[Option<String>]) -> Result<(u64, u64, u
     for a in actions {
         nested = Budget::checked_add(nested, opt_string_capacity_bytes(a))?;
     }
-    let header = Budget::checked_mul(actions.len() as u64, std::mem::size_of::<Option<String>>() as u64)?;
-    Ok((actions.len() as u64, actions.len() as u64, header.saturating_add(nested)))
+    let header = Budget::checked_mul(
+        actions.len() as u64,
+        std::mem::size_of::<Option<String>>() as u64,
+    )?;
+    Ok((
+        actions.len() as u64,
+        actions.len() as u64,
+        header.saturating_add(nested),
+    ))
 }
 
-pub fn actions_capacity_bytes_vec(actions: &Vec<Option<String>>) -> Result<(u64, u64, u64, u64), Reason> {
+pub fn actions_capacity_bytes_vec(
+    actions: &Vec<Option<String>>,
+) -> Result<(u64, u64, u64, u64), Reason> {
     let len = actions.len() as u64;
     let cap = actions.capacity() as u64;
     let header = Budget::checked_mul(cap, std::mem::size_of::<Option<String>>() as u64)?;
@@ -307,11 +390,21 @@ pub fn actions_capacity_bytes_vec(actions: &Vec<Option<String>>) -> Result<(u64,
 }
 
 pub fn strings_capacity_bytes_vec(v: &Vec<String>) -> Result<(u64, u64, u64, u64), Reason> {
+    strings_capacity_bytes_budgeted(v, &mut Budget::new())
+}
+
+pub fn strings_capacity_bytes_budgeted(
+    v: &Vec<String>,
+    budget: &mut Budget,
+) -> Result<(u64, u64, u64, u64), Reason> {
     let len = v.len() as u64;
     let cap = v.capacity() as u64;
     let header = Budget::checked_mul(cap, std::mem::size_of::<String>() as u64)?;
     let mut nested = 0u64;
     for s in v {
+        if !budget.visit() {
+            return Err(budget.failed().unwrap_or(Reason::BudgetVisits));
+        }
         nested = Budget::checked_add(nested, owned_string_capacity_bytes(s))?;
     }
     Ok((len, cap, header, nested))
@@ -321,7 +414,14 @@ pub fn strings_capacity_bytes_vec(v: &Vec<String>) -> Result<(u64, u64, u64, u64
 pub fn grid3_capacity_bytes<T>(
     grid: &Vec<Vec<Vec<T>>>,
     budget: &mut Budget,
-) -> Result<(u64 /*cap_bytes*/, u64 /*nested not incl leaves*/, u64 /*visits*/), Reason> {
+) -> Result<
+    (
+        u64, /*cap_bytes*/
+        u64, /*nested not incl leaves*/
+        u64, /*visits*/
+    ),
+    Reason,
+> {
     let mut total = Budget::checked_mul(
         grid.capacity() as u64,
         std::mem::size_of::<Vec<Vec<T>>>() as u64,
@@ -362,8 +462,42 @@ pub fn collision_flags_bytes(flags: &Vec<[i32; 104]>) -> Result<(u64, u64, u64),
 }
 
 /// Fragment of owner rows plus epoch metadata (scalar bridge).
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct OwnerEpoch {
+    pub source: &'static str,
+    pub tick: u32,
+    pub gens: [u64; 11],
+    pub family_gates: Option<[u64; 25]>,
+    pub base: Option<(i32, i32)>,
+    pub tile: Option<(i32, i32, i32)>,
+    pub ingame: bool,
+    pub scene_state: i32,
+    pub draw: Option<bool>,
+    pub loop_cycle: Option<i32>,
+}
+
+pub fn generation_values(g: &client::client::ClientGens) -> [u64; 11] {
+    [
+        g.npc, g.player, g.inv, g.varp, g.stat, g.chat, g.scene, g.iface, g.camera, g.map_flag,
+        g.world,
+    ]
+}
+
+pub fn mono_ns() -> u64 {
+    static ORIGIN: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    ORIGIN
+        .get_or_init(Instant::now)
+        .elapsed()
+        .as_nanos()
+        .min(u128::from(u64::MAX)) as u64
+}
+
+/// Fragment of owner rows plus epoch metadata (scalar bridge).
 #[derive(Debug, Clone)]
 pub struct OwnerFragment {
+    pub epochs: [Option<OwnerEpoch>; 3],
+    pub script_state: Option<&'static str>,
+    pub fingerprint_present: Option<bool>,
     pub slot_token: u64,
     pub request_id: u32,
     pub frame_serial: u64,
@@ -372,17 +506,20 @@ pub struct OwnerFragment {
     pub source_tick: u32,
     pub complete: bool,
     pub reason: Reason,
-    pub rows: Vec<FieldRow>,
+    pub rows: FieldRows,
     pub begin_ns: u64,
     pub end_ns: u64,
     pub visits: u32,
     /// Coverage declarations for omitted/unknown owners.
-    pub coverage_unknown: Vec<&'static str>,
+    pub coverage_unknown: &'static [&'static str],
 }
 
 impl OwnerFragment {
     pub fn new(source: &'static str) -> Self {
         Self {
+            epochs: [None; 3],
+            script_state: None,
+            fingerprint_present: None,
             slot_token: 0,
             request_id: 0,
             frame_serial: 0,
@@ -391,11 +528,11 @@ impl OwnerFragment {
             source_tick: 0,
             complete: true,
             reason: Reason::Ok,
-            rows: Vec::new(),
+            rows: FieldRows::default(),
             begin_ns: 0,
             end_ns: 0,
             visits: 0,
-            coverage_unknown: Vec::new(),
+            coverage_unknown: &[],
         }
     }
 }
@@ -403,6 +540,8 @@ impl OwnerFragment {
 /// Natural encoded buffer metadata (len/capacity only).
 #[derive(Debug, Clone, Copy)]
 pub struct EncodedBufMeta {
+    pub mono_ns: u64,
+    pub slot_token: u64,
     pub kind: EncodedBufKind,
     pub len: u64,
     pub capacity: u64,
@@ -447,6 +586,16 @@ pub fn reject_dedup_combo() -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fragment_row_storage_is_fixed_before_first_push() {
+        let fragment = OwnerFragment::new("generated");
+        assert_eq!(fragment.rows.capacity(), MAX_FIELD_ROWS);
+        assert!(
+            std::mem::size_of_val(&fragment.rows)
+                >= MAX_FIELD_ROWS * std::mem::size_of::<FieldRow>()
+        );
+    }
 
     #[test]
     fn vec_capacity_counts_spare() {
