@@ -11,6 +11,22 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 14:57 UTC
+
+- Owner instrumentation70a0954 REJECTED same-card Grok4.5/xai review
+  20260909_105352_eeb764,141s. Incorrect tokens/phase offsets, unwired COW,
+  every-frame instead of bounded requests, incomplete entity/fingerprint fields,
+  weak validator/missing integration/overhead/frozen-overlay evidence. Unit
+  helper passes do not qualify the capture. No native/live release follows.
+- Root reassigns SAME t_ce3310e4 to profileorch for coherent correction, no
+  model/provider override; original report and review retained as failed evidence.
+  Read reviewer card findings plus root comments; also enforce fixed observer
+  allocation bounds, nested traversal deadlines and mailbox byte accounting.
+  Complete original design/test/report contract; no narrowed acceptance.
+- Sharded routing tooling t_500f341e remains actualAstra/openai
+  20260909_103750_adb99e running, no real/native release. Fresh read-only disk
+  check: Concord14654509056B free, builder38016901120B. No files removed.
+
 ## Latest boundary — 2026-09-09 14:36 UTC
 
 - Routing resource design t_4e422f9a APPROVED6a2c566, actualGrok4.5/xai
