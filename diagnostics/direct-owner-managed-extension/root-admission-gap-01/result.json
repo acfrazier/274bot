@@ -1,0 +1,44 @@
+{
+  "scope": "generated semantic preflight rejection probe; no live launch; source and sampler mocked only",
+  "commit": "07b5b29",
+  "results": [
+    {
+      "case": "untyped",
+      "all_five_receipts": {
+        "anything": true
+      },
+      "incorrectly_accepted": true
+    },
+    {
+      "case": "expired",
+      "all_five_receipts": {
+        "expires_unix": 0,
+        "observed_unix": 0
+      },
+      "incorrectly_accepted": true
+    },
+    {
+      "case": "rejected",
+      "all_five_receipts": {
+        "admitted": false,
+        "status": "rejected"
+      },
+      "incorrectly_accepted": true
+    },
+    {
+      "case": "wrong_identity_and_conflict",
+      "all_five_receipts": {
+        "server_pid": -1,
+        "server_start_identity": "wrong",
+        "matches": [
+          {
+            "pid": 4733,
+            "start_identity": "macos_lstart:Wed Sep 9 18:43:22 2026",
+            "class": "frontend"
+          }
+        ]
+      },
+      "incorrectly_accepted": true
+    }
+  ]
+}

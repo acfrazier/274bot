@@ -11,6 +11,19 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 22:45 UTC
+
+- LIVE HOLD: root reproduced07b5b29 semantic receipt gap. All5 admission receipts
+  are only nonempty-object/hash checked; arbitrary, expired, rejected and wrong
+  identity/conflicting objects all pass actual preflight in generated isolation.
+  See direct-owner-admission-gap-report.md. Previous native green does not cover it.
+- Corrective t_5c2087e1 dispatched profileSol, exactexistingcontroller scope,
+  strict typed/root-bound semantics and negative tests then same-card reviewer.
+  No private receipt issuance/live launch until correction reviewed/native-qualified.
+- Navigation native workflow21725 COMPLETE0: all8 steps passed including generated
+  counting, integration and scheduler. Raw results need root audit/archive before
+  Concord qualification or private/exact59/CF phases. No performance claim.
+
 ## Latest boundary — 2026-09-09 22:41 UTC
 
 - Root issued runtime build manifest2869ec97 and ran reviewed direct verifier on
