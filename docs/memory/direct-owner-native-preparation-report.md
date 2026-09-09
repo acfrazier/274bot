@@ -2,6 +2,8 @@
 
 Task: `t_0a97cf2a`. Branch: `codex/memory-diagnostics`. Status: frozen source prepared and local source check passed; Linux generated qualification and live qualification remain false. No production implementation, existing overlay receipt, submodule commit/gitlink, remote, STATE, native/SSH/live/account/cache/server, or frontend operation was performed.
 
+The 20 scoped preparation/report/artifact files first entered history in `03df80d7cc43f0b2eb7310474482f5ce801b6b5d`. A shared-index race swept the already-staged files into a parallel root commit together with the unrelated root-owned `docs/memory/nav-singleton-f1-result.md`. Root directed that combined commit be preserved without reset/amend/rewrite and treated as this preparation's evidence commit. Review scope is the 20 paths under `diagnostics/direct-owner-native-preparation/` plus this report; the F1 report has a separate review and is excluded here.
+
 ## Prior blocked result retained
 
 The first attempt correctly stopped when original H plus the exact read-only patches produced two host files whose full hashes differed from the moving reviewed branch. Its fail-closed receipts remain unchanged at `diagnostics/direct-owner-native-preparation/artifact/{provenance-audit.json,preparation-result.json}`. The discrepancy is the already-recorded tiled-navigation test adaptation inherited by reviewed commit `3cdc3e4`; importing it into the original-H derivative is forbidden.
