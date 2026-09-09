@@ -11,6 +11,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 14:27 UTC
+
+- Cold evidence review COMPLETE and APPROVED c1d4120, t_8693907a actual
+  Grok4.5/xai profile, session20260909_101247_c6b89d,469s. Reviewer independently
+  verified720 archive members, originalGit/source/binary/input binding and
+  six-pair math. Its park verdict describes original contract before0036143;
+  operator decision below supersedes that disposition, not the measured facts.
+- Root releases DESIGN ONLY t_4e422f9a profileorch: bounded routing resource/
+  phase plan after failed59row baseline, owned nav-stage-a-routing-resource-plan.md.
+  No caps/retries/probe/source/tool changes released. Existing all59selectors/
+  3lanes/8sweeps and phase/cache/metric implications must be addressed explicitly.
+  Same-card reviewer required. Direct per-bot design t_360cbcc9 continues,
+  actualAstra20260909_101747_1b471a; neither task releases a native capture.
+
 ## Latest boundary — 2026-09-09: operator accepts the startup tradeoff
 
 - Operator answered the pending question: the allocation tradeoff is worth the
