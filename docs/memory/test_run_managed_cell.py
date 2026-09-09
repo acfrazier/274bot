@@ -2064,14 +2064,35 @@ class ManagedCellTests(unittest.TestCase):
                 name: str(self.fx.root / ('private-' + name + '.json'))
                 for name in ('conflict', 'account', 'population', 'cache', 'server_health')}}
         spec_path.write_text(json.dumps(spec))
-        server_sample = sr.sample_process(self.fx.game_server.pid, timeout=2)
-        helper_sample = sr.sample_process(self.fx.helper.pid, timeout=2)
-        fake_pf = {'binary': str(self.fx.binary.resolve()), 'manifest': str(self.fx.manifest.resolve()),
-                   'provenance': {'status': 'verified', 'files': {}},
-                   'server_pid': self.fx.game_server.pid, 'server_sample': server_sample,
-                   'ambient_identities': {'ambient_helper': {
-                       'pid': self.fx.helper.pid, 'sample': helper_sample}},
-                   'direct_preflight': {}}
+        fixtures = self._direct_preflight_fixtures(spec)
+        fake_pf = {
+            'binary': str(self.fx.binary.resolve()),
+            'manifest': str(self.fx.manifest.resolve()),
+            'provenance': fixtures['provenance'],
+            'server_pid': self.fx.game_server.pid,
+            'server_sample': fixtures['sample'](self.fx.game_server.pid, timeout=2),
+            'ambient_identities': {'ambient_helper': {
+                'pid': self.fx.helper.pid,
+                'sample': fixtures['sample'](self.fx.helper.pid, timeout=2),
+            }},
+            'direct_cache_snapshot': fixtures['cache'],
+            'direct_preflight': {
+                'admission_bindings': {
+                    'release_contract': {
+                        'path': str(fixtures['release_path'].resolve()),
+                        'sha256': _sha(fixtures['release_path']),
+                    },
+                    **{
+                        'receipt_' + kind: {
+                            'path': str(pathlib.Path(path).resolve()),
+                            'sha256': _sha(pathlib.Path(path)),
+                        }
+                        for kind, path in spec['capture_contract']['admission_receipts'].items()
+                    },
+                },
+                'release_expires_unix_s': time.time() + 60.0,
+            },
+        }
         stop_requests = []
         real_request = rmc._request_collector_stop
 
