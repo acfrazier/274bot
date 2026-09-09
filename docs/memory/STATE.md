@@ -11,6 +11,29 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 23:27 UTC
+
+- Fixture correction113ce05 handed same cardt_481b2857 toreviewer. Final revision
+  adds actual first-check admission cache/scalar hits, restored real all-phase
+  audits and output/record mutation negatives. Local bounded29tests passed in
+  31.0476s,98,795,520Bpeak with unchangedQUAL_LIMITS. Independent review pending.
+- Worker amend displaced root4c8a17d checkpoint from history; exact STATE bytes
+  remained inworkingtree and root reverified/restores them in this commit. No
+  evidence or source lost. Future worker corrections must append scoped commits.
+- Owner correctiont_5c2087e1 remains active; no live/native release yet.
+
+## Latest boundary — 2026-09-09 23:23 UTC
+
+- Actual corrective workers verified: t_481b2857 run1050/session191221_6a97f7
+  gpt-5.6-luna/openai-codex; t_5c2087e1 run1049/session184441_307b90
+  gpt-5.6-sol/openai-codex. Both still implementing/testing, neither reviewed.
+- Luna initial commit50a44ab adds final real audits but does not remove the
+  profiled admission hotspot; root explicitly withheld native reuse and posted
+  review findings. Luna is revising to cache repeated generated admissions and
+  prove output/record mutation rejection; diagnostic counters must be bounded.
+- Preserve50a44ab and its29-test local pass as intermediate evidence only. No
+  native rerun from it, no qualification cap increase, no private/live release.
+
 ## Latest boundary — 2026-09-09 23:11 UTC
 
 - Concord scheduler FAILED:guard exit-9 after302.849s,300CPU/360wall cap;last test
