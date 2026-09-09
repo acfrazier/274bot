@@ -11,6 +11,31 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 01:06 UTC
+
+- Root ONE production-prefix replay completed exit0 in167.132470633seconds,
+  native3965 reaped and /proc3963/3964/3965 later absent. Identical manifest,
+  unchanged caps; all3phaseCPU72.296/45.878/48.919 below180. Export archive
+  381680bytes SHA62dc105b3095f274176a3ee9b84e31b53606cac504f6149f59930c420ef70cbd,
+  all19payloadhashes and13resultfilehashes verified locally. Receipt remains
+  validated_prefix_diagnostic, capture_completefalse, acceptancefalse.
+- Root independently reconciled descriptor size/count, stacks and families at
+  peak160842811/89122, lastmark132027090/209263, EOF132028404/209283. Original
+  canonical full multiset equality is runner-attested; root exported arithmetic
+  verifies totals only. All ownership remainsunknown. SparseRSS23871488 versus
+  cumulative44568576 are different populations/measurements, noRSSsavings.
+- t_04537ad7 profileLuna is actively preparing independent report/accounting and
+  SAMEcardGrok4.5 review. No replay/capture/code change authorized on that card.
+  Existing failed result preserved; output diagnostics/root-native-production-a55972a.
+- Root bounded saved-stack symbol probe: Mac llvm-cxxfilt default stripped the
+  Linux underscore and leftnamesunchanged; --no-strip-underscore decodesv0.
+  First3peakstacks contain nav load_pack/decode callers. This is SYMBOL evidence
+  only, no source-line/instance/lifetime or owneracceptance; original classifier
+  unchanged. Probe receipts retained separately, no new trace or native replay.
+- 289 H samecardt_34667a70 resumed actual run918 and is implementing real input
+  emitters after explicit mouseguard correction decision. Offline tests ongoing;
+  noHreview, authenticlive, finalGrok4.6 or campaignacceptance yet.
+
 ## Latest boundary — 2026-09-09 00:57 UTC
 
 - Qualification4ab8c7e plus root smoke-recoveryedcf3bb APPROVED actual
