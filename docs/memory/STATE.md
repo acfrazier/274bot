@@ -11,6 +11,23 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 18:44 UTC
+
+- Refined navigation admission plana438547 APPROVED t_47ab4258 by actual
+  Grok4.5/xai143926_5025cd; reviewed exact composite8385+ebf0collision binding,
+  source/helper invariants and budget continuity. No whole-ebf0 tree substitution.
+- Reviewer assessed rootproposal80b9fe0: old4+fresh118 requires122 cumulative
+  diagnostic children while1800wall/1500CPU stays unchanged. Root accepted this
+  finite candidate-only exception6cc8706/b00ba2c, requiring exact prior receipts
+  and later hash-bound phase releases. No real run authorized by that decision.
+- New t_4474ac39 profileSol implements only approved source/admission/schedule
+  parameterization and generated qualification. Legacy defaults/118 cap and old
+  evidence stay intact; refined122 needs the explicit decision. Same-card review
+  precedes any native packaging or measurement.
+- Owner controller design t_59c6d6f5 and coverage t_420c2fae still active. Root
+  inspected new test-only deadline/stale-publication assertions; not yet qualified.
+  All root native jobs remain complete; no Concord run.
+
 ## Latest boundary — 2026-09-09 18:37 UTC
 
 - Root materialized exact1124source archive in clean diagnostic Git trees:
