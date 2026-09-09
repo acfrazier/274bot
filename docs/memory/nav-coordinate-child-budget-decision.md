@@ -1,13 +1,16 @@
 # Refined navigation: proposed four-child accounting exception
 
-Status: root proposal for independent review alongside
-nav-coordinate-native-admission-plan.md. No real run or cap change is released
-until root accepts that review and issues an exact phase authorization.
+Status: root ACCEPTED the independent review of proposal80b9fe0 alongside
+admission plana438547, taskt_47ab4258, actualGrok4.5/xai session
+20260909_143926_5025cd. Root authorizes implementing the finite122-child
+accounting exception below for coordinate-ebf0f30 only. This decision does not
+launch a real child: every real phase still needs fresh source/native/correctness
+admission, preflight and an exact hash-bound root phase authorization.
 
 Root selects a fresh dense/refined comparison for candidate
 `coordinate-ebf0f30`, using the sole reviewed collision overlay on original8385.
 The old four-child F1 remains immutable spent work and is never substituted into
-the new candidate result. All59 rows need118 fresh children. Therefore propose
+the new candidate result. All59 rows need118 fresh children. Therefore approve
 changing only the cumulative diagnostic child count from118 to122: old4 plus
 new118. This is a finite candidate-transition allowance, not a retry allowance
 or a resettable allowance per candidate.
