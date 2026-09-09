@@ -39,7 +39,7 @@ The direct mode contract is:
 | runtime switch | `BOT_MEMORY_OWNER_CAPTURE=1`, emitted by `run_diagnostic.py`, not inherited |
 | warmup / observation / teardown | 30 / 120 / 60 seconds |
 | guard cadence | 0.5 seconds on an anchored monotonic schedule |
-| metadata handoff deadline | 5 seconds from managed launcher `Popen` return |
+| outer handoff/startup deadline | 5 seconds from managed launcher `Popen` return; not RSS grace after frontend spawn |
 | runtime available-memory floor | 256 MiB (`268435456` bytes) |
 | frontend RSS ceiling | 512 MiB (`536870912` bytes) |
 | aggregate owned-output ceiling | 64 MiB (`67108864` bytes) |
@@ -201,11 +201,18 @@ inconsistency with top-level `n`, timing, `sampler_interval_s`, `max_wall_s`,
 frontend, build role, and diagnostic argv.
 
 The direct diagnostic argv is exactly the existing N1 resource-only argv plus
-`--direct-owner-capture`, `--warmup 30`, `--observe 120`, and an explicit fresh
-`--run-dir`. It retains `--no-diagnostics --sustain` and has no Heaptrack or
-other probe flag. `run_managed_cell.require_argv_consistent_with_spec` compares
-all of those values; neither an environment variable nor a spec-only declaration
-can turn the mode on.
+`--direct-owner-capture`, `--warmup 30`, `--observe 120`, an explicit fresh
+`--run-dir PATH`, and `--frontend-handoff PATH`. The handoff argument is the
+child-visible channel: its canonical value must equal
+`capture_contract.frontend_handoff_path`, which in turn must be exactly
+`cell_dir/frontend-handoff.json`; `--run-dir` must canonically equal the reserved
+`capture_contract.run_dir`. It retains `--no-diagnostics --sustain` and has no
+Heaptrack or other probe flag. `run_diagnostic.validate_args` rejects either path
+flag outside direct mode and rejects direct mode without both.
+`run_managed_cell.require_argv_consistent_with_spec` compares all of those values,
+including the two canonical reserved paths, against the spec before launch.
+Neither an environment variable nor a spec-only declaration can turn the mode
+on or redirect either output path.
 
 `run_current_tui_calibration.clean_environment` scrubs the owner variable for all
 calls and sets it only in direct mode. `run_diagnostic.build_child_env` scrubs it
@@ -225,7 +232,8 @@ single filesystem. Before launch, the managed runner exclusively reserves:
 1. the controller result and spec paths;
 2. only this cell's `cell_dir`, not the whole shared `cells_root`;
 3. the exact frontend `run_dir` passed by `--run-dir`;
-4. the early handoff and guard files inside `cell_dir`.
+4. the handoff slot, its one fixed-name atomic-update temporary
+   `cell_dir/frontend-handoff.next.json`, and guard files inside `cell_dir`.
 
 `run_diagnostic` consumes the pre-reserved empty run directory in direct mode;
 its timestamp-generated default remains unchanged otherwise. Any run-directory
@@ -236,10 +244,13 @@ The output scanner starts immediately after launcher creation, before frontend
 metadata. It walks only the four declared owned paths. Every root and parent is
 resolved and checked before launch. During scans it uses `lstat`, never follows a
 symlink, rejects a symlink/special file or a path-component replacement, and
-deduplicates regular files by `(st_dev, st_ino)`. Nested roots and hard links are
-therefore counted once. A hard link is measured but never followed outside an
-owned root. A declared or reported path outside the owned roots fails; the runner
-does not search, truncate, chmod, or delete unrelated files.
+deduplicates regular files by `(st_dev, st_ino)`. The only permitted owned leaf
+replacement is the validated atomic `spawned` -> `exited` handoff transition in
+section 7.3; its fixed-name temporary is counted while present, and every other
+inode replacement fails. Nested roots and hard links are therefore counted once.
+A hard link is measured but never followed outside an owned root. A declared or
+reported path outside the owned roots fails; the runner does not search,
+truncate, chmod, or delete unrelated files.
 
 The aggregate is the sum of `st_size` for unique owned regular files, including
 launcher/cell logs, process accounting, guard evidence, metadata, samples,
@@ -287,46 +298,115 @@ password, vault content, or cache payload into public output. A stale or missing
 receipt fails before launch. The exact freshness window is recorded by the root
 release contract; implementation must not invent one if root did not bind it.
 
-## 7. Early frontend handoff
+## 7. Frontend spawn and lifecycle handoff
 
-Direct mode adds an exclusive `frontend-handoff.json` under `cell_dir`.
-`run_managed_cell` passes that exact path and the pre-reserved run directory to
-`run_diagnostic`; both are in the validated spec.
+Direct mode adds one stateful `frontend-handoff.json` slot under `cell_dir`.
+`run_managed_cell` passes that exact path through the explicit
+`--frontend-handoff` argument and passes the pre-reserved run directory through
+`--run-dir`; both canonical paths are in the validated spec. There is no implicit
+environment or current-directory path channel.
 
-For direct mode, `run_diagnostic` installs owned-child cleanup handlers before
-spawning `tui-play`. It records `spawn_before_monotonic_s` immediately before
-`Popen` and `spawn_after_monotonic_s` immediately after. Before ConPTY-helper
-discovery, ordinary metadata work, or any other fallible post-spawn operation,
-it exclusive-writes and flushes the handoff containing:
+### 7.1 Stop-safe spawn registration
 
-- schema/mode;
-- frontend PID;
+This mode is Linux-only, so `run_diagnostic` closes the otherwise unowned interval
+inside `Popen` with POSIX signal masking rather than a second launcher. Before
+spawn it installs direct-mode SIGTERM/SIGINT handlers, snapshots its existing
+direct-child PID/start identities, and blocks those signals with
+`signal.pthread_sigmask`. It records `spawn_before_monotonic_s` immediately before
+`Popen`. On return it assigns the `Popen` handle, records
+`spawn_after_monotonic_s`, samples the new child's Linux start identity, and puts
+the handle/PID/identity into the cleanup state. It keeps the signals blocked until
+the initial handoff in section 7.2 is durable, then restores the old mask. A stop
+delivered during `Popen` therefore remains pending until the exact owned handle
+is registered and its spawn evidence is preserved; the handler records the
+request and the normal identity-checked cleanup path reaps that child. It never
+signals from a guessed PID.
+
+If `Popen` raises before a handle is assigned, the launcher performs one bounded
+comparison against the pre-spawn direct-child snapshot while the signals remain
+blocked. It may clean only a unique new direct child whose executable is the
+admitted binary, whose parent remains this launcher, and whose Linux field-22
+start tick converts through `SC_CLK_TCK` to the monotonic boot-time spawn bracket
+(allowing one scheduler tick of measurement tolerance). Zero or ambiguous matches
+produce a spawn-failure receipt with explicit `orphan_risk`; no candidate is
+signaled. The old signal mask is restored in a `finally` path after this
+receipt/cleanup attempt. A handoff-write or other failure
+after handle assignment uses that registered handle and identity while the stop
+signals are still blocked, preserves its failure receipt, and only then restores
+the mask. These rules cover a pending stop, a `Popen` exception after partial OS
+creation, and an ordinary post-spawn exception without changing default-mode
+signal behavior.
+
+### 7.2 Spawn state and first RSS sample
+
+Before ordinary metadata work or any other fallible post-spawn operation,
+`run_diagnostic` exclusive-writes, flushes, and fsyncs the handoff in state
+`spawned`, then restores the signal mask as specified above. It contains:
+
+- schema/mode/state and a random per-launch nonce generated before `Popen`;
+- frontend PID and the launcher's sampled frontend start identity;
 - launcher PID;
 - exact run directory;
 - the two monotonic spawn brackets;
 - frontend/TTY/N/workload/timing values.
 
-The managed runner accepts the handoff only if it appears within five seconds,
-is a regular non-symlink file at the reserved path, names its actual launcher,
-names a live direct child of that launcher, has an allowed PID distinct from
-server/controller/ambient/launcher/collector, and has finite ordered monotonic
-values inside the runner's launcher-start/receive envelope. It then samples and
-stores the frontend start identity. The conservative wall origin is
-`spawn_before_monotonic_s`, so `Popen` time cannot be omitted.
+The managed runner accepts either the `spawned` state or a later `exited` state
+that repeats the complete immutable spawn object. It requires a regular
+non-symlink file at the reserved path and its actual launcher. It records the
+first nonce and requires that value unchanged for every later state. It requires the
+exact reserved run directory, finite ordered brackets inside the runner's
+launcher-start/receive envelope, and an allowed PID distinct from
+server/controller/ambient/launcher/collector. For `spawned`, it requires a live
+direct child. It independently samples the frontend PID and requires the sampled
+start identity to equal the launcher's handoff identity before storing that
+identity as the guard key. A handoff that first appears as `exited` cannot qualify
+unless the managed runner had already obtained a valid identity-bound RSS sample
+for that same spawn object.
 
-Before this handoff, MemAvailable, output, and outer-launcher wall are measured,
-but frontend RSS is not. The receipt explicitly marks that startup interval as
-RSS-unobserved; it is not called guard coverage. Missing/late/malformed handoff
-fails at five seconds and cleans the owned launcher. Preinstalled launcher
-handlers/finally cleanup prevent a spawned-but-unreported frontend from being
-silently abandoned. If owned cleanup cannot be proven, the receipt reports
-orphan risk and does not signal a guessed PID.
+The five-second deadline is only an outer bound from the managed launcher's
+`Popen` return through the diagnostic launcher's pre-spawn setup. It does not
+permit five seconds of a live frontend without RSS enforcement. The first valid
+identity-bound frontend RSS sample must finish no later than
+`spawn_before_monotonic_s + 0.5`; a handoff received after that point fails
+immediately. Subsequent samples use the same absolute half-second grid anchored
+at `spawn_before_monotonic_s`. Thus a slow `Popen`, late handoff, or slow first
+sample cannot qualify by merely arriving inside the five-second outer window.
+
+Before frontend spawn, MemAvailable, output, and outer-launcher wall are measured
+but frontend RSS is inapplicable. The receipt calls this `pre_frontend_spawn`, not
+guard coverage. Once `spawn_before_monotonic_s` is recorded, any interval beyond
+the first 0.5-second sample deadline is a guard failure. Missing/malformed outer
+handoff fails at five seconds and cleans the owned launcher. The stop-safe spawn
+registration above prevents a spawned-but-unreported frontend from being silently
+abandoned; if ownership cannot be proven, the receipt reports orphan risk and
+does not signal a guessed PID.
+
+### 7.3 Identity-bound exit state
+
+After `child.wait()` returns, and before reader/PTY teardown, final metadata,
+provenance recheck, analysis, or any other post-exit operation,
+`run_diagnostic` records `wait_return_monotonic_s` and the exact exit code. It
+exclusive-creates and fsyncs `cell_dir/frontend-handoff.next.json`, then atomically
+replaces the handoff slot with state `exited` and fsyncs `cell_dir`. That state
+repeats byte-for-byte the immutable spawn object and adds the stored frontend
+start identity, exit code, and wait return time. The per-launch nonce, PID,
+identity, paths, and spawn brackets cannot change. Keeping the complete spawn
+object means an atomic replacement cannot erase evidence if the frontend exits
+before the managed reader sees the first state, although such a run still fails
+the required first RSS sample.
+
+The `exited` state is evidence that this launcher waited on its registered child;
+it is not an RSS sample and does not claim when between the last sample and wait
+return the process exited. Final metadata must repeat the same spawn/exit tuple
+and exit code. A stale file, nonce change, non-atomic/truncated state, changed
+immutable field, or final-metadata disagreement is a lifecycle failure.
 
 ## 8. Runtime guard in the managed loop
 
-After the handoff, the existing managed loop runs a direct guard sample on an
-absolute 0.5-second monotonic grid until the frontend/launcher complete or a
-breach begins cleanup. Each row is appended and flushed to
+Starting with the first sample required by section 7.2, the existing managed loop
+runs a direct guard sample on the absolute 0.5-second monotonic grid until the
+identity-bound exit state is accepted and the launcher completes, or a breach
+begins cleanup. Each row is appended and flushed to
 `direct-owner-guard.jsonl` and contains scheduled/start/end monotonic times,
 lateness/acquisition duration, frontend PID/start identity/current RSS,
 MemAvailable, output total/breakdown digest, elapsed frontend wall, and any
@@ -343,12 +423,30 @@ At every grid point:
 5. scan all owned output paths using the rules above;
 6. compare elapsed time to the conservative frontend spawn origin.
 
-No previous value is reused. A missing process sample, identity change/PID reuse,
-parent mismatch, acquisition error, skipped grid point, or sample whose end is
-already beyond its next scheduled point is a guard failure. Normal frontend exit
-is recognized only through the owned launcher's completion path and final
-metadata; disappearance while the launcher is still running is not silently
-accepted as a fresh sample.
+No previous value is reused. An identity change/PID reuse, parent mismatch,
+acquisition error, skipped grid point, or sample whose end is already beyond its
+next scheduled point is a guard failure. A missing process sample starts only a
+bounded `exit_pending` state; it is neither a zero-RSS value nor immediate proof
+of failure. The managed runner continues the MemAvailable/output/outer-wall
+checks and rereads the handoff until the earlier of the next absolute grid point
+or 0.5 seconds after the missing sample began. It accepts normal exit only if an
+atomic `exited` state arrives in that interval, exactly matches the previously
+validated nonce/PID/start identity/spawn object, reports `child.wait()` return no
+later than receipt of the state, and the same owned launcher subsequently exits
+with final metadata and the declared exit code. If the proof is absent, late,
+malformed, mismatched, or followed by launcher/final-metadata disagreement, the
+original missing sample is an unexplained disappearance and the run fails.
+
+Once the exit state is accepted, frontend RSS enforcement stops because the
+identity-bound child has been waited and no longer exists. The last valid RSS row
+is retained; no RSS value is imputed after it. The receipt records the terminal
+unsampled interval from that row's end through `wait_return_monotonic_s` and does
+not call it continuous or hard-limit coverage. MemAvailable and aggregate output
+continue on the anchored grid until launcher completion. Frontend wall is frozen
+at `wait_return_monotonic_s - spawn_before_monotonic_s` and is checked against
+360 seconds when the exit state is accepted; the separate 365-second outer
+launcher emergency ceiling still bounds finalization. A launcher exit without
+the matching exit state is never accepted, even if its return code is zero.
 
 The first observed value satisfying any of these conditions triggers failure and
 owned cleanup:
@@ -387,11 +485,13 @@ sixty-second teardown. The supervisor does not call script Stop, extend teardown
 or wait for a missing owner reply past the existing lifecycle.
 
 On guard, protocol, launcher, or sampling failure, reuse `_terminate_owned` and
-`_cleanup_frontend`. Signals are limited to the `Popen`-owned collector and
-launcher and the captured frontend after immediate PID/start-identity and parent
-checks. The game server, SSH parent, root helpers, and conflicting processes are
-never cleanup targets. Before each escalation, identity is rechecked. Foreign or
-reused PIDs produce an unresolved cleanup receipt, not a signal.
+`_cleanup_frontend`. The direct diagnostic's stop-safe spawn registration from
+section 7.1 is the only additional pre-handoff cleanup seam. Signals are limited
+to the `Popen`-owned collector and launcher and the captured frontend after
+immediate PID/start-identity and parent checks. The game server, SSH parent, root
+helpers, and conflicting processes are never cleanup targets. Before each
+escalation, identity is rechecked. Foreign, ambiguous, or reused PIDs produce an
+unresolved cleanup receipt with orphan risk, not a signal.
 
 Every path preserves one-attempt evidence:
 
@@ -431,11 +531,13 @@ Only these existing Python paths need implementation changes:
      owned output/run-dir assembly, default guard preservation, post-run source
      recheck, and owner validator result;
 2. `docs/memory/run_managed_cell.py`
-   - strict direct spec, early handoff intake, identity-bound 0.5-second guard,
-     output scanner, direct collector lifetime, cleanup/failure receipts;
+   - strict direct spec/argv path binding, spawn/exit handoff intake, first-sample
+     deadline, identity-bound 0.5-second guard and exit-pending state, output
+     scanner, direct collector lifetime, cleanup/failure receipts;
 3. `docs/memory/run_diagnostic.py`
-   - direct CLI validation, explicit run directory, owner env scrub/set, monotonic
-     Popen bracket, early handoff, and pre-spawn cleanup handlers;
+   - direct CLI validation including explicit handoff/run paths, owner env
+     scrub/set, monotonic Popen bracket, signal-masked spawn registration,
+     spawn/exit handoff states, and pre-handoff owned cleanup;
 4. `docs/memory/build_provenance.py`
    - shared source digest and `verify_direct_owner_build` wrapper with lineage
      file bindings; ordinary verification unchanged;
@@ -472,6 +574,9 @@ not use a real account, server, cache, PTY login, or network fixture.
   0.5-second cadence, and canonical owner feature string.
 - Reject feature list form, missing owner feature, snapshot-dedup, counting
   allocator, heaptrack, N16, headless, probe flags, and env/spec/argv disagreement.
+- Independently vary the spec handoff/run paths, `--frontend-handoff`, `--run-dir`,
+  and inherited environment; reject every mismatch or path outside the reserved
+  `cell_dir`/run root before launching.
 - Reject original/reviewed H/C IDs used as derivative HEADs, dirty source, source
   digest drift, archive/manifest/materialization/build-receipt drift, client HEAD
   mismatch, nav/catalog mismatch, and runtime binary mutation.
@@ -494,12 +599,27 @@ not use a real account, server, cache, PTY login, or network fixture.
 - Delay handoff to just below and just above five seconds; inject missing,
   truncated, duplicate, symlink, wrong-run-dir, wrong-launcher, forbidden PID,
   parent mismatch, and invalid monotonic brackets.
+- Allow slow pre-spawn launcher setup inside five seconds, then require the first
+  valid RSS sample by `spawn_before+0.5`; inject Popen/handoff/sample delays on
+  both sides of that deadline and prove the outer window never grants RSS grace.
 - Reuse a PID between handoff and first sample and between soft/hard cleanup;
   assert no signal reaches the unrelated process.
 - Spawn a frontend before suppressing the handoff; prove the preinstalled launcher
   cleanup reaps it, or records explicit orphan risk if identity cannot be proven.
+- Deliver SIGTERM while a fake/direct `Popen` is in progress; prove it remains
+  pending until the returned handle and start identity are registered, then only
+  that child is cleaned. Raise after partial spawn with zero, one, and multiple
+  new direct-child candidates; clean only the unique executable/parent/identity
+  match and otherwise preserve `orphan_risk` without signaling a guessed PID.
 - Make the first/any later frontend sample absent, malformed, slow, stale, or
   identity-changing; assert one failure and no retry.
+- Exit the frontend normally while `run_diagnostic` is still closing PTY/readers,
+  checking provenance, and writing final metadata. Prove the matching atomic exit
+  state permits that bounded finalization without another RSS sample or any
+  supervisor signal, while MemAvailable/output/outer-wall checks continue. Then
+  remove, delay, truncate, replay, or identity-mismatch the exit state and prove a
+  missing PID remains a failure even when launcher/final metadata later look
+  successful.
 
 ### Limits and receipts
 
@@ -525,7 +645,8 @@ not use a real account, server, cache, PTY login, or network fixture.
   phase, wrong frame/slot, cap breach, malformed terminal row, Stop reversal, and
   C-before-Stop; assert raw hashes remain and success is refused.
 - Simulate normal completion and prove no supervisor signal occurs, Stop timing is
-  unchanged, teardown remains sixty seconds, and cleanup reports no descendants.
+  unchanged, teardown remains sixty seconds, exit proof precedes final metadata,
+  and cleanup reports no descendants.
 - Inject a guard breach during warmup, observation, and teardown; prove only the
   owned tree is stopped, server/ambient/unrelated processes remain alive, all
   cases report attempts one, and no second scene/N is launched.
