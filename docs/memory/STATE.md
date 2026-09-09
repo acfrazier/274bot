@@ -11,6 +11,25 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 12:50 UTC
+
+- Newreal19case comparison PASS: botharms0,2119093915fullbytes equal,
+ SHA39e5becd9e82ff0565e032346ad447a0047c6657e594bec48e48a7f732d5f271.
+ Actual12Route2BankSession5NoPath; hostroutes5Tele4Door2Stairs2Boat. Required
+ carried/disabled/missing controls work; actualbankplanwithdraw1712 thenTele,
+ pendingallow_bank_fetch=false/noWear. No livewithdrawal/teleexecution claim.
+ Rootindependent fullbytes/frame/source/input/case audit PASS. All65142784cells
+ andblockedwords compared twice; earlier40caseproof preserved.
+- Bothnativearchives downloaded, all13917filehashes verified. Local
+ diagnostics/native-nav-differential-preparation/results-ccff4bb; report
+ nav-corpus-native-extension-report.md is ready for independent evidence review.
+ Correctnesscoverage gained, NOT StageA/B/CPU/RSS/latency/savings acceptance.
+- StageA tool t_fa5a3462 actualAstra083333_3ac036 running corrective generation/
+ build. No native or real performance run released. User377question answered:
+ bounded parallelport worthwhile, keepTSforcontent untilRustqualified; one shared
+ core/revisionboundaries and reusabletests avoidfork/harnessduplication. User
+ will document cross-revision findings in other task; no377action dispatchedhere.
+
 ## Latest boundary — 2026-09-09 12:39 UTC
 
 - Native ccff4bb generated PASS12954inputs/328120731fullbytes equal and MacSHA
