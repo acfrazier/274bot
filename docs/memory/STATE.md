@@ -11,6 +11,29 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 01:35 UTC
+
+- Root reclaimed the first nav-census worker run before its invalid HEAD-equality
+  build gate could govern execution. The campaign HEAD legitimately contains
+  diagnostic commits; compiled source bytes must match frozen provenance instead.
+  Same card t_c20cf6f3 resumed under Luna20260908_212853_54b2ff. Partial files
+  retained. It now builds/runs generated fixtures; supervisor and negative tests
+  remain in progress. No real pack has run.
+- Worker cargo fmt --all touched path dependencies; its log shows it restored
+  those formatting changes. Final source-byte checks and report must retain this
+  deviation. Root has not approved implementation or Linux qualification yet.
+- Dedicated builder read-only preparation: same boot d63ba1f3,7823335424 bytes
+  available memory,56423383040 free disk, no listed Cargo/rustc/census jobs.
+  Existing /home/builder/274bot-campaign/calibration-c0709ab/host has actual
+  frozen Git refs c0709ab/client3456 and its Cargo cache. Receipt in
+  diagnostics/nav-census-preparation/builder-readonly-admission.json. This is
+  preparation, not fresh build/run admission or source-byte verification.
+  A hypothetical no-Git fallback is unnecessary for this selected build path;
+  exact source, executable and input verification remain required.
+- 289 H continues all82 production-path goldens, including mouse whole-sample
+  boundaries and saturation. Its worker remained live through compaction and
+  resumed work. Full verification, review and authentic live gates are still open.
+
 ## Latest boundary — 2026-09-09 01:26 UTC
 
 - Saved-prefix symbol audit/design01524bc APPROVED actual Grok4.5/xai session

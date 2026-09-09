@@ -1,0 +1,17 @@
+{
+  "status": "read_only_preparation_not_build_or_run_admission",
+  "observed_unix": 1788917359.1497731,
+  "host_alias": "274bot-builder",
+  "boot_id": "d63ba1f3-9677-4e61-9d4c-f14a8cf502ac",
+  "mem_available": 7823335424,
+  "disk_free": 56423383040,
+  "source_root": "/home/builder/274bot-campaign/calibration-c0709ab/host",
+  "source_exists": true,
+  "cargo_target": "/home/builder/274bot-campaign/target/release/deps",
+  "cargo_target_exists": true,
+  "listed_cargo_rustc_census_jobs": [],
+  "source_hash_verification_performed": false,
+  "build_started": false,
+  "real_input_census_started": false,
+  "limitation": "Fresh source verification and admission are required at the later reviewed build and run boundaries."
+}
