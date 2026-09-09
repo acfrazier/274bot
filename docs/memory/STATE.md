@@ -11,6 +11,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 17:32 UTC
+
+- Real F1 completed4/4, supervisor exited0. Charged29.501340CPU/40.090448wall;
+  all child limits/headroom and root hash/sample/aggregate readback passed.
+  Hot-route CPU diagnostic changes row1+2.490%, row2+11.620%; no gate verdict.
+- Root preserved and independently verified144member F1 evidence archive
+  SHA102c6d41806620247e3c9d23f19a743f4503ca53b556afd4d7da9f05851cf031.
+  Root report nav-singleton-f1-result.md. Independent evidence/next-decision
+  review t_96957a0c profilegrok46 requested; no F2 or refinement released.
+- Root03df80d inadvertently included20 already-staged owner preparation files
+  alongside its F1 report. Combined history preserved; Sol notified and scopes
+  separated for review. No production changes or evidence discarded.
+  Owner preparation now completes same-card handoff with an explanatory follow-up.
+
 ## Latest boundary — 2026-09-09 17:27 UTC
 
 - Concord generated qualification06 PASSED: guards2.880s, clean218.344s,
