@@ -1,0 +1,79 @@
+test_budget_reservation_refund_and_deadline (test_sharded.Metrics) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-r9x6u0n0
+ok
+test_coordinate_cf1_carries_binding_and_prior_ledger (test_sharded.Metrics) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-iy6yqnm8
+ok
+test_coordinate_generated_qualification_has_separate_phase_and_budget (test_sharded.Metrics) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-sk1irno7
+ok
+test_coordinate_qualification_configuration_is_externally_bound (test_sharded.Metrics) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-mtfv1i9v
+ok
+test_coordinate_schedule_and_finite_budget_decision (test_sharded.Metrics) ... ok
+test_exact_quantiles (test_sharded.Metrics) ... ok
+test_full_coordinate_generated_protocol (test_sharded.Metrics) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-_n7co131
+ok
+test_full_generated_protocol (test_sharded.Metrics) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-dj9z8e_7
+ok
+test_schedule_and_raw_contract (test_sharded.Metrics) ... ok
+test_scheduler_fixture_address_binds_to_qualification_cap (test_sharded.Metrics) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-z1vw4xfe
+ok
+test_continuation_original_auth_and_receipt_gaps (test_sharded_guards.Guards) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-gsxfg0qf
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-iwunn9xr
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-8ay0wsls
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-k2nl8dpc
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-fwgd96sd
+ok
+test_continuation_setup_uses_remaining_cpu (test_sharded_guards.Guards) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-s6fggnpl
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-tftzjqrt
+ok
+test_driver_deadline_reaps_and_never_restarts (test_sharded_guards.Guards) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-74pa8jwq
+ok
+test_early_peak_and_storage_reservations (test_sharded_guards.Guards) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-do7ow5gq
+ok
+test_failure_headroom_and_no_restart (test_sharded_guards.Guards) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-ln98veo2
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-wvia52qq
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-qm_7y7rj
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-5p1mu9p2
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-lw_ric8a
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-x5d_nwc4
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-zqx6o7ld
+ok
+test_final_aggregation_output_mutation (test_sharded_guards.Guards) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-y2w0ec51
+ok
+test_limits_receipt_exact_and_numeric_output (test_sharded_guards.Guards) ... ok
+test_mutation_after_child_and_loaded_config (test_sharded_guards.Guards) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-loab10p6
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-td5lpm4y
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-22f_4gnq
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-r5s35o9a
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-a8aet6xc
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-2ivc3ew1
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-72ndbqvr
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-haewf_qg
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-ffaksc0e
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-7k69e3gu
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-otr4ipmp
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-nlkqdoh8
+ok
+test_native_idle_fixed_window_contract (test_sharded_guards.Guards) ... ok
+test_native_idle_single_shot_fail_closed (test_sharded_guards.Guards) ... ok
+test_native_idle_wait_charged_and_interrupted (test_sharded_guards.Guards) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-w89p8j0c
+ok
+test_native_idle_window_mutation_binding (test_sharded_guards.Guards) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-ltbxabyo
+ok
+test_negative_row_cpu_rejected (test_sharded_guards.Guards) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-91rpe9nm
+ok
+test_new_native_qualification_is_mandatory (test_sharded_guards.Guards) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-sw1xqlpg
+ok
+test_setup_claim_and_reservation_rejection (test_sharded_guards.Guards) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-6hlwl9v5
+retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-wkssl4to
+ok
+test_setup_cpu_budget_stops_admission (test_sharded_guards.Guards) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-5c6uv234
+ok
+test_supervisor_cpu_and_interrupt (test_sharded_guards.Guards) ... ok
+test_weighted_cpu_noise_and_partial (test_sharded_guards.Guards) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-uw59rf67
+ok
+test_wrong_shard_and_repeated_ordinals (test_sharded_guards.Guards) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-exbacd4b
+ok
+
+----------------------------------------------------------------------
+Ran 29 tests in 112.326s
+
+OK

@@ -1,0 +1,15 @@
+{
+  "command": "python3 -m unittest -v test_sharded test_sharded_guards",
+  "result": "OK",
+  "tests": 29,
+  "elapsed_seconds": 112.326,
+  "raw_log": "full-generated-suite.log",
+  "raw_log_sha256": "2d40c33034abf4388de48a293ed8075c44a662a7f2a5ac8d512c753def1224e7",
+  "source_hashes": {
+    "test_sharded.py": "a9abd238931285b12fe008983a86c515693963d7c3f143cb8102fbf7febe58ce",
+    "test_sharded_guards.py": "45dd91f94b7c9128647e26d243666fd7ea658a82dce56c4dd19b6d2b01cae15b",
+    "sharded.py": "f4b7cc0bd2ca0135f84f9ad2f0d11829b39218bc7b12acc5b3925978f1fa53bf",
+    "qualify_sharded.py": "38692e38c7174cdc5e13f31048a80aa0dfe026362a7fb1de8a4e391c3e894e41"
+  },
+  "native_acceptance": "not performed; prior Concord scheduler failure preserved"
+}

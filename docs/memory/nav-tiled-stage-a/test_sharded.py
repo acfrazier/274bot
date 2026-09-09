@@ -32,11 +32,15 @@ def matrix_fixture_doubles(run):
     guard coverage; this double is only for the repeated arithmetic matrix.
     """
     original_read_ref=sh.read_ref
+    original_write_json=sh.write_json
+    original_storage_guard=sh.storage_guard
     reads={}
     storage_calls=[]
 
     def cached_read_ref(ref,cap=256*1024):
-        key=(ref['path'],ref['sha256'],cap)
+        # The cache is an explicit bounded reference identity, never a blanket
+        # success.  A changed path, digest, or admission cap is a new check.
+        key=(str(ref['path']),str(ref['sha256']),int(cap))
         if key not in reads:
             reads[key]=original_read_ref(ref,cap)
         return reads[key]
@@ -56,12 +60,39 @@ def matrix_fixture_doubles(run):
     with patch.object(sh,'read_ref',cached_read_ref),\
             patch.object(sh,'write_json',buffered_write_json),\
             patch.object(sh,'storage_guard',bounded_storage_guard):
-        yield storage_calls
+        yield dict(reads=reads,storage_calls=storage_calls,
+            original_read_ref=original_read_ref,original_write_json=original_write_json,
+            original_storage_guard=original_storage_guard)
 
     # Keep these checks outside the patch so a future edit cannot silently
     # remove the explicit use of this double from the full-matrix fixture.
     if not storage_calls:
         raise AssertionError('matrix fixture did not exercise storage calls')
+
+
+def audit_generated_matrix(results, phases, source=None):
+    """Re-run real binding/admission after the fixture double is restored."""
+    admitted=[]
+    original_admit=sh.stage.admit
+
+    def audited_admit(path,*args,**kwargs):
+        admitted.append(Path(path))
+        return original_admit(path,*args,**kwargs)
+
+    with patch.object(sh.stage,'admit',audited_admit):
+        for phase in phases:
+            result=results[phase]
+            value=sh.read_ref(sh.reference(result))
+            sh.bind_entries(result.parent,value['entries'],phase)
+            sh.collect(result.parent,value['entries'],phase)
+        if source is not None:
+            source_path,source_sha,expected=source
+            binding=sh.stage.source_binding.load(source_path,source_sha)
+            if sh.stage.source_binding.reference(source_path,source_sha,binding)!=expected:
+                raise ValueError('generated source binding mutation')
+    if not admitted:
+        raise AssertionError('final real matrix audit did not admit bindings')
+    return admitted
 
 
 class Metrics(unittest.TestCase):
@@ -85,7 +116,7 @@ class Metrics(unittest.TestCase):
                 launches.append((arm,int(selector.stem)))
                 return mock_output(out,name)
             with patch.object(sh.stage,'check_release'),patch.object(sh,'launch',launch),\
-                    matrix_fixture_doubles(run):
+                    matrix_fixture_doubles(run) as double:
                 f1=sh.run_phase(run,auth,sh.stage.sha(auth),standin=True)
                 self.assertEqual(len(launches),4)
                 for phase in ('F2','acceptance'):
@@ -102,6 +133,17 @@ class Metrics(unittest.TestCase):
                 self.assertEqual(result['completed'],708)
                 self.assertEqual(len(list((run/'release').rglob('input.bin'))),1)
                 with self.assertRaises(FileExistsError):sh.run_phase(run,auth,sh.stage.sha(auth),standin=True)
+            self.assertIs(sh.read_ref,double['original_read_ref'])
+            self.assertIs(sh.write_json,double['original_write_json'])
+            self.assertIs(sh.storage_guard,double['original_storage_guard'])
+            final_paths={'F1':run/'release/F1/result.json','F2':run/'release/F2/result.json',
+                'acceptance':run/'release/acceptance/result.json'}
+            admitted=audit_generated_matrix(final_paths,('F1','F2','acceptance'))
+            self.assertGreater(len(admitted),3*len(sh.schedule('acceptance')))
+            target=run/'release/acceptance'/('000-1-1-dense.out')
+            target.write_bytes(target.read_bytes()+b'\n')
+            with self.assertRaisesRegex(ValueError,'sha256'):
+                audit_generated_matrix(final_paths,('F1','F2','acceptance'))
 
     def test_coordinate_cf1_carries_binding_and_prior_ledger(self):
         with retained_fixture() as d:
@@ -182,7 +224,8 @@ class Metrics(unittest.TestCase):
             def launch(run,arm,pack,selector,out,name,standin):
                 launches.append((arm,int(selector.stem)));return mock_output(out,name)
             try:
-                with patch.object(sh.stage,'check_release'),patch.object(sh,'launch',launch),matrix_fixture_doubles(run):
+                with patch.object(sh.stage,'check_release'),patch.object(sh,'launch',launch),\
+                        matrix_fixture_doubles(run) as double:
                     result=sh.run_phase(run,root_path,sh.stage.sha(root_path),standin=True,
                         source_binding_path=source,source_binding_sha256=source_hash)
                     for phase in ('CF2','CA'):
@@ -193,6 +236,20 @@ class Metrics(unittest.TestCase):
                         path=run/(phase+'.json');sh.write_json(path,auth)
                         result=sh.run_phase(run,path,sh.stage.sha(path),standin=True,
                             source_binding_path=source,source_binding_sha256=source_hash)
+                self.assertIs(sh.read_ref,double['original_read_ref'])
+                self.assertIs(sh.write_json,double['original_write_json'])
+                self.assertIs(sh.storage_guard,double['original_storage_guard'])
+                final_paths={'CF1':run/'coordinate-ebf0f30-full-01/CF1/result.json',
+                    'CF2':run/'coordinate-ebf0f30-full-01/CF2/result.json',
+                    'CA':run/'coordinate-ebf0f30-full-01/CA/result.json'}
+                admitted=audit_generated_matrix(final_paths,('CF1','CF2','CA'),
+                    (source,source_hash,ref))
+                self.assertGreater(len(admitted),3*len(sh.schedule('CA')))
+                target=run/'coordinate-ebf0f30-full-01/CA'/('000-1-1-dense.out')
+                target.write_bytes(target.read_bytes()+b'\n')
+                with self.assertRaisesRegex(ValueError,'sha256'):
+                    audit_generated_matrix(final_paths,('CF1','CF2','CA'),
+                        (source,source_hash,ref))
                 self.assertEqual(launches,[(a,r) for phase in ('CF1','CF2','CA')
                     for _,r,a in sh.schedule(phase)])
                 final=json.loads(result.read_text())
