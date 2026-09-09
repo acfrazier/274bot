@@ -11,6 +11,27 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 02:33 UTC
+
+- ONE real navpack census completed exit0 in0.504798s, exact input73438581B
+  SHA2f393138... . Verified exported result archivebd376c12... and receipt
+  f7ea7488... under diagnostics/nav-census-preparation/real-result/.
+  Root recomputed A73285632,T63616,D3090,estimate4068608,reduction69217024
+  (66.0105MiB), above fixed16MiBscreen. Not an allocation/RSS saving.
+- Root found uniform_pair_histogram mislabeled: code increments per valid cell,
+  sum65142784; it is not uniform tile histogram60526. Initial root assertion
+  failed on that interpretation; preserved in root-recompute.json. Separate
+  tile/accounting totals reproduce. t_71e88dd7 actual Astra profile orch now
+  independently reports native evidence and prepares consumer/storage design;
+  no representation implementation released until report/design Grok review.
+- Arrow0e998f2 is in same-card Grok4.5 review t_1ced5ad3. Root flagged
+  unconditional overlay epoch => full atlas upload every scene frame and a
+  mirroring integer-only test, requiring narrower invalidation and meaningful
+  production blink/movement/clear/unchanged regression. No fix/live acceptance.
+  Proof manifest preserves ingame, progress through9250cycles, no T1/T2, visual
+  room capture, user arrow defect and owned-client termination-15. Server61312
+  supervisor14070 remains; no client currently running.
+
 ## Latest boundary — 2026-09-09 02:26 UTC
 
 - Census3d32602 APPROVED actual Grok4.5/xai20260908_221202_bf852a. Root
