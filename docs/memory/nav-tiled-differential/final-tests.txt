@@ -1,0 +1,29 @@
+test_executable_mutation_rejected (test_admission.Admission) ... ok
+test_extra_original_source_suffix_rejected (test_admission.Admission) ... ok
+test_frozen_collision_mutation_rejected (test_admission.Admission) ... ok
+test_frozen_host_helper_mutation_rejected (test_admission.Admission) ... ok
+test_output_truncation_missing_completion_count (test_admission.Admission) ... ok
+test_selector_malformed_and_bounds (test_admission.Admission) ... ok
+test_address_limit (test_guard.Guards) ... skipped 'native hard AS qualification requires Linux'
+test_combined_descendant_pipe_budget (test_guard.Guards) ... ok
+test_cpu_limit (test_guard.Guards) ... ok
+test_descendant_cleanup_normal_and_timeout (test_guard.Guards) ... ok
+test_existing_output_does_not_launch_child (test_guard.Guards) ... ok
+test_fixed_selectors_reject_unbounded_work (test_guard.Guards) ... ok
+test_hash_rejects_changed_input (test_guard.Guards) ... ok
+test_huge_string_rejected_before_decoder (test_guard.Guards) ... ok
+test_invalid_dimensions_can_reach_error_decoder (test_guard.Guards) ... ok
+test_large_dimensions_rejected_before_decoder (test_guard.Guards) ... ok
+test_lossless_compare_catches_last_byte (test_guard.Guards) ... ok
+test_nonzero_retained (test_guard.Guards) ... ok
+test_output_limit (test_guard.Guards) ... ok
+test_pipe_eof_is_not_leader_completion (test_guard.Guards) ... ok
+test_real_release_fails_closed_before_opening_input (test_guard.Guards) ... ok
+test_rss_limit (test_guard.Guards) ... ok
+test_symlink_rejected (test_guard.Guards) ... ok
+test_wall_timeout_and_owned_cleanup (test_guard.Guards) ... ok
+
+----------------------------------------------------------------------
+Ran 24 tests in 2.343s
+
+OK (skipped=1)

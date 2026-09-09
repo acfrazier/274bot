@@ -1,0 +1,26 @@
+{
+  "archive_sha256": "cd233dceb7888607663f8d041ba80e75bf9cae63ba72c0ceb9e8fab77273b486",
+  "bytes": 1487,
+  "files": [
+    {
+      "bytes": 1259,
+      "path": "guard-tests.err",
+      "sha256": "cba417b33940437bb4732e362f3baa7d51686f66273c111cdca28d0b9887da28"
+    },
+    {
+      "bytes": 0,
+      "path": "guard-tests.out",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 666,
+      "path": "guard-tests.receipt.json",
+      "sha256": "d503b8669d706b0ab4a8fb98d7778e10d5fc3fe3795536f0a24f206eea554482"
+    },
+    {
+      "bytes": 575,
+      "path": "guards.json",
+      "sha256": "51e1e74a2f21bae0fb1a68dffefa9bf93b6a5b89a4eef151c2ab67da28d091db"
+    }
+  ]
+}
