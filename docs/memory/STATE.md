@@ -11,6 +11,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 18:17 UTC
+
+- TUI overlay25af151 APPROVED actualGrok4.5/xai140618_7af3eb. Root verified
+  transferred helper/patch identities and ran fresh Linux full92tests PASS,
+  74.175s, all3locks unchanged, owned test processes absent afterward.
+- Original failed qualification remains intact. Root combined initial12passing
+  checks, corrected client3+1 tests, separate TUI cfgtest overlay and original
+  production release build in7cc7545,54-file evidence manifest. Independent
+  Grok4.6 native-evidence review t_ffc1ef40 is ready; no live admission yet.
+- Offline preparation now8f310a7 under same-card review round3 after source
+  derivative identity/string-feature defects. Narrow design t_59c6d6f5 waits on
+  its acceptance. Coordinate experiment t_8cdb3301 remains active.
+- All root native jobs ended; original production binary is unchanged and has
+  not been installed on Concord. No live capture or real F2 released.
+
 ## Latest boundary — 2026-09-09 18:10 UTC
 
 - TUI test overlay corrected at25af151; same-card reviewer round2 is running.
