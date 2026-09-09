@@ -11,6 +11,18 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 17:12 UTC
+
+- Fixture correction7965c4c approved t_a8c976a6 by actual Grok4.5/xai run
+  20260909_130608_ec2897 (254s), independent24/24 pass. Root freezes that commit.
+- Fresh builder root nav-singleton-7965c4c-1712 runs generated qualification05
+  with verified identical compiled inputs/binaries reused from linuxref-1633.
+  Earlier failed target qualifier04 remains intact. Source archive SHA256
+  8a57f6b38f0525d3fa218022545391dd1e4f667437523b9b0376a9ae3345506d.
+  No real F1 released; Concord target qualification still required.
+- Owner preparation resumed actual Sol/openai20260909_130608_abd9b9 and remains
+  in progress on the exact derived-source proof and frozen compile.
+
 ## Latest boundary — 2026-09-09 17:06 UTC
 
 - Scheduler fixture correction completed locally and entered same-card review
