@@ -11,6 +11,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 12:17 UTC
+
+- Separate289 native trace now passed one ground displacement: scene2,WALK,
+ selected53,49 from54,50; opcode234 length5, routeOK. Independent tile logs
+ moved3094,3106 to3093,3105; directCUA before/after confirmed. Logout visible,
+ client exit0 after92.397s; PID25841 absent. Rawclient-proof-groundtrace-1212
+ manifest/loghash preserved; clientdocsc18f3a1. No production movement fix;
+ previous failedclick causes unknown. No audio/fullparity/performance acceptance.
+ Isolatedserver49444 remains; no nativeclient running. No289hostintegration.
+- t_2aabed22 actualAstra080530_dd9750 remains running generated-only extension;
+ Varrock savededge has no quest/varp/worn gates; savedship fares30 coins each.
+ Root awaits complete generated evidence and same-card review before newnative
+ qualification/release. Main274pack/frozenclient3456 remain unchanged.
+
 ## Latest boundary — 2026-09-09 12:11 UTC
 
 - Native differential report5999f85 APPROVED t_961e2009 actual Grok4.5/xai
