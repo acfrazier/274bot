@@ -11,6 +11,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 17:00 UTC
+
+- Concord qualification04 FAILED at360.013s wall limit, peak35012608B, during
+  mocked full-schedule test. F1=4/F2=114 complete; acceptance689/708 checkpoint
+  records267.570CPU/361.038cumulative wall. Remaining guards did not run. No real
+  probe or F1 authorization issued. Native session75736 exited1 and is closed.
+- Full failure receipts copied to concord-qualification-failure-04; checkpoint
+  readback root-concord-matrix-checkpoints.json. All remote partial fixtures and
+  earlier failures remain intact. No cap increased or failed result accepted.
+- Bounded test-only correction t_a8c976a6 profileluna: preserve826schedule and
+  actual focused guards, justify any arithmetic-fixture I/O doubles, full native
+  qualifier still required; same-card reviewer before target follow-up. No real
+  scheduler/production changes authorized. Sol owner preparation remains active.
+
 ## Latest boundary — 2026-09-09 16:52 UTC
 
 - Reference admission t_00284081 APPROVED038313e, actualGrok4.5/xai
