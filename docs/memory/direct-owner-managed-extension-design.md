@@ -312,8 +312,23 @@ This mode is Linux-only, so `run_diagnostic` closes the otherwise unowned interv
 inside `Popen` with POSIX signal masking rather than a second launcher. Before
 spawn it installs direct-mode SIGTERM/SIGINT handlers, snapshots its existing
 direct-child PID/start identities, and blocks those signals with
-`signal.pthread_sigmask`. It records `spawn_before_monotonic_s` immediately before
-`Popen`. On return it assigns the `Popen` handle, records
+`signal.pthread_sigmask`, retaining the returned pre-block mask and the previous
+signal dispositions. Admission requires SIGTERM and SIGINT to be unblocked in
+that pre-block mask; otherwise it fails before spawn because soft cleanup could
+not be proved. It records `spawn_before_monotonic_s` immediately before `Popen`.
+
+The direct-mode POSIX `preexec_fn` composes the existing PTY session setup with
+child-only signal restoration. While SIGTERM/SIGINT are still blocked, the child
+restores their pre-install dispositions; as the final step before returning from
+`preexec_fn`, it calls `signal.pthread_sigmask(signal.SIG_SETMASK,
+pre_block_mask)`. Thus the frontend exec inherits the launcher's original
+unblocked mask, not the parent's temporary registration mask. Any child-side
+restoration error fails `Popen` and enters the partial-spawn accounting below.
+The child restoration changes only the forked child's mask and dispositions: the
+parent keeps the direct-mode handlers and SIGTERM/SIGINT blocked through durable
+registration and handoff.
+
+On return `run_diagnostic` assigns the `Popen` handle, records
 `spawn_after_monotonic_s`, samples the new child's Linux start identity, and puts
 the handle/PID/identity into the cleanup state. It keeps the signals blocked until
 the initial handoff in section 7.2 is durable, then restores the old mask. A stop
@@ -611,6 +626,17 @@ not use a real account, server, cache, PTY login, or network fixture.
   that child is cleaned. Raise after partial spawn with zero, one, and multiple
   new direct-child candidates; clean only the unique executable/parent/identity
   match and otherwise preserve `orphan_risk` without signaling a guessed PID.
+- In generated Linux subprocess fixtures, inspect `/proc/<pid>/status` and prove
+  the real child does not inherit the parent's temporary SIGTERM/SIGINT block.
+  Send SIGTERM and SIGINT in separate cases after spawn and prove each child
+  responds promptly without the hard-kill stage. Inject an already-blocked
+  pre-block mask and prove admission fails before `Popen`.
+- Hold the parent inside `Popen`, deliver a pending parent SIGTERM/SIGINT in
+  separate cases, and prove the child-side mask restoration does not unblock the
+  parent: only after durable PID/start-identity handoff may the parent handler run
+  and clean that registered child. Also inject child restoration failure and
+  require the partial-spawn cleanup/`orphan_risk` receipt rather than a guessed
+  signal.
 - Make the first/any later frontend sample absent, malformed, slow, stale, or
   identity-changing; assert one failure and no retry.
 - Exit the frontend normally while `run_diagnostic` is still closing PTY/readers,
