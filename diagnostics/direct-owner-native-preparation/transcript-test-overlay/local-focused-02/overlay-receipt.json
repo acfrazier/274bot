@@ -1,0 +1,437 @@
+{
+  "all_requested_passed": true,
+  "cache_fixtures": {
+    "empty": {
+      "files": {},
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/generated-cache-fixtures/empty"
+    },
+    "prepopulated": {
+      "files": {
+        "config": {
+          "bytes": 68,
+          "sha256": "eb4d8ed6ef9eb68ea6e67b1bf0b5f3911990a4adbf029410249d0fc257be9629"
+        }
+      },
+      "generated_loc_count": 13,
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/generated-cache-fixtures/prepopulated"
+    }
+  },
+  "inputs": {
+    "archive": {
+      "bytes": 5075876,
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/artifact/frozen/frozen-direct-owner-source.tar.gz",
+      "sha256": "2c36d254c37c5ed56a55f78728357296d62be602f8653ed9ec041cd37d099d5d"
+    },
+    "coverage_helper": {
+      "bytes": 24072,
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/stage_coverage_overlay.py",
+      "sha256": "6e1aab8eae3bd217f1f2b320f8b1b45e7a8fae924563dd7c74449ed4af5a3082"
+    },
+    "coverage_patch": {
+      "bytes": 10143,
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/coverage-test-only.patch",
+      "sha256": "dcb84047157f75c7ad21868b72eb7c3434cb818e8ba3e4b732f6b40d435c1b6e"
+    },
+    "manifest": {
+      "bytes": 327668,
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/artifact/frozen/frozen-source-manifest.json",
+      "sha256": "ca69e70352c5f6f8d1c9db026959af6ba8fd64886be533a0095c3ca94bb5732e"
+    },
+    "transcript_patch": {
+      "bytes": 2292,
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/transcript-test-only.patch",
+      "sha256": "1e5ac15b25d113a180f8212fdd282bd63d76e79c14aa200560c2184106deb995"
+    },
+    "tui_patch": {
+      "bytes": 3091,
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/tui-test-overlay/tui-test-only.patch",
+      "sha256": "3bf08949fee5f44a2c6dc82525004a9cc0f47759526d43bda6f77cc9f33a51e4"
+    }
+  },
+  "limitations": [
+    "The only new source delta is an integration test under crates/host-play/tests.",
+    "The committed golden and all equality assertions remain byte-for-byte unchanged.",
+    "Generated cache fixtures contain no private or ambient cache data.",
+    "A macOS run is local generated evidence, not native Linux qualification.",
+    "No frontend, account, vault, server, live test, or production binary is run.",
+    "The separate Linux GPU texture brightness failure is outside this overlay."
+  ],
+  "live_qualified": false,
+  "locks": [
+    {
+      "phase": "after-transcript-stage",
+      "verified": {
+        "Cargo.lock": {
+          "bytes": 173350,
+          "sha256": "03059d02f8274c8fc9cd7e2f69a48f317e3f44417570ecf4730b31710f8d4b83"
+        },
+        "docs/memory/diagnostics/linux-gpu-shade-probe/Cargo.lock": {
+          "bytes": 45750,
+          "sha256": "d0285dae7f5cef20edf41cd8473141767d33b5c82e1a943c97cae4789ae8e41a"
+        },
+        "vendor/fr-client-rust/Cargo.lock": {
+          "bytes": 83056,
+          "sha256": "015530e3685e8175fe5ec12b41cf37a40ee116557d575cd38b6852926ec47cc7"
+        }
+      }
+    },
+    {
+      "phase": "after-transcript-tests",
+      "verified": {
+        "Cargo.lock": {
+          "bytes": 173350,
+          "sha256": "03059d02f8274c8fc9cd7e2f69a48f317e3f44417570ecf4730b31710f8d4b83"
+        },
+        "docs/memory/diagnostics/linux-gpu-shade-probe/Cargo.lock": {
+          "bytes": 45750,
+          "sha256": "d0285dae7f5cef20edf41cd8473141767d33b5c82e1a943c97cae4789ae8e41a"
+        },
+        "vendor/fr-client-rust/Cargo.lock": {
+          "bytes": 83056,
+          "sha256": "015530e3685e8175fe5ec12b41cf37a40ee116557d575cd38b6852926ec47cc7"
+        }
+      }
+    }
+  ],
+  "native_linux_qualified": false,
+  "original_ambient_dependence_exposed": true,
+  "original_probe_steps": [
+    {
+      "cache_condition": "empty",
+      "cleanup": {
+        "group_absent": true,
+        "signals": []
+      },
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "host-play",
+        "--test",
+        "snapshot_frame_equivalence",
+        "transcript_matches_golden_and_peer_feature_build",
+        "--features",
+        "memory-profile-no-alloc",
+        "--",
+        "--exact",
+        "--test-threads=1"
+      ],
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/reviewed-base-stage/derived-source",
+      "environment": {
+        "BOT_CPU": "1",
+        "BOT_MEMORY_OWNER_CAPTURE": "0",
+        "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/target",
+        "R274_TEST_FORCE_NO_GPU": null,
+        "SNAPSHOT_FRAME_FIXTURE_CACHE_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/generated-cache-fixtures/empty",
+        "removed_live_inputs": true
+      },
+      "exit": 101,
+      "expected_failure": true,
+      "expected_loc_id": 0,
+      "expected_loc_id_observed": true,
+      "failures": [
+        "transcript_matches_golden_and_peer_feature_build"
+      ],
+      "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/logs/original-empty-ambient-probe.log",
+      "log_bytes": 43308,
+      "log_sha256": "4dcfb5aea2ba50273a54f603f103ceaf16303ebe451fd53b0695a1332c20f2a8",
+      "name": "original-empty-ambient-probe",
+      "probe_test_sha256": "f4f81fd8cff139a77396af44e24c82cfb8ec2cd2ff1ac93f714b3db5d660fc63",
+      "test_results": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.02s"
+      ],
+      "timed_out": false,
+      "timeout_s": 900,
+      "wall_s": 160.84560995799998
+    },
+    {
+      "cache_condition": "prepopulated",
+      "cleanup": {
+        "group_absent": true,
+        "signals": []
+      },
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "host-play",
+        "--test",
+        "snapshot_frame_equivalence",
+        "transcript_matches_golden_and_peer_feature_build",
+        "--features",
+        "memory-profile-no-alloc",
+        "--",
+        "--exact",
+        "--test-threads=1"
+      ],
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/reviewed-base-stage/derived-source",
+      "environment": {
+        "BOT_CPU": "1",
+        "BOT_MEMORY_OWNER_CAPTURE": "0",
+        "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/target",
+        "R274_TEST_FORCE_NO_GPU": null,
+        "SNAPSHOT_FRAME_FIXTURE_CACHE_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/generated-cache-fixtures/prepopulated",
+        "removed_live_inputs": true
+      },
+      "exit": 101,
+      "expected_failure": true,
+      "expected_loc_id": 13,
+      "expected_loc_id_observed": true,
+      "failures": [
+        "transcript_matches_golden_and_peer_feature_build"
+      ],
+      "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/logs/original-prepopulated-ambient-probe.log",
+      "log_bytes": 29455,
+      "log_sha256": "aac63c45524191c5499c52695572ffd3838ae3220c7b65c481701e4cfd0ec704",
+      "name": "original-prepopulated-ambient-probe",
+      "probe_test_sha256": "f4f81fd8cff139a77396af44e24c82cfb8ec2cd2ff1ac93f714b3db5d660fc63",
+      "test_results": [
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.01s"
+      ],
+      "timed_out": false,
+      "timeout_s": 900,
+      "wall_s": 1.5878412080000146
+    }
+  ],
+  "performance_qualified": false,
+  "platform": {
+    "machine": "arm64",
+    "release": "24.6.0",
+    "system": "Darwin"
+  },
+  "post_test_contract": {
+    "changed_path": "crates/host-play/tests/snapshot_frame_equivalence.rs",
+    "full_golden_equality_retained": true,
+    "golden_sha256": "783a7d5077829887147240a17545b69351ad2938c7304785489c899fb2dd81d4",
+    "identity": {
+      "derived_members_verified": [
+        "crates/api/src/owner_capture.rs",
+        "crates/host-play/src/owner_capture.rs",
+        "crates/host-play/src/owner_capture_output.rs",
+        "crates/host-play/tests/snapshot_frame_equivalence.rs",
+        "crates/host/src/owner_capture.rs",
+        "crates/tui/src/bin.rs",
+        "vendor/fr-client-rust/crates/client/src/core/world_owner_capture.rs"
+      ],
+      "original_members_verified": 1117,
+      "source_member_count": 1124
+    },
+    "integration_test_only": true,
+    "peer_feature_equality_retained": true,
+    "production_or_live_binary_source_changed": false,
+    "test_after_sha256": "90abb21d1a3ec7f91c6bcffc59dd9312ae5d962a08c9d4d59a2f02a09ebc5d66",
+    "test_before_sha256": "4fd5aa58f64c555ed99657d0b37ccf65769fd3513b294a3fccbbd90a0ccab39a",
+    "verified": true
+  },
+  "prepared": true,
+  "requested_step_count": 4,
+  "schema": "direct-owner-transcript-test-overlay-v1",
+  "source": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/reviewed-base-stage/derived-source",
+  "source_member_count": 1124,
+  "source_only_contract": {
+    "changed_path": "crates/host-play/tests/snapshot_frame_equivalence.rs",
+    "full_golden_equality_retained": true,
+    "golden_sha256": "783a7d5077829887147240a17545b69351ad2938c7304785489c899fb2dd81d4",
+    "identity": {
+      "derived_members_verified": [
+        "crates/api/src/owner_capture.rs",
+        "crates/host-play/src/owner_capture.rs",
+        "crates/host-play/src/owner_capture_output.rs",
+        "crates/host-play/tests/snapshot_frame_equivalence.rs",
+        "crates/host/src/owner_capture.rs",
+        "crates/tui/src/bin.rs",
+        "vendor/fr-client-rust/crates/client/src/core/world_owner_capture.rs"
+      ],
+      "original_members_verified": 1117,
+      "source_member_count": 1124
+    },
+    "integration_test_only": true,
+    "peer_feature_equality_retained": true,
+    "production_or_live_binary_source_changed": false,
+    "test_after_sha256": "90abb21d1a3ec7f91c6bcffc59dd9312ae5d962a08c9d4d59a2f02a09ebc5d66",
+    "test_before_sha256": "4fd5aa58f64c555ed99657d0b37ccf65769fd3513b294a3fccbbd90a0ccab39a",
+    "verified": true
+  },
+  "steps": [
+    {
+      "cache_condition": "empty",
+      "cleanup": {
+        "group_absent": true,
+        "signals": []
+      },
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "host-play",
+        "--test",
+        "snapshot_frame_equivalence",
+        "transcript_matches_golden_and_peer_feature_build",
+        "--features",
+        "memory-profile-no-alloc",
+        "--",
+        "--exact",
+        "--test-threads=1"
+      ],
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/reviewed-base-stage/derived-source",
+      "environment": {
+        "BOT_CPU": "1",
+        "BOT_MEMORY_OWNER_CAPTURE": "0",
+        "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/target",
+        "R274_TEST_FORCE_NO_GPU": null,
+        "SNAPSHOT_FRAME_FIXTURE_CACHE_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/generated-cache-fixtures/empty",
+        "removed_live_inputs": true
+      },
+      "exit": 0,
+      "failures": [],
+      "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/logs/snapshot-empty-feature-off.log",
+      "log_bytes": 1623,
+      "log_sha256": "ac998f468bcb22314e6ee73c11b90742b0b1c33768c387ae27f9ed7c777b7101",
+      "name": "snapshot-empty-feature-off",
+      "test_results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.01s"
+      ],
+      "timed_out": false,
+      "timeout_s": 900,
+      "wall_s": 2.749422750000008
+    },
+    {
+      "cache_condition": "empty",
+      "cleanup": {
+        "group_absent": true,
+        "signals": []
+      },
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "host-play",
+        "--test",
+        "snapshot_frame_equivalence",
+        "transcript_matches_golden_and_peer_feature_build",
+        "--features",
+        "memory-profile-no-alloc,snapshot-dedup",
+        "--",
+        "--exact",
+        "--test-threads=1"
+      ],
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/reviewed-base-stage/derived-source",
+      "environment": {
+        "BOT_CPU": "1",
+        "BOT_MEMORY_OWNER_CAPTURE": "0",
+        "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/target",
+        "R274_TEST_FORCE_NO_GPU": null,
+        "SNAPSHOT_FRAME_FIXTURE_CACHE_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/generated-cache-fixtures/empty",
+        "removed_live_inputs": true
+      },
+      "exit": 0,
+      "failures": [],
+      "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/logs/snapshot-empty-feature-on.log",
+      "log_bytes": 2733,
+      "log_sha256": "d3a0e9dbe0eb46845ef2f6d0a6f9a3aad7ef5f55ba59d376a1266885f6696f25",
+      "name": "snapshot-empty-feature-on",
+      "test_results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.01s"
+      ],
+      "timed_out": false,
+      "timeout_s": 900,
+      "wall_s": 15.445213916
+    },
+    {
+      "cache_condition": "prepopulated",
+      "cleanup": {
+        "group_absent": true,
+        "signals": []
+      },
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "host-play",
+        "--test",
+        "snapshot_frame_equivalence",
+        "transcript_matches_golden_and_peer_feature_build",
+        "--features",
+        "memory-profile-no-alloc",
+        "--",
+        "--exact",
+        "--test-threads=1"
+      ],
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/reviewed-base-stage/derived-source",
+      "environment": {
+        "BOT_CPU": "1",
+        "BOT_MEMORY_OWNER_CAPTURE": "0",
+        "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/target",
+        "R274_TEST_FORCE_NO_GPU": null,
+        "SNAPSHOT_FRAME_FIXTURE_CACHE_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/generated-cache-fixtures/prepopulated",
+        "removed_live_inputs": true
+      },
+      "exit": 0,
+      "failures": [],
+      "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/logs/snapshot-prepopulated-feature-off.log",
+      "log_bytes": 1396,
+      "log_sha256": "f42a351db620933acbf7769439833ac41ef22e200f28469252811c79e9249622",
+      "name": "snapshot-prepopulated-feature-off",
+      "test_results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.10s"
+      ],
+      "timed_out": false,
+      "timeout_s": 900,
+      "wall_s": 0.6891537500000027
+    },
+    {
+      "cache_condition": "prepopulated",
+      "cleanup": {
+        "group_absent": true,
+        "signals": []
+      },
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "host-play",
+        "--test",
+        "snapshot_frame_equivalence",
+        "transcript_matches_golden_and_peer_feature_build",
+        "--features",
+        "memory-profile-no-alloc,snapshot-dedup",
+        "--",
+        "--exact",
+        "--test-threads=1"
+      ],
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/reviewed-base-stage/derived-source",
+      "environment": {
+        "BOT_CPU": "1",
+        "BOT_MEMORY_OWNER_CAPTURE": "0",
+        "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/target",
+        "R274_TEST_FORCE_NO_GPU": null,
+        "SNAPSHOT_FRAME_FIXTURE_CACHE_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/generated-cache-fixtures/prepopulated",
+        "removed_live_inputs": true
+      },
+      "exit": 0,
+      "failures": [],
+      "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/logs/snapshot-prepopulated-feature-on.log",
+      "log_bytes": 1412,
+      "log_sha256": "29d6ef2175a9c5be5f6491bc1ec7c905af5cb2bc0016c094ed7547045c483e6f",
+      "name": "snapshot-prepopulated-feature-on",
+      "test_results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.01s"
+      ],
+      "timed_out": false,
+      "timeout_s": 900,
+      "wall_s": 0.6162787080000101
+    }
+  ]
+}

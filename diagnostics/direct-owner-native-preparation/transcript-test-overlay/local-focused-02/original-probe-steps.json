@@ -1,0 +1,102 @@
+[
+  {
+    "cache_condition": "empty",
+    "cleanup": {
+      "group_absent": true,
+      "signals": []
+    },
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "-p",
+      "host-play",
+      "--test",
+      "snapshot_frame_equivalence",
+      "transcript_matches_golden_and_peer_feature_build",
+      "--features",
+      "memory-profile-no-alloc",
+      "--",
+      "--exact",
+      "--test-threads=1"
+    ],
+    "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/reviewed-base-stage/derived-source",
+    "environment": {
+      "BOT_CPU": "1",
+      "BOT_MEMORY_OWNER_CAPTURE": "0",
+      "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/target",
+      "R274_TEST_FORCE_NO_GPU": null,
+      "SNAPSHOT_FRAME_FIXTURE_CACHE_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/generated-cache-fixtures/empty",
+      "removed_live_inputs": true
+    },
+    "exit": 101,
+    "expected_failure": true,
+    "expected_loc_id": 0,
+    "expected_loc_id_observed": true,
+    "failures": [
+      "transcript_matches_golden_and_peer_feature_build"
+    ],
+    "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/logs/original-empty-ambient-probe.log",
+    "log_bytes": 43308,
+    "log_sha256": "4dcfb5aea2ba50273a54f603f103ceaf16303ebe451fd53b0695a1332c20f2a8",
+    "name": "original-empty-ambient-probe",
+    "probe_test_sha256": "f4f81fd8cff139a77396af44e24c82cfb8ec2cd2ff1ac93f714b3db5d660fc63",
+    "test_results": [
+      "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.02s"
+    ],
+    "timed_out": false,
+    "timeout_s": 900,
+    "wall_s": 160.84560995799998
+  },
+  {
+    "cache_condition": "prepopulated",
+    "cleanup": {
+      "group_absent": true,
+      "signals": []
+    },
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "-p",
+      "host-play",
+      "--test",
+      "snapshot_frame_equivalence",
+      "transcript_matches_golden_and_peer_feature_build",
+      "--features",
+      "memory-profile-no-alloc",
+      "--",
+      "--exact",
+      "--test-threads=1"
+    ],
+    "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/reviewed-base-stage/derived-source",
+    "environment": {
+      "BOT_CPU": "1",
+      "BOT_MEMORY_OWNER_CAPTURE": "0",
+      "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/target",
+      "R274_TEST_FORCE_NO_GPU": null,
+      "SNAPSHOT_FRAME_FIXTURE_CACHE_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/generated-cache-fixtures/prepopulated",
+      "removed_live_inputs": true
+    },
+    "exit": 101,
+    "expected_failure": true,
+    "expected_loc_id": 13,
+    "expected_loc_id_observed": true,
+    "failures": [
+      "transcript_matches_golden_and_peer_feature_build"
+    ],
+    "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/logs/original-prepopulated-ambient-probe.log",
+    "log_bytes": 29455,
+    "log_sha256": "aac63c45524191c5499c52695572ffd3838ae3220c7b65c481701e4cfd0ec704",
+    "name": "original-prepopulated-ambient-probe",
+    "probe_test_sha256": "f4f81fd8cff139a77396af44e24c82cfb8ec2cd2ff1ac93f714b3db5d660fc63",
+    "test_results": [
+      "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.01s"
+    ],
+    "timed_out": false,
+    "timeout_s": 900,
+    "wall_s": 1.5878412080000146
+  }
+]

@@ -1,0 +1,152 @@
+{
+  "all_requested_passed": true,
+  "archive": {
+    "bytes": 5075876,
+    "sha256": "2c36d254c37c5ed56a55f78728357296d62be602f8653ed9ec041cd37d099d5d"
+  },
+  "archive_is_immutable_input": true,
+  "derived_identity": {
+    "derived_members_verified": [
+      "crates/api/src/owner_capture.rs",
+      "crates/host-play/src/owner_capture.rs",
+      "crates/host-play/src/owner_capture_output.rs",
+      "crates/host/src/owner_capture.rs",
+      "crates/tui/src/bin.rs",
+      "vendor/fr-client-rust/crates/client/src/core/world_owner_capture.rs"
+    ],
+    "original_members_verified": 1118,
+    "source_member_count": 1124
+  },
+  "derived_tree": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/reviewed-base-stage/derived-source",
+  "helper": {
+    "bytes": 24072,
+    "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/stage_coverage_overlay.py",
+    "sha256": "6e1aab8eae3bd217f1f2b320f8b1b45e7a8fae924563dd7c74449ed4af5a3082"
+  },
+  "limitations": [
+    "The derived source exists only for tests and must never enter a live or production build.",
+    "Failing invariant tests expose frozen production behavior; this overlay does not repair it.",
+    "A macOS result is local generated evidence, not native Linux qualification.",
+    "No frontend, account, vault, cache, server, network, or live test is accessed."
+  ],
+  "live_qualified": false,
+  "locks": [
+    {
+      "phase": "after-stage",
+      "verified": {
+        "Cargo.lock": {
+          "bytes": 173350,
+          "sha256": "03059d02f8274c8fc9cd7e2f69a48f317e3f44417570ecf4730b31710f8d4b83"
+        },
+        "docs/memory/diagnostics/linux-gpu-shade-probe/Cargo.lock": {
+          "bytes": 45750,
+          "sha256": "d0285dae7f5cef20edf41cd8473141767d33b5c82e1a943c97cae4789ae8e41a"
+        },
+        "vendor/fr-client-rust/Cargo.lock": {
+          "bytes": 83056,
+          "sha256": "015530e3685e8175fe5ec12b41cf37a40ee116557d575cd38b6852926ec47cc7"
+        }
+      }
+    },
+    {
+      "phase": "after-tests",
+      "verified": {
+        "Cargo.lock": {
+          "bytes": 173350,
+          "sha256": "03059d02f8274c8fc9cd7e2f69a48f317e3f44417570ecf4730b31710f8d4b83"
+        },
+        "docs/memory/diagnostics/linux-gpu-shade-probe/Cargo.lock": {
+          "bytes": 45750,
+          "sha256": "d0285dae7f5cef20edf41cd8473141767d33b5c82e1a943c97cae4789ae8e41a"
+        },
+        "vendor/fr-client-rust/Cargo.lock": {
+          "bytes": 83056,
+          "sha256": "015530e3685e8175fe5ec12b41cf37a40ee116557d575cd38b6852926ec47cc7"
+        }
+      }
+    }
+  ],
+  "manifest": {
+    "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/artifact/frozen/frozen-source-manifest.json",
+    "sha256": "ca69e70352c5f6f8d1c9db026959af6ba8fd64886be533a0095c3ca94bb5732e"
+  },
+  "native_linux_qualified": false,
+  "original_identity": {
+    "derived_members_verified": [],
+    "original_members_verified": 1124,
+    "source_member_count": 1124
+  },
+  "patches": [
+    {
+      "command": [
+        "patch",
+        "--batch",
+        "--forward",
+        "--strip=1",
+        "--input",
+        "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/tui-test-overlay/tui-test-only.patch"
+      ],
+      "name": "reviewed-tui-test-guard",
+      "output": "patching file 'crates/tui/src/bin.rs'\n",
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/tui-test-overlay/tui-test-only.patch",
+      "sha256": "3bf08949fee5f44a2c6dc82525004a9cc0f47759526d43bda6f77cc9f33a51e4"
+    },
+    {
+      "command": [
+        "patch",
+        "--batch",
+        "--forward",
+        "--strip=1",
+        "--input",
+        "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/coverage-test-only.patch"
+      ],
+      "name": "coverage-gap-tests",
+      "output": "patching file 'crates/api/src/owner_capture.rs'\npatching file 'crates/host/src/owner_capture.rs'\npatching file 'crates/host-play/src/owner_capture.rs'\npatching file 'crates/host-play/src/owner_capture_output.rs'\npatching file 'vendor/fr-client-rust/crates/client/src/core/world_owner_capture.rs'\n",
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/coverage-test-only.patch",
+      "sha256": "dcb84047157f75c7ad21868b72eb7c3434cb818e8ba3e4b732f6b40d435c1b6e"
+    }
+  ],
+  "platform": {
+    "machine": "arm64",
+    "release": "24.6.0",
+    "system": "Darwin"
+  },
+  "post_test_identity": {
+    "derived_members_verified": [
+      "crates/api/src/owner_capture.rs",
+      "crates/host-play/src/owner_capture.rs",
+      "crates/host-play/src/owner_capture_output.rs",
+      "crates/host/src/owner_capture.rs",
+      "crates/tui/src/bin.rs",
+      "vendor/fr-client-rust/crates/client/src/core/world_owner_capture.rs"
+    ],
+    "original_members_verified": 1118,
+    "source_member_count": 1124
+  },
+  "prepared": true,
+  "production_source_modified": false,
+  "schema": "direct-owner-coverage-overlay-v1",
+  "steps": [],
+  "test_only_contract": {
+    "changed_paths": [
+      "crates/api/src/owner_capture.rs",
+      "crates/host-play/src/owner_capture.rs",
+      "crates/host-play/src/owner_capture_output.rs",
+      "crates/host/src/owner_capture.rs",
+      "crates/tui/src/bin.rs",
+      "vendor/fr-client-rust/crates/client/src/core/world_owner_capture.rs"
+    ],
+    "coverage_changes_inside_existing_cfg_test_modules": true,
+    "derived_hashes": {
+      "crates/api/src/owner_capture.rs": "5d91a1a70dcf1b1954931cc168d0344c1b6e010dfb2016e5d01244e71a052a06",
+      "crates/host-play/src/owner_capture.rs": "b758ca4740f3210a411b0b4643d13f6589d98b6ebbadb40bb70bd0901f29ee2a",
+      "crates/host-play/src/owner_capture_output.rs": "59421d88f652236c2c1aa4757c3b6c77632a47752ac82a98f8febdae19f33c3e",
+      "crates/host/src/owner_capture.rs": "138a88380bcebc078c571e13be21f382d79e2316fc49b2bc9941ad60c4ea438e",
+      "crates/tui/src/bin.rs": "aee97345c86cff0eb3253ef56b3e64fd123991f57bebbe5fcb750d899839e28c",
+      "vendor/fr-client-rust/crates/client/src/core/world_owner_capture.rs": "7b572b26ada4e8135d0513975678106285e8f2a3b3d36d7a5cfe8ca65f765599"
+    },
+    "non_test_behavior_change_authorized": false,
+    "tui_guard_cfg_test_only": true,
+    "verified": true
+  }
+}

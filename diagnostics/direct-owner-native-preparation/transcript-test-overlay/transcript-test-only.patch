@@ -1,0 +1,60 @@
+diff --git a/crates/host-play/tests/snapshot_frame_equivalence.rs b/crates/host-play/tests/snapshot_frame_equivalence.rs
+--- a/crates/host-play/tests/snapshot_frame_equivalence.rs
++++ b/crates/host-play/tests/snapshot_frame_equivalence.rs
+@@ -18,7 +18,7 @@
+ use api::snapshot::{GameSnapshot, WidgetView};
+ use client::client::{Client, ClientConfig};
+ use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
+-use client::config::LocType;
++use client::config::{Cache, LocType};
+ use client::dash3d::ClientPlayer;
+ use client::io::ServerProt;
+ use host::{drain_and_rebuild_snapshot, Pump};
+@@ -27,11 +27,26 @@
+ use std::path::PathBuf;
+ use std::sync::Arc;
+ 
++const GOLDEN_FIRST_LOC_ID: usize = 4_671;
++
++fn fixture_cache_dir() -> PathBuf {
++    std::env::var_os("SNAPSHOT_FRAME_FIXTURE_CACHE_DIR")
++        .map(PathBuf::from)
++        .unwrap_or_else(|| {
++            PathBuf::from(std::env::var_os("CARGO_TARGET_DIR").unwrap_or_else(|| {
++                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
++                    .join("../../target-frame-eq")
++                    .into_os_string()
++            }))
++            .join("snapshot-frame-generated-cache")
++        })
++}
++
+ fn cfg() -> ClientConfig {
+     ClientConfig {
+         host: "127.0.0.1".into(),
+         port: 43594,
+-        cache_dir: "/tmp".into(),
++        cache_dir: fixture_cache_dir().display().to_string(),
+         members: true,
+         lowmem: false,
+     }
+@@ -47,7 +62,18 @@
+ 
+ /// Deterministic client: widgets + side tabs + one loc (matches api snapshot_dedup_proto plant).
+ fn frame_client() -> Client {
+-    let mut c = Client::new(cfg());
++    // The golden's loc ids are fixture data, not a property of whichever
++    // cache happens to exist on the test host. Inject a generated table with
++    // deliberate index-aligned ids; `from_shared` also skips cache unpack and
++    // the `/crc` probe while retaining the production host constructor.
++    let mut cache = Cache::default();
++    cache.locs = (0..GOLDEN_FIRST_LOC_ID)
++        .map(|id| LocType {
++            id: id as i32,
++            ..LocType::default()
++        })
++        .collect();
++    let mut c = Client::from_shared(cfg(), Arc::new(cache), Arc::new(Vec::new()), Vec::new());
+     plant_populated(&mut c);
+     c
+ }

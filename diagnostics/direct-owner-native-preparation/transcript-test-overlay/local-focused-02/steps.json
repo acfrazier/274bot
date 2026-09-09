@@ -1,0 +1,178 @@
+[
+  {
+    "cache_condition": "empty",
+    "cleanup": {
+      "group_absent": true,
+      "signals": []
+    },
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "-p",
+      "host-play",
+      "--test",
+      "snapshot_frame_equivalence",
+      "transcript_matches_golden_and_peer_feature_build",
+      "--features",
+      "memory-profile-no-alloc",
+      "--",
+      "--exact",
+      "--test-threads=1"
+    ],
+    "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/reviewed-base-stage/derived-source",
+    "environment": {
+      "BOT_CPU": "1",
+      "BOT_MEMORY_OWNER_CAPTURE": "0",
+      "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/target",
+      "R274_TEST_FORCE_NO_GPU": null,
+      "SNAPSHOT_FRAME_FIXTURE_CACHE_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/generated-cache-fixtures/empty",
+      "removed_live_inputs": true
+    },
+    "exit": 0,
+    "failures": [],
+    "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/logs/snapshot-empty-feature-off.log",
+    "log_bytes": 1623,
+    "log_sha256": "ac998f468bcb22314e6ee73c11b90742b0b1c33768c387ae27f9ed7c777b7101",
+    "name": "snapshot-empty-feature-off",
+    "test_results": [
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.01s"
+    ],
+    "timed_out": false,
+    "timeout_s": 900,
+    "wall_s": 2.749422750000008
+  },
+  {
+    "cache_condition": "empty",
+    "cleanup": {
+      "group_absent": true,
+      "signals": []
+    },
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "-p",
+      "host-play",
+      "--test",
+      "snapshot_frame_equivalence",
+      "transcript_matches_golden_and_peer_feature_build",
+      "--features",
+      "memory-profile-no-alloc,snapshot-dedup",
+      "--",
+      "--exact",
+      "--test-threads=1"
+    ],
+    "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/reviewed-base-stage/derived-source",
+    "environment": {
+      "BOT_CPU": "1",
+      "BOT_MEMORY_OWNER_CAPTURE": "0",
+      "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/target",
+      "R274_TEST_FORCE_NO_GPU": null,
+      "SNAPSHOT_FRAME_FIXTURE_CACHE_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/generated-cache-fixtures/empty",
+      "removed_live_inputs": true
+    },
+    "exit": 0,
+    "failures": [],
+    "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/logs/snapshot-empty-feature-on.log",
+    "log_bytes": 2733,
+    "log_sha256": "d3a0e9dbe0eb46845ef2f6d0a6f9a3aad7ef5f55ba59d376a1266885f6696f25",
+    "name": "snapshot-empty-feature-on",
+    "test_results": [
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.01s"
+    ],
+    "timed_out": false,
+    "timeout_s": 900,
+    "wall_s": 15.445213916
+  },
+  {
+    "cache_condition": "prepopulated",
+    "cleanup": {
+      "group_absent": true,
+      "signals": []
+    },
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "-p",
+      "host-play",
+      "--test",
+      "snapshot_frame_equivalence",
+      "transcript_matches_golden_and_peer_feature_build",
+      "--features",
+      "memory-profile-no-alloc",
+      "--",
+      "--exact",
+      "--test-threads=1"
+    ],
+    "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/reviewed-base-stage/derived-source",
+    "environment": {
+      "BOT_CPU": "1",
+      "BOT_MEMORY_OWNER_CAPTURE": "0",
+      "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/target",
+      "R274_TEST_FORCE_NO_GPU": null,
+      "SNAPSHOT_FRAME_FIXTURE_CACHE_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/generated-cache-fixtures/prepopulated",
+      "removed_live_inputs": true
+    },
+    "exit": 0,
+    "failures": [],
+    "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/logs/snapshot-prepopulated-feature-off.log",
+    "log_bytes": 1396,
+    "log_sha256": "f42a351db620933acbf7769439833ac41ef22e200f28469252811c79e9249622",
+    "name": "snapshot-prepopulated-feature-off",
+    "test_results": [
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.10s"
+    ],
+    "timed_out": false,
+    "timeout_s": 900,
+    "wall_s": 0.6891537500000027
+  },
+  {
+    "cache_condition": "prepopulated",
+    "cleanup": {
+      "group_absent": true,
+      "signals": []
+    },
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "-p",
+      "host-play",
+      "--test",
+      "snapshot_frame_equivalence",
+      "transcript_matches_golden_and_peer_feature_build",
+      "--features",
+      "memory-profile-no-alloc,snapshot-dedup",
+      "--",
+      "--exact",
+      "--test-threads=1"
+    ],
+    "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/reviewed-base-stage/derived-source",
+    "environment": {
+      "BOT_CPU": "1",
+      "BOT_MEMORY_OWNER_CAPTURE": "0",
+      "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/target",
+      "R274_TEST_FORCE_NO_GPU": null,
+      "SNAPSHOT_FRAME_FIXTURE_CACHE_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/generated-cache-fixtures/prepopulated",
+      "removed_live_inputs": true
+    },
+    "exit": 0,
+    "failures": [],
+    "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/transcript-test-overlay/local-focused-02/logs/snapshot-prepopulated-feature-on.log",
+    "log_bytes": 1412,
+    "log_sha256": "29d6ef2175a9c5be5f6491bc1ec7c905af5cb2bc0016c094ed7547045c483e6f",
+    "name": "snapshot-prepopulated-feature-on",
+    "test_results": [
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.01s"
+    ],
+    "timed_out": false,
+    "timeout_s": 900,
+    "wall_s": 0.6162787080000101
+  }
+]
