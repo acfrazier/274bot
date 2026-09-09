@@ -11,6 +11,19 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 22:41 UTC
+
+- Root issued runtime build manifest2869ec97 and ran reviewed direct verifier on
+  actual Concord inputs: binary392dbecc, nav/flags/catalog, all4 lineage artifacts,
+  both clean diagnostic HEADs and source digests pass. Controller69 source files
+  match07b5b29 outside the production checkout. Downloaded result55a1e3c8 verified.
+- Evidence: diagnostics/direct-owner-native-preparation/root-runtime-manifest-01/.
+  Runtime root admission-01 contains the exact controller and manifest. No app
+  launch or private-account/host-health admission; fresh private receipts and live
+  preflight still required. This is file/source binding, not live acceptance.
+- Native navigation counting builds and generated-clean passed; generated-counting
+  remains running in the existing builder workflow. No CF1/performance release.
+
 ## Latest boundary — 2026-09-09 22:38 UTC
 
 - Native Windows controller import/contract check passed: five production modules
