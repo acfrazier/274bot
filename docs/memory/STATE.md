@@ -11,6 +11,28 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 01:26 UTC
+
+- Saved-prefix symbol audit/design01524bc APPROVED actual Grok4.5/xai session
+  20260908_212052_208a07, t_29a858c3. Root reran its seven selector tests and full
+  bounded audit; five output hashes reproduce. Frozen source shows existing nav
+  sharing and packed cells; supplemental call paths do not prove per-instance
+  ownership, source-line recovery, epoch overlap or RSS causation.
+- Root explicitly released tooling implementation t_c20cf6f3 under Luna. It is
+  running: standalone offline 32x32 nav tile census, exact decoder, full face/bit
+  values on four planes, bounded output and owned-process guard fixtures. Fixed
+  16MiB hypothetical element-storage threshold; no tile-size search. This card
+  cannot run the real pack, change runtime representation or access remote hosts.
+  Same-card Grok4.5 review, Linux build/guard qualification and root one-census
+  release remain required before actual input execution.
+- Root read-only local prerequisite: /Users/acfrazier/.274bot/274bot.navpack is
+  73438581 bytes and SHA2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30,
+  matching captured input. No copy or census has run. The diagnostic is intended
+  to reject or select a future representation design, not establish a saving.
+- 289 Ht_34667a70 continues production-path byte goldens for all82 outbound rows.
+  Focused mouse, login-reset, social and action tests have passed during work;
+  full suite/contract, report, task review and authentic live/finalGrok4.6 remain.
+
 ## Latest boundary — 2026-09-09 01:11 UTC
 
 - Native production-prefix report f22560a APPROVED t_04537ad7 actual
