@@ -5,3 +5,6 @@ run-*/
 guards-*/
 test-*/
 frozen-host-context.txt
+sharded-run-*/
+sharded-guards-*/
+sharded-test-*/

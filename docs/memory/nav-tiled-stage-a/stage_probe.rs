@@ -398,6 +398,10 @@ pub fn run() {
         }
     });
     drop(requests);
+    // Preserve execution order outside all timing. Formatting and the copy are
+    // post-route observer work; the original duration endpoint is unchanged.
+    let raw_durations = format!("{:?}", durations);
+    assert!(raw_durations.len() + 16384 <= 256 * 1024, "raw output bound");
     durations.sort_unstable();
     let p99 = durations[(durations.len() * 99).div_ceil(100) - 1];
     drop(durations);
@@ -412,5 +416,5 @@ pub fn run() {
     drop(weak);
     event("post_drop", 0, 0, begin);
     let diagnostic = cfg!(feature = "stage-counting");
-    println!("{{\"summary\":true,\"diagnostic\":{diagnostic},\"input_bytes\":{input_len},\"startup_peak_rss_bytes\":{startup_peak},\"logical_cells\":{cells},\"layout\":{:?},\"lookup_count\":{},\"lookup_checksum\":{lookup_sum},\"narrow_checksum\":{narrow_sum},\"narrow_allocations\":{},\"narrow_requested_bytes\":{},\"lookup_including_observer_allocations\":{},\"route_p99_ns\":{p99},\"lane_cpu_ns\":{:?},\"aggregate\":{},\"process_cpu_ns\":{},\"process_peak_rss_bytes\":{}}}",layout,cells.min(65536)*8*3,narrow_after[0]-narrow_before[0],narrow_after[2]-narrow_before[2],after[0]-before[0],lane_cpu,aggregate.json(),cpu(),peak());
+    println!("{{\"summary\":true,\"raw_schema\":\"stage-a-raw-v1\",\"raw_order\":\"sweep-row-lane/8/3\",\"raw_elapsed_ns\":{raw_durations},\"diagnostic\":{diagnostic},\"input_bytes\":{input_len},\"startup_peak_rss_bytes\":{startup_peak},\"logical_cells\":{cells},\"layout\":{:?},\"lookup_count\":{},\"lookup_checksum\":{lookup_sum},\"narrow_checksum\":{narrow_sum},\"narrow_allocations\":{},\"narrow_requested_bytes\":{},\"lookup_including_observer_allocations\":{},\"route_p99_ns\":{p99},\"lane_cpu_ns\":{:?},\"aggregate\":{},\"process_cpu_ns\":{},\"process_peak_rss_bytes\":{}}}",layout,cells.min(65536)*8*3,narrow_after[0]-narrow_before[0],narrow_after[2]-narrow_before[2],after[0]-before[0],lane_cpu,aggregate.json(),cpu(),peak());
 }
