@@ -1,0 +1,108 @@
+{
+  "tool_commit": "a44a930e0b2a8bf546458fb160daa061c22a3dce",
+  "scope": "fresh native generated coordinate differential qualification only; no private input or real release",
+  "binding_sha256": "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb",
+  "files": [
+    {
+      "path": "host/docs/memory/nav-tiled-differential/README.md",
+      "bytes": 11630,
+      "sha256": "2c5ab6704c5f6b07315b062d589a67cd0ac207f6978051053ba5d428b3069913"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-differential/audit.py",
+      "bytes": 8896,
+      "sha256": "672fd1bc1cad3bf90b5b8798608da855535cfe49c7db28d33ba72c339f90e81f"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-differential/check_limits.py",
+      "bytes": 520,
+      "sha256": "d8c923d64659722f310f4a616ccb5f0ccff7255ba2b6db86302d0d2eb20cc875"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-differential/final-tests.txt",
+      "bytes": 1705,
+      "sha256": "befb73581f7e04e4fa970285c7fb801bde99ee9eb82cef38ef71b934d7f19574"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-differential/generate.py",
+      "bytes": 8483,
+      "sha256": "f51c88b73186b9e7a50ea45494cc160523339d2be9c6e10f8134d7de05bdd784"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-differential/harness.py",
+      "bytes": 35936,
+      "sha256": "e6c3e1a0456bb63406372c715fca36b8f8038ea68430a8fa217a3efbea413d9a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-differential/probe.rs",
+      "bytes": 18952,
+      "sha256": "ee91e2370d04de8a1c9b9d55eaf9cbb3c8bbd9d0153b4748208fc50656e40cd8"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-differential/propose_extension.py",
+      "bytes": 6525,
+      "sha256": "baf4b24dfc3eb8d8c5d0c6bac7855338d5abcfd2e3c8577977aa6fa9bb7c7fc6"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-differential/receipt_summary.py",
+      "bytes": 575,
+      "sha256": "23e43f7fee2885e61538d9f2218aca7a2a32c7def1b28813eaa164055f9a7300"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-differential/test_admission.py",
+      "bytes": 10010,
+      "sha256": "f46f4c7c76cee56d83501c6f06cd138de6d287aeb065a8e39c60a2ff7a0e6066"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-differential/test_extension.py",
+      "bytes": 4861,
+      "sha256": "6b60f4d6d4a987772245abb4caf69ce0e0f1a65cf35ead36c93accacd98331b0"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-differential/test_guard.py",
+      "bytes": 6885,
+      "sha256": "1395d7c943d573536ae7c3c4a0cbddecc2781cc2b0b1711788c5486007cc4930"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/source_binding.py",
+      "bytes": 5506,
+      "sha256": "004b1ee9fd8958ef1097bda5b2546766b31de00e0a4b197f49687c95778888c9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-source-binding.json",
+      "bytes": 856,
+      "sha256": "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb"
+    },
+    {
+      "path": "git-objects/client.pack",
+      "bytes": 669396,
+      "sha256": "b5ad4fa3f27f763ebba26a4e5d45a82f335b14c9434676d5f5ba511f2b974a3a"
+    },
+    {
+      "path": "git-objects/coordinate-overlay.pack",
+      "bytes": 15308,
+      "sha256": "43fe903cc1e334d48a287fb35328b5a2e99b2576236ab65f13503cab3b7bc0b2"
+    },
+    {
+      "path": "git-objects/host.pack",
+      "bytes": 498357,
+      "sha256": "cc589b631c8ce871ebec77c21424704b66f6bb7ab25b8f3e369cab1341c0577f"
+    },
+    {
+      "path": "git-objects/manifest.json",
+      "bytes": 71047,
+      "sha256": "141e1b298a78c72cc841b403abe0337681f6956b06aebef7368dcf27aa91eb03"
+    },
+    {
+      "path": "git-objects/qualifier-ancestor.pack",
+      "bytes": 46593,
+      "sha256": "f9c7514725ec0c2b87ae44e2c28edf8b54dbb4d8b614d9f24512a335bce39113"
+    },
+    {
+      "path": "git-objects/root-verification.json",
+      "bytes": 340,
+      "sha256": "015f0ff9c127d1e503ed442e2591f94a7960bbda0c33b2f20882fa807540ef66"
+    }
+  ],
+  "archive_sha256": "731a491be77cbff9e838cfe0b6cc4ed855235344e3bc1dd1e4393a23603ed633"
+}

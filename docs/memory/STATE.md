@@ -11,6 +11,18 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 22:59 UTC
+
+- Concord generated-clean passed after real toolchain prerequisite correction;
+  generated-counting now running in the same continuation. No private inputs.
+- Root started separate reviewed full-byte differential native generated workflow
+  at274bot-builder /home/builder/nav-coordinate-differential-a44a930-01.
+  Exact20 source/tool/pack members froma44a930+admitted binding exported; archive
+  731a491b. Guards and fresh prepare passed; separate debug builds running.
+- This qualifies the byte-comparison path needed before the fresh exact59 real
+  check. No private/real differential or CF1/performance authorization issued.
+- Admission correction t_5c2087e1 remains active; owner live hold unchanged.
+
 ## Latest boundary — 2026-09-09 22:55 UTC
 
 - Builder coordinate native audit complete:771 archive members,4 admitted binaries,
