@@ -11,6 +11,19 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 18:29 UTC
+
+- Combined native evidence APPROVED40d8491 by actualGrok4.6/xai141723_e07f5a.
+  Root rechecked all54bound files and wrote separate composite admissionb890df1
+  for the15-step generated matrix with explicit test-only TUI exception. Original
+  failed qualification and helper flags remain unchanged; live remainsfalse.
+- Review identified explicit deadline/stale-frame/slot/request coverage and
+  feature-off suites as remaining plan§6 live prerequisites. New bounded
+  t_420c2fae profileSol closes actual test gaps in a separate test-only overlay,
+  preserving production source/binary; native followup requires review first.
+- Controller design t_59c6d6f5 actualSol142324_859592 and refined navigation
+  admission/budget plan t_47ab4258 actualSol142524_b05c8b continue. No real release.
+
 ## Latest boundary — 2026-09-09 18:25 UTC
 
 - Offline owner preparation7924ae5 APPROVED actualGrok4.5/xai142123_9e285d;
