@@ -94,3 +94,29 @@ fixtures and explicit final real integrity checks, preserving all826 slots per
 matrix and existing negative mutation coverage. Production tools, limits and
 binary/source admissions remain outside its scope. Same-card independent review
 and root fresh native qualification remain required before any real release.
+
+
+## Fresh Concord qualification after reviewed fixture correction
+
+The scheduler fixture correction 113ce05 passed same-card Grok 4.5 review.
+Root packaged only its changed test_sharded.py with the four unchanged admitted
+coordinate binaries and production tools. Fresh Concord qualification 03 passed:
+guards 9.4217s, clean 203.0011s, counting 202.4357s, integration 17.9707s,
+scheduler 172.3857s. The scheduler guard itself passed all 29 tests without skips
+in 162.0534s, sampled peak 48,766,976 bytes, with hard AS active and unchanged
+300 CPU / 360 wall / 512 MiB RSS / 4 GiB AS limits. The separate four-child tiny
+generated smoke completed, and all twelve Linux reference comparisons matched.
+
+Root retained and independently read all 9,999 archive members, SHA256
+41cd71c943b11c3c899fe66693cc98dbe83e2936007eb10698fa83f161b02681,
+5,750,337 compressed bytes / 24,948,143 uncompressed bytes. The audit compares
+all measured tool bytes to 113ce05, verifies all four unchanged admission files,
+every admitted source and executable hash, raw comparisons, exact four-child
+order and guard receipts. Evidence is under
+`diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction-native-01/`.
+The root archive and audit scripts sit in its parent directory.
+
+This completes fresh native generated qualification of the coordinate candidate.
+It does not turn the earlier failed scheduler run into a pass, nor establish real
+exact-59 correctness, CF1/CF2, clean acceptance, resource savings or live owner
+readiness. Those remain separately released work.

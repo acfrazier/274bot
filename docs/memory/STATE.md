@@ -11,6 +11,18 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 23:54 UTC
+
+- Concord qualification03 COMPLETE PASS, session13659 terminal0. All five steps
+  passed; scheduler guard29tests/no skips/hardAS in162.0534s and four generated
+  smoke children completed. Root archive41cd71c9 independently audited all9,999
+  members, exact113ce05 tools, unchanged4admissions/source/binaries and12 raw
+  comparisons. See nav-coordinate-native-result-report.md. No private release yet.
+- Owner lifecycle fixture t_a6d0e3df correction16fdb97 received CHANGES REQUESTED
+  from same-card reviewer1055: helper/bindings updated but capture_contract still
+  omits release_contract. No native rerun from16fdb97. Same card returns to Luna;
+  preserve original native failure and all lifecycle assertions.
+
 ## Latest boundary — 2026-09-09 23:48 UTC
 
 - Fresh controller 9344d75 Linux qualification FAILED: 148 tests, one failure,
