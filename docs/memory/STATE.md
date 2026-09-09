@@ -11,6 +11,18 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 02:06 UTC
+
+- Census fixes d0120da are in same-card round-2 review t_c20cf6f3, actual
+  Grok4.5/xai session20260908_215658_4d2c7d. No Linux build or real pack release.
+  Root flagged hard-coded Darwin fixture expectations and normal-exit owned
+  descendant cleanup for review. Native guard qualification remains required.
+- 289 H committed0406ceb and handed the same card t_34667a70 to reviewer;
+  actual Grok4.5/xai session20260908_220159_daf89a is reviewing it. Root read
+  the final direct receipt: exit0 in188.57s,72 passing target summaries with
+  950 tests. Preserve prior full-suite exit101 and its test-only readiness
+  repair. H review, aggregate/final Grok4.6 and authentic live remain open.
+
 ## Latest boundary — 2026-09-09 01:53 UTC
 
 - Census implementation d3970d0 failed independent round-1 Grok4.5 review
