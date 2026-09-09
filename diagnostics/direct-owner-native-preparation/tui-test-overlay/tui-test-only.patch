@@ -1,0 +1,85 @@
+diff --git a/crates/tui/src/bin.rs b/crates/tui/src/bin.rs
+index 5684321..be15b5c 100644
+--- a/crates/tui/src/bin.rs
++++ b/crates/tui/src/bin.rs
+@@ -296,6 +296,8 @@ pub struct TuiSession {
+     #[cfg(feature = "memory-profile")]
+     memory: Option<host_play::memory::Run>,
+     play: Option<Play>,
++    #[cfg(test)]
++    suppress_slot_spawn: bool,
+     vault: Option<Vault>,
+     pub error: Option<String>,
+     /// All profile names (for the strip's slot list), in vault order.
+@@ -361,6 +363,11 @@ impl TuiSession {
+     fn inject_play(&mut self, play: Play) {
+         self.play = Some(play);
+     }
++
++    /// Keep preparation tests from creating workers that need a live service.
++    fn suppress_slot_spawn(&mut self) {
++        self.suppress_slot_spawn = true;
++    }
+ }
+ 
+ impl TuiSession {
+@@ -374,6 +381,8 @@ impl TuiSession {
+             #[cfg(feature = "memory-profile")]
+             memory: None,
+             play: None,
++            #[cfg(test)]
++            suppress_slot_spawn: false,
+             vault: None,
+             error: None,
+             names: Vec::new(),
+@@ -527,6 +536,10 @@ impl TuiSession {
+     /// immediately and re-handshakes after a DC only when the profile's
+     /// `auto_login` is on.
+     fn spawn(&mut self, name: &str) -> bool {
++        #[cfg(test)]
++        if self.suppress_slot_spawn {
++            return false;
++        }
+         let Some(mut profile) = self.vault.as_ref().and_then(|v| v.get(name)).cloned() else {
+             return false;
+         };
+@@ -1620,6 +1633,7 @@ ScriptRegistry.register({
+         let root = fake_rs2b0t_tree(&iso.dir);
+         iso.set_rs2b0t(&root);
+         let mut session = TuiSession::new(dummy_options());
++        session.suppress_slot_spawn();
+         session
+             .live_prepare_script(scenario::get("bone_burier").expect("registered"))
+             .expect("prepare");
+@@ -1634,10 +1648,19 @@ ScriptRegistry.register({
+             "prepare sets script_sel to the catalog card"
+         );
+         let play = session.play.as_ref().expect("play started");
+-        assert_ne!(
+-            play.script_state(&name),
+-            script::RunState::Running,
+-            "isolate is not Running yet — Start waits for the StartScript step"
++        assert!(
++            play.arm(&name).is_none(),
++            "unit fixture must not create a slot worker"
++        );
++        assert_eq!(
++            session
++                .pending_script
++                .lock()
++                .unwrap()
++                .as_ref()
++                .map(|pending| pending.slot.as_str()),
++            Some(name.as_str()),
++            "preparation stages the selected card for StartScript"
+         );
+     }
+ 
+@@ -1662,6 +1685,7 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
+         .unwrap();
+         iso.set_rs2b0t(&root);
+         let mut session = TuiSession::new(dummy_options());
++        session.suppress_slot_spawn();
+         session
+             .live_prepare_script(scenario::get("thiever").expect("registered"))
+             .expect("prepare");

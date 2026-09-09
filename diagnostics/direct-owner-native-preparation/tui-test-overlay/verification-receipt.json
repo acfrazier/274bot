@@ -1,0 +1,51 @@
+{
+  "schema": "direct-owner-tui-test-overlay-verification-v1",
+  "archive": {
+    "path": "diagnostics/direct-owner-native-preparation/artifact/frozen/frozen-direct-owner-source.tar.gz",
+    "bytes": 5075876,
+    "sha256": "2c36d254c37c5ed56a55f78728357296d62be602f8653ed9ec041cd37d099d5d",
+    "manifest_source_member_count": 1124
+  },
+  "overlay": {
+    "patch": "diagnostics/direct-owner-native-preparation/tui-test-overlay/tui-test-only.patch",
+    "patch_bytes": 3091,
+    "patch_sha256": "3bf08949fee5f44a2c6dc82525004a9cc0f47759526d43bda6f77cc9f33a51e4",
+    "changed_paths": ["crates/tui/src/bin.rs"],
+    "original_bin_sha256": "a859ca06b33066cbb55641facb7eea449317c9d3e7a6f93ff11c5787d01499d2",
+    "derived_bin_sha256": "aee97345c86cff0eb3253ef56b3e64fd123991f57bebbe5fcb750d899839e28c",
+    "diff_stat": {"insertions": 28, "deletions": 4},
+    "cfg_test_only": {
+      "field": true,
+      "helper_impl": true,
+      "spawn_branch": true,
+      "non_test_source_modified": false
+    }
+  },
+  "locks": {
+    "Cargo.lock": "03059d02f8274c8fc9cd7e2f69a48f317e3f44417570ecf4730b31710f8d4b83",
+    "vendor/fr-client-rust/Cargo.lock": "015530e3685e8175fe5ec12b41cf37a40ee116557d575cd38b6852926ec47cc7"
+  },
+  "local_test": {
+    "command": "cargo test --offline --locked -p tui --features memory-profile-no-alloc,memory-owner-capture -- --test-threads=1",
+    "exit": 0,
+    "passed": 92,
+    "failed": 0,
+    "ignored": 0,
+    "filtered_out": 0,
+    "guard_tests": [
+      "bin::tests::live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting",
+      "bin::tests::live_prepare_thiever_posts_guard_target_when_schema_empty"
+    ],
+    "log_sha256": "70b07a82eaa1677c66e1a060108e84cf1711db7be238ae51abb67599a27675cf",
+    "log_bytes": 21978,
+    "wall_seconds": 4.71,
+    "output_dir": "/private/tmp/direct-owner-tui-test-overlay-03"
+  },
+  "claims": {
+    "original_archive_unchanged": true,
+    "linux_qualified": false,
+    "live_qualified": false,
+    "production_replacement": false,
+    "native_execution": false
+  }
+}
