@@ -11,6 +11,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 19:32 UTC
+
+- Coverage e01c288 APPROVED actualGrok4.5/xai152437_fa22ae; reviewer independently
+  reran5/5 gap commands. Root accepts test-only source/assertion/environment
+  boundary; local12/12 does not itself qualify Linux or live execution.
+- Root now runs19 generated Linux gap/feature-off/feature-on commands on builder,
+  fresh root-coverage-native-01 under direct-owner-a7e112e-1738. Reviewed helper
+  and patch match e01c288 bytes; all frozen inputs verified before staging.
+- Root wrapper uses the unchanged helper staging/matrices/run_step and existing
+  owned Cargo cache, explicit native x86_64 target, fresh test source/output,
+  before/after tree/locks and separate19-step receipts. Preparation-only empty
+  staging receipt is not a full matrix. No cache/evidence deletion or live run.
+- Controller implementation t_d0c28edb and navigation tooling t_4474ac39 remain
+  active. Production release binaries remain separate from these test builds.
+
 ## Latest boundary — 2026-09-09 19:24 UTC
 
 - Independent lifecycle fidelity reviewbc53902 APPROVED design5cb6374 by actual
