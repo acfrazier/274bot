@@ -11,6 +11,14 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 20:38 UTC
+
+- Independent combined functional review t_82ed565a now RUNNING actual
+  Grok4.6/xai163753_d59927, reviewing cc0dc06 native regression evidence,
+  original GPU defect and explicit bounded TUI disposition. No live authority.
+- Controller and navigation Sol runs remain active. Root native transcript
+  work is complete and archived; no native process or new local compiler cache.
+
 ## Latest boundary — 2026-09-09 20:36 UTC
 
 - Native transcript01 COMPLETE0:2 original controls reproduce0/13 IDs;
