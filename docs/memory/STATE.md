@@ -11,6 +11,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 17:55 UTC
+
+- Root fetched exact client-lock dependencies without lock changes; rerun client
+  world owner3tests and packet integration1test PASS. Original failures retained;
+  root-client-correction-02 binds full1124source hashes and all lockfiles.
+- Initial correction01 stopped before fetch because Python guard tests emitted
+  bytecode under source. Root preserved those exact .pyc files outside source
+  with hashes; no production source changed, full source verification then passed.
+- Optimized diagnostic binary now building from ORIGINAL frozen source in
+  root-release-build-01, offline/locked/release, same feature pair. Reviewed
+  qualifier's earlier dev binary remains separate; neither is live admission.
+- Same-card TUI overlay t_08ab7a27 actualLuna/openai135115_78dc38 and coordinate
+  experiment t_8cdb3301 actualSol/openai135115_515f9f active. No real probes/capture.
+
 ## Latest boundary — 2026-09-09 17:49 UTC
 
 - F1 evidence ACCEPTED d1f7622 by actualGrok4.6/xai133212_a287ec; recommends
