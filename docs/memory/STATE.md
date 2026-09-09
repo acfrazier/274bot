@@ -11,6 +11,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 14:36 UTC
+
+- Routing resource design t_4e422f9a APPROVED6a2c566, actualGrok4.5/xai
+  session20260909_103250_a0222c. Root releases TOOLING/GENERATED qualification
+  only t_500f341e profileorch, owned diagnostic stage tree plus report
+  nav-stage-a-sharded-tooling-report.md. Exact frozen production Git sources
+  mandatory despite concurrent owner instrumentation edits in this checkout.
+- Add practical bounded storage: one verified input copy per release, no73MB
+  copy per child; preserve per-child and global output/time/CPU guards and no
+  automatic evidence deletion. No native/realF1/F2/acceptance or changed temporal
+  experiment acceptance released yet. Parent plan explicitly records differences.
+- Owner instrumentation t_ce3310e4 actualcomposer2.5fast/xai session
+  20260909_103350_5c0d31 running. Root remains responsible for client commit/
+  gitlink after same-card reviewed host+client changes and native freeze.
+
 ## Latest boundary — 2026-09-09 14:33 UTC
 
 - Direct per-bot design t_360cbcc9 APPROVED round2 at192da0d after root fixed
