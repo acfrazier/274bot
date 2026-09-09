@@ -424,7 +424,7 @@ pub fn interpreted(
     let sha = stream.finish(g)?;
     let mut definitions = serde_json::Map::new();
     for op in [b's', b'i', b't', b'a', b'S'] {
-        if defs[op as usize] > 0 || op == b'a' {
+        if defs[op as usize] > 0 {
             definitions.insert((op as char).to_string(), json!(defs[op as usize]));
         }
     }

@@ -5,6 +5,26 @@ from pathlib import Path
 
 
 class EventRecord(unittest.TestCase):
+    def test_descriptor_definition_schema_matches_reference_when_empty(self):
+        for raw_tail, interpreted_tail in (
+            (b'c 0\n', b'c 0\n'),
+            (b'c 0\nS suppression\n', b'c 0\nS suppression\n'),
+        ):
+            with self.subTest(raw_tail=raw_tail, interpreted_tail=interpreted_tail), fixture(
+                raw_tail,
+                interpreted_tail,
+                b'f; 0\n',
+            ) as entries:
+                result = pair(entries, 0, outputs=True)
+                assert result is not None
+                self.assertNotIn('a', result['first']['definitions'])
+
+    def test_unused_descriptor_definition_count_is_retained(self):
+        with fixture(b'c 0\n', b'a a 1\nc 0\n', b'f; 0\n') as entries:
+            result = pair(entries, 0, outputs=True)
+            assert result is not None
+            self.assertEqual(result['first']['definitions']['a'], 1)
+
     def test_absent_event_is_null(self):
         with fixture(b'c 0\nc a\n', b'a a 1\nc 0\nc a\n', b'f; 0\n') as entries:
             result = pair(entries, 0, outputs=True)
