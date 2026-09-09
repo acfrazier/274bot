@@ -11,6 +11,23 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 19:50 UTC
+
+- Coverage02 preserved complete failure receipt:8/9 attempted commands passed,
+  host-play snapshot_frame_equivalence8pass1fail on loc IDs0/1 versus golden4671/2.
+  Disk remained ample. Archive86a99fa4 preserves9 logs/full source; root verified
+  all1124 members, before/after identity, and owned cleanup.10 commands not run.
+- Root traced fixture Client::new(cache_dir=/tmp) plus cache.locs.len()-based IDs;
+  golden depends on ambient cache contents. New bounded t_8d078f01 profileSol
+  prepares a separate deterministic test-only fixture overlay, preserving full
+  golden/observable/peer-feature assertions and production source. Review required.
+- Root independently runs the10 remaining original commands in fresh
+  root-coverage-native-03-remainder, including feature-on host-play (no skip filter).
+  Any repeated fixture failure stays failed; remaining successes cannot establish
+  full19 qualification until both host-play suites are resolved and reviewed.
+- Controller and navigation workers continue. Builder now128GiB; both checkpoints,
+  original disk chain, release binaries and failed run artifacts remain retained.
+
 ## Latest boundary — 2026-09-09 19:43 UTC
 
 - Linux coverage01 FAILED on disk exhaustion:8 commands passed, host-play link

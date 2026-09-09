@@ -1,0 +1,70 @@
+{
+  "scope": "Failed Linux coverage02; no full native/live admission",
+  "archive": {
+    "bytes": 5318282,
+    "sha256": "86a99fa43829eafeb286bb5f6ee2e2a830d29094d2d959d3acbfd00858549ee1"
+  },
+  "source_members_verified": 1124,
+  "logs": [
+    {
+      "path": "logs/feature-off-host-play-profile.log",
+      "bytes": 47299,
+      "sha256": "5a7985d6f0413098eb91d4055f3d3245fc1820902f1f30518cd793fec65022e6"
+    },
+    {
+      "path": "logs/gap-host-play-output.log",
+      "bytes": 2994,
+      "sha256": "8fbf42a81494be9fc144ac46ebd762b0c86b4a81210de9d7f8d7532d0cb0c1a4"
+    },
+    {
+      "path": "logs/gap-host-play-terminal-deadline.log",
+      "bytes": 1277,
+      "sha256": "f3a9e827be28f9039637ef889a739154b73df67e8c35b94e7af7fb530325cbb8"
+    },
+    {
+      "path": "logs/gap-api-deadline.log",
+      "bytes": 1086,
+      "sha256": "ed6405844bed032fdcea203e2cb684d2c5ac6da7f28aefd262dd14b4d91569e7"
+    },
+    {
+      "path": "logs/feature-off-host.log",
+      "bytes": 17652,
+      "sha256": "76056f8387fb108e45ea29a81477e81622a46805848137e3f49f41f108c00ef2"
+    },
+    {
+      "path": "logs/feature-off-api.log",
+      "bytes": 13097,
+      "sha256": "09a9a4cceb0a9f7de7822074a52c7bd3105255c08ae4c43cd1aada3d3f3bf210"
+    },
+    {
+      "path": "logs/gap-host-stale-slot.log",
+      "bytes": 1401,
+      "sha256": "107dabd91f6c681daab571cde0de867beef4b0aad938e3fec0ffd136dfa6e886"
+    },
+    {
+      "path": "logs/gap-client-linked-deadline.log",
+      "bytes": 988,
+      "sha256": "ad80493acdfc0ad754f81df107e87d7c849b0f2ef0601a0c0dbdded5c6bbf935"
+    },
+    {
+      "path": "logs/feature-off-script-load.log",
+      "bytes": 25233,
+      "sha256": "b885230cfa61cd3c619a5e77cdda3719d9a19498e3e5c33eb183a6efb3cbd6fb"
+    }
+  ],
+  "completed_steps": 9,
+  "passed_steps": 8,
+  "not_run": [
+    "feature-off-tui-profile",
+    "feature-off-client-unit",
+    "feature-off-client-integration",
+    "feature-on-api",
+    "feature-on-host",
+    "feature-on-script-load",
+    "feature-on-host-play-profile",
+    "feature-on-tui-profile",
+    "feature-on-client-unit",
+    "feature-on-client-integration"
+  ],
+  "failure": "snapshot_frame_equivalence transcript mismatch: generated loc IDs versus golden"
+}
