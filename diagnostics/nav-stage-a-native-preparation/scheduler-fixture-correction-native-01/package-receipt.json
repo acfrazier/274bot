@@ -1,0 +1,37 @@
+{
+  "verified": true,
+  "archive": "native-coordinate-113ce05-concord-01.tar.gz",
+  "sha256": "a00f35f77e740f7583c64c7f847ad95dcf4f09d219acf2cb8129b66877163b74",
+  "bytes": 5974224,
+  "files": 775,
+  "uncompressed_bytes": 19538600,
+  "fixture_correction": {
+    "schema": "root-scheduler-fixture-relocation-v1",
+    "base_archive_sha256": "18e574254751f4307965bb78e91282ec545af701ae5d1d8cc60ecf07d17afe6c",
+    "base_tool_commit": "a44a930e0b2a8bf546458fb160daa061c22a3dce",
+    "tool_commit": "113ce05525cd2bd27128bd3f420cafaad76c529c",
+    "review_sha256": "82d9da44b86284da7b7772b778d77f962d143bc33dab758e6664a59e066c3fae",
+    "changed_path": "host/docs/memory/nav-tiled-stage-a/test_sharded.py",
+    "old_sha256": "c3f4251ab1258ad1987aea1d53706878d83e1d3a1aef8ab77b2cc2f864dd76c9",
+    "new_sha256": "b39ee71d0778488c09ea6e4e97a08eeb995ab195296436a20160f433cfd3ec4d",
+    "unchanged_top_level_tools": [
+      "host/docs/memory/nav-tiled-stage-a/README-sharded.md",
+      "host/docs/memory/nav-tiled-stage-a/README.md",
+      "host/docs/memory/nav-tiled-stage-a/allocator.rs",
+      "host/docs/memory/nav-tiled-stage-a/coordinate-source-binding.json",
+      "host/docs/memory/nav-tiled-stage-a/frozen_generate.py",
+      "host/docs/memory/nav-tiled-stage-a/frozen_probe.rs",
+      "host/docs/memory/nav-tiled-stage-a/frozen_support.py",
+      "host/docs/memory/nav-tiled-stage-a/proposed-manifest.json",
+      "host/docs/memory/nav-tiled-stage-a/qualify_sharded.py",
+      "host/docs/memory/nav-tiled-stage-a/sharded-proposed-manifest.json",
+      "host/docs/memory/nav-tiled-stage-a/sharded.py",
+      "host/docs/memory/nav-tiled-stage-a/source_binding.py",
+      "host/docs/memory/nav-tiled-stage-a/stage_a.py",
+      "host/docs/memory/nav-tiled-stage-a/stage_probe.rs",
+      "host/docs/memory/nav-tiled-stage-a/test_sharded_guards.py",
+      "host/docs/memory/nav-tiled-stage-a/test_stage_a.py"
+    ],
+    "scope": "same four immutable stage admissions and binaries; only generated scheduler fixture changes; fresh native qualification required; no private release"
+  }
+}

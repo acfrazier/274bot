@@ -11,6 +11,28 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 23:44 UTC
+
+- Scheduler fixture correction 113ce05 independently APPROVED by same-card
+  reviewer t_481b2857, actual Grok 4.5/xai-oauth. Root verified the new package:
+  only test_sharded.py changes; all production tools and four existing coordinate
+  admissions/binaries remain byte-identical. Package a00f35f7, 775 members.
+- Fresh Concord generated qualification is running in a new immutable root
+  /home/acfrazier/274bot-campaign/nav-coordinate-113ce05-concord-01,
+  qualification coordinate-ebf0f30-qualification-03, session 13659. Guards passed
+  in 9.4217s; generated-clean running. Do not restart. Earlier failed qualification
+  remains failed and retained. No private release or performance claim.
+- Direct-owner correction 9344d75 independently APPROVED on same card t_5c2087e1,
+  run 1053, actual Grok 4.5/xai-oauth session 20260909_193925_cc8027. Root read
+  the schema report; fresh Linux generated qualification and actual root receipt
+  preparation remain required before live launch. Native/live hold remains.
+- Operator-requested Hermes repatch completed separately: restored handoff/run-pin
+  guards on updated ecfcbb62 base, preserved websocket fix, 137 tests passed with
+  one explicit Linux-only skip on Mac, independent Grok 4.5 APPROVE. Installed
+  7f1904cb; graceful default gateway restart after workers drained reports current
+  code SHA 7f1904cbed483fbf457aa0565533fc03b89b25fe (PID 28215). Historical update
+  warning remains; no update receipt or inactive-profile state was rewritten.
+
 ## Latest boundary — 2026-09-09 23:27 UTC
 
 - Fixture correction113ce05 handed same cardt_481b2857 toreviewer. Final revision
