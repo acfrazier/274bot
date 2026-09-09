@@ -1,0 +1,2811 @@
+diff --git a/crates/host-play/src/lib.rs b/crates/host-play/src/lib.rs
+index 7dd2d50..699285a 100644
+--- a/crates/host-play/src/lib.rs
++++ b/crates/host-play/src/lib.rs
+@@ -983,9 +983,35 @@ fn dispatch_script_interact(
+                     },
+                 );
+             }
+-            InteractReq::WalkNear { x, z, level, radius, allow_teleports } => {
+-                let arm = ScriptWalkArm { here, world: world.clone(), navs: Arc::clone(navs), name: name.to_string(), state: state.clone(), bank: snapshot.bank().iter().map(|it|(it.def.id,it.count)).collect() };
+-                wrote |= arm.route_with_radius(x,z,level,FindOptions {allow_teleports,..FindOptions::default()},radius);
++            InteractReq::WalkNear {
++                x,
++                z,
++                level,
++                radius,
++                allow_teleports,
++            } => {
++                let arm = ScriptWalkArm {
++                    here,
++                    world: world.clone(),
++                    navs: Arc::clone(navs),
++                    name: name.to_string(),
++                    state: state.clone(),
++                    bank: snapshot
++                        .bank()
++                        .iter()
++                        .map(|it| (it.def.id, it.count))
++                        .collect(),
++                };
++                wrote |= arm.route_with_radius(
++                    x,
++                    z,
++                    level,
++                    FindOptions {
++                        allow_teleports,
++                        ..FindOptions::default()
++                    },
++                    radius,
++                );
+             }
+             InteractReq::WalkTo { x, z, level } => {
+                 wrote |= matches!(ix.walk(WorldTile { x, z, level }), SendResult::Sent { .. });
+@@ -2383,26 +2409,61 @@ impl ScriptWalkArm {
+     /// no player tile, no nav world, or a route/session already queued;
+     /// the worker stores the outcome on the uid's nav bot. Returns whether
+     /// the worker was spawned — not whether a path exists.
+-    fn route(&self, x: i32, z: i32, level: i32, opts: FindOptions) -> bool { self.route_with_radius(x,z,level,opts,0) }
+-    fn route_with_radius(&self, x: i32, z: i32, level: i32, mut opts: FindOptions, radius: i32) -> bool {
+-        let Some((hx, hz, hl)) = self.here else { return false; };
+-        let Some(world) = self.world.as_ref() else { return false; };
+-        let from = WorldTile { x: hx, z: hz, level: hl };
++    fn route(&self, x: i32, z: i32, level: i32, opts: FindOptions) -> bool {
++        self.route_with_radius(x, z, level, opts, 0)
++    }
++    fn route_with_radius(
++        &self,
++        x: i32,
++        z: i32,
++        level: i32,
++        mut opts: FindOptions,
++        radius: i32,
++    ) -> bool {
++        let Some((hx, hz, hl)) = self.here else {
++            return false;
++        };
++        let Some(world) = self.world.as_ref() else {
++            return false;
++        };
++        let from = WorldTile {
++            x: hx,
++            z: hz,
++            level: hl,
++        };
+         let to = WorldTile { x, z, level };
+         let token = {
+             let mut navs = self.navs.lock().unwrap();
+             let bot = navs.entry(self.name.clone()).or_default();
+-            if bot.bank_fetch.is_some() || (radius <= 0 && (bot.route.is_some() || bot.route_worker.is_some())) { return false; }
++            if bot.bank_fetch.is_some()
++                || (radius <= 0 && (bot.route.is_some() || bot.route_worker.is_some()))
++            {
++                return false;
++            }
+             let key = (to, radius, opts.allow_teleports);
+-            if bot.requested_route == Some(key) && (bot.route_worker.is_some() || bot.route.is_some()) { return true; }
+-            if let Some(ess) = bot.traveller.essence() { opts.essence = Some(ess); }
++            if bot.requested_route == Some(key)
++                && (bot.route_worker.is_some() || bot.route.is_some())
++            {
++                return true;
++            }
++            if let Some(ess) = bot.traveller.essence() {
++                opts.essence = Some(ess);
++            }
+             bot.route_generation = bot.route_generation.wrapping_add(1);
+             bot.requested_route = Some(key);
+             bot.pending_route = Some(ScriptRouteRequest {
+-                generation: bot.route_generation, world: Arc::clone(world), from, to, radius,
+-                opts, state: self.state.clone(), bank: self.bank.clone(),
++                generation: bot.route_generation,
++                world: Arc::clone(world),
++                from,
++                to,
++                radius,
++                opts,
++                state: self.state.clone(),
++                bank: self.bank.clone(),
+             });
+-            if bot.route_worker.is_some() { return true; }
++            if bot.route_worker.is_some() {
++                return true;
++            }
+             let token = Arc::new(());
+             bot.route_worker = Some(Arc::clone(&token));
+             token
+@@ -2410,30 +2471,65 @@ impl ScriptWalkArm {
+         let navs = Arc::clone(&self.navs);
+         let name = self.name.clone();
+         let worker_token = Arc::clone(&token);
+-        let spawned = thread::Builder::new().name(format!("nav-find-{name}")).spawn(move || loop {
+-            let request = {
++        let spawned = thread::Builder::new()
++            .name(format!("nav-find-{name}"))
++            .spawn(move || loop {
++                let request = {
++                    let mut all = navs.lock().unwrap();
++                    let Some(bot) = all.get_mut(&name) else {
++                        return;
++                    };
++                    if !bot
++                        .route_worker
++                        .as_ref()
++                        .is_some_and(|t| Arc::ptr_eq(t, &worker_token))
++                    {
++                        return;
++                    }
++                    let Some(request) = bot.pending_route.take() else {
++                        bot.route_worker = None;
++                        return;
++                    };
++                    request
++                };
++                #[cfg(feature = "memory-profile")]
++                memory_diagnostics::navigation(&name, || {
++                    format!(
++                        "FindStart generation={} from={:?} to={:?} radius={}",
++                        request.generation, request.from, request.to, request.radius
++                    )
++                });
++                let outcome = request.calculate();
++                #[cfg(feature = "memory-profile")]
++                memory_diagnostics::navigation(&name, || {
++                    let kind = match &outcome {
++                        RouteOutcome::Routed(_) => "Routed",
++                        RouteOutcome::BankSession { .. } => "BankSession",
++                        RouteOutcome::NoPath => "NoPath",
++                    };
++                    format!("FindEnd generation={} outcome={kind}", request.generation)
++                });
+                 let mut all = navs.lock().unwrap();
+-                let Some(bot) = all.get_mut(&name) else { return; };
+-                if !bot.route_worker.as_ref().is_some_and(|t|Arc::ptr_eq(t,&worker_token)) { return; }
+-                let Some(request) = bot.pending_route.take() else { bot.route_worker = None; return; };
+-                request
+-            };
+-            #[cfg(feature="memory-profile")]
+-            memory_diagnostics::navigation(&name,||format!("FindStart generation={} from={:?} to={:?} radius={}",request.generation,request.from,request.to,request.radius));
+-            let outcome = request.calculate();
+-            #[cfg(feature="memory-profile")]
+-            memory_diagnostics::navigation(&name,|| {
+-                let kind=match &outcome {RouteOutcome::Routed(_)=>"Routed",RouteOutcome::BankSession{..}=>"BankSession",RouteOutcome::NoPath=>"NoPath"};
+-                format!("FindEnd generation={} outcome={kind}",request.generation)
+-            });
+-            let mut all = navs.lock().unwrap();
+-            let Some(bot) = all.get_mut(&name) else { return; };
+-            if !bot.route_worker.as_ref().is_some_and(|t|Arc::ptr_eq(t,&worker_token)) { return; }
+-            bot.publish_route(request.generation, request.opts.allow_teleports, outcome);
+-        }).is_ok();
++                let Some(bot) = all.get_mut(&name) else {
++                    return;
++                };
++                if !bot
++                    .route_worker
++                    .as_ref()
++                    .is_some_and(|t| Arc::ptr_eq(t, &worker_token))
++                {
++                    return;
++                }
++                bot.publish_route(request.generation, request.opts.allow_teleports, outcome);
++            })
++            .is_ok();
+         if !spawned {
+             if let Some(bot) = self.navs.lock().unwrap().get_mut(&self.name) {
+-                if bot.route_worker.as_ref().is_some_and(|t|Arc::ptr_eq(t,&token)) {
++                if bot
++                    .route_worker
++                    .as_ref()
++                    .is_some_and(|t| Arc::ptr_eq(t, &token))
++                {
+                     bot.route_worker = None;
+                     bot.pending_route = None;
+                     bot.requested_route = None;
+@@ -2442,7 +2538,6 @@ impl ScriptWalkArm {
+         }
+         spawned
+     }
+-
+ }
+ 
+ /// One pump step of a uid's nav bot: advance a pending BankBudget session
+@@ -2552,12 +2647,7 @@ fn step_nav_bot<D: Driver>(
+                     ),
+                     nav::router::Leg::Transport { edge } => format!(
+                         "Leg {phase:?} {:?} id={} open_id={:?} from={:?} to={:?} option={}",
+-                        edge.kind,
+-                        edge.loc_id,
+-                        edge.open_loc_id,
+-                        edge.at,
+-                        edge.to,
+-                        edge.option
++                        edge.kind, edge.loc_id, edge.open_loc_id, edge.at, edge.to, edge.option
+                     ),
+                 })
+             }));
+@@ -2578,14 +2668,24 @@ fn step_nav_bot<D: Driver>(
+                     if route.dest.x == *x && route.dest.z == *z && route.dest.level == *level
+             )
+         });
+-        #[cfg(feature="memory-profile")]
+-        nav_capture::route(name,snapshot,route.dest,bot.route_generation);
+-        let outcome=bot.traveller.follow(driver, snapshot, route, &mut options);
+-        #[cfg(feature="memory-profile")]
+-        if let Some(outcome)=&outcome {
+-            memory_diagnostics::navigation(name,||format!("FollowEnd tick={} generation={} outcome={outcome:?}",snapshot.tick(),bot.route_generation));
+-            if !matches!(outcome,nav::traveller::TravelOutcome::Arrived{..}) {
+-                nav_capture::failure(name,snapshot,serde_json::json!({"generation":bot.route_generation,"outcome":format!("{outcome:?}")}));
++        #[cfg(feature = "memory-profile")]
++        nav_capture::route(name, snapshot, route.dest, bot.route_generation);
++        let outcome = bot.traveller.follow(driver, snapshot, route, &mut options);
++        #[cfg(feature = "memory-profile")]
++        if let Some(outcome) = &outcome {
++            memory_diagnostics::navigation(name, || {
++                format!(
++                    "FollowEnd tick={} generation={} outcome={outcome:?}",
++                    snapshot.tick(),
++                    bot.route_generation
++                )
++            });
++            if !matches!(outcome, nav::traveller::TravelOutcome::Arrived { .. }) {
++                nav_capture::failure(
++                    name,
++                    snapshot,
++                    serde_json::json!({"generation":bot.route_generation,"outcome":format!("{outcome:?}")}),
++                );
+             }
+         }
+         match outcome {
+@@ -3110,10 +3210,7 @@ impl Play {
+     /// Replace the Play-local directory (panel builds the Arc before `run_with_io`
+     /// so the per-frame hook can capture the same handle).
+     #[cfg(feature = "snapshot-dedup")]
+-    pub fn replace_dedup_directory(
+-        &mut self,
+-        dir: Arc<api::snapshot_dedup::SlotDedupDirectory>,
+-    ) {
++    pub fn replace_dedup_directory(&mut self, dir: Arc<api::snapshot_dedup::SlotDedupDirectory>) {
+         self.dedup_directory = dir;
+     }
+ }
+@@ -3194,7 +3291,10 @@ impl Play {
+     /// `set_draw` on the next tick).
+     pub fn focus(&mut self, name: &str) {
+         self.focused = Some(name.to_string());
+-        let uid = self.arms.get(name).map(|arm| arm.uid.load(Ordering::Relaxed));
++        let uid = self
++            .arms
++            .get(name)
++            .map(|arm| arm.uid.load(Ordering::Relaxed));
+         self.queue.lock().unwrap().set_preferred(uid);
+         self.wake(name);
+     }
+@@ -3386,13 +3486,15 @@ impl Play {
+     }
+ 
+     #[cfg(feature = "memory-profile")]
+-    pub fn memory_script_metrics(&self, name:&str) -> Option<serde_json::Value> {
+-        script_slot(&self.scripts,name).and_then(|slot|slot.lock().unwrap().memory_metrics())
++    pub fn memory_script_metrics(&self, name: &str) -> Option<serde_json::Value> {
++        script_slot(&self.scripts, name).and_then(|slot| slot.lock().unwrap().memory_metrics())
+     }
+ 
+     #[cfg(feature = "memory-profile")]
+-    pub fn memory_script_progress(&self, name:&str) -> serde_json::Value {
+-        script_slot(&self.scripts,name).map(|slot|slot.lock().unwrap().memory_progress()).unwrap_or(serde_json::Value::Null)
++    pub fn memory_script_progress(&self, name: &str) -> serde_json::Value {
++        script_slot(&self.scripts, name)
++            .map(|slot| slot.lock().unwrap().memory_progress())
++            .unwrap_or(serde_json::Value::Null)
+     }
+ 
+     /// `name`'s script `last_error`; `None` when the slot has none.
+@@ -3473,7 +3575,10 @@ impl Play {
+     /// Test-only: install a stoppable dummy slot thread (no client) so
+     /// `stop_slot` / harness finish_cohort_shutdown can prove join-before-terminal.
+     #[cfg(any(test, feature = "memory-profile"))]
+-    pub fn test_install_stoppable_slot(&mut self, name: &str) -> Arc<std::sync::atomic::AtomicBool> {
++    pub fn test_install_stoppable_slot(
++        &mut self,
++        name: &str,
++    ) -> Arc<std::sync::atomic::AtomicBool> {
+         let arm = SlotArm::new(1, false);
+         let stop = Arc::clone(&arm.stop);
+         self.arms.insert(name.to_owned(), Arc::clone(&arm));
+@@ -3717,8 +3822,7 @@ fn spawn_slot_thread(
+     slot_world: Option<Arc<NavWorld>>,
+     slot_obj_names: Arc<api::obj_names::ObjNames>,
+     slot_frame: SlotFrame,
+-    #[cfg(feature = "snapshot-dedup")]
+-    dedup_instance: api::snapshot_dedup::SlotDedupInstance,
++    #[cfg(feature = "snapshot-dedup")] dedup_instance: api::snapshot_dedup::SlotDedupInstance,
+     handles: &mut HashMap<String, thread::JoinHandle<()>>,
+ ) {
+     let username = profile.username.clone();
+@@ -4684,7 +4788,10 @@ mod tests {
+         let s = SlotStatus::default();
+         assert_eq!((s.walk_x, s.walk_z, s.walk_level), (-1, -1, -1));
+         #[cfg(feature = "memory-profile")]
+-        assert!(s.runtime_settings.is_none(), "untouched None until first observe");
++        assert!(
++            s.runtime_settings.is_none(),
++            "untouched None until first observe"
++        );
+     }
+ 
+     /// Production capture helper reads live Client scalars — not hardcoded defaults.
+@@ -4744,7 +4851,10 @@ mod tests {
+         c.loop_cycle = 1;
+         let snap2 = capture_client_runtime_settings(&c);
+         assert!(snap2.lowmem && snap2.midi_active && snap2.wave_enabled && snap2.draw);
+-        assert_eq!((snap2.midi_volume, snap2.wave_volume, snap2.loop_cycle), (100, 50, 1));
++        assert_eq!(
++            (snap2.midi_volume, snap2.wave_volume, snap2.loop_cycle),
++            (100, 50, 1)
++        );
+     }
+ 
+     #[test]
+@@ -5025,7 +5135,8 @@ mod tests {
+         assert_eq!(play.focused(), None, "no slot is focused before focus()");
+         play.arms.insert("b".into(), SlotArm::new(11, false));
+         play.arms.insert("c".into(), SlotArm::new(12, false));
+-        *play.queue.lock().unwrap() = LoginQueue::new(Duration::from_secs(1), 30, Duration::from_secs(60));
++        *play.queue.lock().unwrap() =
++            LoginQueue::new(Duration::from_secs(1), 30, Duration::from_secs(60));
+         play.focus("b");
+         assert_eq!(play.focused().as_deref(), Some("b"));
+         let now = Instant::now();
+@@ -5035,7 +5146,11 @@ mod tests {
+             assert_eq!(q.request_permit(11, now), Permit::Grant);
+             assert!(matches!(q.request_permit(12, now), Permit::Wait(_)));
+             assert!(matches!(q.request_permit(11, now), Permit::Wait(_)));
+-            assert_eq!(q.queued_uids(), vec![11, 12], "focused reconnect has priority");
++            assert_eq!(
++                q.queued_uids(),
++                vec![11, 12],
++                "focused reconnect has priority"
++            );
+         }
+         play.focus("c");
+         assert_eq!(play.login_queue_uids(), vec![12, 11]);
+@@ -5151,41 +5266,82 @@ mod tests {
+ 
+     #[test]
+     fn route_publication_rejects_stale_results_and_preserves_route_on_failure() {
+-        let old = Route { legs: vec![], dest: WorldTile{x:1,z:1,level:0}, ticks:0.0 };
+-        let next = Route { legs: vec![], dest: WorldTile{x:2,z:2,level:0}, ticks:0.0 };
+-        let mut bot = NavBot { route:Some(old.clone()),route_generation:2,..Default::default() };
+-        bot.publish_route(1,true,RouteOutcome::Routed(next.clone()));
+-        assert_eq!(bot.route,Some(old.clone()));
+-        bot.publish_route(2,true,RouteOutcome::NoPath);
+-        assert_eq!(bot.route,Some(old));
+-        bot.publish_route(2,true,RouteOutcome::Routed(next.clone()));
+-        assert_eq!(bot.route,Some(next));
++        let old = Route {
++            legs: vec![],
++            dest: WorldTile {
++                x: 1,
++                z: 1,
++                level: 0,
++            },
++            ticks: 0.0,
++        };
++        let next = Route {
++            legs: vec![],
++            dest: WorldTile {
++                x: 2,
++                z: 2,
++                level: 0,
++            },
++            ticks: 0.0,
++        };
++        let mut bot = NavBot {
++            route: Some(old.clone()),
++            route_generation: 2,
++            ..Default::default()
++        };
++        bot.publish_route(1, true, RouteOutcome::Routed(next.clone()));
++        assert_eq!(bot.route, Some(old.clone()));
++        bot.publish_route(2, true, RouteOutcome::NoPath);
++        assert_eq!(bot.route, Some(old));
++        bot.publish_route(2, true, RouteOutcome::Routed(next.clone()));
++        assert_eq!(bot.route, Some(next));
+         assert!(bot.allow_teleports);
+     }
+ 
+     #[test]
+     fn failed_radius_search_can_retry_same_destination_with_old_route_retained() {
+-        let old = Route { legs: vec![], dest: WorldTile{x:1,z:1,level:0}, ticks:0.0 };
+-        let navs = Arc::new(Mutex::new(HashMap::from([("retry".to_string(), NavBot {
+-            route: Some(old.clone()), ..Default::default()
+-        })])));
++        let old = Route {
++            legs: vec![],
++            dest: WorldTile {
++                x: 1,
++                z: 1,
++                level: 0,
++            },
++            ticks: 0.0,
++        };
++        let navs = Arc::new(Mutex::new(HashMap::from([(
++            "retry".to_string(),
++            NavBot {
++                route: Some(old.clone()),
++                ..Default::default()
++            },
++        )])));
+         let arm = ScriptWalkArm {
+-            here: Some((0,0,0)), world: Some(Arc::new(open_world(3,3))),
+-            navs: Arc::clone(&navs), name: "retry".into(), state: None, bank: vec![],
++            here: Some((0, 0, 0)),
++            world: Some(Arc::new(open_world(3, 3))),
++            navs: Arc::clone(&navs),
++            name: "retry".into(),
++            state: None,
++            bank: vec![],
+         };
+         // Both searches have no in-world approach tile. Each call must actually
+         // run a new search, while retaining the unrelated route on failure.
+         for expected_generation in 1..=2 {
+-            assert!(arm.route_with_radius(100,100,0,FindOptions::default(),1));
++            assert!(arm.route_with_radius(100, 100, 0, FindOptions::default(), 1));
+             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+             loop {
+                 let all = navs.lock().unwrap();
+                 let bot = &all["retry"];
+                 assert_eq!(bot.route_generation, expected_generation);
+                 assert_eq!(bot.route, Some(old.clone()));
+-                if bot.route_worker.is_none() { break; }
++                if bot.route_worker.is_none() {
++                    break;
++                }
+                 drop(all);
+-                assert!(std::time::Instant::now() < deadline, "route worker did not finish");
++                assert!(
++                    std::time::Instant::now() < deadline,
++                    "route worker did not finish"
++                );
+                 std::thread::sleep(std::time::Duration::from_millis(1));
+             }
+         }
+@@ -5193,15 +5349,30 @@ mod tests {
+ 
+     #[test]
+     fn approach_candidates_avoid_occupied_target_and_stay_in_radius() {
+-        let mut world = open_world(7,7);
+-        world.collision.blocked[0] |= 1 << (3*7+3);
+-        world.collision.walk[3*7+2] = 1; // A face wall does not occupy its floor tile.
+-        let target = WorldTile {x:3,z:3,level:0};
+-        let candidates = approach_tiles(&world, WorldTile{x:0,z:3,level:0}, target, 1);
+-        assert_eq!(candidates.len(),8);
+-        assert!(candidates.iter().all(|t|*t != target && (t.x-3).abs() <= 1 && (t.z-3).abs() <= 1));
+-        assert_eq!(candidates[0].x,2);
+-        assert!(approach_tiles(&world,target,target,0).is_empty());
++        let mut world = open_world(7, 7);
++        world.collision.blocked[0] |= 1 << (3 * 7 + 3);
++        world.collision.walk[3 * 7 + 2] = 1; // A face wall does not occupy its floor tile.
++        let target = WorldTile {
++            x: 3,
++            z: 3,
++            level: 0,
++        };
++        let candidates = approach_tiles(
++            &world,
++            WorldTile {
++                x: 0,
++                z: 3,
++                level: 0,
++            },
++            target,
++            1,
++        );
++        assert_eq!(candidates.len(), 8);
++        assert!(candidates
++            .iter()
++            .all(|t| *t != target && (t.x - 3).abs() <= 1 && (t.z - 3).abs() <= 1));
++        assert_eq!(candidates[0].x, 2);
++        assert!(approach_tiles(&world, target, target, 0).is_empty());
+     }
+ 
+     #[test]
+@@ -9668,7 +9839,7 @@ export default class T extends LoopingBot {
+ 
+ #[cfg(feature = "memory-profile")]
+ pub mod memory;
+-#[cfg(feature="memory-profile")]
++#[cfg(feature = "memory-profile")]
+ pub mod nav_capture;
+ 
+ #[cfg(feature = "memory-profile")]
+@@ -9679,11 +9850,26 @@ mod memory_diagnostics;
+ fn approach_tiles(world: &NavWorld, from: WorldTile, to: WorldTile, radius: i32) -> Vec<WorldTile> {
+     let r = radius.clamp(0, 104);
+     let mut tiles = Vec::new();
+-    for dx in -r..=r { for dz in -r..=r {
+-        let t=WorldTile { x:to.x+dx,z:to.z+dz,level:to.level };
+-        if world.collision.standable(t) {tiles.push(t);}
+-    }}
+-    tiles.sort_by_key(|t| ((t.x-from.x).abs().max((t.z-from.z).abs()),(t.x-to.x).abs().max((t.z-to.z).abs()),t.x,t.z));
++    for dx in -r..=r {
++        for dz in -r..=r {
++            let t = WorldTile {
++                x: to.x + dx,
++                z: to.z + dz,
++                level: to.level,
++            };
++            if world.collision.standable(t) {
++                tiles.push(t);
++            }
++        }
++    }
++    tiles.sort_by_key(|t| {
++        (
++            (t.x - from.x).abs().max((t.z - from.z).abs()),
++            (t.x - to.x).abs().max((t.z - to.z).abs()),
++            t.x,
++            t.z,
++        )
++    });
+     tiles
+ }
+ 
+@@ -9695,26 +9881,46 @@ struct ScriptRouteRequest {
+     radius: i32,
+     opts: FindOptions,
+     state: Option<WorldState>,
+-    bank: Vec<(i32,i32)>,
++    bank: Vec<(i32, i32)>,
+ }
+ impl ScriptRouteRequest {
+     fn calculate(&self) -> RouteOutcome {
+         let empty = WorldState::empty();
+         let state = self.state.as_ref().unwrap_or(&empty);
+-        if self.radius <= 0 { return route_or_bank_fetch(&self.world,self.from,self.to,self.opts.clone(),state,&self.bank); }
+-        for target in approach_tiles(&self.world,self.from,self.to,self.radius) {
+-            let outcome = route_or_bank_fetch(&self.world,self.from,target,self.opts.clone(),state,&self.bank);
+-            if !matches!(outcome,RouteOutcome::NoPath) { return outcome; }
++        if self.radius <= 0 {
++            return route_or_bank_fetch(
++                &self.world,
++                self.from,
++                self.to,
++                self.opts.clone(),
++                state,
++                &self.bank,
++            );
++        }
++        for target in approach_tiles(&self.world, self.from, self.to, self.radius) {
++            let outcome = route_or_bank_fetch(
++                &self.world,
++                self.from,
++                target,
++                self.opts.clone(),
++                state,
++                &self.bank,
++            );
++            if !matches!(outcome, RouteOutcome::NoPath) {
++                return outcome;
++            }
+         }
+         RouteOutcome::NoPath
+     }
+ }
+ impl NavBot {
+     fn publish_route(&mut self, generation: u64, allow_teleports: bool, outcome: RouteOutcome) {
+-        if self.route_generation != generation { return; }
++        if self.route_generation != generation {
++            return;
++        }
+         let (route, pending) = match outcome {
+-            RouteOutcome::Routed(route) => (route,None),
+-            RouteOutcome::BankSession {pending,route} => (route,Some(pending)),
++            RouteOutcome::Routed(route) => (route, None),
++            RouteOutcome::BankSession { pending, route } => (route, Some(pending)),
+             RouteOutcome::NoPath => {
+                 // The retained route belongs to the previous request. A later
+                 // request for this failed destination must be allowed to retry.
+diff --git a/crates/host-play/src/memory.rs b/crates/host-play/src/memory.rs
+index f72fb63..0c70cca 100644
+--- a/crates/host-play/src/memory.rs
++++ b/crates/host-play/src/memory.rs
+@@ -55,7 +55,6 @@ fn process_cpu_seconds() -> Option<(f64, f64)> {
+     }
+ }
+ 
+-
+ unsafe impl GlobalAlloc for CountingAllocator {
+     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+         let p = System.alloc(layout);
+@@ -145,7 +144,11 @@ impl Config {
+             Ok("seeded-idle") => Workload::SeededIdle,
+             Ok("active") => Workload::Active,
+             Ok("lifecycle") => Workload::Lifecycle,
+-            _ => return Err("BOT_MEMORY_WORKLOAD must be idle, seeded-idle, active, or lifecycle".into()),
++            _ => {
++                return Err(
++                    "BOT_MEMORY_WORKLOAD must be idle, seeded-idle, active, or lifecycle".into(),
++                )
++            }
+         };
+         let duration = |key: &str, default: u64| -> Result<Duration, String> {
+             let secs = match std::env::var(key) {
+@@ -209,10 +212,7 @@ impl RenderPolicy {
+ pub fn parse_render_policy(frontend: &str) -> Result<RenderPolicy, String> {
+     let single = std::env::var("BOT_MEMORY_SINGLE_RENDERER").as_deref() == Ok("1");
+     let policy = std::env::var("BOT_MEMORY_RENDER_POLICY").ok();
+-    let policy = policy
+-        .as_deref()
+-        .map(str::trim)
+-        .filter(|s| !s.is_empty());
++    let policy = policy.as_deref().map(str::trim).filter(|s| !s.is_empty());
+     if frontend == "tui" && (single || policy.is_some()) {
+         return Err(
+             "BOT_MEMORY_SINGLE_RENDERER / BOT_MEMORY_RENDER_POLICY require panel frontend".into(),
+@@ -327,8 +327,18 @@ pub(crate) fn client_frame(c: &mut client::client::Client, name: &str, hold: boo
+ /// Keep the original idle workload available as the unseeded login control.
+ fn seeded_idle_scenario() -> scenario::Scenario {
+     let mut scenario = scenario::thiever_sustained_scenario();
+-    let start = scenario.steps.iter().position(|step| matches!(step.kind, scenario::StepKind::StartScript)).expect("Thiever StartScript");
+-    let arrival = scenario.steps.iter().find(|step| step.name == "seed stats, food, and tele to the guard stand").expect("Thiever seed").wait.arm;
++    let start = scenario
++        .steps
++        .iter()
++        .position(|step| matches!(step.kind, scenario::StepKind::StartScript))
++        .expect("Thiever StartScript");
++    let arrival = scenario
++        .steps
++        .iter()
++        .find(|step| step.name == "seed stats, food, and tele to the guard stand")
++        .expect("Thiever seed")
++        .wait
++        .arm;
+     scenario.steps.truncate(start);
+     scenario.proof = arrival;
+     scenario.settings.start_script = None;
+@@ -336,11 +346,18 @@ fn seeded_idle_scenario() -> scenario::Scenario {
+     scenario
+ }
+ 
+-fn seed_runner(scenario: scenario::Scenario, name: &str, world: Option<Arc<nav::world::NavWorld>>) -> Seed {
++fn seed_runner(
++    scenario: scenario::Scenario,
++    name: &str,
++    world: Option<Arc<nav::world::NavWorld>>,
++) -> Seed {
+     let mut runner = scenario::ScenarioRunner::with_world(scenario, world);
+     runner.set_live_names(&[name.to_owned()]);
+     runner.set_deadline(Duration::from_secs(1800));
+-    Seed { runner, started: false }
++    Seed {
++        runner,
++        started: false,
++    }
+ }
+ 
+ /// Live fields collected per fixture name at a qualification boundary.
+@@ -698,10 +715,11 @@ impl Run {
+     pub fn prepare_unseeded(config: Config, frontend: &'static str) -> Result<Self, String> {
+         // Fail closed on panel-only / conflicting flags before minting vaults.
+         let render_policy = parse_render_policy(frontend)?;
+-        let single_renderer =
+-            std::env::var("BOT_MEMORY_SINGLE_RENDERER").as_deref() == Ok("1");
++        let single_renderer = std::env::var("BOT_MEMORY_SINGLE_RENDERER").as_deref() == Ok("1");
+         client::profiling::enable();
+-        if std::env::var("BOT_SCHEDULING_PROFILE").as_deref() == Ok("1") { host::cadence::enable(); }
++        if std::env::var("BOT_SCHEDULING_PROFILE").as_deref() == Ok("1") {
++            host::cadence::enable();
++        }
+         if std::env::var("BOT_RENDER_PROFILE").as_deref() == Ok("1") {
+             host::render_profile::enable();
+             if std::env::var("BOT_GPU_COMPLETION_PROFILE").as_deref() == Ok("1") {
+@@ -732,8 +750,7 @@ impl Run {
+         crate::nav_capture::enable(&names);
+         let diagnostics = std::env::var("BOT_MEMORY_DIAGNOSTICS").as_deref() == Ok("1");
+         // Resolved once at harness setup (not re-read per sample/failure).
+-        let failure_capture =
+-            std::env::var("BOT_MEMORY_FAILURE_CAPTURE").as_deref() == Ok("1");
++        let failure_capture = std::env::var("BOT_MEMORY_FAILURE_CAPTURE").as_deref() == Ok("1");
+         if diagnostics {
+             crate::memory_diagnostics::enable(&names);
+         }
+@@ -800,7 +817,8 @@ impl Run {
+             .open(&output_path)
+             .map_err(|e| format!("{}: {e}", output_path.display()))?;
+         let qualification_output = std::fs::OpenOptions::new()
+-            .write(true).create_new(true)
++            .write(true)
++            .create_new(true)
+             .open(output_path.with_extension("qualification.jsonl"))
+             .map_err(|e| e.to_string())?;
+         let diagnostic_output = if diagnostics {
+@@ -898,7 +916,16 @@ impl Run {
+             bag.insert("bankAtFood".into(), serde_json::json!(3));
+             let slot = crate::script_slot_or_insert(&play.scripts, name);
+             let mut slot = slot.lock().unwrap();
+-            slot.start_load_with_loadouts(card.js.clone(), card.shape, siblings.clone(), &[script::Loadout { name: "Memory food".into(), worn: vec![], carry: vec!["Lobster".into()] }])?;
++            slot.start_load_with_loadouts(
++                card.js.clone(),
++                card.shape,
++                siblings.clone(),
++                &[script::Loadout {
++                    name: "Memory food".into(),
++                    worn: vec![],
++                    carry: vec!["Lobster".into()],
++                }],
++            )?;
+             slot.post_settings_bag(&bag);
+             drop(slot);
+             play.wake(name);
+@@ -947,8 +974,7 @@ impl Run {
+                 };
+                 match status {
+                     scenario::RunnerStatus::Failed(msg) => {
+-                        let failure =
+-                            format!("Thiever seed/proof failed for {name}: {msg}");
++                        let failure = format!("Thiever seed/proof failed for {name}: {msg}");
+                         return self
+                             .handle_harness_failure(
+                                 failure,
+@@ -1105,21 +1131,21 @@ impl Run {
+             || self
+                 .last_sample
+                 .is_none_or(|t| t.elapsed() >= Duration::from_secs(1));
+-        if sample_due
+-        {
++        if sample_due {
+             let (allocs, alloc_bytes, live_bytes) = rust_allocator_counts();
+             let metrics = script::memory_profile::snapshots();
+-            let sum = |key:&str|metrics.iter().filter_map(|m|m[key].as_u64()).sum::<u64>();
++            let sum = |key: &str| metrics.iter().filter_map(|m| m[key].as_u64()).sum::<u64>();
+             let live = sum("v8_live");
+-            let sampled = metrics.iter().filter(|m|m["v8_live"]==1 && m["v8_heap_samples"].as_u64().unwrap_or(0)>0).count() as u64;
++            let sampled = metrics
++                .iter()
++                .filter(|m| m["v8_live"] == 1 && m["v8_heap_samples"].as_u64().unwrap_or(0) > 0)
++                .count() as u64;
+             let gpu = client::profiling::gpu_bytes();
+             // Stamp mono at the same Instant used for elapsed_s so the sibling
+             // encloses the native phase boundary (not a later post-metrics time).
+             let (elapsed_s, elapsed_mono_ns) = if host::responsiveness_profile::enabled() {
+                 let now_i = std::time::Instant::now();
+-                let elapsed_s = now_i
+-                    .saturating_duration_since(self.started)
+-                    .as_secs_f64();
++                let elapsed_s = now_i.saturating_duration_since(self.started).as_secs_f64();
+                 (
+                     elapsed_s,
+                     Some(host::responsiveness_profile::mono_ns(now_i)),
+@@ -1155,13 +1181,14 @@ impl Run {
+                     }
+                 },
+                 rust_allocations: (!cfg!(feature = "memory-profile-no-alloc")).then_some(allocs),
+-                rust_allocated_bytes: (!cfg!(feature = "memory-profile-no-alloc")).then_some(alloc_bytes),
++                rust_allocated_bytes: (!cfg!(feature = "memory-profile-no-alloc"))
++                    .then_some(alloc_bytes),
+                 rust_live_bytes: (!cfg!(feature = "memory-profile-no-alloc")).then_some(live_bytes),
+                 snapshot_inflight_bytes: Some(sum("snapshot_inflight_bytes")),
+                 snapshot_inflight_capacity: Some(sum("snapshot_inflight_capacity")),
+-                v8_used_bytes: (live==sampled).then(||sum("v8_used_bytes")),
+-                v8_total_bytes: (live==sampled).then(||sum("v8_total_bytes")),
+-                gpu_tracked_bytes: Some(gpu.buffers+gpu.textures),
++                v8_used_bytes: (live == sampled).then(|| sum("v8_used_bytes")),
++                v8_total_bytes: (live == sampled).then(|| sum("v8_total_bytes")),
++                gpu_tracked_bytes: Some(gpu.buffers + gpu.textures),
+             };
+             let mut value = sample.to_json();
+             let cpu = process_cpu_seconds();
+@@ -1192,14 +1219,37 @@ impl Run {
+             value["gpu_peak_tracked_bytes"] = gpu.peak.into();
+             value["v8_live_isolates"] = live.into();
+             value["v8_sampled_isolates"] = sampled.into();
+-            let now_ms=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+-            value["v8_max_sample_age_ms"] = metrics.iter().filter(|m|m["v8_live"]==1).filter_map(|m|m["v8_updated_ms"].as_u64()).map(|t|now_ms.saturating_sub(t)).max().map(serde_json::Value::from).unwrap_or(serde_json::Value::Null);
+-            for key in ["script_tick_count","script_tick_total_ns"] {value[key]=sum(key).into();}
+-            value["script_tick_max_ns"]=metrics.iter().filter_map(|m|m["script_tick_max_ns"].as_u64()).max().unwrap_or(0).into();
++            let now_ms = std::time::SystemTime::now()
++                .duration_since(std::time::UNIX_EPOCH)
++                .unwrap_or_default()
++                .as_millis() as u64;
++            value["v8_max_sample_age_ms"] = metrics
++                .iter()
++                .filter(|m| m["v8_live"] == 1)
++                .filter_map(|m| m["v8_updated_ms"].as_u64())
++                .map(|t| now_ms.saturating_sub(t))
++                .max()
++                .map(serde_json::Value::from)
++                .unwrap_or(serde_json::Value::Null);
++            for key in ["script_tick_count", "script_tick_total_ns"] {
++                value[key] = sum(key).into();
++            }
++            value["script_tick_max_ns"] = metrics
++                .iter()
++                .filter_map(|m| m["script_tick_max_ns"].as_u64())
++                .max()
++                .unwrap_or(0)
++                .into();
+             value["snapshot_sum_isolate_peak_capacity"] = sum("snapshot_peak_capacity").into();
+-            for (key,counter) in [("client_tick",&client::profiling::CLIENT_TICK),("ui_draw",&client::profiling::UI_DRAW),("ui_frame",&client::profiling::UI_FRAME)] {
+-                let (count,total,max)=counter.read();
+-                value[format!("{key}_count")]=count.into();value[format!("{key}_total_ns")]=total.into();value[format!("{key}_max_ns")]=max.into();
++            for (key, counter) in [
++                ("client_tick", &client::profiling::CLIENT_TICK),
++                ("ui_draw", &client::profiling::UI_DRAW),
++                ("ui_frame", &client::profiling::UI_FRAME),
++            ] {
++                let (count, total, max) = counter.read();
++                value[format!("{key}_count")] = count.into();
++                value[format!("{key}_total_ns")] = total.into();
++                value[format!("{key}_max_ns")] = max.into();
+             }
+             // Legacy process-wide drawing/non-drawing groups — array schema unchanged.
+             value["scheduling"] = host::cadence::read().map(|groups| {
+@@ -1603,8 +1653,7 @@ impl Run {
+                     "level": s.tile_level
+                 })
+             });
+-            let runtime_settings =
+-                runtime_settings_value(status.and_then(|s| s.runtime_settings));
++            let runtime_settings = runtime_settings_value(status.and_then(|s| s.runtime_settings));
+             let renderer = renderer_evidence_for(name, render_slice);
+             QualificationSlotFields {
+                 state: format!("{:?}", play.script_state(name)),
+@@ -1747,16 +1796,12 @@ impl Run {
+         }
+         let tail_ns = host::responsiveness_cohort::DEFAULT_TAIL_NS;
+         let capacity = host::responsiveness_cohort::DEFAULT_CAPACITY;
+-        let boundaries = host::responsiveness_cohort::begin_armed(
+-            observe_ns,
+-            tail_ns,
+-            capacity,
+-            || host::responsiveness_profile::mono_ns(Instant::now()),
+-        )
+-        .map_err(|e| format!("cohort begin_armed failed: {e:?}"))?;
+-        let sidecar_path = self
+-            .output_path
+-            .with_extension("cohort.jsonl");
++        let boundaries =
++            host::responsiveness_cohort::begin_armed(observe_ns, tail_ns, capacity, || {
++                host::responsiveness_profile::mono_ns(Instant::now())
++            })
++            .map_err(|e| format!("cohort begin_armed failed: {e:?}"))?;
++        let sidecar_path = self.output_path.with_extension("cohort.jsonl");
+         let mut sidecar = std::fs::OpenOptions::new()
+             .write(true)
+             .create_new(true)
+@@ -1870,7 +1915,10 @@ impl Run {
+     }
+ 
+     /// Absolute END+tail gate (process mono). Not Instant drain_at.elapsed().
+-    fn cohort_tail_complete(boundaries: &host::responsiveness_cohort::Boundaries, now_mono: u64) -> bool {
++    fn cohort_tail_complete(
++        boundaries: &host::responsiveness_cohort::Boundaries,
++        now_mono: u64,
++    ) -> bool {
+         now_mono >= boundaries.end_mono_ns.saturating_add(boundaries.tail_ns)
+     }
+ 
+@@ -2016,11 +2064,7 @@ impl Run {
+         if self.cohort.is_none() {
+             return Ok(());
+         }
+-        if self
+-            .cohort
+-            .as_ref()
+-            .is_some_and(|c| c.terminal.is_some())
+-        {
++        if self.cohort.as_ref().is_some_and(|c| c.terminal.is_some()) {
+             return Ok(());
+         }
+         // Join all run slots that can still publish. stop_slot is the proven
+@@ -2106,10 +2150,7 @@ mod tests {
+     }
+ 
+     fn clear_render_env() -> EnvGuard {
+-        EnvGuard::clear(&[
+-            "BOT_MEMORY_SINGLE_RENDERER",
+-            "BOT_MEMORY_RENDER_POLICY",
+-        ])
++        EnvGuard::clear(&["BOT_MEMORY_SINGLE_RENDERER", "BOT_MEMORY_RENDER_POLICY"])
+     }
+ 
+     #[test]
+@@ -2451,13 +2492,27 @@ mod tests {
+     fn seed_runners_share_world_but_keep_independent_state() {
+         let world = Arc::new(nav::world::NavWorld::from_parts(
+             nav::collision::WorldCollision {
+-                origin: api::snapshot::WorldTile { x: 0, z: 0, level: 0 },
+-                width: 1, height: 1, walk: vec![0; 4], blocked: vec![0], flags: None,
+-            }, Default::default(), vec![],
++                origin: api::snapshot::WorldTile {
++                    x: 0,
++                    z: 0,
++                    level: 0,
++                },
++                width: 1,
++                height: 1,
++                walk: vec![0; 4],
++                blocked: vec![0],
++                flags: None,
++            },
++            Default::default(),
++            vec![],
+         ));
+         let mut a = seed_runner(seeded_idle_scenario(), "seed_a", Some(world.clone()));
+         let b = seed_runner(seeded_idle_scenario(), "seed_b", Some(world.clone()));
+-        assert_eq!(Arc::strong_count(&world), 3, "both runners must retain the injected world");
++        assert_eq!(
++            Arc::strong_count(&world),
++            3,
++            "both runners must retain the injected world"
++        );
+         assert_eq!(a.runner.profile_name(), "seed_a");
+         assert_eq!(b.runner.profile_name(), "seed_b");
+         a.started = true;
+@@ -2471,11 +2526,24 @@ mod tests {
+     #[test]
+     fn bind_seed_nav_from_play_preserves_arc_identity() {
+         let _lock = env_lock();
+-        let _g = EnvGuard::clear(&["RS2B0T", "BOT_MEMORY_OUTPUT", "BOT_MEMORY_N", "BOT_MEMORY_WORKLOAD"]);
++        let _g = EnvGuard::clear(&[
++            "RS2B0T",
++            "BOT_MEMORY_OUTPUT",
++            "BOT_MEMORY_N",
++            "BOT_MEMORY_WORKLOAD",
++        ]);
+         let world = Arc::new(nav::world::NavWorld::from_parts(
+             nav::collision::WorldCollision {
+-                origin: api::snapshot::WorldTile { x: 0, z: 0, level: 0 },
+-                width: 1, height: 1, walk: vec![0; 4], blocked: vec![0], flags: None,
++                origin: api::snapshot::WorldTile {
++                    x: 0,
++                    z: 0,
++                    level: 0,
++                },
++                width: 1,
++                height: 1,
++                walk: vec![0; 4],
++                blocked: vec![0],
++                flags: None,
+             },
+             Default::default(),
+             vec![],
+@@ -2489,7 +2557,10 @@ mod tests {
+         assert_eq!(map.len(), 2);
+         for name in &run.names {
+             let seed = map.get(name).expect("named seed").lock().unwrap();
+-            let shared = seed.runner.shared_world().expect("seed must hold play world");
++            let shared = seed
++                .runner
++                .shared_world()
++                .expect("seed must hold play world");
+             assert!(
+                 Arc::ptr_eq(&world, &shared),
+                 "seed {name} must share Play Arc identity"
+@@ -2528,8 +2599,16 @@ mod tests {
+         let _g = EnvGuard::clear(&["RS2B0T", "BOT_MEMORY_OUTPUT"]);
+         let world = Arc::new(nav::world::NavWorld::from_parts(
+             nav::collision::WorldCollision {
+-                origin: api::snapshot::WorldTile { x: 1, z: 2, level: 0 },
+-                width: 1, height: 1, walk: vec![0; 4], blocked: vec![0], flags: None,
++                origin: api::snapshot::WorldTile {
++                    x: 1,
++                    z: 2,
++                    level: 0,
++                },
++                width: 1,
++                height: 1,
++                walk: vec![0; 4],
++                blocked: vec![0],
++                flags: None,
+             },
+             Default::default(),
+             vec![],
+@@ -2558,18 +2637,44 @@ mod tests {
+     fn seeded_idle_preserves_setup_and_ends_before_script_start() {
+         let active = scenario::thiever_sustained_scenario();
+         let idle = seeded_idle_scenario();
+-        let start = active.steps.iter().position(|s| matches!(s.kind, scenario::StepKind::StartScript)).unwrap();
++        let start = active
++            .steps
++            .iter()
++            .position(|s| matches!(s.kind, scenario::StepKind::StartScript))
++            .unwrap();
+         assert_eq!(idle.steps.len(), start);
+-        assert_eq!(idle.steps.iter().map(|s| s.name).collect::<Vec<_>>(), active.steps[..start].iter().map(|s| s.name).collect::<Vec<_>>());
+-        assert!(matches!(idle.steps.last().unwrap().kind, scenario::StepKind::DrainDialogs { .. }));
+-        assert!(matches!(idle.proof, scenario::Proof::ArrivedNear { x: 2661, z: 3306, level: 0, radius: 10 }));
++        assert_eq!(
++            idle.steps.iter().map(|s| s.name).collect::<Vec<_>>(),
++            active.steps[..start]
++                .iter()
++                .map(|s| s.name)
++                .collect::<Vec<_>>()
++        );
++        assert!(matches!(
++            idle.steps.last().unwrap().kind,
++            scenario::StepKind::DrainDialogs { .. }
++        ));
++        assert!(matches!(
++            idle.proof,
++            scenario::Proof::ArrivedNear {
++                x: 2661,
++                z: 3306,
++                level: 0,
++                radius: 10
++            }
++        ));
+         assert!(idle.settings.start_script.is_none());
+     }
+ 
+     #[test]
+     fn prepare_seeded_idle_runs_seed_without_catalog() {
+         let _lock = env_lock();
+-        let _g = EnvGuard::clear(&["RS2B0T", "BOT_MEMORY_OUTPUT", "BOT_MEMORY_N", "BOT_MEMORY_WORKLOAD"]);
++        let _g = EnvGuard::clear(&[
++            "RS2B0T",
++            "BOT_MEMORY_OUTPUT",
++            "BOT_MEMORY_N",
++            "BOT_MEMORY_WORKLOAD",
++        ]);
+         std::env::set_var("BOT_MEMORY_N", "1");
+         std::env::set_var("BOT_MEMORY_WORKLOAD", "seeded-idle");
+         let config = Config::from_env().expect("seeded idle config").unwrap();
+@@ -2816,10 +2921,14 @@ mod tests {
+         assert!(run.failure_capture);
+         assert!(run.diagnostics);
+         assert!(run.diagnostic_output.is_some());
+-        let run_off = harness_stub(false, false, std::fs::OpenOptions::new()
+-            .write(true)
+-            .open(NULL_DEVICE)
+-            .unwrap());
++        let run_off = harness_stub(
++            false,
++            false,
++            std::fs::OpenOptions::new()
++                .write(true)
++                .open(NULL_DEVICE)
++                .unwrap(),
++        );
+         assert!(!run_off.failure_capture);
+         assert!(!run_off.diagnostics);
+         let _ = std::fs::remove_dir_all(_qpath.parent().unwrap());
+@@ -2856,7 +2965,14 @@ mod tests {
+         assert_eq!(row["runtime"]["dispatched"], 1);
+         assert_eq!(row["client"]["ingame"], true);
+         // Legacy keys still present; runtime_settings additive (null until observe).
+-        for key in ["name", "state", "error", "runtime", "client", "runtime_settings"] {
++        for key in [
++            "name",
++            "state",
++            "error",
++            "runtime",
++            "client",
++            "runtime_settings",
++        ] {
+             assert!(row.get(key).is_some(), "missing key {key}");
+         }
+         assert!(row["runtime_settings"].is_null());
+@@ -2889,11 +3005,15 @@ mod tests {
+         let names = vec!["z_last".into(), "a_first".into(), "m_mid".into()];
+         let rows = qualification_slot_rows(&names, |name| stub_fields(name));
+         assert_eq!(
+-            rows.iter().map(|r| r["name"].as_str().unwrap()).collect::<Vec<_>>(),
++            rows.iter()
++                .map(|r| r["name"].as_str().unwrap())
++                .collect::<Vec<_>>(),
+             vec!["z_last", "a_first", "m_mid"]
+         );
+         assert_eq!(
+-            rows.iter().map(|r| r["ordinal"].as_u64().unwrap()).collect::<Vec<_>>(),
++            rows.iter()
++                .map(|r| r["ordinal"].as_u64().unwrap())
++                .collect::<Vec<_>>(),
+             vec![0, 1, 2]
+         );
+     }
+@@ -2918,12 +3038,7 @@ mod tests {
+             false,
+             true,
+         );
+-        let value = serialize_qualification_boundary(
+-            "observe-start",
+-            slots,
+-            12.5,
+-            Some(settings),
+-        );
++        let value = serialize_qualification_boundary("observe-start", slots, 12.5, Some(settings));
+         // Top-level successful boundary keys.
+         assert_eq!(value["phase"], "observe-start");
+         assert_eq!(value["elapsed_s"], 12.5);
+@@ -3331,7 +3446,10 @@ mod tests {
+         let batch: serde_json::Value = serde_json::from_str(side_lines[1]).unwrap();
+         assert_eq!(batch["record"], "cohort-batch");
+         assert!(
+-            batch["records"].as_array().map(|a| !a.is_empty()).unwrap_or(false),
++            batch["records"]
++                .as_array()
++                .map(|a| !a.is_empty())
++                .unwrap_or(false),
+             "completed start@START must appear in drained batch: {batch}"
+         );
+         let cursor_after = run.cohort.as_ref().unwrap().cursor;
+@@ -3632,7 +3750,8 @@ mod tests {
+             vec![],
+             0,
+         );
+-        run.poll(&mut play).expect("poll at END with recent last_sample");
++        run.poll(&mut play)
++            .expect("poll at END with recent last_sample");
+ 
+         let after = std::fs::read_to_string(&samples_path).unwrap();
+         let after_lines: Vec<&str> = after.lines().collect();
+diff --git a/crates/host-play/src/rss.rs b/crates/host-play/src/rss.rs
+index 90aa3ef..8256b3a 100644
+--- a/crates/host-play/src/rss.rs
++++ b/crates/host-play/src/rss.rs
+@@ -132,8 +132,7 @@ pub fn sample_process() -> (u64, f64) {
+     {
+         // First field = PeakWorkingSetSize (lifetime peak WS).
+         // Either sampler fail → full (0, 0.0) sentinel (panel joint check).
+-        let peak = windows_memory_counters()
+-            .and_then(|(_, peak)| nonzero_resident(peak));
++        let peak = windows_memory_counters().and_then(|(_, peak)| nonzero_resident(peak));
+         let cpu = windows_cpu_seconds_total();
+         combine_windows_sample(peak, cpu)
+     }
+diff --git a/crates/host-play/tests/snapshot_frame_equivalence.rs b/crates/host-play/tests/snapshot_frame_equivalence.rs
+index cd3f1f0..fb0f93a 100644
+--- a/crates/host-play/tests/snapshot_frame_equivalence.rs
++++ b/crates/host-play/tests/snapshot_frame_equivalence.rs
+@@ -422,12 +422,7 @@ fn run_cross_path_transcript() -> Transcript {
+     bump_all(&mut client);
+     let mut nav_snap = GameSnapshot::new();
+ 
+-    steps.push(nav_step(
+-        "first_publication",
+-        &mut nav_snap,
+-        &client,
+-        true,
+-    ));
++    steps.push(nav_step("first_publication", &mut nav_snap, &client, true));
+     steps.push(nav_step(
+         "quiet_off_edge_after_first",
+         &mut nav_snap,
+@@ -511,8 +506,8 @@ fn write_json(path: &std::path::Path, value: &impl Serialize) {
+ }
+ 
+ fn read_transcript(path: &std::path::Path) -> Transcript {
+-    let raw = std::fs::read_to_string(path)
+-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
++    let raw =
++        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+     serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
+ }
+ 
+@@ -803,9 +798,11 @@ fn transcript_matches_golden_and_peer_feature_build() {
+         .find(|s| s.path == "host" && s.name == "first_publication")
+         .expect("host first");
+     assert_eq!(host_first.dirty_any, Some(true));
+-    assert!(
+-        host_first.obs.widget_texts.iter().any(|t| t.as_deref() == Some("Hello"))
+-    );
++    assert!(host_first
++        .obs
++        .widget_texts
++        .iter()
++        .any(|t| t.as_deref() == Some("Hello")));
+     assert!(host_first
+         .obs
+         .side_tab_texts
+@@ -874,7 +871,11 @@ fn transcript_matches_golden_and_peer_feature_build() {
+     }
+ 
+     let golden_file = golden_path();
+-    if std::env::var("UPDATE_SNAPSHOT_FRAME_GOLDEN").ok().as_deref() == Some("1") {
++    if std::env::var("UPDATE_SNAPSHOT_FRAME_GOLDEN")
++        .ok()
++        .as_deref()
++        == Some("1")
++    {
+         write_json(&golden_file, &live);
+     }
+     assert!(
+@@ -884,7 +885,8 @@ fn transcript_matches_golden_and_peer_feature_build() {
+     );
+     let golden = read_transcript(&golden_file);
+     assert_eq!(
+-        live, golden,
++        live,
++        golden,
+         "live transcript (feature-{}) must exactly equal committed golden",
+         feature_label()
+     );
+@@ -898,7 +900,8 @@ fn transcript_matches_golden_and_peer_feature_build() {
+     if peer.is_file() {
+         let peer_tx = read_transcript(&peer);
+         assert_eq!(
+-            live, peer_tx,
++            live,
++            peer_tx,
+             "cross-feature exact compare failed: feature-{} vs feature-{} (paths {} vs {})",
+             feature_label(),
+             peer_label,
+@@ -1146,11 +1149,11 @@ mod with_dedup {
+         assert!(!Arc::ptr_eq(&locs_before, &b.locs_arc()));
+         assert_eq!(b.locs()[0].name.as_deref(), Some("Open door"));
+ 
+-        let quiet_before = b.dedup_counters().side_tabs.quiet_skips
+-            + b.dedup_counters().loc.quiet_skips;
++        let quiet_before =
++            b.dedup_counters().side_tabs.quiet_skips + b.dedup_counters().loc.quiet_skips;
+         nav_publish(&mut b, &client, true);
+-        let quiet_after = b.dedup_counters().side_tabs.quiet_skips
+-            + b.dedup_counters().loc.quiet_skips;
++        let quiet_after =
++            b.dedup_counters().side_tabs.quiet_skips + b.dedup_counters().loc.quiet_skips;
+         assert!(quiet_after > quiet_before);
+     }
+ }
+diff --git a/crates/host/src/input_seam_trace.rs b/crates/host/src/input_seam_trace.rs
+index cf69abd..7579c35 100644
+--- a/crates/host/src/input_seam_trace.rs
++++ b/crates/host/src/input_seam_trace.rs
+@@ -178,9 +178,7 @@ pub fn stage_counts(stage: Stage) -> (u32, u32) {
+ /// against the module's own unit tests (global FORCE/counters).
+ #[cfg(test)]
+ pub fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+-    tests::TEST_LOCK
+-        .lock()
+-        .unwrap_or_else(|e| e.into_inner())
++    tests::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+ }
+ 
+ /// Reset counters and force latch (unit tests only).
+@@ -299,11 +297,7 @@ pub fn note_imgui_arrow(key: ArrowKey, down: bool, edge: &str) {
+         return;
+     }
+     emit_with(Stage::ImguiArrow, || {
+-        format!(
+-            "key={} down={} edge={edge}",
+-            key.as_str(),
+-            u8::from(down)
+-        )
++        format!("key={} down={} edge={edge}", key.as_str(), u8::from(down))
+     });
+ }
+ 
+@@ -369,13 +363,7 @@ pub fn note_gate(
+ }
+ 
+ /// `stream_capture_for` entry for a Left/Right key edge.
+-pub fn note_stream(
+-    key: ArrowKey,
+-    down: bool,
+-    channel: bool,
+-    slot_opt: bool,
+-    slot_id: Option<u64>,
+-) {
++pub fn note_stream(key: ArrowKey, down: bool, channel: bool, slot_opt: bool, slot_id: Option<u64>) {
+     if !enabled() {
+         return;
+     }
+diff --git a/crates/host/src/lib.rs b/crates/host/src/lib.rs
+index 2a7589f..f16b0d0 100644
+--- a/crates/host/src/lib.rs
++++ b/crates/host/src/lib.rs
+@@ -310,8 +310,19 @@ impl Host {
+                     thread::sleep(rest);
+                 }
+                 if let Some(profile) = cadence.as_mut() {
+-                    let slept = if rest.is_some() { sleep_start.unwrap().elapsed() } else { Duration::ZERO };
+-                    profile.record(start, client.draw, work, rest.unwrap_or_default(), slept, FRAME_MS);
++                    let slept = if rest.is_some() {
++                        sleep_start.unwrap().elapsed()
++                    } else {
++                        Duration::ZERO
++                    };
++                    profile.record(
++                        start,
++                        client.draw,
++                        work,
++                        rest.unwrap_or_default(),
++                        slept,
++                        FRAME_MS,
++                    );
+                 }
+                 continue;
+             }
+@@ -319,7 +330,9 @@ impl Host {
+             // run one tick (drain the socket / apply the panel's
+             // `set_draw`) and re-evaluate. A watch-only sidecar wakes on
+             // the 1 s repaint bound; everything else on the game-tick bound.
+-            if let Some(profile) = cadence.as_mut() { profile.parked(); }
++            if let Some(profile) = cadence.as_mut() {
++                profile.parked();
++            }
+             let before = stream_bytes(client);
+             let timeout = if socket_stalled {
+                 STALL_PARK_MS
+diff --git a/crates/host/src/login_queue.rs b/crates/host/src/login_queue.rs
+index 1a38001..27f804e 100644
+--- a/crates/host/src/login_queue.rs
++++ b/crates/host/src/login_queue.rs
+@@ -283,8 +283,14 @@ mod tests {
+         assert!(matches!(q.request_permit(2, now), Permit::Wait(_)));
+         assert!(matches!(q.request_permit(1, now), Permit::Wait(_)));
+         assert_eq!(q.queued_uids(), vec![1, 2]);
+-        assert_eq!(q.request_permit(1, now + Duration::from_secs(1)), Permit::Grant);
+-        assert_eq!(q.request_permit(2, now + Duration::from_secs(2)), Permit::Grant);
++        assert_eq!(
++            q.request_permit(1, now + Duration::from_secs(1)),
++            Permit::Grant
++        );
++        assert_eq!(
++            q.request_permit(2, now + Duration::from_secs(2)),
++            Permit::Grant
++        );
+     }
+ 
+     #[test]
+@@ -298,7 +304,10 @@ mod tests {
+         assert!(matches!(q.request_permit(1, now), Permit::Wait(_)));
+         q.set_preferred(Some(3));
+         assert_eq!(q.queued_uids(), vec![3, 1]);
+-        assert!(matches!(q.request_permit(3, now + Duration::from_secs(1)), Permit::Wait(_)));
++        assert!(matches!(
++            q.request_permit(3, now + Duration::from_secs(1)),
++            Permit::Wait(_)
++        ));
+         q.leave(3);
+         q.leave(1);
+         q.set_preferred(None);
+diff --git a/crates/host/src/render_profile.rs b/crates/host/src/render_profile.rs
+index 050a42d..27f5f60 100644
+--- a/crates/host/src/render_profile.rs
++++ b/crates/host/src/render_profile.rs
+@@ -748,9 +748,9 @@ impl Local {
+                 .gpu_completion_latency_ns
+                 .wrapping_add(batch.latency_ns);
+             for i in 0..INTERVAL_BUCKETS {
+-                self.snap.gpu_completion_latency_buckets[i] = self.snap
+-                    .gpu_completion_latency_buckets[i]
+-                    .wrapping_add(batch.latency_buckets[i]);
++                self.snap.gpu_completion_latency_buckets[i] =
++                    self.snap.gpu_completion_latency_buckets[i]
++                        .wrapping_add(batch.latency_buckets[i]);
+             }
+         }
+         if batch.stable_interval_n != 0 {
+@@ -763,9 +763,9 @@ impl Local {
+                 .gpu_stable_completion_interval_ns
+                 .wrapping_add(batch.stable_interval_ns);
+             for i in 0..INTERVAL_BUCKETS {
+-                self.snap.gpu_stable_completion_interval_buckets[i] = self.snap
+-                    .gpu_stable_completion_interval_buckets[i]
+-                    .wrapping_add(batch.stable_interval_buckets[i]);
++                self.snap.gpu_stable_completion_interval_buckets[i] =
++                    self.snap.gpu_stable_completion_interval_buckets[i]
++                        .wrapping_add(batch.stable_interval_buckets[i]);
+             }
+         }
+         if batch.transition_interval_n != 0 {
+@@ -778,9 +778,9 @@ impl Local {
+                 .gpu_transition_completion_interval_ns
+                 .wrapping_add(batch.transition_interval_ns);
+             for i in 0..INTERVAL_BUCKETS {
+-                self.snap.gpu_transition_completion_interval_buckets[i] = self.snap
+-                    .gpu_transition_completion_interval_buckets[i]
+-                    .wrapping_add(batch.transition_interval_buckets[i]);
++                self.snap.gpu_transition_completion_interval_buckets[i] =
++                    self.snap.gpu_transition_completion_interval_buckets[i]
++                        .wrapping_add(batch.transition_interval_buckets[i]);
+             }
+         }
+         self.snap.gpu_pending_n = shared.pending.load(Relaxed) as u64;
+@@ -858,9 +858,7 @@ pub fn gpu_registration_complete(s: &SlotObservation) -> bool {
+ /// True when registration was complete and every registered callback has
+ /// delivered (pending cleared). Required to qualify completion throughput.
+ pub fn gpu_completion_coverage_complete(s: &SlotObservation) -> bool {
+-    gpu_registration_complete(s)
+-        && s.gpu_pending_n == 0
+-        && s.gpu_completed_n == s.gpu_registered_n
++    gpu_registration_complete(s) && s.gpu_pending_n == 0 && s.gpu_completed_n == s.gpu_registered_n
+ }
+ 
+ #[cfg(test)]
+@@ -1341,7 +1339,10 @@ mod tests {
+                 .find(|s| s.generation == gen)
+                 .map(|s| s.gpu_frame_n)
+                 .unwrap_or(u64::MAX);
+-            assert_eq!(after, before, "observe must not REGISTRY-flush every GPU frame");
++            assert_eq!(
++                after, before,
++                "observe must not REGISTRY-flush every GPU frame"
++            );
+             for cb in cbs {
+                 cb();
+             }
+@@ -1354,7 +1355,10 @@ mod tests {
+                 .find(|s| s.generation == gen)
+                 .map(|s| s.gpu_completed_n)
+                 .unwrap_or(u64::MAX);
+-            assert_eq!(after_complete, 0, "complete traffic must not force registry flush");
++            assert_eq!(
++                after_complete, 0,
++                "complete traffic must not force registry flush"
++            );
+             local.record(base_obs(Instant::now())); // ~state path can publish
+             drop(local);
+             let _ = read();
+@@ -1427,11 +1431,9 @@ mod tests {
+                 "on_complete must not clear pending stamp"
+             );
+             // Reclaim attempt must fail while p1 still holds the cell.
+-            assert!(
+-                shared.pending_submit_ms[idx]
+-                    .compare_exchange(0, 1, Relaxed, Relaxed)
+-                    .is_err()
+-            );
++            assert!(shared.pending_submit_ms[idx]
++                .compare_exchange(0, 1, Relaxed, Relaxed)
++                .is_err());
+             p1.mark_completed();
+             drop(p1);
+             assert_eq!(shared.pending_submit_ms[idx].load(Relaxed), 0);
+@@ -1657,9 +1659,9 @@ mod tests {
+ 
+             let instance =
+                 wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+-            let adapter = pollster::block_on(instance.request_adapter(
+-                &wgpu::RequestAdapterOptions::default(),
+-            ))
++            let adapter = pollster::block_on(
++                instance.request_adapter(&wgpu::RequestAdapterOptions::default()),
++            )
+             .expect("gpu_real_queue proof requires an adapter (unavailable on this host)");
+             let (device, queue) = pollster::block_on(adapter.request_device(&Default::default()))
+                 .expect("gpu_real_queue proof requires a device");
+diff --git a/crates/host/src/responsiveness_cohort.rs b/crates/host/src/responsiveness_cohort.rs
+index 32be7de..7637730 100644
+--- a/crates/host/src/responsiveness_cohort.rs
++++ b/crates/host/src/responsiveness_cohort.rs
+@@ -1359,9 +1359,7 @@ mod tests {
+             saw_tx.send(()).expect("saw");
+             let in_window = start(3, 7, 1_000, Surface::Decode);
+             let pre_start = start(3, 7, 999, Surface::Decode);
+-            done_tx
+-                .send(in_window)
+-                .expect("done");
++            done_tx.send(in_window).expect("done");
+             // pre_start result checked on join path via side channel would
+             // need another channel; assert locally.
+             assert!(
+diff --git a/crates/host/src/slot_io.rs b/crates/host/src/slot_io.rs
+index b733995..e4a6f9a 100644
+--- a/crates/host/src/slot_io.rs
++++ b/crates/host/src/slot_io.rs
+@@ -35,10 +35,7 @@ pub(crate) const MAX_WAIT_HANDLES: usize = 2;
+ /// Unix: `poll(2)`. Windows: `WSAPoll` on pointer-width `SOCKET` values —
+ /// never truncates to 32-bit fds and never busy-spins.
+ #[allow(unsafe_code)]
+-pub(crate) fn wait_readable(
+-    handles: &[WaitHandle],
+-    timeout: Duration,
+-) -> [bool; MAX_WAIT_HANDLES] {
++pub(crate) fn wait_readable(handles: &[WaitHandle], timeout: Duration) -> [bool; MAX_WAIT_HANDLES] {
+     debug_assert!(
+         handles.len() <= MAX_WAIT_HANDLES,
+         "wait_readable supports at most {MAX_WAIT_HANDLES} handles"
+diff --git a/crates/panel/src/app.rs b/crates/panel/src/app.rs
+index b23b4ef..8aaada9 100644
+--- a/crates/panel/src/app.rs
++++ b/crates/panel/src/app.rs
+@@ -154,8 +154,8 @@ struct PanelState {
+     /// `--live script_*` run starts or lazily on the first write (the
+     /// interactive F12 capture has no run start to hook).
+     shot_dir: Option<PathBuf>,
+-    #[cfg(feature="memory-profile")]
+-    nav_captures:crate::nav_capture::Captures,
++    #[cfg(feature = "memory-profile")]
++    nav_captures: crate::nav_capture::Captures,
+ }
+ 
+ /// Headed live harness: null_raster (2 slots), stress50 / stress50_full
+@@ -508,8 +508,8 @@ impl Default for PanelState {
+             os_window: None,
+             shot_state: Arc::new(Mutex::new(crate::window::ShotState::default())),
+             shot_dir: None,
+-            #[cfg(feature="memory-profile")]
+-            nav_captures:Default::default(),
++            #[cfg(feature = "memory-profile")]
++            nav_captures: Default::default(),
+         }
+     }
+ }
+@@ -4270,7 +4270,7 @@ fn pump_shots(state: &mut PanelState) -> usize {
+                 &cap.snapshot_json,
+             ) {
+                 Ok(path) => {
+-                    #[cfg(feature="memory-profile")]
++                    #[cfg(feature = "memory-profile")]
+                     state.nav_captures.written(&cap.label);
+                     println!("[panel] shot {} -> {}", cap.label, path.display());
+                     written += 1;
+@@ -4310,22 +4310,37 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
+     #[cfg(feature = "memory-profile")]
+     if let Some(run) = state.memory.as_mut() {
+         if host_play::nav_capture::enabled() {
+-            state.nav_captures.tick(&mut state.session,&state.shot_state);
++            state
++                .nav_captures
++                .tick(&mut state.session, &state.shot_state);
++        }
++        if !state.nav_captures.busy() {
++            state.session.memory_focus(run);
+         }
+-        if !state.nav_captures.busy() {state.session.memory_focus(run);}
+         if !state.nav_captures.has_terminal() {
+             // as_mut: poll may stop_slot/join producers before process::exit.
+             if let Some(play) = state.session.play.as_mut() {
+                 match run.poll(play) {
+-                    Ok(true) if !state.nav_captures.busy() => {eprintln!("PASS: memory panel observation complete");std::process::exit(0);}
++                    Ok(true) if !state.nav_captures.busy() => {
++                        eprintln!("PASS: memory panel observation complete");
++                        std::process::exit(0);
++                    }
+                     Ok(_) => {}
+-                    Err(error) if host_play::nav_capture::enabled() => {state.nav_captures.failed(error);}
+-                    Err(error) => {eprintln!("FAIL: memory panel: {error}");std::process::exit(1);}
++                    Err(error) if host_play::nav_capture::enabled() => {
++                        state.nav_captures.failed(error);
++                    }
++                    Err(error) => {
++                        eprintln!("FAIL: memory panel: {error}");
++                        std::process::exit(1);
++                    }
+                 }
+             }
+         }
+-        if let Some(error)=state.nav_captures.terminal_ready() {
+-            eprintln!("FAIL: memory panel: {error}; diagnostic capture drain complete or timed out");std::process::exit(1);
++        if let Some(error) = state.nav_captures.terminal_ready() {
++            eprintln!(
++                "FAIL: memory panel: {error}; diagnostic capture drain complete or timed out"
++            );
++            std::process::exit(1);
+         }
+     }
+     state.session.pump_script_transpile();
+diff --git a/crates/panel/src/lib.rs b/crates/panel/src/lib.rs
+index a1b965d..60a2fd9 100644
+--- a/crates/panel/src/lib.rs
++++ b/crates/panel/src/lib.rs
+@@ -30,5 +30,5 @@ pub use theme::*;
+ /// so parallel tests that each create one race.
+ pub(crate) static IMGUI_CTX_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+ 
+-#[cfg(feature="memory-profile")]
++#[cfg(feature = "memory-profile")]
+ mod nav_capture;
+diff --git a/crates/panel/src/session.rs b/crates/panel/src/session.rs
+index 83d8fe0..3ee913d 100644
+--- a/crates/panel/src/session.rs
++++ b/crates/panel/src/session.rs
+@@ -6627,10 +6627,7 @@ mod tests {
+         s.capture_tx
+             .as_ref()
+             .unwrap()
+-            .send(InputEv::Key {
+-                down: true,
+-                ch: 37,
+-            })
++            .send(InputEv::Key { down: true, ch: 37 })
+             .unwrap();
+         let mut shell = client::client::GameShell::new();
+         assert!(
+@@ -6660,10 +6657,7 @@ mod tests {
+         s.capture_tx
+             .as_ref()
+             .unwrap()
+-            .send(InputEv::Key {
+-                down: true,
+-                ch: 39,
+-            })
++            .send(InputEv::Key { down: true, ch: 39 })
+             .unwrap();
+         // Same focused name every frame must not rebuild the channel.
+         s.memory_focus_at(&names, 0, host_play::memory::RenderPolicy::FocusedOne);
+@@ -6786,10 +6780,7 @@ mod tests {
+         s.capture_tx
+             .as_ref()
+             .unwrap()
+-            .send(InputEv::Key {
+-                down: true,
+-                ch: 37,
+-            })
++            .send(InputEv::Key { down: true, ch: 37 })
+             .unwrap();
+         let mut shell = client::client::GameShell::new();
+         assert!(
+@@ -8232,9 +8223,7 @@ ScriptRegistry.register({
+             "widgets missing"
+         );
+         assert!(
+-            snap.side_tabs()
+-                .iter()
+-                .any(|t| t.root_component_id == 1100),
++            snap.side_tabs().iter().any(|t| t.root_component_id == 1100),
+             "side tab missing"
+         );
+         assert_eq!(snap.locs().len(), 1);
+diff --git a/crates/scenario/src/lib.rs b/crates/scenario/src/lib.rs
+index 6998d6c..b8addb6 100644
+--- a/crates/scenario/src/lib.rs
++++ b/crates/scenario/src/lib.rs
+@@ -1892,15 +1892,24 @@ fn thiever_scenario() -> Scenario {
+ /// unchanged catalog script must eat, restock, and return using host APIs.
+ pub fn thiever_sustained_scenario() -> Scenario {
+     let mut scenario = thiever_scenario();
+-    let step = scenario.steps.iter_mut().find(|s| s.name == "seed stats, food, and tele to the guard stand").expect("Thiever seed");
+-    step.kind = StepKind::Perform { send: Box::new(|c, _| {
+-        cheat(c, "advancestat thieving 50");
+-        cheat(c, "advancestat hitpoints 50");
+-        cheat(c, "give lobster 4");
+-        cheat(c, "givebank lobster 2000");
+-        cheat(c, &tele_args(ARDOUGNE_GUARD.level, ARDOUGNE_GUARD.x, ARDOUGNE_GUARD.z));
+-        true
+-    }) };
++    let step = scenario
++        .steps
++        .iter_mut()
++        .find(|s| s.name == "seed stats, food, and tele to the guard stand")
++        .expect("Thiever seed");
++    step.kind = StepKind::Perform {
++        send: Box::new(|c, _| {
++            cheat(c, "advancestat thieving 50");
++            cheat(c, "advancestat hitpoints 50");
++            cheat(c, "give lobster 4");
++            cheat(c, "givebank lobster 2000");
++            cheat(
++                c,
++                &tele_args(ARDOUGNE_GUARD.level, ARDOUGNE_GUARD.x, ARDOUGNE_GUARD.z),
++            );
++            true
++        }),
++    };
+     scenario
+ }
+ 
+diff --git a/crates/scenario/src/runner.rs b/crates/scenario/src/runner.rs
+index 0205cf6..51b1fbb 100644
+--- a/crates/scenario/src/runner.rs
++++ b/crates/scenario/src/runner.rs
+@@ -949,11 +949,23 @@ mod tests {
+         runner.phase = Phase::Running;
+         runner.step_sent = true;
+         runner.route = Some(Route {
+-            dest: WorldTile { x: 3221, z: 3220, level: 0 },
++            dest: WorldTile {
++                x: 3221,
++                z: 3220,
++                level: 0,
++            },
+             legs: vec![nav::router::Leg::Walk {
+                 tiles: vec![
+-                    WorldTile { x: 3220, z: 3220, level: 0 },
+-                    WorldTile { x: 3221, z: 3220, level: 0 },
++                    WorldTile {
++                        x: 3220,
++                        z: 3220,
++                        level: 0,
++                    },
++                    WorldTile {
++                        x: 3221,
++                        z: 3220,
++                        level: 0,
++                    },
+                 ],
+             }],
+             ticks: 1.0,
+@@ -970,7 +982,11 @@ mod tests {
+         assert_eq!(*shots.lock().unwrap(), vec![Some((3220, 3220, 0)); 2]);
+         let evidence = runner.evidence().unwrap();
+         assert_eq!(evidence.tile, Some([3220, 3220, 0]));
+-        assert!(evidence.message.as_ref().unwrap().contains("not seen within 1 ticks"));
++        assert!(evidence
++            .message
++            .as_ref()
++            .unwrap()
++            .contains("not seen within 1 ticks"));
+     }
+ 
+     #[test]
+diff --git a/crates/script/src/isolate_fb.rs b/crates/script/src/isolate_fb.rs
+index 60ef811..b3200b2 100644
+--- a/crates/script/src/isolate_fb.rs
++++ b/crates/script/src/isolate_fb.rs
+@@ -1570,7 +1570,11 @@ fn combat_style_eq(fp: &CombatStyleFp, c: &CombatStyleInput<'_>) -> bool {
+ }
+ 
+ fn combat_styles_eq(fp: &[CombatStyleFp], rows: &[CombatStyleInput<'_>]) -> bool {
+-    fp.len() == rows.len() && fp.iter().zip(rows.iter()).all(|(a, b)| combat_style_eq(a, b))
++    fp.len() == rows.len()
++        && fp
++            .iter()
++            .zip(rows.iter())
++            .all(|(a, b)| combat_style_eq(a, b))
+ }
+ 
+ fn make_product_fp(p: &MakeProductInput<'_>) -> MakeProductFp {
+@@ -1600,7 +1604,11 @@ fn make_product_eq(fp: &MakeProductFp, p: &MakeProductInput<'_>) -> bool {
+ }
+ 
+ fn make_products_eq(fp: &[MakeProductFp], rows: &[MakeProductInput<'_>]) -> bool {
+-    fp.len() == rows.len() && fp.iter().zip(rows.iter()).all(|(a, b)| make_product_eq(a, b))
++    fp.len() == rows.len()
++        && fp
++            .iter()
++            .zip(rows.iter())
++            .all(|(a, b)| make_product_eq(a, b))
+ }
+ 
+ fn nearest_booth_eq(fp: &NearestBoothFp, b: &NearestBoothInput<'_>) -> bool {
+@@ -1612,7 +1620,11 @@ fn chat_options_eq(fp: &[String], rows: &[ChatOptionInput<'_>]) -> bool {
+ }
+ 
+ fn chat_lines_eq(fp: &[(i32, String)], rows: &[ChatLineInput<'_>]) -> bool {
+-    fp.len() == rows.len() && fp.iter().zip(rows.iter()).all(|(a, b)| a.0 == b.seq && a.1 == b.text)
++    fp.len() == rows.len()
++        && fp
++            .iter()
++            .zip(rows.iter())
++            .all(|(a, b)| a.0 == b.seq && a.1 == b.text)
+ }
+ 
+ impl SnapshotFingerprint {
+@@ -3566,7 +3578,10 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
+                 allow_teleports: row.action().is_some_and(|a| a == "tele" || a == "on"),
+             }),
+             "walk-near" => out.push(crate::shim::InteractReq::WalkNear {
+-                x: row.x(), z: row.z(), level: row.level(), radius: row.index().unwrap_or(0),
++                x: row.x(),
++                z: row.z(),
++                level: row.level(),
++                radius: row.index().unwrap_or(0),
+                 allow_teleports: row.action().is_some_and(|a| a == "tele" || a == "on"),
+             }),
+             "walk-to" => out.push(crate::shim::InteractReq::WalkTo {
+@@ -3776,7 +3791,11 @@ fn interact_off<'b>(
+         InteractReq::Walk {
+             allow_teleports: true,
+             ..
+-        } | InteractReq::WalkNear { allow_teleports: true, .. } => Some(b.create_string("tele")),
++        }
++        | InteractReq::WalkNear {
++            allow_teleports: true,
++            ..
++        } => Some(b.create_string("tele")),
+         _ => None,
+     };
+     let tab = b.start_table();
+@@ -3808,12 +3827,20 @@ fn interact_off<'b>(
+                 b.push_slot_always(VT_IN_CHOOSE, off);
+             }
+         }
+-        InteractReq::WalkNear { x, z, level, radius, .. } => {
++        InteractReq::WalkNear {
++            x,
++            z,
++            level,
++            radius,
++            ..
++        } => {
+             b.push_slot_always(VT_IN_X, *x);
+             b.push_slot_always(VT_IN_Z, *z);
+             b.push_slot_always(VT_IN_LEVEL, *level);
+             b.push_slot_always(VT_IN_INDEX, *radius);
+-            if let Some(off) = action_off { b.push_slot_always(VT_IN_ACTION, off); }
++            if let Some(off) = action_off {
++                b.push_slot_always(VT_IN_ACTION, off);
++            }
+         }
+         InteractReq::Walk { x, z, level, .. } | InteractReq::WalkTo { x, z, level } => {
+             b.push_slot_always(VT_IN_X, *x);
+@@ -4166,7 +4193,13 @@ pub(crate) mod tests {
+                 level: 0,
+                 allow_teleports: true,
+             },
+-            InteractReq::WalkNear {x:2656,z:3286,level:0,radius:3,allow_teleports:false},
++            InteractReq::WalkNear {
++                x: 2656,
++                z: 3286,
++                level: 0,
++                radius: 3,
++                allow_teleports: false,
++            },
+             InteractReq::WalkTo {
+                 x: 3,
+                 z: 4,
+diff --git a/crates/script/src/isolated_env.rs b/crates/script/src/isolated_env.rs
+index e2b5418..4801a11 100644
+--- a/crates/script/src/isolated_env.rs
++++ b/crates/script/src/isolated_env.rs
+@@ -322,11 +322,18 @@ mod tests {
+     #[test]
+     fn operator_home_never_queries_profile_for_explicit_home() {
+         assert_eq!(
+-            super::operator_home_from(Ok("/explicit".into()), || panic!("unexpected USERPROFILE read")).unwrap(),
++            super::operator_home_from(Ok("/explicit".into()), || panic!(
++                "unexpected USERPROFILE read"
++            ))
++            .unwrap(),
+             "/explicit"
+         );
+         #[cfg(not(windows))]
+-        assert!(super::operator_home_from(Err(std::env::VarError::NotPresent), || panic!("Unix queried USERPROFILE")).is_err());
++        assert!(
++            super::operator_home_from(Err(std::env::VarError::NotPresent), || panic!(
++                "Unix queried USERPROFILE"
++            ))
++            .is_err()
++        );
+     }
+-
+ }
+diff --git a/crates/script/src/load.rs b/crates/script/src/load.rs
+index 08a9225..f8ca3ff 100644
+--- a/crates/script/src/load.rs
++++ b/crates/script/src/load.rs
+@@ -1046,15 +1046,25 @@ mod isolate {
+             if capture_override.unwrap_or_else(|| {
+                 std::env::var("BOT_MEMORY_DIAGNOSTICS").as_deref() == Ok("1")
+                     || std::env::var("BOT_MEMORY_FAILURE_CAPTURE").as_deref() == Ok("1")
+-            })
+-            {
++            }) {
+                 counters.enable_stop_reason_capture();
+             }
+             #[cfg(feature = "memory-profile")]
+             let thread_counters = counters.clone();
+             let handle = std::thread::Builder::new()
+                 .name("js-isolate".into())
+-                .spawn(move || isolate_main(js, shape, siblings, rx, msg_tx, setup_tx, #[cfg(feature = "memory-profile")] thread_counters))
++                .spawn(move || {
++                    isolate_main(
++                        js,
++                        shape,
++                        siblings,
++                        rx,
++                        msg_tx,
++                        setup_tx,
++                        #[cfg(feature = "memory-profile")]
++                        thread_counters,
++                    )
++                })
+                 .map_err(|e| format!("isolate thread: {e}"))?;
+             let terminate = match setup_rx.recv_timeout(Duration::from_secs(10)) {
+                 Ok(Ok(handle)) => handle,
+@@ -1091,7 +1101,11 @@ mod isolate {
+         pub fn post_snapshot(&self, bytes: Vec<u8>) {
+             let message = SnapshotMessage {
+                 #[cfg(feature = "memory-profile")]
+-                _lease: crate::memory_profile::SnapshotLease::new(self.counters.clone(), bytes.len(), bytes.capacity()),
++                _lease: crate::memory_profile::SnapshotLease::new(
++                    self.counters.clone(),
++                    bytes.len(),
++                    bytes.capacity(),
++                ),
+                 bytes,
+             };
+             let _ = self.tx.send(IsolateCmd::Snapshot(message));
+@@ -1150,9 +1164,13 @@ mod isolate {
+         }
+ 
+         #[cfg(feature = "memory-profile")]
+-        pub fn memory_metrics(&self) -> serde_json::Value { self.counters.snapshot() }
++        pub fn memory_metrics(&self) -> serde_json::Value {
++            self.counters.snapshot()
++        }
+         #[cfg(feature = "memory-profile")]
+-        pub fn memory_metrics_handle(&self) -> std::sync::Arc<crate::memory_profile::Counters> { self.counters.clone() }
++        pub fn memory_metrics_handle(&self) -> std::sync::Arc<crate::memory_profile::Counters> {
++            self.counters.clone()
++        }
+ 
+         /// Read cached counters only; do not pump messages or probe JS.
+         /// When stop-reason capture was enabled at spawn (diagnostics and/or
+@@ -1160,8 +1178,8 @@ mod isolate {
+         /// or `null` if capture was unavailable.
+         #[cfg(feature = "memory-profile")]
+         pub fn memory_progress(&self) -> serde_json::Value {
+-            use std::sync::atomic::Ordering::Relaxed;
+             use crate::memory_profile::StopReasonCapture;
++            use std::sync::atomic::Ordering::Relaxed;
+             let mut value = serde_json::json!({"dispatched":self.dispatched.load(Relaxed),
+                 "last_completed_tick":self.last_completed.load(Relaxed),
+                 "paint":self.paint.lock().unwrap().as_ref().map(|p|serde_json::json!({"title":p.title,"lines":p.lines})),
+@@ -1385,10 +1403,7 @@ mod isolate {
+     /// When stop-reason capture is enabled, cache a bounded stop reason on
+     /// `counters` before Runtime drop. Swallows all capture failures as Unavailable.
+     #[cfg(feature = "memory-profile")]
+-    fn capture_stop_reason_diag(
+-        runtime: &mut Runtime,
+-        counters: &crate::memory_profile::Counters,
+-    ) {
++    fn capture_stop_reason_diag(runtime: &mut Runtime, counters: &crate::memory_profile::Counters) {
+         use crate::memory_profile::{Counters, StopReasonCapture};
+         if !counters.stop_reason_capture_enabled() {
+             return;
+@@ -1410,7 +1425,9 @@ mod isolate {
+         cmds: Receiver<IsolateCmd>,
+         out: Sender<ThreadMsg>,
+         setup: Sender<Result<v8::IsolateHandle, String>>,
+-        #[cfg(feature = "memory-profile")] counters: std::sync::Arc<crate::memory_profile::Counters>,
++        #[cfg(feature = "memory-profile")] counters: std::sync::Arc<
++            crate::memory_profile::Counters,
++        >,
+     ) {
+         #[cfg(feature = "memory-profile")]
+         let _heap_lifetime = crate::memory_profile::HeapLifetime(counters.clone());
+@@ -1426,14 +1443,22 @@ mod isolate {
+             }
+         };
+         #[cfg(feature = "memory-profile")]
+-        counters.heap_live.store(1,std::sync::atomic::Ordering::Relaxed);
++        counters
++            .heap_live
++            .store(1, std::sync::atomic::Ordering::Relaxed);
+         if let Err(e) = wire_runtime(&mut runtime, &source, shape, &siblings) {
+             let _ = setup.send(Err(e));
+             return;
+         }
+         let terminate = runtime.deno_runtime().v8_isolate().thread_safe_handle();
+         let _ = setup.send(Ok(terminate));
+-        tick_loop(runtime, cmds, out, #[cfg(feature = "memory-profile")] counters);
++        tick_loop(
++            runtime,
++            cmds,
++            out,
++            #[cfg(feature = "memory-profile")]
++            counters,
++        );
+     }
+ 
+     /// Monotonic clock backing the prelude's `performance.now()` shim
+@@ -1474,21 +1499,47 @@ mod isolate {
+                 },
+             )
+             .map_err(|e| format!("register now: {e}"))?;
+-        runtime.register_function("__rs2b0t_withdraw_step", |args: &[serde_json::Value]| {
+-            Ok(crate::bank_withdraw::step(args.first().unwrap_or(&serde_json::Value::Null)))
+-        }).map_err(|e| format!("register withdraw: {e}"))?;
+-        runtime.register_function("__rs2b0t_selected_loadout", |args: &[serde_json::Value]| {
+-            let rows: Vec<crate::loadouts_store::Loadout> = serde_json::from_value(args.first().cloned().unwrap_or(serde_json::json!([]))).unwrap_or_default();
+-            Ok(crate::loadouts_store::selected_compat_loadout(&rows, args.get(1).and_then(|v|v.as_str()).unwrap_or("")))
+-        }).map_err(|e| format!("register loadout: {e}"))?;
+-        runtime.register_function("__rs2b0t_food_of", |args: &[serde_json::Value]| {
+-            let fallback = args.get(1).cloned().unwrap_or(serde_json::json!(""));
+-            let food = args.first().and_then(|v|v.get("carry")).and_then(|v|v.as_array()).and_then(|rows| rows.iter().find_map(|row| {
+-                let name = row.get("item")?.as_str()?;
+-                api::content::FOOD_HEALS.iter().find(|(n,_)|n.eq_ignore_ascii_case(name)).map(|(n,_)|serde_json::json!(n))
+-            }));
+-            Ok(food.unwrap_or(fallback))
+-        }).map_err(|e| format!("register food: {e}"))?;
++        runtime
++            .register_function("__rs2b0t_withdraw_step", |args: &[serde_json::Value]| {
++                Ok(crate::bank_withdraw::step(
++                    args.first().unwrap_or(&serde_json::Value::Null),
++                ))
++            })
++            .map_err(|e| format!("register withdraw: {e}"))?;
++        runtime
++            .register_function(
++                "__rs2b0t_selected_loadout",
++                |args: &[serde_json::Value]| {
++                    let rows: Vec<crate::loadouts_store::Loadout> = serde_json::from_value(
++                        args.first().cloned().unwrap_or(serde_json::json!([])),
++                    )
++                    .unwrap_or_default();
++                    Ok(crate::loadouts_store::selected_compat_loadout(
++                        &rows,
++                        args.get(1).and_then(|v| v.as_str()).unwrap_or(""),
++                    ))
++                },
++            )
++            .map_err(|e| format!("register loadout: {e}"))?;
++        runtime
++            .register_function("__rs2b0t_food_of", |args: &[serde_json::Value]| {
++                let fallback = args.get(1).cloned().unwrap_or(serde_json::json!(""));
++                let food = args
++                    .first()
++                    .and_then(|v| v.get("carry"))
++                    .and_then(|v| v.as_array())
++                    .and_then(|rows| {
++                        rows.iter().find_map(|row| {
++                            let name = row.get("item")?.as_str()?;
++                            api::content::FOOD_HEALS
++                                .iter()
++                                .find(|(n, _)| n.eq_ignore_ascii_case(name))
++                                .map(|(n, _)| serde_json::json!(n))
++                        })
++                    });
++                Ok(food.unwrap_or(fallback))
++            })
++            .map_err(|e| format!("register food: {e}"))?;
+         runtime
+             .eval::<()>(crate::shim::PRELUDE)
+             .map_err(|e| format!("shim: {e}"))?;
+@@ -2480,8 +2531,14 @@ globalThis.__rs2b0t_tick_async = async (n) => {
+     /// are queued is stashed for the next iteration instead of being
+     /// dropped (a `while let Ok(IsolateCmd::Tick(..))` pattern would
+     /// swallow it).
+-    fn tick_loop(mut runtime: Runtime, cmds: Receiver<IsolateCmd>, out: Sender<ThreadMsg>,
+-        #[cfg(feature = "memory-profile")] counters: std::sync::Arc<crate::memory_profile::Counters>) {
++    fn tick_loop(
++        mut runtime: Runtime,
++        cmds: Receiver<IsolateCmd>,
++        out: Sender<ThreadMsg>,
++        #[cfg(feature = "memory-profile")] counters: std::sync::Arc<
++            crate::memory_profile::Counters,
++        >,
++    ) {
+         #[cfg(feature = "memory-profile")]
+         let mut last_heap_sample = None::<Instant>;
+         let mut paused = false;
+@@ -2498,10 +2555,20 @@ globalThis.__rs2b0t_tick_async = async (n) => {
+             if last_heap_sample.is_none_or(|t| t.elapsed() >= Duration::from_secs(1)) {
+                 use std::sync::atomic::Ordering::Relaxed;
+                 let heap = runtime.deno_runtime().v8_isolate().get_heap_statistics();
+-                counters.heap_used.store(heap.used_heap_size() as u64,Relaxed);
+-                counters.heap_total.store(heap.total_heap_size() as u64,Relaxed);
+-                counters.heap_updated_ms.store(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64,Relaxed);
+-                counters.heap_samples.fetch_add(1,Relaxed);
++                counters
++                    .heap_used
++                    .store(heap.used_heap_size() as u64, Relaxed);
++                counters
++                    .heap_total
++                    .store(heap.total_heap_size() as u64, Relaxed);
++                counters.heap_updated_ms.store(
++                    std::time::SystemTime::now()
++                        .duration_since(std::time::UNIX_EPOCH)
++                        .unwrap_or_default()
++                        .as_millis() as u64,
++                    Relaxed,
++                );
++                counters.heap_samples.fetch_add(1, Relaxed);
+                 last_heap_sample = Some(Instant::now());
+             }
+             let cmd = match pending.take() {
+@@ -2531,7 +2598,9 @@ globalThis.__rs2b0t_tick_async = async (n) => {
+                     }
+                 }
+                 IsolateCmd::Loadouts(json) => {
+-                    if let Err(e) = runtime.eval::<()>(&format!("globalThis.__rs2b0t_host.loadouts = {json};")) {
++                    if let Err(e) =
++                        runtime.eval::<()>(&format!("globalThis.__rs2b0t_host.loadouts = {json};"))
++                    {
+                         let _ = out.send(ThreadMsg::Log(format!("loadouts: {e}")));
+                     }
+                 }
+@@ -2643,7 +2712,8 @@ globalThis.__rs2b0t_tick_async = async (n) => {
+                                     call_path,
+                                     error_variant: variant,
+                                     error_debug: debug,
+-                                    terminating_before_cancel: terminating || interrupt_id.is_some(),
++                                    terminating_before_cancel: terminating
++                                        || interrupt_id.is_some(),
+                                     interrupt_id,
+                                 },
+                             );
+diff --git a/crates/script/src/loadouts_store.rs b/crates/script/src/loadouts_store.rs
+index 4fe3a24..ed01551 100644
+--- a/crates/script/src/loadouts_store.rs
++++ b/crates/script/src/loadouts_store.rs
+@@ -238,15 +238,35 @@ mod compatibility_tests {
+     use super::*;
+     #[test]
+     fn selected_loadout_matches_case_and_falls_back_to_first() {
+-        let rows = vec![Loadout { name: "First".into(), worn: vec![], carry: vec!["Coins".into(), "Lobster".into()] }, Loadout { name: "Second".into(), worn: vec![], carry: vec!["Shark".into()] }];
++        let rows = vec![
++            Loadout {
++                name: "First".into(),
++                worn: vec![],
++                carry: vec!["Coins".into(), "Lobster".into()],
++            },
++            Loadout {
++                name: "Second".into(),
++                worn: vec![],
++                carry: vec!["Shark".into()],
++            },
++        ];
+         assert_eq!(selected_compat_loadout(&rows, " SECOND ")["name"], "Second");
+-        assert_eq!(selected_compat_loadout(&rows, "missing")["carry"][1]["item"], "Lobster");
++        assert_eq!(
++            selected_compat_loadout(&rows, "missing")["carry"][1]["item"],
++            "Lobster"
++        );
+         assert!(selected_compat_loadout(&[], "").is_null());
+     }
+ }
+ 
+ /// Adapt the host's persisted loadout shape without changing its wire format.
+ pub fn selected_compat_loadout(rows: &[Loadout], wanted: &str) -> serde_json::Value {
+-    let Some(row) = rows.iter().find(|r| r.name.eq_ignore_ascii_case(wanted.trim())).or_else(|| rows.first()) else { return serde_json::Value::Null; };
++    let Some(row) = rows
++        .iter()
++        .find(|r| r.name.eq_ignore_ascii_case(wanted.trim()))
++        .or_else(|| rows.first())
++    else {
++        return serde_json::Value::Null;
++    };
+     serde_json::json!({"name":row.name,"worn":row.worn,"carry":row.carry.iter().map(|item| serde_json::json!({"item":item})).collect::<Vec<_>>()})
+ }
+diff --git a/crates/script/src/memory_profile.rs b/crates/script/src/memory_profile.rs
+index f363ef2..ba0aa6b 100644
+--- a/crates/script/src/memory_profile.rs
++++ b/crates/script/src/memory_profile.rs
+@@ -6,7 +6,10 @@
+ //! retained on this Arc for the `memory_progress` payload only. It is never
+ //! part of [`Counters::snapshot`]. Failure-capture enables this cache without
+ //! the host-play periodic diagnostic sidecar.
+-use std::sync::{Arc, Mutex, atomic::{AtomicBool, AtomicU64, Ordering::Relaxed}};
++use std::sync::{
++    atomic::{AtomicBool, AtomicU64, Ordering::Relaxed},
++    Arc, Mutex,
++};
+ 
+ /// Max Unicode scalars retained for an opt-in diagnostic stop reason.
+ pub const STOP_REASON_CAP: usize = 1024;
+@@ -67,8 +70,10 @@ impl Counters {
+             "script_tick_max_ns":self.tick_max_ns.load(Relaxed)})
+     }
+     pub fn tick(&self, elapsed: std::time::Duration) {
+-        let ns=elapsed.as_nanos().min(u64::MAX as u128) as u64;
+-        self.tick_ns.fetch_add(ns,Relaxed);self.tick_max_ns.fetch_max(ns,Relaxed);self.tick_count.fetch_add(1,Relaxed);
++        let ns = elapsed.as_nanos().min(u64::MAX as u128) as u64;
++        self.tick_ns.fetch_add(ns, Relaxed);
++        self.tick_max_ns.fetch_max(ns, Relaxed);
++        self.tick_count.fetch_add(1, Relaxed);
+     }
+     /// Enable bounded stop-reason retention (diagnostics and/or failure-capture).
+     pub fn enable_diagnostics(&self) {
+@@ -92,7 +97,10 @@ impl Counters {
+         }
+     }
+     pub fn stop_reason(&self) -> StopReasonCapture {
+-        self.stop_reason.lock().unwrap_or_else(|e| e.into_inner()).clone()
++        self.stop_reason
++            .lock()
++            .unwrap_or_else(|e| e.into_inner())
++            .clone()
+     }
+     /// Bound a captured string to [`STOP_REASON_CAP`] Unicode scalars.
+     pub fn bound_stop_reason(s: String) -> String {
+@@ -127,7 +135,10 @@ impl Counters {
+     /// Keep only the first bounded failure attribution.
+     pub fn record_failure_attribution(&self, mut attribution: FailureAttribution) {
+         attribution.error_debug = Self::bound_stop_reason(attribution.error_debug);
+-        let mut slot = self.failure_attribution.lock().unwrap_or_else(|e| e.into_inner());
++        let mut slot = self
++            .failure_attribution
++            .lock()
++            .unwrap_or_else(|e| e.into_inner());
+         if slot.is_none() {
+             *slot = Some(attribution);
+         }
+@@ -140,19 +151,31 @@ impl Counters {
+             .clone()
+     }
+ }
+-pub struct SnapshotLease { counters: Arc<Counters>, len:u64, capacity:u64 }
++pub struct SnapshotLease {
++    counters: Arc<Counters>,
++    len: u64,
++    capacity: u64,
++}
+ impl SnapshotLease {
+-    pub fn new(counters:Arc<Counters>, len:usize, capacity:usize)->Self {
+-        counters.bytes.fetch_add(len as u64,Relaxed);
+-        let current=counters.capacity.fetch_add(capacity as u64,Relaxed)+capacity as u64;
+-        counters.peak_capacity.fetch_max(current,Relaxed);
+-        Self{counters,len:len as u64,capacity:capacity as u64}
++    pub fn new(counters: Arc<Counters>, len: usize, capacity: usize) -> Self {
++        counters.bytes.fetch_add(len as u64, Relaxed);
++        let current = counters.capacity.fetch_add(capacity as u64, Relaxed) + capacity as u64;
++        counters.peak_capacity.fetch_max(current, Relaxed);
++        Self {
++            counters,
++            len: len as u64,
++            capacity: capacity as u64,
++        }
+     }
+ }
+ impl Drop for SnapshotLease {
+-    fn drop(&mut self) { self.counters.bytes.fetch_sub(self.len,Relaxed);self.counters.capacity.fetch_sub(self.capacity,Relaxed); }
++    fn drop(&mut self) {
++        self.counters.bytes.fetch_sub(self.len, Relaxed);
++        self.counters.capacity.fetch_sub(self.capacity, Relaxed);
++    }
+ }
+-#[cfg(test)] mod tests {
++#[cfg(test)]
++mod tests {
+     use super::*;
+     #[test]
+     fn failure_attribution_is_bounded_first_only_and_capture_off_is_empty() {
+@@ -183,45 +206,76 @@ impl Drop for SnapshotLease {
+         assert!(off.failure_attribution().is_none());
+     }
+ 
+-    #[test] fn thread_ownership_survives_handle_release_without_registry_retention() {
+-        let counters=registered();let weak=Arc::downgrade(&counters);
+-        let (tx,rx)=std::sync::mpsc::channel();
+-        let thread=std::thread::spawn(move || {let _owner=counters;rx.recv().unwrap();});
++    #[test]
++    fn thread_ownership_survives_handle_release_without_registry_retention() {
++        let counters = registered();
++        let weak = Arc::downgrade(&counters);
++        let (tx, rx) = std::sync::mpsc::channel();
++        let thread = std::thread::spawn(move || {
++            let _owner = counters;
++            rx.recv().unwrap();
++        });
+         assert!(weak.upgrade().is_some());
+-        tx.send(()).unwrap();thread.join().unwrap();
++        tx.send(()).unwrap();
++        thread.join().unwrap();
+         assert!(weak.upgrade().is_none());
+     }
+-    #[test] fn runtime_teardown_clears_heap_gauges() {
+-        let c=Arc::new(Counters::default());c.heap_live.store(1,Relaxed);c.heap_used.store(12,Relaxed);c.heap_total.store(16,Relaxed);
+-        drop(HeapLifetime(c.clone()));assert_eq!(c.heap_live.load(Relaxed),0);assert_eq!(c.heap_used.load(Relaxed),0);assert_eq!(c.heap_total.load(Relaxed),0);
+-    }
+-    #[test] fn snapshot_lifetime_counts_capacity_and_releases_on_channel_drop() {
+-        let c=Arc::new(Counters::default());
+-        let (tx,rx)=std::sync::mpsc::channel();
+-        tx.send(SnapshotLease::new(c.clone(),3,16)).unwrap();
+-        tx.send(SnapshotLease::new(c.clone(),5,32)).unwrap();
+-        assert_eq!(c.bytes.load(Relaxed),8);assert_eq!(c.capacity.load(Relaxed),48);
+-        let consumed=rx.recv().unwrap();assert_eq!(c.capacity.load(Relaxed),48);
+-        drop(consumed);assert_eq!(c.capacity.load(Relaxed),32);
+-        drop(rx);assert_eq!(c.capacity.load(Relaxed),0);
+-        assert!(tx.send(SnapshotLease::new(c.clone(),1,8)).is_err());
+-        assert_eq!(c.bytes.load(Relaxed),0);assert_eq!(c.capacity.load(Relaxed),0);
++    #[test]
++    fn runtime_teardown_clears_heap_gauges() {
++        let c = Arc::new(Counters::default());
++        c.heap_live.store(1, Relaxed);
++        c.heap_used.store(12, Relaxed);
++        c.heap_total.store(16, Relaxed);
++        drop(HeapLifetime(c.clone()));
++        assert_eq!(c.heap_live.load(Relaxed), 0);
++        assert_eq!(c.heap_used.load(Relaxed), 0);
++        assert_eq!(c.heap_total.load(Relaxed), 0);
++    }
++    #[test]
++    fn snapshot_lifetime_counts_capacity_and_releases_on_channel_drop() {
++        let c = Arc::new(Counters::default());
++        let (tx, rx) = std::sync::mpsc::channel();
++        tx.send(SnapshotLease::new(c.clone(), 3, 16)).unwrap();
++        tx.send(SnapshotLease::new(c.clone(), 5, 32)).unwrap();
++        assert_eq!(c.bytes.load(Relaxed), 8);
++        assert_eq!(c.capacity.load(Relaxed), 48);
++        let consumed = rx.recv().unwrap();
++        assert_eq!(c.capacity.load(Relaxed), 48);
++        drop(consumed);
++        assert_eq!(c.capacity.load(Relaxed), 32);
++        drop(rx);
++        assert_eq!(c.capacity.load(Relaxed), 0);
++        assert!(tx.send(SnapshotLease::new(c.clone(), 1, 8)).is_err());
++        assert_eq!(c.bytes.load(Relaxed), 0);
++        assert_eq!(c.capacity.load(Relaxed), 0);
+     }
+ }
+ 
+ pub struct HeapLifetime(pub Arc<Counters>);
+-impl Drop for HeapLifetime { fn drop(&mut self) { self.0.heap_used.store(0,Relaxed);self.0.heap_total.store(0,Relaxed);self.0.heap_live.store(0,Relaxed); } }
++impl Drop for HeapLifetime {
++    fn drop(&mut self) {
++        self.0.heap_used.store(0, Relaxed);
++        self.0.heap_total.store(0, Relaxed);
++        self.0.heap_live.store(0, Relaxed);
++    }
++}
+ 
+-static REGISTRY: std::sync::OnceLock<std::sync::Mutex<Vec<std::sync::Weak<Counters>>>> = std::sync::OnceLock::new();
++static REGISTRY: std::sync::OnceLock<std::sync::Mutex<Vec<std::sync::Weak<Counters>>>> =
++    std::sync::OnceLock::new();
+ pub fn registered() -> Arc<Counters> {
+-    let counters=Arc::new(Counters::default());
+-    let mut rows=REGISTRY.get_or_init(Default::default).lock().unwrap();
+-    rows.retain(|r|r.strong_count()>0);rows.push(Arc::downgrade(&counters));counters
++    let counters = Arc::new(Counters::default());
++    let mut rows = REGISTRY.get_or_init(Default::default).lock().unwrap();
++    rows.retain(|r| r.strong_count() > 0);
++    rows.push(Arc::downgrade(&counters));
++    counters
+ }
+ /// Includes detached isolate threads until their real resources are released.
+ /// Weak registration never keeps an isolate or its counters alive.
+ pub fn snapshots() -> Vec<serde_json::Value> {
+-    let mut rows=REGISTRY.get_or_init(Default::default).lock().unwrap();
+-    rows.retain(|r|r.strong_count()>0);
+-    rows.iter().filter_map(|r|r.upgrade()).map(|r|r.snapshot()).collect()
++    let mut rows = REGISTRY.get_or_init(Default::default).lock().unwrap();
++    rows.retain(|r| r.strong_count() > 0);
++    rows.iter()
++        .filter_map(|r| r.upgrade())
++        .map(|r| r.snapshot())
++        .collect()
+ }
+diff --git a/crates/script/src/shim/mod.rs b/crates/script/src/shim/mod.rs
+index 9f83473..00e90a9 100644
+--- a/crates/script/src/shim/mod.rs
++++ b/crates/script/src/shim/mod.rs
+@@ -622,7 +622,14 @@ pub enum InteractReq {
+     },
+     /// Packed navigation to a reachable tile within the requested radius.
+     #[serde(rename = "walk-near")]
+-    WalkNear { x: i32, z: i32, level: i32, radius: i32, #[serde(default)] allow_teleports: bool },
++    WalkNear {
++        x: i32,
++        z: i32,
++        level: i32,
++        radius: i32,
++        #[serde(default)]
++        allow_teleports: bool,
++    },
+     /// Scene `try_move` packet (`Interactions::walk`). Catalog
+     /// `Traversal.walkTo` — not Traveller.
+     #[serde(rename = "walk-to")]
+diff --git a/crates/script/src/slot.rs b/crates/script/src/slot.rs
+index 6aa53ca..4937ef6 100644
+--- a/crates/script/src/slot.rs
++++ b/crates/script/src/slot.rs
+@@ -120,7 +120,13 @@ impl SlotScript {
+     /// Start with explicit loadouts, avoiding operator filesystem inputs in
+     /// disposable live fixtures. Commands are posted before the first tick.
+     #[cfg(feature = "load")]
+-    pub fn start_load_with_loadouts(&mut self, source: String, shape: LoadShape, siblings: Vec<(String,String)>, loadouts: &[crate::loadouts_store::Loadout]) -> Result<(),String> {
++    pub fn start_load_with_loadouts(
++        &mut self,
++        source: String,
++        shape: LoadShape,
++        siblings: Vec<(String, String)>,
++        loadouts: &[crate::loadouts_store::Loadout],
++    ) -> Result<(), String> {
+         match self.state {
+             RunState::Running | RunState::Paused | RunState::Stopping => {
+                 Err("script already active: stop it first".to_string())
+@@ -226,7 +232,9 @@ impl SlotScript {
+ 
+     #[cfg(feature = "load")]
+     pub fn post_loadouts(&self, loadouts: &[crate::loadouts_store::Loadout]) {
+-        if let Some(isolate) = &self.load { isolate.post_loadouts(loadouts); }
++        if let Some(isolate) = &self.load {
++            isolate.post_loadouts(loadouts);
++        }
+     }
+ 
+     /// Start a JS Load isolate and optionally post the operator settings bag.
+@@ -368,13 +376,24 @@ impl SlotScript {
+     }
+ 
+     #[cfg(all(feature = "memory-profile", feature = "load"))]
+-    pub fn memory_metrics(&self) -> Option<serde_json::Value> { self.load.as_ref().map(|i|i.memory_metrics()) }
++    pub fn memory_metrics(&self) -> Option<serde_json::Value> {
++        self.load.as_ref().map(|i| i.memory_metrics())
++    }
+ 
+     #[cfg(all(feature = "memory-profile", feature = "load"))]
+     pub fn memory_progress(&self) -> serde_json::Value {
+-        let mut value = self.load.as_ref().map(|i|i.memory_progress()).unwrap_or(serde_json::json!({}));
++        let mut value = self
++            .load
++            .as_ref()
++            .map(|i| i.memory_progress())
++            .unwrap_or(serde_json::json!({}));
+         if let Some(fp) = &self.last_snapshot {
+-            let rows = |rs: &[crate::isolate_fb::ItemRowFp]| rs.iter().take(32).map(|r|serde_json::json!({"name":r.name,"count":r.count,"ops":r.ops})).collect::<Vec<_>>();
++            let rows = |rs: &[crate::isolate_fb::ItemRowFp]| {
++                rs.iter()
++                    .take(32)
++                    .map(|r| serde_json::json!({"name":r.name,"count":r.count,"ops":r.ops}))
++                    .collect::<Vec<_>>()
++            };
+             value["inventory"] = serde_json::json!(rows(&fp.inv));
+             value["bank"] = serde_json::json!(rows(&fp.bank));
+             value["bank_open"] = serde_json::json!(fp.bank_open);
+diff --git a/crates/script/tests/gold_stubs.rs b/crates/script/tests/gold_stubs.rs
+index 9d775bc..825c45e 100644
+--- a/crates/script/tests/gold_stubs.rs
++++ b/crates/script/tests/gold_stubs.rs
+@@ -345,10 +345,18 @@ export default class T extends LoopingBot {
+ }
+ "#;
+     let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+-    iso.post_loadouts(&[script::Loadout { name: "Food".into(), worn: vec![], carry: vec!["Coins".into(), "Lobster".into()] }]);
+-    iso.probe("globalThis.__rs2b0t_host.snapshot = {inv: [{name:'Lobster',count:1}]}; true").unwrap();
++    iso.post_loadouts(&[script::Loadout {
++        name: "Food".into(),
++        worn: vec![],
++        carry: vec!["Coins".into(), "Lobster".into()],
++    }]);
++    iso.probe("globalThis.__rs2b0t_host.snapshot = {inv: [{name:'Lobster',count:1}]}; true")
++        .unwrap();
+     iso.on_game_tick(1);
+-    assert_eq!(iso.probe("__food").unwrap(), serde_json::json!(["Lobster",12]));
++    assert_eq!(
++        iso.probe("__food").unwrap(),
++        serde_json::json!(["Lobster", 12])
++    );
+     assert!(iso.drain_interacts().iter().any(|r| matches!(r,script::shim::InteractReq::Held{name,action} if name=="Lobster" && action=="Eat")));
+     iso.join();
+ }
+@@ -361,13 +369,16 @@ export default class T extends LoopingBot {
+     async loop() { await Bank.openNearestAccess({name:'Bank booth',op:'Use-quickly'}); }
+ }
+ "#;
+-    let iso=LoadIsolate::spawn(src.into(),LoadShape::CompatClass,vec![]).unwrap();
++    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+     iso.probe("globalThis.__rs2b0t_host.snapshot={here:{x:10,z:10,level:0},nearest_booth:{x:11,z:10,level:0},bank_open:false,bank_loaded:false};true").unwrap();
+     iso.on_game_tick(1);
+     iso.probe("true").unwrap();
+-    let requests=iso.drain_interacts();
+-    assert_eq!(requests.len(),1);
+-    assert!(matches!(requests[0],script::shim::InteractReq::OpenBooth{..}));
++    let requests = iso.drain_interacts();
++    assert_eq!(requests.len(), 1);
++    assert!(matches!(
++        requests[0],
++        script::shim::InteractReq::OpenBooth { .. }
++    ));
+     iso.join();
+ }
+ 
+@@ -385,8 +396,13 @@ export default class T extends LoopingBot {
+         iso.on_game_tick(tick);
+         iso.probe("true").unwrap();
+     }
+-    assert_eq!(iso.probe("typeof globalThis.__withdrawResult").unwrap(), "undefined", "a sent count is not a completed withdrawal");
+-    iso.probe("globalThis.__rs2b0t_host.snapshot.inv=[{name:'Lobster',count:22}];true").unwrap();
++    assert_eq!(
++        iso.probe("typeof globalThis.__withdrawResult").unwrap(),
++        "undefined",
++        "a sent count is not a completed withdrawal"
++    );
++    iso.probe("globalThis.__rs2b0t_host.snapshot.inv=[{name:'Lobster',count:22}];true")
++        .unwrap();
+     iso.on_game_tick(4);
+     assert_eq!(iso.probe("globalThis.__withdrawResult").unwrap(), true);
+     iso.join();
+diff --git a/crates/script/tests/load_isolate.rs b/crates/script/tests/load_isolate.rs
+index 98e940c..6da4873 100644
+--- a/crates/script/tests/load_isolate.rs
++++ b/crates/script/tests/load_isolate.rs
+@@ -513,18 +513,30 @@ fn isolate_logs_tick_errors() {
+ #[test]
+ fn failure_capture_attributes_throw_and_retains_first_failure() {
+     let src = "export function tick(api) { if (globalThis.__rs_n === undefined) { globalThis.__rs_n = 0; throw new Error('boom') } globalThis.__rs_n += 1; throw new Error('later') }";
+-    let iso = LoadIsolate::spawn_with_capture_for_test(src.to_string(), LoadShape::NativeTick, vec![], true)
+-        .expect("spawn capturing isolate");
++    let iso = LoadIsolate::spawn_with_capture_for_test(
++        src.to_string(),
++        LoadShape::NativeTick,
++        vec![],
++        true,
++    )
++    .expect("spawn capturing isolate");
+     iso.on_game_tick(11);
+     let _ = iso.probe("1 + 1");
+     iso.on_game_tick(12);
+     let _ = iso.probe("1 + 1");
+-    let attribution = iso.memory_progress().get("failure_attribution").cloned().expect("captured throw attribution");
++    let attribution = iso
++        .memory_progress()
++        .get("failure_attribution")
++        .cloned()
++        .expect("captured throw attribution");
+     assert_eq!(attribution["tick"], 11);
+     assert_eq!(attribution["call_path"], "sync");
+     assert_eq!(attribution["terminating_before_cancel"], false);
+     assert!(attribution["interrupt_id"].is_null());
+-    assert!(attribution["error_debug"].as_str().unwrap().contains("boom"));
++    assert!(attribution["error_debug"]
++        .as_str()
++        .unwrap()
++        .contains("boom"));
+     iso.join();
+ }
+ 
+@@ -533,8 +545,13 @@ fn failure_capture_attributes_throw_and_retains_first_failure() {
+ #[cfg(feature = "memory-profile")]
+ #[test]
+ fn failure_capture_off_has_no_attribution_in_memory_progress() {
+-    let iso = LoadIsolate::spawn_with_capture_for_test("export function tick(api) { throw new Error('not captured') }".to_string(), LoadShape::NativeTick, vec![], false)
+-        .expect("spawn non-capturing isolate");
++    let iso = LoadIsolate::spawn_with_capture_for_test(
++        "export function tick(api) { throw new Error('not captured') }".to_string(),
++        LoadShape::NativeTick,
++        vec![],
++        false,
++    )
++    .expect("spawn non-capturing isolate");
+     iso.on_game_tick(21);
+     let _ = iso.probe("1 + 1");
+     assert!(iso.memory_progress().get("failure_attribution").is_none());
+@@ -576,15 +593,24 @@ fn slow_tick_is_interrupted_and_isolate_survives() {
+ #[test]
+ fn failure_capture_attributes_host_termination_and_preserves_isolate() {
+     let src = "export function tick(api) { globalThis.__rs_n = (globalThis.__rs_n||0)+1; if (globalThis.__rs_n === 1) { while(true){} } }";
+-    let iso = LoadIsolate::spawn_with_capture_for_test(src.to_string(), LoadShape::NativeTick, vec![], true)
+-        .expect("spawn capturing isolate");
++    let iso = LoadIsolate::spawn_with_capture_for_test(
++        src.to_string(),
++        LoadShape::NativeTick,
++        vec![],
++        true,
++    )
++    .expect("spawn capturing isolate");
+     iso.on_game_tick(31);
+     std::thread::sleep(std::time::Duration::from_millis(80));
+     iso.pause();
+     iso.resume();
+     iso.on_game_tick(32);
+     assert_eq!(iso.probe("__rs_n").expect("post-interrupt probe"), 2);
+-    let attribution = iso.memory_progress().get("failure_attribution").cloned().expect("captured host termination attribution");
++    let attribution = iso
++        .memory_progress()
++        .get("failure_attribution")
++        .cloned()
++        .expect("captured host termination attribution");
+     assert_eq!(attribution["tick"], 31);
+     assert_eq!(attribution["terminating_before_cancel"], true);
+     assert!(attribution["interrupt_id"].as_u64().is_some());
+@@ -1183,7 +1209,10 @@ export default class T extends LoopingBot {
+     assert_eq!(iso.probe("__rs_loops").unwrap(), 1, "first loop runs");
+     let paints_after_first = iso.probe("__rs_paints").unwrap();
+     // Existing runner paints once inside the loop wrapper and once when forwarding.
+-    assert_eq!(paints_after_first, 2, "preserve the existing first-tick paint cadence");
++    assert_eq!(
++        paints_after_first, 2,
++        "preserve the existing first-tick paint cadence"
++    );
+     // Post hold via the FlatBuffer — never poke `__rs2b0t_host.hold`.
+     let mut snap = base_snapshot();
+     snap.hold = true;
+@@ -5273,27 +5302,32 @@ export default class T extends LoopingBot {
+ #[cfg(feature = "memory-profile")]
+ #[test]
+ fn passive_metrics_count_decode_lifetime_heap_and_teardown() {
+-    let iso=LoadIsolate::spawn(NATIVE_TICK.into(),LoadShape::NativeTick,vec![]).unwrap();
++    let iso = LoadIsolate::spawn(NATIVE_TICK.into(), LoadShape::NativeTick, vec![]).unwrap();
+     iso.probe("1").unwrap();
+-    let before=iso.memory_metrics();
+-    assert_eq!(before["v8_live"],1);
+-    assert!(before["v8_heap_samples"].as_u64().unwrap()>0);
+-    assert!(before["v8_used_bytes"].as_u64().unwrap()>0);
+-    assert!(before["v8_total_bytes"].as_u64().unwrap()>=before["v8_used_bytes"].as_u64().unwrap());
+-    let mut malformed=Vec::with_capacity(4096);malformed.extend_from_slice(&[1,2,3]);
++    let before = iso.memory_metrics();
++    assert_eq!(before["v8_live"], 1);
++    assert!(before["v8_heap_samples"].as_u64().unwrap() > 0);
++    assert!(before["v8_used_bytes"].as_u64().unwrap() > 0);
++    assert!(
++        before["v8_total_bytes"].as_u64().unwrap() >= before["v8_used_bytes"].as_u64().unwrap()
++    );
++    let mut malformed = Vec::with_capacity(4096);
++    malformed.extend_from_slice(&[1, 2, 3]);
+     iso.post_snapshot(malformed);
+     iso.on_game_tick(1);
+     iso.probe("1").unwrap(); // Existing command ordering is the completion barrier.
+-    let after=iso.memory_metrics();
+-    assert_eq!(after["snapshot_inflight_bytes"],0);
+-    assert_eq!(after["snapshot_inflight_capacity"],0);
+-    assert!(after["snapshot_peak_capacity"].as_u64().unwrap()>=4096);
+-    assert_eq!(after["script_tick_count"],1);
+-    assert!(after["script_tick_total_ns"].as_u64().unwrap()>0);
+-    let counters=iso.memory_metrics_handle();
++    let after = iso.memory_metrics();
++    assert_eq!(after["snapshot_inflight_bytes"], 0);
++    assert_eq!(after["snapshot_inflight_capacity"], 0);
++    assert!(after["snapshot_peak_capacity"].as_u64().unwrap() >= 4096);
++    assert_eq!(after["script_tick_count"], 1);
++    assert!(after["script_tick_total_ns"].as_u64().unwrap() > 0);
++    let counters = iso.memory_metrics_handle();
+     iso.join();
+-    let stopped=counters.snapshot();
+-    assert_eq!(stopped["v8_live"],0);assert_eq!(stopped["v8_used_bytes"],0);assert_eq!(stopped["v8_total_bytes"],0);
++    let stopped = counters.snapshot();
++    assert_eq!(stopped["v8_live"], 0);
++    assert_eq!(stopped["v8_used_bytes"], 0);
++    assert_eq!(stopped["v8_total_bytes"], 0);
+ }
+ 
+ #[cfg(feature = "memory-profile")]
+@@ -5315,7 +5349,10 @@ fn wait_isolate_dead(iso: &LoadIsolate) {
+         if iso.probe("1 + 1").is_err() {
+             return;
+         }
+-        assert!(Instant::now() < deadline, "isolate must exit after ScriptRunner.stop");
++        assert!(
++            Instant::now() < deadline,
++            "isolate must exit after ScriptRunner.stop"
++        );
+         std::thread::sleep(Duration::from_millis(10));
+     }
+ }
+@@ -5470,7 +5507,10 @@ export default class T extends LoopingBot {
+             } )()"#,
+         )
+         .unwrap();
+-    assert!(captured.is_null(), "accessor must yield unavailable, got {captured}");
++    assert!(
++        captured.is_null(),
++        "accessor must yield unavailable, got {captured}"
++    );
+     assert_eq!(
+         iso.probe("globalThis.__accessor_hit === true").unwrap(),
+         false,
+@@ -5478,7 +5518,8 @@ export default class T extends LoopingBot {
+     );
+     // Full stop path with accessor still stops cleanly and records unavailable.
+     iso.memory_metrics_handle().enable_diagnostics();
+-    iso.probe("globalThis.__rs2b0t_host.stopRequested = true").unwrap();
++    iso.probe("globalThis.__rs2b0t_host.stopRequested = true")
++        .unwrap();
+     iso.on_game_tick(2);
+     wait_stop_logs(&iso);
+     wait_isolate_dead(&iso);
+diff --git a/crates/tui/src/bin.rs b/crates/tui/src/bin.rs
+index be15b5c..75aa00f 100644
+--- a/crates/tui/src/bin.rs
++++ b/crates/tui/src/bin.rs
+@@ -980,9 +980,7 @@ impl TuiSession {
+                         // Immediate drain of existing checkpoints / failure
+                         // boundary already latched by nav failure path.
+                         // Preserve original Err/exit1 — never hold for observe.
+-                        report_nav_json_drain_terminal(
+-                            host_play::nav_capture::drain_json_files(),
+-                        );
++                        report_nav_json_drain_terminal(host_play::nav_capture::drain_json_files());
+                         eprintln!("FAIL: memory tui: {error}");
+                         std::process::exit(1);
+                     }
+@@ -1364,18 +1362,18 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
+             return Ok(code);
+         }
+         {
+-        let _profile_frame = client::profiling::UI_FRAME.start();
+-        terminal
+-            .draw(|frame| {
+-                let _profile_draw = client::profiling::UI_DRAW.start();
+-                app.draw(frame);
+-                app.draw_loadouts_overlay(frame, &mut session.loadouts);
+-                app.draw_params_overlay(frame, &mut session.script_settings, &session.loadouts);
+-            })
+-            .map_err(|e| e.to_string())?;
+-        // Flush the input-start origin, not post-pump focused_name (focus may
+-        // have rotated in session.pump before this draw).
+-        flush_tui_input_origin(&mut input_flush_origin, Instant::now());
++            let _profile_frame = client::profiling::UI_FRAME.start();
++            terminal
++                .draw(|frame| {
++                    let _profile_draw = client::profiling::UI_DRAW.start();
++                    app.draw(frame);
++                    app.draw_loadouts_overlay(frame, &mut session.loadouts);
++                    app.draw_params_overlay(frame, &mut session.script_settings, &session.loadouts);
++                })
++                .map_err(|e| e.to_string())?;
++            // Flush the input-start origin, not post-pump focused_name (focus may
++            // have rotated in session.pump before this draw).
++            flush_tui_input_origin(&mut input_flush_origin, Instant::now());
+         }
+         if event::poll(Duration::from_millis(50)).map_err(|e| e.to_string())? {
+             match event::read().map_err(|e| e.to_string())? {
+@@ -2266,13 +2264,13 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
+         host::responsiveness_profile::set_input_surface(
+             host::responsiveness_profile::InputSurface::Tui,
+         );
+-        let a = host::responsiveness_profile::Local::new(host::responsiveness_profile::slot_id_for(
+-            "tui-origin-old-a",
+-        ))
++        let a = host::responsiveness_profile::Local::new(
++            host::responsiveness_profile::slot_id_for("tui-origin-old-a"),
++        )
+         .expect("enabled");
+-        let b = host::responsiveness_profile::Local::new(host::responsiveness_profile::slot_id_for(
+-            "tui-origin-old-b",
+-        ))
++        let b = host::responsiveness_profile::Local::new(
++            host::responsiveness_profile::slot_id_for("tui-origin-old-b"),
++        )
+         .expect("enabled");
+         let sid_a = a.slot_id();
+         let sid_b = b.slot_id();
+@@ -2286,7 +2284,10 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
+         assert_eq!(ra.input_complete_n, 0, "old routing leaves A open");
+         assert_eq!(ra.input_pending_n, 1);
+         assert_eq!(rb.input_start_n, 0);
+-        assert_eq!(rb.input_complete_n, 0, "B never started; no fabricated complete");
++        assert_eq!(
++            rb.input_complete_n, 0,
++            "B never started; no fabricated complete"
++        );
+         // keep Locals alive through asserts
+         drop((a, b));
+     }
+@@ -2302,13 +2303,13 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
+         host::responsiveness_profile::set_input_surface(
+             host::responsiveness_profile::InputSurface::Tui,
+         );
+-        let a = host::responsiveness_profile::Local::new(host::responsiveness_profile::slot_id_for(
+-            "tui-origin-fix-a",
+-        ))
++        let a = host::responsiveness_profile::Local::new(
++            host::responsiveness_profile::slot_id_for("tui-origin-fix-a"),
++        )
+         .expect("enabled");
+-        let b = host::responsiveness_profile::Local::new(host::responsiveness_profile::slot_id_for(
+-            "tui-origin-fix-b",
+-        ))
++        let b = host::responsiveness_profile::Local::new(
++            host::responsiveness_profile::slot_id_for("tui-origin-fix-b"),
++        )
+         .expect("enabled");
+         let sid_a = a.slot_id();
+         let sid_b = b.slot_id();
+@@ -2322,7 +2323,10 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
+         let ra = row_for(sid_a);
+         let rb = row_for(sid_b);
+         assert_eq!(ra.input_start_n, 1);
+-        assert_eq!(ra.input_complete_n, 1, "A completes on next successful draw");
++        assert_eq!(
++            ra.input_complete_n, 1,
++            "A completes on next successful draw"
++        );
+         assert_eq!(ra.input_pending_n, 0);
+         assert_eq!(rb.input_complete_n, 0, "B not fabricated");
+         assert_eq!(rb.input_start_n, 0);
+@@ -2338,9 +2342,9 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
+         host::responsiveness_profile::set_input_surface(
+             host::responsiveness_profile::InputSurface::Tui,
+         );
+-        let a = host::responsiveness_profile::Local::new(host::responsiveness_profile::slot_id_for(
+-            "tui-origin-same-a",
+-        ))
++        let a = host::responsiveness_profile::Local::new(
++            host::responsiveness_profile::slot_id_for("tui-origin-same-a"),
++        )
+         .expect("enabled");
+         let sid_a = a.slot_id();
+         let mut origin = None;
+@@ -2362,9 +2366,9 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
+         host::responsiveness_profile::set_input_surface(
+             host::responsiveness_profile::InputSurface::Tui,
+         );
+-        let a = host::responsiveness_profile::Local::new(host::responsiveness_profile::slot_id_for(
+-            "tui-origin-nostart-a",
+-        ))
++        let a = host::responsiveness_profile::Local::new(
++            host::responsiveness_profile::slot_id_for("tui-origin-nostart-a"),
++        )
+         .expect("enabled");
+         let sid_a = a.slot_id();
+         let mut origin = None;
+@@ -2390,9 +2394,9 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
+         host::responsiveness_profile::set_input_surface(
+             host::responsiveness_profile::InputSurface::Tui,
+         );
+-        let a = host::responsiveness_profile::Local::new(host::responsiveness_profile::slot_id_for(
+-            "tui-origin-hold-a",
+-        ))
++        let a = host::responsiveness_profile::Local::new(
++            host::responsiveness_profile::slot_id_for("tui-origin-hold-a"),
++        )
+         .expect("enabled");
+         let sid_a = a.slot_id();
+         let mut origin = None;

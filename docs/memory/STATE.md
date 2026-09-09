@@ -11,6 +11,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 01:39 UTC
+
+- Root found 25 additional host files left formatted by the census worker's
+  earlier cargo fmt --all. Preserved the full diff and pre-restoration files,
+  independently formatted each HEAD blob with the same rustfmt/config, and
+  proved all25 working files matched that formatter output exactly. Restored
+  only those paths after rechecking their hashes; all now equal HEAD bytes.
+  Verification and patch: diagnostics/nav-census-format-recovery/. Raw saved
+  files remain local. Runtime/root Cargo/client diff is empty after recovery.
+- Census t_c20cf6f3 remains active under Luna. Generated fixture execution works;
+  guard tests and hardening remain underway. Root sent final-review checks for
+  expected identity binding, symlink rejection, group cleanup after leader exit,
+  interruption/reap handling, /proc exit races and complete output budgeting.
+  The draft is adding expected hash arguments. No implementation approval,
+  Linux qualification or real navpack census has occurred.
+- 289 H has passed its stage2/stage3 invocation and started full native checks.
+  Completion, exact all82 coverage, review and authentic live remain unproven.
+
 ## Latest boundary — 2026-09-09 01:35 UTC
 
 - Root reclaimed the first nav-census worker run before its invalid HEAD-equality
