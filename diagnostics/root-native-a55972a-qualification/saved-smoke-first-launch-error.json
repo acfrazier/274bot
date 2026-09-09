@@ -1,0 +1,9 @@
+{
+  "session": "20260908_203947_6966a3",
+  "message_id": 18238,
+  "tool_result": {
+    "output": "SMOKE_ADMISSION {\"boot_id\": \"2217ec26-dc3e-47a3-a700-d3fafb34163f\", \"conflicts\": [], \"disk_free\": 11812585472, \"mem_available\": 1000890368, \"qualification_present\": true, \"saved_smoke_absent\": true, \"utc\": \"2026-09-09T00:44:48.575732+00:00\"}\nTraceback (most recent call last):\n  File \"<stdin>\", line 15, in <module>\n  File \"/home/acfrazier/owner-native-a55972a/docs/memory/test_heaptrack_owner_replay.py\", line 32, in smoke_manifest\n    inventory = json.loads((root/'owner-capture-evidence-2015-manifest.json').read_text())\n                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/pathlib.py\", line 1029, in read_text\n    with self.open(mode='r', encoding=encoding, errors=errors) as f:\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/pathlib.py\", line 1015, in open\n    return io.open(self, mode, buffering, encoding, errors, newline)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nFileNotFoundError: [Errno 2] No such file or directory: '/home/acfrazier/diagnostics/owner-capture-evidence-2015/owner-capture-evidence-2015-manifest.json'",
+    "exit_code": 1,
+    "error": null
+  }
+}
