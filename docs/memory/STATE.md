@@ -11,6 +11,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 13:36 UTC
+
+- Native builder Stage A qualification PASS: guards, prepare, four builds,
+  generated clean/counting and full integration stand-in all seven commands0.
+  Root native SSH execution closed normally. Builder root
+  /home/builder/274bot-campaign/nav-stage-a-f24de7c-1327.
+- Root releases Concord GENERATED QUALIFICATION only using these same admitted
+  binaries, no rebuild/re-admission. Transfer payload5463683 bytes,
+  SHA4cbd0db3c956559d465fb7b5f14041eb4b4382813fcb4733d53b86e651f4c31d,
+  all496 files independently verified locally. Concord new owned root
+  /home/acfrazier/274bot-campaign/nav-stage-a-f24de7c-1336;
+  run host/docs/memory/nav-tiled-stage-a/concord-run-01.
+  Concord guard/clean/counting/integration receipts must be fresh. Real59case
+  measurement and real counting diagnostics remain unreleased.
+
 ## Latest boundary — 2026-09-09 13:27 UTC
 
 - Stage A tooling f24de7cbcaaa3f419fc5485b77c4a117543a6afc APPROVED same card
