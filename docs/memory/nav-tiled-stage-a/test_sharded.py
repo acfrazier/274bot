@@ -7,6 +7,7 @@ import tempfile
 import time
 import sys
 import subprocess
+import platform
 import json
 from unittest.mock import patch
 from contextlib import contextmanager
@@ -73,12 +74,30 @@ class Metrics(unittest.TestCase):
             p=Path(d);start=time.monotonic()
             with self.assertRaises(sh.Deadline), sh.deadline(.25):
                 sh.stage.support.bounded([sys.executable,'-c',
-                    'import os,time;print(os.getpid(),flush=True);p=os.fork();print(os.getpid(),flush=True);time.sleep(20)'],p,'alarm',wall=20,cpu=2)
+                    'import os,time;print(os.getpid(),flush=True);p=os.fork();print(os.getpid(),flush=True);time.sleep(20)'],p,'alarm',wall=20,cpu=2,address=sh.QUAL_LIMITS['address'])
             self.assertLess(time.monotonic()-start,3)
             self.assertEqual(json.loads((p/'alarm.receipt.json').read_text())['failure'],'supervisor')
             for pid in (p/'alarm.out').read_text().split():
                 result=subprocess.run(['ps','-o','stat=','-p',pid],capture_output=True,text=True)
                 self.assertTrue(not result.stdout.strip() or result.stdout.strip().startswith('Z'))
+
+    def test_scheduler_fixture_address_binds_to_qualification_cap(self):
+        # The qualification runner inherits this cap on Linux; the fixture must
+        # never ask frozen_support to raise that inherited hard limit.
+        with retained_fixture() as d:
+            p=Path(d)
+            r=sh.stage.support.bounded([sys.executable,'-c',
+                'import json,resource;print(json.dumps(resource.getrlimit(resource.RLIMIT_AS)))'],
+                p,'address-binding',address=sh.QUAL_LIMITS['address'])
+            self.assertIsNone(r['failure'])
+            self.assertEqual(r['limits']['address'],sh.QUAL_LIMITS['address'])
+            if platform.system()=='Linux':
+                self.assertTrue(r['address_guard_active'])
+                self.assertEqual(json.loads((p/'address-binding.out').read_text()),
+                    [sh.QUAL_LIMITS['address']]*2)
+            else:
+                # macOS does not provide the Linux hard-RLIMIT_AS proof.
+                self.assertFalse(r['address_guard_active'])
 
     def test_schedule_and_raw_contract(self):
         self.assertTrue(hasattr(sh, 'schedule'), 'schedule missing')

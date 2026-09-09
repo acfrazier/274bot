@@ -1,0 +1,9 @@
+test_budget_reservation_refund_and_deadline (test_sharded.Metrics) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-h1u35yde
+ok
+test_scheduler_fixture_address_binds_to_qualification_cap (test_sharded.Metrics) ... retained fixture: /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/sharded-test-immhqxf9
+ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.365s
+
+OK

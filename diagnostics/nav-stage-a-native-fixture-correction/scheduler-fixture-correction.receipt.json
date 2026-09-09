@@ -1,0 +1,31 @@
+{
+  "schema": "stage-a-native-fixture-correction-v1",
+  "scope": "generated scheduler fixture only",
+  "source_sha256": {
+    "test_sharded.py": "b2643c8fce518b77073b7cfa9ab911c9565212f507bffe10db626d13f9f5858f",
+    "test_sharded_guards.py": "45dd91f94b7c9128647e26d243666fd7ea658a82dce56c4dd19b6d2b01cae15b",
+    "sharded.py": "8bfda30e744379d55a6abaef3dda31192487a534d0508cc41fd3a6ff0152267d",
+    "qualify_sharded.py": "e55bbf575cb01a2f5a940e71bc2d5f093696fb6fd95339b2f4fe75c0234e2853",
+    "sharded-proposed-manifest.json": "36fc057b0a371485420715fb339e58d11dab9eac7f4680e80124642a50d3179b"
+  },
+  "fixture_address_limit": 4294967296,
+  "qualification_address_limit": 4294967296,
+  "focused_tests": {
+    "command": "python3 -m unittest -v test_sharded.Metrics.test_budget_reservation_refund_and_deadline test_sharded.Metrics.test_scheduler_fixture_address_binds_to_qualification_cap",
+    "result": "2 tests passed",
+    "log_sha256": "669a1c1382ed6ac1f91a9358b82f718375dd3aefc4d3c78b393f06bc7929f812"
+  },
+  "full_generated_suite": {
+    "command": "python3 -m unittest -v",
+    "result": "41 tests passed",
+    "duration_seconds": 103.633
+  },
+  "linux_inherited_hard_as": {
+    "evidence": "diagnostics/nav-stage-a-native-preparation/root-inherited-as-reproduction.json",
+    "result": "requesting 68719476736 was rejected; inherited 4294967296 was accepted",
+    "native_hard_as_qualified": false
+  },
+  "platform_limitation": "macOS local execution cannot prove Linux hard RLIMIT_AS inheritance; root must rerun the generated qualification on Linux.",
+  "production_or_real_inputs": false,
+  "native_qualification_claimed": false
+}
