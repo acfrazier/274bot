@@ -1,0 +1,82 @@
+[
+  {
+    "repo": ".",
+    "commit": "c0709aba2f8b45e42193225cf8f4e7325b5ca9bf",
+    "path": "crates/nav/src/world.rs",
+    "frozen_sha256": "73ffbfef4d2375a6dd564383b939345df3e8e7097a71e3dcf3bf0e9d46e9888d",
+    "current_sha256": "73ffbfef4d2375a6dd564383b939345df3e8e7097a71e3dcf3bf0e9d46e9888d",
+    "frozen_equals_current": true
+  },
+  {
+    "repo": ".",
+    "commit": "c0709aba2f8b45e42193225cf8f4e7325b5ca9bf",
+    "path": "crates/nav/src/pack.rs",
+    "frozen_sha256": "4a6609e7395e3e849050c87517da2a1d1bd292c9308d25a971dbfdf1caafdb96",
+    "current_sha256": "4a6609e7395e3e849050c87517da2a1d1bd292c9308d25a971dbfdf1caafdb96",
+    "frozen_equals_current": true
+  },
+  {
+    "repo": ".",
+    "commit": "c0709aba2f8b45e42193225cf8f4e7325b5ca9bf",
+    "path": "crates/nav/src/collision.rs",
+    "frozen_sha256": "bd04af286804afbd7579ab22ea175b9b573e88b61edb3afb1bbca68d968f003b",
+    "current_sha256": "bd04af286804afbd7579ab22ea175b9b573e88b61edb3afb1bbca68d968f003b",
+    "frozen_equals_current": true
+  },
+  {
+    "repo": ".",
+    "commit": "c0709aba2f8b45e42193225cf8f4e7325b5ca9bf",
+    "path": "crates/host-play/src/lib.rs",
+    "frozen_sha256": "ab8284adda3b7c5f07d0eabbfa11e5eef2435bb3079f242d34f0218ed10683b4",
+    "current_sha256": "ab8284adda3b7c5f07d0eabbfa11e5eef2435bb3079f242d34f0218ed10683b4",
+    "frozen_equals_current": true
+  },
+  {
+    "repo": ".",
+    "commit": "c0709aba2f8b45e42193225cf8f4e7325b5ca9bf",
+    "path": "crates/api/src/snapshot.rs",
+    "frozen_sha256": "1d7307e7c75fee3a9a26b1075afd78a8cfad67d626d8327c73a326881cd4cb28",
+    "current_sha256": "1d7307e7c75fee3a9a26b1075afd78a8cfad67d626d8327c73a326881cd4cb28",
+    "frozen_equals_current": true
+  },
+  {
+    "repo": "vendor/fr-client-rust",
+    "commit": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+    "path": "crates/client/src/config/if_type.rs",
+    "frozen_sha256": "f905bd60f246d7afec18255864c4a60e4f769c0c44addb0fc08795145ba687cd",
+    "current_sha256": "f905bd60f246d7afec18255864c4a60e4f769c0c44addb0fc08795145ba687cd",
+    "frozen_equals_current": true
+  },
+  {
+    "repo": "vendor/fr-client-rust",
+    "commit": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+    "path": "crates/client/src/sound/jagfx.rs",
+    "frozen_sha256": "69322fda04550289198195d8e0fdae7903d823792a118ae8831e93dde11754ec",
+    "current_sha256": "69322fda04550289198195d8e0fdae7903d823792a118ae8831e93dde11754ec",
+    "frozen_equals_current": true
+  },
+  {
+    "repo": "vendor/fr-client-rust",
+    "commit": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+    "path": "crates/client/src/dash3d/model.rs",
+    "frozen_sha256": "c2af8c399862d262348efc48d1e0fc7772de4286e9cb7c6554a27f6d2393dfb4",
+    "current_sha256": "c2af8c399862d262348efc48d1e0fc7772de4286e9cb7c6554a27f6d2393dfb4",
+    "frozen_equals_current": true
+  },
+  {
+    "repo": "vendor/fr-client-rust",
+    "commit": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+    "path": "crates/client/src/dash3d/anim_frame.rs",
+    "frozen_sha256": "92ee2012d95905cc7ce01ca49c276e10fc517ca76626451e47dec49cfe1fcf00",
+    "current_sha256": "92ee2012d95905cc7ce01ca49c276e10fc517ca76626451e47dec49cfe1fcf00",
+    "frozen_equals_current": true
+  },
+  {
+    "repo": "vendor/fr-client-rust",
+    "commit": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+    "path": "crates/client/src/client/client.rs",
+    "frozen_sha256": "de5a57f6c67049930edd39f29acfc43e5e6ac4707fefa94c2242074fb04cf94b",
+    "current_sha256": "de5a57f6c67049930edd39f29acfc43e5e6ac4707fefa94c2242074fb04cf94b",
+    "frozen_equals_current": true
+  }
+]
