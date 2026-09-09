@@ -11,6 +11,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 16:01 UTC
+
+- Sharded correction e6958b2f3360e6125e0a0ae048302d944a5994d0 APPROVED:
+  same-card t_500f341e actualGrok4.5/xai20260909_115700_8513e5,234s,
+  independent23tests87.487s pass. Root verified all5699 idle-archive members.
+- Root releases fresh Linux BUILD + GENERATED qualification only. Frozen source
+  payload native-singleton-source-e6958b2f.tar.gz1301757B,
+  SHAa2fdf20a84167a1d516503498daed4cb9edc79243f05e2381d0e1b56add51e3d,
+  33files including original production Git packs, separate qualifier ancestor
+  and12 hash-bound historical generated outputs. No real F1/F2/acceptance release.
+- Owner correction remains active; its dirty client overlay is excluded from
+  this routing payload. Fresh disk checks: builder38016888832B, Concord14654316544B
+  free. No evidence cleanup or runtime-app change.
+
 ## Latest boundary — 2026-09-09 15:54 UTC
 
 - Both corrective workers remain active: t_500f341e Astra114559_dbf123 and
