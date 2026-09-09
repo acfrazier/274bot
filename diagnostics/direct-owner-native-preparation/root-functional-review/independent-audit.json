@@ -1,0 +1,160 @@
+{
+  "schema": "root-direct-owner-native-functional-review-v1",
+  "task": "t_82ed565a",
+  "reviewer_profile": "grok46",
+  "model": "grok-4.6",
+  "provider": "xai-oauth",
+  "utc": "2026-09-09T20:45:15Z",
+  "frozen_evidence_commit": "cc0dc0600961c3ed06b7f47c914e7596b2df8f82",
+  "workspace_head_at_review": "57ae3a7d0ac131237e017f8ef2e936b5e962d029",
+  "verdict": {
+    "native_affected_generated": "approved",
+    "gpu_tui_disposition": "accepted_gpu_remains_open",
+    "native_linux_qualified_helper": false,
+    "live_qualified": false,
+    "gpu_qualified": false,
+    "campaign_complete": false
+  },
+  "archives": {
+    "root-coverage-native-02-failure.tar.gz": {
+      "bytes": 5318282,
+      "sha256": "86a99fa43829eafeb286bb5f6ee2e2a830d29094d2d959d3acbfd00858549ee1"
+    },
+    "root-coverage-native-03-remainder.tar.gz": {
+      "bytes": 5348687,
+      "sha256": "3b50cc0b2893aa3203a3115fdada7d225aab9fc82a4eab04309baa29b9ca3b8e"
+    },
+    "root-transcript-native-01.tar.gz": {
+      "bytes": 5337021,
+      "sha256": "9c9b5c785b6cb065ad7f0d9562b159076c6e1beddc39575c99d3770a4f4437a8"
+    },
+    "root-gpu-baseline-and-client-01.tar.gz": {
+      "bytes": 711019,
+      "sha256": "1d3793c0484253820523b0c0194d3beb8a0b3e2ef128d9dfd2586ea420e7f5ed"
+    },
+    "frozen-direct-owner-source.tar.gz": {
+      "bytes": 5075876,
+      "sha256": "2c36d254c37c5ed56a55f78728357296d62be602f8653ed9ec041cd37d099d5d"
+    },
+    "frozen-source-manifest.json": {
+      "bytes": 327668,
+      "sha256": "ca69e70352c5f6f8d1c9db026959af6ba8fd64886be533a0095c3ca94bb5732e",
+      "source_member_count": 1124
+    }
+  },
+  "coverage_19": {
+    "attempted": 19,
+    "passed": 15,
+    "failed": 4,
+    "failures": [
+      "feature-off-host-play-profile:transcript_matches_golden_and_peer_feature_build",
+      "feature-on-host-play-profile:transcript_matches_golden_and_peer_feature_build",
+      "feature-off-client-integration:gpu_textured_shade_scales_texel_brightness",
+      "feature-on-client-integration:gpu_textured_shade_scales_texel_brightness"
+    ]
+  },
+  "transcript_logs": {
+    "original-empty-ambient-probe": {
+      "exit": 101,
+      "sha256": "69ddf51d91ed87dad8222139c27ff50c187134a67980eac51a0b7b0265b44baf",
+      "planted_loc_ids": [0, 1]
+    },
+    "original-prepopulated-ambient-probe": {
+      "exit": 101,
+      "sha256": "10f7c75fb56d88b124156b80de9d1f988c8903adcad8a133a26694584c31db4e",
+      "planted_loc_ids": [13, 14]
+    },
+    "snapshot-empty-feature-off": {
+      "exit": 0,
+      "passed": 1,
+      "sha256": "09a4f5146783b989902e2984a3d81b6bb3c3968a9fba0eca65160032ad3b673e"
+    },
+    "snapshot-empty-feature-on": {
+      "exit": 0,
+      "passed": 1,
+      "sha256": "4a21d9ff562924f9f448870f01acfd9657605b40a88958a9081193bd978882b1"
+    },
+    "snapshot-prepopulated-feature-off": {
+      "exit": 0,
+      "passed": 1,
+      "sha256": "8f29148314097d6ee661a8712b65b13bdfd04e74836f69e284e04cb62445645d"
+    },
+    "snapshot-prepopulated-feature-on": {
+      "exit": 0,
+      "passed": 1,
+      "sha256": "55eec8b35527a1e86c4e6357884a216360483dbb73052d7070737cb1df9359d8"
+    },
+    "feature-off-host-play-profile": {
+      "exit": 0,
+      "passed": 197,
+      "failed": 0,
+      "ignored": 7,
+      "sha256": "54eaf3c0118bc2b220e6f1fd4c236c1a7a0704b5a72d9a791c632b0253ae1715"
+    },
+    "feature-on-host-play-profile": {
+      "exit": 0,
+      "passed": 212,
+      "failed": 0,
+      "ignored": 7,
+      "sha256": "018ab4463efbe4d91cfd8dab7a57b08a76ae4c10f84295364d47af2772bc4ddc"
+    },
+    "snapshot-dedup-full-integration": {
+      "exit": 0,
+      "passed": 16,
+      "failed": 0,
+      "ignored": 0,
+      "sha256": "bf3b4d4db94acdcb7b9ffc6dfda76e6da3e76c1ca8a0e4be4c8b3c75c3f5b9b7"
+    }
+  },
+  "gpu_logs": {
+    "original-gpu-texture-shade": {
+      "exit": 101,
+      "passed": 0,
+      "failed": 1,
+      "assertion": "shade 16 must scale the red texel to ~223, got 255",
+      "sha256": "7582b4fe862484584c23a4efd03212a3477ef29302bee495d1567c54280860aa"
+    },
+    "candidate-client-all-tests-feature-off": {
+      "exit": 101,
+      "harness_results": 66,
+      "passed": 767,
+      "failed": 1,
+      "ignored": 0,
+      "sha256": "9318d88a4b55f4bed2e2fb4254b6ae99b72c77c1c6f79e4d250c5d65d057633c"
+    },
+    "candidate-client-all-tests-feature-on": {
+      "exit": 101,
+      "harness_results": 66,
+      "passed": 771,
+      "failed": 1,
+      "ignored": 0,
+      "sha256": "33c1d18a7698d7ce8ba1abb69c6d61e41c0513c3e7f6eedb80b953f3cebbc093"
+    }
+  },
+  "gpu_source_identical": {
+    "crates/client/tests/gpu_texture.rs": "053eaef148d5a15e9bfe5da2d55393717707aef675e30a26aa40a22351513e9f",
+    "crates/client/src/render/backend/gpu.rs": "46d5531d2b00e86a0c4fc67e2437372f0e45c211460a0f3b2faa09fe6424df64",
+    "crates/client/src/render/world.rs": "9e2cc21a2c42c9f9956b7bd7e0a7790f0138a975b66413b41e8ca64a432e54e9"
+  },
+  "derived_members_streamed": {
+    "crates/tui/src/bin.rs": "aee97345c86cff0eb3253ef56b3e64fd123991f57bebbe5fcb750d899839e28c",
+    "crates/api/src/owner_capture.rs": "5d91a1a70dcf1b1954931cc168d0344c1b6e010dfb2016e5d01244e71a052a06",
+    "crates/host/src/owner_capture.rs": "138a88380bcebc078c571e13be21f382d79e2316fc49b2bc9941ad60c4ea438e",
+    "crates/host-play/src/owner_capture.rs": "b758ca4740f3210a411b0b4643d13f6589d98b6ebbadb40bb70bd0901f29ee2a",
+    "crates/host-play/src/owner_capture_output.rs": "59421d88f652236c2c1aa4757c3b6c77632a47752ac82a98f8febdae19f33c3e",
+    "vendor/fr-client-rust/crates/client/src/core/world_owner_capture.rs": "7b572b26ada4e8135d0513975678106285e8f2a3b3d36d7a5cfe8ca65f765599",
+    "crates/host-play/tests/snapshot_frame_equivalence.rs": "90abb21d1a3ec7f91c6bcffc59dd9312ae5d962a08c9d4d59a2f02a09ebc5d66"
+  },
+  "production_tui_bin_rs": "a859ca06b33066cbb55641facb7eea449317c9d3e7a6f93ff11c5787d01499d2",
+  "golden_sha256": "783a7d5077829887147240a17545b69351ad2938c7304785489c899fb2dd81d4",
+  "clean_build_binary": {
+    "bytes": 95595424,
+    "sha256": "392dbecc7a86f2fcd7e3f6b515aedceb3f3de3b1d4e140b95463bf20438c0c95"
+  },
+  "focused_overlay_receipt_sha256": "e79a5700026a98be8ac8158197782990a72f86c5ded72f4239366d3fa0bfafc4",
+  "locks": {
+    "Cargo.lock": "03059d02f8274c8fc9cd7e2f69a48f317e3f44417570ecf4730b31710f8d4b83",
+    "vendor/fr-client-rust/Cargo.lock": "015530e3685e8175fe5ec12b41cf37a40ee116557d575cd38b6852926ec47cc7",
+    "docs/memory/diagnostics/linux-gpu-shade-probe/Cargo.lock": "d0285dae7f5cef20edf41cd8473141767d33b5c82e1a943c97cae4789ae8e41a"
+  }
+}
