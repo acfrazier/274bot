@@ -1,0 +1,45 @@
+{
+  "archive_sha256": "1d3793c0484253820523b0c0194d3beb8a0b3e2ef128d9dfd2586ea420e7f5ed",
+  "archive_bytes": 711019,
+  "original_source_files_verified": 183,
+  "source_unchanged": true,
+  "steps": [
+    {
+      "name": "original-gpu-texture-shade",
+      "exit": 101,
+      "harness_results": 1,
+      "passed": 0,
+      "failed": 1,
+      "ignored": 0,
+      "failures": [
+        "gpu_textured_shade_scales_texel_brightness"
+      ],
+      "log_sha256": "7582b4fe862484584c23a4efd03212a3477ef29302bee495d1567c54280860aa"
+    },
+    {
+      "name": "candidate-client-all-tests-feature-off",
+      "exit": 101,
+      "harness_results": 66,
+      "passed": 767,
+      "failed": 1,
+      "ignored": 0,
+      "failures": [
+        "gpu_textured_shade_scales_texel_brightness"
+      ],
+      "log_sha256": "9318d88a4b55f4bed2e2fb4254b6ae99b72c77c1c6f79e4d250c5d65d057633c"
+    },
+    {
+      "name": "candidate-client-all-tests-feature-on",
+      "exit": 101,
+      "harness_results": 66,
+      "passed": 771,
+      "failed": 1,
+      "ignored": 0,
+      "failures": [
+        "gpu_textured_shade_scales_texel_brightness"
+      ],
+      "log_sha256": "33c1d18a7698d7ce8ba1abb69c6d61e41c0513c3e7f6eedb80b953f3cebbc093"
+    }
+  ],
+  "conclusion": "Same exact GPU shade16 assertion fails in original client and candidate with both feature settings. All commands remain failed; no full GPU/native/live qualification."
+}

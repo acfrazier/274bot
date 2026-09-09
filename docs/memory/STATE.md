@@ -11,6 +11,19 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 20:03 UTC
+
+- Coverage02+remaining03 finished all19 commands:15pass4fail (transcript and GPU
+  each under both features). Full raw/source hashes and cleanup checked.
+- Original client3456 reproduces identical GPU shade16 expected223/observed255.
+  Exact GPU test/backend/world source matches candidate. No renderer fix or
+  tolerance weakening; actual native adapter not inferred from old container.
+- Complete --no-fail-fast client inventories:off767pass1fail,on771pass1fail,
+  66 harnesses each; only same GPU assertion fails. All commands remain101.
+  See direct-owner-native-gpu-baseline-report.md and audit/raw archive1d3793c0.
+- Root native job completed; no builder test currently active. Transcript,
+  controller and navigation Sol workers continue. No full native/live admission.
+
 ## Latest boundary — 2026-09-09 19:52 UTC
 
 - Native remaining03 TUI feature-off and client unit passed. Full client

@@ -1,0 +1,28 @@
+{
+  "client_commit": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+  "scope": "Original-client GPU test baseline preparation only",
+  "archive": {
+    "bytes": 3276800,
+    "sha256": "448b2ea7e4f76658bed71d5ec1016bc084230894530f9b35073cabd24c67e18b"
+  },
+  "gpu_source_comparison": [
+    {
+      "path": "crates/client/tests/gpu_texture.rs",
+      "bytes": 28871,
+      "sha256": "053eaef148d5a15e9bfe5da2d55393717707aef675e30a26aa40a22351513e9f",
+      "frozen_equals_original": true
+    },
+    {
+      "path": "crates/client/src/render/backend/gpu.rs",
+      "bytes": 78391,
+      "sha256": "46d5531d2b00e86a0c4fc67e2437372f0e45c211460a0f3b2faa09fe6424df64",
+      "frozen_equals_original": true
+    },
+    {
+      "path": "crates/client/src/render/world.rs",
+      "bytes": 254096,
+      "sha256": "9e2cc21a2c42c9f9956b7bd7e0a7790f0138a975b66413b41e8ca64a432e54e9",
+      "frozen_equals_original": true
+    }
+  ]
+}
