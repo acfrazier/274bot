@@ -11,6 +11,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 18:37 UTC
+
+- Root materialized exact1124source archive in clean diagnostic Git trees:
+  hostdcdbeebf/clientb74dfb3c (f0647a5 materialization receipt). These identities
+  differ from all original/reviewed provenance commits; no production edits.
+- Fresh native release build with those Git HEADs present throughout PASS18.889s.
+  All source bytes/modes/locks and clean HEADs verified before/after. New binary
+  SHA392dbecc7a86f2fcd7e3f6b515aedceb3f3de3b1d4e140b95463bf20438c0c95,
+  95595424B; receipt archiveSHAfc4a92eb2cff5e9929cd94c3a0f323312dd5988969c34d83793648c928457f7e.
+- This new build is not the earlier8e400e binary; earlier evidence remains
+  immutable. Final readiness review must combine new build with remaining test
+  coverage. No Concord installation/live release. Builder job completed.
+- t_59c6d6f5 controller design, t_47ab4258 nav admission plan and t_420c2fae
+  coverage followup remain active; controller review receives root build facts.
+
 ## Latest boundary — 2026-09-09 18:29 UTC
 
 - Combined native evidence APPROVED40d8491 by actualGrok4.6/xai141723_e07f5a.

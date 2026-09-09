@@ -1,0 +1,12 @@
+[
+  {
+    "path": "host.bundle",
+    "bytes": 4828500,
+    "sha256": "36c0258903ec5d69ce772e19d5eea1efdcabe398ca0287bcd35e39c86bc7160b"
+  },
+  {
+    "path": "client.bundle",
+    "bytes": 702995,
+    "sha256": "fa64be6d6aee447c245bb8e339c55881ffd46b54152ae1d463409f6869f647f9"
+  }
+]

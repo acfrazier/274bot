@@ -1,0 +1,42 @@
+{
+  "schema": "root-clean-owner-build-evidence-v1",
+  "live_qualified": false,
+  "readiness_review_pending": true,
+  "files": [
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-clean-build-01-receipts/root-clean-build-01/logs/cargo-build-clean-derivative.log",
+      "bytes": 1945,
+      "sha256": "9c28353566837ac00772aee89f2b2ab3f9bf8f6b99d48c0240262fbd42f78700"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-clean-build-01-receipts/root-clean-build-01/result.json",
+      "bytes": 7242,
+      "sha256": "77a38d72ef65ec8d4ce30e200574d9422549ac5449fa66659576d89eece09d22"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-clean-build-01-receipts/root_build_clean_derivative.py",
+      "bytes": 5564,
+      "sha256": "f1c0f3fc49ad659a177142950b68aec251021809cccdf5a9f12c0ab8207869d5"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-clean-build-01-receipts.tar.gz",
+      "bytes": 5104,
+      "sha256": "fc4a92eb2cff5e9929cd94c3a0f323312dd5988969c34d83793648c928457f7e"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-clean-source-01/bundles.json",
+      "bytes": 282,
+      "sha256": "305f1bcf2508e84b1d4363d8e3d77d09d54d8400b7b09a606548e8124219f6a5"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root-clean-source-01/materialization.json",
+      "bytes": 2072,
+      "sha256": "dae8ce184e610bf63389bac90a27ba4707e394df19c9bd441ec9afcabebbc40d"
+    },
+    {
+      "path": "diagnostics/direct-owner-native-preparation/root_build_clean_derivative.py",
+      "bytes": 5564,
+      "sha256": "f1c0f3fc49ad659a177142950b68aec251021809cccdf5a9f12c0ab8207869d5"
+    }
+  ]
+}
