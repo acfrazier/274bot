@@ -11,6 +11,26 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 13:54 UTC
+
+- Real Stage A attempt STOPPED on first baseline:00-dense returncode-9 after
+  90.231s under90s hardCPU cap, wrapper1 after93.020s. Load/input-drop/lookup
+  markers present; no completedroute marker/summary. No candidate or counting
+  run occurred. Both root SSH sequences closed; no probe remains. OOMkill count
+  sinceboot0,~959576KiB available, no swap. Kill timing is consistent withCPU
+  limit; finalCPU/whichroute or warmup-vs-timed interval not directly captured.
+  Not a tiled regression finding or paired performance result; StageA OPEN.
+- Full Concord evidence archived/downloaded and all678 members independently
+  hashed:5198802 bytes SHAabffe5b9c367b44ebbd0456beeb7dec9e9f986de0ce096ead5c9a4281870f943.
+  Local diagnostics/nav-stage-a-native-preparation, full input bytes in archive;
+  readable metadata in concord-attempt-01-metadata. Preserve this failed attempt.
+- Root report nav-stage-a-first-attempt-report.md proposes a distinct startup/
+  load gate screen with SAME binaries/caps and reviewed outside-destination
+  row40 only, new6-pair release. This intentionally cannot qualify59case routing.
+  Necessary cold/peak failure would park candidate; pass leavesStageAopen.
+  Independent failure-evidence/proposal review required before any newrun.
+  No cap relaxation, route retry, production edits or user input requested.
+
 ## Latest boundary — 2026-09-09 13:47 UTC
 
 - Concord generated qualification COMPLETE: guards0, clean0 (218.509s),
