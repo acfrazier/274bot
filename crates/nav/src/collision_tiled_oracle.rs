@@ -238,7 +238,7 @@ fn all_512_uniform_pairs_round_trip_through_tiled_storage() {
     // 32×32 single plane: one full tile. Every face×blocked pair as uniform.
     for face in 0u8..=255 {
         for blk in [false, true] {
-            let mut walk = vec![face; TILE_CELLS];
+            let walk = vec![face; TILE_CELLS];
             let mut blocked = vec![0u64; TILE_CELLS / 64];
             if blk {
                 blocked.fill(u64::MAX);
@@ -492,9 +492,14 @@ fn malformed_wire_corpus_matches_pack_error_variants() {
     // Differential vs the same decode path that freezes only after success:
     // every failure must be PackError (never PackedPartsError) with the same
     // variant/payload the dense-era decoder produced before conversion.
+    // Freeze (`from_packed_parts`) runs only after full parse success.
     fn expect(bytes: &[u8], check: impl FnOnce(PackError)) {
         match decode(bytes) {
-            Err(e) => check(e),
+            Err(e) => {
+                // Wire failures stay PackError; never rewrite through constructor.
+                let _ = &e as &PackError;
+                check(e);
+            }
             Ok(_) => panic!("expected decode error"),
         }
     }
@@ -511,7 +516,7 @@ fn malformed_wire_corpus_matches_pack_error_variants() {
     }
 
     // Header complete enough to fail dimension checks before body reads.
-    let mut hdr = |w: u32, h: u32| {
+    let hdr = |w: u32, h: u32| {
         let mut b = Vec::from(&b"274V\x08"[..]);
         for v in [0i32, 0, 0] {
             b.extend_from_slice(&v.to_le_bytes());
@@ -520,12 +525,17 @@ fn malformed_wire_corpus_matches_pack_error_variants() {
         b.extend_from_slice(&h.to_le_bytes());
         b
     };
-    expect(&hdr(0, 1), |e| assert!(matches!(e, PackError::BadLength(_))));
+    expect(&hdr(0, 1), |e| {
+        assert!(matches!(
+            e,
+            PackError::BadLength(m) if m.contains("exceeds the") || m.contains("0x")
+        ))
+    });
     expect(&hdr(1, 0), |e| assert!(matches!(e, PackError::BadLength(_))));
     expect(&hdr(u32::MAX, u32::MAX), |e| {
         assert!(matches!(e, PackError::BadLength(_)))
     });
-    // Oversize vs MAX_GRID (1<<20).
+    // Oversize vs MAX_GRID (16384).
     expect(&hdr(1 << 20, 1), |e| assert!(matches!(e, PackError::BadLength(_))));
 
     // Truncated face plane after valid header 1×1 four planes = 4 faces.
@@ -539,30 +549,118 @@ fn malformed_wire_corpus_matches_pack_error_variants() {
     expect(&short_bits, |e| assert!(matches!(e, PackError::Truncated)));
 
     // Faces+blocked present, truncated edge count / edge body.
-    let mut no_edges = hdr(1, 1);
-    no_edges.extend_from_slice(&[0u8; 4]);
-    no_edges.extend_from_slice(&0u64.to_le_bytes());
-    expect(&no_edges, |e| assert!(matches!(e, PackError::Truncated)));
+    let mut collision_only = hdr(1, 1);
+    collision_only.extend_from_slice(&[0u8; 4]);
+    collision_only.extend_from_slice(&0u64.to_le_bytes());
+    expect(&collision_only, |e| assert!(matches!(e, PackError::Truncated)));
 
-    let mut edge_hdr = no_edges.clone();
+    let mut edge_hdr = collision_only.clone();
     edge_hdr.extend_from_slice(&1u32.to_le_bytes()); // claims 1 edge
     expect(&edge_hdr, |e| assert!(matches!(e, PackError::Truncated)));
 
-    // Bad transport kind tag after a full edge header prefix is hard without
-    // a full edge; inject kind byte 99 with enough trailing zeros to reach it.
-    let mut bad_kind = no_edges.clone();
+    // Bad transport kind tag: kind is read before body fields.
+    let mut bad_kind = collision_only.clone();
     bad_kind.extend_from_slice(&1u32.to_le_bytes());
     bad_kind.push(99); // unknown kind
-    // pad with zeros so kind is read before other truncations
     bad_kind.extend_from_slice(&[0u8; 80]);
     expect(&bad_kind, |e| {
-        assert!(matches!(e, PackError::BadLength(m) if m.contains("unknown transport kind")))
+        assert!(matches!(
+            e,
+            PackError::BadLength(m) if m == "unknown transport kind 99"
+        ))
+    });
+
+    // Edge fixed fields through ticks (kind + 9×i32), then dir/open_loc/reqs.
+    fn push_edge_fixed(out: &mut Vec<u8>, kind: u8, dir: u8) {
+        out.push(kind);
+        for v in [0i32; 9] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out.push(dir);
+        out.extend_from_slice(&(-1i32).to_le_bytes()); // open_loc_id None
+    }
+    fn push_empty_req_tail(out: &mut Vec<u8>) {
+        // skill, item, quest, varp, worn — five empty count prefixes
+        for _ in 0..5 {
+            out.extend_from_slice(&0u32.to_le_bytes());
+        }
+    }
+
+    // Unknown door dir tag (dir=5) with enough body so dir is reached.
+    let mut bad_dir = collision_only.clone();
+    bad_dir.extend_from_slice(&1u32.to_le_bytes());
+    push_edge_fixed(&mut bad_dir, 0, 5);
+    push_empty_req_tail(&mut bad_dir);
+    bad_dir.extend_from_slice(&0u32.to_le_bytes()); // banks
+    expect(&bad_dir, |e| {
+        assert!(matches!(
+            e,
+            PackError::BadLength(m) if m == "unknown door dir 5"
+        ))
+    });
+
+    // Requirement section truncation: skill_req claims 1 pair, no body.
+    let mut short_req = collision_only.clone();
+    short_req.extend_from_slice(&1u32.to_le_bytes());
+    push_edge_fixed(&mut short_req, 0, 0);
+    // skill_req count=1 with no pair bytes → Truncated on skill pair read
+        short_req.extend_from_slice(&1u32.to_le_bytes());
+        expect(&short_req, |e| assert!(matches!(e, PackError::Truncated)));
+
+    // Quest req claims one string of length 1 with invalid UTF-8 payload.
+    let mut bad_quest_utf8 = collision_only.clone();
+    bad_quest_utf8.extend_from_slice(&1u32.to_le_bytes());
+    push_edge_fixed(&mut bad_quest_utf8, 0, 0);
+    bad_quest_utf8.extend_from_slice(&0u32.to_le_bytes()); // skill empty
+    bad_quest_utf8.extend_from_slice(&0u32.to_le_bytes()); // item empty
+    bad_quest_utf8.extend_from_slice(&1u32.to_le_bytes()); // one quest
+    bad_quest_utf8.extend_from_slice(&1u32.to_le_bytes()); // len=1
+    bad_quest_utf8.push(0xff); // invalid UTF-8; remaining reqs unused
+        expect(&bad_quest_utf8, |e| {
+        assert!(matches!(
+            e,
+            PackError::BadLength(m) if m == "quest req is not UTF-8"
+        ))
+    });
+
+    // Empty edges, bank section truncated after count=1.
+    let mut short_bank = collision_only.clone();
+    short_bank.extend_from_slice(&0u32.to_le_bytes()); // edges
+    short_bank.extend_from_slice(&1u32.to_le_bytes()); // banks=1
+    expect(&short_bank, |e| assert!(matches!(e, PackError::Truncated)));
+
+    // Bank stand name is not UTF-8.
+    let mut bad_bank_utf8 = collision_only.clone();
+    bad_bank_utf8.extend_from_slice(&0u32.to_le_bytes()); // edges
+    bad_bank_utf8.extend_from_slice(&1u32.to_le_bytes()); // banks=1
+    bad_bank_utf8.extend_from_slice(&1u32.to_le_bytes()); // name len=1
+    bad_bank_utf8.push(0xff); // invalid UTF-8 name
+    expect(&bad_bank_utf8, |e| {
+        assert!(matches!(
+            e,
+            PackError::BadLength(m) if m == "bank stand name is not UTF-8"
+        ))
+    });
+
+    // Unknown bank access tag after a valid empty name + tile.
+    let mut bad_bank_tag = collision_only.clone();
+    bad_bank_tag.extend_from_slice(&0u32.to_le_bytes()); // edges
+    bad_bank_tag.extend_from_slice(&1u32.to_le_bytes()); // banks=1
+    bad_bank_tag.extend_from_slice(&0u32.to_le_bytes()); // empty name
+    for v in [0i32; 3] {
+        bad_bank_tag.extend_from_slice(&v.to_le_bytes());
+    }
+    bad_bank_tag.push(2); // unknown access tag
+    bad_bank_tag.extend_from_slice(&[0u8; 8]);
+    expect(&bad_bank_tag, |e| {
+        assert!(matches!(
+            e,
+            PackError::BadLength(m) if m == "unknown bank access tag 2"
+        ))
     });
 
     // Valid empty graph/banks pack (baseline acceptance) still round-trips.
-    let mut ok = hdr(1, 1);
-    ok.extend_from_slice(&[0u8; 4]);
-    ok.extend_from_slice(&0u64.to_le_bytes());
+    let mut ok = collision_only.clone();
     ok.extend_from_slice(&0u32.to_le_bytes()); // edges
     ok.extend_from_slice(&0u32.to_le_bytes()); // banks
     let (c, g, banks) = decode(&ok).expect("minimal valid pack");
@@ -583,6 +681,20 @@ fn malformed_wire_corpus_matches_pack_error_variants() {
     assert!(matches!(
         decode_flags_sidecar(b"274F\x02"),
         Err(PackError::BadVersion(2))
+    ));
+    // Sidecar truncated body after valid header.
+    let mut short_flags = Vec::from(&b"274F\x01"[..]);
+    for v in [0i32, 0, 0] {
+        short_flags.extend_from_slice(&v.to_le_bytes());
+    }
+    short_flags.extend_from_slice(&1u32.to_le_bytes());
+    short_flags.extend_from_slice(&1u32.to_le_bytes());
+    // no flag u32 body — decode_flags_sidecar reads to end; empty is Ok with
+    // empty flags, but a partial trailing u32 is Truncated. One leftover byte:
+    short_flags.push(0);
+    assert!(matches!(
+        decode_flags_sidecar(&short_flags),
+        Err(PackError::Truncated)
     ));
 }
 
