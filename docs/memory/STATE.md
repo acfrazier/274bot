@@ -11,6 +11,22 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 11:31 UTC
+
+- Native Linux exact-tool760d3ac staging verified13412 file hashes. Both frozen
+  probes built offline exit0 (dense30.514s, tiled30.391s), independent targets,
+  native address guard active. Root generated comparison is now running;
+  no result/guard qualification or real-pack release yet. Owned native path:
+  /home/builder/274bot-campaign/nav-differential-760d3ac-1125/host/docs/memory/
+  nav-tiled-differential/native-run. Fresh receipts preserve Mac evidence.
+- Ground diagnostic096864e APPROVED actual Grok4.5/xai072825_72c707,1m44s.
+  Full synthetic CPU/GPU input-render-nextloop path emits expected packets;
+  enclosed collision demonstrates legitimate source-tile fallback. Native
+  ground cause remains unknown. Root released bounded opt-in diagnostic trace
+  t_2ebebe02 profile orch; no behavior fix or new live client authorized yet.
+  Trace must pass same-card review and required corrective Grok4.6 before
+  root native proof. Menu/logout acceptance stays separate from displacement.
+
 ## Latest boundary — 2026-09-09 11:22 UTC
 
 - Tool760d3acbc429931447454af41902e43de8ac5b2e APPROVED same-card
