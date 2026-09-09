@@ -11,6 +11,31 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 01:53 UTC
+
+- Census implementation d3970d0 failed independent round-1 Grok4.5 review
+  (actual session 20260908_214055_88d06d). Required corrections cover compiled
+  client source verification, combined output budgeting, Linux process-exit
+  sampling races, unavailable sample reporting, native source identity binding,
+  and negative fixtures. Same card t_c20cf6f3 is running corrective Luna run927.
+  No Linux build, qualification or real pack execution is released yet.
+- 289 H run918 exhausted its iteration budget. Its full workspace all-features
+  suite exited101: stage1 welcome/logout fixture received zero frames instead of
+  one. Earlier fixed-empty fixture also failed intermittently. Preserve these
+  failures; successful stage2/stage3/outbound checks are not full-suite success.
+  Root preserved the work in diagnostics/h-iteration-recovery-20260909/ and
+  resumed the same card t_34667a70 under Astra20260908_214355_52073d. Authorized
+  a bounded test-only receiver-readiness repair while preserving fragmentation
+  barriers, parser poll counts, negative assertions and finite cleanup. The
+  worker has generated an 82-operation source/emitter/golden-test ledger;
+  remaining boundary checks, full verification, commit and review are pending.
+- User asked whether JagFX measurements use lowmem. The independent N1 native
+  control binding records requested and runtime lowmem=true. Heaptrack metadata
+  does not separately record that setting. Frozen JagFX lowmem construction
+  still calls default/empty_table and reserves 1000 inline optional Sound slots;
+  this supports the shared empty-table allocation lead, not populated sounds,
+  per-bot cost, an exact native field binding, or accepted RSS savings.
+
 ## Latest boundary — 2026-09-09 01:39 UTC
 
 - Root found 25 additional host files left formatted by the census worker's
