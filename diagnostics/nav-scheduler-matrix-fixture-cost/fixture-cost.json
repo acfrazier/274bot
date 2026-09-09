@@ -1,0 +1,22 @@
+{
+  "schema": "nav-scheduler-matrix-fixture-cost-v1",
+  "scope": "macOS local generated stand-in arithmetic fixture; not Concord qualification",
+  "matrix": {"ordinals": 59, "phases": {"F1": 4, "F2": 114, "acceptance": 708}, "total_launches": 826},
+  "before": {"source": "diagnostics/nav-stage-a-sharded-tooling/16-full-matrix.log", "elapsed_seconds": 86.732, "result": "pass"},
+  "after": {"command": "python3 -m unittest test_sharded.Metrics.test_full_generated_protocol", "elapsed_seconds": 51.728, "wall_seconds": 51.78, "user_seconds": 23.00, "sys_seconds": 28.58, "result": "pass"},
+  "doubles": [
+    "cached read_ref for repeated immutable authorization/checkpoint history reads",
+    "buffered write_json without fsync/rename for generated arithmetic checkpoints",
+    "constant-time storage_guard seam that records calls and validates destination shape"
+  ],
+  "real_control_flow": [
+    "run_phase state machine and all 826 schedule slots",
+    "Budget reserve/finish, deadline and CPU headroom paths",
+    "authorization/continuation references and exact result aggregation",
+    "output file generation and sha256 binding",
+    "focused tests retain atomic write_json, read_ref/stage.admit, storage_guard, mutation, native preflight, deadline, CPU, descendant cleanup and no-restart coverage"
+  ],
+  "limits_changed": false,
+  "production_code_changed": false,
+  "host": "macOS local"
+}

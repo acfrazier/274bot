@@ -20,6 +20,48 @@ def retained_fixture():
     yield path
 
 
+@contextmanager
+def matrix_fixture_doubles(run):
+    """Remove redundant fixture durability/history scans, not guard logic.
+
+    The full 826-slot test still runs the real scheduler, authorization state
+    machine, output binding, aggregation and budget/deadline code.  Focused
+    tests below keep the real atomic writer, reference admission and storage
+    guard coverage; this double is only for the repeated arithmetic matrix.
+    """
+    original_read_ref=sh.read_ref
+    reads={}
+    storage_calls=[]
+
+    def cached_read_ref(ref,cap=256*1024):
+        key=(ref['path'],ref['sha256'],cap)
+        if key not in reads:
+            reads[key]=original_read_ref(ref,cap)
+        return reads[key]
+
+    def buffered_write_json(path,value,cap=256*1024):
+        data=(json.dumps(value,sort_keys=True,separators=(',',':'),allow_nan=False)+'\n').encode()
+        if len(data)>cap:
+            raise ValueError('bounded JSON output exceeded')
+        path.write_bytes(data)
+
+    def bounded_storage_guard(dest,reserve=0):
+        storage_calls.append((Path(dest),reserve))
+        if not Path(dest).is_dir() or reserve<0:
+            raise ValueError('invalid generated release destination')
+        return 0
+
+    with patch.object(sh,'read_ref',cached_read_ref),\
+            patch.object(sh,'write_json',buffered_write_json),\
+            patch.object(sh,'storage_guard',bounded_storage_guard):
+        yield storage_calls
+
+    # Keep these checks outside the patch so a future edit cannot silently
+    # remove the explicit use of this double from the full-matrix fixture.
+    if not storage_calls:
+        raise AssertionError('matrix fixture did not exercise storage calls')
+
+
 class Metrics(unittest.TestCase):
     def test_full_generated_protocol(self):
         self.assertTrue(hasattr(sh,'run_phase'), 'phase driver missing')
@@ -34,7 +76,8 @@ class Metrics(unittest.TestCase):
             def launch(run,arm,pack,selector,out,name,standin):
                 launches.append((arm,int(selector.stem)))
                 return mock_output(out,name)
-            with patch.object(sh.stage,'check_release'),patch.object(sh,'launch',launch):
+            with patch.object(sh.stage,'check_release'),patch.object(sh,'launch',launch),\
+                    matrix_fixture_doubles(run):
                 f1=sh.run_phase(run,auth,sh.stage.sha(auth),standin=True)
                 self.assertEqual(len(launches),4)
                 for phase in ('F2','acceptance'):
