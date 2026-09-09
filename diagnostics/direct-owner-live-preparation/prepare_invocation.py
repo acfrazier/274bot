@@ -113,6 +113,11 @@ def verify_derivative_admission(path: Path, source: dict[str, Any]) -> dict[str,
         value = admission.get(key)
         if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{40}", value) is None:
             fail(f"derivative admission {key} must be a clean checkout identity")
+        if value in {
+            source["host_original"], source["client_original"],
+            source["host_reviewed"], source["client_reviewed"],
+        }:
+            fail(f"derivative admission {key} must not relabel provenance identity")
     if admission.get("host_clean") is not True or admission.get("client_clean") is not True:
         fail("derivative admission requires clean host and client checkouts")
     if admission.get("materialized_from_archive") is not True:
