@@ -1,0 +1,21 @@
+{
+  "scope": "User-authorized builder storage expansion; no measurement-host or production binary change",
+  "files": {
+    "expand-builder.ps1": {
+      "bytes": 2300,
+      "sha256": "90d8087e9c2ced98626d140b0756b00f2c145eb0f24d2bc8c837921238f86702"
+    },
+    "host-expansion.log": {
+      "bytes": 882,
+      "sha256": "04323505445201670849e2305e6afdae430e2cb8e28c8fc2995d228c5af58170"
+    },
+    "host-receipts.json": {
+      "bytes": 2148,
+      "sha256": "a012fa16256e67a223ee56b84c1de2db4463a4445bb1b50af4b48ba702081f61"
+    },
+    "guest-expansion.log": {
+      "bytes": 1639,
+      "sha256": "55bb82e3547354e822d98cd7c97644b3a3b1957a3f01b8e0ea1f630f0fe9a5dd"
+    }
+  }
+}

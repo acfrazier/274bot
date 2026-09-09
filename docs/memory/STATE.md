@@ -11,6 +11,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 19:43 UTC
+
+- Linux coverage01 FAILED on disk exhaustion:8 commands passed, host-play link
+  failed, TUI compile reported ENOSPC; steps/result writes became empty. Full raw
+  archive46d70769 preserved locally; root independently verified1124 source members
+  and10 logs. No full qualification. Original failed directory remains intact.
+- Root cleared only disposable incremental cache and47 uniquely-linked debug/test
+  executables after confirming no worker and binding inventory; both release
+  copies remained exact8e400e/392d hashes. No source or raw evidence removed.
+- User authorized VHD expansion. Root cleanly shut down idle builder, converted
+  its active checkpoint chain into a separate dynamic disk, expanded64→128GiB,
+  booted and grew ext4. Original chain and both checkpoint IDs retained; release
+  hashes unchanged. Guest free space86298832896B after growth. Windows host and
+  Concord unaffected; builder only restarted.
+- Fresh root-coverage-native-02 now runs the same19 commands and build settings.
+  Atomic summaries and stop-on-first-failure added only to root orchestration;
+  failed01 is not relabeled. Controller and navigation workers remain active.
+
 ## Latest boundary — 2026-09-09 19:32 UTC
 
 - Coverage e01c288 APPROVED actualGrok4.5/xai152437_fa22ae; reviewer independently

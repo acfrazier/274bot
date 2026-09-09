@@ -1,0 +1,138 @@
+{
+  "scope": "Failed Linux coverage attempt; no full native or live admission",
+  "archive": {
+    "bytes": 5326072,
+    "sha256": "46d7076954362c3eed75fab9757e8c2c97251e068de5d082bccbed6226ecfcf9"
+  },
+  "source_members_verified": 1124,
+  "logs": [
+    {
+      "path": "logs/feature-off-host-play-profile.log",
+      "bytes": 108141,
+      "sha256": "f207a6734ad8e3ce7608171347ff86790ab224dc0b91810f6d099e917a263464",
+      "test_results": [],
+      "errors": [
+        "rustc-LLVM ERROR: IO failure on output stream: No space left on device",
+        "error: could not compile `host-play` (lib test)",
+        "error: could not compile `host-play` (test \"channel_ladder\") due to 1 previous error",
+        "error: linking with `cc` failed: exit status: 1",
+        "error: could not compile `host-play` (test \"snapshot_frame_equivalence\") due to 1 previous error",
+        "error: linking with `cc` failed: exit status: 1",
+        "error: could not compile `host-play` (test \"null_raster\") due to 1 previous error"
+      ]
+    },
+    {
+      "path": "logs/gap-host-play-output.log",
+      "bytes": 2994,
+      "sha256": "2c35097c71ca88ee819bfcf3e01e73e6372a64ce9c986d33e72152e46cf54054",
+      "test_results": [
+        "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 188 filtered out; finished in 0.00s"
+      ],
+      "errors": []
+    },
+    {
+      "path": "logs/gap-host-play-terminal-deadline.log",
+      "bytes": 1277,
+      "sha256": "68e276bd694f3c5b4f42368c874b318431a2193cc7351f314ee4c215088a4c67",
+      "test_results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 194 filtered out; finished in 0.00s"
+      ],
+      "errors": []
+    },
+    {
+      "path": "logs/gap-api-deadline.log",
+      "bytes": 1086,
+      "sha256": "caa7052718d14a45d3239474bda3b7f7d8d37f4218bf1e677b1075788dd937ea",
+      "test_results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.01s"
+      ],
+      "errors": []
+    },
+    {
+      "path": "logs/feature-off-tui-profile.log",
+      "bytes": 4096,
+      "sha256": "4377713104e7a5052977ff7e6d05b30a1411a447b6d7aea0ca97d6bfa1155274",
+      "test_results": [],
+      "errors": [
+        "rustc-LLVM ERROR: IO failure on output stream: No space left on device",
+        "error: failed to write query cache to `/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/incremental/script-1z4rosv96qwjd/s-hm5368wcqn-14v4uwk-working/query-cache.bin`: No space left on device (os error 28)",
+        "error: could not compile `tui` (lib)"
+      ]
+    },
+    {
+      "path": "logs/feature-off-host.log",
+      "bytes": 17652,
+      "sha256": "a7f7a868f9197d011b60bf041a46f1ef00f5e84855abc1339d156258f7756000",
+      "test_results": [
+        "test result: ok. 213 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 8.27s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "errors": []
+    },
+    {
+      "path": "logs/feature-off-api.log",
+      "bytes": 13097,
+      "sha256": "c33c3e4a840b6767faae039e1c02480a22737e4a4320f11a2d04998318e6768e",
+      "test_results": [
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s",
+        "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.13s",
+        "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+        "test result: ok. 60 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "errors": []
+    },
+    {
+      "path": "logs/gap-host-stale-slot.log",
+      "bytes": 1401,
+      "sha256": "53d085ccc3e748956957dd2c13417046be37bf3f63e70a1534b859dcf4c16553",
+      "test_results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 220 filtered out; finished in 0.00s"
+      ],
+      "errors": []
+    },
+    {
+      "path": "logs/gap-client-linked-deadline.log",
+      "bytes": 988,
+      "sha256": "b2b3ab75461171e79e6cf51230a98f27fe589ce80a52377618a3a642e0e32acb",
+      "test_results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 78 filtered out; finished in 0.00s"
+      ],
+      "errors": []
+    },
+    {
+      "path": "logs/feature-off-script-load.log",
+      "bytes": 25233,
+      "sha256": "618a067ffe5003c533d90e8d9835491e29916fff5c06d234ae3d891b882c6426",
+      "test_results": [
+        "test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.09s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.65s",
+        "test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s",
+        "test result: ok. 144 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.78s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s",
+        "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "errors": []
+    }
+  ],
+  "summaries_unavailable_due_to_disk_exhaustion": true
+}

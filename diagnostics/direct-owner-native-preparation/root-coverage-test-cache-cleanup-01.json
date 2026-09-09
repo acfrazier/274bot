@@ -1,0 +1,259 @@
+{
+  "scope": "Disposable uniquely-linked debug/test executable cache only; hardlinked frontend binaries, release copies, source and raw evidence retained",
+  "files": [
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/registry-825009f93b37f293",
+      "bytes": 351934240,
+      "sha256": "bd8fedca394f706f06aaf6ed9c257eedbe0b9ce4a785c301f2568282d018e156"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/loadouts_bag-c1213fb3503aabb1",
+      "bytes": 431834328,
+      "sha256": "ee2810c24e845ba7cc43912291b8052273c17350e934148084e79e82ff5e336e"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/load_shape-2625bff07213e211",
+      "bytes": 351940264,
+      "sha256": "19ea05980e38d08898e09eb81fa0d45b885c0e8a373463f6b688898d9afee71a"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/script-d2b2eaf59b7ac4f9",
+      "bytes": 425396200,
+      "sha256": "3b849dba6c5fcb1297632a56c51bc28a7f902cb1797c373152aaed9a10f1ea20"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/login_one-4e93ba1bc565bb83",
+      "bytes": 413516936,
+      "sha256": "80a9dd38567deae46875fbf951f578dc111af564b4109e3845a3af7afcfb9a88"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/host_js-6b6b96ecf753e059",
+      "bytes": 351993992,
+      "sha256": "4397e5c1b589f1a8fac196555ddaa8301dc1c310abf325dbec64fadfdb72ffc8"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/obj_names-e44b6fafad782eac",
+      "bytes": 129943280,
+      "sha256": "533ce20911412f85cca1558585778dfcd529691e12ba33d8fe8fb588b8875493"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/wall_login-f77aa11465bf4175",
+      "bytes": 413871616,
+      "sha256": "276f55ef10ef1c02f1d2f4067095877c2c0f1bb5dc74477073f9613b60355470"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/direct_owner_capture-a436331bd73140ad",
+      "bytes": 379565912,
+      "sha256": "34b6daaad1f2f69a5e625da5ec779c7f0229068dcb9680aee2d52cf9664bd85d"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/load_isolate-0edd587aaf8b6c81",
+      "bytes": 435118376,
+      "sha256": "14d2e8315e9d4e3f7ae9b051ae752d2a15ef336c30f4c4e860cd21a5b49ac1fd"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/snapshot-6fb483f225362dea",
+      "bytes": 134850592,
+      "sha256": "e72e3912aa7d489a863ca9974d6deac6b09d6a4b0851a1bccf2ff5da817e30b1"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/script-0c16c3a121ba1e1e",
+      "bytes": 425752904,
+      "sha256": "0f6ae4a9dc5b155bacf0682fb23640712c7f4d4d94e3104f2eb5f7c0824ff526"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/snapshot_dedup-c83e4c34e97472d6",
+      "bytes": 7149792,
+      "sha256": "bdd4f8d5a72684f4603185c90da44ba3a59ae7557f2edb653cd47d5155370faa"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/js_cache-59be846ca68d1714",
+      "bytes": 390451776,
+      "sha256": "17dc64f31f677bbe1f60a365d72bf1b7bb8583f8ee57ab35347dc8beec696ebf"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/host-166cffd0d1e3d172",
+      "bytes": 177919040,
+      "sha256": "203ab997548b58c2d26a9515567ebd8e15c6a979fb177674170467ba42c5e5ee"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/snapshot_dedup_proto-b73045b055d929bc",
+      "bytes": 133557624,
+      "sha256": "6fd835a99f1171e315ac532a5d5c6d8285a67ec7c71fde7f4d2b3770aebd31b6"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/declared_abi-38736984e1c44a10",
+      "bytes": 432189112,
+      "sha256": "28067819efd6cc8a3c4e77982a3a8ed044e6f6be083427da280df12d92340630"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/walk_to-e9e618bce4aeb29f",
+      "bytes": 352023416,
+      "sha256": "b8a831160f500181361d06b90a3fce7b2398e6113f699afab35b6c9177ea7117"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/settings_bag-3c02ab062211689b",
+      "bytes": 432268432,
+      "sha256": "771b575c20e23639de477efe38c469cf6332ce5df75cda24ddf992492a662881"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/gold_stubs-5079fe653c5a1621",
+      "bytes": 432697584,
+      "sha256": "062865d0d710e05d82a33243de9fb3edca2e3ae5cfb36a6a0165e44a5c5b922d"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/host_play-20b462fc0dad8305",
+      "bytes": 503149592,
+      "sha256": "3598c866456b89fbecf515ab84ab91e603dad3c083738db29353158a0bd35fcb"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/load_picker-c02b34b9c0dfe02e",
+      "bytes": 351882376,
+      "sha256": "f1d8ee5cc99abb5d62872db39ae0e5cf1629454b479b1a0748a245d11ebf2ad2"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/direct_owner_capture-f291983811f92bb1",
+      "bytes": 352158536,
+      "sha256": "a9646ad4c11d22527c49381d511a712b29e0199b68526bb757fb758736b730ec"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/catalog_run-a828c3b80472a2d9",
+      "bytes": 352878112,
+      "sha256": "74d1d038906fa0646cb31d97b62606bf4082b738afbb59c40707a2a39d6dc4c7"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/direct_owner_capture-fe27aa877552ae63",
+      "bytes": 132531688,
+      "sha256": "7c28a5aa7e16e98ea5ee66da3f4f94b1d0fbd22d4fd3b39a5a50ad968780f6ff"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/api-4b16d5bf7238b161",
+      "bytes": 101546960,
+      "sha256": "fa168e9bdc898cc53e9a04f70ec617e6e2373985c9521496a2251e1e02bd2d17"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/tui_play-99139836c6138257",
+      "bytes": 74957336,
+      "sha256": "6dc7d13317aa35dd6941a9827b56f164c99a4c9152fdb72f88e4db71c4d83aba"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/unloadable-9c94d6ccd0c096b0",
+      "bytes": 352876936,
+      "sha256": "1d22225e973f61441900595ffd5921704edd1f041ba8732b0bee9cb48a544e07"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/catalog_start-0eeef00188a18f9b",
+      "bytes": 433535376,
+      "sha256": "10360c8f33a8960957f433aa30661848b140fa9ec77460efddfaed5c3acea802"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/login_two-a11063c3aebfd6f9",
+      "bytes": 413691336,
+      "sha256": "327f9b8e4f8e4634927ae4c1dfcce2692e7e7c60d460f697d0d9cbf102807322"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/api-f444d5a0405c174d",
+      "bytes": 60407640,
+      "sha256": "46684d9fbe07fb2b206d1b4dc353205e0e753d97ca01ce4434543d997dd6921e"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/host-78f16f3c07329d12",
+      "bytes": 176972960,
+      "sha256": "f3148995eaa0d371ca7d49dbda4e5e1aabeeea9e43a3030548664a80d8f7d26e"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/host_play-294b90b0adf0bbd4",
+      "bytes": 61922016,
+      "sha256": "e26077e1574dbf500791e15bd7fa6aad1946c5b91009ff41a0878bdbc1942533"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/slot-675dc590cc9575b4",
+      "bytes": 352573424,
+      "sha256": "1443aea982436a49a6d8b4fcf3072296f050c1df0d2cb3d14bd46714af2d92ad"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/direct_owner_capture-64e1ff4bab361284",
+      "bytes": 117703256,
+      "sha256": "0c41ff37026543acb6b4ee07c48a72082bdfd082d71273c6d776d98e2514b85d"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/tui-ff8bdfc11c4973a7",
+      "bytes": 510481816,
+      "sha256": "48859594b96a6f7b565e0645438267997ce57195118bad7f9d9061c5be35592c"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/direct_owner_capture-4a56a26d52e0247a",
+      "bytes": 352465064,
+      "sha256": "afbda5d26456a37f82d51b51ed98d1a38a08cf86770c142756753e0e0753569b"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/channel_walk-9b0676b01d2fe39b",
+      "bytes": 413091480,
+      "sha256": "02a2c1cfe88b20b72b0e9c271f8210913c5b814a2378ea4791fd1b4331348f46"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/direct_owner_capture-f5fa094245e75669",
+      "bytes": 132358696,
+      "sha256": "49b1bf1c4ce915abfafbdf6908c27ac1a9f12d8c26d4af7c464ad2041a8a5db5"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/client-d8a0a33f5d4a25fc",
+      "bytes": 151959184,
+      "sha256": "d1432e974b22abbc3a82b06c565ffdd6cd3b76d7b00cd51270af388631aa67d0"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/settle-8de990d4d02fbf36",
+      "bytes": 133421848,
+      "sha256": "0b3f32430677ba8522ad164a18f9c4b5bcc0c11721727fbffd114bf97fd1765a"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/interact-a1a50372430f9621",
+      "bytes": 135040736,
+      "sha256": "e9dba90010a7e467b9aef37c729f8ef4ff9d9e028b8928fee7dd1fcd436a0300"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/rs2b0t_registry-5aebadc868c03c9c",
+      "bytes": 353483448,
+      "sha256": "16d4653342753d444935288eab79faf989c9d7bafb88ef7223494611a915f3dc"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/host_play-f1d957fd67d73bed",
+      "bytes": 412569224,
+      "sha256": "0486d2d98d53e5501acec563a457ed072e49edfc29081ac9fe794014d25be44d"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/load_siblings-d8028851913dced9",
+      "bytes": 432701104,
+      "sha256": "e5da401b093d7df5e33f4f3ece9683455c3f8cef10357574d000e3bc697dd305"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/rss_ladder-e32deaaaa804abff",
+      "bytes": 413237056,
+      "sha256": "b1a61f9d045ef8993c8bc14c91ebdb2795817a8088710768939814a5f3e76b08"
+    },
+    {
+      "path": "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/linux-qualification-01/target/x86_64-unknown-linux-gnu/debug/deps/query-fd51099adb61b3dc",
+      "bytes": 135761200,
+      "sha256": "5bd1151c12e6d6725030fc90f2a6eb138dc729fce84dc9ecf6d87f74c24b149e"
+    }
+  ],
+  "release_before": {
+    "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/root-release-build-01/tui-play": "8e400e2d622af2c00280bfb91c741753e0da3df1736bb7d6fe7d0f8251394194",
+    "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/root-clean-build-01/tui-play": "392dbecc7a86f2fcd7e3f6b515aedceb3f3de3b1d4e140b95463bf20438c0c95"
+  },
+  "disk_before": {
+    "total": 65445814272,
+    "used": 59689160704,
+    "free": 5739876352
+  },
+  "all_removed": true,
+  "release_after": {
+    "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/root-release-build-01/tui-play": "8e400e2d622af2c00280bfb91c741753e0da3df1736bb7d6fe7d0f8251394194",
+    "/home/builder/274bot-campaign/direct-owner-a7e112e-1738/root-clean-build-01/tui-play": "392dbecc7a86f2fcd7e3f6b515aedceb3f3de3b1d4e140b95463bf20438c0c95"
+  },
+  "disk_after": {
+    "total": 65445814272,
+    "used": 45683453952,
+    "free": 19745583104
+  }
+}

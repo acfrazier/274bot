@@ -1,0 +1,24 @@
+START independent disk conversion
+{
+    "VM":  {
+               "Name":  "274bot-builder",
+               "State":  2
+           },
+    "Disk":  {
+                 "Path":  "C:\\ProgramData\\274bot\\hyperv-builder\\vm\\ubuntu-builder-os-expanded-128.vhdx",
+                 "Size":  137438953472,
+                 "FileSize":  56912510976,
+                 "ParentPath":  ""
+             },
+    "Snapshots":  [
+                      {
+                          "Name":  "Automatic Checkpoint - 274bot-builder - (9/7/2026 - 2:56:07 PM)",
+                          "Id":  "53428eb2-3632-4182-9962-c9fbcb33da42"
+                      },
+                      {
+                          "Name":  "pre-campaign-toolchain",
+                          "Id":  "e369d938-017e-4206-ac99-166522d2f5d1"
+                      }
+                  ],
+    "OriginalChainMetadataUnchanged":  true
+}

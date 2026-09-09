@@ -1,0 +1,63 @@
+{
+  "before": {
+    "Chain": [
+      {
+        "Path": "C:\\ProgramData\\274bot\\hyperv-builder\\vm\\ubuntu-builder-os_701763EC-054C-4283-A727-BB7BC8AD071C.avhdx",
+        "Size": 68719476736,
+        "FileSize": 62922948608,
+        "WriteUtc": 639245795367076817,
+        "ParentPath": "C:\\ProgramData\\274bot\\hyperv-builder\\vm\\ubuntu-builder-os_CC0AD604-27FE-4097-9B93-FB2B5F859F19.avhdx"
+      },
+      {
+        "Path": "C:\\ProgramData\\274bot\\hyperv-builder\\vm\\ubuntu-builder-os_CC0AD604-27FE-4097-9B93-FB2B5F859F19.avhdx",
+        "Size": 68719476736,
+        "FileSize": 2232418304,
+        "WriteUtc": 639244043502233321,
+        "ParentPath": "C:\\ProgramData\\274bot\\hyperv-builder\\vm\\ubuntu-builder-os.vhdx"
+      },
+      {
+        "Path": "C:\\ProgramData\\274bot\\hyperv-builder\\vm\\ubuntu-builder-os.vhdx",
+        "Size": 68719476736,
+        "FileSize": 3766484992,
+        "WriteUtc": 639244041370286445,
+        "ParentPath": ""
+      }
+    ],
+    "Snapshots": [
+      {
+        "Name": "Automatic Checkpoint - 274bot-builder - (9/7/2026 - 2:56:07 PM)",
+        "Id": "53428eb2-3632-4182-9962-c9fbcb33da42"
+      },
+      {
+        "Name": "pre-campaign-toolchain",
+        "Id": "e369d938-017e-4206-ac99-166522d2f5d1"
+      }
+    ],
+    "Source": "C:\\ProgramData\\274bot\\hyperv-builder\\vm\\ubuntu-builder-os_701763EC-054C-4283-A727-BB7BC8AD071C.avhdx",
+    "Destination": "C:\\ProgramData\\274bot\\hyperv-builder\\vm\\ubuntu-builder-os-expanded-128.vhdx",
+    "SizeBytes": 137438953472
+  },
+  "after": {
+    "VM": {
+      "Name": "274bot-builder",
+      "State": 2
+    },
+    "Disk": {
+      "Path": "C:\\ProgramData\\274bot\\hyperv-builder\\vm\\ubuntu-builder-os-expanded-128.vhdx",
+      "Size": 137438953472,
+      "FileSize": 56912510976,
+      "ParentPath": ""
+    },
+    "Snapshots": [
+      {
+        "Name": "Automatic Checkpoint - 274bot-builder - (9/7/2026 - 2:56:07 PM)",
+        "Id": "53428eb2-3632-4182-9962-c9fbcb33da42"
+      },
+      {
+        "Name": "pre-campaign-toolchain",
+        "Id": "e369d938-017e-4206-ac99-166522d2f5d1"
+      }
+    ],
+    "OriginalChainMetadataUnchanged": true
+  }
+}
