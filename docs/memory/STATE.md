@@ -11,6 +11,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 18:53 UTC
+
+- Controller design0149711 completed, but same-card actualGrok4.5/xai
+  144829_ad4c40 requested changes: normal-exit/missing-PID race, cleanup for
+  stop/failure inside Popen before PID registration, and explicit handoff argv
+  binding. Root independently raised the first two before the verdict.
+- Root additionally requires first valid RSS sample within0.5s of frontend spawn
+  (or equivalent owned discovery). The5s outer handoff ceiling cannot silently
+  authorize missed post-spawn RSS intervals. Same-card design correction must
+  resolve this before implementation; no live release.
+- Overview93910fd now explains the two current experiments and separates shared
+  navigation cost from per-bot owner storage; older overview status is dated.
+- Coverage t_420c2fae and refined navigation tooling t_4474ac39 continue. All
+  root native builds/tests are finished and no Concord job is active.
+
 ## Latest boundary — 2026-09-09 18:44 UTC
 
 - Refined navigation admission plana438547 APPROVED t_47ab4258 by actual
