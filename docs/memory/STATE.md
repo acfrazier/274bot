@@ -11,6 +11,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 16:47 UTC
+
+- Concord clean/counting generated checks passed212.590/215.131s. Integration
+  failed because copied builder standin-release occupied its fresh output path.
+  Root preserved failed integration-tests and builder standin-release under
+  distinct names with before/after hashes; original failure log/progress unchanged.
+  Corrected integration plus scheduler qualification04 now running. No code/cap
+  changes or real release. Future staging helper preserves that directory too.
+- Reference-provenance review t_00284081 actualGrok4.5/xai
+  20260909_124305_0f8762 running; explicitly audits fixed run-05 alias/README,
+  original Linux archive evidence and full comparisons before F1 release.
+- Root F1 admission helper prepared only (not issued): exact original pack/59row
+  hashes, all native/source/guard proofs, fixed one-second fresh preflight and
+  reference-review receipt binding. Sol frozen owner preparation remains active.
+
 ## Latest boundary — 2026-09-09 16:39 UTC
 
 - Linux matched-reference qualification03 PASSED60.005s, native hard-AS true,
