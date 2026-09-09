@@ -1,0 +1,906 @@
+{
+  "run": "run-05",
+  "guards": {
+    "evidence": {
+      "guards.err": "0a0e1c69806cfd3391da708abf99c18a47b95c95bc819eb0b6a6bf681004eb29",
+      "guards.out": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "guards.receipt.json": "e91b29768ffe7507f2b9c1ccfff9f5feb8a0b5374d4a2604a8eef0759b20d90d"
+    },
+    "native_hard_as_qualified": false,
+    "platform": "macOS-15.7.9-arm64-arm-64bit",
+    "qualified": true,
+    "tools": {
+      "allocator.rs": "652261fbb469b2f2e14736856641da99c486624d157898436c01e0b76e240b4f",
+      "frozen_generate.py": "f51c88b73186b9e7a50ea45494cc160523339d2be9c6e10f8134d7de05bdd784",
+      "frozen_probe.rs": "ee91e2370d04de8a1c9b9d55eaf9cbb3c8bbd9d0153b4748208fc50656e40cd8",
+      "frozen_support.py": "099c4bf8e25bf09b6181e5d51575872340f3b27fc286341315fc6fa799969ba6",
+      "proposed-manifest.json": "0a64a4ffa50c4b74bd6e17daaa2bf8ebc1673ac93afedfaec16b9b41c500cfc8",
+      "stage_a.py": "f55621d02b363595d7e263f5dc4556db9c84d74a5851da18b00c46500fd758a9",
+      "stage_probe.rs": "bcf175629fbe3915cf91f7cdc75df3c5b85009938690c6279c6ea88158af350e",
+      "test_stage_a.py": "b358c8742a77c793946a1c2659e008e0d342c2f60143504376b85e84cabb3e4a"
+    }
+  },
+  "integration": {
+    "checks": [
+      "both-arm source/lock/binary/tool rejection",
+      "both-arm self-test",
+      "both-arm malformed decode and selector failures",
+      "phase ordering rejection",
+      "hash-bound release JSON stand-in and mutations"
+    ],
+    "qualified": true,
+    "scope": "synthetic only",
+    "tools": {
+      "allocator.rs": "652261fbb469b2f2e14736856641da99c486624d157898436c01e0b76e240b4f",
+      "frozen_generate.py": "f51c88b73186b9e7a50ea45494cc160523339d2be9c6e10f8134d7de05bdd784",
+      "frozen_probe.rs": "ee91e2370d04de8a1c9b9d55eaf9cbb3c8bbd9d0153b4748208fc50656e40cd8",
+      "frozen_support.py": "099c4bf8e25bf09b6181e5d51575872340f3b27fc286341315fc6fa799969ba6",
+      "proposed-manifest.json": "0a64a4ffa50c4b74bd6e17daaa2bf8ebc1673ac93afedfaec16b9b41c500cfc8",
+      "stage_a.py": "f55621d02b363595d7e263f5dc4556db9c84d74a5851da18b00c46500fd758a9",
+      "stage_probe.rs": "bcf175629fbe3915cf91f7cdc75df3c5b85009938690c6279c6ea88158af350e",
+      "test_stage_a.py": "b358c8742a77c793946a1c2659e008e0d342c2f60143504376b85e84cabb3e4a"
+    }
+  },
+  "compiler": {
+    "binaries": {
+      "cargo": {
+        "path": "/Users/acfrazier/.rustup/toolchains/1.98.0-aarch64-apple-darwin/bin/cargo",
+        "sha256": "1de2e84c15443b70444eecfa959ff9099dd8c1a5606b6d9ef5bc0ea9c25bc7f9"
+      },
+      "rustc": {
+        "path": "/Users/acfrazier/.rustup/toolchains/1.98.0-aarch64-apple-darwin/bin/rustc",
+        "sha256": "a11618eca0956a8aa4372c2bc898690b513cbdfa2cb9125b2a5301e360ed5b49"
+      }
+    },
+    "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)\n",
+    "platform": "macOS-15.7.9-arm64-arm-64bit",
+    "python_sha256": "6b24be8ba00c4abc8b3e7e2620bd710e2cf7a4312d00c147f8f05fbb6f3d297a",
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: aarch64-apple-darwin\nrelease: 1.98.0\nLLVM version: 22.1.8\n"
+  },
+  "builds": {
+    "dense-clean-build.receipt.json": {
+      "address_guard_active": false,
+      "command": [
+        "cargo",
+        "build",
+        "--offline",
+        "--release",
+        "--manifest-path",
+        "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/run-05/dense/Cargo.toml",
+        "--target-dir",
+        "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/run-05/dense/target-clean",
+        "-p",
+        "nav",
+        "--bin",
+        "stage-a-probe"
+      ],
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/run-05/dense",
+      "failure": null,
+      "limits": {
+        "address": 68719476736,
+        "cpu": 480,
+        "file_size": 1073741824,
+        "output": 8388608,
+        "rss": 6442450944,
+        "wall": 600
+      },
+      "output_bytes": 4870,
+      "returncode": 0,
+      "sampled_group_peak_bytes": 1089126400,
+      "wall_seconds": 73.840846
+    },
+    "dense-counting-build.receipt.json": {
+      "address_guard_active": false,
+      "command": [
+        "cargo",
+        "build",
+        "--offline",
+        "--release",
+        "--manifest-path",
+        "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/run-05/dense/Cargo.toml",
+        "--target-dir",
+        "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/run-05/dense/target-counting",
+        "-p",
+        "nav",
+        "--bin",
+        "stage-a-probe",
+        "--locked",
+        "--features",
+        "stage-counting"
+      ],
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/run-05/dense",
+      "failure": null,
+      "limits": {
+        "address": 68719476736,
+        "cpu": 480,
+        "file_size": 1073741824,
+        "output": 8388608,
+        "rss": 6442450944,
+        "wall": 600
+      },
+      "output_bytes": 4733,
+      "returncode": 0,
+      "sampled_group_peak_bytes": 1091092480,
+      "wall_seconds": 83.46787983300001
+    },
+    "tiled-clean-build.receipt.json": {
+      "address_guard_active": false,
+      "command": [
+        "cargo",
+        "build",
+        "--offline",
+        "--release",
+        "--manifest-path",
+        "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/run-05/tiled/Cargo.toml",
+        "--target-dir",
+        "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/run-05/tiled/target-clean",
+        "-p",
+        "nav",
+        "--bin",
+        "stage-a-probe"
+      ],
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/run-05/tiled",
+      "failure": null,
+      "limits": {
+        "address": 68719476736,
+        "cpu": 480,
+        "file_size": 1073741824,
+        "output": 8388608,
+        "rss": 6442450944,
+        "wall": 600
+      },
+      "output_bytes": 4870,
+      "returncode": 0,
+      "sampled_group_peak_bytes": 1092714496,
+      "wall_seconds": 90.91748641699999
+    },
+    "tiled-counting-build.receipt.json": {
+      "address_guard_active": false,
+      "command": [
+        "cargo",
+        "build",
+        "--offline",
+        "--release",
+        "--manifest-path",
+        "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/run-05/tiled/Cargo.toml",
+        "--target-dir",
+        "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/run-05/tiled/target-counting",
+        "-p",
+        "nav",
+        "--bin",
+        "stage-a-probe",
+        "--locked",
+        "--features",
+        "stage-counting"
+      ],
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/run-05/tiled",
+      "failure": null,
+      "limits": {
+        "address": 68719476736,
+        "cpu": 480,
+        "file_size": 1073741824,
+        "output": 8388608,
+        "rss": 6442450944,
+        "wall": 600
+      },
+      "output_bytes": 4733,
+      "returncode": 0,
+      "sampled_group_peak_bytes": 1083604992,
+      "wall_seconds": 69.43017895899999
+    }
+  },
+  "qualification": {
+    "clean": {
+      "native_hard_as_qualified": false,
+      "platform": "macOS-15.7.9-arm64-arm-64bit",
+      "qualified": true,
+      "results": [
+        {
+          "fixture": "all-uniform",
+          "summary": [
+            {
+              "aggregate": {
+                "banks": 0,
+                "calls": 840,
+                "checksum": 207165582859989808,
+                "empty": 0,
+                "legs": 48,
+                "no_path": 792,
+                "routes": 48,
+                "ticks": 200,
+                "tiles": 288,
+                "transports": 0
+              },
+              "diagnostic": false,
+              "input_bytes": 18465,
+              "lane_cpu_ns": [
+                349017000,
+                348802000,
+                10551112000
+              ],
+              "layout": [
+                0,
+                0,
+                0,
+                0,
+                16384,
+                2048,
+                16384,
+                2048,
+                104,
+                0
+              ],
+              "logical_cells": 16384,
+              "lookup_checksum": 262144,
+              "lookup_count": 393216,
+              "lookup_including_observer_allocations": 0,
+              "narrow_allocations": 0,
+              "narrow_checksum": 262144,
+              "narrow_requested_bytes": 0,
+              "process_cpu_ns": 12674705000,
+              "process_peak_rss_bytes": 28000256,
+              "route_p99_ns": 129773833,
+              "startup_peak_rss_bytes": 2801664,
+              "summary": true
+            },
+            {
+              "aggregate": {
+                "banks": 0,
+                "calls": 840,
+                "checksum": 207165582859989808,
+                "empty": 0,
+                "legs": 48,
+                "no_path": 792,
+                "routes": 48,
+                "ticks": 200,
+                "tiles": 288,
+                "transports": 0
+              },
+              "diagnostic": false,
+              "input_bytes": 18465,
+              "lane_cpu_ns": [
+                361176000,
+                361478000,
+                10965162000
+              ],
+              "layout": [
+                16,
+                128,
+                0,
+                0,
+                0,
+                0,
+                128,
+                0,
+                120,
+                8
+              ],
+              "logical_cells": 16384,
+              "lookup_checksum": 262144,
+              "lookup_count": 393216,
+              "lookup_including_observer_allocations": 0,
+              "narrow_allocations": 0,
+              "narrow_checksum": 262144,
+              "narrow_requested_bytes": 0,
+              "process_cpu_ns": 13158885000,
+              "process_peak_rss_bytes": 25067520,
+              "route_p99_ns": 134963333,
+              "startup_peak_rss_bytes": 2818048,
+              "summary": true
+            }
+          ]
+        },
+        {
+          "fixture": "all-dense",
+          "summary": [
+            {
+              "aggregate": {
+                "banks": 0,
+                "calls": 840,
+                "checksum": 207165582859989808,
+                "empty": 0,
+                "legs": 48,
+                "no_path": 792,
+                "routes": 48,
+                "ticks": 200,
+                "tiles": 288,
+                "transports": 0
+              },
+              "diagnostic": false,
+              "input_bytes": 18465,
+              "lane_cpu_ns": [
+                369585000,
+                369228000,
+                11167260000
+              ],
+              "layout": [
+                0,
+                0,
+                0,
+                0,
+                16384,
+                2048,
+                16384,
+                2048,
+                104,
+                0
+              ],
+              "logical_cells": 16384,
+              "lookup_checksum": 335871616,
+              "lookup_count": 393216,
+              "lookup_including_observer_allocations": 0,
+              "narrow_allocations": 0,
+              "narrow_checksum": 335871616,
+              "narrow_requested_bytes": 0,
+              "process_cpu_ns": 13319523000,
+              "process_peak_rss_bytes": 31948800,
+              "route_p99_ns": 135958333,
+              "startup_peak_rss_bytes": 2801664,
+              "summary": true
+            },
+            {
+              "aggregate": {
+                "banks": 0,
+                "calls": 840,
+                "checksum": 207165582859989808,
+                "empty": 0,
+                "legs": 48,
+                "no_path": 792,
+                "routes": 48,
+                "ticks": 200,
+                "tiles": 288,
+                "transports": 0
+              },
+              "diagnostic": false,
+              "input_bytes": 18465,
+              "lane_cpu_ns": [
+                382086000,
+                380143000,
+                11564078000
+              ],
+              "layout": [
+                16,
+                128,
+                16,
+                18432,
+                0,
+                0,
+                128,
+                18432,
+                120,
+                8
+              ],
+              "logical_cells": 16384,
+              "lookup_checksum": 335871616,
+              "lookup_count": 393216,
+              "lookup_including_observer_allocations": 0,
+              "narrow_allocations": 0,
+              "narrow_checksum": 335871616,
+              "narrow_requested_bytes": 0,
+              "process_cpu_ns": 13862189000,
+              "process_peak_rss_bytes": 27459584,
+              "route_p99_ns": 143950250,
+              "startup_peak_rss_bytes": 2818048,
+              "summary": true
+            }
+          ]
+        },
+        {
+          "fixture": "gated",
+          "summary": [
+            {
+              "aggregate": {
+                "banks": 32,
+                "calls": 840,
+                "checksum": 810647932929204000,
+                "empty": 0,
+                "legs": 792,
+                "no_path": 592,
+                "routes": 280,
+                "ticks": 976,
+                "tiles": 696,
+                "transports": 256
+              },
+              "diagnostic": false,
+              "input_bytes": 337,
+              "lane_cpu_ns": [
+                755000,
+                848000,
+                3807000
+              ],
+              "layout": [
+                0,
+                0,
+                0,
+                0,
+                36,
+                8,
+                48,
+                16,
+                104,
+                0
+              ],
+              "logical_cells": 36,
+              "lookup_checksum": 576,
+              "lookup_count": 864,
+              "lookup_including_observer_allocations": 0,
+              "narrow_allocations": 0,
+              "narrow_checksum": 576,
+              "narrow_requested_bytes": 0,
+              "process_cpu_ns": 9920000,
+              "process_peak_rss_bytes": 3489792,
+              "route_p99_ns": 95084,
+              "startup_peak_rss_bytes": 2801664,
+              "summary": true
+            },
+            {
+              "aggregate": {
+                "banks": 32,
+                "calls": 840,
+                "checksum": 810647932929204000,
+                "empty": 0,
+                "legs": 792,
+                "no_path": 592,
+                "routes": 280,
+                "ticks": 976,
+                "tiles": 696,
+                "transports": 256
+              },
+              "diagnostic": false,
+              "input_bytes": 337,
+              "lane_cpu_ns": [
+                776000,
+                842000,
+                3846000
+              ],
+              "layout": [
+                4,
+                32,
+                0,
+                0,
+                0,
+                0,
+                32,
+                0,
+                120,
+                8
+              ],
+              "logical_cells": 36,
+              "lookup_checksum": 576,
+              "lookup_count": 864,
+              "lookup_including_observer_allocations": 0,
+              "narrow_allocations": 0,
+              "narrow_checksum": 576,
+              "narrow_requested_bytes": 0,
+              "process_cpu_ns": 9836000,
+              "process_peak_rss_bytes": 3244032,
+              "route_p99_ns": 95291,
+              "startup_peak_rss_bytes": 2818048,
+              "summary": true
+            }
+          ]
+        }
+      ],
+      "scope": "synthetic tooling qualification only",
+      "tools": {
+        "allocator.rs": "652261fbb469b2f2e14736856641da99c486624d157898436c01e0b76e240b4f",
+        "frozen_generate.py": "f51c88b73186b9e7a50ea45494cc160523339d2be9c6e10f8134d7de05bdd784",
+        "frozen_probe.rs": "ee91e2370d04de8a1c9b9d55eaf9cbb3c8bbd9d0153b4748208fc50656e40cd8",
+        "frozen_support.py": "099c4bf8e25bf09b6181e5d51575872340f3b27fc286341315fc6fa799969ba6",
+        "proposed-manifest.json": "0a64a4ffa50c4b74bd6e17daaa2bf8ebc1673ac93afedfaec16b9b41c500cfc8",
+        "stage_a.py": "f55621d02b363595d7e263f5dc4556db9c84d74a5851da18b00c46500fd758a9",
+        "stage_probe.rs": "bcf175629fbe3915cf91f7cdc75df3c5b85009938690c6279c6ea88158af350e",
+        "test_stage_a.py": "b358c8742a77c793946a1c2659e008e0d342c2f60143504376b85e84cabb3e4a"
+      },
+      "variant": "clean"
+    },
+    "counting": {
+      "native_hard_as_qualified": false,
+      "platform": "macOS-15.7.9-arm64-arm-64bit",
+      "qualified": true,
+      "results": [
+        {
+          "fixture": "all-uniform",
+          "summary": [
+            {
+              "aggregate": {
+                "banks": 0,
+                "calls": 840,
+                "checksum": 207165582859989808,
+                "empty": 0,
+                "legs": 48,
+                "no_path": 792,
+                "routes": 48,
+                "ticks": 200,
+                "tiles": 288,
+                "transports": 0
+              },
+              "diagnostic": true,
+              "input_bytes": 18465,
+              "lane_cpu_ns": [
+                350090000,
+                349103000,
+                10604277000
+              ],
+              "layout": [
+                0,
+                0,
+                0,
+                0,
+                16384,
+                2048,
+                16384,
+                2048,
+                104,
+                0
+              ],
+              "logical_cells": 16384,
+              "lookup_checksum": 262144,
+              "lookup_count": 393216,
+              "lookup_including_observer_allocations": 0,
+              "narrow_allocations": 0,
+              "narrow_checksum": 262144,
+              "narrow_requested_bytes": 0,
+              "process_cpu_ns": 12724906000,
+              "process_peak_rss_bytes": 24821760,
+              "route_p99_ns": 130291500,
+              "startup_peak_rss_bytes": 2850816,
+              "summary": true
+            },
+            {
+              "aggregate": {
+                "banks": 0,
+                "calls": 840,
+                "checksum": 207165582859989808,
+                "empty": 0,
+                "legs": 48,
+                "no_path": 792,
+                "routes": 48,
+                "ticks": 200,
+                "tiles": 288,
+                "transports": 0
+              },
+              "diagnostic": true,
+              "input_bytes": 18465,
+              "lane_cpu_ns": [
+                367849000,
+                366492000,
+                11151103000
+              ],
+              "layout": [
+                16,
+                128,
+                0,
+                0,
+                0,
+                0,
+                128,
+                0,
+                120,
+                8
+              ],
+              "logical_cells": 16384,
+              "lookup_checksum": 262144,
+              "lookup_count": 393216,
+              "lookup_including_observer_allocations": 0,
+              "narrow_allocations": 0,
+              "narrow_checksum": 262144,
+              "narrow_requested_bytes": 0,
+              "process_cpu_ns": 13369936000,
+              "process_peak_rss_bytes": 29917184,
+              "route_p99_ns": 137375167,
+              "startup_peak_rss_bytes": 2834432,
+              "summary": true
+            }
+          ]
+        },
+        {
+          "fixture": "all-dense",
+          "summary": [
+            {
+              "aggregate": {
+                "banks": 0,
+                "calls": 840,
+                "checksum": 207165582859989808,
+                "empty": 0,
+                "legs": 48,
+                "no_path": 792,
+                "routes": 48,
+                "ticks": 200,
+                "tiles": 288,
+                "transports": 0
+              },
+              "diagnostic": true,
+              "input_bytes": 18465,
+              "lane_cpu_ns": [
+                355607000,
+                355740000,
+                10782675000
+              ],
+              "layout": [
+                0,
+                0,
+                0,
+                0,
+                16384,
+                2048,
+                16384,
+                2048,
+                104,
+                0
+              ],
+              "logical_cells": 16384,
+              "lookup_checksum": 335871616,
+              "lookup_count": 393216,
+              "lookup_including_observer_allocations": 0,
+              "narrow_allocations": 0,
+              "narrow_checksum": 335871616,
+              "narrow_requested_bytes": 0,
+              "process_cpu_ns": 12922475000,
+              "process_peak_rss_bytes": 28639232,
+              "route_p99_ns": 133617709,
+              "startup_peak_rss_bytes": 2850816,
+              "summary": true
+            },
+            {
+              "aggregate": {
+                "banks": 0,
+                "calls": 840,
+                "checksum": 207165582859989808,
+                "empty": 0,
+                "legs": 48,
+                "no_path": 792,
+                "routes": 48,
+                "ticks": 200,
+                "tiles": 288,
+                "transports": 0
+              },
+              "diagnostic": true,
+              "input_bytes": 18465,
+              "lane_cpu_ns": [
+                378603000,
+                378362000,
+                11482953000
+              ],
+              "layout": [
+                16,
+                128,
+                16,
+                18432,
+                0,
+                0,
+                128,
+                18432,
+                120,
+                8
+              ],
+              "logical_cells": 16384,
+              "lookup_checksum": 335871616,
+              "lookup_count": 393216,
+              "lookup_including_observer_allocations": 0,
+              "narrow_allocations": 0,
+              "narrow_checksum": 335871616,
+              "narrow_requested_bytes": 0,
+              "process_cpu_ns": 13771094000,
+              "process_peak_rss_bytes": 26591232,
+              "route_p99_ns": 141210166,
+              "startup_peak_rss_bytes": 2834432,
+              "summary": true
+            }
+          ]
+        },
+        {
+          "fixture": "gated",
+          "summary": [
+            {
+              "aggregate": {
+                "banks": 32,
+                "calls": 840,
+                "checksum": 810647932929204000,
+                "empty": 0,
+                "legs": 792,
+                "no_path": 592,
+                "routes": 280,
+                "ticks": 976,
+                "tiles": 696,
+                "transports": 256
+              },
+              "diagnostic": true,
+              "input_bytes": 337,
+              "lane_cpu_ns": [
+                753000,
+                796000,
+                3783000
+              ],
+              "layout": [
+                0,
+                0,
+                0,
+                0,
+                36,
+                8,
+                48,
+                16,
+                104,
+                0
+              ],
+              "logical_cells": 36,
+              "lookup_checksum": 576,
+              "lookup_count": 864,
+              "lookup_including_observer_allocations": 0,
+              "narrow_allocations": 0,
+              "narrow_checksum": 576,
+              "narrow_requested_bytes": 0,
+              "process_cpu_ns": 9642000,
+              "process_peak_rss_bytes": 3424256,
+              "route_p99_ns": 94541,
+              "startup_peak_rss_bytes": 2850816,
+              "summary": true
+            },
+            {
+              "aggregate": {
+                "banks": 32,
+                "calls": 840,
+                "checksum": 810647932929204000,
+                "empty": 0,
+                "legs": 792,
+                "no_path": 592,
+                "routes": 280,
+                "ticks": 976,
+                "tiles": 696,
+                "transports": 256
+              },
+              "diagnostic": true,
+              "input_bytes": 337,
+              "lane_cpu_ns": [
+                766000,
+                858000,
+                3896000
+              ],
+              "layout": [
+                4,
+                32,
+                0,
+                0,
+                0,
+                0,
+                32,
+                0,
+                120,
+                8
+              ],
+              "logical_cells": 36,
+              "lookup_checksum": 576,
+              "lookup_count": 864,
+              "lookup_including_observer_allocations": 0,
+              "narrow_allocations": 0,
+              "narrow_checksum": 576,
+              "narrow_requested_bytes": 0,
+              "process_cpu_ns": 9890000,
+              "process_peak_rss_bytes": 3391488,
+              "route_p99_ns": 96750,
+              "startup_peak_rss_bytes": 2834432,
+              "summary": true
+            }
+          ]
+        }
+      ],
+      "scope": "synthetic tooling qualification only",
+      "tools": {
+        "allocator.rs": "652261fbb469b2f2e14736856641da99c486624d157898436c01e0b76e240b4f",
+        "frozen_generate.py": "f51c88b73186b9e7a50ea45494cc160523339d2be9c6e10f8134d7de05bdd784",
+        "frozen_probe.rs": "ee91e2370d04de8a1c9b9d55eaf9cbb3c8bbd9d0153b4748208fc50656e40cd8",
+        "frozen_support.py": "099c4bf8e25bf09b6181e5d51575872340f3b27fc286341315fc6fa799969ba6",
+        "proposed-manifest.json": "0a64a4ffa50c4b74bd6e17daaa2bf8ebc1673ac93afedfaec16b9b41c500cfc8",
+        "stage_a.py": "f55621d02b363595d7e263f5dc4556db9c84d74a5851da18b00c46500fd758a9",
+        "stage_probe.rs": "bcf175629fbe3915cf91f7cdc75df3c5b85009938690c6279c6ea88158af350e",
+        "test_stage_a.py": "b358c8742a77c793946a1c2659e008e0d342c2f60143504376b85e84cabb3e4a"
+      },
+      "variant": "counting"
+    }
+  },
+  "standin_metrics": {
+    "cold": {
+      "baseline_median": 50646.0,
+      "baseline_repeat_range": 0.3438771077676421,
+      "candidate_median": 55146.0,
+      "classification": "inconclusive",
+      "median_delta": 0.08885203174979268,
+      "n": 6,
+      "paired_deltas": [
+        0.18593768510839948,
+        -0.48619831773486555,
+        0.5084310705682581,
+        -0.2764087983256328,
+        0.487856888994195,
+        -0.17523595150653556
+      ],
+      "threshold": 0.1
+    },
+    "peak": {
+      "baseline_median": 3178496.0,
+      "baseline_repeat_range": 360448.0,
+      "candidate_median": 3080192.0,
+      "classification": "pass",
+      "median_delta": -98304.0,
+      "n": 6,
+      "paired_deltas": [
+        81920.0,
+        -278528.0,
+        -163840.0,
+        -98304.0,
+        -32768.0,
+        -229376.0
+      ],
+      "threshold": 8388608
+    },
+    "route_cpu": {
+      "baseline_median": 5866000.0,
+      "baseline_repeat_range": 0.07705421070576202,
+      "candidate_median": 5760500.0,
+      "classification": "inconclusive",
+      "median_delta": -0.017984998295260825,
+      "n": 6,
+      "paired_deltas": [
+        -0.028298670303443574,
+        -0.04858506648482782,
+        0.03972042277531538,
+        -0.005455165359699966,
+        -0.0008523695874531196,
+        -0.0941016024548244
+      ],
+      "threshold": 0.05
+    },
+    "route_p99": {
+      "baseline_median": 97854.5,
+      "baseline_repeat_range": 3209.0,
+      "candidate_median": 96375.0,
+      "classification": "pass",
+      "median_delta": -1479.5,
+      "n": 6,
+      "paired_deltas": [
+        -2959.0,
+        -3750.0,
+        1292.0,
+        -1042.0,
+        1.0,
+        -3000.0
+      ],
+      "threshold": 2000000
+    }
+  },
+  "self_tests": {
+    "dense-clean-self-test.out": {
+      "self_test": true,
+      "resident_before": 2818048,
+      "resident_touched": 36372480,
+      "resident_after": 2818048,
+      "peak_before": 2818048,
+      "peak_after": 36372480
+    },
+    "dense-counting-self-test.out": {
+      "self_test": true,
+      "resident_before": 2883584,
+      "resident_touched": 36438016,
+      "resident_after": 2883584,
+      "peak_before": 2883584,
+      "peak_after": 36438016
+    },
+    "tiled-clean-self-test.out": {
+      "self_test": true,
+      "resident_before": 3080192,
+      "resident_touched": 36634624,
+      "resident_after": 3080192,
+      "peak_before": 3080192,
+      "peak_after": 36634624
+    },
+    "tiled-counting-self-test.out": {
+      "self_test": true,
+      "resident_before": 2899968,
+      "resident_touched": 36454400,
+      "resident_after": 2899968,
+      "peak_before": 2899968,
+      "peak_after": 36454400
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "archive_members": 183,
+  "archive_sha256": "7dee7795f03480cdc3bfd97e52b46d9b87d512d40932fa7b2a1efda34b4e915b",
+  "qualified": true,
+  "rebuild_rejected_returncode": 1,
+  "rebuild_stderr": "Traceback (most recent call last):\n  File \"/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/stage_a.py\", line 377, in <module>\n    if __name__=='__main__':main()\n  File \"/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/stage_a.py\", line 370, in main\n    elif a.action=='build':build(run,a.variant)\n  File \"/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/nav-tiled-stage-a/stage_a.py\", line 152, in build\n    if receipt_path.exists(): raise ValueError('admitted binary cannot be rebuilt; prepare a new run')\nValueError: admitted binary cannot be rebuilt; prepare a new run\n",
+  "scope": "final generated-only readback; no real input executed",
+  "verified_binaries": [
+    {
+      "arm": "dense",
+      "sha256": "0cc6f273075b3b64e10597ae856bd344db0ff6bc9f262662200dc8bd6737923f",
+      "variant": "clean"
+    },
+    {
+      "arm": "dense",
+      "sha256": "18b30e37baac5523e3270f7fd702867b5aad1d7d64f27f0f1d0cdb3b88325d1a",
+      "variant": "counting"
+    },
+    {
+      "arm": "tiled",
+      "sha256": "ac0758488de7b3c11f641007d503842591ebe270d7dce394dadc712dd2d3d81c",
+      "variant": "clean"
+    },
+    {
+      "arm": "tiled",
+      "sha256": "3904a3a0c94bb1bdeb296d1ce59769fb6d74d5a9d955dab5812268ea28b96c3d",
+      "variant": "counting"
+    }
+  ]
+}

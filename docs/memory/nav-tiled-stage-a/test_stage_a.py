@@ -96,6 +96,43 @@ class Unit(unittest.TestCase):
     def test_real_gate_before_path_access(self):
         for auth in ({},{'released':True,'mode':'real','input_path':'/not-to-open'}):
             with self.assertRaises(ValueError):s.check_release(self.path,auth)
+    def test_released_copies_remain_bound_between_launches(self):
+        # Stub prerequisites/child only: exercise real copy, normalization, hash
+        # admission, schedule and failure receipts without a real pack/process.
+        for standin in (True,False):
+            for target in ('input.bin','routes.tsv'):
+                for timing in ('after_process','before_next_process','completion'):
+                    with self.subTest(standin=standin,target=target,timing=timing):
+                        run=self.path/f'{standin}-{target}-{timing}';run.mkdir()
+                        s.fixtures(run)
+                        pack=run/'fixtures/gated.bin';route=run/'fixtures/routes.json'
+                        auth=dict(input_path=str(pack),input_sha256=s.sha(pack),input_bytes=pack.stat().st_size,
+                                  routes_path=str(route),routes_sha256=s.sha(route))
+                        dest=run/('standin-release' if standin else 'real-release')
+                        launches=[];checks=[]
+                        def mutate():
+                            p=dest/target;p.write_bytes(p.read_bytes()+b'\n')
+                        def check(*args):
+                            checks.append(1)
+                            if timing=='before_next_process' and len(checks)==3:mutate()
+                        def launch(*args,**kwargs):
+                            launches.append(args[1])
+                            if timing=='after_process' and len(launches)==1:mutate()
+                            return [dict(phase=p,process_peak_rss_bytes=100,elapsed_ns=100,cpu_ns=100)
+                                    for p in s.PHASES]+[dict(aggregate={'calls':1},route_p99_ns=100)]
+                        original_paired=s.paired
+                        def paired(*args):
+                            if timing=='completion' and args[2]==2_000_000:mutate()
+                            return original_paired(*args)
+                        with patch.object(s,'check_release',check),patch.object(s,'run_one',launch),patch.object(s,'paired',paired):
+                            with self.assertRaisesRegex(ValueError,'sha256 mismatch|length'):
+                                s.released_run(run,auth,standin=standin)
+                        expected=len(json.loads((s.HERE/'proposed-manifest.json').read_text())['order']) if timing=='completion' else 1
+                        self.assertEqual(len(launches),expected)
+                        receipt=json.loads((dest/'result.json').read_text())
+                        self.assertFalse(receipt['qualified'])
+                        self.assertIn('failure',receipt)
+
     def test_baseline_repeat_noise_not_delta_noise(self):
         r=s.paired([100,200,100],[101,201,101],.1,True)
         self.assertEqual(r['classification'],'inconclusive');self.assertEqual(r['baseline_repeat_range'],1)

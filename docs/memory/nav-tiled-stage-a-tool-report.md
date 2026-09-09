@@ -1,9 +1,68 @@
 # Stage A tooling report
 
-## Corrective implementation — t_fa5a3462
+## Round 3 — release-copy binding correction
 
-Status: final local generated tooling qualification passed; independent same-card
-review pending. NO real navpack read/run, SSH/native Linux execution, game,
+The round-2 review rejected 6c5a8672: its `run_one` fresh hashes could silently
+re-admit an owned input or normalized selector mutation between repetitions.
+The run-04 receipts below remain historical qualification evidence, not approval
+of that release protocol. Root/reviewer reproductions and prior failures remain
+unchanged. No native/real measurement is released by this correction.
+
+`released_run` now holds the original authorization input SHA256 and exact size,
+and a normalized TSV SHA256 computed from the normalization bytes before writing
+the file. It checks those fixed bindings before every launch, after each process,
+and after metric aggregation before successful completion. It never substitutes
+`run_one`'s fresh consistency digests for authorization. Completion failures now
+also retain `qualified=false`, the exception, and completed process results.
+
+The regression exercises both stand-in and real control-flow modes using generated
+fixtures only, with prerequisites and child launches explicitly stubbed. It mutates
+each owned file after the first process, during the next iteration's prerequisite
+check, and during final aggregation. Early mutations must leave exactly one launch;
+completion mutations must refuse success and preserve the failure receipt. JSON
+input selectors exercise normalization rather than assuming source TSV hash equality.
+These stubs are control-flow tests, not fabricated probe or performance evidence.
+
+`evidence/round-3-red.txt.gz` preserves all mutation cases failing against the rejected
+implementation. `round-3-green.txt.gz` preserves the first corrected test attempt:
+hash rejection worked, but the assertion expected the word `hash` instead of the
+actual `sha256 mismatch` exception. The assertion was corrected; no guard weakened.
+Raw logs are gzip-preserved because unittest's trailing whitespace failed the
+first staged whitespace check; no raw failure output was edited to satisfy it.
+Fresh run-05 admissions are required because tool/test hashes changed; run-04
+admissions and binaries were neither rewritten nor re-admitted.
+
+Fresh qualification completed on macOS 15.7.9 / aarch64 with Rust/Cargo 1.98.0:
+
+- `guards-05`: 17 tests passed in 2.283s, no skips, including all 12 mutation
+  subcases. Native Linux hard-AS remains explicitly unqualified.
+- `run-05`: four independent release builds passed; clean and counting generated
+  qualifications passed for both frozen arms on uniform, dense and gated packs.
+  Matched aggregate/layout and narrow warmed-read checks passed unchanged.
+- All four Rust self-tests and both-arm source/lock/tool/binary mutation,
+  malformed decoder/selector and phase-order integration tests passed.
+- The actual twelve-process JSON-selector generated stand-in release protocol
+  passed with the corrected bindings. Cold/route-CPU arithmetic was inconclusive
+  from baseline repeat noise; tiny-fixture peak/p99 pass labels are NOT Stage A
+  performance acceptance. No actual pack or native host was used, and no
+  production files were changed.
+- Final readback reverified all four admissions and all archive members and
+  confirmed an admitted rebuild is rejected before Cargo. `git diff --check`
+  passed. `final_readback.py run-05` now selects a fresh evidence filename and
+  refuses to overwrite an existing readback receipt.
+
+Evidence: `nav-tiled-stage-a/evidence/run-05.tar.gz`, 183 members, 178,086 bytes,
+SHA256 `7dee7795f03480cdc3bfd97e52b46d9b87d512d40932fa7b2a1efda34b4e915b`.
+Adjacent run-05 archive inventory, summary and final-readback JSON retain exact
+tool/source/compiler/binary hashes and raw qualification output. All previous
+archives remain untouched. Same-card reviewer defaults rechecked as grok-4.5 /
+xai-oauth; independent review is still required. Native generated qualification,
+root real-input release and all performance/resident acceptance remain pending.
+
+## Prior corrective implementation — t_fa5a3462 (6c5a8672; rejected)
+
+Historical status: local generated tooling qualification passed, but independent
+review rejected the between-iteration release binding. NO real navpack read/run, SSH/native Linux execution, game,
 account, frontend or performance acceptance. No production code changed.
 The rejected aab094f6 report below is retained as historical evidence, not an
 accurate description of the replacement tool. Interrupted Luna main.rs edits

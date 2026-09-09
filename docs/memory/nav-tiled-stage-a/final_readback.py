@@ -7,7 +7,7 @@ import sys
 import tarfile
 import stage_a as s
 
-run=s.HERE/'run-04'
+run=s.owned(s.HERE/(sys.argv[1] if len(sys.argv)>1 else 'run-04'))
 verified=[]
 for arm in s.ARMS:
     for variant in ('clean','counting'):
@@ -19,7 +19,7 @@ assert r.returncode!=0 and 'admitted binary cannot be rebuilt' in r.stderr
 assert before=={str(p):s.sha(p) for p in run.glob('*-admission.json')}
 for arm in s.ARMS:
     for variant in ('clean','counting'):s.verify_arm(run,arm,variant)
-inventory=json.loads((s.HERE/'evidence/run-04-archive.json').read_text())
+inventory=json.loads((s.HERE/'evidence'/(run.name+'-archive.json')).read_text())
 archive=s.HERE/'evidence'/inventory['archive'];assert s.sha(archive)==inventory['sha256']
 with tarfile.open(archive) as tar:
     assert len(tar.getmembers())==len(inventory['files'])
@@ -28,5 +28,7 @@ with tarfile.open(archive) as tar:
         assert hashlib.sha256(f.read()).hexdigest()==e['sha256']
 result=dict(qualified=True,verified_binaries=verified,archive_members=len(inventory['files']),archive_sha256=inventory['sha256'],rebuild_rejected_returncode=r.returncode,rebuild_stderr=r.stderr,
             scope='final generated-only readback; no real input executed')
-s.save(s.HERE/'evidence/final-readback.json',result)
+destination=s.HERE/'evidence'/('final-readback.json' if run.name=='run-04' else run.name+'-final-readback.json')
+if destination.exists(): raise FileExistsError(destination)
+s.save(destination,result)
 print(json.dumps(result,indent=2))

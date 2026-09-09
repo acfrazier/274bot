@@ -327,30 +327,40 @@ def released_run(run, auth, standin=False):
     admit(route,auth['routes_sha256'],65536);rows=selectors(route)
     dest=run/('standin-release' if standin else 'real-release');dest.mkdir()
     shutil.copyfile(pack,dest/'input.bin');save(dest/'authorization.json',auth)
-    (dest/'routes.tsv').write_text(''.join(' '.join(map(str,r))+'\n' for r in rows))
-    admit(dest/'input.bin',auth['input_sha256'],128*1024**2)
+    normalized=''.join(' '.join(map(str,r))+'\n' for r in rows).encode()
+    normalized_hash=hashlib.sha256(normalized).hexdigest()
+    (dest/'routes.tsv').write_bytes(normalized)
+    input_hash=auth['input_sha256'];input_bytes=auth['input_bytes']
+    def bind_copies():
+        # Fixed authorization/normalization values, NEVER fresh per-run hashes.
+        admit(dest/'input.bin',input_hash,1024**2 if standin else 128*1024**2)
+        if (dest/'input.bin').stat().st_size!=input_bytes: raise ValueError('root input length mismatch')
+        admit(dest/'routes.tsv',normalized_hash,65536)
     schedule=json.loads((HERE/'proposed-manifest.json').read_text())['order']
     results=[]
-    save(dest/'launch.json',dict(order=schedule,authorization=auth,normalized_routes_sha256=sha(dest/'routes.tsv'),hardware=hardware()))
+    save(dest/'launch.json',dict(order=schedule,authorization=auth,normalized_routes_sha256=normalized_hash,hardware=hardware()))
     try:
         for i,arm in enumerate(schedule):
             check_release(run,auth,standin)
+            bind_copies()
             results.append(dict(arm=arm,data=run_one(run,arm,'clean',dest/'input.bin',dest/'routes.tsv',dest,f'{i:02d}-{arm}',released=not standin)))
+            bind_copies()
             if results[-1]['data'][-1]['aggregate']!=results[0]['data'][-1]['aggregate']: raise ValueError('paired workload aggregates differ')
             save(dest/'progress.json',dict(completed=len(results),results=results))
+        metrics={}
+        for name,threshold,relative in [('peak',8*1024**2,False),('cold',.10,True),('route_cpu',.05,True),('route_p99',2_000_000,False)]:
+            samples={a:[] for a in ARMS}
+            for r in results:
+                phases={p['phase']:p for p in r['data'][:-1]};summary=r['data'][-1]
+                value={'peak':phases['decoded_converted_retained_input']['process_peak_rss_bytes'],
+                       'cold':phases['retained_input']['elapsed_ns']+phases['decoded_converted_retained_input']['elapsed_ns'],
+                       'route_cpu':phases['hot_routes']['cpu_ns'],'route_p99':summary['route_p99_ns']}[name]
+                samples[r['arm']].append(value)
+            metrics[name]=paired(samples['dense'],samples['tiled'],threshold,relative)
+        bind_copies()
+        save(dest/'result.json',dict(scope='stand-in qualification only' if standin else 'Stage A only; no resident acceptance',metrics=metrics,results=results))
     except BaseException as e:
         save(dest/'result.json',dict(qualified=False,failure=repr(e),results=results));raise
-    metrics={}
-    for name,threshold,relative in [('peak',8*1024**2,False),('cold',.10,True),('route_cpu',.05,True),('route_p99',2_000_000,False)]:
-        samples={a:[] for a in ARMS}
-        for r in results:
-            phases={p['phase']:p for p in r['data'][:-1]};summary=r['data'][-1]
-            value={'peak':phases['decoded_converted_retained_input']['process_peak_rss_bytes'],
-                   'cold':phases['retained_input']['elapsed_ns']+phases['decoded_converted_retained_input']['elapsed_ns'],
-                   'route_cpu':phases['hot_routes']['cpu_ns'],'route_p99':summary['route_p99_ns']}[name]
-            samples[r['arm']].append(value)
-        metrics[name]=paired(samples['dense'],samples['tiled'],threshold,relative)
-    save(dest/'result.json',dict(scope='stand-in qualification only' if standin else 'Stage A only; no resident acceptance',metrics=metrics,results=results))
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('action',choices=['prepare','build','generated','guards','real']);p.add_argument('--run',type=Path,required=True)
