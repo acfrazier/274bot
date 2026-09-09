@@ -1,8 +1,41 @@
 # Making 274bot lean: what we have changed, and why
 
-Written for the operator, 2026-09-08. This is a reading guide to the memory and
+Written for the operator, 2026-09-08; current focus updated 2026-09-09.
+This is a reading guide to the memory and
 performance campaign, not a release note or a claim that its targets are met.
 For the latest execution status, use [STATE.md](STATE.md).
+
+## What we are trying now — September 9
+
+We are pursuing two connected experiments:
+
+- **Keep the smaller navigation storage and reduce its lookup overhead.** The
+  tiled representation saves shared navigation storage, but collision reads
+  perform extra work. The reviewed refinement reuses validated coordinates
+  instead of converting them to an index and then back to coordinates. Generated
+  tests showed roughly 31% faster reads and 3% faster routes, with matching
+  checksums and unchanged storage. Fresh native and real-pack qualification still
+  has to establish whether that helps the actual workload. See the
+  [coordinate experiment](nav-coordinate-lookup-experiment-report.md) and
+  [native admission plan](nav-coordinate-native-admission-plan.md).
+- **Measure which live owners account for the remaining per-bot memory.** One
+  short N1 capture will inspect the actual World, snapshot, interface and script
+  owners. It will measure their logical retained storage without copying them.
+  That should identify the next representation worth investigating. These
+  counters will not be called RSS savings or subtracted from RSS to invent a
+  residual owner. See the [capture design](direct-per-bot-owner-capture-plan.md).
+
+Navigation is a shared cost; the owner capture investigates costs that can grow
+with each bot. The current controller and regression work prepares trustworthy
+measurements for those two questions. Reviewed generated tests and native builds
+are progress toward that point, not a completed live result. Source admission,
+remaining regression coverage and resource guards precede the capture; refined
+navigation tooling and fresh qualification precede its real comparison.
+
+The broader explanation below was written on September 8. Its dated execution
+descriptions are background; STATE owns current actions and review status.
+
+## Why the campaign exists
 
 The central problem is that a bot host contains several applications' worth of
 state: a game client, a world model, navigation, a script runtime, observation
