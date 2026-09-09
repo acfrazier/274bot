@@ -11,6 +11,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 12:20 UTC
+
+- Root released independent StageA TOOLING ONLY t_fa5a3462 profileluna;
+ actualworker running. New nav-tiled-stage-a directory/report ownership;
+ synthetic-only qualification, frozen original arms, no realpack/SSH/measurement
+ released. Separate clean System vs counting diagnostics, explicit input/world
+ lifetime, currentRSS and processCPU required. Root freezes hardware/order/route
+ manifest only after correctness and tool review; all performance gates OPEN.
+- Extension t_2aabed22 still implementation: generated328120731 outputbytes
+ match, eacharm/protocol12Teleport8BankSession8Boat52NoPath assertions.
+ Archive/report and required same-card review pending; no native release yet.
+- Readonly Linux check: samebootd63ba1f3, MemAvailable7555588KiB,
+ diskfree47646654464B, no compiler/probe/frontend process. No measurement run.
+
 ## Latest boundary — 2026-09-09 12:17 UTC
 
 - Separate289 native trace now passed one ground displacement: scene2,WALK,
