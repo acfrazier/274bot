@@ -32,6 +32,48 @@ class PreparationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "missing or false"):
                 prep.verify_qualification(path, {})
 
+    def test_build_uses_schema_faithful_candidate_and_feature_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "tui-play"
+            binary.write_bytes(b"offline fixture")
+            manifest = root / "build-manifest.json"
+            manifest.write_text(json.dumps({
+                "candidate": {
+                    "commit": prep.HOST_COMMIT,
+                    "build_exit": 0,
+                    "sources_sha256_pre": "a" * 64,
+                    "sources_sha256_post": "a" * 64,
+                    "sources_stable_across_build": True,
+                    "client": {"commit": prep.CLIENT_COMMIT},
+                },
+                "features": {
+                    "requested": ["memory-profile-no-alloc", "memory-owner-capture"],
+                    "locked": True, "allocation_counting": False,
+                    "snapshot_dedup": False,
+                },
+                "binaries": {"candidate_tui_play": {
+                    "path": str(binary), "sha256": prep.digest(binary),
+                }},
+            }))
+            result = prep.verify_build(manifest, binary)
+            self.assertEqual(result["client_commit"], prep.CLIENT_COMMIT)
+
+    def test_controller_requires_exact_reviewed_tool_digest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            controller = root / "run_current_tui_calibration.py"
+            controller.write_bytes(b"not the reviewed controller")
+            manifest = root / "install-manifest.json"
+            manifest.write_text(json.dumps({
+                "review_commit": prep.CONTROLLER_COMMIT,
+                "only_untracked_controller_tools_changed": {
+                    "run_current_tui_calibration.py": {"after": prep.CONTROLLER_SHA256}
+                },
+            }))
+            with self.assertRaisesRegex(ValueError, "digest mismatch"):
+                prep.verify_controller(controller, manifest)
+
 
 if __name__ == "__main__":
     unittest.main()

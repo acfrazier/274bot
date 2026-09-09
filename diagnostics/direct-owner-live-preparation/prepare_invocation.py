@@ -18,6 +18,7 @@ ARCHIVE_SHA256 = "2c36d254c37c5ed56a55f78728357296d62be602f8653ed9ec041cd37d099d
 HOST_COMMIT = "c0709aba2f8b45e42193225cf8f4e7325b5ca9bf"
 CLIENT_COMMIT = "3456edc8dabf7b25ada78110ffa56327af9f67a4"
 CONTROLLER_COMMIT = "e707e2d"
+CONTROLLER_SHA256 = "8634665855d87aa93d27f10bc386f87d04be4c522b24e5379174f45cc2f37312"
 NAV_PACK_SHA256 = "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30"
 
 # These are release-contract values, not measured results.
@@ -108,19 +109,38 @@ def verify_qualification(path: Path, source: dict[str, Any]) -> dict[str, Any]:
 
 def verify_build(manifest: Path, binary: Path) -> dict[str, Any]:
     build = obj(manifest, "direct-owner build manifest")
-    if build.get("hostCommit") != HOST_COMMIT or build.get("clientCommit") != CLIENT_COMMIT:
-        fail("build manifest H/C identity mismatch")
+    candidate = build.get("candidate")
+    if not isinstance(candidate, dict) or candidate.get("commit") != HOST_COMMIT:
+        fail("build manifest candidate host identity mismatch")
+    client = candidate.get("client")
+    if not isinstance(client, dict) or client.get("commit") != CLIENT_COMMIT:
+        fail("build manifest candidate client identity mismatch")
+    if candidate.get("build_exit") != 0 or candidate.get("sources_stable_across_build") is not True:
+        fail("build manifest candidate source/build evidence is not stable")
+    if candidate.get("sources_sha256_pre") != candidate.get("sources_sha256_post"):
+        fail("build manifest candidate source digests differ")
     features = build.get("features")
     if not isinstance(features, dict):
         fail("build manifest features object is required")
-    text = json.dumps(features, sort_keys=True)
-    if "memory-owner-capture" not in text or "snapshot-dedup" in text:
-        fail("build manifest must prove memory-owner-capture and reject snapshot-dedup")
+    requested = features.get("requested")
+    requested_values = (requested if isinstance(requested, list)
+                        else requested.replace(",", " ").split() if isinstance(requested, str)
+                        else [requested])
+    if ("memory-profile-no-alloc" not in requested_values
+            or "memory-owner-capture" not in requested_values
+            or features.get("locked") is not True
+            or features.get("allocation_counting") is not False
+            or features.get("snapshot_dedup") is not False
+            or "snapshot-dedup" in json.dumps(features, sort_keys=True)):
+        fail("build manifest must prove the locked owner-capture feature contract")
     binaries = build.get("binaries")
-    candidate = binaries.get("candidate_tui_play") if isinstance(binaries, dict) else None
-    expected = candidate.get("sha256") if isinstance(candidate, dict) else None
+    binary_entry = binaries.get("candidate_tui_play") if isinstance(binaries, dict) else None
+    expected = binary_entry.get("sha256") if isinstance(binary_entry, dict) else None
     if not isinstance(expected, str) or digest(binary) != expected:
         fail("direct-owner binary does not match build manifest")
+    recorded_path = binary_entry.get("path") if isinstance(binary_entry, dict) else None
+    if not isinstance(recorded_path, str) or Path(recorded_path).resolve() != binary.resolve():
+        fail("direct-owner binary path differs from build manifest")
     return {"manifest_sha256": digest(manifest), "binary_sha256": expected,
             "host_commit": HOST_COMMIT, "client_commit": CLIENT_COMMIT}
 
@@ -129,8 +149,14 @@ def verify_controller(path: Path, install_manifest: Path) -> dict[str, Any]:
     controller = obj(install_manifest, "N1 controller install manifest")
     if controller.get("review_commit") != CONTROLLER_COMMIT:
         fail("N1 controller review identity mismatch")
+    tools = controller.get("only_untracked_controller_tools_changed")
+    entry = tools.get("run_current_tui_calibration.py") if isinstance(tools, dict) else None
+    if not isinstance(entry, dict) or entry.get("after") != CONTROLLER_SHA256:
+        fail("N1 controller install manifest tool identity mismatch")
+    if digest(path) != CONTROLLER_SHA256:
+        fail("N1 controller digest mismatch")
     return {"controller": str(path), "controller_manifest_sha256": digest(install_manifest),
-            "review_commit": CONTROLLER_COMMIT}
+            "controller_sha256": CONTROLLER_SHA256, "review_commit": CONTROLLER_COMMIT}
 
 
 def build_release_contract(args: argparse.Namespace) -> dict[str, Any]:
