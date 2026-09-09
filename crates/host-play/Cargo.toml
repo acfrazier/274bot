@@ -36,5 +36,14 @@ memory-profile-no-alloc = ["memory-profile"]
 # Opt-in A1 rebuild-edge exact family body dedup candidate (not default).
 snapshot-dedup = ["api/snapshot-dedup", "host/snapshot-dedup"]
 
+# Opt-in direct per-bot owner capture; requires memory-profile-no-alloc path.
+memory-owner-capture = [
+    "memory-profile-no-alloc",
+    "api/memory-owner-capture",
+    "host/memory-owner-capture",
+    "script/memory-owner-capture",
+    "client/memory-owner-capture",
+]
+
 [dev-dependencies]
 serde = { version = "=1.0.219", features = ["derive"] }

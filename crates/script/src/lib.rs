@@ -22,6 +22,10 @@ pub mod settings_store;
 pub mod shim;
 pub mod slot;
 
+#[cfg(feature = "memory-owner-capture")]
+#[path = "fingerprint_owner_capture.rs"]
+mod fingerprint_owner_capture;
+
 pub use ctx::{DetectedRandom, FindOptions, RandomClaim, Script, ScriptCtx};
 pub use isolated_env::{bot_file, bot_home, rs2b0t_env, IsolatedEnv};
 #[cfg(feature = "load")]

@@ -695,6 +695,15 @@ fn script_observe(
     if let Some(slot) = script_slot(scripts, name) {
         let mut slot = slot.lock().unwrap();
         slot.on_is_up(up);
+        #[cfg(feature = "memory-owner-capture")]
+        {
+            // Existing lock only: fingerprint census after gate, before encode/tick.
+            if crate::owner_capture::enabled() {
+                let mut budget = api::owner_capture::Budget::new();
+                let frag = slot.owner_payload(&mut budget);
+                let _ = host::owner_capture::global_mailbox().try_push_fragment(frag);
+            }
+        }
         // Post the snapshot only while the slot script is Running.
         // While the guardian holds: still dispatch the isolate tick so
         // `onPaint` runs (loop/pump stay frozen inside the isolate);
@@ -734,6 +743,15 @@ fn script_observe(
                     teleports_enabled,
                     |input| slot.encode_snapshot_delta(input, force_banks),
                 );
+                #[cfg(feature = "memory-owner-capture")]
+                {
+                    // Natural encoded Vec metadata before move into post_snapshot.
+                    crate::owner_capture::note_encoded(
+                        api::owner_capture::EncodedBufKind::FirstPostInWindow,
+                        bytes.len(),
+                        bytes.capacity(),
+                    );
+                }
                 slot.post_snapshot(bytes);
                 slot.store_last_world_id(world_id);
             }
@@ -3876,6 +3894,18 @@ fn spawn_slot_thread(
                         // hold freezes script tick and the nav follow.
                         move |c, _ignored, run_sends, status: &RandomStatus| {
                             let name = &obs_name;
+                            #[cfg(feature = "memory-owner-capture")]
+                            {
+                                // Closure ENTRY: actual retained nav_snapshot before rebuilds.
+                                crate::owner_capture::observe_entry_nav(
+                                    &nav_snapshot,
+                                    host::owner_capture::SlotToken(
+                                        crate::owner_capture::enabled()
+                                            .then_some(1u64)
+                                            .unwrap_or(0),
+                                    ),
+                                );
+                            }
                             // Panel/TUI WalkArm + scenario follow gate on the
                             // same hold as step_nav_bot (prev-frame status).
                             #[cfg(feature = "memory-profile")]
@@ -9802,6 +9832,10 @@ pub mod nav_capture;
 
 #[cfg(feature = "memory-profile")]
 mod memory_diagnostics;
+
+/// Opt-in direct per-bot owner capture (feature `memory-owner-capture`).
+#[cfg(feature = "memory-owner-capture")]
+pub mod owner_capture;
 
 /// Candidate destinations for an explicit radius request. Exact walks retain
 /// their old routing behavior. Bound enumeration to the loaded scene size.

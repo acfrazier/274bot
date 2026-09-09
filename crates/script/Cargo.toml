@@ -9,6 +9,8 @@ publish = false
 # snapshot inflight). Empty feature: counters compile in; isolate wiring
 # stays behind later hops.
 memory-profile = []
+# Opt-in direct per-bot owner capture (fingerprint/natural buffer scalars).
+memory-owner-capture = ["api/memory-owner-capture", "load"]
 # rustyscript pulls V8 into the build; `load` gates the JS isolate so
 # crates that only need compiled scripts stay V8-free. On for script tests
 # (they exercise Load) and for panel/host-play; nothing else depends on

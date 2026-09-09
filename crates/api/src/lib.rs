@@ -7,6 +7,9 @@ pub use snapshot::{LocalTile, WorldTile};
 pub mod content;
 pub mod interact;
 pub mod obj_names;
+/// Opt-in direct per-bot owner capture helpers (feature `memory-owner-capture`).
+#[cfg(feature = "memory-owner-capture")]
+pub mod owner_capture;
 pub mod prot;
 pub mod query;
 pub mod random;

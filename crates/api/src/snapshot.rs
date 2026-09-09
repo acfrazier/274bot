@@ -11,6 +11,10 @@ use serde::Serialize;
 #[cfg(feature = "snapshot-dedup")]
 use std::sync::Arc;
 
+#[cfg(feature = "memory-owner-capture")]
+#[path = "snapshot_owner_capture.rs"]
+mod snapshot_owner_capture;
+
 /// A world tile: absolute `x`/`z` plus the plane (`level`). The key type
 /// loc/ground-item/player families are positioned by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]

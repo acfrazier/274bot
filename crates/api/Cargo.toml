@@ -13,6 +13,9 @@ default = []
 # Opt-in A1 rebuild-edge exact family body dedup candidate. Feature-off keeps
 # original Vec storage and rebuild path with no equality/registry work.
 snapshot-dedup = []
+# Opt-in direct per-bot owner capture census (default off). Mutually exclusive
+# with snapshot-dedup for v1 capture runs.
+memory-owner-capture = []
 
 [dev-dependencies]
 serde_json = "=1.0.140"

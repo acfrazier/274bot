@@ -206,6 +206,128 @@ impl SlotScript {
         };
     }
 
+    /// Borrowed fingerprint + slot buffer census (feature `memory-owner-capture`).
+    /// Call under the existing slot lock after `on_is_up`, before encode/tick.
+    #[cfg(feature = "memory-owner-capture")]
+    pub fn owner_payload(
+        &self,
+        budget: &mut api::owner_capture::Budget,
+    ) -> api::owner_capture::OwnerFragment {
+        use api::owner_capture::{
+            owned_string_capacity_bytes, strings_capacity_bytes_vec, FieldRow, Reason,
+        };
+
+        let mut frag = if let Some(fp) = self.last_snapshot.as_ref() {
+            crate::fingerprint_owner_capture::fingerprint_owner_payload(fp, budget)
+        } else {
+            let mut f = api::owner_capture::OwnerFragment::new("fingerprint");
+            let _ = budget.push_row(
+                &mut f.rows,
+                FieldRow::unknown(
+                    "fingerprint",
+                    "absent",
+                    Reason::Missing,
+                    budget.elapsed_ns(),
+                ),
+            );
+            // Builder capacity remains unknown after Stop / when absent.
+            let _ = budget.push_row(
+                &mut f.rows,
+                FieldRow::unknown(
+                    "fingerprint",
+                    "builder_capacity",
+                    Reason::OpaqueUnknown,
+                    budget.elapsed_ns(),
+                ),
+            );
+            f
+        };
+        frag.source = "slotscript";
+
+        // pending_logs + last_error
+        match strings_capacity_bytes_vec(&self.pending_logs) {
+            Ok((_len, _cap, header, nested)) => {
+                let _ = budget.push_row(
+                    &mut frag.rows,
+                    FieldRow::ok(
+                        "slotscript",
+                        "pending_logs",
+                        self.pending_logs.len() as u64,
+                        self.pending_logs.capacity() as u64,
+                        self.pending_logs.len() as u64,
+                        header,
+                        header,
+                        nested,
+                        0,
+                        0,
+                        budget.elapsed_ns(),
+                    ),
+                );
+            }
+            Err(r) => {
+                frag.complete = false;
+                frag.reason = r;
+            }
+        }
+        {
+            let nested = self
+                .last_error
+                .as_ref()
+                .map(owned_string_capacity_bytes)
+                .unwrap_or(0);
+            let _ = budget.push_row(
+                &mut frag.rows,
+                FieldRow::ok(
+                    "slotscript",
+                    "last_error",
+                    if self.last_error.is_some() { 1 } else { 0 },
+                    1,
+                    if self.last_error.is_some() { 1 } else { 0 },
+                    nested,
+                    nested,
+                    0,
+                    0,
+                    0,
+                    budget.elapsed_ns(),
+                ),
+            );
+        }
+
+        // Live FlatBufferBuilder capacity is opaque (plan §2 builder).
+        let _ = budget.push_row(
+            &mut frag.rows,
+            FieldRow::unknown(
+                "slotscript",
+                "ipc_builder_capacity",
+                Reason::OpaqueUnknown,
+                budget.elapsed_ns(),
+            ),
+        );
+        // Compiled trait-object / native isolate internals unknown.
+        let _ = budget.push_row(
+            &mut frag.rows,
+            FieldRow::unknown(
+                "slotscript",
+                "compiled_or_isolate_native",
+                Reason::OpaqueUnknown,
+                budget.elapsed_ns(),
+            ),
+        );
+
+        if let Some(r) = budget.failed() {
+            frag.complete = false;
+            frag.reason = r;
+        }
+        frag.visits = budget.visits();
+        frag
+    }
+
+    /// Record natural encoded Vec metadata (len/capacity) without cloning.
+    #[cfg(feature = "memory-owner-capture")]
+    pub fn natural_encoded_meta(bytes: &Vec<u8>) -> (u64, u64) {
+        (bytes.len() as u64, bytes.capacity() as u64)
+    }
+
     /// Post the host's FlatBuffer snapshot blob into a Load isolate (no-op
     /// for a compiled script). Call it before [`SlotScript::on_game_tick`]
     /// so the posted blob is what the tick's JS reads.

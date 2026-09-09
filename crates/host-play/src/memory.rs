@@ -702,6 +702,10 @@ impl Run {
             std::env::var("BOT_MEMORY_SINGLE_RENDERER").as_deref() == Ok("1");
         client::profiling::enable();
         if std::env::var("BOT_SCHEDULING_PROFILE").as_deref() == Ok("1") { host::cadence::enable(); }
+        #[cfg(feature = "memory-owner-capture")]
+        {
+            crate::owner_capture::init().map_err(|e| e.to_string())?;
+        }
         if std::env::var("BOT_RENDER_PROFILE").as_deref() == Ok("1") {
             host::render_profile::enable();
             if std::env::var("BOT_GPU_COMPLETION_PROFILE").as_deref() == Ok("1") {
@@ -1024,6 +1028,14 @@ impl Run {
             // Arm first so immutable START matches this observe-start boundary.
             self.arm_cohort_at_observe_start()?;
             self.write_qualification(play, "observe-start")?;
+            #[cfg(feature = "memory-owner-capture")]
+            {
+                // Phase A: observe-start boundary request (nonblocking).
+                let _ = crate::owner_capture::request_phase(
+                    0,
+                    host::owner_capture::SlotToken(0),
+                );
+            }
             // Prefer the Instant used for mono START when cohort-on so wall
             // observe duration tracks the same immutable window.
             self.observing = Some(self.cohort.as_ref().map(|_| Instant::now()).unwrap_or(now));
@@ -1065,6 +1077,14 @@ impl Run {
                     }
                 }
                 self.write_qualification(play, "observe-end")?;
+                #[cfg(feature = "memory-owner-capture")]
+                {
+                    // Phase B: observe-end boundary request (nonblocking).
+                    let _ = crate::owner_capture::request_phase(
+                        1,
+                        host::owner_capture::SlotToken(0),
+                    );
+                }
                 if self.cohort.is_some() {
                     // Keep ordinary runtime for the finite tail; scripts stay up
                     // through this sample, then drain begins after the write.
@@ -1095,6 +1115,14 @@ impl Run {
                 }
                 self.stopped = true;
                 self.teardown = Some(now);
+                #[cfg(feature = "memory-owner-capture")]
+                {
+                    // Phase C: post-stop / teardown boundary (nonblocking).
+                    let _ = crate::owner_capture::request_phase(
+                        2,
+                        host::owner_capture::SlotToken(0),
+                    );
+                }
             }
         }
 

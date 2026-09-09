@@ -4,6 +4,8 @@ mod auto_run;
 pub mod cadence;
 pub mod input_seam_trace;
 pub mod login_queue;
+#[cfg(feature = "memory-owner-capture")]
+pub mod owner_capture;
 mod random;
 pub mod render_profile;
 pub mod responsiveness_cohort;
@@ -375,6 +377,11 @@ impl Host {
     {
         let _profile_tick = client::profiling::CLIENT_TICK.start();
         let t_obs = Instant::now();
+        #[cfg(feature = "memory-owner-capture")]
+        {
+            // Immediately BEFORE observe: borrowed Client + host snapshot only.
+            crate::owner_capture::pre_observe_hook(client, &slot.snapshot);
+        }
         let busy = observe(client, username, *run_sends, prev_status);
         let observe_ns = t_obs.elapsed().as_nanos() as u64;
         slot.observe_ns = slot.observe_ns.wrapping_add(observe_ns);
