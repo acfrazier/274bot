@@ -1,0 +1,50 @@
+{
+  "scope": "task-specific exact builder compiler toolchain prerequisite; no probe rebuild or private input",
+  "source_files_verified": 165,
+  "archive_sha256": "dfc473e13e3e2d380d8349937c24368ce1ab916817028b114b1ecdd4be7da1c9",
+  "manifest_sha256": "0bbf05683bba48004ca58fdac3453cf69423bdcec88d798424bdf88cadedcb07",
+  "override_directory": "/home/acfrazier/274bot-campaign/nav-coordinate-a44a930-concord-01",
+  "tar_filter_modes_restored": [
+    "lib/rustlib/components",
+    "lib/rustlib/manifest-cargo-x86_64-unknown-linux-gnu",
+    "lib/rustlib/manifest-clippy-preview-x86_64-unknown-linux-gnu",
+    "lib/rustlib/manifest-rust-std-x86_64-unknown-linux-gnu",
+    "lib/rustlib/manifest-rustc-x86_64-unknown-linux-gnu",
+    "lib/rustlib/manifest-rustfmt-preview-x86_64-unknown-linux-gnu",
+    "lib/rustlib/multirust-channel-manifest.toml",
+    "lib/rustlib/multirust-config.toml",
+    "lib/rustlib/rust-installer-version"
+  ],
+  "checks": [
+    {
+      "command": [
+        "rustup",
+        "which",
+        "rustc"
+      ],
+      "stdout": "/home/acfrazier/.rustup/toolchains/274bot-1.98.0/bin/rustc\n"
+    },
+    {
+      "command": [
+        "rustup",
+        "which",
+        "cargo"
+      ],
+      "stdout": "/home/acfrazier/.rustup/toolchains/274bot-1.98.0/bin/cargo\n"
+    },
+    {
+      "command": [
+        "rustc",
+        "-Vv"
+      ],
+      "stdout": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8\n"
+    },
+    {
+      "command": [
+        "cargo",
+        "--version"
+      ],
+      "stdout": "cargo 1.98.0 (797e8a9bc 2026-08-05)\n"
+    }
+  ]
+}

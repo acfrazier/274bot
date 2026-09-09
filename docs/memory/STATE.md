@@ -11,6 +11,18 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 22:55 UTC
+
+- Builder coordinate native audit complete:771 archive members,4 admitted binaries,
+  all source/tool/Git bindings and12 raw840-call comparisons verified. See
+  nav-coordinate-native-result-report.md. Generated4-child GQ only, no CF/perf.
+- Concord first guard failed3/21 tests solely missingrustup. Failurearchivedc20effa7.
+  Operator installedapt rustup; root staged exact165-file builder1.98 toolchain,
+  verified bytes/modes and set task-directory override. No probe rebuild/testchange.
+- Fresh Concord guards passed; generated-clean continuation running in existing
+  nav-coordinate-a44a930-concord-01. Preserve original failed logs; no private input.
+- Owner live hold remains for semantic admission correction t_5c2087e1 Solactive.
+
 ## Latest boundary — 2026-09-09 22:45 UTC
 
 - LIVE HOLD: root reproduced07b5b29 semantic receipt gap. All5 admission receipts

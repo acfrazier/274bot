@@ -1,0 +1,109 @@
+{
+  "scope": "root native generated evidence audit only; no real performance acceptance",
+  "archive_sha256": "18e574254751f4307965bb78e91282ec545af701ae5d1d8cc60ecf07d17afe6c",
+  "members_verified": 771,
+  "steps_verified": 8,
+  "effective_sources": {
+    "dense": {
+      "base": "29b7aea779322c8611f83dc193e939ca7d756f75",
+      "files": 209,
+      "overlays": []
+    },
+    "refined": {
+      "base": "8385babb23fd15b876506d4a3f6154984a6b2df1",
+      "files": 210,
+      "overlays": [
+        {
+          "git_blob": "07e0b215aa1fd21df87f308f0a889aa4ce8bb4a7",
+          "path": "crates/nav/src/collision.rs",
+          "provenance": "overlay",
+          "sha256": "760ae7c88c35fac6183f2db51af1f69af8d5e3225110889bc84a5a4944720b0b",
+          "size": 65821
+        }
+      ]
+    }
+  },
+  "admitted_binaries": {
+    "dense-clean": "3fb22ef212db8d700ca84f40bbf35ef20639fc2caf0ad491e6d3932e57545421",
+    "dense-counting": "d4b4a41bda1433532b81eb72812a089baa0139868b40f3960d53290df5cbe4ae",
+    "refined-clean": "9264b001b320cdb761e486ff7f9ebb54d231b7bf2cdc1b7eb24b920eee900039",
+    "refined-counting": "81fc1e751972ab17ba8455e91247ddcc18481bae8c1f639a448c1dee4502a3c1"
+  },
+  "raw_comparisons": [
+    {
+      "variant": "clean",
+      "arm": "dense",
+      "fixture": "all-uniform",
+      "raw_calls": 840
+    },
+    {
+      "variant": "clean",
+      "arm": "dense",
+      "fixture": "all-dense",
+      "raw_calls": 840
+    },
+    {
+      "variant": "clean",
+      "arm": "dense",
+      "fixture": "gated",
+      "raw_calls": 840
+    },
+    {
+      "variant": "clean",
+      "arm": "refined",
+      "fixture": "all-uniform",
+      "raw_calls": 840
+    },
+    {
+      "variant": "clean",
+      "arm": "refined",
+      "fixture": "all-dense",
+      "raw_calls": 840
+    },
+    {
+      "variant": "clean",
+      "arm": "refined",
+      "fixture": "gated",
+      "raw_calls": 840
+    },
+    {
+      "variant": "counting",
+      "arm": "dense",
+      "fixture": "all-uniform",
+      "raw_calls": 840
+    },
+    {
+      "variant": "counting",
+      "arm": "dense",
+      "fixture": "all-dense",
+      "raw_calls": 840
+    },
+    {
+      "variant": "counting",
+      "arm": "dense",
+      "fixture": "gated",
+      "raw_calls": 840
+    },
+    {
+      "variant": "counting",
+      "arm": "refined",
+      "fixture": "all-uniform",
+      "raw_calls": 840
+    },
+    {
+      "variant": "counting",
+      "arm": "refined",
+      "fixture": "all-dense",
+      "raw_calls": 840
+    },
+    {
+      "variant": "counting",
+      "arm": "refined",
+      "fixture": "gated",
+      "raw_calls": 840
+    }
+  ],
+  "native_hard_as_qualified": true,
+  "generated_smoke_children": 4,
+  "real_children": 0
+}

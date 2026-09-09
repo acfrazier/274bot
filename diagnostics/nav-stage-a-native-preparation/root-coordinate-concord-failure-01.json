@@ -1,0 +1,11 @@
+{
+  "archive": "coordinate-concord-guard-failure-01.tar.gz",
+  "sha256": "c20effa705e0deb1ce71e1bb0099f68038879465ca1d6c2463d979d9e835b42d",
+  "raw_hashes_verified": true,
+  "qualified": false,
+  "tests": 21,
+  "errors": 3,
+  "cause": "rustup missing in three source-binding prepare tests",
+  "native_address_guard_active": true,
+  "scope": "generated Concord failure; no private-pack child or performance release"
+}
