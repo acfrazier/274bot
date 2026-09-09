@@ -11,6 +11,19 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 17:27 UTC
+
+- Concord generated qualification06 PASSED: guards2.880s, clean218.344s,
+  counting219.141s, integration15.096s, scheduler224.324s. Native hard-AS true;
+  root revalidated scheduler receipt/source/smoke bindings and12 comparisons.
+- Root issued F1-only authorization after exact original pack/59row admission
+  and fresh one-second idle/memory/no-conflict preflight. Authorization SHA256
+  d6da3b78dfdc419c53dea6c25bc131aebea9c3a380f7e12d858d2b4f0d194820.
+  Real four-probe feasibility now running in Concord7965c4c-1714,
+  concord-run-01/root-singleton-release-01. No F2/acceptance released.
+- Owner preparation remains active; local frozen compile/generated proof passed,
+  final scoped report and same-card review still required before Linux build.
+
 ## Latest boundary — 2026-09-09 17:15 UTC
 
 - Builder qualification05 passed32.133s with native hard-AS true. Root verified
