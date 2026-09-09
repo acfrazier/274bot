@@ -25,6 +25,17 @@ class EventRecord(unittest.TestCase):
             assert result is not None
             self.assertEqual(result['first']['definitions']['a'], 1)
 
+    def test_descriptor_free_without_timestamp_mark_rejects(self):
+        for tail in (b'', b'S suppression\n'):
+            with self.subTest(tail=tail), fixture(tail, tail, b'f; 0\n') as entries:
+                self.assertIsNone(pair(entries, 0, outputs=True))
+                request = dict(op='analyze', requested_time=0, outputs=True)
+                request.update({k: Path(v['path']).read_bytes().hex() for k, v in entries.items()})
+                with self.assertRaisesRegex(reference.Invalid, 'no actual timestamp mark'):
+                    reference.analyze(entries, requested_time=0)
+                with self.assertRaisesRegex(reference.Invalid, 'no actual timestamp mark'):
+                    native(request)
+
     def test_absent_event_is_null(self):
         with fixture(b'c 0\nc a\n', b'a a 1\nc 0\nc a\n', b'f; 0\n') as entries:
             result = pair(entries, 0, outputs=True)
