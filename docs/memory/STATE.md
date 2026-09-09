@@ -11,6 +11,18 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 13:07 UTC
+
+- Extended native correctness evidence APPROVED: t_429af44a, actual reviewer
+  grok-4.5 / xai-oauth session 20260909_085336_52b8ff, completed 472s.
+  Independent full archive membership, dense/tiled bytes and all 19 case outcomes
+  reproduced. Review commit 12c41df, nav-corpus-native-extension-review.md.
+  This closes the bounded extension correctness review, not performance gates.
+- Stage A corrective implementation t_fa5a3462 remains running. Root identified
+  an input binding gap between repetitions and recorded it on the same card;
+  final tooling and review must enforce the original input and normalized route
+  hashes before every launch and after completion. No native measurement release.
+
 ## Latest boundary — 2026-09-09 12:50 UTC
 
 - Newreal19case comparison PASS: botharms0,2119093915fullbytes equal,
