@@ -11,6 +11,18 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 19:11 UTC
+
+- Controller child-mask correction5cb6374 completed; same-card round3 actual
+  Grok4.5/xai151026_1eaa26 is running. Root read the complete correction.
+- After two substantive lifecycle rejections, queued independent coherent design
+  escalation t_cd9d8639 profilegrok46 behind that review, per execution workflow.
+  Configured Grok4.6/xai and Sol defaults reverified. Implementation awaits both
+  reviews and root reconciliation; no live authority from design approval.
+- Coverage and navigation tooling remain active. Root inspected updated coverage
+  assertions for token isolation and unsuccessful terminal evidence; candidate
+  corrected-suite proof and review remain pending. No root native/Concord job.
+
 ## Latest boundary — 2026-09-09 19:08 UTC
 
 - Root traced renderer failure to test environment: BOT_CPU=1 forces both slot
