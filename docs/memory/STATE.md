@@ -11,6 +11,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 19:05 UTC
+
+- Root original-source feature-off host baseline reproduced the candidate failure:
+  212 passed, 1 failed, 1 ignored; prefer_cpu_rebuilds_renderer_not_client paint1
+  versus2. Original Hc0709ab/C3456edc clean before/after, same BOT_CPU=1 and
+  full single-threaded suite. Evidence in root-host-featureoff-baseline-01;
+  this is macOS failure attribution, not a green/native/live admission.
+- Controller design revisionff47094 is in same-card review. Root identified an
+  additional child signal-mask inheritance gap in its spawn registration contract
+  and posted it to t_59c6d6f5. Child must restore its prior mask before exec while
+  parent registration remains protected; real signal-response proof required.
+- Coverage t_420c2fae and navigation tooling t_4474ac39 remain running. Root
+  baseline process exited101 with complete raw evidence; no native/Concord job.
+
 ## Latest boundary — 2026-09-09 18:57 UTC
 
 - Coverage followup local run preserved failures: stale enqueue expectedWrongEpoch

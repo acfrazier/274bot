@@ -1,0 +1,22 @@
+{
+  "host_commit": "c0709aba2f8b45e42193225cf8f4e7325b5ca9bf",
+  "client_commit": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+  "platform": "macOS original-source baseline",
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--locked",
+    "-p",
+    "host",
+    "--",
+    "--test-threads=1"
+  ],
+  "source_before_clean": true,
+  "environment": {
+    "BOT_CPU": "1",
+    "BOT_MEMORY_OWNER_CAPTURE": "0",
+    "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/root-host-featureoff-baseline-01/target"
+  },
+  "scope": "Feature-off host correctness baseline; no performance or live qualification."
+}

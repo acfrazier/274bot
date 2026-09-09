@@ -1,0 +1,17 @@
+{
+  "scope": "Original-source macOS feature-off failure attribution only; not performance, native Linux, or live admission.",
+  "files": {
+    "launch.json": {
+      "bytes": 679,
+      "sha256": "4f1e992045f3dc99ad9838168d0a31fb611c5d4703090ba8cca8496ce774ae48"
+    },
+    "result.json": {
+      "bytes": 1438,
+      "sha256": "70d27d5d41875ccee685630af251d75a8a04d7e6ae54340be84fad6e489c1965"
+    },
+    "logs/original-host-feature-off.log": {
+      "bytes": 22474,
+      "sha256": "2ba3c91bfd5de15cfc98f001784cc33e668e809c16a7a08466cb412e25739da5"
+    }
+  }
+}

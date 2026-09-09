@@ -1,0 +1,43 @@
+{
+  "client_commit": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--locked",
+    "-p",
+    "host",
+    "--",
+    "--test-threads=1"
+  ],
+  "environment": {
+    "BOT_CPU": "1",
+    "BOT_MEMORY_OWNER_CAPTURE": "0",
+    "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/root-host-featureoff-baseline-01/target"
+  },
+  "host_commit": "c0709aba2f8b45e42193225cf8f4e7325b5ca9bf",
+  "platform": "macOS original-source baseline",
+  "scope": "Feature-off host correctness baseline; no performance or live qualification.",
+  "source_after_clean": true,
+  "source_before_clean": true,
+  "step": {
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "-p",
+      "host",
+      "--",
+      "--test-threads=1"
+    ],
+    "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/root-host-featureoff-baseline-01/source",
+    "exit": 101,
+    "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/root-host-featureoff-baseline-01/logs/original-host-feature-off.log",
+    "log_bytes": 22474,
+    "log_sha256": "2ba3c91bfd5de15cfc98f001784cc33e668e809c16a7a08466cb412e25739da5",
+    "name": "original-host-feature-off",
+    "timed_out": false,
+    "wall_s": 27.984151166
+  }
+}
