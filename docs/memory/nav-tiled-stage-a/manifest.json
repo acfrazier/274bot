@@ -1,0 +1,13 @@
+{
+  "status": "proposed_not_released",
+  "frozen": {"dense": "29b7aea779322c8611f83dc193e939ca7d756f75", "tiled": "8385babb23fd15b876506d4a3f6154984a6b2df1", "client": "3456edc8dabf7b25ada78110ffa56327af9f67a4", "tool": "760d3acbc429931447454af41902e43de8ac5b2e"},
+  "repetitions": 9,
+  "order": "alternate dense,tiled; fresh process per cell; no concurrent builds",
+  "settings": {"allocator": "System", "release": true, "incremental": false, "jobs": 2, "real_input": false, "native_hard_as": "Linux-only qualification"},
+  "phases": ["retained_input", "decoded_converted", "hot_lookup_route", "world_drop", "dropped_input", "post_drop"],
+  "synthetic_modes": ["all-uniform", "all-dense"],
+  "thresholds": {"peak_increase_bytes": 8388608, "cold_load_median_increase_fraction": 0.10, "route_cpu_increase_fraction": 0.05, "route_p99_increase_ms": 2.0},
+  "limits": {"wall_seconds": 30, "cpu_seconds": 20, "rss_bytes": 1073741824, "output_bytes": 1048576},
+  "route_selector_schema": "exact 10 integer fields: from_x from_z from_level to_x to_z to_level option_bits state_family radius model",
+  "real_release": "disabled; future root authorization must bind path, input hash, source/lock/tool/binary hashes and owned output directory"
+}
