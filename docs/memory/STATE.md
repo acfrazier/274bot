@@ -11,6 +11,31 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 02:47 UTC
+
+- Native census report/design29b7aea APPROVED t_71e88dd7, actual Grok4.5/xai
+  session20260908_224206_b590fd. Independent audit reproduces213-input digest,
+  archive/receipt hashes and A/T/D. Histogram mislabel and failed qualification
+  wrapper remain disclosed. This selects an experiment, not an RSS saving.
+- Root released implementation/generated correctness ONLY t_797a8226, actual
+  implementer grok-composer-2.5-fast/xai20260908_224707_c2d9f8. Exact32x32
+  design sections1-5, dense-oracle regressions and scoped caller migration.
+  Root approves internal Rust source migration on stated workspace-only-caller
+  assumption; optional user clarification about external WorldCollision Rust
+  consumers is pending. No assertion of public Vec compatibility. Real pack
+  execution, native microbench and paired runtime measurements await separate
+  correctness review/release. No second census or JagFX experiment.
+- Arrowc9fca37 REJECTED round2 actual Grok4.5/xai20260908_224406_98ff39:
+  composed test bypasses production draw_scene_overlays, misses required
+  motion/scene1 cases, and signature occurs before other covered overlays.
+  Root reassigned SAMEcard t_1ced5ad3 to profile orch for exact production-path
+  regression/wiring correction including two deliberate failing mutation
+  proofs. Tracked289 tree clean at reassignment; prior commits preserved.
+  No arrow/live acceptance. Actual Astra corrective run not yet verified.
+- Isolated289 server61312 remains. No live client. Root plans a temporary
+  local .app wrapper of the reviewed binary for CUA-addressable interaction;
+  no wrapper created or new launch yet. Existing live proof remains partial.
+
 ## Latest boundary — 2026-09-09 02:33 UTC
 
 - ONE real navpack census completed exit0 in0.504798s, exact input73438581B
