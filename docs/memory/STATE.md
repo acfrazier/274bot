@@ -11,6 +11,26 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 01:11 UTC
+
+- Native production-prefix report f22560a APPROVED t_04537ad7 actual
+  Grok4.5/xai session20260908_210751_ed9fd4. Reviewer independently rehashed
+  all20payloads/21archiveentries and reconciled all3cutoffs. Approval is solely
+  diagnosticreporting. Original failedcapture and fullcampaigngates remain.
+- Source-symbol analysis/designt_29a858c3 is running actualAstra/openai
+  20260908_210651_bbae3e. Root exploratorydemangle uses llvm-cxxfilt with
+  --no-strip-underscore; originalclassifier untouched. Atlastmark132027090bytes,
+  firstapplication-frame groups include navdecode73793888, JagFXloadshared
+  13932080, interfaceunpack6491160, modelunpack5046594, animframeunpack3538928,
+  snapshotwalk2947951. These are SYMBOL-CALLPATH groups, not accepted ownership,
+  exactfield/lifetime/epoch orRSS; frozen-source audit and designreview required.
+- Unknown-symbol bytes mean an allocation stack has at least one unresolved
+  frame, not that all its function names are absent. Canonical14903rows belong
+  to the peakcomparison export, not the full115733323-line interpretedstream.
+  These clarify reading of the approvedreport without changing rawreceipt.
+- 289 Ht_34667a70 activeAstra20260908_205749_552998; realinput/counter paths
+  and R274guards underimplementation, no completion/review/livepass yet.
+
 ## Latest boundary — 2026-09-09 01:06 UTC
 
 - Root ONE production-prefix replay completed exit0 in167.132470633seconds,
