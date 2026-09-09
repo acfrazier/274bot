@@ -11,6 +11,19 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 16:24 UTC
+
+- Fixture correction007346ffc6a06993141a169bb099201d9cc11985 APPROVED t_53d40ff1
+  actualGrok4.5/xai20260909_122002_050a06. Root releases fresh Linux generated
+  scheduler qualification only, preserving original failed native stage. Reuse
+  four unchanged binaries only after exact compiled-tool/source/admission checks;
+  prior seven successful steps remain labeled reused, not fresh measurements.
+  New source payload1303844B SHA9370e27dcf13f52741c1560ba86c1eaa1b5b924c03c2eaa4ed3a64ed7810dbf7.
+- Owner correction3cdc3e4fbeb960fe4c270eb994ce22746787eb2d handed to same-card
+  reviewer; actualGrok4.5/xai20260909_122303_8ae7b8 running. Root read report and
+  verified all21host/5client member hashes after refresh.14suite selections have
+  final passing results. Client commit/gitlink and native capture still withheld.
+
 ## Latest boundary — 2026-09-09 16:13 UTC
 
 - Linux native-singleton-e6958b2-1601 completed seven steps successfully:
