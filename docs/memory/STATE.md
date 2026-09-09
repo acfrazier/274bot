@@ -11,6 +11,23 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 15:46 UTC
+
+- Sharded setup-CPU fix5c0ab7f verified by round2 Grok4.5/xai
+  20260909_114058_6cd06e: independent~.036s alarm,19tests pass. Card remains
+  CHANGES REQUESTED because50ms idle sampling still ignored root's fixed-window
+  correction. Same-card t_500f341e actualAstra20260909_114559_dbf123 now handles
+  that remaining change, contract/docs/tests/fresh qualification. No native release.
+- Owner correction t_ce3310e4 Astra105753_372d24 stopped at150iterations after
+  44m49s, preserving substantial uncommitted changes and partial generated tests.
+  No review/completion claim. Root explicitly resumed SAME card with a bounded
+  remaining-work brief; actualAstra/openai20260909_114458_cdd44b running.
+  Finish latest JSONL/metadata validation, full feature on/off regressions/client
+  integrations, generated overhead, frozen-overlay proof and exact host/client
+  report. Do not redo completed corrections or call them qualified yet.
+- Client remains dirty at original3456; root still owns reviewed commit/gitlink
+  before native build. No native/live captures or apps changed in this interval.
+
 ## Latest boundary — 2026-09-09 15:29 UTC
 
 - Sharded tooling5324f41 t_500f341e REJECTED round1 actualGrok4.5/xai
