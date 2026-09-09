@@ -11,6 +11,29 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 11:20 UTC
+
+- Differential tool760d3ac completed implementation; same-cardt_3393f351
+  actual Grok4.5/xai071823_626354 review started. Final run03:12953generated
+  inputs,306044401fulloutputbytes equal, generated real-protocol stand-in
+ 128271bytes equal. Final guards23pass/1Linux-onlyASskip onMac; nativeLinux
+  qualification required before real input. Earlier guard failure was test
+  fixture1MiB+1 exceeding outertestfilecap, not navigation mismatch. All failed
+  receipts retained. Toolreview pending; no realpack/performance release.
+- Linux builder revalidated samebootd63ba1f3,7.4GBavailable,52GBdiskfree;
+  no tool staging/execution there yet. Root initial-run audit remains scoped
+  to earlier7272-input corpus; do not cite it as independent final-run audit.
+- Presentation03d916a approved Grok4.5 then requiredGrok4.6 t_e73008ec,
+  actual070122_467319, report171cc31. Root fresh build1.961sSHA b3b68d2e...
+  nativewgpu menu and logout VERIFIED viaCUA; closeexit0 before300s. Ground
+  clicks did not move3094,3106; NPCTalk-to untested. Noaudio/latency/fullparity
+  acceptance. Manifest lostcity-289/runtime/client-proof-presentation-1109.
+- PostcloseCUA observation auto-relaunched bundle1458; rootidentityverified
+  SIGTERMcleanupconfirmedabsent. ReviewedproofPID99379reaped0,exec8959closed;
+  build66119closed. Onlyrootpersistentexec26485/server49444remains.
+- Root released diagnostic-onlyground-inputt_f8eda60b, actualAstra/openai
+ 071823_e31bdd. No production/clientfix/live onthatcard untilcause evidence.
+
 ## Latest boundary — 2026-09-09 10:48 UTC
 
 - Required final tutorial-input t_7fe3337b completed actual Grok4.6/xai
