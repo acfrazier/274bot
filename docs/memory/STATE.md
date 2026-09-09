@@ -11,6 +11,29 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 13:47 UTC
+
+- Concord generated qualification COMPLETE: guards0, clean0 (218.509s),
+  counting0 (216.506s), full integration0 (14.814s). Same admitted four Linux
+  binaries; no compiler/rebuild on Concord. Builder full667file archive also
+  downloaded and independently hashed, SHA5b82a2c856485adc4e76cb06a760050455849885c2853acbad02c3bf1e8bb621.
+- Root releases ONE real59case Stage A schedule: six processes per arm, fixed
+  AB/BA alternation,120s wall/90s CPU/1GiB sampledRSS/4GiB AS/256KiB output
+  per process; unchanged8MiB peak/10% cold/5% routeCPU/2ms routep99 gates and
+  baseline-noise classification. Original pack73438581 bytes and unchanged
+  combined59selectors hashes remain as above. No retries/cap adjustments.
+  After clean completion, two separately labeled counting diagnostics (one
+  dense, one tiled) are released for actual layout/narrow-read allocation checks;
+  never include those timings/RSS in clean comparisons.
+- Frozen auth root-real-authorization.json SHA
+  2c14748c27676284462b89088dfd5984345c547c406509e3109b40182df17edf,
+  Concord root as above; tool/concord-run-01/real-release is new output.
+  Preflight2026-09-09T13:46:36Z: sameboot2217ec26,2CPU,2014852KiBtotal,
+  967068KiBavailable,0swap,14667911168Bfree,98.16% idle/0steal over3s,
+  no conflicting campaign processes. Existing other service remains (MainThread
+  ~642MB), separately outside probe budget; no service stop/tuning authorized.
+  This is Stage A only, not whole-host target acceptance/StageB/resident savings.
+
 ## Latest boundary — 2026-09-09 13:36 UTC
 
 - Native builder Stage A qualification PASS: guards, prepare, four builds,
