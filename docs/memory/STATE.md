@@ -11,6 +11,17 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 19:52 UTC
+
+- Native remaining03 TUI feature-off and client unit passed. Full client
+  integration failed gpu_texture::gpu_textured_shade_scales_texel_brightness:
+  expected red~223 at shade16, observed255;9other GPU texture tests passed.
+  This is a separate failure from the transcript fixture and needs original
+  client baseline/source/adapter attribution before any production change.
+- Remaining03 continues feature-on commands with raw errors preserved. Root owns
+  GPU attribution after this bounded matrix; transcript worker remains scoped
+  to deterministic test data only. No complete native or live admission.
+
 ## Latest boundary — 2026-09-09 19:50 UTC
 
 - Coverage02 preserved complete failure receipt:8/9 attempted commands passed,
