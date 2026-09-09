@@ -11,6 +11,23 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 17:49 UTC
+
+- F1 evidence ACCEPTED d1f7622 by actualGrok4.6/xai133212_a287ec; recommends
+  generated coordinate refinement before further real work. Root chooses that
+  bounded experiment: t_8cdb3301 profileSol, existing reviewed design only.
+  No F2/new native candidate/acceptance release.
+- Owner Linux qualification01 FAILED:12/15steps pass; two client tests lacked
+  offline lockedserde_core; original frozen TUI test spawned a synthetic worker
+  and stalled. Root terminated only its verifiedownedcargo group after308.714s;
+  worker/group gone, remaining managedguard check passed. No capture occurred.
+  Failure24member archive SHA06059fae5610cf32f705648e27224d29aba776a7015204e95277e32e0f811977 locallyverified.
+- Native observer fixture0alloc/bytes,0.673msCPU,262144scratch passed; no full
+  nativequalification claim. Root handles lockeddependencyfetch separately.
+- Bounded t_08ab7a27 profileLuna prepares separate test-only overlay from existing
+  f9675b66 guard, not a production/source-archive replacement; same-cardreview
+  and nativefullTUIchecks required. Original source/manifests/failures stay intact.
+
 ## Latest boundary — 2026-09-09 17:38 UTC
 
 - Owner frozen preparation03df80d/a7e112e APPROVED t_0a97cf2a, actualGrok4.5/xai
