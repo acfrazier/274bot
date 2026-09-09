@@ -11,6 +11,23 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 11:48 UTC
+
+- ONE native real comparison PASS:65142784 logical cells,40frozen routes,
+ 2119504803 full output bytes equal; outputSHA44f55bfaa3493aec13d334a2ad19709dcc566c8c2cb25484bd5ad75b2305973d.
+  Root independently verified full byte/frame/hash/source provenance and all
+ 13437 exported archive entries. Report nav-tiled-native-differential-report.md;
+  saved evidence in diagnostics/native-nav-differential-preparation/results-760d3ac.
+  No successful Teleport/BankSession in chosen cases; ordinary paths won.
+  Exact essence-entry quest fact absent. No StageA/B or savings acceptance.
+- Operator confirmed fixed tests under ~/experiments/rs2b0t/e2e/nav*;
+  t_3cd7b8af profile luna assigned static case/prerequisite mapping ONLY,
+  followed by same-card review. No foreign live script/server/account execution.
+  Root verified current input remains274 ~/.274bot/274bot.navpack exacthash;
+  separate289 work does not replace it. Await mapping before next corpus release.
+- Ground trace t_2ebebe02 continues implementation; t_99cec734 required final
+  Grok4.6 waits behind completed parent review. No new native client yet.
+
 ## Latest boundary — 2026-09-09 11:37 UTC
 
 - Native generated comparison PASS12953 inputs,306044401 bytes identical,
