@@ -11,6 +11,17 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 20:06 UTC
+
+- Root independently verified all7 clean-build evidence hashes and stable source
+  receipt, then retrieved fresh binary392dbecc (95595424B) from builder.
+- Local root-runtime-preparation-01 now holds8 hash-verified transfer inputs:
+  binary,2 Git bundles (dcdbeebf/b74dfb3), original frozen archive/manifest,
+  materialization, fresh build result/log. Preparation JSON binds every byte.
+- No Concord installation, runtime manifest, private-fixture admission or live
+  launch. Controller/transcript/navigation Sol runs remain active; prior19-command
+  regression failures and original GPU attribution retain their stated limits.
+
 ## Latest boundary — 2026-09-09 20:03 UTC
 
 - Coverage02+remaining03 finished all19 commands:15pass4fail (transcript and GPU
