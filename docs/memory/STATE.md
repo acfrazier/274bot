@@ -11,6 +11,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 16:39 UTC
+
+- Linux matched-reference qualification03 PASSED60.005s, native hard-AS true,
+  all12comparisons. Root verified856packaged members/5873883bytes,
+  SHA58a898896bf313204e060d830adca3f33f6a354e2dd5ebd4b60e495822805dd0.
+  Both earlier failures remain intact. Seven reused steps are labeled in provenance.
+- Root releases fresh Concord GENERATED guards/workloads/integration/scheduler
+  only in /home/acfrazier/274bot-campaign/nav-singleton-linuxref-1639, same admitted
+  binaries, no rebuild. Fresh available memory1000099840B, zero swap. No real release.
+- Frozen owner source/native preparation t_0a97cf2a actualSol/openai
+  20260909_123604_580546 running. Scope originalH/C+reviewed overlay, source-only
+  artifact and proposed bounded native script/local checks, then same-card review;
+  no native/live access delegated. Client binding remainsedc3a3e/5c73a4a.
+
 ## Latest boundary — 2026-09-09 16:33 UTC
 
 - Owner3cdc3e4 APPROVED same-card actualGrok4.5/xai122303_8ae7b8,442s. Root
