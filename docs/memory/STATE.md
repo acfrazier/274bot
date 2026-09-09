@@ -11,6 +11,25 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 00:19 UTC
+
+- Operator reports Mac restart completed and CPU tracing enabled. Restart hold
+  is lifted. Root preserved four unfinished289 G source/test files plus hashes in
+  diagnostics/restart-20260909 before resuming the SAME t_7f7981c3 card.
+- Previous G worker PID24085 disappeared; all-features suite interrupted exit130
+  after158.4seconds is not a pass. Normal workspace test passed in199.3seconds.
+  Resumed actual Astra/openai session20260908_201745_22def4 is active. Preserve the
+  partial changes and complete outstanding checks/report and same-card review.
+- Parser5dd7702 approved actual Grok4.5/xai20260908_195351_1020ed at23:57.
+  New t_68d60d73 (Luna) corrects only the empty-descriptor key parity, adds real
+  three-pass reference regressions and obtains same-card review. Native release
+  remains gated; no Linux/production run is released by this local correction.
+- Mac tracing access check: xctrace lists Time Profiler but the owned2-second
+  smoke aborts134 with a missing weak symbol in Instruments Devices.xrplugin
+  before recording. DTrace without elevation reports additional privileges;
+  sudo-n requires a password. No profiling proof or permission/config changes.
+  This tooling limitation does not block the scoped local implementation work.
+
 ## Latest boundary — 2026-09-08 23:55 UTC
 
 - Local parser correction5dd7702 is in actual Grok4.5/xai review session
