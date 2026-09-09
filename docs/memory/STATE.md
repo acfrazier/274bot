@@ -11,6 +11,31 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 00:57 UTC
+
+- Qualification4ab8c7e plus root smoke-recoveryedcf3bb APPROVED actual
+  Grok4.5/xai20260908_204848_8a67a0. Nine cases/27 repetitions,16core42native
+  tests pass;108 arithmetic checks match. First driver failed before tests at
+  precreated output; first smoke failed before engines at wrong cwd. Both exact
+  tracebacks retained. Separate root saved-smoke2 compares all17outputs and
+  hashes44export payloads; both children exit0/reaped and later PIDs absent.
+- Root explicitly released ONE native production-prefix replay of the identical
+  existing manifest7fcd08ae, no new capture or changed caps. It is RUNNING:
+  wrapper3963/runner3964 launched1788915413.140539 on Concord, output
+  /home/acfrazier/owner-native-a55972a/production-replay-1. Fresh admission had
+  1,011,859,456 memory/11,810,811,904 disk, conflicts[],41stagefiles rehashed.
+  Source/ELF a55972a/98b5a2a2, CPU180/wall300 perphase, RSS512MiB/AS768MiB and
+  other limits unchanged; outer930seconds. Local decision/script/launch receipt
+  in diagnostics/root-native-production-a55972a. No result or owner ranking yet.
+  Do not restart: follow the actual root SSH session and remote control receipts.
+- 289 fixture-isolationc9faade passed actual Grok4.5 review; H t_34667a70 began
+  under Astra20260908_205149_160019 but blocked before edits on a primary mouse
+  length-check bug. Root read J5826-5878 and authorized forward payload<240 before
+  each whole sample (maximum243), retain ordered leftovers and all recorder/
+  encoding behavior, preserve R274. Explicitly document source-bug correction,
+  not literal equivalence, and test large batches. SAME card unblocked; no H
+  completion, live or final whole-branch approval yet.
+
 ## Latest boundary — 2026-09-09 00:39 UTC
 
 - Parser correctiona55972a APPROVED actual Grok4.5/xai20260908_203046_6a6bdc.
