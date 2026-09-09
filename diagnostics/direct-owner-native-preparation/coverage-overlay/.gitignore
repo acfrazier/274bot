@@ -1,0 +1,10 @@
+/_audit-stage/
+/_audit-target/
+/_baseline-files/
+/__pycache__/
+/local-stage-*/
+/local-verification-01/
+/local-verification-final/
+/local-verification-green/
+/local-verification-corrected/target/
+/local-verification-corrected/derived-source/

@@ -1,0 +1,23 @@
+{"cwd": "/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/direct-owner-coverage-overlay-_a9zqdyk/direct-owner-source/vendor/fr-client-rust", "command": ["cargo", "test", "--offline", "--locked", "-p", "client", "--features", "memory-owner-capture", "--lib", "linked_square_walk_honors_fragment_deadline", "--", "--test-threads=1"], "timeout_s": 900}
+   Compiling log v0.4.33
+   Compiling cc v1.4.3
+   Compiling rand v0.8.8
+   Compiling naga v29.0.4
+   Compiling wgpu-types v29.0.4
+   Compiling tungstenite v0.24.0
+   Compiling bzip2-sys v0.1.13+1.0.8
+   Compiling bzip2 v0.4.4
+   Compiling wgpu-naga-bridge v29.0.4
+   Compiling wgpu-hal v29.0.4
+   Compiling wgpu-core-deps-apple v29.0.4
+   Compiling wgpu-core v29.0.4
+   Compiling wgpu v29.0.4
+   Compiling client v0.1.0 (/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/direct-owner-coverage-overlay-_a9zqdyk/direct-owner-source/vendor/fr-client-rust/crates/client)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.07s
+     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/client-35b9c56821a3ab5a)
+
+running 1 test
+test core::world::world_owner_capture::owner_capture_tests::linked_square_walk_honors_fragment_deadline ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 78 filtered out; finished in 0.00s
+

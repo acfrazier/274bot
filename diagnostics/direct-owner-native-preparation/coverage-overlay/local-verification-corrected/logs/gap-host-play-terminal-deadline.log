@@ -1,0 +1,24 @@
+{"cwd": "/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/direct-owner-coverage-overlay-_a9zqdyk/direct-owner-source", "command": ["cargo", "test", "--offline", "--locked", "-p", "host-play", "--features", "memory-profile-no-alloc,memory-owner-capture", "--lib", "delayed_fragment_latches_failure_and_terminal_is_unsuccessful", "--", "--test-threads=1"], "timeout_s": 900}
+warning: methods `generation` and `slot_id` are never used
+   --> crates/host/src/cadence.rs:384:12
+    |
+360 | impl Local {
+    | ---------- methods in this implementation
+...
+384 |     pub fn generation(&self) -> u64 {
+    |            ^^^^^^^^^^
+...
+388 |     pub fn slot_id(&self) -> u64 {
+    |            ^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `host` (lib) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.24s
+     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/host_play-e1a4990c2c2538eb)
+
+running 1 test
+test owner_capture::tests::delayed_fragment_latches_failure_and_terminal_is_unsuccessful ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 194 filtered out; finished in 0.00s
+

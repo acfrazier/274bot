@@ -1,0 +1,721 @@
+{
+  "all_requested_passed": true,
+  "archive": {
+    "bytes": 5075876,
+    "sha256": "2c36d254c37c5ed56a55f78728357296d62be602f8653ed9ec041cd37d099d5d"
+  },
+  "archive_is_immutable_input": true,
+  "derived_identity": {
+    "derived_members_verified": [
+      "crates/api/src/owner_capture.rs",
+      "crates/host-play/src/owner_capture.rs",
+      "crates/host-play/src/owner_capture_output.rs",
+      "crates/host/src/owner_capture.rs",
+      "crates/tui/src/bin.rs",
+      "vendor/fr-client-rust/crates/client/src/core/world_owner_capture.rs"
+    ],
+    "original_members_verified": 1118,
+    "source_member_count": 1124
+  },
+  "derived_tree": null,
+  "helper": {
+    "bytes": 24072,
+    "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/stage_coverage_overlay.py",
+    "sha256": "6e1aab8eae3bd217f1f2b320f8b1b45e7a8fae924563dd7c74449ed4af5a3082"
+  },
+  "limitations": [
+    "The derived source exists only for tests and must never enter a live or production build.",
+    "Failing invariant tests expose frozen production behavior; this overlay does not repair it.",
+    "A macOS result is local generated evidence, not native Linux qualification.",
+    "No frontend, account, vault, cache, server, network, or live test is accessed."
+  ],
+  "live_qualified": false,
+  "locks": [
+    {
+      "phase": "after-stage",
+      "verified": {
+        "Cargo.lock": {
+          "bytes": 173350,
+          "sha256": "03059d02f8274c8fc9cd7e2f69a48f317e3f44417570ecf4730b31710f8d4b83"
+        },
+        "docs/memory/diagnostics/linux-gpu-shade-probe/Cargo.lock": {
+          "bytes": 45750,
+          "sha256": "d0285dae7f5cef20edf41cd8473141767d33b5c82e1a943c97cae4789ae8e41a"
+        },
+        "vendor/fr-client-rust/Cargo.lock": {
+          "bytes": 83056,
+          "sha256": "015530e3685e8175fe5ec12b41cf37a40ee116557d575cd38b6852926ec47cc7"
+        }
+      }
+    },
+    {
+      "phase": "after-tests",
+      "verified": {
+        "Cargo.lock": {
+          "bytes": 173350,
+          "sha256": "03059d02f8274c8fc9cd7e2f69a48f317e3f44417570ecf4730b31710f8d4b83"
+        },
+        "docs/memory/diagnostics/linux-gpu-shade-probe/Cargo.lock": {
+          "bytes": 45750,
+          "sha256": "d0285dae7f5cef20edf41cd8473141767d33b5c82e1a943c97cae4789ae8e41a"
+        },
+        "vendor/fr-client-rust/Cargo.lock": {
+          "bytes": 83056,
+          "sha256": "015530e3685e8175fe5ec12b41cf37a40ee116557d575cd38b6852926ec47cc7"
+        }
+      }
+    }
+  ],
+  "manifest": {
+    "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/artifact/frozen/frozen-source-manifest.json",
+    "sha256": "ca69e70352c5f6f8d1c9db026959af6ba8fd64886be533a0095c3ca94bb5732e"
+  },
+  "native_linux_qualified": false,
+  "original_identity": {
+    "derived_members_verified": [],
+    "original_members_verified": 1124,
+    "source_member_count": 1124
+  },
+  "patches": [
+    {
+      "command": [
+        "patch",
+        "--batch",
+        "--forward",
+        "--strip=1",
+        "--input",
+        "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/tui-test-overlay/tui-test-only.patch"
+      ],
+      "name": "reviewed-tui-test-guard",
+      "output": "patching file 'crates/tui/src/bin.rs'\n",
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/tui-test-overlay/tui-test-only.patch",
+      "sha256": "3bf08949fee5f44a2c6dc82525004a9cc0f47759526d43bda6f77cc9f33a51e4"
+    },
+    {
+      "command": [
+        "patch",
+        "--batch",
+        "--forward",
+        "--strip=1",
+        "--input",
+        "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/coverage-test-only.patch"
+      ],
+      "name": "coverage-gap-tests",
+      "output": "patching file 'crates/api/src/owner_capture.rs'\npatching file 'crates/host/src/owner_capture.rs'\npatching file 'crates/host-play/src/owner_capture.rs'\npatching file 'crates/host-play/src/owner_capture_output.rs'\npatching file 'vendor/fr-client-rust/crates/client/src/core/world_owner_capture.rs'\n",
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/coverage-test-only.patch",
+      "sha256": "dcb84047157f75c7ad21868b72eb7c3434cb818e8ba3e4b732f6b40d435c1b6e"
+    }
+  ],
+  "platform": {
+    "machine": "arm64",
+    "release": "24.6.0",
+    "system": "Darwin"
+  },
+  "post_test_identity": {
+    "derived_members_verified": [
+      "crates/api/src/owner_capture.rs",
+      "crates/host-play/src/owner_capture.rs",
+      "crates/host-play/src/owner_capture_output.rs",
+      "crates/host/src/owner_capture.rs",
+      "crates/tui/src/bin.rs",
+      "vendor/fr-client-rust/crates/client/src/core/world_owner_capture.rs"
+    ],
+    "original_members_verified": 1118,
+    "source_member_count": 1124
+  },
+  "prepared": true,
+  "production_source_modified": false,
+  "schema": "direct-owner-coverage-overlay-v1",
+  "steps": [
+    {
+      "cleanup": {
+        "group_absent": true,
+        "signals": []
+      },
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "api",
+        "--features",
+        "memory-owner-capture",
+        "--lib",
+        "deadline_failure_is_latched_and_suppresses_later_rows",
+        "--",
+        "--test-threads=1"
+      ],
+      "cwd": "/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/direct-owner-coverage-overlay-_a9zqdyk/direct-owner-source",
+      "environment": {
+        "BOT_CPU": "1",
+        "BOT_MEMORY_OWNER_CAPTURE": "0",
+        "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target",
+        "R274_TEST_FORCE_NO_GPU": null,
+        "removed_live_inputs": true
+      },
+      "exit": 0,
+      "failures": [],
+      "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/logs/gap-api-deadline.log",
+      "log_bytes": 4813,
+      "log_sha256": "8bda700294bb484c52207424bb99c5a206ac6282b850a7f6cfe13512a20eb0f0",
+      "name": "gap-api-deadline",
+      "test_results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.02s"
+      ],
+      "timed_out": false,
+      "timeout_s": 900,
+      "wall_s": 25.373264833
+    },
+    {
+      "cleanup": {
+        "group_absent": true,
+        "signals": []
+      },
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "client",
+        "--features",
+        "memory-owner-capture",
+        "--lib",
+        "linked_square_walk_honors_fragment_deadline",
+        "--",
+        "--test-threads=1"
+      ],
+      "cwd": "/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/direct-owner-coverage-overlay-_a9zqdyk/direct-owner-source/vendor/fr-client-rust",
+      "environment": {
+        "BOT_CPU": "1",
+        "BOT_MEMORY_OWNER_CAPTURE": "0",
+        "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target",
+        "R274_TEST_FORCE_NO_GPU": null,
+        "removed_live_inputs": true
+      },
+      "exit": 0,
+      "failures": [],
+      "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/logs/gap-client-linked-deadline.log",
+      "log_bytes": 1449,
+      "log_sha256": "1b9d98ae93dbddb3288cbd019a77f474197c0a6478609ca9eda4eefede3f9e08",
+      "name": "gap-client-linked-deadline",
+      "test_results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 78 filtered out; finished in 0.00s"
+      ],
+      "timed_out": false,
+      "timeout_s": 900,
+      "wall_s": 10.529497709000001
+    },
+    {
+      "cleanup": {
+        "group_absent": true,
+        "signals": []
+      },
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "host",
+        "--features",
+        "memory-owner-capture",
+        "--lib",
+        "token_addressed_queue_does_not_deliver_stale_request_to_current_slot",
+        "--",
+        "--test-threads=1"
+      ],
+      "cwd": "/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/direct-owner-coverage-overlay-_a9zqdyk/direct-owner-source",
+      "environment": {
+        "BOT_CPU": "1",
+        "BOT_MEMORY_OWNER_CAPTURE": "0",
+        "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target",
+        "R274_TEST_FORCE_NO_GPU": null,
+        "removed_live_inputs": true
+      },
+      "exit": 0,
+      "failures": [],
+      "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/logs/gap-host-stale-slot.log",
+      "log_bytes": 2332,
+      "log_sha256": "2212393471b70a99545cf6d94f04297a7c389c8b7eb4e87e43f4a4b6e6c58b3a",
+      "name": "gap-host-stale-slot",
+      "test_results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 220 filtered out; finished in 0.00s"
+      ],
+      "timed_out": false,
+      "timeout_s": 900,
+      "wall_s": 18.600103667
+    },
+    {
+      "cleanup": {
+        "group_absent": true,
+        "signals": []
+      },
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "host-play",
+        "--features",
+        "memory-profile-no-alloc,memory-owner-capture",
+        "--lib",
+        "owner_capture::output::tests",
+        "--",
+        "--test-threads=1"
+      ],
+      "cwd": "/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/direct-owner-coverage-overlay-_a9zqdyk/direct-owner-source",
+      "environment": {
+        "BOT_CPU": "1",
+        "BOT_MEMORY_OWNER_CAPTURE": "0",
+        "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target",
+        "R274_TEST_FORCE_NO_GPU": null,
+        "removed_live_inputs": true
+      },
+      "exit": 0,
+      "failures": [],
+      "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/logs/gap-host-play-output.log",
+      "log_bytes": 13471,
+      "log_sha256": "f3373d5380a79423e3b2d1b1bd61a19097c331c7375a5442260fdc29bbb5becf",
+      "name": "gap-host-play-output",
+      "test_results": [
+        "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 188 filtered out; finished in 0.01s"
+      ],
+      "timed_out": false,
+      "timeout_s": 900,
+      "wall_s": 113.25579191700001
+    },
+    {
+      "cleanup": {
+        "group_absent": true,
+        "signals": []
+      },
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "host-play",
+        "--features",
+        "memory-profile-no-alloc,memory-owner-capture",
+        "--lib",
+        "delayed_fragment_latches_failure_and_terminal_is_unsuccessful",
+        "--",
+        "--test-threads=1"
+      ],
+      "cwd": "/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/direct-owner-coverage-overlay-_a9zqdyk/direct-owner-source",
+      "environment": {
+        "BOT_CPU": "1",
+        "BOT_MEMORY_OWNER_CAPTURE": "0",
+        "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target",
+        "R274_TEST_FORCE_NO_GPU": null,
+        "removed_live_inputs": true
+      },
+      "exit": 0,
+      "failures": [],
+      "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/logs/gap-host-play-terminal-deadline.log",
+      "log_bytes": 1328,
+      "log_sha256": "fe7b9ec09974976cefaf49dfd4bc3ef850a17efab53af858f052a5da5f7bbbaf",
+      "name": "gap-host-play-terminal-deadline",
+      "test_results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 194 filtered out; finished in 0.00s"
+      ],
+      "timed_out": false,
+      "timeout_s": 900,
+      "wall_s": 0.3489834579999922
+    },
+    {
+      "cleanup": {
+        "group_absent": true,
+        "signals": []
+      },
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "api",
+        "--",
+        "--test-threads=1"
+      ],
+      "cwd": "/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/direct-owner-coverage-overlay-_a9zqdyk/direct-owner-source",
+      "environment": {
+        "BOT_CPU": "1",
+        "BOT_MEMORY_OWNER_CAPTURE": "0",
+        "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target",
+        "R274_TEST_FORCE_NO_GPU": null,
+        "removed_live_inputs": true
+      },
+      "exit": 0,
+      "failures": [],
+      "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/logs/feature-off-api.log",
+      "log_bytes": 13515,
+      "log_sha256": "3a48cdafe74c9bcc63f2f2d8d18744ff152c3685e1187808172fed61685d2ba0",
+      "name": "feature-off-api",
+      "test_results": [
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.46s",
+        "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.99s",
+        "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.76s",
+        "test result: ok. 60 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.82s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.41s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "timed_out": false,
+      "timeout_s": 900,
+      "wall_s": 27.603452250000004
+    },
+    {
+      "cleanup": {
+        "group_absent": true,
+        "signals": []
+      },
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "host",
+        "--",
+        "--test-threads=1"
+      ],
+      "cwd": "/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/direct-owner-coverage-overlay-_a9zqdyk/direct-owner-source",
+      "environment": {
+        "BOT_CPU": null,
+        "BOT_MEMORY_OWNER_CAPTURE": "0",
+        "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target",
+        "R274_TEST_FORCE_NO_GPU": "1",
+        "removed_live_inputs": true
+      },
+      "exit": 0,
+      "failures": [],
+      "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/logs/feature-off-host.log",
+      "log_bytes": 17749,
+      "log_sha256": "649dfd4c2c45a8629f7560a948854aad729bd42449387635cc75fd425f6f2a4f",
+      "name": "feature-off-host",
+      "test_results": [
+        "test result: ok. 213 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 16.91s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "timed_out": false,
+      "timeout_s": 900,
+      "wall_s": 34.02749608300002
+    },
+    {
+      "cleanup": {
+        "group_absent": true,
+        "signals": []
+      },
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "script",
+        "--features",
+        "load",
+        "--",
+        "--test-threads=1"
+      ],
+      "cwd": "/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/direct-owner-coverage-overlay-_a9zqdyk/direct-owner-source",
+      "environment": {
+        "BOT_CPU": "1",
+        "BOT_MEMORY_OWNER_CAPTURE": "0",
+        "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target",
+        "R274_TEST_FORCE_NO_GPU": null,
+        "removed_live_inputs": true
+      },
+      "exit": 0,
+      "failures": [],
+      "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/logs/feature-off-script-load.log",
+      "log_bytes": 26247,
+      "log_sha256": "c43e498b44ad283a26ff7e0b631fa60c16c928ffb637ddb1d3e32b8886cf33ad",
+      "name": "feature-off-script-load",
+      "test_results": [
+        "test result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.77s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.43s",
+        "test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.10s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.70s",
+        "test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s",
+        "test result: ok. 144 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.17s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s",
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s",
+        "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "timed_out": false,
+      "timeout_s": 900,
+      "wall_s": 58.354858041
+    },
+    {
+      "cleanup": {
+        "group_absent": true,
+        "signals": []
+      },
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "host-play",
+        "--features",
+        "memory-profile-no-alloc",
+        "--",
+        "--test-threads=1"
+      ],
+      "cwd": "/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/direct-owner-coverage-overlay-_a9zqdyk/direct-owner-source",
+      "environment": {
+        "BOT_CPU": "1",
+        "BOT_MEMORY_OWNER_CAPTURE": "0",
+        "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target",
+        "R274_TEST_FORCE_NO_GPU": null,
+        "removed_live_inputs": true
+      },
+      "exit": 0,
+      "failures": [],
+      "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/logs/feature-off-host-play-profile.log",
+      "log_bytes": 20369,
+      "log_sha256": "0d520d646c66393d5e06e73f8be68232a88258d1f124cbfdd094e6cfdc648ee2",
+      "name": "feature-off-host-play-profile",
+      "test_results": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 181 filtered out; finished in 0.00s",
+        "test result: ok. 182 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 43.32s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.17s",
+        "test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "timed_out": false,
+      "timeout_s": 900,
+      "wall_s": 71.68854199999998
+    },
+    {
+      "cleanup": {
+        "group_absent": true,
+        "signals": []
+      },
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "tui",
+        "--features",
+        "memory-profile-no-alloc",
+        "--",
+        "--test-threads=1"
+      ],
+      "cwd": "/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/direct-owner-coverage-overlay-_a9zqdyk/direct-owner-source",
+      "environment": {
+        "BOT_CPU": "1",
+        "BOT_MEMORY_OWNER_CAPTURE": "0",
+        "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target",
+        "R274_TEST_FORCE_NO_GPU": null,
+        "removed_live_inputs": true
+      },
+      "exit": 0,
+      "failures": [],
+      "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/logs/feature-off-tui-profile.log",
+      "log_bytes": 12559,
+      "log_sha256": "2216eb6747f8fb54d60225a300b9c6336fb6c7303f12f3d9bda24834087709de",
+      "name": "feature-off-tui-profile",
+      "test_results": [
+        "test result: ok. 92 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.76s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "timed_out": false,
+      "timeout_s": 900,
+      "wall_s": 47.98760333299998
+    },
+    {
+      "cleanup": {
+        "group_absent": true,
+        "signals": []
+      },
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "client",
+        "--lib",
+        "--",
+        "--test-threads=1"
+      ],
+      "cwd": "/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/direct-owner-coverage-overlay-_a9zqdyk/direct-owner-source/vendor/fr-client-rust",
+      "environment": {
+        "BOT_CPU": "1",
+        "BOT_MEMORY_OWNER_CAPTURE": "0",
+        "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target",
+        "R274_TEST_FORCE_NO_GPU": null,
+        "removed_live_inputs": true
+      },
+      "exit": 0,
+      "failures": [],
+      "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/logs/feature-off-client-unit.log",
+      "log_bytes": 6981,
+      "log_sha256": "69b07c4a96f5bbf5eca3694b7354221f142a6bbad23239779cd86638527e004d",
+      "name": "feature-off-client-unit",
+      "test_results": [
+        "test result: ok. 75 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.26s"
+      ],
+      "timed_out": false,
+      "timeout_s": 900,
+      "wall_s": 6.923282916000005
+    },
+    {
+      "cleanup": {
+        "group_absent": true,
+        "signals": []
+      },
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "client",
+        "--tests",
+        "--",
+        "--test-threads=1"
+      ],
+      "cwd": "/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/direct-owner-coverage-overlay-_a9zqdyk/direct-owner-source/vendor/fr-client-rust",
+      "environment": {
+        "BOT_CPU": "1",
+        "BOT_MEMORY_OWNER_CAPTURE": "0",
+        "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target",
+        "R274_TEST_FORCE_NO_GPU": null,
+        "removed_live_inputs": true
+      },
+      "exit": 0,
+      "failures": [],
+      "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/logs/feature-off-client-integration.log",
+      "log_bytes": 63871,
+      "log_sha256": "87618245dad9cb92997e2833c4088fb2f6101599262e8e3b2b071d048e934fd6",
+      "name": "feature-off-client-integration",
+      "test_results": [
+        "test result: ok. 75 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.58s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.55s",
+        "test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.53s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.48s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s",
+        "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s",
+        "test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.34s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s",
+        "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.79s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.63s",
+        "test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 26.69s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s",
+        "test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.75s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s",
+        "test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.46s",
+        "test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s",
+        "test result: ok. 86 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.54s",
+        "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s",
+        "test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.41s",
+        "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.66s",
+        "test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+        "test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.70s",
+        "test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.02s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s",
+        "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.86s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.98s",
+        "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.61s",
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.88s",
+        "test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.96s",
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s",
+        "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.36s",
+        "test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 38.12s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.40s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.69s",
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.74s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.99s",
+        "test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.49s",
+        "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.05s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.89s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.28s",
+        "test result: ok. 45 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.42s"
+      ],
+      "timed_out": false,
+      "timeout_s": 900,
+      "wall_s": 201.68835374999998
+    }
+  ],
+  "test_only_contract": {
+    "changed_paths": [
+      "crates/api/src/owner_capture.rs",
+      "crates/host-play/src/owner_capture.rs",
+      "crates/host-play/src/owner_capture_output.rs",
+      "crates/host/src/owner_capture.rs",
+      "crates/tui/src/bin.rs",
+      "vendor/fr-client-rust/crates/client/src/core/world_owner_capture.rs"
+    ],
+    "coverage_changes_inside_existing_cfg_test_modules": true,
+    "derived_hashes": {
+      "crates/api/src/owner_capture.rs": "5d91a1a70dcf1b1954931cc168d0344c1b6e010dfb2016e5d01244e71a052a06",
+      "crates/host-play/src/owner_capture.rs": "b758ca4740f3210a411b0b4643d13f6589d98b6ebbadb40bb70bd0901f29ee2a",
+      "crates/host-play/src/owner_capture_output.rs": "59421d88f652236c2c1aa4757c3b6c77632a47752ac82a98f8febdae19f33c3e",
+      "crates/host/src/owner_capture.rs": "138a88380bcebc078c571e13be21f382d79e2316fc49b2bc9941ad60c4ea438e",
+      "crates/tui/src/bin.rs": "aee97345c86cff0eb3253ef56b3e64fd123991f57bebbe5fcb750d899839e28c",
+      "vendor/fr-client-rust/crates/client/src/core/world_owner_capture.rs": "7b572b26ada4e8135d0513975678106285e8f2a3b3d36d7a5cfe8ca65f765599"
+    },
+    "non_test_behavior_change_authorized": false,
+    "tui_guard_cfg_test_only": true,
+    "verified": true
+  }
+}

@@ -1,0 +1,41 @@
+{"cwd": "/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/direct-owner-coverage-overlay-_a9zqdyk/direct-owner-source", "command": ["cargo", "test", "--offline", "--locked", "-p", "host", "--features", "memory-owner-capture", "--lib", "token_addressed_queue_does_not_deliver_stale_request_to_current_slot", "--", "--test-threads=1"], "timeout_s": 900}
+   Compiling subtle v2.6.1
+   Compiling thiserror v2.0.20
+   Compiling crypto-common v0.1.7
+   Compiling inout v0.1.4
+   Compiling opaque-debug v0.3.1
+   Compiling base64ct v1.8.3
+   Compiling zeroize v1.9.0
+   Compiling aead v0.5.2
+   Compiling cipher v0.4.4
+   Compiling digest v0.10.7
+   Compiling universal-hash v0.5.1
+   Compiling polyval v0.6.2
+   Compiling password-hash v0.5.0
+   Compiling aes v0.8.3
+   Compiling ctr v0.9.2
+   Compiling sha2 v0.10.9
+   Compiling sha1 v0.10.7
+   Compiling hmac v0.12.1
+   Compiling ghash v0.5.1
+   Compiling tungstenite v0.24.0
+   Compiling pbkdf2 v0.12.2
+   Compiling aes-gcm v0.10.3
+   Compiling naga v29.0.4
+   Compiling vault v0.1.0 (/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/direct-owner-coverage-overlay-_a9zqdyk/direct-owner-source/crates/vault)
+   Compiling wgpu-naga-bridge v29.0.4
+   Compiling wgpu-hal v29.0.4
+   Compiling wgpu-core-deps-apple v29.0.4
+   Compiling wgpu-core v29.0.4
+   Compiling wgpu v29.0.4
+   Compiling client v0.1.0 (/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/direct-owner-coverage-overlay-_a9zqdyk/direct-owner-source/vendor/fr-client-rust/crates/client)
+   Compiling api v0.1.0 (/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/direct-owner-coverage-overlay-_a9zqdyk/direct-owner-source/crates/api)
+   Compiling host v0.1.0 (/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/direct-owner-coverage-overlay-_a9zqdyk/direct-owner-source/crates/host)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 18.08s
+     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/host-34f53335b319e4ab)
+
+running 1 test
+test owner_capture::tests::token_addressed_queue_does_not_deliver_stale_request_to_current_slot ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 220 filtered out; finished in 0.00s
+

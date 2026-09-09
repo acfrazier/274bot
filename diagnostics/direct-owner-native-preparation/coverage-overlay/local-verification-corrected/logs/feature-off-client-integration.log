@@ -1,0 +1,1167 @@
+{"cwd": "/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/direct-owner-coverage-overlay-_a9zqdyk/direct-owner-source/vendor/fr-client-rust", "command": ["cargo", "test", "--offline", "--locked", "-p", "client", "--tests", "--", "--test-threads=1"], "timeout_s": 900}
+   Compiling client v0.1.0 (/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/direct-owner-coverage-overlay-_a9zqdyk/direct-owner-source/vendor/fr-client-rust/crates/client)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 11.97s
+     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/client-116207f0c42a23ac)
+
+running 75 tests
+test bot_target::tests::content_sits_next_to_engine ... ok
+test bot_target::tests::operator_home_never_queries_profile_for_explicit_home ... ok
+test bot_target::tests::operator_home_prefers_explicit_home_including_empty ... ok
+test bot_target::tests::prod_and_live_alias_are_the_public_world ... ok
+test bot_target::tests::prod_cache_dir_is_home_unpack_not_engine_pack ... ok
+test client::client::audio_toggle::set_lowmem_false_loads_sound_and_opens_gates ... ok
+test client::client::dead_server_watchdog::fresh_last_response_does_not_trip_the_watchdog ... ok
+test client::client::dead_server_watchdog::reading_a_full_packet_restamps_the_watchdog ... ok
+test client::client::dead_server_watchdog::stale_last_response_fires_lost_con_in_one_game_loop_pass ... ok
+test client::client::dead_server_watchdog::watchdog_stays_quiet_until_the_bound_elapses ... ok
+test client::client::ground_obj_size_tests::empty_ground_obj_grid_is_under_400kb ... ok
+test client::client::try_move_path::run_enabled_reads_varp_173 ... ok
+test client::client::try_move_path::run_enabled_reads_visible_run_off_orb ... ok
+test client::client::try_move_path::try_move_tiles_records_a_long_bfs_not_nine ... ok
+test client::client::try_move_path::try_move_tiles_records_every_step_src_to_dest ... ok
+test client::client::zone_post_build::loc_change_post_build_keeps_permanent_and_drops_timed ... ok
+test config::if_type::iface_size_tests::iface_holes_are_pointer_sized ... ok
+test config::if_type::iface_size_tests::mut_overlay_is_much_smaller_than_the_decode ... ok
+test config::if_type::iface_size_tests::mut_template_inv_arrays_are_bounded ... ok
+test config::obj_type::tests::get_sprite_resolves_owi_ohi_and_count_variants ... ok
+test config::obj_type::tests::sprite_cache_evicts_at_capacity_100 ... ok
+test config::obj_type::tests::sprite_cache_hits_same_key_and_unlinks_stale_counts ... ok
+test config::obj_type::tests::sprite_drop_shadow_only_when_outline_zero ... ok
+test core::world::size_tests::empty_tile_grid_is_pointer_sized ... ok
+test core::world::size_tests::fill_base_level_does_not_materialize_empty_squares ... ok
+test core::world::sprite_reuse_tests::dynamic_sprite_slots_stay_bounded_across_frames ... ok
+test dash3d::anim_frame::tests::private_arc_shared_within_unpack_not_across_and_get_detaches ... ok
+test dash3d::anim_frame::tests::private_partial_replace_keeps_old_arc_until_final_owner_drops ... ok
+test dash3d::anim_frame::tests::public_get_results_are_independent_nested_and_transforms ... ok
+test dash3d::anim_frame::tests::public_init_high_id_missing_and_struct_construction ... ok
+test dash3d::anim_frame::tests::public_multi_frame_defaults_origin_signed_and_transparency ... ok
+test dash3d::anim_frame::tests::public_partial_republish_preserves_old_result_and_sibling ... ok
+test dash3d::wrapping_cross_tests::overflow_matches_java_int_not_i64 ... ok
+test graphics::pix2d::tests::mark_pixel_is_opaque_and_alpha_is_the_coverage_byte ... ok
+test io::client_stream::tests::reader_handle_tracks_the_socket_and_wakes_on_data ... ok
+test io::ondemand::tests::model_use_priority_matches_java ... ok
+test login_rsa::tests::java_defaults_are_the_lost_city_pair ... ok
+test login_rsa::tests::openssl_pkcs1_pem_roundtrip_n_e ... ok
+test login_rsa::tests::prod_modulus_is_decimal_and_long ... ok
+test profiling::tests::allocation_replacement_and_drop_release_only_their_bytes ... ok
+test render::backend::gpu::tests::draw_area_rgba_title_is_fully_opaque ... ok
+test render::backend::gpu::tests::draw_area_rgba_uses_coverage_as_scene_window_alpha ... ok
+test render::backend::gpu::tests::freeze_does_not_cls_the_frozen_viewport ... ok
+test render::backend::gpu::tests::freeze_last_scene_only_while_the_game_is_loading ... ok
+test render::backend::gpu::tests::sealed_scene_window_uploads_modal_rgb_without_chrome_redraw ... ok
+test render::backend::gpu::tests::viewport_overlay_moves_and_clears_without_chrome_redraw ... ok
+test render::backend::gpu_atlas::tests::atlas_growth_stops_at_the_cap ... ok
+test render::backend::gpu_atlas::tests::downsample_rgba_averages_a_2x2_checker ... ok
+test render::backend::gpu_atlas::tests::evicted_regions_are_reused_from_the_next_epoch ... ok
+test render::backend::gpu_atlas::tests::layer_atlas_spills_without_overflow ... ok
+test render::backend::gpu_atlas::tests::model_atlas_texture_reports_eight_mips ... ok
+test render::backend::gpu_atlas::tests::region_cache_evicts_the_lru_entry ... ok
+test render::backend::gpu_atlas::tests::rgba_mip_chain_from_128_has_eight_levels ... ok
+test render::backend::gpu_atlas::tests::stale_sprite_sources_stop_growing_the_atlas ... ok
+test render::nav_debug::tests::face_only_cell_has_letters_but_no_fill ... ok
+test render::nav_debug::tests::nsew_letters_sit_on_the_right_edges ... ok
+test render::nav_debug::tests::overlay_pixel_writes_source_rgb_and_coverage_alpha ... ok
+test render::nav_debug::tests::reach_fill_colours_only_unreached_standable_cells ... ok
+test render::store::tests::dynamic_sprite_does_not_reresolve_wall ... ok
+test render::store::tests::model_store_shared_across_renderers ... ok
+test render::store::tests::render_worlds_share_one_decode_per_model_id ... ok
+test render::store::tests::tile_mutation_reresolves_lazy_models ... ok
+test render::world::near_plane_tests::a_behind_clips_in_abc_order ... ok
+test render::world::near_plane_tests::all_behind_clips_to_nothing ... ok
+test render::world::near_plane_tests::intersection_lands_on_the_near_plane_with_interpolated_xy ... ok
+test render::world::near_plane_tests::two_behind_clips_to_a_triangle ... ok
+test sound::jagfx::jagfx_size_tests::default_does_not_allocate_wave_scratch ... ok
+test sound::jagfx::jagfx_size_tests::default_tables_are_one_process_arc ... ok
+test unpack::tests::corrupt_gzip_payload_is_an_error ... ok
+test unpack::tests::decode_rejects_truncated_body ... ok
+test unpack::tests::decode_rejects_truncated_header ... ok
+test unpack::tests::gunzip_rejects_truncated_stream ... ok
+test unpack::tests::load_snapshot_once_injects_only_the_first_call ... ok
+test unpack::tests::record_round_trip ... ok
+test unpack::tests::version_hash_is_stable_and_short ... ok
+
+test result: ok. 75 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.58s
+
+     Running unittests src/bin/unpack-cache.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/unpack_cache-6f70714f2d12b88e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cache_share.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/cache_share-ed4ac4d131face09)
+
+running 1 test
+test two_clients_share_type_tables_and_not_ifaces ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+     Running tests/cache_short_circuit.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/cache_short_circuit-5b9e318827e922b2)
+
+running 2 tests
+test from_shared_maininit_keeps_injected_cache_and_skips_reunpack ... ok
+test new_maininit_still_reunpacks_fresh_cache ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/chat_mode.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/chat_mode-a9c455f6b157aeac)
+
+running 4 tests
+test non_strip_clicks_are_ignored ... ok
+test public_chat_button_cycles_mode_and_sends_chat_setmode ... ok
+test report_abuse_sends_close_modal_and_records_main_modal_id ... ok
+test trade_button_cycles_trade_mode ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.55s
+
+     Running tests/client_build.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/client_build-bfe48074434e6c30)
+
+running 38 tests
+test check_locations_checks_ground_decor_in_high_mem ... ok
+test check_locations_empty_packet_is_ready ... ok
+test check_locations_requests_missing_models_in_area ... ok
+test check_locations_skips_ground_decor_in_low_mem ... ok
+test check_model_all_missing_model_is_not_ready ... ok
+test check_model_all_none_models_is_ready ... ok
+test check_model_all_requests_through_wired_provider ... ok
+test dematerialize_overlay_rearms_share_light ... ok
+test fade_adjacent_level0_seam ... ok
+test finish_build_blocks_map_flag_block_tiles ... ok
+test finish_build_clamps_hue_and_lig_off ... ok
+test finish_build_clears_flat_floor_occluder_bits ... ok
+test finish_build_clears_wall_occluder_bits ... ok
+test finish_build_hooks_share_light ... ok
+test finish_build_link_below_blocks_lower_level ... ok
+test finish_build_magenta_overlay_floor ... ok
+test finish_build_push_down_link_below ... ok
+test finish_build_sets_quick_ground_after_load_ground ... ok
+test finish_build_textured_overlay_uses_tex_average ... ok
+test ground_hole_is_one_fat_pointer ... ok
+test ground_stamp_materializes_the_mesh_a_headed_build_writes ... ok
+test ground_tile_visible_gates_force_high_detail_in_low_mem ... ok
+test ground_tile_visible_requires_matching_vis_below_level ... ok
+test load_locations_empty_is_noop ... ok
+test load_locations_ground_decor_blocks_when_active ... ok
+test load_locations_low_mem_skips_force_high_detail ... ok
+test load_locations_low_mem_skips_wrong_vis_below ... ok
+test load_locations_places_at_offset_tiles ... ok
+test load_locations_skips_out_of_area_tiles ... ok
+test load_locations_wall_blocks_collision_without_model ... ok
+test load_tex_averages_fills_from_textures_jag ... ok
+test lowmem_does_not_unload_process_wide_models ... ok
+test prefetch_locations_decodes_loc_id_loop ... ok
+test prefetch_locations_empty_packet_is_noop ... ok
+test scene_model_ids_protects_placed_loc_models ... ok
+test scene_model_ids_protects_push_down_linked_walls ... ok
+test set_draw_true_enables_overlay_mesh_for_later_set_ground ... ok
+test unheaded_build_keeps_stamp_but_no_mesh_until_materialize ... ok
+
+test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.53s
+
+     Running tests/client_skeleton.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/client_skeleton-564394bd9bde038a)
+
+running 4 tests
+test config_has_no_rsa_fields ... ok
+test login_error_carries_code_and_messages ... ok
+test new_client_starts_logged_out ... ok
+test run_drives_mainloop_and_hook_until_stopped ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.48s
+
+     Running tests/client_stream.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/client_stream-4dc1c291c06aa38e)
+
+running 2 tests
+test payload_byte_counters ... ok
+test tcp_read_write_roundtrip ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/collision.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/collision-ce085140aaca5735)
+
+running 13 tests
+test add_loc_blocks_walk_scenery ... ok
+test add_wall_blocks_east_neighbour ... ok
+test block_ground_sets_flag ... ok
+test client_npc_route_readable ... ok
+test client_player_at_and_route_arrays ... ok
+test del_loc_restores_open ... ok
+test reset_flags_bounds_and_open ... ok
+test scenery_blocked_tile_not_arrived_at ... ok
+test spot_recolour_guard_matches_ts ... ok
+test test_loc_approaches_from_open_side ... ok
+test test_wall_matches_ts_shape_tests ... ok
+test unblock_ground_clears_flag ... ok
+test walk_route_avoids_blocked_tile ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+
+     Running tests/config_types.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/config_types-fc35695156b04b1c)
+
+running 8 tests
+test cache_holds_all_unpacked_tables ... ok
+test cache_obj_by_id_matches_unpacked_table ... ok
+test client_new_unpacks_config_from_cache_dir ... ok
+test client_owns_an_empty_cache_until_unpacked ... ok
+test get_sprite_resolves_engine_pack_obj ... ok
+test iftype_unpack_keeps_inv_background_names ... ok
+test missing_config_jag_sets_error_loading ... ok
+test unpack_obj_from_engine_config_jag ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+
+     Running tests/datastruct.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/datastruct-d91132b99eea5d24)
+
+running 16 tests
+test arena_unlink_on_unlinked_node_is_noop ... ok
+test arena_unlink_splices_and_is_idempotent ... ok
+test hash_table_put_find_and_repin ... ok
+test link_list_clear_drops_all_and_is_reusable ... ok
+test link_list_for_each_empty_is_noop ... ok
+test link_list_for_each_leaves_mutable_cursor_untouched ... ok
+test link_list_for_each_walks_in_order ... ok
+test link_list_head_empty_and_cursor_exhaustion ... ok
+test link_list_head_next_iterates ... ok
+test link_list_move_last_to_front ... ok
+test link_list_push_front_reverses_order ... ok
+test link_list_push_pop_front ... ok
+test link_list_tail_and_prev ... ok
+test link_list_unlink_last_during_iterate ... ok
+test lru_cache_clear_resets_capacity ... ok
+test lru_cache_evicts_least_recently_used ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/direct_owner_capture.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/direct_owner_capture-d4c0b4ca12de8002)
+
+running 1 test
+test packet_probe_preserves_bytes_and_cursor ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/do_action.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/do_action-06eac47c983b8a33)
+
+running 13 tests
+test do_action_inv_button1_encodes ... ok
+test do_action_obj_examine_adds_chat ... ok
+test do_action_op_held_writes_p2_obj_slot_com ... ok
+test do_action_op_loc_encodes_loc_id_not_shape ... ok
+test do_action_pause_button_latches_please_wait ... ok
+test do_action_useheld_start_returns_with_use_mode_armed ... ok
+test op_npc2_writes_opnpc2 ... ok
+test tgt_button_arms_spell_target_mode ... ok
+test try_move_flushes_move_gameclick_to_socket ... ok
+test try_move_out_of_area_destination_returns_false ... ok
+test try_move_type_1_writes_minimapclick_size_plus_14 ... ok
+test try_move_writes_move_gameclick ... ok
+test walk_menu_arms_mouse_picking ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.34s
+
+     Running tests/draw.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/draw-ffdc2deb4e593838)
+
+running 2 tests
+test headless_new_starts_with_draw_off ... ok
+test set_draw_true_allows_game_draw_without_present ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running tests/entity_move.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/entity_move-f4712e459fd7b9e8)
+
+running 3 tests
+test game_loop_walk_moves_local_player_and_orbit_camera ... ok
+test move_npcs_steps_tracked_npc ... ok
+test route_move_advances_x_toward_queued_tile ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+
+     Running tests/fade.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/fade-76113ff5b9b5c14a)
+
+running 9 tests
+test fade_out_ramps_down_not_up ... ok
+test fade_out_then_swap_lands_on_target_and_holds ... ok
+test finish_fade_jumps_to_ladder_volumes ... ok
+test finish_fade_jumps_to_target ... ok
+test set_target_vol_jumps_when_not_fading ... ok
+test set_target_vol_retargets_mid_ramp ... ok
+test step_ms_accumulates_to_ticks ... ok
+test stop_hard_is_silence ... ok
+test stop_hard_then_finish_fade_recovers ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/from_shared.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/from_shared-961a032c3c9cb5e8)
+
+running 6 tests
+test adopt_reconnects_opcode_18_without_tcp_drop ... ok
+test adopt_without_live_stream_returns_none ... ok
+test from_shared_reuses_one_arc_without_unpack ... ok
+test mut_overlay_is_small_and_decode_stays_ptr_eq_after_writes ... ok
+test mut_overlay_template_is_arc_until_first_write ... ok
+test slot_write_cows_only_the_written_overlay_slot ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.79s
+
+     Running tests/game_shell.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/game_shell-302d06df3a7b1064)
+
+running 3 tests
+test deltime_default_is_20 ... ok
+test run_increments_loop_not_server_tick ... ok
+test set_framerate_1_is_error_screen_only ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/gens.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/gens-027d9ae00d8d4be5)
+
+running 12 tests
+test applied_packets_bump_their_family ... ok
+test camera_packets_bump_camera_gen ... ok
+test gens_defaults_to_zero ... ok
+test iface_packets_bump_iface_gen ... ok
+test logout_bumps_all_gens ... ok
+test logout_method_bumps_all_gens ... ok
+test map_flag_packets_bump_map_flag_gen ... ok
+test npc_info_bumps_npc_gen_only ... ok
+test packet_to_family_mapping_is_exact ... ok
+test rebuild_bumps_all_gens ... ok
+test t1_unknown_opcode_bumps_all_gens ... ok
+test world_packets_bump_world_gen ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.63s
+
+     Running tests/gpu_backend.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/gpu_backend-77035d2c7ce8d855)
+
+running 10 tests
+test chrome_composites_from_the_cpu_draw_area ... ok
+test chrome_upload_runs_when_redraw_chat_set ... ok
+test chrome_upload_skipped_when_only_minimap_moved ... ok
+test composite_produces_one_full_frame_texture ... ok
+test draw_area_upload_carries_known_chrome_pixels ... ok
+test finish_does_not_clobber_the_last_presented_frame ... ok
+test finish_returns_stable_present_texture_identity ... ok
+test freeze_keeps_last_minimap_after_punched_chrome ... ok
+test gpu_backend_selected_when_adapter_available ... ok
+test minimap_texture_is_172x156 ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+     Running tests/gpu_depth.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/gpu_depth-7c910af0cafb2a89)
+
+running 3 tests
+test flush_booth_occluded_by_wall ... ok
+test same_tile_west_wall_occludes_booth ... ok
+test sharelight_wall_run_cpu_vs_gpu ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 26.69s
+
+     Running tests/gpu_inject.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/gpu_inject-2a7adca09e49c9e1)
+
+running 1 test
+test injected_device_wins_over_self_init_and_later_injections ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests/gpu_memory_profile.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/gpu_memory_profile-ab95becc55cd84b1)
+
+running 1 test
+test atlas_payload_growth_and_drop_are_counted_once ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests/gpu_mesh.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/gpu_mesh-d763cd62fac1b262)
+
+running 10 tests
+test gpu_loc_pick_is_per_face_not_aabb ... ok
+test highmem_textured_quick_ground_samples_the_atlas ... ok
+test hsl_to_rgb_matches_colour_table ... ok
+test loc_model_at_resolves_grounded_scenery_loc ... ok
+test lowmem_textured_ground_face_shades_with_the_texture_average ... ok
+test lowmem_textured_quick_ground_shades_with_the_texture_average ... ok
+test nav_debug_paint_does_not_enable_aabb_loc_pick ... ok
+test scene_mesh_builds_ground_and_wall_triangles ... ok
+test set_nav_debug_paint_roundtrips_on_client ... ok
+test textured_face_with_out_of_range_tex_id_still_emits ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.75s
+
+     Running tests/gpu_pipelines.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/gpu_pipelines-9dc5aa7a74d51d67)
+
+running 1 test
+test two_backends_share_one_shader_module_build ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running tests/gpu_texture.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/gpu_texture-01106ec29220597a)
+
+running 10 tests
+test composite_lands_the_scene_in_the_full_frame ... ok
+test gpu_gouraud_face_shades_like_the_colour_table ... ok
+test gpu_lowmem_texture_samples_the_full_128px_layer ... ok
+test gpu_render_clamps_out_of_range_tex_id ... ok
+test gpu_render_samples_multi_texture_model ... ok
+test gpu_textured_shade_scales_texel_brightness ... ok
+test gpu_vertex_stays_pod ... ok
+test textured_model_mesh_carries_tex_id_and_uv ... ok
+test textured_type3_face_carries_tex_id_and_uv ... ok
+test wall_face_crossing_the_near_plane_still_emits ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.46s
+
+     Running tests/graphics.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/graphics-8ff72f1a0bf02b0f)
+
+running 38 tests
+test colour_constants_match_274 ... ok
+test java_random_known_sequence ... ok
+test java_random_next_int_bound ... ok
+test pix2d_cls_clears_all ... ok
+test pix2d_draw_rect_outlines_only ... ok
+test pix2d_fill_circle_opaque ... ok
+test pix2d_fill_rect_honours_clipping ... ok
+test pix2d_fill_rect_trans_mixes_channels ... ok
+test pix2d_hline_vline ... ok
+test pix32_depack_zero_palette_becomes_one ... ok
+test pix32_plot_and_quick_plot ... ok
+test pix32_rotate_plot_sprite_identity ... ok
+test pix32_scanline_plot_sprite_mask ... ok
+test pix32_trans_plot_sprite_blends ... ok
+test pix32_trim_and_flip ... ok
+test pix3d_colour_table_structure ... ok
+test pix3d_div_tables ... ok
+test pix3d_draw_default_state ... ok
+test pix3d_flat_triangle_fills_pixmap ... ok
+test pix3d_flat_triangle_off_screen_writes_are_noops ... ok
+test pix3d_gouraud_triangle_constant_shade ... ok
+test pix3d_gouraud_triangle_off_screen_writes_are_noops ... ok
+test pix3d_raster_marks_gpu_overlay_coverage ... ok
+test pix3d_set_clipping_sets_origin_and_scanline_len ... ok
+test pix3d_sin_cos_tables_match_formula ... ok
+test pix3d_texture_pool_unpack_and_average ... ok
+test pix8_depack_and_plot_sprite ... ok
+test pix8_flips ... ok
+test pix8_halve_size ... ok
+test pix8_scale_plot_sprite ... ok
+test pix8_trim_restores_original_size ... ok
+test pixfont_anti_macro_plot_trans_blends ... ok
+test pixfont_centre_and_right_string ... ok
+test pixfont_depack_from_jag ... ok
+test pixfont_draw_string_plots_mask ... ok
+test pixfont_draw_string_tag_colour ... ok
+test pixfont_update_state_tags ... ok
+test pixmap_fill_rect ... ok
+
+test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/headless.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/headless-b4d9efe70d9c9c84)
+
+running 1 test
+test headless_client_core_runs_sim_without_renderer ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/hud.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/hud-175e16c88e0635db)
+
+running 86 tests
+test active_text_uses_text2 ... ok
+test add_chat_bumps_chat_seq_per_message ... ok
+test add_chat_shifts_and_redraws ... ok
+test animate_interface_advances_model_frame ... ok
+test chat_enter_clears_input_and_echoes_without_player_name ... ok
+test chat_input_appends_prints_and_backspaces ... ok
+test chat_input_command_sends_client_cheat ... ok
+test chat_input_public_sends_message_public ... ok
+test click_combat_tab_sets_active_icon_0 ... ok
+test close_modal_clears_resumed_pause_button ... ok
+test do_scrollbar_up_arrow_decreases_pos ... ok
+test draw_chat_dialog_overlay_draws_header_and_input ... ok
+test draw_chat_empty_history_does_not_panic ... ok
+test draw_chat_modal_clears_stale_chat_lines ... ok
+test draw_chat_plots_cr1_crown ... ok
+test draw_chat_plots_cr2_crown_for_private ... ok
+test draw_chat_renders_type0_line_and_input ... ok
+test draw_chat_social_overlay_draws_header_and_input ... ok
+test draw_chat_uses_chat_modal_instead_of_lines ... ok
+test draw_graphic_writes_pixels ... ok
+test draw_icons_blinks_flashing_tab ... ok
+test draw_icons_flash_sends_tut_clickside_and_clears ... ok
+test draw_interface_inv_text_writes_obj_name ... ok
+test draw_interface_substitutes_percent1 ... ok
+test draw_interface_text_writes_pixels ... ok
+test draw_private_messages_plots_cr1_crown ... ok
+test draw_reboot_timer_overlay_draws_system_update ... ok
+test draw_scrollbar_fills_track ... ok
+test draw_side_text_component_writes_pixels ... ok
+test game_draw_chat_scrollbar_up_arrow_steps_scroll_pos ... ok
+test game_draw_redraws_side_and_chat_when_modal_anims ... ok
+test get_if_var_missing_scripts_is_none ... ok
+test get_if_var_out_of_range_script_id_is_none ... ok
+test get_if_var_pushvar ... ok
+test get_if_var_stat_effective ... ok
+test hidden_layer_draws_when_hovered ... ok
+test hover_walk_steps_scrollable_layer_scrollbar ... ok
+test hovered_rect_uses_colour_over ... ok
+test icon_state_defaults ... ok
+test if_anim_reset_zeros_nested_layer_child ... ok
+test if_close_also_clears_main_modal ... ok
+test if_close_clears_side_and_chat_modals ... ok
+test if_openchat_sets_chat_and_closes_side ... ok
+test if_openmain_sets_main_and_closes_side_chat ... ok
+test if_openmain_side_sets_both ... ok
+test if_openoverlay_g2b_negative_clears ... ok
+test if_openoverlay_g2b_positive_sets ... ok
+test if_openside_clears_main_modal ... ok
+test if_openside_sets_side_modal_id ... ok
+test if_seticon_65535_clears_slot ... ok
+test if_seticon_out_of_range_icon_is_ignored ... ok
+test if_seticon_writes_side_icon_slot ... ok
+test if_showicon_sets_active_icon ... ok
+test iftype_keeps_graphic_name ... ok
+test iftype_unpack_keeps_inv_background_names ... ok
+test inv_number_formats_k_and_m ... ok
+test main_modal_click_sends_if_button ... ok
+test message_game_duelreq_is_type_8 ... ok
+test message_game_plain_is_type_0 ... ok
+test message_game_tradereq_is_type_4 ... ok
+test mouse_loop_skips_walk_when_main_modal_open ... ok
+test nice_number_groups_and_colours ... ok
+test obj_drag_quick_release_fires_last_entry_same_slot_drop_does_not ... ok
+test obj_drag_release_sends_inv_buttond ... ok
+test prepare_game_depacks_mod_icons ... ok
+test resumed_pause_button_text_is_please_wait ... ok
+test side_click_close_button_sends_close_modal ... ok
+test side_click_layer_recurse_with_scrolled_child ... ok
+test side_click_ok_button_writes_if_button ... ok
+test side_click_real_logout_text_sends_if_button ... ok
+test side_click_requires_left_button_in_panel ... ok
+test side_click_select_sets_var_when_different ... ok
+test side_click_skips_non_button_first_child ... ok
+test side_click_toggle_applies_varp_clientcode ... ok
+test side_click_toggle_flips_var_and_redraws ... ok
+test side_click_toggle_without_script_keeps_var ... ok
+test side_click_uses_side_modal_when_open ... ok
+test sideicons_load_from_media ... ok
+test swap_slots_exchanges_type_and_count ... ok
+test tut_flash_bounces_active_icon_when_same ... ok
+test tut_open_sets_tut_com_id ... ok
+test type_inv_hover_sets_hovered_slot_on_empty_slot ... ok
+test update_if_pointer_resets_over_side_when_pointer_leaves ... ok
+test update_if_pointer_sets_over_chat_and_redraws_chat ... ok
+test update_if_pointer_sets_over_main ... ok
+test update_if_pointer_sets_over_side_and_redraws ... ok
+
+test result: ok. 86 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.54s
+
+     Running tests/iface_model.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/iface_model-330762da186a206e)
+
+running 9 tests
+test draw_interface_type_model_missing_does_not_panic ... ok
+test gpu_draw_does_not_crash_on_mysterious_cube_modal ... ok
+test gpu_main_modal_rect_is_opaque_over_the_scene ... ok
+test gpu_ship_journey_paints_the_title_over_the_scene ... ok
+test gpu_ship_journey_stays_over_a_frozen_scene ... ok
+test npc_get_head_none_without_head_ids ... ok
+test npc_get_head_queues_every_missing_head_id ... ok
+test obj_get_model_unlit_none_without_model ... ok
+test travel_modals_are_full_scene_layers ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+
+     Running tests/ingame.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/ingame-3f9edeeb6de4d0ef)
+
+running 18 tests
+test first_headed_paint_builds_minimap_from_unheaded_stamps ... ok
+test follow_camera_chases_while_the_scene_is_loading ... ok
+test follow_camera_moves_eye_above_local_player ... ok
+test follow_camera_pitch_clamp_lifts_link_below_neighbors ... ok
+test game_draw_headless_does_not_panic ... ok
+test game_draw_main_writes_viewport_pixels ... ok
+test game_draw_renders_scene_without_manual_pix3d_init ... ok
+test get_av_h_link_below_reads_level_above ... ok
+test minimap_build_buffer_writes_pixels ... ok
+test minimap_draw_without_media_does_not_panic ... ok
+test minimap_is_under_chrome_not_a_black_square_on_top ... ok
+test pix3d_low_mem_follows_config ... ok
+test production_init_wires_textures_and_pool ... ok
+test roof_check2_high_cam_is_3 ... ok
+test roof_check2_under_roof_and_low_cam_is_minusedlevel ... ok
+test roof_check_ray_hits_remove_roof_between_cam_and_player ... ok
+test roof_check_returns_3_outdoors ... ok
+test roof_check_returns_minusedlevel_when_player_tile_has_remove_roof ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.41s
+
+     Running tests/inject.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/inject-1f4aa6c0a24a7c46)
+
+running 7 tests
+test anim_init_does_not_drop_unpacked_frames ... ok
+test empty_snapshot_file_is_an_error ... ok
+test loads_fake_snapshot_into_stores ... ok
+test missing_snapshot_dir_is_an_error ... ok
+test model_init_does_not_drop_unpacked_meta ... ok
+test real_cache_round_trip ... ok
+test unpack_grows_the_frame_table_to_fit_the_frame_id ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.66s
+
+     Running tests/input.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/input-2799e7cb28478408)
+
+running 16 tests
+test chat_accepts_colon_then_tilde_in_cheat ... ok
+test defaults_match_java_fields ... ok
+test enter_lookup_from_cr_and_named ... ok
+test key_codes_arrows_enter_backspace_space ... ok
+test key_codes_letters_and_digits ... ok
+test key_codes_tab_and_debug_punctuation ... ok
+test key_down_sets_held_and_queues ... ok
+test key_held_guards_ch_range ... ok
+test key_queue_wraps_at_128 ... ok
+test key_up_clears_held_without_queueing ... ok
+test latch_click_clears_pending_button ... ok
+test left_down_sets_click ... ok
+test mouse_move_updates_position_only ... ok
+test mouse_up_releases_button ... ok
+test right_down_uses_java_button_2 ... ok
+test title_tab_moves_between_username_and_password ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+     Running tests/isaac.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/isaac-84c56925bee2547d)
+
+running 1 test
+test isaac_seed_1_2_3_4_first_eight ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/jagfile.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/jagfile-695174dd28f3b252)
+
+running 2 tests
+test gen_hash_matches_java ... ok
+test reads_unpacked_jag_from_engine_pack ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/leftover.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/leftover-eaad1ba5e997bc2f)
+
+running 50 tests
+test add_players_clears_minimap_flag_on_arrival ... ok
+test add_players_keeps_minimap_flag_when_not_arrived ... ok
+test cam_lookat_rate2_over_100_aims_immediately ... ok
+test cam_lookat_rate2_under_100_does_not_aim ... ok
+test cam_moveto_rate2_over_100_jumps_camera ... ok
+test cam_reset_clears_cinema ... ok
+test cam_shake_marks_axis_and_fields ... ok
+test cc_logout_still_returns_true ... ok
+test cinema_camera_eases_toward_move_target ... ok
+test clientcode_1_rebuilds_colour_table ... ok
+test clientcode_options_panel_fields ... ok
+test cold_login_reset_empty_table_leaves_parts_minus_one ... ok
+test cold_login_reset_revalidates_design ... ok
+test colour_table_slot_is_per_thread ... ok
+test cross_plot_mode1_into_area_game ... ok
+test cross_plot_mode2_uses_second_half ... ok
+test cross_tick_clears_after_400 ... ok
+test design_accept_encodes_idk_savedesign ... ok
+test design_colour_cycle_wraps_hair_table ... ok
+test design_kit_cycle_wraps_and_respects_gender ... ok
+test design_preview_sets_rotation_and_caches_temp_model ... ok
+test design_switch_buttons_swap_graphic_names ... ok
+test design_switch_male_female_toggles ... ok
+test dialog_digits_capped_at_10 ... ok
+test dialog_enter_sends_resume_p_countdialog ... ok
+test dialog_keys_append_digits_and_backspace ... ok
+test dialog_letters_are_ignored ... ok
+test dispatch_cam_reset_resets_ptype ... ok
+test game_loop_holds_reboot_timer_at_one ... ok
+test game_loop_ticks_reboot_timer_down ... ok
+test game_loop_ticks_shake_cycles_and_runs_cinema ... ok
+test game_loop_without_cinema_skips_cinema_camera ... ok
+test hint_arrow_type_10_reads_player ... ok
+test hint_arrow_type_1_reads_npc ... ok
+test hint_arrow_type_2_to_6_reads_tile ... ok
+test minimap_toggle_reads_state ... ok
+test p_countdialog_opens_amount ... ok
+test pm_options_shift_below_reboot_line ... ok
+test prepare_game_loads_cross_sprites ... ok
+test reboot_timer_scales_by_30 ... ok
+test runweight_reaches_stats_tab_script ... ok
+test scene_loading_splash_keeps_last_frame ... ok
+test set_multiway_reads_zone ... ok
+test shake_jitter_follows_seeded_random ... ok
+test shake_pitch_clamps_to_128_and_383 ... ok
+test shake_yaw_wraps_11_bit ... ok
+test shake_zero_jitter_leaves_eye_unchanged ... ok
+test update_runweight_other_tab_does_not_redraw ... ok
+test update_runweight_sets_value_and_redraws_stats_tab ... ok
+test walk_consume_sets_cross_mode_1 ... ok
+
+test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.70s
+
+     Running tests/login.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/login-f3bf882e9dc50107)
+
+running 10 tests
+test already_logged_in_leaves_title_ready_to_retry ... ok
+test cold_login_clears_entity_tables ... ok
+test cold_login_opcode_16_success ... ok
+test cold_login_response_2_resets_tab_chat_and_rebuilds_frame ... ok
+test failed_login_can_be_retried_on_the_same_client ... ok
+test login_code_6_is_error ... ok
+test lowmem_login_writes_info_byte_one ... ok
+test reconnect_response_15_keeps_game_and_local_player ... ok
+test reconnect_uses_opcode_18 ... ok
+test to_userhash_matches_client_ts ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.02s
+
+     Running tests/login_rsa.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/login_rsa-36adc0555bba7e1b)
+
+running 2 tests
+test garbage_login_rsan_falls_back_to_java_defaults ... ok
+test java_and_prod_pairs_are_distinct_decimal ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/login_uid.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/login_uid-ac2975e280bdd2ab)
+
+running 3 tests
+test concurrent_clients_get_distinct_login_uids ... ok
+test login_uid_is_present_in_login_wrapper_bytes ... ok
+test two_clients_get_distinct_login_uids ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+     Running tests/logout.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/logout-1d335ba60308dca5)
+
+running 7 tests
+test cc_add_friend_opens_social_input_without_if_button ... ok
+test cc_add_ignore_opens_social_input_without_friend_server ... ok
+test cc_logout_arms_logout_timer ... ok
+test cc_logout_hook_ignores_non_ok_buttons ... ok
+test logout_restores_title_frame ... ok
+test logout_then_title_draw_reallocates_regions ... ok
+test title_draw_drops_game_areas_so_relogin_rebuilds ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.86s
+
+     Running tests/lost_con.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/lost_con-56e409fb2120e0fb)
+
+running 4 tests
+test lost_con_uses_reconnect_login ... ok
+test lost_con_with_pending_logout_logs_out_without_reconnecting ... ok
+test silence_watchdog_calls_lost_con_after_wall_clock_silence ... ok
+test silence_watchdog_reconnects_with_response_15 ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.98s
+
+     Running tests/maininit.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/maininit-f0c8db1f7521ff19)
+
+running 14 tests
+test crc_retry_countdown_reports_java_messages ... ok
+test crc_retry_pumps_present_target ... ok
+test crc_unreachable_sets_error_loading_in_bounded_time ... ok
+test draw_progress_headed_paints_red_bar ... ok
+test draw_progress_headed_paints_stage_text_once_title_jag_exists ... ok
+test draw_progress_headed_paints_torch_columns ... ok
+test draw_progress_headless_sets_fields_without_touching_pixels ... ok
+test get_jag_file_crc_hit_skips_http ... ok
+test get_jag_file_http_persists ... ok
+test maininit_clears_error_loading_from_new_unpack ... ok
+test maininit_empty_cache_fetches_all_eight_jags_over_http ... ok
+test maininit_is_oneshot_and_sets_progress_100_on_crc_hit ... ok
+test maininit_retries_jag_get_after_crc_mismatch ... ok
+test maininit_with_progress_notifies_callback_at_each_progress_point ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.61s
+
+     Running tests/midi.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/midi-a305bf965550d570)
+
+running 11 tests
+test client_new_unpacks_sounds_jag ... ok
+test clientcode3_mute_stops_and_unmute_requests_next_song ... ok
+test clientcode3_volume_ladder ... ok
+test game_loop_drains_synth_sound_queue ... ok
+test jagfx_fixture_matches_ts_reference ... ok
+test jagfx_init_and_generate_from_engine_sounds ... ok
+test logout_stops_midi_and_resets_song_state ... ok
+test null_midi_swallows_play ... ok
+test save_and_stop_midi_feed_the_backend ... ok
+test synth_sound_queue_drains_through_jagfx ... ok
+test synth_sound_queue_pushes_pcm_not_drops ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.88s
+
+     Running tests/minimenu.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/minimenu-a50e8faa8b9d594d)
+
+running 27 tests
+test add_npc_options_and_add_player_options_callable_directly ... ok
+test add_world_options_loc_examine_from_pick ... ok
+test add_world_options_npc_ops_from_pick ... ok
+test add_world_options_obj_take_and_examine_from_pick ... ok
+test add_world_options_player_ops_from_pick ... ok
+test add_world_options_skips_duplicate_typecodes ... ok
+test add_world_options_walk_when_idle ... ok
+test build_minimenu_returns_while_obj_drag_active ... ok
+test build_minimenu_sorts_1000_plus_below_actions ... ok
+test build_minimenu_starts_with_cancel ... ok
+test chat_line_adds_friend_and_ignore_for_friend ... ok
+test chat_region_adds_report_abuse_for_staff ... ok
+test empty_ok_button_still_fires_if_button ... ok
+test inv_slot_adds_drop_and_examine ... ok
+test inv_slot_obj_iop_and_component_iop_options ... ok
+test inv_slot_use_and_target_replace_ops ... ok
+test left_click_add_friend_last_entry_opens_menu ... ok
+test left_click_fires_last_entry_walk ... ok
+test left_click_on_open_menu_row_fires_option_and_closes ... ok
+test non_inv_buttons_push_button_actions ... ok
+test open_menu_clamps_viewport_menu_inside_512x334 ... ok
+test open_menu_in_chat_sets_area_2 ... ok
+test open_menu_in_side_sets_area_1 ... ok
+test open_menu_in_viewport_sets_area_0_and_geometry ... ok
+test paused_and_targeting_suppress_continue_and_target_buttons ... ok
+test right_click_viewport_opens_menu ... ok
+test social_component_ok_override_pushes_remove_and_message ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.96s
+
+     Running tests/model.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/model-d3bc9dab2a2769bf)
+
+running 11 tests
+test depth_bucket_overflow_does_not_spill_into_next_row ... ok
+test mouse_check_defaults_false_and_picked_count_starts_zero ... ok
+test obj_render_vertex_on_camera_plane_does_not_panic ... ok
+test world_render_miss_leaves_pick_unchanged ... ok
+test world_render_off_screen_model_is_skipped ... ok
+test world_render_priority_model_draws_via_merge_buckets ... ok
+test world_render_skips_faces_with_missing_colours ... ok
+test world_render_skips_models_with_missing_points ... ok
+test world_render_wide_winding_cross_does_not_overflow ... ok
+test world_render_with_aabb_mouse_check_picks_without_triangle_test ... ok
+test world_render_with_mouse_check_picks_the_face_in_front_of_camera ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/music.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/music-0893a607bab9d9d8)
+
+running 13 tests
+test fade_out_reaches_floor_then_signals_swap ... ok
+test failed_immediate_play_keeps_state ... ok
+test failed_zone_swap_consumes_pending_but_keeps_fade_at_floor ... ok
+test first_song_plays_immediately ... ok
+test jingle_plays_immediately_even_while_song_plays ... ok
+test music_delay_counts_down_and_requests_next_song ... ok
+test music_delay_zero_does_not_requeue_when_midi_inactive ... ok
+test music_tick_swaps_pending_after_fade_out ... ok
+test set_target_vol_jumps_when_not_fading ... ok
+test stop_midi_drops_pending ... ok
+test successful_swap_restores_gain ... ok
+test zone_song_change_holds_pending_until_swap ... ok
+test zone_song_plays_immediately_after_backend_eof ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.36s
+
+     Running tests/ondemand.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/ondemand-2dc79127f5ea11be)
+
+running 16 tests
+test bar_urgent_models_are_in_use_bit_only ... ok
+test different_files_both_queue ... ok
+test drop_socket_on_one_handle_does_not_kill_the_hub ... ok
+test duplicate_request_is_deduplicated ... ok
+test hub_ingame_is_or_of_live_handles ... ok
+test prefetch_cache_hit_posts_extra_model_for_unpack ... ok
+test prefetched_archive0_model_posts_to_completed ... ok
+test provider_model_request_completes_without_ondemand_request ... ok
+test request_all_models_requests_every_model ... ok
+test request_increments_remaining ... ok
+test sibling_does_not_complete_a_file_it_did_not_request ... ok
+test two_handles_dedupe_the_same_request_on_the_wire ... ok
+test two_handles_share_one_worker_on_the_same_port ... ok
+test unpack_models_from_cache_makes_a_random_event_model_loadable ... ok
+test worker_downloads_and_gunzips_from_ondemand_socket ... ok
+test worker_reopens_socket_immediately_after_drop_socket ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 38.12s
+
+     Running tests/overlays.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/overlays-4d62277883a10b85)
+
+running 6 tests
+test add_players_stamps_model_min_y_on_live_player ... ok
+test entity_overlays_collects_chat_bubble ... ok
+test entity_overlays_plots_prayer_headicon ... ok
+test get_overlay_pos_out_of_range_is_neg1 ... ok
+test get_overlay_pos_projects_in_front_of_camera ... ok
+test prepare_game_depacks_headicons ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.40s
+
+     Running tests/packet.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/packet-932df2be1d45fc78)
+
+running 6 tests
+test crc32_matches_client_ts ... ok
+test g_roundtrip_signed_and_smart ... ok
+test p1_enc_xors_isaac ... ok
+test p1_p2_p4_big_endian_layout ... ok
+test pjstr_newline_terminated ... ok
+test rsaenc_java_key_hi_1337 ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/player_info.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/player_info-eb41aec9f5b0d385)
+
+running 2 tests
+test player_info_appearance_lands_on_local_player ... ok
+test player_info_cached_appearance_reapplied_after_remove_reentry ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+     Running tests/present_pack.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/present_pack-3297689b92430080)
+
+running 2 tests
+test pack_low24 ... ok
+test present_target_enum_dispatch ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/prot.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/prot-5ec107e22a972331)
+
+running 2 tests
+test client_opcodes_and_lengths ... ok
+test server_opcodes_and_size_table ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rebuild.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/rebuild-0b187f242392b9a4)
+
+running 12 tests
+test check_scene_ready_sets_state_2_and_map_build_complete ... ok
+test game_loop_builds_scene_headless_with_draw_off ... ok
+test load_ground_opcode_one_sets_explicit_height ... ok
+test load_ground_opcode_zero_uses_perlin_terrain ... ok
+test load_ground_writes_client_mapl_flags ... ok
+test lowmem_level_change_rebuilds_from_parked_map_bytes ... ok
+test rebuild_normal_paints_loading_splash_when_draw ... ok
+test rebuild_normal_same_zone_scene_2_is_ignored ... ok
+test rebuild_normal_sets_base ... ok
+test rebuild_normal_shifts_local_player ... ok
+test tcp_in_rebuild_normal_over_socket ... ok
+test world_groundh_matches_client_after_load_ground ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.69s
+
+     Running tests/render_backend.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/render_backend-6d9e4ebfafb1d090)
+
+running 5 tests
+test cpu_backend_returns_owned_pixmap_frame ... ok
+test gpu_init_failure_falls_back_to_cpu ... ok
+test renderer_backend_selection ... ok
+test stage_panic_reinstalls_backend ... ok
+test texture_backend_surfaces_owned_texture ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.74s
+
+     Running tests/render_media.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/render_media-016c36b52653af4a)
+
+running 2 tests
+test renderers_share_one_media_arc ... ok
+test renderers_that_drew_share_the_depacked_media_arc ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+     Running tests/run_loop.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/run_loop-ea38a694f38c9e25)
+
+running 1 test
+test run_stops_when_state_negative ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+     Running tests/seq_delay.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/seq_delay-f9d418baa454031a)
+
+running 1 test
+test delay_lookup_preserves_fallbacks_and_publication_without_allocating ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/server_packets.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/server_packets-f949de0077c706ad)
+
+running 19 tests
+test enclosed_loc_add_change_does_not_panic ... ok
+test logout_clears_ingame ... ok
+test logout_clears_the_tutorial_overlay ... ok
+test logout_resets_ptype ... ok
+test midi_jingle_sets_song_and_delay ... ok
+test midi_song_65535_is_no_song ... ok
+test midi_song_sets_next ... ok
+test npc_info_empty_list_is_ok ... ok
+test player_info_teleports_local_player ... ok
+test reset_anims_clears_primary_anims ... ok
+test truncated_player_info_is_t2_not_panic ... ok
+test unknown_ptype_logs_out ... ok
+test unset_map_flag_clears_flag ... ok
+test update_runenergy_sets_energy ... ok
+test update_stat_sets_xp_and_levels ... ok
+test varp_large_writes_var ... ok
+test varp_small_value_is_signed ... ok
+test varp_small_writes_var ... ok
+test varp_sync_copies_served_vars ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.99s
+
+     Running tests/social.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/social-80916de8b80975a2)
+
+running 23 tests
+test add_friend_encodes_p8 ... ok
+test apply_clientcode_8_sets_split_private_chat ... ok
+test client_component_fills_friend_name ... ok
+test client_component_update_range_writes_world_text ... ok
+test del_friend_removes_and_encodes ... ok
+test do_action_ignorelist_del_calls_del_ignore ... ok
+test do_action_message_private_opens_social_input ... ok
+test game_loop_runs_timeout_chat ... ok
+test message_game_trade_skips_ignored ... ok
+test message_private_unpacks_and_adds_chat ... ok
+test message_public_packs_hello ... ok
+test player_chat_mask_skips_payload_when_disabled ... ok
+test player_chat_mask_unpacks_and_adds_chat ... ok
+test public_send_stamps_local_bubble_and_hides_when_off ... ok
+test public_send_without_name_skips_bubble ... ok
+test social_enter_add_friend_encodes ... ok
+test social_enter_pm_sends_message_private ... ok
+test timeout_chat_expires_local_bubble_on_the_150th_tick ... ok
+test timeout_chat_expires_tracked_player_and_npc ... ok
+test to_sentence_case_after_punct ... ok
+test update_friendlist_adds_and_login_chat ... ok
+test update_friendlist_existing_world_0_to_10_chats_login ... ok
+test update_ignorelist_fills_userhashes ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.49s
+
+     Running tests/title.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/title-fd49e40793b9b302)
+
+running 7 tests
+test from_jpeg_decodes_title_dat ... ok
+test gpu_title_flames_tick_left_strip ... ok
+test prepare_title_does_not_request_scape_main ... ok
+test title_background_fills_left_strip ... ok
+test title_draw_writes_pixels ... ok
+test title_flames_tick_mutates_left_strip ... ok
+test title_requests_scape_main ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.05s
+
+     Running tests/unpack_cache.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/unpack_cache-22655e2f0f617864)
+
+running 3 tests
+test cpu_renders_maze_wall_and_textured_door ... ok
+test maze_wall_texture_ids_in_range_and_loaded ... ok
+test unpacks_versioned_snapshot ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.89s
+
+     Running tests/walk.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/walk-eb98fc0e6a8dcb52)
+
+running 6 tests
+test game_loop_consumes_ground_pick_into_move_gameclick ... ok
+test minimap_loop_outside_rect_is_ignored ... ok
+test minimap_loop_type1_in_rect ... ok
+test mouse_loop_chrome_click_does_not_walk ... ok
+test mouse_loop_viewport_click_arms_picking ... ok
+test walk_here_uses_picking_not_tiles_as_params ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s
+
+     Running tests/wordfilter.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/wordfilter-a8f177edc29a39c0)
+
+running 2 tests
+test filter_without_unpack_is_identity ... ok
+test unpack_wordenc_and_whitelist_cook ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/wordpack.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/wordpack-e0d1bb6753531628)
+
+running 4 tests
+test wordpack_bytes_match_ts_oracle ... ok
+test wordpack_exact_80_roundtrip ... ok
+test wordpack_roundtrip_hello ... ok
+test wordpack_truncates_to_80 ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/world.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/world-56aa587b871bbbf7)
+
+running 26 tests
+test camera_facing_box_faces_draw_as_2x2_scenery ... ok
+test camera_facing_box_survives_full_vis_window ... ok
+test core_world_has_typecodes_without_renderer ... ok
+test eight_tile_south_occluder_does_not_eat_outside_walls ... ok
+test fountain_facing_side_survives_dense_neighbours ... ok
+test interior_scenery_does_not_eat_south_wall_from_outside ... ok
+test near_camera_facing_south_wall_still_covers ... ok
+test overlay_edge_ground_keeps_dirt_and_grass_face_colours ... ok
+test painted_house_wall_covers_from_outside_after_share_light ... ok
+test render_2d_ground_plain_quick_fills_4x4 ... ok
+test render_all_lights_animated_sharelight_loc_frames ... ok
+test render_all_lights_pending_sharelight_scene_sprites ... ok
+test render_all_non_flat_diagonal_quick_ground_uses_own_corners ... ok
+test render_all_renders_scenery_sprites ... ok
+test render_all_writes_pixels_and_picks_ground_tile ... ok
+test reset_vis_calc_marks_near_tiles_visible ... ok
+test share_light_does_not_delete_adjacent_south_walls ... ok
+test share_light_empty_world_is_noop ... ok
+test share_light_lights_ground_decor ... ok
+test share_light_lights_scenery_sprites ... ok
+test share_light_lights_wall_models_and_consumes_normals ... ok
+test south_facing_wall_covers_pixels_from_outside ... ok
+test south_wall_covers_when_camera_is_southeast ... ok
+test south_wall_not_swallowed_by_its_own_occluder ... ok
+test update_mouse_picking_sets_click_and_clears_ground ... ok
+test varrock_fountain_facing_side_covers ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.28s
+
+     Running tests/zone.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps/zone-0cc90b99adc5d0bb)
+
+running 45 tests
+test change_loc_available_remaps_shape_11_to_10 ... ok
+test change_loc_unchecked_wall_straight_with_anim_sets_wall ... ok
+test check_model_none_is_ready ... ok
+test client_obj_roundtrips_in_link_list ... ok
+test client_proj_bind_seq_resolves_zero_delays_via_animframe_fallback ... ok
+test client_proj_move_by_uses_bound_seq_delays ... ok
+test client_proj_set_target_places_startpos_along_delta ... ok
+test full_follows_clears_8x8_ground_obj_and_expires_locs ... ok
+test get_wall_mut_none_on_empty_tile ... ok
+test loc_add_change_applies_on_do_queue ... ok
+test loc_add_change_out_of_range_shape_does_not_panic ... ok
+test loc_add_change_waits_when_model_not_ready ... ok
+test loc_anim_door_packet_overrides_non_door_placement ... ok
+test loc_anim_ground_decor_model ... ok
+test loc_anim_missing_wall_is_noop ... ok
+test loc_anim_out_of_range_shape_does_not_panic ... ok
+test loc_anim_replaces_wall_model1 ... ok
+test loc_anim_scene_remaps_shape_11_to_10 ... ok
+test loc_anim_wall_decor_uses_tile_xz ... ok
+test loc_anim_wall_door_animates_both_models ... ok
+test loc_change_defaults_end_time_minus_one ... ok
+test loc_del_removes_wall ... ok
+test loc_del_wall_decor_uses_tile_xz_not_swapped ... ok
+test logout_clears_zone_lists ... ok
+test map_anim_pushes_and_add_map_anim_places_dynamic ... ok
+test map_projanim_negative_target_retargets_to_local_player ... ok
+test map_projanim_out_of_range_dest_is_dropped ... ok
+test map_projanim_pushes_and_add_projectiles_places_dynamic ... ok
+test map_spot_anim_start_cycle_is_cycle_plus_delay ... ok
+test obj_add_headless_still_sets_world ... ok
+test obj_add_sets_ground_object ... ok
+test obj_count_rewrites_matching_stack ... ok
+test obj_del_clears_empty_cell ... ok
+test obj_reveal_adds_for_other_pid ... ok
+test obj_reveal_skips_self_slot ... ok
+test p_locmerge_consumes_and_noops_without_model ... ok
+test p_locmerge_no_player_stops_before_apply ... ok
+test rebuild_normal_negative_dx_shifts_descending ... ok
+test rebuild_normal_shifts_ground_obj_by_base_delta ... ok
+test rebuild_normal_zero_delta_preserves_ground_obj ... ok
+test rotate_x_axis_90_swaps_y_and_z ... ok
+test scene_model_proj_min_y_defaults_1000 ... ok
+test update_pid_sets_self_slot_and_members ... ok
+test world_dynamic_count_starts_zero ... ok
+test world_update_num_increments_when_draw_then_zeros_headless ... ok
+
+test result: ok. 45 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.42s
+

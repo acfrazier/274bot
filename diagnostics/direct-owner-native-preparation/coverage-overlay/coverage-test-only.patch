@@ -1,0 +1,277 @@
+--- a/crates/api/src/owner_capture.rs
++++ b/crates/api/src/owner_capture.rs
+@@ -628,6 +628,21 @@
+     }
+ 
+     #[test]
++    fn deadline_failure_is_latched_and_suppresses_later_rows() {
++        let mut budget = Budget::new();
++        std::thread::sleep(std::time::Duration::from_millis(8));
++        assert!(!budget.check_deadline());
++        assert_eq!(budget.failed(), Some(Reason::BudgetDeadline));
++
++        let mut rows = FieldRows::default();
++        assert!(!budget.push_row(
++            &mut rows,
++            FieldRow::unknown("late", "row", Reason::Incomplete, 0)
++        ));
++        assert!(rows.is_empty(), "deadline failure must suppress later rows");
++    }
++
++    #[test]
+     fn unknown_is_not_zero() {
+         let r = FieldRow::unknown("builder", "capacity", Reason::OpaqueUnknown, 0);
+         assert!(!r.complete);
+--- a/crates/host/src/owner_capture.rs
++++ b/crates/host/src/owner_capture.rs
+@@ -851,6 +851,29 @@
+     }
+ 
+     #[test]
++    fn token_addressed_queue_does_not_deliver_stale_request_to_current_slot() {
++        let stale = register_slot_token();
++        let current = register_slot_token();
++        assert_ne!(stale, current);
++
++        let mb = OwnerMailbox::new();
++        mb.try_publish_request(OwnerRequest {
++            request_id: 1,
++            phase: 0,
++            slot_token: stale,
++            armed_frame: 0,
++        })
++        .unwrap();
++        assert!(mb.try_take_request_for(current).is_none());
++        let stale_request = mb.try_take_request_for(stale).unwrap();
++        assert_eq!(stale_request.slot_token, stale);
++        assert_eq!(stale_request.request_id, 1);
++        let inner = mb.inner.lock().unwrap();
++        assert!(inner.requests.is_empty());
++        assert_eq!(inner.bytes_est, 0);
++    }
++
++    #[test]
+     fn draining_fragments_preserves_undrained_accounting() {
+         let mb = OwnerMailbox::new();
+         mb.try_publish_request(OwnerRequest {
+--- a/crates/host-play/src/owner_capture.rs
++++ b/crates/host-play/src/owner_capture.rs
+@@ -636,4 +636,49 @@
+         let c = CaptureConfig::off();
+         assert!(!c.enabled);
+     }
++
++    #[test]
++    fn delayed_fragment_latches_failure_and_terminal_is_unsuccessful() {
++        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++        let path = std::env::temp_dir().join(format!(
++            "owner-phase-deadline-{}-{}",
++            std::process::id(),
++            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
++        ));
++        let was_enabled = enabled();
++        owner_capture::init_enabled(true);
++        let mailbox = owner_capture::global_mailbox();
++        mailbox.drain_fragments();
++        mailbox.drain_encoded();
++
++        let token = SlotToken(77);
++        let mut phases = PhasePublisher::with_output(&path).unwrap();
++        phases.token = Some(token);
++        phases.requests[0] = Some(100);
++        let mut fragment = OwnerFragment::new("nav_snapshot");
++        fragment.slot_token = token.0;
++        fragment.request_id = 1;
++        fragment.phase = 0;
++        fragment.frame_serial = 11;
++        fragment.begin_ns = 100;
++        fragment.end_ns = 1_000_000_101;
++        mailbox.try_push_fragment(fragment).unwrap();
++
++        phases.poll(false, false);
++        let failure = phases.failure;
++        let finish = phases.finish();
++        owner_capture::init_enabled(was_enabled);
++        let contents = std::fs::read_to_string(&path).unwrap();
++        std::fs::remove_file(path).unwrap();
++
++        assert_eq!(failure, Some(Reason::BudgetDeadline));
++        assert_eq!(
++            finish.unwrap_err(),
++            "owner capture unqualified: budget_deadline"
++        );
++        assert!(contents.contains("\"kind\":\"owner_fragment\""));
++        assert!(contents.contains(
++            "\"kind\":\"owner_terminal\",\"complete\":false,\"reason\":\"budget_deadline\""
++        ));
++    }
+ }
+--- a/crates/host-play/src/owner_capture_output.rs
++++ b/crates/host-play/src/owner_capture_output.rs
+@@ -263,8 +263,46 @@
+         let out = Output::new(&path).unwrap();
+         std::fs::remove_file(path).unwrap();
+         out
++    }
++
++    fn inspectable_output(name: &str) -> (std::path::PathBuf, Output) {
++        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++        let path = std::env::temp_dir().join(format!(
++            "owner-output-{name}-{}-{}",
++            std::process::id(),
++            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
++        ));
++        let out = Output::new(&path).unwrap();
++        (path, out)
++    }
++
++    fn fragment(
++        source: &'static str,
++        token: u64,
++        request_id: u32,
++        frame: u64,
++        begin_ns: u64,
++        end_ns: u64,
++    ) -> OwnerFragment {
++        let mut fragment = OwnerFragment::new(source);
++        fragment.slot_token = token;
++        fragment.request_id = request_id;
++        fragment.phase = 0;
++        fragment.frame_serial = frame;
++        fragment.begin_ns = begin_ns;
++        fragment.end_ns = end_ns;
++        fragment
+     }
+ 
++    fn written(out: &mut Output, path: &std::path::Path) -> String {
++        out.file.flush().unwrap();
++        std::fs::read_to_string(path).unwrap()
++    }
++
++    fn remove_output(path: std::path::PathBuf) {
++        std::fs::remove_file(path).unwrap();
++    }
++
+     #[test]
+     fn completed_fragments_alone_never_certify_missing_encoded_rows() {
+         let mut out = output();
+@@ -286,4 +324,97 @@
+             Err(Reason::CapDrift)
+         );
+     }
++
++    #[test]
++    fn wrong_token_and_request_are_rejected_before_publication() {
++        for (name, fragment) in [
++            ("wrong-token", fragment("nav_snapshot", 8, 1, 7, 100, 200)),
++            ("wrong-request", fragment("nav_snapshot", 7, 2, 7, 100, 200)),
++        ] {
++            let (path, mut out) = inspectable_output(name);
++            out.sent[0] = true;
++            assert_eq!(
++                out.fragment(fragment, 7, [Some(100), None, None]),
++                Err(Reason::WrongEpoch)
++            );
++            assert!(written(&mut out, &path).is_empty());
++            remove_output(path);
++        }
++    }
++
++    #[test]
++    fn stale_frame_is_rejected_without_publishing_a_second_row() {
++        let (path, mut out) = inspectable_output("stale-frame");
++        out.sent[0] = true;
++        out.fragment(
++            fragment("nav_snapshot", 7, 1, 11, 100, 200),
++            7,
++            [Some(100), None, None],
++        )
++        .unwrap();
++        assert_eq!(
++            out.fragment(
++                fragment("slotscript", 7, 1, 12, 100, 200),
++                7,
++                [Some(100), None, None],
++            ),
++            Err(Reason::StaleFrame)
++        );
++        let contents = written(&mut out, &path);
++        assert_eq!(contents.matches("\"kind\":\"owner_fragment\"").count(), 1);
++        assert!(!contents.contains("slotscript"));
++        remove_output(path);
++    }
++
++    #[test]
++    fn malformed_fragment_is_rejected_with_failure_receipt() {
++        let (path, mut out) = inspectable_output("malformed");
++        out.sent[0] = true;
++        let mut malformed = fragment("nav_snapshot", 7, 1, 11, 100, 200);
++        malformed.complete = false;
++        malformed.reason = Reason::Malformed;
++        assert_eq!(
++            out.fragment(malformed, 7, [Some(100), None, None]),
++            Err(Reason::Incomplete)
++        );
++        let contents = written(&mut out, &path);
++        remove_output(path);
++        assert_eq!(contents.matches("\"kind\":\"owner_fragment\"").count(), 1);
++        assert!(contents.contains("\"complete\":false"));
++        assert!(contents.contains("\"reason\":\"malformed\""));
++    }
++
++    #[test]
++    fn delayed_fragment_is_rejected_while_preserving_raw_evidence() {
++        let (path, mut out) = inspectable_output("delayed");
++        out.sent[0] = true;
++        assert_eq!(
++            out.fragment(
++                fragment("nav_snapshot", 7, 1, 11, 100, 1_000_000_101),
++                7,
++                [Some(100), None, None],
++            ),
++            Err(Reason::BudgetDeadline)
++        );
++        let contents = written(&mut out, &path);
++        remove_output(path);
++        assert_eq!(contents.matches("\"kind\":\"owner_fragment\"").count(), 1);
++        assert!(contents.contains("\"source\":\"nav_snapshot\""));
++    }
++
++    #[test]
++    fn missing_fragment_deadline_cannot_finish_successfully() {
++        let (path, mut out) = inspectable_output("missing-deadline");
++        assert_eq!(
++            out.poll([Some(100), None, None], 7, 1_000_000_101),
++            Err(Reason::Missing)
++        );
++        assert_eq!(out.finish(Some(Reason::Missing)), Err(Reason::Missing));
++        let contents = std::fs::read_to_string(&path).unwrap();
++        remove_output(path);
++        assert!(contents.contains("\"kind\":\"owner_request\""));
++        assert!(!contents.contains("\"kind\":\"owner_fragment\""));
++        assert!(contents
++            .contains("\"kind\":\"owner_terminal\",\"complete\":false,\"reason\":\"missing\""));
++    }
+ }
+--- a/vendor/fr-client-rust/crates/client/src/core/world_owner_capture.rs
++++ b/vendor/fr-client-rust/crates/client/src/core/world_owner_capture.rs
+@@ -495,4 +495,19 @@
+         assert_eq!(sq.box_count, Some(3));
+         assert_eq!(sq.box_bytes, Some(3 * std::mem::size_of::<Square>() as u64));
+     }
++
++    #[test]
++    fn linked_square_walk_honors_fragment_deadline() {
++        let mut w = World::new(vec![vec![vec![0; 2]; 2]; 1], 2, 1, 2);
++        let mut root = Square::new(0, 0, 0);
++        root.linked_square = Some(Box::new(Square::new(0, 0, 0)));
++        w.squares[0][0][0] = Some(Box::new(root));
++
++        let mut budget = WorldOwnerBudget::new(262_144, 0);
++        let rows = w.owner_payload(&mut budget);
++        let squares = rows.iter().find(|row| row.field == "squares").unwrap();
++        assert!(!squares.complete);
++        assert_eq!(squares.reason, "budget_deadline");
++        assert_eq!(budget.failed, Some("budget_deadline"));
++    }
+ }
