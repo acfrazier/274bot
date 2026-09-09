@@ -11,6 +11,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 18:10 UTC
+
+- TUI test overlay corrected at25af151; same-card reviewer round2 is running.
+  Native execution remains withheld until approval and root verification.
+- Offline live preparation e599d17 rejected for invented build-manifest fields,
+  weak feature checking and unbound controller digest. Same-card Luna correction
+  is running; root also identified strict source/feature admission gaps.
+- Narrow managed-controller design queued as t_59c6d6f5 profileSol behind
+  preparation review t_53db9807. It must preserve existing default behavior and
+  address exact source lineage, short timing and owned runtime guards before
+  implementation. No new live attempt is released.
+- Coordinate experiment t_8cdb3301 remains running. No real F2 or native owner
+  process is active; original failed qualification and corrected client evidence
+  remain distinct from a full native admission.
+
 ## Latest boundary — 2026-09-09 18:02 UTC
 
 - Optimized original-owner binary built134.926s,95595384B SHA256
