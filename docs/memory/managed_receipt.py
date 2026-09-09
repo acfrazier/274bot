@@ -40,7 +40,7 @@ def _timestamp(value):
 
 def create_launch(path, *, cell_id, index, kind, effective_cli, binary,
                   manifest_path, server_identity_path, host_conditions_path,
-                  sampler_config, cache_provenance_path=None):
+                  sampler_config, cache_provenance_path=None, capture_mode=None):
     """Call immediately before starting the launcher; never overwrites a cell."""
     if not isinstance(cell_id, str) or not cell_id or type(index) is not int or index < 1:
         raise ValueError('invalid cell id/index')
@@ -55,6 +55,10 @@ def create_launch(path, *, cell_id, index, kind, effective_cli, binary,
     value = {'schema': 1, 'id': cell_id, 'index': index, 'kind': kind,
              'effective_cli': effective_cli, 'binary': str(pathlib.Path(binary).resolve(strict=True)),
              'sampler': sampler_config, 'performance_acceptance': False}
+    if capture_mode is not None:
+        if capture_mode != 'direct-owner-v1':
+            raise ValueError('invalid capture mode')
+        value['capture_mode'] = capture_mode
     value['binary_sha256'] = file_sha256(value['binary'])
     if cache_provenance_path is not None:
         cache_path = pathlib.Path(cache_provenance_path).resolve(strict=True)
@@ -108,8 +112,15 @@ def complete(path, *, launch_path, run_dir, launcher_exit_code, sampler_result,
     else:
         run_dir = pathlib.Path(run_dir).resolve(strict=True)
         receipt['run_dir'] = str(run_dir)
-        for name in RAW_FILES:
-            source = run_dir / name
+        raw_sources = {name: run_dir / name for name in RAW_FILES}
+        if launch.get('capture_mode') == 'direct-owner-v1':
+            raw_sources.update({
+                'samples.owners.jsonl': run_dir / 'samples.owners.jsonl',
+                'frontend-handoff.json': launch_path.parent / 'frontend-handoff.json',
+                'direct-owner-guard.jsonl': launch_path.parent / 'direct-owner-guard.jsonl',
+                'direct-owner-guard-summary.json': launch_path.parent / 'direct-owner-guard-summary.json',
+            })
+        for name, source in raw_sources.items():
             if source.is_file():
                 receipt['raw_hashes'][name] = file_sha256(source)
             else:
@@ -122,6 +133,9 @@ def complete(path, *, launch_path, run_dir, launcher_exit_code, sampler_result,
                     receipt['raw_hashes']['input-probes.jsonl'] = file_sha256(source)
                 else:
                     errors.append('missing_raw_file:input-probes.jsonl')
+            if (launch.get('capture_mode') == 'direct-owner-v1'
+                    and meta.get('capture_mode') != 'direct-owner-v1'):
+                errors.append('metadata_capture_mode_mismatch')
             receipt['exit_code'] = meta.get('exit_code')
             if meta.get('run_dir') is None or pathlib.Path(meta['run_dir']).resolve() != run_dir:
                 errors.append('metadata_run_dir_mismatch')
@@ -177,7 +191,9 @@ def complete(path, *, launch_path, run_dir, launcher_exit_code, sampler_result,
     if run_dir is not None:
         for name, digest in receipt['raw_hashes'].items():
             try:
-                if file_sha256(run_dir / name) != digest:
+                source = (run_dir / name if name in RAW_FILES or name in
+                          ('samples.owners.jsonl', 'input-probes.jsonl') else launch_path.parent / name)
+                if file_sha256(source) != digest:
                     errors.append('raw_changed_during_completion:' + name)
             except OSError:
                 errors.append('raw_unreadable_during_completion:' + name)

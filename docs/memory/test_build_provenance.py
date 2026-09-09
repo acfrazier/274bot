@@ -36,6 +36,103 @@ class BuildProvenanceTests(unittest.TestCase):
         }
         self.manifest_path = self.root / 'manifest.json'
 
+    def add_direct_lineage(self):
+        files = {}
+        for name in ('archive', 'source_manifest', 'materialization', 'build_result'):
+            path = self.root / (name + '.json')
+            path.write_text(name)
+            files[name] = {'path': str(path.resolve()), 'sha256': bp.file_sha256(path)}
+        original_fixed = (bp.DIRECT_ARCHIVE_SHA256, bp.DIRECT_SOURCE_MANIFEST_SHA256,
+                          bp.DIRECT_BINARY_SHA256)
+        self.addCleanup(lambda: setattr(bp, 'DIRECT_ARCHIVE_SHA256', original_fixed[0]))
+        self.addCleanup(lambda: setattr(bp, 'DIRECT_SOURCE_MANIFEST_SHA256', original_fixed[1]))
+        self.addCleanup(lambda: setattr(bp, 'DIRECT_BINARY_SHA256', original_fixed[2]))
+        bp.DIRECT_ARCHIVE_SHA256 = files['archive']['sha256']
+        bp.DIRECT_SOURCE_MANIFEST_SHA256 = files['source_manifest']['sha256']
+        self.paths['binary'].write_bytes(b'direct-binary')
+        bp.DIRECT_BINARY_SHA256 = bp.file_sha256(self.paths['binary'])
+        materialization = pathlib.Path(files['materialization']['path'])
+        materialization.write_text(json.dumps({
+            'schema': 'root-clean-owner-source-materialization-v1',
+            'archive': {'sha256': bp.DIRECT_ARCHIVE_SHA256},
+            'source_manifest_sha256': bp.DIRECT_SOURCE_MANIFEST_SHA256,
+            'source_member_count': 1124,
+            'source_provenance': {
+                'host_original': bp.DIRECT_ORIGINAL_HOST,
+                'client_original': bp.DIRECT_ORIGINAL_CLIENT,
+                'host_reviewed': bp.DIRECT_REVIEWED_HOST,
+                'client_reviewed': bp.DIRECT_REVIEWED_CLIENT,
+            },
+            'checkout_host_commit': bp.DIRECT_DIAGNOSTIC_HOST,
+            'checkout_client_commit': bp.DIRECT_DIAGNOSTIC_CLIENT,
+            'host_clean': True, 'client_clean': True,
+        }))
+        files['materialization']['sha256'] = bp.file_sha256(materialization)
+        build_result = pathlib.Path(files['build_result']['path'])
+        build_result.write_text(json.dumps({
+            'built': True,
+            'binary': {'sha256': bp.DIRECT_BINARY_SHA256, 'bytes': 95595424},
+            'source_before': {
+                'host_commit': bp.DIRECT_DIAGNOSTIC_HOST, 'client_commit': bp.DIRECT_DIAGNOSTIC_CLIENT,
+                'host_clean': True, 'client_clean': True, 'source_member_count': 1124,
+                'source_digests': {'host': bp.DIRECT_HOST_SOURCE_DIGEST, 'client': bp.DIRECT_CLIENT_SOURCE_DIGEST},
+                'archive': {'sha256': bp.DIRECT_ARCHIVE_SHA256},
+            },
+            'source_after': {
+                'host_commit': bp.DIRECT_DIAGNOSTIC_HOST, 'client_commit': bp.DIRECT_DIAGNOSTIC_CLIENT,
+                'host_clean': True, 'client_clean': True, 'source_member_count': 1124,
+                'source_digests': {'host': bp.DIRECT_HOST_SOURCE_DIGEST, 'client': bp.DIRECT_CLIENT_SOURCE_DIGEST},
+                'archive': {'sha256': bp.DIRECT_ARCHIVE_SHA256},
+            },
+            'step': {'exit': 0, 'command': ['cargo', 'build', '--offline', '--locked', '--features', bp.DIRECT_FEATURES]},
+        }))
+        files['build_result']['sha256'] = bp.file_sha256(build_result)
+        self.manifest['candidate'].update(
+            commit=bp.DIRECT_DIAGNOSTIC_HOST,
+            branch='codex/direct-owner-host-archive',
+            sources_sha256_pre=bp.DIRECT_HOST_SOURCE_DIGEST,
+            sources_sha256_post=bp.DIRECT_HOST_SOURCE_DIGEST,
+            client={'commit': bp.DIRECT_DIAGNOSTIC_CLIENT, 'sources_sha256': bp.DIRECT_CLIENT_SOURCE_DIGEST},
+            source_lineage={
+                **files,
+                'source_member_count': 1124,
+                'original_host_commit': bp.DIRECT_ORIGINAL_HOST,
+                'original_client_commit': bp.DIRECT_ORIGINAL_CLIENT,
+                'reviewed_host_commit': bp.DIRECT_REVIEWED_HOST,
+                'reviewed_client_commit': bp.DIRECT_REVIEWED_CLIENT,
+                'diagnostic_host_commit': bp.DIRECT_DIAGNOSTIC_HOST,
+                'diagnostic_client_commit': bp.DIRECT_DIAGNOSTIC_CLIENT,
+            },
+        )
+        self.manifest['features'].update(requested=bp.DIRECT_FEATURES, snapshot_dedup=False)
+        self.manifest['binaries']['candidate_tui_play']['sha256'] = bp.file_sha256(self.paths['binary'])
+        return files
+
+    def test_direct_owner_wrapper_binds_lineage_and_rejects_feature_or_identity_drift(self):
+        files = self.add_direct_lineage()
+        result = self.verify_direct()
+        self.assertEqual(result['build_commit'], bp.DIRECT_DIAGNOSTIC_HOST)
+        self.assertEqual(set(files), set(result['source_lineage_files']))
+        for label, binding in files.items():
+            self.assertEqual(result['files']['source_lineage_' + label], binding)
+        for path, value in (
+            (('features', 'requested'), ['memory-profile-no-alloc', 'memory-owner-capture']),
+            (('features', 'snapshot_dedup'), True),
+            (('candidate', 'commit'), bp.DIRECT_ORIGINAL_HOST),
+            (('candidate', 'client'), {'commit': bp.DIRECT_ORIGINAL_CLIENT, 'sources_sha256': bp.DIRECT_CLIENT_SOURCE_DIGEST}),
+        ):
+            with self.subTest(path=path):
+                changed = copy.deepcopy(self.manifest)
+                changed[path[0]][path[1]] = value
+                with self.assertRaises(ValueError):
+                    self.verify_direct(changed)
+
+    def verify_direct(self, manifest=None):
+        self.manifest_path.write_text(json.dumps(self.manifest if manifest is None else manifest))
+        return bp.verify_direct_owner_build(
+            self.manifest_path, 'candidate', 'tui', self.paths['binary'],
+            self.paths['nav_pack'], self.paths['nav_flags'], self.paths['catalog'])
+
     def verify(self, manifest=None, binary=None):
         self.manifest_path.write_text(json.dumps(self.manifest if manifest is None else manifest))
         return bp.verify_build(self.manifest_path, 'candidate', 'tui', binary or self.paths['binary'],

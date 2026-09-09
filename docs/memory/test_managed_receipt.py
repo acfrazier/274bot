@@ -9,6 +9,31 @@ import cache_provenance as cp
 
 
 class ManagedReceiptTests(unittest.TestCase):
+    def test_direct_owner_raw_artifacts_are_conditional_required_and_hashed(self):
+        self.launch['capture_mode'] = 'direct-owner-v1'
+        self.launch_path.write_text(json.dumps(self.launch))
+        self.meta['capture_mode'] = 'direct-owner-v1'
+        self.write_meta()
+        missing = self.finish()
+        for name in ('samples.owners.jsonl', 'frontend-handoff.json',
+                     'direct-owner-guard.jsonl', 'direct-owner-guard-summary.json'):
+            self.assertIn('missing_raw_file:' + name, missing['binding_errors'])
+        self.receipt_path.unlink()
+        for name in ('samples.owners.jsonl', 'frontend-handoff.json',
+                     'direct-owner-guard.jsonl', 'direct-owner-guard-summary.json'):
+            parent = self.run if name == 'samples.owners.jsonl' else self.root
+            (parent / name).write_text('{}\n')
+        result = self.finish()
+        for name in ('samples.owners.jsonl', 'frontend-handoff.json',
+                     'direct-owner-guard.jsonl', 'direct-owner-guard-summary.json'):
+            parent = self.run if name == 'samples.owners.jsonl' else self.root
+            self.assertEqual(result['raw_hashes'][name], mr.file_sha256(parent / name))
+        self.receipt_path.unlink()
+        self.meta.pop('capture_mode')
+        self.write_meta()
+        mismatch = self.finish()
+        self.assertIn('metadata_capture_mode_mismatch', mismatch['binding_errors'])
+
     def test_opt_in_probe_raw_artifact_is_required_and_hashed(self):
         self.meta['tui_input_probes'] = True
         self.write_meta()

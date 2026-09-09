@@ -1,0 +1,106 @@
+{
+  "schema": 1,
+  "captured_utc": "2026-09-09T21:35:08Z",
+  "scope": "generated direct-owner managed extension validation; not native target or live qualification",
+  "host": {
+    "os": "macOS 15.7.9 (24G830)",
+    "arch": "arm64",
+    "python": "3.9.6"
+  },
+  "container": {
+    "image": "python:3.11-slim",
+    "os": "Linux 7.0.12-linuxkit",
+    "arch": "x86_64",
+    "python": "3.11.16",
+    "init": true,
+    "git_available": false
+  },
+  "results": [
+    {
+      "name": "linux_generated_focused_subset",
+      "tests": 140,
+      "failures": 0,
+      "errors": 0,
+      "skips": 2,
+      "excluded_tests": [
+        "docs.memory.test_current_tui_calibration.CurrentCalibration.test_resolve_rs2b0t_commit_real_git_when_path_ok"
+      ],
+      "reason_for_exclusion": "the local pre-existing Python container image has no git binary; the excluded real-git test passed in the macOS non-collector run",
+      "log": "docker-linux-generated-unittest-rerun.log",
+      "sha256": "8dbe66a1b5ad108bc8bbaed8e56f6adc3553a9a114cffcfc36631bf6a6c3db3e",
+      "bytes": 35671
+    },
+    {
+      "name": "macos_complete_focused_suite",
+      "tests": 141,
+      "failures": 9,
+      "errors": 0,
+      "skips": 4,
+      "attribution": "all failures are generated managed-cell success assertions with collector_exit_code=1 and sampler_premature_exit=1; a preserved reproducer collector log identifies the strict process-accounting cadence deadline as the failure",
+      "log": "macos-focused-unittest-final.log",
+      "sha256": "6f12bb09c308981b1e656f01b8b3fb916746ea00a6b36a0eaf452bd886765f57",
+      "bytes": 68775
+    },
+    {
+      "name": "macos_noncollector_modules",
+      "tests": 90,
+      "failures": 0,
+      "errors": 0,
+      "skips": 3,
+      "log": "macos-focused-noncollector-unittest.log",
+      "sha256": "100c8d1445fe7d62d47a5cc71a1d3a5189e2b877e1387bd424c0774ca4a17382",
+      "bytes": 25972
+    },
+    {
+      "name": "macos_direct_managed_units",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "log": "macos-managed-direct-unit.log",
+      "sha256": "827d3c7802fb99f1176cbc2a55e429e49f6316f15d272961bb52cdce04fd0979",
+      "bytes": 1250
+    },
+    {
+      "name": "macos_reused_owner_validator",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "log": "macos-owner-validator-unittest-rerun.log",
+      "sha256": "1596143dec45d0aaeec522bd1069dbe8f3e43700c979bf223933eece644e2359",
+      "bytes": 384
+    }
+  ],
+  "supporting_evidence": [
+    {
+      "name": "macos_cadence_failure_sample",
+      "log": "macos-cadence-failure-sample.log",
+      "sha256": "47559635fd0ef6f9a633a2dafbe4b968cc6e9b2a7e16fb340acb326e8e57c21c",
+      "bytes": 90
+    },
+    {
+      "name": "root_preserved_initial_macos_failure",
+      "directory": "root-preserved-macos-failure-01",
+      "sha256": "18efaffb26f73f21f5c7a17afec3bd58a56d29bc49fc479e197c4e9fc5fa9aad",
+      "tests": 138,
+      "failures": 12,
+      "skips": 2
+    },
+    {
+      "name": "root_preserved_initial_container_failure",
+      "directory": "root-preserved-container-failure-01",
+      "sha256": "6f01ef6584579d2df2a06e1f01bde6a823b1debf944387e8bcccd32c7e76298c",
+      "tests": 138,
+      "failures": 2,
+      "errors": 1,
+      "skips": 2
+    }
+  ],
+  "limitations": [
+    "The Linux container run is generated functional evidence, not native target qualification and not live/private admission evidence.",
+    "The Linux green result is an explicit 140-test subset, not a full-suite pass.",
+    "No release/live capture was attempted and no private root admission artifact was fabricated.",
+    "The unchanged default path remains covered by Linux generated tests; the macOS full-suite failures are retained rather than weakened or skipped."
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "scope": "preserved generated Linux container regression failure only; not native qualification",
+  "captured_utc": "2026-09-09T21:08:27.801087+00:00",
+  "source": "diagnostics/direct-owner-managed-extension/docker-linux-focused-unittest.log",
+  "sha256": "6f01ef6584579d2df2a06e1f01bde6a823b1debf944387e8bcccd32c7e76298c",
+  "bytes": 44550,
+  "reported_tests": 138,
+  "reported_failures": 2,
+  "reported_errors": 1,
+  "reported_skipped": 2
+}

@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import pathlib
 import os
+import argparse
+import json
+import signal
 import subprocess
 import sys
+import tempfile
+import textwrap
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parent
 SCRIPT = ROOT / "run_diagnostic.py"
@@ -24,6 +30,380 @@ def run_cli(*args: str) -> subprocess.CompletedProcess:
 
 
 class RunDiagnosticCli(unittest.TestCase):
+    def test_direct_owner_consumes_only_the_pre_reserved_empty_run_directory(self):
+        parser = rd.build_parser()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            reserved = root / 'reserved'
+            reserved.mkdir()
+            args = parser.parse_args([
+                'tui', '1', 'active', '--no-diagnostics', '--sustain',
+                '--warmup', '30', '--observe', '120', '--direct-owner-capture',
+                '--run-dir', str(reserved), '--frontend-handoff', str(root / 'handoff.json'),
+            ])
+            self.assertEqual(rd.prepare_run_directory(args, root), reserved.resolve())
+            self.assertTrue(reserved.is_dir())
+            (reserved / 'foreign').write_text('x')
+            with self.assertRaisesRegex(RuntimeError, 'empty'):
+                rd.prepare_run_directory(args, root)
+
+            ordinary = parser.parse_args(['tui', '1', 'active'])
+            generated = rd.prepare_run_directory(ordinary, root, timestamp='stamp')
+            self.assertEqual(generated, root / 'docs/memory/diagnostics/stamp_tui_n1_active')
+            self.assertTrue(generated.is_dir())
+
+    def test_direct_owner_cli_is_exact_and_path_flags_are_mode_only(self):
+        parser = rd.build_parser()
+        valid = parser.parse_args([
+            "tui", "1", "active", "--no-diagnostics", "--sustain",
+            "--warmup", "30", "--observe", "120", "--direct-owner-capture",
+            "--run-dir", "/tmp/direct-run", "--frontend-handoff", "/tmp/direct-handoff.json",
+        ])
+        rd.validate_args(valid, parser)
+        for extra in (("--run-dir", "/tmp/r"), ("--frontend-handoff", "/tmp/h")):
+            bad = parser.parse_args(["tui", "1", "active", *extra])
+            with self.assertRaises(SystemExit):
+                rd.validate_args(bad, parser)
+        invalid = (
+            ["tui", "16", "active"], ["panel", "1", "active"],
+            ["tui", "1", "idle"], ["tui", "1", "active", "--headless"],
+            ["tui", "1", "active", "--heaptrack-output", "/tmp/h"],
+        )
+        for prefix in invalid:
+            args = parser.parse_args([*prefix, "--no-diagnostics", "--sustain", "--warmup", "30", "--observe", "120",
+                                      "--direct-owner-capture", "--run-dir", "/tmp/r", "--frontend-handoff", "/tmp/f"])
+            with self.assertRaises(SystemExit):
+                rd.validate_args(args, parser)
+
+    def test_direct_owner_child_env_scrubs_inherited_and_sets_only_after_validation(self):
+        parser = rd.build_parser()
+        off = parser.parse_args(["tui", "1", "active"])
+        direct = parser.parse_args([
+            "tui", "1", "active", "--no-diagnostics", "--sustain", "--warmup", "30",
+            "--observe", "120", "--direct-owner-capture", "--run-dir", "/tmp/r",
+            "--frontend-handoff", "/tmp/f",
+        ])
+        rd.validate_args(direct, parser)
+        polluted = {"BOT_MEMORY_OWNER_CAPTURE": "1", "PATH": "/usr/bin"}
+        self.assertNotIn("BOT_MEMORY_OWNER_CAPTURE", rd.build_child_env(off, "/tmp/off", base_env=polluted))
+        self.assertEqual(rd.build_child_env(direct, "/tmp/r", base_env=polluted)["BOT_MEMORY_OWNER_CAPTURE"], "1")
+
+    def test_spawn_and_exit_handoff_preserve_immutable_spawn_object(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            slot = root / "frontend-handoff.json"
+            spawn = rd.build_spawn_handoff(
+                nonce="n", frontend_pid=11, frontend_start_identity="start:11",
+                launcher_pid=7, run_dir=root / "run", spawn_before=1.0, spawn_after=1.1,
+                frontend="tui", n=1, workload="active", warmup_s=30, observe_s=120,
+            )
+            rd.write_spawn_handoff(slot, spawn)
+            first = json.loads(slot.read_text())
+            self.assertEqual(first["state"], "spawned")
+            rd.write_exit_handoff(slot, spawn, exit_code=0, wait_return_monotonic_s=2.0)
+            exited = json.loads(slot.read_text())
+            self.assertEqual(exited["state"], "exited")
+            self.assertEqual(exited["spawn"], first["spawn"])
+            self.assertEqual(exited["frontend_start_identity"], "start:11")
+            self.assertFalse((root / "frontend-handoff.next.json").exists())
+
+    @unittest.skipUnless(hasattr(signal, "pthread_sigmask"), "POSIX signal masks")
+    def test_direct_child_preexec_restores_prior_mask_without_unblocking_parent(self):
+        prior = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+        self.addCleanup(lambda: signal.pthread_sigmask(signal.SIG_SETMASK, prior))
+        called = []
+        setup = rd.compose_direct_child_setup(
+            lambda: called.append("terminal"), prior,
+            {signal.SIGTERM: signal.SIG_DFL, signal.SIGINT: signal.default_int_handler},
+        )
+        with mock.patch.object(signal, "signal") as set_disposition, \
+             mock.patch.object(signal, "pthread_sigmask") as set_mask:
+            setup()
+        self.assertEqual(called, ["terminal"])
+        self.assertEqual(set_disposition.call_count, 2)
+        set_mask.assert_called_once_with(signal.SIG_SETMASK, prior)
+
+    @unittest.skipUnless(hasattr(signal, "pthread_sigmask"), "POSIX signal masks")
+    def test_stop_recorded_during_spawn_targets_only_registered_child_after_handoff(self):
+        for delivered in (signal.SIGTERM, signal.SIGINT):
+            with self.subTest(delivered=delivered):
+                events = []
+                handlers = {}
+
+                class Child:
+                    pid = 321
+
+                    def poll(self):
+                        return None
+
+                    def terminate(self):
+                        events.append('terminate')
+
+                child = Child()
+
+                def install(sig, handler):
+                    handlers[sig] = handler
+
+                def popen(*_args, **_kwargs):
+                    handlers[delivered](delivered, None)
+                    return child
+
+                with mock.patch.object(signal, 'getsignal', return_value=signal.SIG_DFL), \
+                     mock.patch.object(signal, 'signal', side_effect=install), \
+                     mock.patch.object(signal, 'pthread_sigmask', return_value=set()), \
+                     mock.patch.object(rd, '_linux_direct_children', return_value={}), \
+                     mock.patch.object(rd.subprocess, 'Popen', side_effect=popen), \
+                     mock.patch.object(rd.sr, 'sample_process', return_value={'start_identity': 'start:321'}), \
+                     mock.patch.object(rd, 'write_spawn_handoff', side_effect=lambda *_: events.append('handoff')):
+                    rd.spawn_direct_unix(
+                        binary=pathlib.Path('/tmp/binary'), root=pathlib.Path('/tmp'), env={},
+                        slave=4, terminal_setup=lambda: None, run_dir=pathlib.Path('/tmp/run'),
+                        handoff_path=pathlib.Path('/tmp/handoff.json'), frontend='tui', n=1,
+                        workload='active', warmup_s=30, observe_s=120,
+                    )
+                self.assertEqual(events, ['handoff', 'terminate'])
+
+    @unittest.skipUnless(hasattr(signal, 'pthread_sigmask'), 'POSIX signal masks')
+    def test_direct_spawn_rejects_preblocked_stop_before_popen(self):
+        with mock.patch.object(signal, 'getsignal', return_value=signal.SIG_DFL), \
+             mock.patch.object(signal, 'signal'), \
+             mock.patch.object(signal, 'pthread_sigmask', return_value={signal.SIGTERM}), \
+             mock.patch.object(rd.subprocess, 'Popen') as popen:
+            with self.assertRaisesRegex(RuntimeError, 'already blocked'):
+                rd.spawn_direct_unix(
+                    binary=pathlib.Path('/tmp/binary'), root=pathlib.Path('/tmp'), env={},
+                    slave=4, terminal_setup=lambda: None, run_dir=pathlib.Path('/tmp/run'),
+                    handoff_path=pathlib.Path('/tmp/handoff.json'), frontend='tui', n=1,
+                    workload='active', warmup_s=30, observe_s=120,
+                )
+        popen.assert_not_called()
+
+    def test_partial_spawn_cleanup_signals_only_unique_owned_identity(self):
+        unique = {'pid': 321, 'start_identity': 'linux_proc_start_ticks:7',
+                  'start_monotonic_s': 1.05}
+        with mock.patch.object(rd, '_linux_direct_children', side_effect=[{321: unique},
+                                                                         {321: unique}, {}]), \
+             mock.patch.object(rd.os, 'kill') as kill:
+            result = rd._cleanup_partial_direct_spawn('/tmp/binary', {}, 1.0, 1.1)
+        self.assertTrue(result['cleaned'])
+        self.assertFalse(result['orphan_risk'])
+        kill.assert_called_once_with(321, signal.SIGTERM)
+
+        ambiguous = {321: unique, 322: dict(unique, pid=322)}
+        with mock.patch.object(rd, '_linux_direct_children', return_value=ambiguous), \
+             mock.patch.object(rd.os, 'kill') as kill:
+            result = rd._cleanup_partial_direct_spawn('/tmp/binary', {}, 1.0, 1.1)
+        self.assertTrue(result['orphan_risk'])
+        kill.assert_not_called()
+
+        with mock.patch.object(rd, '_linux_direct_children', return_value={}), \
+             mock.patch.object(rd.os, 'kill') as kill:
+            result = rd._cleanup_partial_direct_spawn('/tmp/binary', {}, 1.0, 1.1)
+        self.assertTrue(result['orphan_risk'])
+        self.assertEqual(result['candidates'], [])
+        kill.assert_not_called()
+
+    @unittest.skipUnless(hasattr(signal, 'pthread_sigmask'), 'POSIX signal masks')
+    def test_child_restoration_failure_preserves_orphan_risk_without_guessed_signal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            failure = root / 'frontend-spawn-failure.json'
+            with mock.patch.object(signal, 'getsignal', return_value=signal.SIG_DFL), \
+                 mock.patch.object(signal, 'signal'), \
+                 mock.patch.object(signal, 'pthread_sigmask', return_value=set()), \
+                 mock.patch.object(rd, '_linux_direct_children', return_value={}), \
+                 mock.patch.object(rd.subprocess, 'Popen', side_effect=RuntimeError('restore failed')), \
+                 mock.patch.object(rd.os, 'kill') as kill:
+                with self.assertRaisesRegex(RuntimeError, 'restore failed'):
+                    rd.spawn_direct_unix(
+                        binary=root / 'binary', root=root, env={}, slave=4,
+                        terminal_setup=lambda: None, run_dir=root / 'run',
+                        handoff_path=root / 'frontend-handoff.json', frontend='tui', n=1,
+                        workload='active', warmup_s=30, observe_s=120,
+                    )
+            receipt = json.loads(failure.read_text())
+            self.assertTrue(receipt['orphan_risk'])
+            self.assertEqual(receipt['cleanup']['candidates'], [])
+            kill.assert_not_called()
+
+    @unittest.skipUnless(hasattr(signal, 'pthread_sigmask'), 'POSIX signal masks')
+    def test_prespawn_discovery_failure_restores_parent_mask_and_records_orphan_risk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            mask_calls = []
+
+            def mask(how, value):
+                mask_calls.append((how, value))
+                return set()
+
+            with mock.patch.object(signal, 'getsignal', return_value=signal.SIG_DFL), \
+                 mock.patch.object(signal, 'signal'), \
+                 mock.patch.object(signal, 'pthread_sigmask', side_effect=mask), \
+                 mock.patch.object(rd, '_linux_direct_children',
+                                   side_effect=OSError('proc unavailable')), \
+                 mock.patch.object(rd.subprocess, 'Popen') as popen:
+                with self.assertRaisesRegex(OSError, 'proc unavailable'):
+                    rd.spawn_direct_unix(
+                        binary=root / 'binary', root=root, env={}, slave=4,
+                        terminal_setup=lambda: None, run_dir=root / 'run',
+                        handoff_path=root / 'frontend-handoff.json', frontend='tui', n=1,
+                        workload='active', warmup_s=30, observe_s=120,
+                    )
+            popen.assert_not_called()
+            self.assertEqual(mask_calls[0][0], signal.SIG_BLOCK)
+            self.assertEqual(mask_calls[-1], (signal.SIG_SETMASK, set()))
+            receipt = json.loads((root / 'frontend-spawn-failure.json').read_text())
+            self.assertTrue(receipt['orphan_risk'])
+            self.assertIn('proc unavailable', receipt['cleanup']['error'])
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux /proc mask qualification')
+    def test_linux_direct_child_restores_stop_mask_before_exec(self):
+        import fcntl
+        import pty
+        import termios
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            binary = root / 'child.py'
+            binary.write_text('#!/usr/bin/env python3\nimport time\ntime.sleep(30)\n')
+            binary.chmod(0o755)
+            run = root / 'run'
+            run.mkdir()
+            handoff = root / 'frontend-handoff.json'
+            master, slave = pty.openpty()
+            self.addCleanup(lambda: os.close(master))
+
+            def terminal_setup():
+                os.setsid()
+                fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+
+            child, _handoff, _state = rd.spawn_direct_unix(
+                binary=binary, root=root, env=os.environ.copy(), slave=slave,
+                terminal_setup=terminal_setup, run_dir=run, handoff_path=handoff,
+                frontend='tui', n=1, workload='active', warmup_s=30, observe_s=120,
+            )
+            os.close(slave)
+            try:
+                status = (pathlib.Path('/proc') / str(child.pid) / 'status').read_text()
+                blocked_hex = next(line.split()[1] for line in status.splitlines()
+                                   if line.startswith('SigBlk:'))
+                blocked = int(blocked_hex, 16)
+                self.assertEqual(blocked & (1 << (signal.SIGTERM - 1)), 0)
+                self.assertEqual(blocked & (1 << (signal.SIGINT - 1)), 0)
+                child.send_signal(signal.SIGTERM)
+                child.wait(timeout=2)
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait(timeout=2)
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux SIGINT qualification')
+    def test_linux_direct_child_responds_to_sigint_without_hard_kill(self):
+        import fcntl
+        import pty
+        import termios
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            binary = root / 'child.py'
+            binary.write_text('#!/usr/bin/env python3\nimport time\ntime.sleep(30)\n')
+            binary.chmod(0o755)
+            run = root / 'run'
+            run.mkdir()
+            handoff = root / 'frontend-handoff.json'
+            master, slave = pty.openpty()
+
+            def terminal_setup():
+                os.setsid()
+                fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+
+            child, _handoff, _state = rd.spawn_direct_unix(
+                binary=binary, root=root, env=os.environ.copy(), slave=slave,
+                terminal_setup=terminal_setup, run_dir=run, handoff_path=handoff,
+                frontend='tui', n=1, workload='active', warmup_s=30, observe_s=120,
+            )
+            os.close(slave)
+            try:
+                child.send_signal(signal.SIGINT)
+                child.wait(timeout=2)
+                self.assertNotEqual(child.returncode, -signal.SIGKILL)
+            finally:
+                os.close(master)
+                if child.poll() is None:
+                    child.kill()
+                    child.wait(timeout=2)
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux pending-signal qualification')
+    def test_linux_pending_parent_stop_runs_only_after_durable_handoff(self):
+        harness = textwrap.dedent(r'''
+            import fcntl, json, os, pathlib, pty, signal, subprocess, sys, termios, time
+            sys.path.insert(0, os.environ['MEMORY_MODULE_ROOT'])
+            import run_diagnostic as rd
+
+            delivered = int(sys.argv[1])
+            root = pathlib.Path(sys.argv[2])
+            binary = root / 'child.py'
+            binary.write_text('#!/usr/bin/env python3\nimport time\ntime.sleep(30)\n')
+            binary.chmod(0o755)
+            run = root / 'run'
+            run.mkdir()
+            handoff = root / 'frontend-handoff.json'
+            inside_popen = root / 'inside-popen'
+            master, slave = pty.openpty()
+
+            sender_code = (
+                'import os,pathlib,sys,time\n'
+                'p=pathlib.Path(sys.argv[1]); d=time.monotonic()+3\n'
+                'while not p.exists() and time.monotonic()<d:\n'
+                '    time.sleep(.005)\n'
+                'if not p.exists(): sys.exit(2)\n'
+                'os.kill(int(sys.argv[2]),int(sys.argv[3]))'
+            )
+            sender = subprocess.Popen([
+                sys.executable, '-c', sender_code, str(inside_popen),
+                str(os.getpid()), str(delivered)])
+
+            def terminal_setup():
+                os.setsid()
+                fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+                inside_popen.write_text('blocked-parent')
+                time.sleep(.2)
+
+            child = None
+            try:
+                child, _handoff, state = rd.spawn_direct_unix(
+                    binary=binary, root=root, env=os.environ.copy(), slave=slave,
+                    terminal_setup=terminal_setup, run_dir=run, handoff_path=handoff,
+                    frontend='tui', n=1, workload='active', warmup_s=30,
+                    observe_s=120)
+                sender.wait(timeout=3)
+                rc = child.wait(timeout=3)
+                print(json.dumps({
+                    'stop_requested': state['stop_requested'],
+                    'handoff_state': json.loads(handoff.read_text())['state'],
+                    'child_exit': rc,
+                }))
+            finally:
+                os.close(slave)
+                os.close(master)
+                if sender.poll() is None:
+                    sender.kill(); sender.wait()
+                if child is not None and child.poll() is None:
+                    child.kill(); child.wait()
+        ''')
+        for delivered in (signal.SIGTERM, signal.SIGINT):
+            with self.subTest(delivered=delivered), tempfile.TemporaryDirectory() as tmp:
+                env = os.environ.copy()
+                env['MEMORY_MODULE_ROOT'] = str(ROOT)
+                completed = subprocess.run(
+                    [sys.executable, '-c', harness, str(delivered), tmp],
+                    capture_output=True, text=True, timeout=10, env=env)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                result = json.loads(completed.stdout.splitlines()[-1])
+                self.assertTrue(result['stop_requested'])
+                self.assertEqual(result['handoff_state'], 'spawned')
+                self.assertNotEqual(result['child_exit'], 0)
+
     def test_capture_frontend_bound_preserves_960_second_live_budget(self):
         self.assertEqual(rd._CAPTURE_FRONTEND_MAX_WALL_S, 960)
 

@@ -12,8 +12,10 @@ import signal
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 import unittest
+from typing import Any
 from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parent
@@ -315,6 +317,375 @@ class ManagedCellTests(unittest.TestCase):
         kwargs.setdefault("accounting_script", ACCOUNTING)
         kwargs.setdefault('_test_launcher', True)
         return rmc.run_managed_cell(spec_path, self.fx.cells, **kwargs)
+
+    def _direct_spec(self):
+        spec = self.fx.base_spec(cell_id='direct_contract')
+        result = (self.fx.root / 'direct_contract.json').resolve()
+        spec_path = result.with_suffix(result.suffix + '.spec.json')
+        cell_dir = result.with_suffix(result.suffix + '.cells') / 'direct_contract'
+        run_dir = cell_dir / 'frontend-run'
+        handoff = cell_dir / 'frontend-handoff.json'
+        diag = [
+            'tui', '1', 'active', '--binary', str(self.fx.binary),
+            '--build-manifest', str(self.fx.manifest), '--build-role', 'candidate',
+            '--no-diagnostics', '--sustain', '--warmup', '30', '--observe', '120',
+            '--direct-owner-capture', '--run-dir', str(run_dir),
+            '--frontend-handoff', str(handoff),
+        ]
+        spec.update(
+            diagnostic_argv=diag, n=1, warmup_s=30, observe_s=120,
+            teardown_grace_s=60, sampler_interval_s=.5, max_wall_s=365,
+            process_backend='system', requested_backend='none', heaptrack=None,
+            capture_contract={
+                'mode': 'direct-owner-v1', 'cell_dir': str(cell_dir),
+                'run_dir': str(run_dir), 'frontend_handoff_path': str(handoff),
+                'owned_output_paths': [str(result), str(spec_path),
+                                       str(cell_dir), str(run_dir)],
+                'warmup_s': 30, 'observe_s': 120, 'teardown_grace_s': 60,
+                'guard_interval_s': .5, 'handoff_deadline_s': 5.0,
+                'mem_available_floor_bytes': 268435456,
+                'frontend_rss_limit_bytes': 536870912,
+                'owned_output_limit_bytes': 67108864,
+                'frontend_wall_limit_s': 360, 'outer_wall_limit_s': 365,
+                'source_lineage': {'bound': True},
+                'admission_receipts': {name: str(self.fx.root / (name + '.json'))
+                                       for name in ('conflict', 'account', 'population', 'cache', 'server_health')},
+            },
+        )
+        return spec
+
+    def test_direct_contract_and_argv_paths_are_exact_and_mode_only(self):
+        spec = self._direct_spec()
+        normalized = rmc.validate_spec(spec)
+        args = rmc.parse_diagnostic_argv(spec['diagnostic_argv'])
+        rmc.require_argv_consistent_with_spec(normalized, args, _test_launcher=True)
+        for key, value in (
+            ('n', 16), ('warmup_s', 31), ('sampler_interval_s', .6),
+            ('max_wall_s', 366), ('process_backend', 'libproc'),
+        ):
+            with self.subTest(key=key), self.assertRaises(rmc.CellError):
+                rmc.validate_spec(spec | {key: value})
+        unknown = json.loads(json.dumps(spec))
+        unknown['capture_contract']['unreviewed'] = True
+        with self.assertRaisesRegex(rmc.CellError, 'unknown'):
+            rmc.validate_spec(unknown)
+        mismatch = json.loads(json.dumps(spec))
+        mismatch['capture_contract']['run_dir'] = str(self.fx.root / 'elsewhere')
+        with self.assertRaises(rmc.CellError):
+            rmc.require_argv_consistent_with_spec(
+                rmc.validate_spec(mismatch), rmc.parse_diagnostic_argv(mismatch['diagnostic_argv']),
+                _test_launcher=True)
+        foreign_output = json.loads(json.dumps(spec))
+        foreign_output['capture_contract']['owned_output_paths'][0] = str(
+            self.fx.root / 'unrelated-result.json'
+        )
+        with self.assertRaisesRegex(rmc.CellError, 'owned paths'):
+            rmc.validate_spec(foreign_output)
+        ordinary = self.fx.base_spec()
+        ordinary['capture_contract'] = {'mode': 'direct-owner-v1'}
+        with self.assertRaises(rmc.CellError):
+            rmc.validate_spec(ordinary)
+
+        argv_mismatch = json.loads(json.dumps(spec))
+        index = argv_mismatch['diagnostic_argv'].index('--run-dir') + 1
+        argv_mismatch['diagnostic_argv'][index] = str(self.fx.root / 'redirected-run')
+        with self.assertRaisesRegex(rmc.CellError, 'run-dir'):
+            rmc.require_argv_consistent_with_spec(
+                rmc.validate_spec(argv_mismatch),
+                rmc.parse_diagnostic_argv(argv_mismatch['diagnostic_argv']),
+                _test_launcher=True,
+            )
+
+    def test_owned_output_scanner_deduplicates_hardlinks_and_rejects_symlinks(self):
+        root = self.fx.root / 'owned'
+        nested = root / 'nested'
+        nested.mkdir(parents=True)
+        first = root / 'bytes'
+        first.write_bytes(b'12345')
+        os.link(first, nested / 'same')
+        scanner = rmc.OwnedOutputScanner([root, nested])
+        sample = scanner.scan()
+        self.assertEqual(sample['total_bytes'], 5)
+        external = self.fx.root / 'external'
+        external.write_bytes(b'secret')
+        (root / 'escape').symlink_to(external)
+        with self.assertRaisesRegex(rmc.CellError, 'symlink'):
+            scanner.scan()
+        self.assertEqual(external.read_bytes(), b'secret')
+
+    def test_owned_output_scanner_rejects_disappearance_but_allows_handoff_replacement(self):
+        root = self.fx.root / 'owned-replacement'
+        root.mkdir()
+        stable = root / 'stable'
+        stable.write_text('stable')
+        handoff = root / 'frontend-handoff.json'
+        handoff.write_text('spawned')
+        scanner = rmc.OwnedOutputScanner([root], replaceable_paths=[handoff])
+        scanner.scan()
+        stable.unlink()
+        with self.assertRaisesRegex(rmc.CellError, 'disappeared'):
+            scanner.scan()
+
+        stable.write_text('stable')
+        scanner = rmc.OwnedOutputScanner([root], replaceable_paths=[handoff])
+        scanner.scan()
+        replacement = root / 'frontend-handoff.next.json'
+        replacement.write_text('exited')
+        os.replace(replacement, handoff)
+        sample = scanner.scan()
+        self.assertGreater(sample['total_bytes'], 0)
+
+        transient = root / 'frontend-handoff.next.json'
+        scanner = rmc.OwnedOutputScanner(
+            [root], replaceable_paths=[handoff, transient]
+        )
+        transient.write_text('next')
+        scanner.scan()
+        transient.unlink()
+        scanner.scan()
+
+    def test_owned_output_scanner_fails_in_scan_disappearance_and_replayed_replacement(self):
+        root = self.fx.root / 'owned-races'
+        root.mkdir()
+        victim = root / 'victim'
+        victim.write_text('evidence')
+        real_scandir = os.scandir
+
+        def remove_after_listing(path):
+            entries = list(real_scandir(path))
+            if pathlib.Path(path) == root:
+                victim.unlink()
+            return entries
+
+        scanner = rmc.OwnedOutputScanner([root])
+        with mock.patch.object(rmc.os, 'scandir', side_effect=remove_after_listing):
+            with self.assertRaisesRegex(rmc.CellError, 'disappeared'):
+                scanner.scan()
+
+        handoff = root / 'frontend-handoff.json'
+        handoff.write_text('spawned')
+        scanner = rmc.OwnedOutputScanner([root], replaceable_paths=[handoff])
+        scanner.scan()
+        replacement = root / 'frontend-handoff.next.json'
+        replacement.write_text('exited')
+        os.replace(replacement, handoff)
+        scanner.scan()
+        replacement.write_text('replayed')
+        os.replace(replacement, handoff)
+        with self.assertRaisesRegex(rmc.CellError, 'replacement'):
+            scanner.scan()
+
+    def test_handoff_identity_deadline_and_exit_proof_are_fail_closed(self):
+        spawn = {
+            'nonce': 'abc', 'frontend_pid': 101, 'frontend_start_identity': 'start:101',
+            'launcher_pid': 77, 'run_dir': '/tmp/run', 'spawn_before_monotonic_s': 10.0,
+            'spawn_after_monotonic_s': 10.1, 'frontend': 'tui', 'terminal': True,
+            'terminal_size': [120, 40], 'n': 1, 'workload': 'active',
+            'warmup_s': 30, 'observe_s': 120, 'teardown_grace_s': 60,
+        }
+        state = {'schema': 1, 'mode': 'direct-owner-v1', 'state': 'spawned', 'spawn': spawn}
+        accepted = rmc.validate_frontend_handoff(
+            state, launcher_pid=77, run_dir=pathlib.Path('/tmp/run'),
+            receive_monotonic_s=10.49, launcher_start_monotonic_s=9.9)
+        self.assertEqual(accepted['nonce'], 'abc')
+        with self.assertRaisesRegex(rmc.CellError, 'first RSS'):
+            rmc.require_first_sample_deadline(accepted, sample_end_monotonic_s=10.500001)
+        rmc.require_first_sample_deadline(accepted, sample_end_monotonic_s=10.5)
+        exited = {'schema': 1, 'mode': 'direct-owner-v1', 'state': 'exited',
+                  'spawn': spawn, 'frontend_start_identity': 'start:101',
+                  'exit_code': 0, 'wait_return_monotonic_s': 11.0}
+        rmc.validate_exit_handoff(exited, accepted, receipt_monotonic_s=11.1)
+        exited['spawn'] = dict(spawn, nonce='replay')
+        with self.assertRaises(rmc.CellError):
+            rmc.validate_exit_handoff(exited, accepted, receipt_monotonic_s=11.1)
+
+        exited['spawn'] = spawn
+        metadata = {
+            'run_dir': '/tmp/run', 'pid': 101, 'exit_code': 0,
+            'direct_owner_spawn': spawn,
+            'direct_owner_exit': {
+                'frontend_start_identity': 'start:101', 'exit_code': 0,
+                'wait_return_monotonic_s': 11.0,
+            },
+        }
+        rmc.validate_direct_final_metadata(metadata, accepted, exited, pathlib.Path('/tmp/run'))
+        metadata['direct_owner_exit']['exit_code'] = 9
+        with self.assertRaisesRegex(rmc.CellError, 'metadata'):
+            rmc.validate_direct_final_metadata(metadata, accepted, exited, pathlib.Path('/tmp/run'))
+
+    def test_guard_thresholds_accept_equal_and_fail_over_without_imputation(self):
+        scanner = mock.Mock(scan=mock.Mock(return_value={'total_bytes': 67108864,
+                                                          'breakdown': [], 'digest': 'd'}))
+        sample = {'pid': 101, 'start_identity': 'start:101', 'parent_pid': 77,
+                  'resident_bytes': 536870912}
+        row = rmc.direct_guard_sample(
+            scheduled=10.5, started=10.5, ended=10.6, spawn_before=10.0,
+            frontend_pid=101, frontend_identity='start:101', launcher_pid=77,
+            process_sample=sample, mem_available=268435456, output_scanner=scanner)
+        self.assertIsNone(row['failure_reason'])
+        for change, expected in (
+            ({'mem_available': 268435455}, 'MemAvailable'),
+            ({'resident_bytes': 536870913}, 'frontend_rss'),
+            ({'output_bytes': 67108865}, 'owned_output'),
+            ({'scheduled': 370.0, 'started': 370.0, 'ended': 370.000001,
+              'spawn_before': 10.0}, 'frontend_wall'),
+        ):
+            with self.subTest(change=change):
+                values = dict(scheduled=10.5, started=10.5, ended=10.6, spawn_before=10.0,
+                              frontend_pid=101, frontend_identity='start:101', launcher_pid=77,
+                              process_sample=dict(sample), mem_available=268435456,
+                              output_scanner=scanner)
+                if 'resident_bytes' in change:
+                    values['process_sample']['resident_bytes'] = change.pop('resident_bytes')
+                if 'output_bytes' in change:
+                    scanner.scan.return_value = {'total_bytes': change.pop('output_bytes'), 'breakdown': [], 'digest': 'd'}
+                values.update(change)
+                self.assertIn(expected, rmc.direct_guard_sample(**values)['failure_reason'])
+                scanner.scan.return_value = {'total_bytes': 67108864, 'breakdown': [], 'digest': 'd'}
+
+    def test_guard_rejects_large_overshoot_skipped_grid_and_identity_failures(self):
+        scanner = mock.Mock(scan=mock.Mock(return_value={
+            'total_bytes': 67108864, 'breakdown': [], 'digest': 'd'}))
+        base: dict[str, Any] = dict(
+            scheduled=10.5, started=10.5, ended=10.6, spawn_before=10.0,
+            frontend_pid=101, frontend_identity='start:101', launcher_pid=77,
+            process_sample={'pid': 101, 'start_identity': 'start:101',
+                            'parent_pid': 77, 'resident_bytes': 536870912},
+            mem_available=268435456, output_scanner=scanner,
+        )
+        cases = (
+            ({'ended': 11.000001}, 'guard_schedule_overrun'),
+            ({'process_sample': None}, 'frontend_sample_missing'),
+            ({'process_sample': dict(base['process_sample'], pid=102)}, 'frontend_pid_mismatch'),
+            ({'process_sample': dict(base['process_sample'], start_identity='reused')},
+             'frontend_identity_changed'),
+            ({'process_sample': dict(base['process_sample'], parent_pid=88)},
+             'frontend_parent_mismatch'),
+            ({'process_sample': dict(base['process_sample'], resident_bytes=2 ** 40)},
+             'frontend_rss_above_ceiling'),
+            ({'mem_available': 0}, 'MemAvailable_below_floor'),
+        )
+        for changes, expected in cases:
+            with self.subTest(expected=expected):
+                self.assertEqual(
+                    rmc.direct_guard_sample(**(base | changes))['failure_reason'], expected)
+        scanner.scan.return_value = {'total_bytes': 2 ** 40, 'breakdown': [], 'digest': 'jump'}
+        row = rmc.direct_guard_sample(**base)
+        self.assertEqual(row['failure_reason'], 'owned_output_above_ceiling')
+        self.assertEqual(row['owned_output_bytes'], 2 ** 40)
+
+    def test_direct_preflight_rejects_missing_raw_swap_counters(self):
+        spec = self._direct_spec()
+        self.fx.manifest_obj['candidate']['source_lineage'] = spec['capture_contract']['source_lineage']
+        self.fx.manifest.write_text(json.dumps(self.fx.manifest_obj))
+        server_identity = json.loads(self.fx.server_identity.read_text())['start_identity']
+
+        def sample(pid, *, timeout):
+            identity = server_identity if pid == self.fx.game_server.pid else 'ambient-start'
+            return {'pid': pid, 'start_identity': identity, 'resident_bytes': 1,
+                    'state': 'S'}
+
+        incomplete = {
+            'mem_available_bytes': 805306368,
+            'vmstat': {'pswpin': 0, 'pswpout': 0, 'oom_kill': 0},
+            'cgroup': {'identity': 'cg', 'boot_id': 'boot',
+                       'memory_events': {'oom': 0}},
+        }
+        with mock.patch.object(rmc.bp, 'verify_direct_owner_build', return_value={
+                'status': 'verified', 'files': {}}), \
+                mock.patch.object(rmc.pa, 'process_sampler', return_value=sample), \
+                self.assertRaisesRegex(rmc.CellError, 'memory counters'):
+            rmc.preflight(
+                spec, rmc.parse_diagnostic_argv(spec['diagnostic_argv']),
+                direct_snapshot=lambda: incomplete,
+                disk_usage=lambda _path: mock.Mock(free=268435456),
+                sleep=lambda _seconds: None,
+                platform_name='linux', machine='x86_64',
+            )
+
+    def test_direct_preflight_boundaries_counter_drift_and_receipt_mutation(self):
+        spec = self._direct_spec()
+        self.fx.manifest_obj['candidate']['source_lineage'] = spec['capture_contract']['source_lineage']
+        self.fx.manifest.write_text(json.dumps(self.fx.manifest_obj))
+        for label, path in spec['capture_contract']['admission_receipts'].items():
+            pathlib.Path(path).write_text(json.dumps({'fixture_kind': label}))
+        server_identity = json.loads(self.fx.server_identity.read_text())['start_identity']
+
+        def sample(pid, *, timeout):
+            identity = server_identity if pid == self.fx.game_server.pid else 'ambient-start'
+            return {'pid': pid, 'start_identity': identity, 'resident_bytes': 1,
+                    'state': 'S'}
+
+        def snapshot(**changes):
+            value = {
+                'mem_available_bytes': 805306368,
+                'swap_total_bytes': 0,
+                'swap_free_bytes': 0,
+                'vmstat': {'pswpin': 0, 'pswpout': 0, 'oom_kill': 0},
+                'cgroup': {'identity': 'cg', 'boot_id': 'boot',
+                           'memory_events': {'oom': 0, 'oom_kill': 0}},
+            }
+            value.update(changes)
+            return value
+
+        args = rmc.parse_diagnostic_argv(spec['diagnostic_argv'])
+        patches = (
+            mock.patch.object(rmc.bp, 'verify_direct_owner_build', return_value={
+                'status': 'verified', 'files': {}}),
+            mock.patch.object(rmc.pa, 'process_sampler', return_value=sample),
+        )
+        with patches[0], patches[1]:
+            accepted = rmc.preflight(
+                spec, args, direct_snapshot=mock.Mock(side_effect=[snapshot(), snapshot()]),
+                disk_usage=lambda _path: mock.Mock(free=268435456),
+                sleep=lambda _seconds: None, platform_name='linux', machine='x86_64')
+            self.assertEqual(accepted['direct_preflight']['output_free_bytes'], 268435456)
+
+        for label, before, after, free in (
+            ('mem', snapshot(mem_available_bytes=805306367), snapshot(), 268435456),
+            ('disk', snapshot(), snapshot(), 268435455),
+            ('swap', snapshot(swap_total_bytes=2, swap_free_bytes=1), snapshot(), 268435456),
+            ('vmstat', snapshot(), snapshot(vmstat={'pswpin': 0, 'pswpout': 0,
+                                                    'oom_kill': 1}), 268435456),
+            ('cgroup', snapshot(), snapshot(cgroup={
+                'identity': 'cg', 'boot_id': 'other-boot',
+                'memory_events': {'oom': 0, 'oom_kill': 0}}), 268435456),
+        ):
+            with self.subTest(label=label), \
+                    mock.patch.object(rmc.bp, 'verify_direct_owner_build', return_value={
+                        'status': 'verified', 'files': {}}), \
+                    mock.patch.object(rmc.pa, 'process_sampler', return_value=sample), \
+                    self.assertRaises(rmc.CellError):
+                rmc.preflight(
+                    spec, args, direct_snapshot=mock.Mock(side_effect=[before, after]),
+                    disk_usage=lambda _path, free=free: mock.Mock(free=free),
+                    sleep=lambda _seconds: None, platform_name='linux', machine='x86_64')
+
+        receipt = pathlib.Path(spec['capture_contract']['admission_receipts']['conflict'])
+        def mutate_receipt(_seconds):
+            receipt.write_text('{"changed": true}\n')
+        with mock.patch.object(rmc.bp, 'verify_direct_owner_build', return_value={
+                'status': 'verified', 'files': {}}), \
+                mock.patch.object(rmc.pa, 'process_sampler', return_value=sample), \
+                self.assertRaisesRegex(rmc.CellError, 'admission receipt changed'):
+            rmc.preflight(
+                spec, args, direct_snapshot=mock.Mock(side_effect=[snapshot(), snapshot()]),
+                disk_usage=lambda _path: mock.Mock(free=268435456),
+                sleep=mutate_receipt, platform_name='linux', machine='x86_64')
+
+        def zombie_sample(pid, *, timeout):
+            value = sample(pid, timeout=timeout)
+            if pid == self.fx.game_server.pid:
+                value['state'] = 'Z'
+            return value
+        with mock.patch.object(rmc.bp, 'verify_direct_owner_build', return_value={
+                'status': 'verified', 'files': {}}), \
+                mock.patch.object(rmc.pa, 'process_sampler', return_value=zombie_sample), \
+                self.assertRaisesRegex(rmc.CellError, 'zombie'):
+            rmc.preflight(
+                spec, args, direct_snapshot=mock.Mock(side_effect=[snapshot(), snapshot()]),
+                disk_usage=lambda _path: mock.Mock(free=268435456),
+                sleep=lambda _seconds: None, platform_name='linux', machine='x86_64')
 
     def test_conpty_helper_handoff_missing_fails_closed(self):
         with mock.patch.object(rmc.sys, 'platform', 'win32'):
@@ -1105,6 +1476,106 @@ class ManagedCellTests(unittest.TestCase):
         self.assertEqual(result["signals"], [])
         self.assertTrue(result.get("orphan_risk"))
         self.assertTrue(_alive(helper_pid))
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'direct lifecycle qualification is Linux-only')
+    def test_linux_direct_lifecycle_generates_owned_guard_and_handoff_evidence(self):
+        launcher = self.fx.root / 'direct_launcher.py'
+        launcher.write_text(textwrap.dedent('''\
+            #!/usr/bin/env python3
+            import argparse, json, os, pathlib, subprocess, sys, time
+            p = argparse.ArgumentParser()
+            p.add_argument('--direct-owner-capture', action='store_true')
+            p.add_argument('--run-dir', type=pathlib.Path, required=True)
+            p.add_argument('--frontend-handoff', type=pathlib.Path, required=True)
+            p.add_argument('--binary'); p.add_argument('--build-manifest'); p.add_argument('--build-role')
+            p.add_argument('--no-diagnostics', action='store_true'); p.add_argument('--sustain', action='store_true')
+            p.add_argument('--warmup', type=int); p.add_argument('--observe', type=int)
+            p.add_argument('frontend'); p.add_argument('n'); p.add_argument('workload')
+            a = p.parse_args()
+            before = time.monotonic()
+            child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(.15)'])
+            after = time.monotonic()
+            stat = (pathlib.Path('/proc') / str(child.pid) / 'stat').read_text()
+            start = stat[stat.rfind(')') + 2:].split()[19]
+            spawn = {'nonce': 'fixture-nonce', 'launcher_pid': os.getpid(),
+                     'frontend_pid': child.pid,
+                     'frontend_start_identity': 'linux_proc_start_ticks:' + start,
+                     'run_dir': str(a.run_dir.resolve()),
+                     'spawn_before_monotonic_s': before, 'spawn_after_monotonic_s': after,
+                     'frontend': 'tui', 'terminal': True, 'terminal_size': [120, 40],
+                     'n': 1, 'workload': 'active', 'warmup_s': 30, 'observe_s': 120,
+                     'teardown_grace_s': 60}
+            handoff = {'schema': 1, 'mode': 'direct-owner-v1', 'state': 'spawned', 'spawn': spawn}
+            a.frontend_handoff.write_text(json.dumps(handoff, sort_keys=True) + '\\n')
+            meta = {'schema': 1, 'run_dir': str(a.run_dir.resolve()), 'pid': child.pid,
+                    'capture_mode': 'direct-owner-v1', 'direct_owner_spawn': spawn}
+            (a.run_dir / 'metadata.json').write_text(json.dumps(meta, sort_keys=True) + '\\n')
+            print('BOT_DIAGNOSTIC_METADATA=' + json.dumps(meta, sort_keys=True), flush=True)
+            rc = child.wait(); wait_return = time.monotonic()
+            exited = dict(handoff, state='exited', frontend_start_identity=spawn['frontend_start_identity'],
+                          exit_code=rc, wait_return_monotonic_s=wait_return)
+            next_path = a.frontend_handoff.with_name('frontend-handoff.next.json')
+            next_path.write_text(json.dumps(exited, sort_keys=True) + '\\n')
+            os.replace(next_path, a.frontend_handoff)
+            meta.update(exit_code=rc, direct_owner_exit={
+                'frontend_start_identity': spawn['frontend_start_identity'], 'exit_code': rc,
+                'wait_return_monotonic_s': wait_return})
+            (a.run_dir / 'metadata.json').write_text(json.dumps(meta, sort_keys=True) + '\\n')
+            print('BOT_DIAGNOSTIC_METADATA=' + json.dumps(meta, sort_keys=True), flush=True)
+        '''))
+        launcher.chmod(0o755)
+        result_path = self.fx.root / 'direct.json'
+        spec_path = result_path.with_suffix(result_path.suffix + '.spec.json')
+        cell_id = 'direct'
+        cell_dir = result_path.with_suffix(result_path.suffix + '.cells') / cell_id
+        run_dir = cell_dir / 'frontend-run'
+        handoff = cell_dir / 'frontend-handoff.json'
+        spec = self.fx.base_spec(cell_id=cell_id)
+        spec.update(n=1, warmup_s=30, observe_s=120, teardown_grace_s=60,
+                    sampler_interval_s=.5, max_wall_s=365, process_backend='system',
+                    requested_backend='none', heaptrack=None)
+        spec['diagnostic_argv'] = [
+            '--binary', str(self.fx.binary), '--build-manifest', str(self.fx.manifest),
+            '--build-role', 'candidate', '--no-diagnostics', '--sustain', '--warmup', '30',
+            '--observe', '120', '--direct-owner-capture', '--run-dir', str(run_dir),
+            '--frontend-handoff', str(handoff), 'tui', '1', 'active']
+        spec['launcher_argv'] = [str(launcher)] + spec['diagnostic_argv']
+        spec['capture_contract'] = {
+            'mode': 'direct-owner-v1', 'cell_dir': str(cell_dir.resolve()),
+            'run_dir': str(run_dir.resolve()), 'frontend_handoff_path': str(handoff.resolve()),
+            'owned_output_paths': [str(result_path.resolve()), str(spec_path.resolve()),
+                                   str(cell_dir.resolve()), str(run_dir.resolve())],
+            'warmup_s': 30, 'observe_s': 120, 'teardown_grace_s': 60, 'guard_interval_s': 0.5,
+            'handoff_deadline_s': 5, 'mem_available_floor_bytes': 268435456,
+            'frontend_rss_limit_bytes': 536870912, 'owned_output_limit_bytes': 67108864,
+            'frontend_wall_limit_s': 360, 'outer_wall_limit_s': 365,
+            'source_lineage': {'fixture': True},
+            'admission_receipts': {
+                name: str(self.fx.root / ('private-' + name + '.json'))
+                for name in ('conflict', 'account', 'population', 'cache', 'server_health')}}
+        spec_path.write_text(json.dumps(spec))
+        server_sample = sr.sample_process(self.fx.game_server.pid, timeout=2)
+        helper_sample = sr.sample_process(self.fx.helper.pid, timeout=2)
+        fake_pf = {'binary': str(self.fx.binary.resolve()), 'manifest': str(self.fx.manifest.resolve()),
+                   'provenance': {'status': 'verified', 'files': {}},
+                   'server_pid': self.fx.game_server.pid, 'server_sample': server_sample,
+                   'ambient_identities': {'ambient_helper': {
+                       'pid': self.fx.helper.pid, 'sample': helper_sample}},
+                   'direct_preflight': {}}
+        with mock.patch.object(rmc, 'preflight', return_value=fake_pf), \
+             mock.patch.object(rmc.mr, 'complete', return_value={'status': 'ok', 'binding_errors': []}):
+            report = rmc.run_managed_cell(
+                spec_path, result_path.with_suffix(result_path.suffix + '.cells'),
+                _test_launcher=True)
+        self.assertEqual(report['status'], 'ok', report)
+        self.assertEqual(report['direct_owner']['spawn']['launcher_pid'], report['launcher_pid'])
+        self.assertIsNotNone(report['direct_owner']['exit'])
+        self.assertEqual(report['direct_owner']['exit']['exit_code'], 0)
+        self.assertTrue(report['collector_stop_requested'])
+        self.assertEqual(report['collector_exit_code'], 0)
+        self.assertTrue((cell_dir / 'direct-owner-guard.jsonl').is_file())
+        self.assertTrue((cell_dir / 'direct-owner-guard-summary.json').is_file())
+        self.assertEqual(json.loads(handoff.read_text())['state'], 'exited')
 
 
 def _alive(pid: int) -> bool:

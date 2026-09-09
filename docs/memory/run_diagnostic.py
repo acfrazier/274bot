@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Run one diagnostic cell without overwriting the T4 baseline artifacts."""
-import argparse, hashlib, json, os, pathlib, signal, subprocess, sys, time
+import argparse, hashlib, json, os, pathlib, secrets, signal, subprocess, sys, time
 import errno, struct, threading
 from build_provenance import file_sha256, verify_build, recheck_files
+import build_provenance as bp
 from operator_home import bot_home_path
 import heaptrack_capture as hc
+import server_resources as sr
 
 # Historical Mac checkout default for rs2b0t provenance. Never applied on win32.
 _DEFAULT_RS2B0T_MAC = '/Users/acfrazier/experiments/rs2b0t'
@@ -59,6 +61,12 @@ def build_parser():
     p.add_argument('--warmup', type=int, default=120)
     p.add_argument('--heaptrack-output', type=pathlib.Path,
                    help='Linux N1 TUI direct Heaptrack capture directory')
+    p.add_argument('--direct-owner-capture', action='store_true',
+                   help='Linux N1 real-PTY owner capture (exact 30/120/60 contract)')
+    p.add_argument('--run-dir', type=pathlib.Path,
+                   help='Pre-reserved direct-owner frontend run directory')
+    p.add_argument('--frontend-handoff', type=pathlib.Path,
+                   help='Pre-reserved direct-owner frontend lifecycle handoff slot')
     return p
 
 def validate_args(a, parser):
@@ -98,6 +106,22 @@ def validate_args(a, parser):
                 a.render_profile, a.gpu_completion_profile, a.responsiveness_profile,
                 a.tui_input_probes, a.nav_captures)):
             parser.error('--heaptrack-output is incompatible with other diagnostic probes')
+    direct = bool(getattr(a, 'direct_owner_capture', False))
+    if bool(getattr(a, 'run_dir', None)) != direct or bool(getattr(a, 'frontend_handoff', None)) != direct:
+        parser.error('--run-dir and --frontend-handoff are valid and required only with --direct-owner-capture')
+    if direct:
+        if (a.frontend, a.n, a.workload) != ('tui', 1, 'active'):
+            parser.error('--direct-owner-capture requires the N1 TUI active diagnostic')
+        if not a.no_diagnostics or not a.sustain or a.headless:
+            parser.error('--direct-owner-capture requires --no-diagnostics --sustain and real TUI')
+        if (a.warmup, a.observe) != (30, 120):
+            parser.error('--direct-owner-capture requires exact --warmup 30 --observe 120')
+        if a.heaptrack_output or any((a.stack_logging, a.stack_logging_lite,
+                a.scheduling_profile, a.render_profile, a.gpu_completion_profile,
+                a.responsiveness_profile, a.responsiveness_fine, a.tui_input_probes,
+                a.nav_captures, a.failure_capture, a.cpu_fallback, a.single_renderer,
+                a.focused_one, a.focused_background, a.debug)):
+            parser.error('--direct-owner-capture is incompatible with other diagnostic modes')
 
 def requested_render_policy(a):
     if a.frontend != 'panel':
@@ -128,7 +152,7 @@ _SCRUB_CHILD_ENV = (
     'BOT_MEMORY_SUSTAIN', 'BOT_MEMORY_SINGLE_RENDERER', 'BOT_MEMORY_RENDER_POLICY',
     'BOT_MEMORY_FAILURE_CAPTURE', 'BOT_NAV_CAPTURES', 'BOT_SCHEDULING_PROFILE',
     'BOT_RENDER_PROFILE', 'BOT_GPU_COMPLETION_PROFILE', 'BOT_RESPONSIVENESS_PROFILE',
-    'BOT_RESPONSIVENESS_FINE',
+    'BOT_RESPONSIVENESS_FINE', 'BOT_MEMORY_OWNER_CAPTURE',
 )
 
 def apply_rs2b0t_default(env, *, platform=None):
@@ -225,10 +249,253 @@ def build_child_env(a, run_dir, base_env=None, *, platform=None):
         env['BOT_RESPONSIVENESS_PROFILE'] = '1'
     if a.responsiveness_fine:
         env['BOT_RESPONSIVENESS_FINE'] = '1'
+    if getattr(a, 'direct_owner_capture', False):
+        env['BOT_MEMORY_OWNER_CAPTURE'] = '1'
     capture = getattr(a, 'heaptrack_capture', None)
     if capture:
         env = hc.child_env(env, capture['output'], capture['preload'])
     return env
+
+
+def compose_direct_child_setup(terminal_setup, pre_block_mask, dispositions):
+    """Compose PTY setup with child-only disposition and mask restoration."""
+    def child_setup():
+        terminal_setup()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, dispositions[sig])
+        signal.pthread_sigmask(signal.SIG_SETMASK, pre_block_mask)
+    return child_setup
+
+
+def build_spawn_handoff(*, nonce, frontend_pid, frontend_start_identity, launcher_pid,
+                        run_dir, spawn_before, spawn_after, frontend, n, workload,
+                        warmup_s, observe_s):
+    spawn = {
+        'nonce': nonce,
+        'frontend_pid': int(frontend_pid),
+        'frontend_start_identity': frontend_start_identity,
+        'launcher_pid': int(launcher_pid),
+        'run_dir': str(pathlib.Path(run_dir).resolve()),
+        'spawn_before_monotonic_s': float(spawn_before),
+        'spawn_after_monotonic_s': float(spawn_after),
+        'frontend': frontend,
+        'terminal': True,
+        'terminal_size': [120, 40],
+        'n': int(n),
+        'workload': workload,
+        'warmup_s': int(warmup_s),
+        'observe_s': int(observe_s),
+        'teardown_grace_s': 60,
+    }
+    return {'schema': 1, 'mode': 'direct-owner-v1', 'state': 'spawned', 'spawn': spawn}
+
+
+def _write_fsynced_exclusive(path, value):
+    path = pathlib.Path(path)
+    with path.open('x', encoding='utf-8') as handle:
+        json.dump(value, handle, sort_keys=True, allow_nan=False)
+        handle.write('\n')
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def write_spawn_handoff(path, value):
+    if value.get('mode') != 'direct-owner-v1' or value.get('state') != 'spawned':
+        raise ValueError('invalid direct owner spawn handoff')
+    _write_fsynced_exclusive(path, value)
+
+
+def write_exit_handoff(path, spawn_handoff, *, exit_code, wait_return_monotonic_s):
+    path = pathlib.Path(path)
+    spawn = spawn_handoff.get('spawn')
+    if spawn_handoff.get('state') != 'spawned' or not isinstance(spawn, dict):
+        raise ValueError('invalid immutable spawn handoff')
+    value = {
+        'schema': 1,
+        'mode': 'direct-owner-v1',
+        'state': 'exited',
+        'spawn': spawn,
+        'frontend_start_identity': spawn.get('frontend_start_identity'),
+        'exit_code': int(exit_code),
+        'wait_return_monotonic_s': float(wait_return_monotonic_s),
+    }
+    next_path = path.with_name('frontend-handoff.next.json')
+    _write_fsynced_exclusive(next_path, value)
+    os.replace(next_path, path)
+    directory = os.open(str(path.parent), os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+    return value
+
+
+def _linux_direct_children(binary):
+    """Snapshot direct Linux children with executable and field-22 identity."""
+    children = {}
+    proc_root = pathlib.Path('/proc')
+    ticks = os.sysconf('SC_CLK_TCK')
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            text = (entry / 'stat').read_text()
+            close = text.rfind(')')
+            fields = text[close + 2:].split()
+            if int(fields[1]) != os.getpid():
+                continue
+            exe = pathlib.Path(os.readlink(entry / 'exe')).resolve()
+            if exe != pathlib.Path(binary).resolve():
+                continue
+            start_ticks = int(fields[19])
+            children[int(entry.name)] = {
+                'pid': int(entry.name),
+                'start_identity': 'linux_proc_start_ticks:' + str(start_ticks),
+                'start_monotonic_s': start_ticks / ticks,
+            }
+        except (OSError, ValueError, IndexError):
+            continue
+    return children
+
+
+def _cleanup_partial_direct_spawn(binary, before_children, spawn_before, spawn_after):
+    after = _linux_direct_children(binary)
+    tolerance = 1.0 / os.sysconf('SC_CLK_TCK')
+    candidates = [info for pid, info in after.items()
+                  if pid not in before_children
+                  and spawn_before - tolerance <= info['start_monotonic_s'] <= spawn_after + tolerance]
+    result = {'candidates': candidates, 'cleaned': False, 'orphan_risk': len(candidates) != 1,
+              'signals': []}
+    if len(candidates) != 1:
+        return result
+    candidate = candidates[0]
+    pid = candidate['pid']
+    for sig, label in ((signal.SIGTERM, 'SIGTERM'), (signal.SIGKILL, 'SIGKILL')):
+        current = _linux_direct_children(binary).get(pid)
+        if not current or current['start_identity'] != candidate['start_identity']:
+            result['cleaned'] = True
+            result['orphan_risk'] = False
+            return result
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            result['cleaned'] = True
+            result['orphan_risk'] = False
+            return result
+        except OSError as error:
+            result['error'] = str(error)
+            result['orphan_risk'] = True
+            return result
+        result['signals'].append(label)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            if pid not in _linux_direct_children(binary):
+                result['cleaned'] = True
+                result['orphan_risk'] = False
+                return result
+            time.sleep(.02)
+    result['orphan_risk'] = pid in _linux_direct_children(binary)
+    return result
+
+
+def spawn_direct_unix(*, binary, root, env, slave, terminal_setup, run_dir, handoff_path,
+                      frontend, n, workload, warmup_s, observe_s):
+    """Stop-safe direct frontend spawn with durable identity registration."""
+    if not hasattr(signal, 'pthread_sigmask'):
+        raise RuntimeError('direct owner capture requires POSIX signal masks')
+    dispositions = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
+    holder = {'child': None, 'stop_requested': False}
+
+    def stop(_sig, _frame):
+        holder['stop_requested'] = True
+        child = holder.get('child')
+        if child is not None and child.poll() is None:
+            child.terminate()
+
+    installed = []
+    try:
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, stop)
+            installed.append(sig)
+        pre_block_mask = signal.pthread_sigmask(
+            signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT}
+        )
+    except Exception:
+        for sig in installed:
+            signal.signal(sig, dispositions[sig])
+        raise
+    if signal.SIGTERM in pre_block_mask or signal.SIGINT in pre_block_mask:
+        signal.pthread_sigmask(signal.SIG_SETMASK, pre_block_mask)
+        for sig, disposition in dispositions.items():
+            signal.signal(sig, disposition)
+        raise RuntimeError('direct owner TERM/INT already blocked before spawn')
+
+    before_children = {}
+    spawn_before = time.monotonic()
+    try:
+        try:
+            before_children = _linux_direct_children(binary)
+            nonce = secrets.token_hex(16)
+            spawn_before = time.monotonic()
+            child = subprocess.Popen(
+                [str(binary)], cwd=root, env=env, stdin=slave, stdout=slave, stderr=slave,
+                preexec_fn=compose_direct_child_setup(
+                    terminal_setup, pre_block_mask, dispositions
+                ),
+            )
+            spawn_after = time.monotonic()
+            holder['child'] = child
+            sampled = sr.sample_process(child.pid, timeout=.2)
+            identity = sampled.get('start_identity')
+            if not isinstance(identity, str) or not identity:
+                raise RuntimeError('direct owner frontend start identity unavailable')
+            handoff = build_spawn_handoff(
+                nonce=nonce, frontend_pid=child.pid, frontend_start_identity=identity,
+                launcher_pid=os.getpid(), run_dir=run_dir, spawn_before=spawn_before,
+                spawn_after=spawn_after, frontend=frontend, n=n, workload=workload,
+                warmup_s=warmup_s, observe_s=observe_s,
+            )
+            write_spawn_handoff(handoff_path, handoff)
+            if holder['stop_requested'] and child.poll() is None:
+                child.terminate()
+            return child, handoff, holder
+        except Exception as error:
+            spawn_after = time.monotonic()
+            child = holder.get('child')
+            if child is not None:
+                try:
+                    child.terminate()
+                    child.wait(timeout=2)
+                except Exception:
+                    try:
+                        child.kill()
+                        child.wait(timeout=2)
+                    except Exception:
+                        pass
+                cleanup = {'registered_handle': True, 'pid': child.pid,
+                           'orphan_risk': child.poll() is None}
+            else:
+                try:
+                    cleanup = _cleanup_partial_direct_spawn(
+                        binary, before_children, spawn_before, spawn_after
+                    )
+                except Exception as cleanup_error:
+                    cleanup = {
+                        'candidates': [], 'cleaned': False, 'orphan_risk': True,
+                        'signals': [], 'error': str(cleanup_error),
+                    }
+            failure_path = pathlib.Path(handoff_path).with_name(
+                'frontend-spawn-failure.json'
+            )
+            _write_fsynced_exclusive(failure_path, {
+                'schema': 1, 'mode': 'direct-owner-v1', 'state': 'spawn_failed',
+                'spawn_before_monotonic_s': spawn_before,
+                'spawn_after_monotonic_s': spawn_after, 'error': str(error),
+                'cleanup': cleanup, 'orphan_risk': bool(cleanup.get('orphan_risk')),
+            })
+            raise
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, pre_block_mask)
 
 def catalog_path_for_env(env, *, windows=None):
     """js-scripts catalog under operator home (HOME/USERPROFILE parity)."""
@@ -298,6 +565,29 @@ def wait_for_capture_frontend(child, *, timeout_s=_CAPTURE_FRONTEND_MAX_WALL_S):
             rc = child.wait(timeout=15)
         return rc, True
 
+
+def run_directory_path(args, root, *, timestamp=None):
+    root = pathlib.Path(root)
+    if getattr(args, 'direct_owner_capture', False):
+        return pathlib.Path(args.run_dir).resolve()
+    stamp = timestamp or time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
+    return root / 'docs/memory/diagnostics' / (stamp + '_' + args.frontend
+                                                + f'_n{args.n}_{args.workload}')
+
+
+def prepare_run_directory(args, root, *, timestamp=None):
+    """Consume the managed reservation in direct mode; preserve default naming."""
+    run = run_directory_path(args, root, timestamp=timestamp)
+    if getattr(args, 'direct_owner_capture', False):
+        unresolved = pathlib.Path(args.run_dir)
+        if unresolved.is_symlink() or not run.is_dir():
+            raise RuntimeError('direct owner run directory is not a pre-reserved directory')
+        if any(run.iterdir()):
+            raise RuntimeError('direct owner pre-reserved run directory is not empty')
+        return run
+    run.mkdir(parents=True, exist_ok=False)
+    return run
+
 def main(argv=None):
     p = build_parser()
     a = p.parse_args(argv)
@@ -305,7 +595,8 @@ def main(argv=None):
     terminal = a.frontend == 'tui' and not a.headless
     root = pathlib.Path(__file__).resolve().parents[2]
     binary = a.binary.resolve() if a.binary else root / 'target/release' / (a.frontend+'-play')
-    run = root / 'docs/memory/diagnostics' / (time.strftime('%Y%m%dT%H%M%SZ',time.gmtime())+'_'+a.frontend+f'_n{a.n}_{a.workload}')
+    run_stamp = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
+    run = run_directory_path(a, root, timestamp=run_stamp)
     capture = None
     if a.heaptrack_output:
         try:
@@ -335,7 +626,9 @@ def main(argv=None):
     provenance = {'status': 'unavailable', 'reason': 'no_build_manifest', 'performance_acceptance': False}
     if a.build_manifest:
         try:
-            provenance = verify_build(a.build_manifest, a.build_role, a.frontend, binary, nav_pack, nav_flags, catalog_path)
+            verifier = bp.verify_direct_owner_build if a.direct_owner_capture else verify_build
+            provenance = verifier(a.build_manifest, a.build_role, a.frontend, binary,
+                                  nav_pack, nav_flags, catalog_path)
         except (ValueError, OSError, TypeError) as error:
             p.error(f'build provenance: {error}')
     try:
@@ -347,7 +640,12 @@ def main(argv=None):
             require_terminal_transport()
         except RuntimeError as error:
             p.error(str(error))
-    run.mkdir(parents=True, exist_ok=False)
+    if a.direct_owner_capture and not (sys.platform.startswith('linux') and os.uname().machine == 'x86_64'):
+        p.error('--direct-owner-capture requires Linux x86_64')
+    try:
+        run = prepare_run_directory(a, root, timestamp=run_stamp)
+    except RuntimeError as error:
+        p.error(str(error))
     render_policy = requested_render_policy(a)
     backend = requested_backend(a)
     meta = dict(stack_logging_mode='lite' if a.stack_logging_lite else ('1' if a.stack_logging else None),host_sources_sha256=source_digest(root),client_sources_sha256=source_digest(root/'vendor/fr-client-rust'),frontend=a.frontend,n=a.n,workload=a.workload,warmup_s=a.warmup,observe_s=a.observe,
@@ -373,10 +671,22 @@ def main(argv=None):
                 feature_flags=provenance.get('feature_flags'),
                 allocator_provenance=provenance.get('allocator_provenance'),
                 allocation_counting=provenance.get('allocation_counting'))
+    if a.direct_owner_capture:
+        meta.update(
+            capture_mode='direct-owner-v1',
+            child_environment_contract={
+                key: env.get(key) for key in (
+                    'BOT_MEMORY_OWNER_CAPTURE', 'BOT_MEMORY_N', 'BOT_MEMORY_WORKLOAD',
+                    'BOT_MEMORY_WARMUP_S', 'BOT_MEMORY_OBSERVE_S',
+                    'BOT_MEMORY_DIAGNOSTICS', 'BOT_MEMORY_SUSTAIN',
+                )
+            },
+        )
     with (run/'run.log').open('xb') as log:
         reader = None
         probe = None
         conpty_session = None
+        direct_handoff = None
         if terminal:
             transport = require_terminal_transport()
             env['TERM'] = 'xterm-256color'
@@ -422,15 +732,24 @@ def main(argv=None):
                     terminal_session()
                     if capture:
                         hc.child_preexec()()
-                child = subprocess.Popen(
-                    [str(binary)],
-                    cwd=root,
-                    env=env,
-                    stdin=slave,
-                    stdout=slave,
-                    stderr=slave,
-                    preexec_fn=child_setup,
-                )
+                if a.direct_owner_capture:
+                    child, direct_handoff, direct_state = spawn_direct_unix(
+                        binary=binary, root=root, env=env, slave=slave,
+                        terminal_setup=terminal_session, run_dir=run,
+                        handoff_path=a.frontend_handoff, frontend=a.frontend, n=a.n,
+                        workload=a.workload, warmup_s=a.warmup, observe_s=a.observe,
+                    )
+                    meta['direct_owner_spawn'] = direct_handoff['spawn']
+                else:
+                    child = subprocess.Popen(
+                        [str(binary)],
+                        cwd=root,
+                        env=env,
+                        stdin=slave,
+                        stdout=slave,
+                        stderr=slave,
+                        preexec_fn=child_setup,
+                    )
                 os.close(slave)
                 meta['terminal_transport'] = 'unix-pty'
                 if a.tui_input_probes:
@@ -483,6 +802,17 @@ def main(argv=None):
                 }
         else:
             rc = child.wait()
+        if direct_handoff is not None:
+            wait_return_monotonic_s = time.monotonic()
+            exited_handoff = write_exit_handoff(
+                a.frontend_handoff, direct_handoff, exit_code=rc,
+                wait_return_monotonic_s=wait_return_monotonic_s,
+            )
+            meta['direct_owner_exit'] = {
+                'frontend_start_identity': exited_handoff['frontend_start_identity'],
+                'exit_code': exited_handoff['exit_code'],
+                'wait_return_monotonic_s': exited_handoff['wait_return_monotonic_s'],
+            }
         if capture:
             guard_stop.set()
             guard_thread.join(timeout=2)

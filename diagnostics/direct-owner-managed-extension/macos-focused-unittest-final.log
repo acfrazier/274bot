@@ -1,0 +1,462 @@
+test_clean_environment_forces_all_hot_flags_off (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_default_n16_remains_the_cli_and_environment_contract (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_diagnostic_argv_is_exact_resource_only_contract (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_direct_owner_rejects_heaptrack_and_non_n1 (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_direct_owner_spec_is_exact_opt_in_and_default_is_unchanged (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_direct_source_cleanliness_includes_untracked_files (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_existing_output_is_refused_before_managed_launch (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_feature_contract_rejects_counting_or_snapshot_dedup (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_incomplete_managed_state_is_failed_and_never_accepted (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_invalid_n_fails_before_launch (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... usage: python3 -m unittest [-h] [--n {1,16}] --host-checkout HOST_CHECKOUT
+                           --binary BINARY --build-manifest BUILD_MANIFEST
+                           --build-role {reference,candidate} --server-root
+                           SERVER_ROOT --rs2b0t RS2B0T --cache-dir CACHE_DIR
+                           --unpack-root UNPACK_ROOT --nav-pack NAV_PACK
+                           --nav-flags NAV_FLAGS --catalog CATALOG
+                           --host-conditions HOST_CONDITIONS --server-identity
+                           SERVER_IDENTITY --server-pid SERVER_PID
+                           --server-start-identity SERVER_START_IDENTITY
+                           --ssh-parent-pid SSH_PARENT_PID
+                           [--expected-host-commit EXPECTED_HOST_COMMIT]
+                           [--expected-client-commit EXPECTED_CLIENT_COMMIT]
+                           --output OUTPUT
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture]
+                           [--conflict-receipt CONFLICT_RECEIPT]
+                           [--account-admission ACCOUNT_ADMISSION]
+                           [--population-admission POPULATION_ADMISSION]
+                           [--cache-admission CACHE_ADMISSION]
+                           [--server-health-receipt SERVER_HEALTH_RECEIPT]
+                           [--preflight-only]
+python3 -m unittest: error: argument --n: invalid choice: 2 (choose from 1, 16)
+ok
+test_invalid_programmatic_n_fails_closed_before_launch (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_launch_environment_binds_explicit_operator_paths (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_launch_environment_preserves_operator_context_from_snapshot (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_managed_exception_does_not_claim_no_launch (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_memory_guard_fails_closed_when_meminfo_unavailable (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_memory_guard_interrupts_managed_call_and_owned_child_is_cleaned (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_memory_guard_triggers_cleanup_callback (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_missing_programmatic_n_keeps_default (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_n1_cli_and_environment_agree_in_generated_contract (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_n1_spec_receipt_matches_cli_and_environment (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_owner_environment_is_scrubbed_and_only_direct_mode_reemits (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_preflight_only_has_no_launch_or_output_reservation (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_preflight_rejects_server_pid_start_mismatch (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_preflight_samples_declared_server_identity (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_run_passes_preserved_context_to_managed_runner (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_run_receipt_retains_selected_n_after_managed_runner (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_server_identity_requires_fresh_declared_server_and_real_hashes (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_source_mismatch_fails_before_build_or_launch (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_wall_budget_is_unchanged_without_capture_and_split_with_capture (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls) ... ok
+test_argv_inconsistent_with_spec_rejected (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_cache_changed_during_observation_fails_receipt (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_cleanup_rechecks_parent_while_launcher_alive (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_complete_cache_proof_pre_and_post (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_conpty_discovery_empty_fails_closed (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_conpty_helper_handoff_identity_and_parent_are_bound (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_conpty_helper_handoff_missing_fails_closed (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_conpty_helper_handoff_rejects_pid_reuse (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_deadline_cleanup_owned_children_only (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_default_no_cache_stays_compatible (docs.memory.test_run_managed_cell.ManagedCellTests) ... FAIL
+test_direct_contract_and_argv_paths_are_exact_and_mode_only (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_direct_preflight_boundaries_counter_drift_and_receipt_mutation (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_direct_preflight_rejects_missing_raw_swap_counters (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_early_frontend_fail_stops_collector_no_retry (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_exclusive_cell_create_no_overwrite (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_guard_rejects_large_overshoot_skipped_grid_and_identity_failures (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_guard_thresholds_accept_equal_and_fail_over_without_imputation (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_handoff_identity_deadline_and_exit_proof_are_fail_closed (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_identity_mismatch_cleanup_never_signals_foreign_process (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_invalid_specs_and_actual_launcher_mismatch_precede_launch (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_launcher_exit_does_not_leave_term_ignoring_frontend (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_libproc_modules_include_native_and_identity_backend (docs.memory.test_run_managed_cell.ManagedCellTests) ... FAIL
+test_linux_direct_lifecycle_generates_owned_guard_and_handoff_evidence (docs.memory.test_run_managed_cell.ManagedCellTests) ... skipped 'direct lifecycle qualification is Linux-only'
+test_missing_metadata_no_retry_preserves_cell (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_missing_or_duplicate_boundary_fails_durable_receipt (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_module_mutation_before_completion_fails_runner (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_native_backend_preflight_matches_native_collector_identity (docs.memory.test_run_managed_cell.ManagedCellTests) ... FAIL
+test_nonobject_server_identity_is_durable_preflight_failure (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_owned_output_scanner_deduplicates_hardlinks_and_rejects_symlinks (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_owned_output_scanner_fails_in_scan_disappearance_and_replayed_replacement (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_owned_output_scanner_rejects_disappearance_but_allows_handoff_replacement (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_paired_cache_fields_required_together (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_parent_pid_rejects_foreign_and_accepts_owned_child (docs.memory.test_run_managed_cell.ManagedCellTests) ... ps: process id too large: 2000000001
+ok
+test_pid_alive_rejects_invalid_and_detects_live_child (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_portable_cleanup_signal_labels_no_undefined_sigkill (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_preflight_rejects_changed_binary_without_launch (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_preflight_rejects_dead_server_identity (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_real_delayed_qualification_controls_stop (docs.memory.test_run_managed_cell.ManagedCellTests) ... FAIL
+test_receipt_hashes_and_frontend_launcher_distinction (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_relative_cell_root_and_accounting_path_reach_same_output (docs.memory.test_run_managed_cell.ManagedCellTests) ... FAIL
+test_requested_backend_spec_matches_diagnostic_argv (docs.memory.test_run_managed_cell.ManagedCellTests)
+spec.requested_backend must agree with diagnostic --cpu-fallback. ... ok
+test_role_identities_agree_with_collector_and_server_sidecar (docs.memory.test_run_managed_cell.ManagedCellTests) ... FAIL
+test_sampler_fail_recorded_not_replaced (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_sampler_modules_bound_and_backend_identity_consistent (docs.memory.test_run_managed_cell.ManagedCellTests) ... FAIL
+test_short_teardown_before_pad_fails_honestly (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_successful_cell_uses_stop_file_not_only_sigterm (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_successful_observation_then_delayed_teardown (docs.memory.test_run_managed_cell.ManagedCellTests) ... FAIL
+test_unix_collector_starts_once_before_metadata_processing (docs.memory.test_run_managed_cell.ManagedCellTests) ... FAIL
+test_windows_conpty_starts_once_after_helpers_are_bound (docs.memory.test_run_managed_cell.ManagedCellTests)
+The delayed Windows start includes the handed-off helper role. ... ok
+test_windows_non_conpty_handoff_does_not_require_helpers (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_windows_sampler_module_bound_when_producer_is_win32 (docs.memory.test_run_managed_cell.ManagedCellTests)
+Launch pin includes windows_process_sample.py only for win32 system producer. ... ok
+test_accepts_n16_in_help_choices (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_capture_frontend_bound_preserves_960_second_live_budget (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_capture_frontend_timeout_is_failed_even_when_child_exits_zero (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_catalog_path_uses_operator_home_windows_profile (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_child_restoration_failure_preserves_orphan_risk_without_guessed_signal (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_cpu_fallback_env_scrub_default_and_explicit_set (docs.memory.test_run_diagnostic.RunDiagnosticCli)
+Inherited BOT_CPU is scrubbed; BOT_CPU=1 only when --cpu-fallback. ... ok
+test_cpu_fallback_flag_panel_only_and_metadata_names (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_direct_child_preexec_restores_prior_mask_without_unblocking_parent (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_direct_owner_child_env_scrubs_inherited_and_sets_only_after_validation (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_direct_owner_cli_is_exact_and_path_flags_are_mode_only (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... usage: python3 -m unittest [-h] [--nav-captures] [--single-renderer]
+                           [--focused-one] [--focused-background]
+                           [--cpu-fallback] [--headless] [--tui-input-probes]
+                           [--debug] [--no-diagnostics] [--failure-capture]
+                           [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                           [--build-role {reference,candidate}] [--sustain]
+                           [--stack-logging | --stack-logging-lite]
+                           [--scheduling-profile] [--render-profile]
+                           [--gpu-completion-profile]
+                           [--responsiveness-profile] [--responsiveness-fine]
+                           [--observe OBSERVE] [--warmup WARMUP]
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture] [--run-dir RUN_DIR]
+                           [--frontend-handoff FRONTEND_HANDOFF]
+                           {panel,tui} {1,16,32,128}
+                           {idle,seeded-idle,active,lifecycle}
+python3 -m unittest: error: --run-dir and --frontend-handoff are valid and required only with --direct-owner-capture
+usage: python3 -m unittest [-h] [--nav-captures] [--single-renderer]
+                           [--focused-one] [--focused-background]
+                           [--cpu-fallback] [--headless] [--tui-input-probes]
+                           [--debug] [--no-diagnostics] [--failure-capture]
+                           [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                           [--build-role {reference,candidate}] [--sustain]
+                           [--stack-logging | --stack-logging-lite]
+                           [--scheduling-profile] [--render-profile]
+                           [--gpu-completion-profile]
+                           [--responsiveness-profile] [--responsiveness-fine]
+                           [--observe OBSERVE] [--warmup WARMUP]
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture] [--run-dir RUN_DIR]
+                           [--frontend-handoff FRONTEND_HANDOFF]
+                           {panel,tui} {1,16,32,128}
+                           {idle,seeded-idle,active,lifecycle}
+python3 -m unittest: error: --run-dir and --frontend-handoff are valid and required only with --direct-owner-capture
+usage: python3 -m unittest [-h] [--nav-captures] [--single-renderer]
+                           [--focused-one] [--focused-background]
+                           [--cpu-fallback] [--headless] [--tui-input-probes]
+                           [--debug] [--no-diagnostics] [--failure-capture]
+                           [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                           [--build-role {reference,candidate}] [--sustain]
+                           [--stack-logging | --stack-logging-lite]
+                           [--scheduling-profile] [--render-profile]
+                           [--gpu-completion-profile]
+                           [--responsiveness-profile] [--responsiveness-fine]
+                           [--observe OBSERVE] [--warmup WARMUP]
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture] [--run-dir RUN_DIR]
+                           [--frontend-handoff FRONTEND_HANDOFF]
+                           {panel,tui} {1,16,32,128}
+                           {idle,seeded-idle,active,lifecycle}
+python3 -m unittest: error: --direct-owner-capture requires the N1 TUI active diagnostic
+usage: python3 -m unittest [-h] [--nav-captures] [--single-renderer]
+                           [--focused-one] [--focused-background]
+                           [--cpu-fallback] [--headless] [--tui-input-probes]
+                           [--debug] [--no-diagnostics] [--failure-capture]
+                           [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                           [--build-role {reference,candidate}] [--sustain]
+                           [--stack-logging | --stack-logging-lite]
+                           [--scheduling-profile] [--render-profile]
+                           [--gpu-completion-profile]
+                           [--responsiveness-profile] [--responsiveness-fine]
+                           [--observe OBSERVE] [--warmup WARMUP]
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture] [--run-dir RUN_DIR]
+                           [--frontend-handoff FRONTEND_HANDOFF]
+                           {panel,tui} {1,16,32,128}
+                           {idle,seeded-idle,active,lifecycle}
+python3 -m unittest: error: --direct-owner-capture requires the N1 TUI active diagnostic
+usage: python3 -m unittest [-h] [--nav-captures] [--single-renderer]
+                           [--focused-one] [--focused-background]
+                           [--cpu-fallback] [--headless] [--tui-input-probes]
+                           [--debug] [--no-diagnostics] [--failure-capture]
+                           [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                           [--build-role {reference,candidate}] [--sustain]
+                           [--stack-logging | --stack-logging-lite]
+                           [--scheduling-profile] [--render-profile]
+                           [--gpu-completion-profile]
+                           [--responsiveness-profile] [--responsiveness-fine]
+                           [--observe OBSERVE] [--warmup WARMUP]
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture] [--run-dir RUN_DIR]
+                           [--frontend-handoff FRONTEND_HANDOFF]
+                           {panel,tui} {1,16,32,128}
+                           {idle,seeded-idle,active,lifecycle}
+python3 -m unittest: error: --direct-owner-capture requires the N1 TUI active diagnostic
+usage: python3 -m unittest [-h] [--nav-captures] [--single-renderer]
+                           [--focused-one] [--focused-background]
+                           [--cpu-fallback] [--headless] [--tui-input-probes]
+                           [--debug] [--no-diagnostics] [--failure-capture]
+                           [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                           [--build-role {reference,candidate}] [--sustain]
+                           [--stack-logging | --stack-logging-lite]
+                           [--scheduling-profile] [--render-profile]
+                           [--gpu-completion-profile]
+                           [--responsiveness-profile] [--responsiveness-fine]
+                           [--observe OBSERVE] [--warmup WARMUP]
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture] [--run-dir RUN_DIR]
+                           [--frontend-handoff FRONTEND_HANDOFF]
+                           {panel,tui} {1,16,32,128}
+                           {idle,seeded-idle,active,lifecycle}
+python3 -m unittest: error: --direct-owner-capture requires --no-diagnostics --sustain and real TUI
+usage: python3 -m unittest [-h] [--nav-captures] [--single-renderer]
+                           [--focused-one] [--focused-background]
+                           [--cpu-fallback] [--headless] [--tui-input-probes]
+                           [--debug] [--no-diagnostics] [--failure-capture]
+                           [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                           [--build-role {reference,candidate}] [--sustain]
+                           [--stack-logging | --stack-logging-lite]
+                           [--scheduling-profile] [--render-profile]
+                           [--gpu-completion-profile]
+                           [--responsiveness-profile] [--responsiveness-fine]
+                           [--observe OBSERVE] [--warmup WARMUP]
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture] [--run-dir RUN_DIR]
+                           [--frontend-handoff FRONTEND_HANDOFF]
+                           {panel,tui} {1,16,32,128}
+                           {idle,seeded-idle,active,lifecycle}
+python3 -m unittest: error: --direct-owner-capture is incompatible with other diagnostic modes
+ok
+test_direct_owner_consumes_only_the_pre_reserved_empty_run_directory (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_direct_spawn_rejects_preblocked_stop_before_popen (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_failure_capture_env_scrubbed_unless_flag (docs.memory.test_run_diagnostic.RunDiagnosticCli)
+Inherited BOT_MEMORY_FAILURE_CAPTURE must not leak when CLI flag is off. ... ok
+test_failure_capture_flag_independent_of_diagnostics (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_gpu_completion_profile_requires_panel_and_render_profile (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_heaptrack_option_is_n1_tui_only_and_child_env_is_explicit (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... usage: python3 -m unittest [-h] [--nav-captures] [--single-renderer]
+                           [--focused-one] [--focused-background]
+                           [--cpu-fallback] [--headless] [--tui-input-probes]
+                           [--debug] [--no-diagnostics] [--failure-capture]
+                           [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                           [--build-role {reference,candidate}] [--sustain]
+                           [--stack-logging | --stack-logging-lite]
+                           [--scheduling-profile] [--render-profile]
+                           [--gpu-completion-profile]
+                           [--responsiveness-profile] [--responsiveness-fine]
+                           [--observe OBSERVE] [--warmup WARMUP]
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture] [--run-dir RUN_DIR]
+                           [--frontend-handoff FRONTEND_HANDOFF]
+                           {panel,tui} {1,16,32,128}
+                           {idle,seeded-idle,active,lifecycle}
+python3 -m unittest: error: --heaptrack-output requires the N1 TUI active diagnostic
+usage: python3 -m unittest [-h] [--nav-captures] [--single-renderer]
+                           [--focused-one] [--focused-background]
+                           [--cpu-fallback] [--headless] [--tui-input-probes]
+                           [--debug] [--no-diagnostics] [--failure-capture]
+                           [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                           [--build-role {reference,candidate}] [--sustain]
+                           [--stack-logging | --stack-logging-lite]
+                           [--scheduling-profile] [--render-profile]
+                           [--gpu-completion-profile]
+                           [--responsiveness-profile] [--responsiveness-fine]
+                           [--observe OBSERVE] [--warmup WARMUP]
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture] [--run-dir RUN_DIR]
+                           [--frontend-handoff FRONTEND_HANDOFF]
+                           {panel,tui} {1,16,32,128}
+                           {idle,seeded-idle,active,lifecycle}
+python3 -m unittest: error: --heaptrack-output requires the N1 TUI active diagnostic
+usage: python3 -m unittest [-h] [--nav-captures] [--single-renderer]
+                           [--focused-one] [--focused-background]
+                           [--cpu-fallback] [--headless] [--tui-input-probes]
+                           [--debug] [--no-diagnostics] [--failure-capture]
+                           [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                           [--build-role {reference,candidate}] [--sustain]
+                           [--stack-logging | --stack-logging-lite]
+                           [--scheduling-profile] [--render-profile]
+                           [--gpu-completion-profile]
+                           [--responsiveness-profile] [--responsiveness-fine]
+                           [--observe OBSERVE] [--warmup WARMUP]
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture] [--run-dir RUN_DIR]
+                           [--frontend-handoff FRONTEND_HANDOFF]
+                           {panel,tui} {1,16,32,128}
+                           {idle,seeded-idle,active,lifecycle}
+python3 -m unittest: error: --heaptrack-output requires the N1 TUI active diagnostic
+ok
+test_heaptrack_option_rejects_other_probes (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... usage: python3 -m unittest [-h] [--nav-captures] [--single-renderer]
+                           [--focused-one] [--focused-background]
+                           [--cpu-fallback] [--headless] [--tui-input-probes]
+                           [--debug] [--no-diagnostics] [--failure-capture]
+                           [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                           [--build-role {reference,candidate}] [--sustain]
+                           [--stack-logging | --stack-logging-lite]
+                           [--scheduling-profile] [--render-profile]
+                           [--gpu-completion-profile]
+                           [--responsiveness-profile] [--responsiveness-fine]
+                           [--observe OBSERVE] [--warmup WARMUP]
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture] [--run-dir RUN_DIR]
+                           [--frontend-handoff FRONTEND_HANDOFF]
+                           {panel,tui} {1,16,32,128}
+                           {idle,seeded-idle,active,lifecycle}
+python3 -m unittest: error: --heaptrack-output is incompatible with other diagnostic probes
+ok
+test_help_survives_windows_redirected_output_encoding (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_import_survives_missing_unix_tty_modules (docs.memory.test_run_diagnostic.RunDiagnosticCli)
+Panel import/validate must work when pty/fcntl/termios are absent. ... ok
+test_linux_direct_child_responds_to_sigint_without_hard_kill (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... skipped 'Linux SIGINT qualification'
+test_linux_direct_child_restores_stop_mask_before_exec (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... skipped 'Linux /proc mask qualification'
+test_linux_pending_parent_stop_runs_only_after_durable_handoff (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... skipped 'Linux pending-signal qualification'
+test_nav_captures_allows_tui_data_only (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_nav_captures_requires_one_draw_panel_mode (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_partial_spawn_cleanup_signals_only_unique_owned_identity (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_prespawn_discovery_failure_restores_parent_mask_and_records_orphan_risk (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_rejects_conflicting_render_flags (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_rejects_invalid_n_without_launch (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_rejects_panel_flags_on_tui (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_render_profile_flag_independent_and_scrubbed (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_requested_render_policy_metadata_names (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_resolve_rs2b0t_commit_fail_closed_windows (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_resolve_rs2b0t_commit_real_git_when_path_ok (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_responsiveness_profile_flag_independent_and_scrubbed (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_rs2b0t_default_mac_only_not_windows (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_spawn_and_exit_handoff_preserve_immutable_spawn_object (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_stop_recorded_during_spawn_targets_only_registered_child_after_handoff (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_unix_terminal_transport_loads_when_modules_present (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_win32_terminal_transport_selects_conpty_helper (docs.memory.test_run_diagnostic.RunDiagnosticCli) ... ok
+test_cli_requires_explicit_binary_role_and_manifest (docs.memory.test_build_provenance.BuildProvenanceTests) ... ok
+test_corrupt_every_fixture_and_binary (docs.memory.test_build_provenance.BuildProvenanceTests) ... ok
+test_direct_owner_wrapper_binds_lineage_and_rejects_feature_or_identity_drift (docs.memory.test_build_provenance.BuildProvenanceTests) ... ok
+test_main_invalid_manifest_stops_before_mkdir_or_child (docs.memory.test_build_provenance.BuildProvenanceTests) ... ok
+test_missing_invalid_build_and_feature_evidence (docs.memory.test_build_provenance.BuildProvenanceTests) ... ok
+test_mutation_after_preflight_rejected_including_manifest (docs.memory.test_build_provenance.BuildProvenanceTests) ... ok
+test_real_files_bound_without_checkout_source (docs.memory.test_build_provenance.BuildProvenanceTests) ... ok
+test_same_hash_copy_rejected_symlink_accepted (docs.memory.test_build_provenance.BuildProvenanceTests) ... ok
+test_wrong_runtime_catalog_path_rejected (docs.memory.test_build_provenance.BuildProvenanceTests) ... ok
+test_bad_metadata_time_and_cli_preserved_as_errors (docs.memory.test_managed_receipt.ManagedReceiptTests) ... ok
+test_cache_binding_verified_on_both_sides_of_launch (docs.memory.test_managed_receipt.ManagedReceiptTests) ... ok
+test_changed_cache_file_or_snapshot_fails_completion (docs.memory.test_managed_receipt.ManagedReceiptTests) ... ok
+test_direct_owner_raw_artifacts_are_conditional_required_and_hashed (docs.memory.test_managed_receipt.ManagedReceiptTests) ... ok
+test_failed_launcher_preserves_frontend_exit (docs.memory.test_managed_receipt.ManagedReceiptTests) ... ok
+test_foreign_artifact_changed_since_launch_is_failure (docs.memory.test_managed_receipt.ManagedReceiptTests) ... ok
+test_missing_run_and_missing_raw_still_written (docs.memory.test_managed_receipt.ManagedReceiptTests) ... ok
+test_no_overwrites (docs.memory.test_managed_receipt.ManagedReceiptTests) ... ok
+test_opt_in_probe_existing_artifact_is_hashed (docs.memory.test_managed_receipt.ManagedReceiptTests) ... ok
+test_opt_in_probe_raw_artifact_is_required_and_hashed (docs.memory.test_managed_receipt.ManagedReceiptTests) ... ok
+test_receipt_hashes_actual_files_without_metric_acceptance (docs.memory.test_managed_receipt.ManagedReceiptTests) ... ok
+test_runner_failure_keeps_true_child_exit_codes (docs.memory.test_managed_receipt.ManagedReceiptTests) ... ok
+test_sampler_failure_and_missing_output_reject (docs.memory.test_managed_receipt.ManagedReceiptTests) ... ok
+
+======================================================================
+FAIL: test_default_no_cache_stays_compatible (docs.memory.test_run_managed_cell.ManagedCellTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/test_run_managed_cell.py", line 1120, in test_default_no_cache_stays_compatible
+    self.assertEqual(report["status"], "completed", report)
+AssertionError: 'failed_or_unavailable' != 'completed'
+- failed_or_unavailable
++ completed
+ : {'schema': 1, 'attempts': 1, 'launched': True, 'performance_acceptance': False, 'started_utc': '2026-09-09T21:28:18.704634Z', 'cell_dir': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpl77cwp5k/cells/nocache', 'launch_started_utc': '2026-09-09T21:28:18.713768Z', 'launcher_pid': 58693, 'sampler_argv': ['/Applications/Xcode.app/Contents/Developer/usr/bin/python3', '/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/process_accounting.py', 'ambient_helper=58687', 'controller=58371', 'game_server=58688', 'launcher=58693', '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpl77cwp5k/cells/nocache/process_accounting.jsonl', '--interval', '0.2', '--process-backend', 'system', '--stop-file', '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpl77cwp5k/cells/nocache/collector.stop'], 'sampler_roles': {'game_server': 58688, 'controller': 58371, 'ambient_helper': 58687, 'launcher': 58693}, 'collector_stop_path': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpl77cwp5k/cells/nocache/collector.stop', 'collector_pid': 58695, 'frontend_pid': 58698, 'frontend_start_identity': 'macos_lstart:Wed Sep 9 17:28:18 2026', 'run_dir': '/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpl77cwp5k/frontend_runs/run_58693', 'sampler_premature_exit': 1, 'collector_stop_requested_utc': '2026-09-09T21:28:19.767216Z', 'cleanup': {'collector': {'label': 'collector', 'signaled': False, 'exit_code': 1, 'pid': 58695}, 'launcher': {'label': 'launcher', 'signaled': False, 'exit_code': 0, 'pid': 58693}, 'frontend': {'pid': 58698, 'signals': [], 'orphan_risk': False}}, 'startup': {'launcher_start_gap_s': 0.0008774999999996425, 'collector_start_gap_s': 0.0008197919999997083, 'roles': {'game_server': 58688, 'controller': 58371, 'ambient_helper': 58687, 'launcher': 58693}}, 'qualification_line_count': 2, 'launcher_exit_code': 0, 'collector_exit_code': 1, 'collector_stop_requested': True, 'collector_stop_after_observe_s': 0.4071086250000002, 'sampler_result': {'exit_code': 1, 'output': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpl77cwp5k/cells/nocache/process_accounting.jsonl', 'completion': 'failed_or_incomplete', 'status': 'fail', 'duration_mode': 'stop_controlled', 'duration_s_requested': None, 'role_identities': {'game_server': {'pid': 58688, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:18 2026'}, 'controller': {'pid': 58371, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:12 2026'}, 'ambient_helper': {'pid': 58687, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:18 2026'}, 'launcher': {'pid': 58693, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:18 2026'}, 'collector': {'pid': 58695, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:18 2026'}}, 'conpty_helpers': {}, 'launcher_pid': 58693, 'collector_pid': 58695}, 'role_identities': {'game_server': {'pid': 58688, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:18 2026'}, 'controller': {'pid': 58371, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:12 2026'}, 'ambient_helper': {'pid': 58687, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:18 2026'}, 'launcher': {'pid': 58693, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:18 2026'}, 'collector': {'pid': 58695, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:18 2026'}}, 'receipt_status': 'failed_or_unavailable', 'binding_errors': ['sampler_failed_or_incomplete'], 'status': 'failed_or_unavailable', 'ended_utc': '2026-09-09T21:28:20.280237Z'}
+
+======================================================================
+FAIL: test_libproc_modules_include_native_and_identity_backend (docs.memory.test_run_managed_cell.ManagedCellTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/test_run_managed_cell.py", line 1295, in test_libproc_modules_include_native_and_identity_backend
+    self.assertEqual(report["status"], "completed", report)
+AssertionError: 'failed_or_unavailable' != 'completed'
+- failed_or_unavailable
++ completed
+ : {'schema': 1, 'attempts': 1, 'launched': True, 'performance_acceptance': False, 'started_utc': '2026-09-09T21:28:22.993317Z', 'cell_dir': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpxbidre8i/cells/libproc_mods', 'launch_started_utc': '2026-09-09T21:28:22.995423Z', 'launcher_pid': 58928, 'sampler_argv': ['/Applications/Xcode.app/Contents/Developer/usr/bin/python3', '/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/process_accounting.py', 'ambient_helper=58925', 'controller=58371', 'game_server=58926', 'launcher=58928', '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpxbidre8i/cells/libproc_mods/process_accounting.jsonl', '--interval', '0.15', '--process-backend', 'libproc', '--stop-file', '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpxbidre8i/cells/libproc_mods/collector.stop'], 'sampler_roles': {'game_server': 58926, 'controller': 58371, 'ambient_helper': 58925, 'launcher': 58928}, 'collector_stop_path': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpxbidre8i/cells/libproc_mods/collector.stop', 'collector_pid': 58929, 'frontend_pid': 58931, 'frontend_start_identity': 'darwin_proc_start_abstime:1853979568577', 'run_dir': '/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpxbidre8i/frontend_runs/run_58928', 'sampler_premature_exit': 1, 'collector_stop_requested_utc': '2026-09-09T21:28:24.095748Z', 'cleanup': {'collector': {'label': 'collector', 'signaled': False, 'exit_code': 1, 'pid': 58929}, 'launcher': {'label': 'launcher', 'signaled': False, 'exit_code': 0, 'pid': 58928}, 'frontend': {'pid': 58931, 'signals': [], 'orphan_risk': False}}, 'startup': {'launcher_start_gap_s': 0.001079250000000087, 'collector_start_gap_s': 0.0008824999999994532, 'roles': {'game_server': 58926, 'controller': 58371, 'ambient_helper': 58925, 'launcher': 58928}}, 'qualification_line_count': 2, 'launcher_exit_code': 0, 'collector_exit_code': 1, 'collector_stop_requested': True, 'collector_stop_after_observe_s': 0.36699508300000083, 'sampler_result': {'exit_code': 1, 'output': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpxbidre8i/cells/libproc_mods/process_accounting.jsonl', 'completion': 'failed_or_incomplete', 'status': 'fail', 'duration_mode': 'stop_controlled', 'duration_s_requested': None, 'role_identities': {'game_server': {'pid': 58926, 'start_identity': 'darwin_proc_start_abstime:1853978869106'}, 'controller': {'pid': 58371, 'start_identity': 'darwin_proc_start_abstime:1853729681685'}, 'ambient_helper': {'pid': 58925, 'start_identity': 'darwin_proc_start_abstime:1853978835784'}, 'launcher': {'pid': 58928, 'start_identity': 'darwin_proc_start_abstime:1853979090231'}, 'collector': {'pid': 58929, 'start_identity': 'darwin_proc_start_abstime:1853979120966'}}, 'conpty_helpers': {}, 'launcher_pid': 58928, 'collector_pid': 58929}, 'role_identities': {'game_server': {'pid': 58926, 'start_identity': 'darwin_proc_start_abstime:1853978869106'}, 'controller': {'pid': 58371, 'start_identity': 'darwin_proc_start_abstime:1853729681685'}, 'ambient_helper': {'pid': 58925, 'start_identity': 'darwin_proc_start_abstime:1853978835784'}, 'launcher': {'pid': 58928, 'start_identity': 'darwin_proc_start_abstime:1853979090231'}, 'collector': {'pid': 58929, 'start_identity': 'darwin_proc_start_abstime:1853979120966'}}, 'receipt_status': 'failed_or_unavailable', 'binding_errors': ['sampler_failed_or_incomplete'], 'status': 'failed_or_unavailable', 'ended_utc': '2026-09-09T21:28:25.045763Z'}
+
+======================================================================
+FAIL: test_native_backend_preflight_matches_native_collector_identity (docs.memory.test_run_managed_cell.ManagedCellTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/test_run_managed_cell.py", line 964, in test_native_backend_preflight_matches_native_collector_identity
+    self.assertEqual(report['status'], 'completed', report)
+AssertionError: 'failed_or_unavailable' != 'completed'
+- failed_or_unavailable
++ completed
+ : {'schema': 1, 'attempts': 1, 'launched': True, 'performance_acceptance': False, 'started_utc': '2026-09-09T21:28:31.331308Z', 'cell_dir': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpcr8j7x1b/cells/cell_ok', 'launch_started_utc': '2026-09-09T21:28:31.333392Z', 'launcher_pid': 59325, 'sampler_argv': ['/Applications/Xcode.app/Contents/Developer/usr/bin/python3', '/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/process_accounting.py', 'ambient_helper=59322', 'controller=58371', 'game_server=59323', 'launcher=59325', '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpcr8j7x1b/cells/cell_ok/process_accounting.jsonl', '--interval', '0.15', '--process-backend', 'libproc', '--stop-file', '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpcr8j7x1b/cells/cell_ok/collector.stop'], 'sampler_roles': {'game_server': 59323, 'controller': 58371, 'ambient_helper': 59322, 'launcher': 59325}, 'collector_stop_path': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpcr8j7x1b/cells/cell_ok/collector.stop', 'collector_pid': 59326, 'frontend_pid': 59328, 'frontend_start_identity': 'darwin_proc_start_abstime:1854179671366', 'run_dir': '/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpcr8j7x1b/frontend_runs/run_59325', 'sampler_premature_exit': 1, 'collector_stop_requested_utc': '2026-09-09T21:28:32.438552Z', 'cleanup': {'collector': {'label': 'collector', 'signaled': False, 'exit_code': 1, 'pid': 59326}, 'launcher': {'label': 'launcher', 'signaled': False, 'exit_code': 0, 'pid': 59325}, 'frontend': {'pid': 59328, 'signals': [], 'orphan_risk': False}}, 'startup': {'launcher_start_gap_s': 0.0009990410000000338, 'collector_start_gap_s': 0.0009234589999991272, 'roles': {'game_server': 59323, 'controller': 58371, 'ambient_helper': 59322, 'launcher': 59325}}, 'qualification_line_count': 2, 'launcher_exit_code': 0, 'collector_exit_code': 1, 'collector_stop_requested': True, 'collector_stop_after_observe_s': 0.3109621250000032, 'sampler_result': {'exit_code': 1, 'output': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpcr8j7x1b/cells/cell_ok/process_accounting.jsonl', 'completion': 'failed_or_incomplete', 'status': 'fail', 'duration_mode': 'stop_controlled', 'duration_s_requested': None, 'role_identities': {'game_server': {'pid': 59323, 'start_identity': 'darwin_proc_start_abstime:1854179041998'}, 'controller': {'pid': 58371, 'start_identity': 'darwin_proc_start_abstime:1853729681685'}, 'ambient_helper': {'pid': 59322, 'start_identity': 'darwin_proc_start_abstime:1854179014964'}, 'launcher': {'pid': 59325, 'start_identity': 'darwin_proc_start_abstime:1854179198501'}, 'collector': {'pid': 59326, 'start_identity': 'darwin_proc_start_abstime:1854179227496'}}, 'conpty_helpers': {}, 'launcher_pid': 59325, 'collector_pid': 59326}, 'role_identities': {'game_server': {'pid': 59323, 'start_identity': 'darwin_proc_start_abstime:1854179041998'}, 'controller': {'pid': 58371, 'start_identity': 'darwin_proc_start_abstime:1853729681685'}, 'ambient_helper': {'pid': 59322, 'start_identity': 'darwin_proc_start_abstime:1854179014964'}, 'launcher': {'pid': 59325, 'start_identity': 'darwin_proc_start_abstime:1854179198501'}, 'collector': {'pid': 59326, 'start_identity': 'darwin_proc_start_abstime:1854179227496'}}, 'receipt_status': 'failed_or_unavailable', 'binding_errors': ['sampler_failed_or_incomplete'], 'status': 'failed_or_unavailable', 'ended_utc': '2026-09-09T21:28:33.353080Z'}
+
+======================================================================
+FAIL: test_real_delayed_qualification_controls_stop (docs.memory.test_run_managed_cell.ManagedCellTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/test_run_managed_cell.py", line 872, in test_real_delayed_qualification_controls_stop
+    self.assertEqual(report['status'], 'completed', report)
+AssertionError: 'failed_or_unavailable' != 'completed'
+- failed_or_unavailable
++ completed
+ : {'schema': 1, 'attempts': 1, 'launched': True, 'performance_acceptance': False, 'started_utc': '2026-09-09T21:28:33.731493Z', 'cell_dir': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpzbn_ucbk/cells/cell_ok', 'launch_started_utc': '2026-09-09T21:28:33.740366Z', 'launcher_pid': 59442, 'sampler_argv': ['/Applications/Xcode.app/Contents/Developer/usr/bin/python3', '/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/process_accounting.py', 'ambient_helper=59436', 'controller=58371', 'game_server=59437', 'launcher=59442', '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpzbn_ucbk/cells/cell_ok/process_accounting.jsonl', '--interval', '0.15', '--process-backend', 'system', '--stop-file', '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpzbn_ucbk/cells/cell_ok/collector.stop'], 'sampler_roles': {'game_server': 59437, 'controller': 58371, 'ambient_helper': 59436, 'launcher': 59442}, 'collector_stop_path': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpzbn_ucbk/cells/cell_ok/collector.stop', 'collector_pid': 59445, 'frontend_pid': 59447, 'frontend_start_identity': 'macos_lstart:Wed Sep 9 17:28:33 2026', 'run_dir': '/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpzbn_ucbk/frontend_runs/run_59442', 'sampler_premature_exit': 1, 'collector_stop_requested_utc': '2026-09-09T21:28:35.809396Z', 'cleanup': {'collector': {'label': 'collector', 'signaled': False, 'exit_code': 1, 'pid': 59445}, 'launcher': {'label': 'launcher', 'signaled': False, 'exit_code': 0, 'pid': 59442}, 'frontend': {'pid': 59447, 'signals': [], 'orphan_risk': False}}, 'startup': {'launcher_start_gap_s': 0.000894791000000339, 'collector_start_gap_s': 0.0012334170000016798, 'roles': {'game_server': 59437, 'controller': 58371, 'ambient_helper': 59436, 'launcher': 59442}}, 'qualification_line_count': 2, 'launcher_exit_code': 0, 'collector_exit_code': 1, 'collector_stop_requested': True, 'collector_stop_after_observe_s': 0.356672666999998, 'sampler_result': {'exit_code': 1, 'output': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpzbn_ucbk/cells/cell_ok/process_accounting.jsonl', 'completion': 'failed_or_incomplete', 'status': 'fail', 'duration_mode': 'stop_controlled', 'duration_s_requested': None, 'role_identities': {'game_server': {'pid': 59437, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:33 2026'}, 'controller': {'pid': 58371, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:12 2026'}, 'ambient_helper': {'pid': 59436, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:33 2026'}, 'launcher': {'pid': 59442, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:33 2026'}, 'collector': {'pid': 59445, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:33 2026'}}, 'conpty_helpers': {}, 'launcher_pid': 59442, 'collector_pid': 59445}, 'role_identities': {'game_server': {'pid': 59437, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:33 2026'}, 'controller': {'pid': 58371, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:12 2026'}, 'ambient_helper': {'pid': 59436, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:33 2026'}, 'launcher': {'pid': 59442, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:33 2026'}, 'collector': {'pid': 59445, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:33 2026'}}, 'receipt_status': 'failed_or_unavailable', 'binding_errors': ['sampler_failed_or_incomplete'], 'status': 'failed_or_unavailable', 'ended_utc': '2026-09-09T21:28:36.489476Z'}
+
+======================================================================
+FAIL: test_relative_cell_root_and_accounting_path_reach_same_output (docs.memory.test_run_managed_cell.ManagedCellTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/test_run_managed_cell.py", line 862, in test_relative_cell_root_and_accounting_path_reach_same_output
+    self.assertEqual(result['status'],'completed',result)
+AssertionError: 'failed_or_unavailable' != 'completed'
+- failed_or_unavailable
++ completed
+ : {'schema': 1, 'attempts': 1, 'launched': True, 'performance_acceptance': False, 'started_utc': '2026-09-09T21:28:38.009093Z', 'cell_dir': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpg0ny8f8r/cells/cell_ok', 'launch_started_utc': '2026-09-09T21:28:38.017912Z', 'launcher_pid': 59621, 'sampler_argv': ['/Applications/Xcode.app/Contents/Developer/usr/bin/python3', '/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/process_accounting.py', 'ambient_helper=59614', 'controller=58371', 'game_server=59615', 'launcher=59621', '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpg0ny8f8r/cells/cell_ok/process_accounting.jsonl', '--interval', '0.15', '--process-backend', 'system', '--stop-file', '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpg0ny8f8r/cells/cell_ok/collector.stop'], 'sampler_roles': {'game_server': 59615, 'controller': 58371, 'ambient_helper': 59614, 'launcher': 59621}, 'collector_stop_path': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpg0ny8f8r/cells/cell_ok/collector.stop', 'collector_pid': 59623, 'frontend_pid': 59625, 'frontend_start_identity': 'macos_lstart:Wed Sep 9 17:28:38 2026', 'run_dir': '/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpg0ny8f8r/frontend_runs/run_59621', 'collector_stop_requested_utc': '2026-09-09T21:28:38.924454Z', 'cleanup': {'collector': {'label': 'collector', 'signaled': False, 'exit_code': 1, 'pid': 59623}, 'launcher': {'label': 'launcher', 'signaled': False, 'exit_code': 0, 'pid': 59621}, 'frontend': {'pid': 59625, 'signals': [], 'orphan_risk': False}}, 'startup': {'launcher_start_gap_s': 0.0009591250000013929, 'collector_start_gap_s': 0.0009440000000005, 'roles': {'game_server': 59615, 'controller': 58371, 'ambient_helper': 59614, 'launcher': 59621}}, 'qualification_line_count': 2, 'launcher_exit_code': 0, 'collector_exit_code': 1, 'collector_stop_requested': True, 'collector_stop_after_observe_s': 0.3835073330000007, 'sampler_result': {'exit_code': 1, 'output': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpg0ny8f8r/cells/cell_ok/process_accounting.jsonl', 'completion': 'failed_or_incomplete', 'status': 'fail', 'duration_mode': 'stop_controlled', 'duration_s_requested': None, 'role_identities': {'game_server': {'pid': 59615, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:38 2026'}, 'controller': {'pid': 58371, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:12 2026'}, 'ambient_helper': {'pid': 59614, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:38 2026'}, 'launcher': {'pid': 59621, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:38 2026'}, 'collector': {'pid': 59623, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:38 2026'}}, 'conpty_helpers': {}, 'launcher_pid': 59621, 'collector_pid': 59623}, 'role_identities': {'game_server': {'pid': 59615, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:38 2026'}, 'controller': {'pid': 58371, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:12 2026'}, 'ambient_helper': {'pid': 59614, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:38 2026'}, 'launcher': {'pid': 59621, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:38 2026'}, 'collector': {'pid': 59623, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:38 2026'}}, 'receipt_status': 'failed_or_unavailable', 'binding_errors': ['sampler_failed_or_incomplete'], 'status': 'failed_or_unavailable', 'ended_utc': '2026-09-09T21:28:39.589495Z'}
+
+======================================================================
+FAIL: test_role_identities_agree_with_collector_and_server_sidecar (docs.memory.test_run_managed_cell.ManagedCellTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/test_run_managed_cell.py", line 1185, in test_role_identities_agree_with_collector_and_server_sidecar
+    self.assertEqual(report["status"], "completed", report)
+AssertionError: 'failed_or_unavailable' != 'completed'
+- failed_or_unavailable
++ completed
+ : {'schema': 1, 'attempts': 1, 'launched': True, 'performance_acceptance': False, 'started_utc': '2026-09-09T21:28:39.626105Z', 'cell_dir': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmprvdtkgzx/cells/roles', 'launch_started_utc': '2026-09-09T21:28:39.634767Z', 'launcher_pid': 59709, 'sampler_argv': ['/Applications/Xcode.app/Contents/Developer/usr/bin/python3', '/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/process_accounting.py', 'ambient_helper=59703', 'controller=58371', 'game_server=59704', 'launcher=59709', '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmprvdtkgzx/cells/roles/process_accounting.jsonl', '--interval', '0.15', '--process-backend', 'system', '--stop-file', '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmprvdtkgzx/cells/roles/collector.stop'], 'sampler_roles': {'game_server': 59704, 'controller': 58371, 'ambient_helper': 59703, 'launcher': 59709}, 'collector_stop_path': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmprvdtkgzx/cells/roles/collector.stop', 'collector_pid': 59711, 'frontend_pid': 59714, 'frontend_start_identity': 'macos_lstart:Wed Sep 9 17:28:39 2026', 'run_dir': '/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmprvdtkgzx/frontend_runs/run_59709', 'sampler_premature_exit': 1, 'collector_stop_requested_utc': '2026-09-09T21:28:40.549271Z', 'cleanup': {'collector': {'label': 'collector', 'signaled': False, 'exit_code': 1, 'pid': 59711}, 'launcher': {'label': 'launcher', 'signaled': False, 'exit_code': 0, 'pid': 59709}, 'frontend': {'pid': 59714, 'signals': [], 'orphan_risk': False}}, 'startup': {'launcher_start_gap_s': 0.0010003750000002753, 'collector_start_gap_s': 0.0008415419999998619, 'roles': {'game_server': 59704, 'controller': 58371, 'ambient_helper': 59703, 'launcher': 59709}}, 'qualification_line_count': 2, 'launcher_exit_code': 0, 'collector_exit_code': 1, 'collector_stop_requested': True, 'collector_stop_after_observe_s': 0.31158462500000184, 'sampler_result': {'exit_code': 1, 'output': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmprvdtkgzx/cells/roles/process_accounting.jsonl', 'completion': 'failed_or_incomplete', 'status': 'fail', 'duration_mode': 'stop_controlled', 'duration_s_requested': None, 'role_identities': {'game_server': {'pid': 59704, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:39 2026'}, 'controller': {'pid': 58371, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:12 2026'}, 'ambient_helper': {'pid': 59703, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:39 2026'}, 'launcher': {'pid': 59709, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:39 2026'}, 'collector': {'pid': 59711, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:39 2026'}}, 'conpty_helpers': {}, 'launcher_pid': 59709, 'collector_pid': 59711}, 'role_identities': {'game_server': {'pid': 59704, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:39 2026'}, 'controller': {'pid': 58371, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:12 2026'}, 'ambient_helper': {'pid': 59703, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:39 2026'}, 'launcher': {'pid': 59709, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:39 2026'}, 'collector': {'pid': 59711, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:39 2026'}}, 'receipt_status': 'failed_or_unavailable', 'binding_errors': ['sampler_failed_or_incomplete'], 'status': 'failed_or_unavailable', 'ended_utc': '2026-09-09T21:28:41.210224Z'}
+
+======================================================================
+FAIL: test_sampler_modules_bound_and_backend_identity_consistent (docs.memory.test_run_managed_cell.ManagedCellTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/test_run_managed_cell.py", line 1225, in test_sampler_modules_bound_and_backend_identity_consistent
+    self.assertEqual(report["status"], "completed", report)
+AssertionError: 'failed_or_unavailable' != 'completed'
+- failed_or_unavailable
++ completed
+ : {'schema': 1, 'attempts': 1, 'launched': True, 'performance_acceptance': False, 'started_utc': '2026-09-09T21:28:42.298722Z', 'cell_dir': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmp77bq7wua/cells/mods', 'launch_started_utc': '2026-09-09T21:28:42.307275Z', 'launcher_pid': 59833, 'sampler_argv': ['/Applications/Xcode.app/Contents/Developer/usr/bin/python3', '/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/process_accounting.py', 'ambient_helper=59827', 'controller=58371', 'game_server=59828', 'launcher=59833', '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmp77bq7wua/cells/mods/process_accounting.jsonl', '--interval', '0.2', '--process-backend', 'system', '--stop-file', '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmp77bq7wua/cells/mods/collector.stop'], 'sampler_roles': {'game_server': 59828, 'controller': 58371, 'ambient_helper': 59827, 'launcher': 59833}, 'collector_stop_path': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmp77bq7wua/cells/mods/collector.stop', 'collector_pid': 59836, 'frontend_pid': 59838, 'frontend_start_identity': 'macos_lstart:Wed Sep 9 17:28:42 2026', 'run_dir': '/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmp77bq7wua/frontend_runs/run_59833', 'sampler_premature_exit': 1, 'collector_stop_requested_utc': '2026-09-09T21:28:43.308007Z', 'cleanup': {'collector': {'label': 'collector', 'signaled': False, 'exit_code': 1, 'pid': 59836}, 'launcher': {'label': 'launcher', 'signaled': False, 'exit_code': 0, 'pid': 59833}, 'frontend': {'pid': 59838, 'signals': [], 'orphan_risk': False}}, 'startup': {'launcher_start_gap_s': 0.000858583000002966, 'collector_start_gap_s': 0.0009615419999988717, 'roles': {'game_server': 59828, 'controller': 58371, 'ambient_helper': 59827, 'launcher': 59833}}, 'qualification_line_count': 2, 'launcher_exit_code': 0, 'collector_exit_code': 1, 'collector_stop_requested': True, 'collector_stop_after_observe_s': 0.45414220900000046, 'sampler_result': {'exit_code': 1, 'output': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmp77bq7wua/cells/mods/process_accounting.jsonl', 'completion': 'failed_or_incomplete', 'status': 'fail', 'duration_mode': 'stop_controlled', 'duration_s_requested': None, 'role_identities': {'game_server': {'pid': 59828, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:42 2026'}, 'controller': {'pid': 58371, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:12 2026'}, 'ambient_helper': {'pid': 59827, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:42 2026'}, 'launcher': {'pid': 59833, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:42 2026'}, 'collector': {'pid': 59836, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:42 2026'}}, 'conpty_helpers': {}, 'launcher_pid': 59833, 'collector_pid': 59836}, 'role_identities': {'game_server': {'pid': 59828, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:42 2026'}, 'controller': {'pid': 58371, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:12 2026'}, 'ambient_helper': {'pid': 59827, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:42 2026'}, 'launcher': {'pid': 59833, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:42 2026'}, 'collector': {'pid': 59836, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:42 2026'}}, 'receipt_status': 'failed_or_unavailable', 'binding_errors': ['sampler_failed_or_incomplete'], 'status': 'failed_or_unavailable', 'ended_utc': '2026-09-09T21:28:43.756493Z'}
+
+======================================================================
+FAIL: test_successful_observation_then_delayed_teardown (docs.memory.test_run_managed_cell.ManagedCellTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/test_run_managed_cell.py", line 832, in test_successful_observation_then_delayed_teardown
+    self.assertEqual(report["status"], "completed", report)
+AssertionError: 'failed_or_unavailable' != 'completed'
+- failed_or_unavailable
++ completed
+ : {'schema': 1, 'attempts': 1, 'launched': True, 'performance_acceptance': False, 'started_utc': '2026-09-09T21:28:46.326187Z', 'cell_dir': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpbk28n0kk/cells/cell_ok', 'launch_started_utc': '2026-09-09T21:28:46.335048Z', 'launcher_pid': 60081, 'sampler_argv': ['/Applications/Xcode.app/Contents/Developer/usr/bin/python3', '/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/process_accounting.py', 'ambient_helper=60074', 'controller=58371', 'game_server=60075', 'launcher=60081', '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpbk28n0kk/cells/cell_ok/process_accounting.jsonl', '--interval', '0.15', '--process-backend', 'system', '--stop-file', '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpbk28n0kk/cells/cell_ok/collector.stop'], 'sampler_roles': {'game_server': 60075, 'controller': 58371, 'ambient_helper': 60074, 'launcher': 60081}, 'collector_stop_path': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpbk28n0kk/cells/cell_ok/collector.stop', 'collector_pid': 60083, 'frontend_pid': 60085, 'frontend_start_identity': 'macos_lstart:Wed Sep 9 17:28:46 2026', 'run_dir': '/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpbk28n0kk/frontend_runs/run_60081', 'sampler_premature_exit': 1, 'collector_stop_requested_utc': '2026-09-09T21:28:47.385742Z', 'cleanup': {'collector': {'label': 'collector', 'signaled': False, 'exit_code': 1, 'pid': 60083}, 'launcher': {'label': 'launcher', 'signaled': False, 'exit_code': 0, 'pid': 60081}, 'frontend': {'pid': 60085, 'signals': [], 'orphan_risk': False}}, 'startup': {'launcher_start_gap_s': 0.0009752910000031534, 'collector_start_gap_s': 0.0009442500000034215, 'roles': {'game_server': 60075, 'controller': 58371, 'ambient_helper': 60074, 'launcher': 60081}}, 'qualification_line_count': 2, 'launcher_exit_code': 0, 'collector_exit_code': 1, 'collector_stop_requested': True, 'collector_stop_after_observe_s': 0.3670665839999998, 'sampler_result': {'exit_code': 1, 'output': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpbk28n0kk/cells/cell_ok/process_accounting.jsonl', 'completion': 'failed_or_incomplete', 'status': 'fail', 'duration_mode': 'stop_controlled', 'duration_s_requested': None, 'role_identities': {'game_server': {'pid': 60075, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:46 2026'}, 'controller': {'pid': 58371, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:12 2026'}, 'ambient_helper': {'pid': 60074, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:46 2026'}, 'launcher': {'pid': 60081, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:46 2026'}, 'collector': {'pid': 60083, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:46 2026'}}, 'conpty_helpers': {}, 'launcher_pid': 60081, 'collector_pid': 60083}, 'role_identities': {'game_server': {'pid': 60075, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:46 2026'}, 'controller': {'pid': 58371, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:12 2026'}, 'ambient_helper': {'pid': 60074, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:46 2026'}, 'launcher': {'pid': 60081, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:46 2026'}, 'collector': {'pid': 60083, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:46 2026'}}, 'receipt_status': 'failed_or_unavailable', 'binding_errors': ['sampler_failed_or_incomplete'], 'status': 'failed_or_unavailable', 'ended_utc': '2026-09-09T21:28:48.044633Z'}
+
+======================================================================
+FAIL: test_unix_collector_starts_once_before_metadata_processing (docs.memory.test_run_managed_cell.ManagedCellTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/test_run_managed_cell.py", line 724, in test_unix_collector_starts_once_before_metadata_processing
+    self.assertEqual(report["status"], "completed", report)
+AssertionError: 'failed_or_unavailable' != 'completed'
+- failed_or_unavailable
++ completed
+ : {'schema': 1, 'attempts': 1, 'launched': True, 'performance_acceptance': False, 'started_utc': '2026-09-09T21:28:48.062650Z', 'cell_dir': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpuhrg7_6k/cells/cell_ok', 'launch_started_utc': '2026-09-09T21:28:48.071434Z', 'launcher_pid': 60159, 'sampler_argv': ['/Applications/Xcode.app/Contents/Developer/usr/bin/python3', '/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/process_accounting.py', 'ambient_helper=60152', 'controller=58371', 'game_server=60153', 'launcher=60159', '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpuhrg7_6k/cells/cell_ok/process_accounting.jsonl', '--interval', '0.15', '--process-backend', 'system', '--stop-file', '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpuhrg7_6k/cells/cell_ok/collector.stop'], 'sampler_roles': {'game_server': 60153, 'controller': 58371, 'ambient_helper': 60152, 'launcher': 60159}, 'collector_stop_path': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpuhrg7_6k/cells/cell_ok/collector.stop', 'collector_pid': 60161, 'frontend_pid': 60163, 'frontend_start_identity': 'macos_lstart:Wed Sep 9 17:28:48 2026', 'run_dir': '/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpuhrg7_6k/frontend_runs/run_60159', 'sampler_premature_exit': 1, 'collector_stop_requested_utc': '2026-09-09T21:28:48.977350Z', 'cleanup': {'collector': {'label': 'collector', 'signaled': False, 'exit_code': 1, 'pid': 60161}, 'launcher': {'label': 'launcher', 'signaled': False, 'exit_code': 0, 'pid': 60159}, 'frontend': {'pid': 60163, 'signals': [], 'orphan_risk': False}}, 'startup': {'launcher_start_gap_s': 0.0009704999999939901, 'collector_start_gap_s': 0.0009524159999969584, 'roles': {'game_server': 60153, 'controller': 58371, 'ambient_helper': 60152, 'launcher': 60159}}, 'qualification_line_count': 2, 'launcher_exit_code': 0, 'collector_exit_code': 1, 'collector_stop_requested': True, 'collector_stop_after_observe_s': 0.31426175, 'sampler_result': {'exit_code': 1, 'output': '/private/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/tmpuhrg7_6k/cells/cell_ok/process_accounting.jsonl', 'completion': 'failed_or_incomplete', 'status': 'fail', 'duration_mode': 'stop_controlled', 'duration_s_requested': None, 'role_identities': {'game_server': {'pid': 60153, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:48 2026'}, 'controller': {'pid': 58371, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:12 2026'}, 'ambient_helper': {'pid': 60152, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:48 2026'}, 'launcher': {'pid': 60159, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:48 2026'}, 'collector': {'pid': 60161, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:48 2026'}}, 'conpty_helpers': {}, 'launcher_pid': 60159, 'collector_pid': 60161}, 'role_identities': {'game_server': {'pid': 60153, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:48 2026'}, 'controller': {'pid': 58371, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:12 2026'}, 'ambient_helper': {'pid': 60152, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:48 2026'}, 'launcher': {'pid': 60159, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:48 2026'}, 'collector': {'pid': 60161, 'start_identity': 'macos_lstart:Wed Sep 9 17:28:48 2026'}}, 'receipt_status': 'failed_or_unavailable', 'binding_errors': ['sampler_failed_or_incomplete'], 'status': 'failed_or_unavailable', 'ended_utc': '2026-09-09T21:28:49.152796Z'}
+
+----------------------------------------------------------------------
+Ran 141 tests in 38.672s
+
+FAILED (failures=9, skipped=4)
+{"attempts": 0, "launched": false, "performance_acceptance": false, "spec": {"id": "future", "launcher_argv": ["never"]}, "status": "preflight_only"}

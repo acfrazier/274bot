@@ -1,0 +1,10 @@
+{
+  "scope": "preserved generated macOS regression failure only; not acceptance or live evidence",
+  "captured_utc": "2026-09-09T21:05:58.847039+00:00",
+  "source": "diagnostics/direct-owner-managed-extension/macos-focused-unittest.log",
+  "sha256": "18efaffb26f73f21f5c7a17afec3bd58a56d29bc49fc479e197c4e9fc5fa9aad",
+  "bytes": 80944,
+  "reported_tests": 138,
+  "reported_failures": 12,
+  "reported_skipped": 2
+}

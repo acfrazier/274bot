@@ -15,6 +15,76 @@ import run_current_tui_calibration as runner
 
 
 class CurrentTuiCalibrationControls(unittest.TestCase):
+    def _direct_args(self, root):
+        return argparse.Namespace(
+            direct_owner_capture=True, n=1, output=root / "owner.json",
+            binary=root / "binary", build_manifest=root / "manifest.json",
+            build_role="candidate", server_identity=root / "server.json",
+            host_conditions=root / "conditions.json", nav_pack=root / "nav",
+            nav_flags=root / "flags", catalog=root / "catalog.json", server_pid=42,
+            ssh_parent_pid=7, server_root=root, rs2b0t=root / "rs2b0t",
+            cache_dir=root / "cache", unpack_root=root / "unpack",
+            conflict_receipt=root / "conflicts.json",
+            account_admission=root / "account.json",
+            population_admission=root / "population.json",
+            cache_admission=root / "cache-admission.json",
+            server_health_receipt=root / "server-health.json",
+        )
+
+    def test_direct_owner_spec_is_exact_opt_in_and_default_is_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            args = self._direct_args(root)
+            spec = runner.build_spec(args, {
+                "host_commit": runner.DIRECT_DIAGNOSTIC_HOST,
+                "client_commit": runner.DIRECT_DIAGNOSTIC_CLIENT,
+                "host_sources_sha256": runner.DIRECT_HOST_SOURCE_DIGEST,
+                "client_sources_sha256": runner.DIRECT_CLIENT_SOURCE_DIGEST,
+            })
+            contract = spec["capture_contract"]
+            self.assertEqual(contract["mode"], "direct-owner-v1")
+            self.assertEqual((spec["warmup_s"], spec["observe_s"], spec["teardown_grace_s"]), (30, 120, 60))
+            self.assertEqual((spec["sampler_interval_s"], spec["max_wall_s"]), (0.5, 365))
+            self.assertEqual(spec["memory_guard"]["limit_bytes"], 268435456)
+            self.assertEqual(contract["frontend_rss_limit_bytes"], 536870912)
+            self.assertEqual(contract["owned_output_limit_bytes"], 67108864)
+            self.assertEqual(contract["frontend_wall_limit_s"], 360)
+            self.assertEqual(pathlib.Path(contract["frontend_handoff_path"]), pathlib.Path(contract["cell_dir"]) / "frontend-handoff.json")
+            self.assertEqual(pathlib.Path(contract["run_dir"]), pathlib.Path(contract["cell_dir"]) / "frontend-run")
+            argv = spec["diagnostic_argv"]
+            for flag in ("--direct-owner-capture", "--frontend-handoff", "--run-dir", "--no-diagnostics", "--sustain"):
+                self.assertIn(flag, argv)
+            self.assertEqual(argv[argv.index("--warmup") + 1], "30")
+            self.assertEqual(argv[argv.index("--observe") + 1], "120")
+
+            args.direct_owner_capture = False
+            ordinary = runner.build_spec(args, {})
+            self.assertNotIn("capture_contract", ordinary)
+            self.assertEqual((ordinary["warmup_s"], ordinary["observe_s"], ordinary["teardown_grace_s"]), (120, 600, 60))
+            self.assertEqual(ordinary["max_wall_s"], 960)
+            self.assertEqual(ordinary["memory_guard"]["limit_bytes"], 128 * 1024 * 1024)
+
+    def test_owner_environment_is_scrubbed_and_only_direct_mode_reemits(self):
+        polluted = {"BOT_MEMORY_OWNER_CAPTURE": "1", "PATH": "/usr/bin"}
+        ordinary = runner.clean_environment(polluted, n=1)
+        self.assertNotIn("BOT_MEMORY_OWNER_CAPTURE", ordinary)
+        direct = runner.clean_environment(polluted, n=1, direct_owner_capture=True)
+        self.assertEqual(direct["BOT_MEMORY_OWNER_CAPTURE"], "1")
+        self.assertEqual(direct["BOT_MEMORY_WARMUP_S"], "30")
+        self.assertEqual(direct["BOT_MEMORY_OBSERVE_S"], "120")
+
+    def test_direct_owner_rejects_heaptrack_and_non_n1(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            args = self._direct_args(root)
+            args.heaptrack_output = root / "heaptrack"
+            with self.assertRaises(runner.CalibrationError):
+                runner.build_spec(args, {})
+            args.heaptrack_output = None
+            args.n = 16
+            with self.assertRaises(runner.CalibrationError):
+                runner.build_spec(args, {})
+
     def test_diagnostic_argv_is_exact_resource_only_contract(self):
         argv = runner.diagnostic_argv(pathlib.Path("/bin/tui-play"), pathlib.Path("/tmp/build.json"), "candidate")
         self.assertEqual(argv[:3], ["tui", "16", "active"])
@@ -311,6 +381,24 @@ class CurrentTuiCalibrationControls(unittest.TestCase):
             with mock.patch.object(runner, "_git", side_effect=["wrong-host", runner.EXPECTED_CLIENT]):
                 with self.assertRaisesRegex(runner.CalibrationError, "host commit"):
                     runner.check_source(host, runner.EXPECTED_HOST, runner.EXPECTED_CLIENT)
+
+    def test_direct_source_cleanliness_includes_untracked_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            host = pathlib.Path(tmp) / 'host'
+            client = host / 'vendor' / 'fr-client-rust'
+            client.mkdir(parents=True)
+            (host / '.gitmodules').write_text('submodule')
+            replies = [
+                runner.DIRECT_DIAGNOSTIC_HOST, runner.DIRECT_DIAGNOSTIC_CLIENT,
+                '?? untracked-generated-file',
+            ]
+            with mock.patch.object(runner, '_git', side_effect=replies) as git:
+                with self.assertRaisesRegex(runner.CalibrationError, 'dirty'):
+                    runner.check_source(
+                        host, runner.DIRECT_DIAGNOSTIC_HOST,
+                        runner.DIRECT_DIAGNOSTIC_CLIENT, include_untracked=True,
+                    )
+            self.assertEqual(git.call_args_list[-1].args[1:], ('status', '--porcelain'))
 
 
 if __name__ == "__main__":

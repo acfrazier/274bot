@@ -28,6 +28,7 @@ import build_provenance as bp  # noqa: E402
 import run_managed_cell as rmc  # noqa: E402
 import server_resources as sr  # noqa: E402
 import heaptrack_capture as hc  # noqa: E402
+import validate_direct_owner_capture as vdoc  # noqa: E402
 
 EXPECTED_HOST = "c0709aba2f8b45e42193225cf8f4e7325b5ca9bf"
 EXPECTED_CLIENT = "3456edc8dabf7b25ada78110ffa56327af9f67a4"
@@ -38,6 +39,17 @@ WARMUP_S = 120
 OBSERVE_S = 600
 TEARDOWN_GRACE_S = 60
 SUPPORTED_N = (1, 16)
+DIRECT_DIAGNOSTIC_HOST = bp.DIRECT_DIAGNOSTIC_HOST
+DIRECT_DIAGNOSTIC_CLIENT = bp.DIRECT_DIAGNOSTIC_CLIENT
+DIRECT_HOST_SOURCE_DIGEST = bp.DIRECT_HOST_SOURCE_DIGEST
+DIRECT_CLIENT_SOURCE_DIGEST = bp.DIRECT_CLIENT_SOURCE_DIGEST
+DIRECT_WARMUP_S = 30
+DIRECT_OBSERVE_S = 120
+DIRECT_MEM_AVAILABLE_BYTES = 256 * 1024 * 1024
+DIRECT_FRONTEND_RSS_BYTES = 512 * 1024 * 1024
+DIRECT_OUTPUT_BYTES = 64 * 1024 * 1024
+DIRECT_FRONTEND_WALL_S = 360
+DIRECT_OUTER_WALL_S = 365
 
 
 class CalibrationError(RuntimeError):
@@ -62,7 +74,8 @@ def _git(path: pathlib.Path, *args: str) -> str:
         raise CalibrationError(f"git query failed for {path}: {exc}") from exc
 
 
-def check_source(host_checkout: pathlib.Path, expected_host: str, expected_client: str) -> Dict[str, Any]:
+def check_source(host_checkout: pathlib.Path, expected_host: str, expected_client: str,
+                 *, include_untracked: bool = False) -> Dict[str, Any]:
     host_checkout = host_checkout.resolve(strict=True)
     client = host_checkout / "vendor" / "fr-client-rust"
     if not (client / ".git").exists() and not (host_checkout / ".gitmodules").is_file():
@@ -74,7 +87,10 @@ def check_source(host_checkout: pathlib.Path, expected_host: str, expected_clien
     if client_commit != expected_client:
         raise CalibrationError(f"client commit {client_commit} != expected {expected_client}")
     for label, path in (("host", host_checkout), ("client", client)):
-        status = _git(path, "status", "--porcelain", "--untracked-files=no")
+        status_args = ("status", "--porcelain") if include_untracked else (
+            "status", "--porcelain", "--untracked-files=no"
+        )
+        status = _git(path, *status_args)
         if status:
             raise CalibrationError(f"{label} source checkout is dirty")
     return {"host_commit": host_commit, "client_commit": client_commit, "host_clean": True, "client_clean": True}
@@ -123,20 +139,24 @@ def _server_public_environment(server_root: pathlib.Path) -> Dict[str, str]:
 
 
 def launch_environment(args: argparse.Namespace, base: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
-    env = clean_environment(base, n=requested_n(args))
+    env = clean_environment(base, n=requested_n(args),
+                            direct_owner_capture=getattr(args, 'direct_owner_capture', False) is True)
     env.update({"LIVE": "1", "BOT_TARGET": "local", "RS2B0T": str(args.rs2b0t.resolve()),
                 "NAV_PACK": str(args.nav_pack.resolve()), "NAV_FLAGS": str(args.nav_flags.resolve())})
     env.update(_server_public_environment(args.server_root))
     return env
 
 
-def validate_feature_contract(manifest_path: pathlib.Path) -> None:
+def validate_feature_contract(manifest_path: pathlib.Path, *, direct_owner_capture=False) -> None:
     try:
         features = json.loads(manifest_path.resolve(strict=True).read_text())["features"]
     except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
         raise CalibrationError(f"build feature contract is unreadable: {exc}") from exc
-    if (not isinstance(features, dict) or features.get("requested") != "memory-profile-no-alloc"
+    expected = bp.DIRECT_FEATURES if direct_owner_capture else "memory-profile-no-alloc"
+    if (not isinstance(features, dict) or features.get("requested") != expected
             or features.get("locked") is not True or features.get("allocation_counting") is not False
+            or (direct_owner_capture and features.get('allocator') != 'std::alloc::System')
+            or (direct_owner_capture and features.get('snapshot_dedup') is not False)
             or "snapshot-dedup" in str(features.get("enabled", ""))
             or "snapshot-dedup" in str(features.get("requested", ""))):
         raise CalibrationError("build manifest is not the locked memory-profile-no-alloc/System feature contract")
@@ -169,35 +189,51 @@ def validate_live_server(args: argparse.Namespace) -> Dict[str, Any]:
 
 
 def diagnostic_argv(binary: pathlib.Path, manifest: pathlib.Path, role: str, n: int = 16,
-                    heaptrack_output: Optional[pathlib.Path] = None) -> list[str]:
+                    heaptrack_output: Optional[pathlib.Path] = None,
+                    direct_owner_capture: bool = False,
+                    run_dir: Optional[pathlib.Path] = None,
+                    frontend_handoff: Optional[pathlib.Path] = None) -> list[str]:
+    warmup = DIRECT_WARMUP_S if direct_owner_capture else WARMUP_S
+    observe = DIRECT_OBSERVE_S if direct_owner_capture else OBSERVE_S
     argv = [
         "tui", str(n), "active",
         "--binary", str(binary),
         "--build-manifest", str(manifest),
         "--build-role", role,
         "--no-diagnostics", "--sustain",
-        "--warmup", str(WARMUP_S), "--observe", str(OBSERVE_S),
+        "--warmup", str(warmup), "--observe", str(observe),
     ]
     if heaptrack_output is not None:
         argv.extend(["--heaptrack-output", str(heaptrack_output.resolve())])
+    if direct_owner_capture:
+        if run_dir is None or frontend_handoff is None:
+            raise CalibrationError('direct owner argv requires reserved run and handoff paths')
+        argv.extend(['--direct-owner-capture', '--run-dir', str(run_dir.resolve()),
+                     '--frontend-handoff', str(frontend_handoff.resolve())])
     return argv
 
 
-def clean_environment(base: Optional[Mapping[str, str]] = None, n: int = 16) -> Dict[str, str]:
+def clean_environment(base: Optional[Mapping[str, str]] = None, n: int = 16,
+                      direct_owner_capture: bool = False) -> Dict[str, str]:
     env = dict(base if base is not None else os.environ)
     forced_off = (
         "BOT_DEBUG", "BOT_CPU", "BOT_SCHEDULING_PROFILE", "BOT_RESPONSIVENESS_PROFILE",
         "BOT_RESPONSIVENESS_FINE", "BOT_RENDER_PROFILE", "BOT_GPU_COMPLETION_PROFILE",
         "MallocStackLogging", "MallocStackLoggingNoCompact", "BOT_MEMORY_FAILURE_CAPTURE",
+        "BOT_MEMORY_OWNER_CAPTURE",
     )
     for key in forced_off:
         env.pop(key, None)
+    warmup = DIRECT_WARMUP_S if direct_owner_capture else WARMUP_S
+    observe = DIRECT_OBSERVE_S if direct_owner_capture else OBSERVE_S
     env.update(
-        BOT_MEMORY_N=str(n), BOT_MEMORY_WORKLOAD="active", BOT_MEMORY_WARMUP_S=str(WARMUP_S),
-        BOT_MEMORY_OBSERVE_S=str(OBSERVE_S), BOT_MEMORY_DIAGNOSTICS="0",
+        BOT_MEMORY_N=str(n), BOT_MEMORY_WORKLOAD="active", BOT_MEMORY_WARMUP_S=str(warmup),
+        BOT_MEMORY_OBSERVE_S=str(observe), BOT_MEMORY_DIAGNOSTICS="0",
         BOT_MEMORY_SUSTAIN="1", BOT_SCHEDULING_PROFILE="0", BOT_RESPONSIVENESS_PROFILE="0",
         BOT_RESPONSIVENESS_FINE="0", BOT_RENDER_PROFILE="0", BOT_GPU_COMPLETION_PROFILE="0",
     )
+    if direct_owner_capture:
+        env['BOT_MEMORY_OWNER_CAPTURE'] = '1'
     return env
 
 
@@ -207,6 +243,9 @@ def build_spec(args: argparse.Namespace, source: Mapping[str, Any]) -> Dict[str,
     if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", cell_id) is None:
         raise CalibrationError("output basename must produce a safe cell id")
     heaptrack_output = getattr(args, "heaptrack_output", None)
+    direct = getattr(args, 'direct_owner_capture', False) is True
+    if direct and (requested_n(args) != 1 or heaptrack_output is not None):
+        raise CalibrationError('direct owner capture requires N1 and excludes Heaptrack')
     if heaptrack_output is not None:
         if requested_n(args) != 1:
             raise CalibrationError("Heaptrack capture requires N1")
@@ -214,14 +253,21 @@ def build_spec(args: argparse.Namespace, source: Mapping[str, Any]) -> Dict[str,
         heaptrack_output = pathlib.Path(heaptrack_output).resolve()
         if heaptrack_output.exists() or heaptrack_output.is_symlink():
             raise CalibrationError("Heaptrack output must be a unique unused path")
+    spec_path = output.with_suffix(output.suffix + '.spec.json')
+    cells_root = output.with_suffix(output.suffix + '.cells')
+    cell_dir = cells_root / cell_id
+    run_dir = cell_dir / 'frontend-run'
+    handoff = cell_dir / 'frontend-handoff.json'
     diag = diagnostic_argv(args.binary.resolve(), args.build_manifest.resolve(), args.build_role,
-                          n=requested_n(args), heaptrack_output=heaptrack_output)
+                          n=requested_n(args), heaptrack_output=heaptrack_output,
+                          direct_owner_capture=direct, run_dir=run_dir,
+                          frontend_handoff=handoff)
     launcher = [sys.executable, str(HERE / "run_diagnostic.py"), *diag]
-    timing: Dict[str, Any] = {"max_wall_s": 960}
+    timing: Dict[str, Any] = {"max_wall_s": DIRECT_OUTER_WALL_S if direct else 960}
     if heaptrack_output is not None:
         # Preserve the 960-second frontend lifecycle; analysis is post-exit.
         timing.update(live_max_wall_s=960, analysis_windows_s=[180, 180], max_wall_s=1320)
-    return {
+    spec = {
         "id": cell_id, "index": 1, "kind": "diagnostic", "frontend": "tui",
         "build_role": args.build_role, "binary": str(args.binary.resolve()),
         "build_manifest": str(args.build_manifest.resolve()), "n": requested_n(args),
@@ -231,28 +277,74 @@ def build_spec(args: argparse.Namespace, source: Mapping[str, Any]) -> Dict[str,
         "catalog_path": str(args.catalog.resolve()), "launcher_argv": launcher,
         "diagnostic_argv": diag, "game_server_pid": args.server_pid,
         "ambient_helpers": {"ssh_parent": args.ssh_parent_pid},
-        "sampler_interval_s": 0.5, "warmup_s": WARMUP_S, "observe_s": OBSERVE_S,
+        "sampler_interval_s": 0.5,
+        "warmup_s": DIRECT_WARMUP_S if direct else WARMUP_S,
+        "observe_s": DIRECT_OBSERVE_S if direct else OBSERVE_S,
         "teardown_grace_s": TEARDOWN_GRACE_S,
         **timing,
         "process_backend": "system", "requested_backend": "none",
-        "memory_guard": {"metric": "MemAvailable", "limit_bytes": MEM_AVAILABLE_GUARD_BYTES, "poll_interval_s": MEM_GUARD_INTERVAL_S},
+        "memory_guard": {"metric": "MemAvailable", "limit_bytes": DIRECT_MEM_AVAILABLE_BYTES if direct else MEM_AVAILABLE_GUARD_BYTES, "poll_interval_s": MEM_GUARD_INTERVAL_S},
         "source": dict(source), "server_root": str(args.server_root.resolve()),
  "rs2b0t": str(args.rs2b0t.resolve()), "performance_acceptance": False,
  "cache_dir": str(args.cache_dir.resolve()), "unpack_root": str(args.unpack_root.resolve()),
  "heaptrack": ({"output": str(heaptrack_output), "preload": hc.verify_preload()}
                if heaptrack_output is not None else None),
     }
+    if direct:
+        admissions = {
+            'conflict': str(args.conflict_receipt.resolve()),
+            'account': str(args.account_admission.resolve()),
+            'population': str(args.population_admission.resolve()),
+            'cache': str(args.cache_admission.resolve()),
+            'server_health': str(args.server_health_receipt.resolve()),
+        }
+        spec['capture_contract'] = {
+            'mode': 'direct-owner-v1', 'cell_dir': str(cell_dir.resolve()),
+            'run_dir': str(run_dir.resolve()), 'frontend_handoff_path': str(handoff.resolve()),
+            'owned_output_paths': [str(path.resolve()) for path in
+                                   (output, spec_path, cell_dir, run_dir)],
+            'warmup_s': DIRECT_WARMUP_S, 'observe_s': DIRECT_OBSERVE_S,
+            'teardown_grace_s': TEARDOWN_GRACE_S, 'guard_interval_s': 0.5,
+            'handoff_deadline_s': 5.0, 'mem_available_floor_bytes': DIRECT_MEM_AVAILABLE_BYTES,
+            'frontend_rss_limit_bytes': DIRECT_FRONTEND_RSS_BYTES,
+            'owned_output_limit_bytes': DIRECT_OUTPUT_BYTES,
+            'frontend_wall_limit_s': DIRECT_FRONTEND_WALL_S,
+            'outer_wall_limit_s': DIRECT_OUTER_WALL_S,
+            'source_lineage': source.get('source_lineage'),
+            'admission_receipts': admissions,
+        }
+    return spec
 
 
 def validate_inputs(args: argparse.Namespace) -> Dict[str, Any]:
-    source = check_source(args.host_checkout, args.expected_host_commit, args.expected_client_commit)
+    direct = getattr(args, 'direct_owner_capture', False) is True
+    expected_host = DIRECT_DIAGNOSTIC_HOST if direct else args.expected_host_commit
+    expected_client = DIRECT_DIAGNOSTIC_CLIENT if direct else args.expected_client_commit
+    source = check_source(
+        args.host_checkout, expected_host, expected_client, include_untracked=direct
+    )
     identity = validate_live_server(args)
     for label, path in (("binary", args.binary), ("build manifest", args.build_manifest), ("host conditions", args.host_conditions), ("nav pack", args.nav_pack), ("nav flags", args.nav_flags), ("catalog", args.catalog), ("server root", args.server_root), ("rs2b0t", args.rs2b0t)):
         if not path.exists():
             raise CalibrationError(f"{label} does not exist: {path}")
-    # This is the same reviewed manifest verifier used by run_managed_cell.
-    bp.verify_build(args.build_manifest, args.build_role, "tui", args.binary, args.nav_pack, args.nav_flags, args.catalog)
-    validate_feature_contract(args.build_manifest)
+    verifier = bp.verify_direct_owner_build if direct else bp.verify_build
+    provenance = verifier(args.build_manifest, args.build_role, "tui", args.binary,
+                          args.nav_pack, args.nav_flags, args.catalog)
+    validate_feature_contract(args.build_manifest, direct_owner_capture=direct)
+    if direct:
+        source.update(
+            host_sources_sha256=bp.source_digest(args.host_checkout),
+            client_sources_sha256=bp.source_digest(args.host_checkout / 'vendor' / 'fr-client-rust'),
+            source_lineage=json.loads(args.build_manifest.read_text())['candidate']['source_lineage'],
+        )
+        if (source['host_sources_sha256'] != DIRECT_HOST_SOURCE_DIGEST
+                or source['client_sources_sha256'] != DIRECT_CLIENT_SOURCE_DIGEST):
+            raise CalibrationError('direct owner source digest differs from fresh build')
+        for label in ('conflict_receipt', 'account_admission', 'population_admission',
+                      'cache_admission', 'server_health_receipt'):
+            path = getattr(args, label, None)
+            if path is None or not pathlib.Path(path).resolve(strict=True).is_file():
+                raise CalibrationError('direct owner requires root admission receipt: ' + label)
     if getattr(args, "heaptrack_output", None) is not None:
         hc.verify_preload()
     declared_identity = validate_server_identity(args.server_identity, args.server_pid, args.server_start_identity)
@@ -307,35 +399,67 @@ def run(args: argparse.Namespace, spec: Dict[str, Any]) -> int:
     if output.exists() or spec_path.exists() or cells_root.exists():
         raise CalibrationError("refusing existing output/spec/cell path; choose a unique output")
     _exclusive_json(spec_path, spec)
+    direct = getattr(args, 'direct_owner_capture', False) is True
     triggered: Dict[str, str] = {}
     def cleanup(reason: str) -> None:
         triggered["reason"] = reason
         if hasattr(signal, "SIGUSR1"):
             os.kill(os.getpid(), signal.SIGUSR1)
-    guard = MemoryGuard(cleanup)
+    guard = None if direct else MemoryGuard(cleanup)
     report: Dict[str, Any] = {"status": "failed_or_unavailable", "launched": "unknown", "n": n,
                               "attempts": 1, "execution_attempted": True}
     previous_handler = signal.getsignal(signal.SIGUSR1) if hasattr(signal, "SIGUSR1") else None
     def abort_from_guard(signum: int, frame: Any) -> None:
         raise RuntimeError("predeclared host memory guard: owned managed cell cancelled")
-    if hasattr(signal, "SIGUSR1"):
+    if guard is not None and hasattr(signal, "SIGUSR1"):
         signal.signal(signal.SIGUSR1, abort_from_guard)
     launch_env = launch_environment(args, base=os.environ.copy())
-    guard.start()
+    if guard is not None:
+        guard.start()
     try:
         report = rmc.run_managed_cell(spec_path, cells_root, cwd=args.host_checkout,
                                       environment=launch_env)
     except Exception as exc:  # preserve a durable failed artifact and honest attempt state
         report["error"] = str(exc)
     finally:
-        guard.close()
-        if hasattr(signal, "SIGUSR1"):
+        if guard is not None:
+            guard.close()
+        if guard is not None and hasattr(signal, "SIGUSR1"):
             signal.signal(signal.SIGUSR1, previous_handler)
     if triggered:
         report["status"] = "failed_or_unavailable"
         report["memory_guard"] = {"status": "triggered", "reason": triggered["reason"], "cleanup": "owned runner cleanup requested"}
-    else:
+    elif guard is not None:
         report["memory_guard"] = {"status": "not_triggered", "limit_bytes": MEM_AVAILABLE_GUARD_BYTES, "poll_interval_s": MEM_GUARD_INTERVAL_S}
+    else:
+        report['memory_guard'] = {'status': 'managed_direct_guard',
+                                  'limit_bytes': DIRECT_MEM_AVAILABLE_BYTES,
+                                  'poll_interval_s': MEM_GUARD_INTERVAL_S}
+    if direct:
+        try:
+            source_post = check_source(
+                args.host_checkout, DIRECT_DIAGNOSTIC_HOST, DIRECT_DIAGNOSTIC_CLIENT,
+                include_untracked=True,
+            )
+            source_post.update(
+                host_sources_sha256=bp.source_digest(args.host_checkout),
+                client_sources_sha256=bp.source_digest(args.host_checkout / 'vendor' / 'fr-client-rust'),
+            )
+            if (source_post['host_sources_sha256'] != DIRECT_HOST_SOURCE_DIGEST
+                    or source_post['client_sources_sha256'] != DIRECT_CLIENT_SOURCE_DIGEST):
+                raise CalibrationError('direct owner source changed during managed cell')
+            report['source_postrun'] = source_post
+            cell_dir = pathlib.Path(report['cell_dir'])
+            receipt = json.loads((cell_dir / 'receipt.json').read_text())
+            owner_path = pathlib.Path(receipt['run_dir']) / 'samples.owners.jsonl'
+            owner_sha = receipt['raw_hashes']['samples.owners.jsonl']
+            report['owner_protocol'] = vdoc.validate_file(owner_path, owner_sha)
+            if report['owner_protocol'].get('protocol_complete') is not True:
+                raise CalibrationError('direct owner protocol incomplete')
+        except (CalibrationError, ValueError, OSError, KeyError, TypeError,
+                json.JSONDecodeError) as exc:
+            report['status'] = 'failed_or_unavailable'
+            report['direct_owner_error'] = str(exc)
     report["n"] = n
     report["performance_acceptance"] = False
     _exclusive_json(output, report)
@@ -366,6 +490,12 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--output", type=pathlib.Path, required=True)
     p.add_argument("--heaptrack-output", type=pathlib.Path,
                    help="unique direct Heaptrack output directory for N1")
+    p.add_argument("--direct-owner-capture", action="store_true")
+    p.add_argument("--conflict-receipt", type=pathlib.Path)
+    p.add_argument("--account-admission", type=pathlib.Path)
+    p.add_argument("--population-admission", type=pathlib.Path)
+    p.add_argument("--cache-admission", type=pathlib.Path)
+    p.add_argument("--server-health-receipt", type=pathlib.Path)
     p.add_argument("--preflight-only", action="store_true")
     return p
 
