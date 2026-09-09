@@ -11,6 +11,26 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 03:32 UTC
+
+- Nav8385bab APPROVED bounded generated evidence, same-card round2
+  t_797a8226 actual Grok4.5/xai20260908_232616_934274, 4m4s. Root verified
+  actual model/provider. Report now explicitly leaves design5.4/5.5/real pack
+  and StageA/B open. No savings/native release follows this code approval.
+- Parent completion released t_3393f351; actual orch Astra/openai
+  20260908_233117_7cd2a7 is building independent frozen-baseline differential
+  tooling in named new directory. Generated qualification ONLY. No real input.
+- Tutorial input91fcadde87d9566f7844de4d18b8823fa8dd09fe handed same-card
+  t_08298357 to reviewer after304pass/14suites,0fail/0ignored. NPC test failure
+  was incomplete expected bytes; primaryJava confirms leading source-tile
+  MOVE_OPCLICK, expectation corrected, movement code unchanged. Prior red
+  widget/local-message failures remain preserved. Actual review not yet seen.
+- Required final t_7fe3337b profile branchreviewer queued behind tutorial
+  parent. No final run yet. Root keeps audited pre-existing tutorial draw
+  precedence/per-frame-redraw difference as explicit presentation-parity limit;
+  normal acknowledgement presentation will be inspected in fresh native proof.
+  Do not broaden completed input worker or claim full Java UI parity.
+
 ## Latest boundary — 2026-09-09 03:25 UTC
 
 - Tutorial correction t_08298357 actual orch Astra/openai231914_18842e
