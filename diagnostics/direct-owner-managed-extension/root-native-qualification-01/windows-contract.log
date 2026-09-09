@@ -1,0 +1,35 @@
+test_direct_owner_spec_is_exact_opt_in_and_default_is_unchanged (test_current_tui_calibration.CurrentTuiCalibrationControls.test_direct_owner_spec_is_exact_opt_in_and_default_is_unchanged) ... ok
+test_owner_environment_is_scrubbed_and_only_direct_mode_reemits (test_current_tui_calibration.CurrentTuiCalibrationControls.test_owner_environment_is_scrubbed_and_only_direct_mode_reemits) ... ok
+test_direct_owner_rejects_heaptrack_and_non_n1 (test_current_tui_calibration.CurrentTuiCalibrationControls.test_direct_owner_rejects_heaptrack_and_non_n1) ... ok
+test_diagnostic_argv_is_exact_resource_only_contract (test_current_tui_calibration.CurrentTuiCalibrationControls.test_diagnostic_argv_is_exact_resource_only_contract) ... ok
+test_n1_cli_and_environment_agree_in_generated_contract (test_current_tui_calibration.CurrentTuiCalibrationControls.test_n1_cli_and_environment_agree_in_generated_contract) ... ok
+test_n1_spec_receipt_matches_cli_and_environment (test_current_tui_calibration.CurrentTuiCalibrationControls.test_n1_spec_receipt_matches_cli_and_environment) ... ok
+test_default_n16_remains_the_cli_and_environment_contract (test_current_tui_calibration.CurrentTuiCalibrationControls.test_default_n16_remains_the_cli_and_environment_contract) ... ok
+test_wall_budget_is_unchanged_without_capture_and_split_with_capture (test_current_tui_calibration.CurrentTuiCalibrationControls.test_wall_budget_is_unchanged_without_capture_and_split_with_capture) ... ok
+test_invalid_n_fails_before_launch (test_current_tui_calibration.CurrentTuiCalibrationControls.test_invalid_n_fails_before_launch) ... usage: -c [-h] [--n {1,16}] --host-checkout HOST_CHECKOUT --binary BINARY
+          --build-manifest BUILD_MANIFEST --build-role {reference,candidate}
+          --server-root SERVER_ROOT --rs2b0t RS2B0T --cache-dir CACHE_DIR
+          --unpack-root UNPACK_ROOT --nav-pack NAV_PACK --nav-flags NAV_FLAGS
+          --catalog CATALOG --host-conditions HOST_CONDITIONS
+          --server-identity SERVER_IDENTITY --server-pid SERVER_PID
+          --server-start-identity SERVER_START_IDENTITY
+          --ssh-parent-pid SSH_PARENT_PID
+          [--expected-host-commit EXPECTED_HOST_COMMIT]
+          [--expected-client-commit EXPECTED_CLIENT_COMMIT] --output OUTPUT
+          [--heaptrack-output HEAPTRACK_OUTPUT] [--direct-owner-capture]
+          [--conflict-receipt CONFLICT_RECEIPT]
+          [--account-admission ACCOUNT_ADMISSION]
+          [--population-admission POPULATION_ADMISSION]
+          [--cache-admission CACHE_ADMISSION]
+          [--server-health-receipt SERVER_HEALTH_RECEIPT] [--preflight-only]
+-c: error: argument --n: invalid choice: '2' (choose from '1', '16')
+ok
+test_invalid_programmatic_n_fails_closed_before_launch (test_current_tui_calibration.CurrentTuiCalibrationControls.test_invalid_programmatic_n_fails_closed_before_launch) ... ok
+test_missing_programmatic_n_keeps_default (test_current_tui_calibration.CurrentTuiCalibrationControls.test_missing_programmatic_n_keeps_default) ... ok
+test_clean_environment_forces_all_hot_flags_off (test_current_tui_calibration.CurrentTuiCalibrationControls.test_clean_environment_forces_all_hot_flags_off) ... ok
+test_feature_contract_rejects_counting_or_snapshot_dedup (test_current_tui_calibration.CurrentTuiCalibrationControls.test_feature_contract_rejects_counting_or_snapshot_dedup) ... ok
+
+----------------------------------------------------------------------
+Ran 13 tests in 0.016s
+
+OK

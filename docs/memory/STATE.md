@@ -11,6 +11,17 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 22:38 UTC
+
+- Native Windows controller import/contract check passed: five production modules
+  import,13 existing selected pure contract tests pass/no skips on Win11 x64
+  Python3.14.6. Exact69 reviewed source hashes unchanged; root verified raw log.
+  See direct-owner-controller-native-report.md. No full Windows/live claim.
+- Native coordinate guards/prepare/clean builds exited0; counting builds running
+  on274bot-builder /home/builder/nav-coordinate-a44a930-native-01.
+- Runtime manifest/private receipts and fresh preflight remain pending. No live
+  capture or performance/CF1 release. No Hermes worker active.
+
 ## Latest boundary — 2026-09-09 22:35 UTC
 
 - Root launched fresh reviewed navigationa44a930 native generated qualification

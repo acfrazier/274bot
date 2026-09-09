@@ -1,0 +1,27 @@
+{
+  "scope": "native Windows imports and 13 existing pure argv/env/default contract tests only; no UI/live/process lifecycle qualification",
+  "commit": "07b5b29eebaa1fa1cf4d8cdf43891fa298100e97",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+  "tests_selected": [
+    "test_direct_owner_spec_is_exact_opt_in_and_default_is_unchanged",
+    "test_owner_environment_is_scrubbed_and_only_direct_mode_reemits",
+    "test_direct_owner_rejects_heaptrack_and_non_n1",
+    "test_diagnostic_argv_is_exact_resource_only_contract",
+    "test_n1_cli_and_environment_agree_in_generated_contract",
+    "test_n1_spec_receipt_matches_cli_and_environment",
+    "test_default_n16_remains_the_cli_and_environment_contract",
+    "test_wall_budget_is_unchanged_without_capture_and_split_with_capture",
+    "test_invalid_n_fails_before_launch",
+    "test_invalid_programmatic_n_fails_closed_before_launch",
+    "test_missing_programmatic_n_keeps_default",
+    "test_clean_environment_forces_all_hot_flags_off",
+    "test_feature_contract_rejects_counting_or_snapshot_dedup"
+  ],
+  "exit_code": 0,
+  "elapsed_s": 0.30680500000016764,
+  "source_verified_before_and_after": true,
+  "log": "windows-contract.log",
+  "bytes": 3494,
+  "sha256": "ce860ff240321b751070e445b16ab013a10fe609335c51ae8fcbc749b0ed8fd1"
+}

@@ -24,7 +24,19 @@ Evidence: `diagnostics/direct-owner-managed-extension/root-native-qualification-
 contains exact command/platform/result, source manifest, logs, launcher, and root
 audit. The transfer archive remains local alongside this evidence.
 
-This proves native generated controller behavior only. Windows contract checks,
-exact runtime manifest and private admission, fresh live preflight, live owner
+This proves native generated controller behavior only. Exact runtime manifest and private admission, fresh live preflight, live owner
 capture, measured comparisons, remaining campaign gates, and final whole-branch
 Grok 4.6 review remain required. No memory saving or live release is claimed.
+
+## Windows import and contract check
+
+The same 69 files from reviewed `07b5b29` were hash-verified before and after on
+Windows 11 x64, Python 3.14.6. All five production modules imported successfully.
+Thirteen explicitly selected existing pure argv/environment/default-contract tests
+passed with no skips or exclusions from that named selection. Root downloaded and
+verified the 3,494-byte log, SHA256
+`ce860ff240321b751070e445b16ab013a10fe609335c51ae8fcbc749b0ed8fd1`.
+The launcher, exact selection, result and raw log are alongside the Linux evidence
+as `run_windows_contract.py`, `windows-result.json` and `windows-contract.log`.
+This was a bounded import/contract check, not the full Windows suite, UI execution,
+process-lifecycle proof or live qualification. No application settings were changed.
