@@ -20,7 +20,7 @@ Source and build identity
   relevant dirty source and has rerun triggers for every verified tree; it does
   not require the enclosing checkout HEAD to equal the frozen host commit.
 - The executable reports both actual checkout refs and the deterministic frozen
-  source-manifest digest (`c97223eef5030d60dca26250976e78f41aa94416e22f63708fd9cb96788fa207`
+  source-manifest digest (`3d89f9277d7f09b8baf161a89f1f1bd2a9c02ffb57dc3ce7a88084c7e7958fd1`
   for this local build).
 - `cargo check --offline --locked` and `cargo build --offline --locked` pass.
   The isolated `Cargo.lock` is included.
@@ -65,9 +65,10 @@ used for valid fixtures; no foreign decoder is duplicated.
 
 Verification evidence
 
-- Six-test suite: `python3 -m unittest discover -s docs/memory/nav-uniform-census -p 'test_nav_uniform.py' -v` — 6 passed.
-- Follow-up smoke after supervisor identity/cleanup changes: 2 targeted tests —
-  2 passed.
+- Seven-test suite: `python3 -m unittest discover -s docs/memory/nav-uniform-census -p 'test_nav_uniform.py' -v` — 7 passed.
+- The suite includes a successful-leader descendant-cleanup regression and
+  platform-aware Linux `/proc` fixture assertions; all passed on this Darwin
+  checkout. Linux guard sampling remains unexecuted here.
 - No real navpack, remote host, native Linux executor, server, live capture,
   or acceptance run was performed.
 

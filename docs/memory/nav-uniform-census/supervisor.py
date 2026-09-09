@@ -103,6 +103,18 @@ def limits_child() -> None:
         resource.setrlimit(resource.RLIMIT_AS, (AS_LIMIT, AS_LIMIT))
 
 
+def cleanup_owned_group(child: subprocess.Popen[bytes]) -> None:
+    """Kill descendants in the owned session and reap the leader."""
+    if os.name == "posix":
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except (ProcessLookupError, OSError):
+            pass
+    if child.poll() is None:
+        child.kill()
+    child.wait()
+
+
 def run(args: argparse.Namespace) -> int:
     # Keep the path lexical: resolve() would follow a symlink before admission.
     executable = Path(args.executable).absolute()
@@ -164,7 +176,13 @@ def run(args: argparse.Namespace) -> int:
         selector.register(child.stdout, selectors.EVENT_READ, "stdout")
         selector.register(child.stderr, selectors.EVENT_READ, "stderr")
         peak_rss = None; peak_as = None
+        group_cleaned = False
         while selector.get_map() or child.poll() is None:
+            if child.poll() is not None and not group_cleaned:
+                # A successful leader must not leave an owned descendant
+                # running after its receipt is accepted.
+                cleanup_owned_group(child)
+                group_cleaned = True
             if time.monotonic() - started > WALL_LIMIT:
                 fail("wall guard")
             for key, _ in selector.select(0.05):
@@ -230,13 +248,13 @@ def run(args: argparse.Namespace) -> int:
         receipt["failure"] = str(exc)
         if child is not None:
             try:
-                os.killpg(child.pid, signal.SIGKILL)
-            except (ProcessLookupError, OSError):
-                if child.poll() is None:
-                    child.kill()
-            receipt["returncode"] = child.wait()
+                cleanup_owned_group(child)
+            finally:
+                receipt["returncode"] = child.returncode
         raise
     finally:
+        if child is not None:
+            cleanup_owned_group(child)
         receipt["elapsed_seconds"] = time.monotonic() - started
         # A successful receipt/result is part of the single output budget.  A
         # failure receipt is retained even when the child already exhausted
