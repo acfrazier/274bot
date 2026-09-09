@@ -11,6 +11,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 19:24 UTC
+
+- Independent lifecycle fidelity reviewbc53902 APPROVED design5cb6374 by actual
+  Grok4.6/xai151335_5b9c51. Root read/reconciled the full ownership/signal/thread,
+  guard and lineage analysis; no additional design correction required.
+- Root released scoped controller implementation t_d0c28edb, actualSol/openai
+  152414_41e00a running. Five existing controller/provenance/receipt paths and
+  focused generated tests only; same-card review then native tests remain required.
+- Coverage e01c288 committed12/12 corrected local proof and report. Root verified
+  all12 raw log hashes, zero exits/timeouts and absent owned groups; original
+  failed artifacts remain separate. Same-card review is still required before
+  Linux gap/feature-off/feature-on qualification. No live release.
+- Navigation tooling t_4474ac39 remains active; no root native/Concord job.
+
 ## Latest boundary — 2026-09-09 19:14 UTC
 
 - Controller design5cb6374 APPROVED same-card round3 actualGrok4.5/xai
