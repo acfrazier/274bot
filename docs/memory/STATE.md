@@ -11,6 +11,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 17:06 UTC
+
+- Scheduler fixture correction completed locally and entered same-card review
+  t_a8c976a6; all826 schedule slots retained with scoped fixture I/O doubles.
+  Concord timeout remains failed; target qualification and real F1 remain pending.
+- Frozen owner preparation first stopped before archive/compile on two full-file
+  identity differences. Root independently reconstructed original H plus the
+  exact reviewed patches: both production prefixes match reviewed3cdc3e4 byte
+  for byte; all differences are in cfg(test) modules (later tiled-nav tests).
+  Audit root-owner-frozen-prefix-audit.json and full difference.patch preserve proof.
+- Same Sol card t_0a97cf2a resumed with separate reviewed-receipt and derived-tree
+  identity checks, exact two derived hashes and production-prefix equality.
+  Original failure retained; no production/patch/oldreceipt changes authorized.
+  Frozen compile plus independent review still required before Linux execution.
+
 ## Latest boundary — 2026-09-09 17:00 UTC
 
 - Concord qualification04 FAILED at360.013s wall limit, peak35012608B, during
