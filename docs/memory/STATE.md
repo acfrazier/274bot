@@ -11,6 +11,33 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 00:31 UTC
+
+- Empty-descriptor correction407c8e5 received report/test changes requested.
+  Root verified the supposedly missing fixture exists; the16 setup errors were
+  wrong-cwd invocations. Correct root suite passed41 tests (40+1Linux skip).
+  No-mark inputs reject identically in both implementations; an initial root
+  non-None assumption was wrong and immediately corrected in the card history.
+- Corrected report/no-mark regressiona55972a is in actual Grok4.5/xai review
+  session20260908_203046_6a6bdc. Latest42-test suite41pass1LinuxASskip;16core and
+  original21 (19+2Linuxskips) pass. No native qualification release yet.
+- 289 G9344ee64 is in actual Grok4.5/xai review20260908_202946_651b1e.
+  Its10 production fixtures and focused GPU/lib pass, but complete all-features
+  remains FAILED at stage2/E config-bound fixtures. Temporary cache assumptions
+  are source-attributed, not separately measured baseline regressions.
+  Dependent t_0c645ab5 makes those tests self-contained with minimal synthetic
+  config and retained invalid-index coverage; no production validation changes.
+- Resumed G worker initially waited for zombie3086. Root verified stat Z/no
+  descendants, reclaimed that invalid wait and resumed as20260908_202245.
+  The failed/interrupt receipts remain; H/live/finalGrok4.6 still required.
+- Fresh Linux builder read-only admission00:31: same bootd63ba1f3,7.83GB available,
+  56.54GB free, no listed conflicting jobs, compiler present. No build started.
+  Stage scripts lost from /tmp at reboot were reconstructed under
+  diagnostics/owner-native-stage-tools; do not stage before exact code approval.
+- Operator clarified System Settings Processor Trace was enabled. xctrace
+  startup failure is separate and access remains unproven; no further tracing
+  configuration changes or user inputs are needed for current scoped work.
+
 ## Latest boundary — 2026-09-09 00:19 UTC
 
 - Operator reports Mac restart completed and CPU tracing enabled. Restart hold
