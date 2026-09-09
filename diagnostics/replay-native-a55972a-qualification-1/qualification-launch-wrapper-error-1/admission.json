@@ -1,0 +1,14 @@
+{
+  "utc": "2026-09-09T00:42:31.677405+00:00",
+  "boot_id": "2217ec26-dc3e-47a3-a700-d3fafb34163f",
+  "mem_available": 1014480896,
+  "disk_free": 11812753408,
+  "conflicts": [],
+  "native_manifest_sha256": "d00b2bb28af11ab9bbd4b21ea992d87d7f4d5d084b3e16febb563f04ca53adaf",
+  "stage_files_listing_sha256": "6d09b5ced27b9103397be43805bacc9b0b487234fd4b7304f7d95627b6271808",
+  "child_sha256": "98b5a2a20b0daf66057024f4618972fb34219b34568a09fa3be89a674d265b7f",
+  "fixture_sha256": "658acea5f979e68fed27f472ae6191182503e13639ea6c8788b5d0e9fa236fc2",
+  "core_tests_sha256": "9aafaf124041877932483fef5b2b26f7e5512bb885d5d8f7acbcaf456ae45266",
+  "output_absent": true,
+  "saved_smoke_absent": true
+}

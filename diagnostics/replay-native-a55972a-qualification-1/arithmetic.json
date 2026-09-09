@@ -1,0 +1,12 @@
+{
+  "qualification_sha256": "26185ab784edebeec9a667e2a83bfc8d63454463df5b07cffa72ee4d0025d786",
+  "cases": 9,
+  "repetitions": 27,
+  "rate_recomputations": 81,
+  "median_recomputations": 27,
+  "all_rate_checks": true,
+  "all_median_checks": true,
+  "method": "For each stored repeat and phase, recomputed bytes[i]/phases[i].cpu_s; independently recomputed each three-repeat median. Values match qualification JSON.",
+  "production_read": false,
+  "production_retry_authorized": false
+}

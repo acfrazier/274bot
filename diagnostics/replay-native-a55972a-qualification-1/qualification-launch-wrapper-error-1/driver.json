@@ -1,0 +1,18 @@
+{
+  "driver_pid": 3492,
+  "argv": [
+    "python3",
+    "-B",
+    "docs/memory/heaptrack-owner-native/qualify.py",
+    "--output",
+    "/home/acfrazier/owner-native-a55972a/qualification-1",
+    "--expected-child-sha256",
+    "98b5a2a20b0daf66057024f4618972fb34219b34568a09fa3be89a674d265b7f",
+    "--expected-fixture-sha256",
+    "658acea5f979e68fed27f472ae6191182503e13639ea6c8788b5d0e9fa236fc2",
+    "--expected-core-test-sha256",
+    "9aafaf124041877932483fef5b2b26f7e5512bb885d5d8f7acbcaf456ae45266"
+  ],
+  "cwd": "/home/acfrazier/owner-native-a55972a",
+  "recorded_utc": "2026-09-09T00:42:31.678540+00:00"
+}

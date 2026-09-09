@@ -1,0 +1,66 @@
+{
+  "status": "fixture_qualification_passed_smoke_attempt_failed_before_manifest",
+  "date_utc": "2026-09-09",
+  "source_commit": "a55972aa5cce2902c2b09aa098ee825d84a5957a",
+  "stage": "/home/acfrazier/owner-native-a55972a",
+  "qualification_output": "diagnostics/replay-native-a55972a-qualification-1/qualification.json",
+  "qualification_sha256": "26185ab784edebeec9a667e2a83bfc8d63454463df5b07cffa72ee4d0025d786",
+  "qualification": {
+    "portable_probe": false,
+    "production_read": false,
+    "production_retry_authorized": false,
+    "wall_s": 33.95485916799953,
+    "core_tests": {"passed": 16, "failed": 0, "ignored": 0},
+    "native_python_tests": {"ran": 42, "passed": 42, "failed": 0, "skipped": 0},
+    "cases_declared": 9,
+    "cases_run": 9,
+    "repetitions": 27,
+    "necessary_rate_thresholds_bytes_per_cpu_s": [11938945, 4503128, 4503128],
+    "necessary_rate_boolean_cases": {"passed": 6, "failed": 0},
+    "arithmetic_recomputed": {"phase_rates": 81, "medians": 27, "all_match": true}
+  },
+  "fresh_admission": {
+    "utc": "2026-09-09T00:43:07.705221+00:00",
+    "boot_id": "2217ec26-dc3e-47a3-a700-d3fafb34163f",
+    "mem_available_bytes": 1003257856,
+    "disk_free_bytes": 11812732928,
+    "conflicts": [],
+    "qualification_output_absent": true,
+    "saved_smoke_output_absent": true,
+    "native_manifest_sha256": "d00b2bb28af11ab9bbd4b21ea992d87d7f4d5d084b3e16febb563f04ca53adaf",
+    "stage_listing_sha256": "e19b1bcbfe2a247932ed51d3d6f758b49022d1167a6bec9fff3561f9261bad5ea",
+    "executable_sha256": {
+      "child": "98b5a2a20b0daf66057024f4618972fb34219b34568a09fa3be89a674d265b7f",
+      "fixture": "658acea5f979e68fed27f472ae6191182503e13639ea6c8788b5d0e9fa236fc2",
+      "core_tests": "9aafaf124041877932483fef5b2b26f7e5512bb885d5d8f7acbcaf456ae45266"
+    }
+  },
+  "launch_history": {
+    "qualification_driver_1": {"pid": 3492, "exit": 1, "outcome": "wrapper pre-created output; qualify.py failed at root.mkdir before core/tests/timing"},
+    "qualification_driver_2": {"pid": 3510, "exit": 0, "outcome": "successful qualification"},
+    "first_failure_artifacts": "diagnostics/replay-native-a55972a-qualification-1/qualification-launch-wrapper-error-1/"
+  },
+  "saved_smoke": {
+    "authorized": true,
+    "attempted": true,
+    "status": "not_run",
+    "manifest_built": false,
+    "python_run": false,
+    "native_run": false,
+    "reason": "smoke_manifest resolved the unchanged fixture path relative to /home/acfrazier instead of the staged root and raised FileNotFoundError before manifest creation",
+    "retained_failure": "diagnostics/replay-native-a55972a-qualification-1/saved-smoke-1/",
+    "retry": false,
+    "production_input": false
+  },
+  "resource_limitations": {
+    "qualification_external_sampling": "Sparse Linux supervisor sampling; short cells can have one sample.",
+    "max_sample_interval": "Not a sustained cadence or peak proof when the tail is unsampled.",
+    "native_phase_peak": "cumulative_peak_rss_bytes is cumulative native child peak, distinct from external sampled maxima.",
+    "capacity": "Warm bounded fixtures do not establish production population/table/output/I/O capacity."
+  },
+  "historical_reports_preserved": [
+    "docs/memory/heaptrack-owner-native-corrected-qualification.md",
+    "docs/memory/heaptrack-owner-native-corrected-qualification.json"
+  ],
+  "production_release": false
+}
