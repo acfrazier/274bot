@@ -1,0 +1,19 @@
+{
+  "locks": {
+    "Cargo.lock": {
+      "bytes": 173350,
+      "sha256": "03059d02f8274c8fc9cd7e2f69a48f317e3f44417570ecf4730b31710f8d4b83"
+    },
+    "docs/memory/diagnostics/linux-gpu-shade-probe/Cargo.lock": {
+      "bytes": 45750,
+      "sha256": "d0285dae7f5cef20edf41cd8473141767d33b5c82e1a943c97cae4789ae8e41a"
+    },
+    "vendor/fr-client-rust/Cargo.lock": {
+      "bytes": 83056,
+      "sha256": "015530e3685e8175fe5ec12b41cf37a40ee116557d575cd38b6852926ec47cc7"
+    }
+  },
+  "qualification_support_verified": true,
+  "source_member_count": 1124,
+  "verified": true
+}

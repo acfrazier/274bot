@@ -118,6 +118,22 @@ def tool_output(command: list[str], cwd: Path) -> dict[str, Any]:
     return {"command": command, "exit": result.returncode, "output": result.stdout}
 
 
+def executable_identity(command: str) -> dict[str, Any]:
+    found = shutil.which(command)
+    if found is None:
+        raise RuntimeError(f"required tool is not executable: {command}")
+    invoked = Path(found).absolute()
+    resolved = invoked.resolve(strict=True)
+    return {
+        "command": command,
+        "invoked_path": str(invoked),
+        "symlink_target": os.readlink(invoked) if invoked.is_symlink() else None,
+        "resolved_path": str(resolved),
+        "bytes": resolved.stat().st_size,
+        "sha256": file_sha256(resolved),
+    }
+
+
 def safe_environment() -> dict[str, str]:
     env = dict(os.environ)
     for name in (
@@ -352,6 +368,52 @@ def command_matrix(source: Path, target: str, mode: str, support: Path) -> list[
     ]
 
 
+def coverage_contract(mode: str) -> dict[str, dict[str, Any]]:
+    if mode == "source-check":
+        return {
+            "frozen_compile": {
+                "steps": ["cargo-check-tui"],
+                "claim": "offline locked TUI check with memory-profile-no-alloc,memory-owner-capture on the local host target",
+            },
+            "generated_observer": {
+                "steps": ["host-play-generated-observer"],
+                "claim": "generated empty-owner pre-observe and nav/COW seam; allocation count, requested bytes, scratch reservation, and thread CPU bound",
+            },
+            "protocol_validator": {
+                "steps": ["protocol-validator-generated"],
+                "claim": "reviewed generated positive fixture plus negative protocol/order/cap/file-identity mutations",
+            },
+        }
+    return {
+        "feature_graph_and_binary": {
+            "steps": ["cargo-feature-tree", "cargo-build-tui", "cargo-check-tui"],
+            "claim": "offline locked native tui-play build/check with the exact feature pair; feature graph and binary identities recorded separately",
+        },
+        "generated_observer": {
+            "steps": ["host-play-generated-observer"],
+            "claim": "generated empty-owner pre-observe and nav/COW seam; zero allocation/requested bytes, fixed scratch bound, and <=5 ms thread CPU",
+        },
+        "owner_budget_mailbox_output_guards": {
+            "steps": ["api-owner-lib", "host-owner-lib", "host-play-owner-lib"],
+            "claim": "focused owner tests cover checked capacity formulas and visit/deadline limits; three-request/full/stale-slot mailbox rejection; fixed COW scratch/phase timing; cumulative 256 KiB owner-output failure receipt",
+        },
+        "stop_and_cleanup": {
+            "steps": ["script-stop-integration", "managed-guard-cleanup-generated"],
+            "claim": "generated script Stop clears fingerprint while retaining unknown builder capacity; managed invalid-spec/launcher mismatch pre-launch rejection, early failure without retry, deadline cleanup, and foreign-process identity refusal",
+        },
+        "protocol_validator": {
+            "steps": ["protocol-validator-generated"],
+            "claim": "reviewed generated positive fixture plus negative protocol/order/cap/file-identity mutations",
+        },
+    }
+
+
+def binary_identity_commands_passed(binary: dict[str, Any] | None) -> bool:
+    return binary is not None and all(
+        binary.get(name, {}).get("exit") == 0 for name in ("file", "readelf", "ldd")
+    )
+
+
 def write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
@@ -398,6 +460,19 @@ def main() -> int:
         if rustc["exit"] or cargo["exit"] or python["exit"]:
             raise RuntimeError("required compiler/tool identity command failed")
         target = host_target(rustc["output"])
+        tool_identities = {
+            "rustc": executable_identity("rustc"),
+            "cargo": executable_identity("cargo"),
+            "python": executable_identity(sys.executable),
+        }
+        if args.mode == "linux":
+            tool_identities.update(
+                {
+                    "file": executable_identity("file"),
+                    "readelf": executable_identity("readelf"),
+                    "ldd": executable_identity("ldd"),
+                }
+            )
         environment = {
             "mode": args.mode,
             "platform": platform.platform(),
@@ -405,6 +480,12 @@ def main() -> int:
             "python": python,
             "rustc": rustc,
             "cargo": cargo,
+            "tool_binaries": tool_identities,
+            "qualification_script": {
+                "path": str(Path(__file__).resolve()),
+                "bytes": Path(__file__).stat().st_size,
+                "sha256": file_sha256(Path(__file__)),
+            },
             "target": target,
             "capture_environment": "BOT_MEMORY_OWNER_CAPTURE=0; generated fixture explicitly enables only its isolated seam",
             "live_environment_removed": True,
@@ -446,6 +527,13 @@ def main() -> int:
                 }
                 write_json(output / "binary.json", binary)
         all_steps_passed = all(row["exit"] == 0 for row in steps)
+        executed_steps = [row["name"] for row in steps]
+        coverage = coverage_contract(args.mode)
+        covered_steps = {step for item in coverage.values() for step in item["steps"]}
+        coverage_steps_executed = covered_steps.issubset(executed_steps)
+        binary_identity_passed = (
+            binary_identity_commands_passed(binary) if args.mode == "linux" else None
+        )
         linux_generated_qualified = (
             args.mode == "linux"
             and sys.platform == "linux"
@@ -453,7 +541,8 @@ def main() -> int:
             and all_steps_passed
             and observer["qualified"]
             and lock_unchanged
-            and binary is not None
+            and binary_identity_passed is True
+            and coverage_steps_executed
         )
         qualification = {
             "schema": "direct-owner-native-generated-qualification-v1",
@@ -462,6 +551,9 @@ def main() -> int:
             "source_verified": True,
             "locks_unchanged": lock_unchanged,
             "generated_observer_qualified": observer["qualified"],
+            "executed_steps": executed_steps,
+            "coverage_steps_executed": coverage_steps_executed,
+            "binary_identity_commands_passed": binary_identity_passed,
             "linux_generated_qualified": linux_generated_qualified,
             "live_qualified": False,
             "frontend_launched": False,
@@ -469,13 +561,7 @@ def main() -> int:
             "cache_accessed": False,
             "server_accessed": False,
             "runtime_capture_default_off": True,
-            "coverage": {
-                "allocation_thread_cpu": "isolated host-play direct_owner_capture test; zero allocations/bytes and <=5 ms thread CPU",
-                "budget_mailbox_output_guards": "api/host/host-play owner_capture unit tests cover visit cap, fixed rows, mailbox request/full/stale identity and 256 KiB output failure",
-                "stop_cleanup": "script Stop integration plus original-H managed launcher generated early-failure/deadline/foreign-process cleanup fixtures",
-                "protocol": "reviewed direct-owner-v1 validator generated positive and negative mutation/file identity tests",
-                "build": "native tui-play with frozen locks and exact feature pair",
-            },
+            "coverage": coverage,
             "limitations": [
                 "Generated empty owners do not represent populated native scene cost.",
                 "No frontend/live workload, account, cache, or server admission is performed.",
@@ -485,7 +571,14 @@ def main() -> int:
         }
         write_json(output / "qualification.json", qualification)
         print(json.dumps(qualification, indent=2, sort_keys=True))
-        return 0 if (linux_generated_qualified if args.mode == "linux" else all_steps_passed and observer["qualified"] and lock_unchanged) else 1
+        return 0 if (
+            linux_generated_qualified
+            if args.mode == "linux"
+            else all_steps_passed
+            and observer["qualified"]
+            and lock_unchanged
+            and coverage_steps_executed
+        ) else 1
     except (OSError, RuntimeError, KeyError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as error:
         write_json(
             output / "qualification.json",

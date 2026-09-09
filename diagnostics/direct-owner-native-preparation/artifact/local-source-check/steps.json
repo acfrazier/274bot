@@ -1,0 +1,68 @@
+[
+  {
+    "command": [
+      "cargo",
+      "check",
+      "--offline",
+      "--locked",
+      "--target",
+      "aarch64-apple-darwin",
+      "-p",
+      "tui",
+      "--features",
+      "memory-profile-no-alloc,memory-owner-capture"
+    ],
+    "cwd": "/private/tmp/direct-owner-source-check-t_0a97cf2a-r1008d/extracted/direct-owner-source",
+    "exit": 0,
+    "log": "/private/tmp/direct-owner-source-check-t_0a97cf2a-r1008d/logs/cargo-check-tui.log",
+    "log_bytes": 15157,
+    "log_sha256": "de2ae840cfd9ccce1ddad39ff5e0a3ca8b5a220bb6704b0308bfe0f12596bae7",
+    "name": "cargo-check-tui",
+    "timed_out": false,
+    "wall_s": 35.168247707999996
+  },
+  {
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "--target",
+      "aarch64-apple-darwin",
+      "-p",
+      "host-play",
+      "--features",
+      "memory-profile-no-alloc,memory-owner-capture",
+      "--test",
+      "direct_owner_capture",
+      "--",
+      "--test-threads=1",
+      "--nocapture"
+    ],
+    "cwd": "/private/tmp/direct-owner-source-check-t_0a97cf2a-r1008d/extracted/direct-owner-source",
+    "exit": 0,
+    "log": "/private/tmp/direct-owner-source-check-t_0a97cf2a-r1008d/logs/host-play-generated-observer.log",
+    "log_bytes": 12162,
+    "log_sha256": "a206b676bcb0753ba5424d0846d7090b44ce4e9cd8c45a6f2ff5b625ae043395",
+    "name": "host-play-generated-observer",
+    "timed_out": false,
+    "wall_s": 32.535061708
+  },
+  {
+    "command": [
+      "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+      "-m",
+      "unittest",
+      "-v",
+      "test_validate_direct_owner_capture.py"
+    ],
+    "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/support",
+    "exit": 0,
+    "log": "/private/tmp/direct-owner-source-check-t_0a97cf2a-r1008d/logs/protocol-validator-generated.log",
+    "log_bytes": 663,
+    "log_sha256": "e7b226daf931be0fe47ead9f4bda381cdd8c13cb7b9cf6d6324833f5326e5e74",
+    "name": "protocol-validator-generated",
+    "timed_out": false,
+    "wall_s": 0.15322487499999227
+  }
+]

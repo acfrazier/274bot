@@ -1,0 +1,63 @@
+{
+  "capture_environment": "BOT_MEMORY_OWNER_CAPTURE=0; generated fixture explicitly enables only its isolated seam",
+  "cargo": {
+    "command": [
+      "cargo",
+      "-Vv"
+    ],
+    "exit": 0,
+    "output": "cargo 1.98.0 (797e8a9bc 2026-08-05)\nrelease: 1.98.0\ncommit-hash: 797e8a9bca276c1c9f9f738d2a20f484fa4eea9d\ncommit-date: 2026-08-05\nhost: aarch64-apple-darwin\nlibgit2: 1.9.4 (sys:0.21.0 vendored)\nlibcurl: 8.7.1 (sys:0.4.90+curl-8.21.0 system ssl:(SecureTransport) LibreSSL/3.3.6)\nssl: OpenSSL 3.6.3 9 Jun 2026\nos: Mac OS 15.7.9 [64-bit]\n"
+  },
+  "live_environment_removed": true,
+  "machine": "arm64",
+  "mode": "source-check",
+  "platform": "macOS-15.7.9-arm64-arm-64bit",
+  "python": {
+    "command": [
+      "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+      "--version"
+    ],
+    "exit": 0,
+    "output": "Python 3.9.6\n"
+  },
+  "qualification_script": {
+    "bytes": 24446,
+    "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/qualify_linux.py",
+    "sha256": "3a9857bf0a52a32d1b24bcdaf3509fc22f2e034a688ed5c967f4a5207c46d221"
+  },
+  "rustc": {
+    "command": [
+      "rustc",
+      "-vV"
+    ],
+    "exit": 0,
+    "output": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: aarch64-apple-darwin\nrelease: 1.98.0\nLLVM version: 22.1.8\n"
+  },
+  "target": "aarch64-apple-darwin",
+  "tool_binaries": {
+    "cargo": {
+      "bytes": 11319056,
+      "command": "cargo",
+      "invoked_path": "/Users/acfrazier/.cargo/bin/cargo",
+      "resolved_path": "/Users/acfrazier/.cargo/bin/rustup",
+      "sha256": "ec1b9233e7f72990ecd8e62063fa7f6c3dfc2bec8e97f88bff165f9100ac696a",
+      "symlink_target": "rustup"
+    },
+    "python": {
+      "bytes": 102352,
+      "command": "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+      "invoked_path": "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+      "resolved_path": "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9",
+      "sha256": "6b24be8ba00c4abc8b3e7e2620bd710e2cf7a4312d00c147f8f05fbb6f3d297a",
+      "symlink_target": "../../Library/Frameworks/Python3.framework/Versions/3.9/bin/python3"
+    },
+    "rustc": {
+      "bytes": 11319056,
+      "command": "rustc",
+      "invoked_path": "/Users/acfrazier/.cargo/bin/rustc",
+      "resolved_path": "/Users/acfrazier/.cargo/bin/rustup",
+      "sha256": "ec1b9233e7f72990ecd8e62063fa7f6c3dfc2bec8e97f88bff165f9100ac696a",
+      "symlink_target": "rustup"
+    }
+  }
+}

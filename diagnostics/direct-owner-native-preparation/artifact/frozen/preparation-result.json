@@ -1,0 +1,45 @@
+{
+  "after": {
+    "client": {
+      "head": "5c73a4a27f3d72834c2c2a071668eb197eb39fd9",
+      "index_path": "/Users/acfrazier/experiments/274bot/.git/worktrees/t_a1f4796f/modules/vendor/fr-client-rust/index",
+      "index_sha256": "0c0ad289f3671eb2d6b8364df44960531fbec528104a37b788133955965e24ce",
+      "tracked_status": ""
+    },
+    "host": {
+      "head": "cf5cbddc97fa02ed01b50ac9a60d5ce87286bc36",
+      "index_path": "/Users/acfrazier/experiments/274bot/.git/worktrees/t_a1f4796f/index",
+      "index_sha256": "3d2645f932f0664dac051caff8d7592d659f7915e9544c548c8f4575d92ef9c5",
+      "tracked_status": "M diagnostics/direct-owner-native-preparation/prepare_frozen_source.py"
+    },
+    "locks": {
+      "Cargo.lock": "03059d02f8274c8fc9cd7e2f69a48f317e3f44417570ecf4730b31710f8d4b83",
+      "vendor/fr-client-rust/Cargo.lock": "015530e3685e8175fe5ec12b41cf37a40ee116557d575cd38b6852926ec47cc7"
+    }
+  },
+  "archive_bytes": 5075876,
+  "archive_sha256": "2c36d254c37c5ed56a55f78728357296d62be602f8653ed9ec041cd37d099d5d",
+  "archive_verified": true,
+  "before": {
+    "client": {
+      "head": "5c73a4a27f3d72834c2c2a071668eb197eb39fd9",
+      "index_path": "/Users/acfrazier/experiments/274bot/.git/worktrees/t_a1f4796f/modules/vendor/fr-client-rust/index",
+      "index_sha256": "0c0ad289f3671eb2d6b8364df44960531fbec528104a37b788133955965e24ce",
+      "tracked_status": ""
+    },
+    "host": {
+      "head": "cf5cbddc97fa02ed01b50ac9a60d5ce87286bc36",
+      "index_path": "/Users/acfrazier/experiments/274bot/.git/worktrees/t_a1f4796f/index",
+      "index_sha256": "3d2645f932f0664dac051caff8d7592d659f7915e9544c548c8f4575d92ef9c5",
+      "tracked_status": "M diagnostics/direct-owner-native-preparation/prepare_frozen_source.py"
+    },
+    "locks": {
+      "Cargo.lock": "03059d02f8274c8fc9cd7e2f69a48f317e3f44417570ecf4730b31710f8d4b83",
+      "vendor/fr-client-rust/Cargo.lock": "015530e3685e8175fe5ec12b41cf37a40ee116557d575cd38b6852926ec47cc7"
+    }
+  },
+  "manifest_sha256": "ca69e70352c5f6f8d1c9db026959af6ba8fd64886be533a0095c3ca94bb5732e",
+  "prepared": true,
+  "production_tree_unchanged": true,
+  "schema": "direct-owner-preparation-result-v1"
+}

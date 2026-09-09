@@ -1,0 +1,48 @@
+{
+  "accounts_accessed": false,
+  "all_steps_passed": true,
+  "binary_identity_commands_passed": null,
+  "cache_accessed": false,
+  "coverage": {
+    "frozen_compile": {
+      "claim": "offline locked TUI check with memory-profile-no-alloc,memory-owner-capture on the local host target",
+      "steps": [
+        "cargo-check-tui"
+      ]
+    },
+    "generated_observer": {
+      "claim": "generated empty-owner pre-observe and nav/COW seam; allocation count, requested bytes, scratch reservation, and thread CPU bound",
+      "steps": [
+        "host-play-generated-observer"
+      ]
+    },
+    "protocol_validator": {
+      "claim": "reviewed generated positive fixture plus negative protocol/order/cap/file-identity mutations",
+      "steps": [
+        "protocol-validator-generated"
+      ]
+    }
+  },
+  "coverage_steps_executed": true,
+  "executed_steps": [
+    "cargo-check-tui",
+    "host-play-generated-observer",
+    "protocol-validator-generated"
+  ],
+  "frontend_launched": false,
+  "generated_observer_qualified": true,
+  "limitations": [
+    "Generated empty owners do not represent populated native scene cost.",
+    "No frontend/live workload, account, cache, or server admission is performed.",
+    "The protocol fixture remains synthetic parser evidence and reports native_qualified=false itself.",
+    "Root must separately admit live host resources, identities, guards, workload, and one-attempt procedure."
+  ],
+  "linux_generated_qualified": false,
+  "live_qualified": false,
+  "locks_unchanged": true,
+  "mode": "source-check",
+  "runtime_capture_default_off": true,
+  "schema": "direct-owner-native-generated-qualification-v1",
+  "server_accessed": false,
+  "source_verified": true
+}

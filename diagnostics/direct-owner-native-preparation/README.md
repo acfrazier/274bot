@@ -28,4 +28,6 @@ A non-Linux source check is available only for local compilation evidence:
 
 `source-check` never emits a Linux qualification. Neither mode launches a frontend, live test, account, cache, or server. Runtime owner capture is forced off except where the isolated generated test explicitly enables its in-process seam.
 
-Current status: preparation is blocked before archive creation because the read-only host patches materialize two members that do not match their reviewed receipt hashes. See `artifact/provenance-audit.json` and `docs/memory/direct-owner-native-preparation-report.md`.
+Prepared artifacts are under `artifact/frozen/`. The original blocked audit remains at `artifact/`; it is not rewritten as success. The successful audit admits exactly two original-plus-overlay host files as test-only derivations with bound full hashes and byte-identical production prefixes; all other touched host files and all touched client files match the reviewed commits exactly. The complete derived difference is `artifact/frozen/derived-vs-reviewed-test-only.patch`.
+
+Compact macOS source-check receipts are under `artifact/local-source-check/`; extracted source and Cargo target output remain outside the repository. That check is not Linux or live qualification. See `docs/memory/direct-owner-native-preparation-report.md` for identities, commands, results, and the remaining root prerequisites.

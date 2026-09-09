@@ -1,0 +1,9 @@
+{"cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/support", "command": ["/Applications/Xcode.app/Contents/Developer/usr/bin/python3", "-m", "unittest", "-v", "test_validate_direct_owner_capture.py"], "timeout_s": 900}
+test_complete_generated_protocol (test_validate_direct_owner_capture.ValidationTests) ... ok
+test_file_identity_truncation_and_duplicate_keys (test_validate_direct_owner_capture.ValidationTests) ... ok
+test_negative_mutations (test_validate_direct_owner_capture.ValidationTests) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.016s
+
+OK

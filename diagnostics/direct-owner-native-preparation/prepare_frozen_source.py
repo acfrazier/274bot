@@ -9,6 +9,7 @@ source as an archive input.
 from __future__ import annotations
 
 import argparse
+import difflib
 import gzip
 import hashlib
 import json
@@ -47,6 +48,33 @@ SUPPORT_FILES = (
     "validate_direct_owner_capture.py",
     "test_validate_direct_owner_capture.py",
 )
+TEST_ONLY_DERIVATIONS = {
+    "crates/host-play/src/lib.rs": {
+        "materialized": {
+            "bytes": 357877,
+            "sha256": "f997f22f00bb205cdad74eec70d9dfc5750c3f8f80d9ba52c024f5ea4ea9120f",
+        },
+        "reviewed": {
+            "bytes": 361346,
+            "sha256": "096753fc31636e829058e33f54770090810688346c9be47b4ed49193813801ee",
+        },
+        "tests_start_line": 4270,
+        "production_prefix_sha256": "37e1d14040400d818ee56aa11372f284f7f98ce008fd3d4145b16fa57d0503e5",
+    },
+    "crates/host-play/src/memory.rs": {
+        "materialized": {
+            "bytes": 161591,
+            "sha256": "76e633acf9d4dcd1fd03f1a57ea722f5111025790071679119e7e5932ece2991",
+        },
+        "reviewed": {
+            "bytes": 161447,
+            "sha256": "74b7a18164f1b6861697ec8c651c2f81a400dbd41c8bf772cdab29ff4b3bb923",
+        },
+        "tests_start_line": 2077,
+        "production_prefix_sha256": "1af24d12119b500b802e02c63f0f33055b49fda16c03a7eae54121a7af06aa69",
+    },
+}
+TEST_MODULE_MARKER = b"#[cfg(test)]\nmod tests {"
 
 
 def sha256(data: bytes) -> str:
@@ -159,6 +187,30 @@ def member_data(path: Path, mode: str) -> bytes:
     return path.read_bytes()
 
 
+def production_prefix(data: bytes, path: str, expected_line: int) -> bytes:
+    if data.count(TEST_MODULE_MARKER) != 1:
+        raise RuntimeError(f"expected one top-level test module marker: {path}")
+    offset = data.index(TEST_MODULE_MARKER)
+    line = data[:offset].count(b"\n") + 1
+    if line != expected_line:
+        raise RuntimeError(
+            f"test module boundary moved in {path}: line {line}, expected {expected_line}"
+        )
+    return data[:offset]
+
+
+def test_only_diff(path: str, materialized: bytes, reviewed: bytes) -> str:
+    return "".join(
+        difflib.unified_diff(
+            materialized.decode("utf-8").splitlines(keepends=True),
+            reviewed.decode("utf-8").splitlines(keepends=True),
+            fromfile=f"a/{path} (original-plus-reviewed-overlays)",
+            tofile=f"b/{path} (reviewed-commit)",
+            n=3,
+        )
+    )
+
+
 def verify_overlay_members(
     stage: Path,
     entries: list[dict[str, Any]],
@@ -179,18 +231,64 @@ def verify_overlay_members(
         actual = {"bytes": len(data), "sha256": sha256(data)}
         wanted = {"bytes": expected["bytes"], "sha256": expected["sha256"]}
         reviewed_identity = {"bytes": len(reviewed), "sha256": sha256(reviewed)}
-        verified.append(
-            {
-                "path": archive_path,
-                "materialized": actual,
-                "receipt": wanted,
-                "reviewed_commit": reviewed_identity,
-                "materialized_matches_receipt": actual == wanted,
-                "materialized_matches_reviewed": data == reviewed,
-                "receipt_matches_reviewed": wanted == reviewed_identity,
-                "verified": actual == wanted and data == reviewed,
+        row = {
+            "path": archive_path,
+            "materialized": actual,
+            "receipt": wanted,
+            "reviewed_commit": reviewed_identity,
+            "materialized_matches_receipt": actual == wanted,
+            "materialized_matches_reviewed": data == reviewed,
+            "receipt_matches_reviewed": wanted == reviewed_identity,
+        }
+        derivation = TEST_ONLY_DERIVATIONS.get(expected["path"])
+        if derivation is None:
+            row["classification"] = "exact_reviewed"
+            row["verified"] = actual == wanted and data == reviewed
+        else:
+            materialized_prefix = production_prefix(
+                data, expected["path"], derivation["tests_start_line"]
+            )
+            reviewed_prefix = production_prefix(
+                reviewed, expected["path"], derivation["tests_start_line"]
+            )
+            prefix_identity = {
+                "bytes": len(materialized_prefix),
+                "sha256": sha256(materialized_prefix),
             }
-        )
+            difference = test_only_diff(expected["path"], data, reviewed)
+            row.update(
+                {
+                    "classification": "derived_test_only",
+                    "expected_materialized": derivation["materialized"],
+                    "materialized_matches_expected_derived": actual
+                    == derivation["materialized"],
+                    "reviewed_matches_bound_identity": reviewed_identity
+                    == derivation["reviewed"],
+                    "tests_start_line": derivation["tests_start_line"],
+                    "production_prefix": prefix_identity,
+                    "production_prefix_equal": materialized_prefix == reviewed_prefix,
+                    "production_prefix_matches_bound_identity": prefix_identity["sha256"]
+                    == derivation["production_prefix_sha256"],
+                    "differences_confined_to_test_module": materialized_prefix
+                    == reviewed_prefix,
+                    "difference": {
+                        "bytes": len(difference.encode()),
+                        "sha256": sha256(difference.encode()),
+                    },
+                    "_difference_text": difference,
+                }
+            )
+            row["verified"] = all(
+                (
+                    row["receipt_matches_reviewed"],
+                    row["materialized_matches_expected_derived"],
+                    row["reviewed_matches_bound_identity"],
+                    row["production_prefix_equal"],
+                    row["production_prefix_matches_bound_identity"],
+                    bool(difference),
+                )
+            )
+        verified.append(row)
     return verified
 
 
@@ -424,17 +522,51 @@ def prepare(root: Path, output: Path) -> None:
             CLIENT_REVIEWED,
             "vendor/fr-client-rust/",
         )
+        difference_parts = []
+        for row in host_verified:
+            difference = row.pop("_difference_text", None)
+            if difference is not None:
+                difference_parts.append(difference)
+        difference_text = "".join(difference_parts)
+        difference_path = output / "derived-vs-reviewed-test-only.patch"
+        difference_path.write_text(difference_text)
+        derived_paths = {
+            row["path"]
+            for row in host_verified
+            if row["classification"] == "derived_test_only"
+        }
+        exact_host_count = sum(
+            row["classification"] == "exact_reviewed" and row["materialized_matches_reviewed"]
+            for row in host_verified
+        )
+        exact_client_count = sum(row["materialized_matches_reviewed"] for row in client_verified)
         provenance_audit = {
-            "schema": "direct-owner-frozen-provenance-audit-v1",
+            "schema": "direct-owner-frozen-provenance-audit-v2",
             "host_original": HOST_ORIGINAL,
             "client_original": CLIENT_ORIGINAL,
             "host_reviewed": HOST_REVIEWED,
             "client_reviewed": CLIENT_REVIEWED,
             "host": host_verified,
             "client": client_verified,
+            "exact_reviewed_full_file_counts": {
+                "host": exact_host_count,
+                "client": exact_client_count,
+            },
+            "test_only_derivations": {
+                "paths": sorted(derived_paths),
+                "expected_paths": sorted(TEST_ONLY_DERIVATIONS),
+                "difference_artifact": {
+                    "path": difference_path.name,
+                    "bytes": difference_path.stat().st_size,
+                    "sha256": file_sha256(difference_path),
+                },
+            },
         }
-        provenance_audit["verified"] = all(
-            row["verified"] for row in host_verified + client_verified
+        provenance_audit["verified"] = (
+            all(row["verified"] for row in host_verified + client_verified)
+            and derived_paths == set(TEST_ONLY_DERIVATIONS)
+            and exact_host_count == 19
+            and exact_client_count == 5
         )
         (output / "provenance-audit.json").write_text(
             json.dumps(provenance_audit, indent=2, sort_keys=True) + "\n"

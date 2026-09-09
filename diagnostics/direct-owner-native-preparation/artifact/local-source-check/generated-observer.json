@@ -1,0 +1,21 @@
+{
+  "command_passed": true,
+  "criteria": {
+    "allocated_bytes_zero": true,
+    "allocations_zero": true,
+    "fixture_self_declares_no_native_verdict": true,
+    "scratch_within_512kib": true,
+    "thread_cpu_within_fragment_budget": true
+  },
+  "qualified": true,
+  "record": {
+    "allocated_bytes": 0,
+    "allocations": 0,
+    "native_qualified": false,
+    "scratch_reserved_bytes": 262144,
+    "thread_cpu_ns": 1188334,
+    "wall_ns": 1225875
+  },
+  "scope": "generated empty-owner pre-observe + nav/COW seam in an isolated test process",
+  "thread_cpu_limit_ns": 5000000
+}
