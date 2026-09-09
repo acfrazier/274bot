@@ -11,6 +11,22 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 16:13 UTC
+
+- Linux native-singleton-e6958b2-1601 completed seven steps successfully:
+  legacy guards, source preparation, all four builds, clean/counting generated
+  qualification and integration. Scheduler qualification FAILED22/23: deadline
+  fixture omitted child address cap, so frozen default64GiB attempts to raise
+  inherited4GiB Linux hard RLIMIT_AS. No real probe launched; all evidence retained.
+- Root independently reproduced kernel rejection and same4GiB cap success in
+  root-inherited-as-reproduction.json. New bounded corrective card t_53d40ff1
+  profileluna handles fixture only, preserving caps/deadline/descendant proof,
+  then same-card reviewer. Original reviewed code remains preserved; native
+  follow-up and Concord staging remain withheld until correction review.
+- Root SSH build session97969 exited1 and is closed. Original builder stage,
+  logs, all binaries/admissions and failed qualification remain intact. Owner
+  t_ce3310e4 continues feature-on/off regression work, with no review verdict yet.
+
 ## Latest boundary — 2026-09-09 16:01 UTC
 
 - Sharded correction e6958b2f3360e6125e0a0ae048302d944a5994d0 APPROVED:
