@@ -11,6 +11,17 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 20:32 UTC
+
+- Transcript a3abbdd APPROVED actualGrok4.5/xai162751_9bdc09. Root reconciled
+  full verdict, exact helper/patch bytes and six raw local logs.
+- Root starts native root-transcript-native-01:2 original generated controls,
+  4 corrected focused commands, then both complete host-play feature suites
+  and full snapshot-dedup integration. Reviewed helper unchanged, existing owned
+  native Cargo cache reused; source/locks/cleanup checked in separate receipt.
+- Earlier GPU failures remain failed and full GPU/live qualification is withheld.
+  Native has33 GiB free before run; active Mac workers remain separate.
+
 ## Latest boundary — 2026-09-09 20:29 UTC
 
 - User requested Mac project cleanup after near disk exhaustion. Root removed92
