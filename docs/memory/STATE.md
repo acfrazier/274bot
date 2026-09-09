@@ -11,6 +11,27 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 13:27 UTC
+
+- Stage A tooling f24de7cbcaaa3f419fc5485b77c4a117543a6afc APPROVED same card
+  t_fa5a3462 round 3, actual Grok4.5/xai session 20260909_092339_3d490f.
+  Rejected 6c5a867 between-repetition input binding is fixed and independently
+  reproduced as rejection before second launch. Run-05 fresh four builds and
+  generated clean/counting qualification passed; 17 tests include 12 mutation
+  subcases. Root verified all183 archive members, SHA7dee7795f03480cdc3bfd97e52b46d9b87d512d40932fa7b2a1efda34b4e915b.
+- Root releases native Linux BUILD AND GENERATED QUALIFICATION only, new owned
+  builder staging. Source payload native-source-f24de7cb.tar.gz, 1220982 bytes,
+  SHAac855e6ecb69926d3a5fb8ce6fe9b6ed98545860e7ec60d5109a4cbacb57b9ed.
+  Exact original host158/client196 Git objects independently verified locally.
+  No actual pack execution or performance acceptance is released yet.
+- Proposed real workload concatenates unchanged reviewed40+19 selectors,
+  diagnostics/nav-stage-a-real-proposal-01, 59 rows, TSV
+  SHA49e348ea78806c8278d720d27b171c54a0a209930fa8191ffcd38d2e9bbbc125.
+  Six paired processes per arm in the reviewed fixed alternating order.
+  Planned execution host Concord:2CPU/~2GiB/no swap,14.77GBfree, no Rust compiler;
+  build on HyperVbuilder then transfer exact admitted binaries and independently
+  qualify on Concord. Fresh hardware preflight and root real release still required.
+
 ## Latest boundary — 2026-09-09 13:07 UTC
 
 - Extended native correctness evidence APPROVED: t_429af44a, actual reviewer
