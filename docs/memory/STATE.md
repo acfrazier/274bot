@@ -11,6 +11,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 15:54 UTC
+
+- Both corrective workers remain active: t_500f341e Astra114559_dbf123 and
+  t_ce3310e4 Astra114458_cdd44b. New singleton qualification04 reports23tests
+  passing in113.196s and12 historical-output comparisons; root verified current
+  tool hashes and result SHA9244415c4f021acd840842b724288089cf3d5ef414f47efed8f3e0c2224552ae.
+  This is macOS generated evidence; native_hard_as remains false and review pending.
+- Root verified additional sol/grok46 routing probes and recorded guidance in
+  execution.md atb03026a. Existing active workers/review roles remain unchanged.
+- Native packaging preparation now includes the qualifier's frozen f24 source
+  object and12 original generated readbacks, separately from original production
+  Git packs. A parameterized Linux-to-Concord packaging helper is prepared.
+  Neither helper has built a new payload or released native work; final reviewed
+  tooling commit and complete Linux qualification are prerequisites.
+
 ## Latest boundary — 2026-09-09 15:46 UTC
 
 - Sharded setup-CPU fix5c0ab7f verified by round2 Grok4.5/xai
