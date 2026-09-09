@@ -1,0 +1,52 @@
+{
+  "reviewed_controller_commit": "07b5b29eebaa1fa1cf4d8cdf43891fa298100e97",
+  "reviewer_session": "20260909_180340_77a5ff",
+  "reviewer_model": "grok-4.5",
+  "reviewer_provider": "xai-oauth",
+  "review_outcome": "approved",
+  "root_log_hashes_verified": true,
+  "full_suite": {
+    "tests": 142,
+    "failures": 0,
+    "errors": 0,
+    "skips": 2,
+    "skip_reason": "native macOS backend only",
+    "excluded_tests": []
+  },
+  "owner_validator": {
+    "tests": 3,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0
+  },
+  "native_host": "274bot-builder",
+  "runtime_measurement_host": "Concord not used by these tests",
+  "live_release": false,
+  "files": [
+    {
+      "path": "run_native.py",
+      "bytes": 2778,
+      "sha256": "2d92d1b104754a3ebdc503fb1a043a1b4b6775d328384b74cc4a1da259eed472"
+    },
+    {
+      "path": "source-manifest.json",
+      "bytes": 12200,
+      "sha256": "ae9b7b94cdf7f5018f47436c402808f2531ab964f557c9e5573448aa23d9fd32"
+    },
+    {
+      "path": "result.json",
+      "bytes": 1674,
+      "sha256": "79ee55f7c0ae0c0d65c0d86491d1e8dc298e74dcd2512a673e46e72f3fe261e4"
+    },
+    {
+      "path": "full-focused.log",
+      "bytes": 39806,
+      "sha256": "55fe10dd45fe20f884d4430afd0380f28d7ffb439dd22823db506af66342e8ef"
+    },
+    {
+      "path": "owner-validator.log",
+      "bytes": 490,
+      "sha256": "d20015505d4a5e0ceaab45aa5d84b7d1415664cdf59dd86682c6646bfea114d1"
+    }
+  ]
+}

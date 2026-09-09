@@ -11,6 +11,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 22:33 UTC
+
+- Controller07b5b29 APPROVED same-card round2 actualGrok4.5/xai180340_77a5ff;
+  navigationa44a930 APPROVED actualGrok4.5/xai174939_368e17. Root read reports
+  and actual run metadata; verified7 controller log hashes and11 nav evidence hashes.
+- Root native controller qualification COMPLETE: full142 tests zero failures/errors,
+  2macOS-only skips/no exclusions; owner-validator3 pass. Exact69 source files
+  unchanged; both owned groups absent, no timeouts. See
+  direct-owner-controller-native-report.md and root-native-qualification-01.
+- Navigation remains generated/local tooling only; root fresh native build and
+  qualification, exact59 differential, CF1/CF2/CA and acceptance remain pending.
+- Windows controller contract and runtime manifest/private admission/live preflight
+  remain pending. No live release, measurements, or savings claim. No active worker.
+
 ## Latest boundary — 2026-09-09 20:55 UTC
 
 - Root staged immutable runtime/source on Concord in new

@@ -1,0 +1,363 @@
+test_clean_environment_forces_all_hot_flags_off (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_clean_environment_forces_all_hot_flags_off) ... ok
+test_default_n16_remains_the_cli_and_environment_contract (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_default_n16_remains_the_cli_and_environment_contract) ... ok
+test_diagnostic_argv_is_exact_resource_only_contract (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_diagnostic_argv_is_exact_resource_only_contract) ... ok
+test_direct_owner_rejects_heaptrack_and_non_n1 (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_direct_owner_rejects_heaptrack_and_non_n1) ... ok
+test_direct_owner_spec_is_exact_opt_in_and_default_is_unchanged (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_direct_owner_spec_is_exact_opt_in_and_default_is_unchanged) ... ok
+test_direct_source_cleanliness_includes_untracked_files (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_direct_source_cleanliness_includes_untracked_files) ... ok
+test_existing_output_is_refused_before_managed_launch (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_existing_output_is_refused_before_managed_launch) ... ok
+test_feature_contract_rejects_counting_or_snapshot_dedup (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_feature_contract_rejects_counting_or_snapshot_dedup) ... ok
+test_incomplete_managed_state_is_failed_and_never_accepted (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_incomplete_managed_state_is_failed_and_never_accepted) ... ok
+test_invalid_n_fails_before_launch (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_invalid_n_fails_before_launch) ... usage: python3 -m unittest [-h] [--n {1,16}] --host-checkout HOST_CHECKOUT
+                           --binary BINARY --build-manifest BUILD_MANIFEST
+                           --build-role {reference,candidate} --server-root
+                           SERVER_ROOT --rs2b0t RS2B0T --cache-dir CACHE_DIR
+                           --unpack-root UNPACK_ROOT --nav-pack NAV_PACK
+                           --nav-flags NAV_FLAGS --catalog CATALOG
+                           --host-conditions HOST_CONDITIONS --server-identity
+                           SERVER_IDENTITY --server-pid SERVER_PID
+                           --server-start-identity SERVER_START_IDENTITY
+                           --ssh-parent-pid SSH_PARENT_PID
+                           [--expected-host-commit EXPECTED_HOST_COMMIT]
+                           [--expected-client-commit EXPECTED_CLIENT_COMMIT]
+                           --output OUTPUT
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture]
+                           [--conflict-receipt CONFLICT_RECEIPT]
+                           [--account-admission ACCOUNT_ADMISSION]
+                           [--population-admission POPULATION_ADMISSION]
+                           [--cache-admission CACHE_ADMISSION]
+                           [--server-health-receipt SERVER_HEALTH_RECEIPT]
+                           [--preflight-only]
+python3 -m unittest: error: argument --n: invalid choice: 2 (choose from 1, 16)
+ok
+test_invalid_programmatic_n_fails_closed_before_launch (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_invalid_programmatic_n_fails_closed_before_launch) ... ok
+test_launch_environment_binds_explicit_operator_paths (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_launch_environment_binds_explicit_operator_paths) ... ok
+test_launch_environment_preserves_operator_context_from_snapshot (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_launch_environment_preserves_operator_context_from_snapshot) ... ok
+test_managed_exception_does_not_claim_no_launch (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_managed_exception_does_not_claim_no_launch) ... ok
+test_memory_guard_fails_closed_when_meminfo_unavailable (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_memory_guard_fails_closed_when_meminfo_unavailable) ... ok
+test_memory_guard_interrupts_managed_call_and_owned_child_is_cleaned (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_memory_guard_interrupts_managed_call_and_owned_child_is_cleaned) ... ok
+test_memory_guard_triggers_cleanup_callback (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_memory_guard_triggers_cleanup_callback) ... ok
+test_missing_programmatic_n_keeps_default (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_missing_programmatic_n_keeps_default) ... ok
+test_n1_cli_and_environment_agree_in_generated_contract (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_n1_cli_and_environment_agree_in_generated_contract) ... ok
+test_n1_spec_receipt_matches_cli_and_environment (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_n1_spec_receipt_matches_cli_and_environment) ... ok
+test_owner_environment_is_scrubbed_and_only_direct_mode_reemits (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_owner_environment_is_scrubbed_and_only_direct_mode_reemits) ... ok
+test_preflight_only_has_no_launch_or_output_reservation (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_preflight_only_has_no_launch_or_output_reservation) ... {"attempts": 0, "launched": false, "performance_acceptance": false, "spec": {"id": "future", "launcher_argv": ["never"]}, "status": "preflight_only"}
+ok
+test_preflight_rejects_server_pid_start_mismatch (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_preflight_rejects_server_pid_start_mismatch) ... ok
+test_preflight_samples_declared_server_identity (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_preflight_samples_declared_server_identity) ... ok
+test_run_passes_preserved_context_to_managed_runner (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_run_passes_preserved_context_to_managed_runner) ... ok
+test_run_receipt_retains_selected_n_after_managed_runner (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_run_receipt_retains_selected_n_after_managed_runner) ... ok
+test_server_identity_requires_fresh_declared_server_and_real_hashes (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_server_identity_requires_fresh_declared_server_and_real_hashes) ... ok
+test_source_mismatch_fails_before_build_or_launch (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_source_mismatch_fails_before_build_or_launch) ... ok
+test_wall_budget_is_unchanged_without_capture_and_split_with_capture (docs.memory.test_current_tui_calibration.CurrentTuiCalibrationControls.test_wall_budget_is_unchanged_without_capture_and_split_with_capture) ... ok
+test_argv_inconsistent_with_spec_rejected (docs.memory.test_run_managed_cell.ManagedCellTests.test_argv_inconsistent_with_spec_rejected) ... ok
+test_cache_changed_during_observation_fails_receipt (docs.memory.test_run_managed_cell.ManagedCellTests.test_cache_changed_during_observation_fails_receipt) ... ok
+test_cleanup_rechecks_parent_while_launcher_alive (docs.memory.test_run_managed_cell.ManagedCellTests.test_cleanup_rechecks_parent_while_launcher_alive) ... ok
+test_complete_cache_proof_pre_and_post (docs.memory.test_run_managed_cell.ManagedCellTests.test_complete_cache_proof_pre_and_post) ... ok
+test_conpty_discovery_empty_fails_closed (docs.memory.test_run_managed_cell.ManagedCellTests.test_conpty_discovery_empty_fails_closed) ... ok
+test_conpty_helper_handoff_identity_and_parent_are_bound (docs.memory.test_run_managed_cell.ManagedCellTests.test_conpty_helper_handoff_identity_and_parent_are_bound) ... ok
+test_conpty_helper_handoff_missing_fails_closed (docs.memory.test_run_managed_cell.ManagedCellTests.test_conpty_helper_handoff_missing_fails_closed) ... ok
+test_conpty_helper_handoff_rejects_pid_reuse (docs.memory.test_run_managed_cell.ManagedCellTests.test_conpty_helper_handoff_rejects_pid_reuse) ... ok
+test_deadline_cleanup_owned_children_only (docs.memory.test_run_managed_cell.ManagedCellTests.test_deadline_cleanup_owned_children_only) ... ok
+test_default_collector_stops_after_pad_before_generated_stop_and_c (docs.memory.test_run_managed_cell.ManagedCellTests.test_default_collector_stops_after_pad_before_generated_stop_and_c) ... ok
+test_default_no_cache_stays_compatible (docs.memory.test_run_managed_cell.ManagedCellTests.test_default_no_cache_stays_compatible) ... ok
+test_direct_contract_and_argv_paths_are_exact_and_mode_only (docs.memory.test_run_managed_cell.ManagedCellTests.test_direct_contract_and_argv_paths_are_exact_and_mode_only) ... ok
+test_direct_preflight_boundaries_counter_drift_and_receipt_mutation (docs.memory.test_run_managed_cell.ManagedCellTests.test_direct_preflight_boundaries_counter_drift_and_receipt_mutation) ... ok
+test_direct_preflight_rejects_missing_raw_swap_counters (docs.memory.test_run_managed_cell.ManagedCellTests.test_direct_preflight_rejects_missing_raw_swap_counters) ... ok
+test_early_frontend_fail_stops_collector_no_retry (docs.memory.test_run_managed_cell.ManagedCellTests.test_early_frontend_fail_stops_collector_no_retry) ... ok
+test_exclusive_cell_create_no_overwrite (docs.memory.test_run_managed_cell.ManagedCellTests.test_exclusive_cell_create_no_overwrite) ... ok
+test_guard_rejects_large_overshoot_skipped_grid_and_identity_failures (docs.memory.test_run_managed_cell.ManagedCellTests.test_guard_rejects_large_overshoot_skipped_grid_and_identity_failures) ... ok
+test_guard_thresholds_accept_equal_and_fail_over_without_imputation (docs.memory.test_run_managed_cell.ManagedCellTests.test_guard_thresholds_accept_equal_and_fail_over_without_imputation) ... ok
+test_handoff_identity_deadline_and_exit_proof_are_fail_closed (docs.memory.test_run_managed_cell.ManagedCellTests.test_handoff_identity_deadline_and_exit_proof_are_fail_closed) ... ok
+test_identity_mismatch_cleanup_never_signals_foreign_process (docs.memory.test_run_managed_cell.ManagedCellTests.test_identity_mismatch_cleanup_never_signals_foreign_process) ... ok
+test_invalid_specs_and_actual_launcher_mismatch_precede_launch (docs.memory.test_run_managed_cell.ManagedCellTests.test_invalid_specs_and_actual_launcher_mismatch_precede_launch) ... ok
+test_launcher_exit_does_not_leave_term_ignoring_frontend (docs.memory.test_run_managed_cell.ManagedCellTests.test_launcher_exit_does_not_leave_term_ignoring_frontend) ... ok
+test_libproc_modules_include_native_and_identity_backend (docs.memory.test_run_managed_cell.ManagedCellTests.test_libproc_modules_include_native_and_identity_backend) ... skipped 'native macOS backend'
+test_linux_direct_lifecycle_keeps_collector_through_stop_c_and_exit (docs.memory.test_run_managed_cell.ManagedCellTests.test_linux_direct_lifecycle_keeps_collector_through_stop_c_and_exit) ... ok
+test_missing_metadata_no_retry_preserves_cell (docs.memory.test_run_managed_cell.ManagedCellTests.test_missing_metadata_no_retry_preserves_cell) ... ok
+test_missing_or_duplicate_boundary_fails_durable_receipt (docs.memory.test_run_managed_cell.ManagedCellTests.test_missing_or_duplicate_boundary_fails_durable_receipt) ... ok
+test_module_mutation_before_completion_fails_runner (docs.memory.test_run_managed_cell.ManagedCellTests.test_module_mutation_before_completion_fails_runner) ... ok
+test_native_backend_preflight_matches_native_collector_identity (docs.memory.test_run_managed_cell.ManagedCellTests.test_native_backend_preflight_matches_native_collector_identity) ... skipped 'native macOS backend'
+test_nonobject_server_identity_is_durable_preflight_failure (docs.memory.test_run_managed_cell.ManagedCellTests.test_nonobject_server_identity_is_durable_preflight_failure) ... ok
+test_owned_output_scanner_deduplicates_hardlinks_and_rejects_symlinks (docs.memory.test_run_managed_cell.ManagedCellTests.test_owned_output_scanner_deduplicates_hardlinks_and_rejects_symlinks) ... ok
+test_owned_output_scanner_fails_in_scan_disappearance_and_replayed_replacement (docs.memory.test_run_managed_cell.ManagedCellTests.test_owned_output_scanner_fails_in_scan_disappearance_and_replayed_replacement) ... ok
+test_owned_output_scanner_rejects_disappearance_but_allows_handoff_replacement (docs.memory.test_run_managed_cell.ManagedCellTests.test_owned_output_scanner_rejects_disappearance_but_allows_handoff_replacement) ... ok
+test_paired_cache_fields_required_together (docs.memory.test_run_managed_cell.ManagedCellTests.test_paired_cache_fields_required_together) ... ok
+test_parent_pid_rejects_foreign_and_accepts_owned_child (docs.memory.test_run_managed_cell.ManagedCellTests.test_parent_pid_rejects_foreign_and_accepts_owned_child) ... ok
+test_pid_alive_rejects_invalid_and_detects_live_child (docs.memory.test_run_managed_cell.ManagedCellTests.test_pid_alive_rejects_invalid_and_detects_live_child) ... ok
+test_portable_cleanup_signal_labels_no_undefined_sigkill (docs.memory.test_run_managed_cell.ManagedCellTests.test_portable_cleanup_signal_labels_no_undefined_sigkill) ... ok
+test_preflight_rejects_changed_binary_without_launch (docs.memory.test_run_managed_cell.ManagedCellTests.test_preflight_rejects_changed_binary_without_launch) ... ok
+test_preflight_rejects_dead_server_identity (docs.memory.test_run_managed_cell.ManagedCellTests.test_preflight_rejects_dead_server_identity) ... ok
+test_real_delayed_qualification_controls_stop (docs.memory.test_run_managed_cell.ManagedCellTests.test_real_delayed_qualification_controls_stop) ... ok
+test_receipt_hashes_and_frontend_launcher_distinction (docs.memory.test_run_managed_cell.ManagedCellTests.test_receipt_hashes_and_frontend_launcher_distinction) ... ok
+test_relative_cell_root_and_accounting_path_reach_same_output (docs.memory.test_run_managed_cell.ManagedCellTests.test_relative_cell_root_and_accounting_path_reach_same_output) ... ok
+test_requested_backend_spec_matches_diagnostic_argv (docs.memory.test_run_managed_cell.ManagedCellTests.test_requested_backend_spec_matches_diagnostic_argv)
+spec.requested_backend must agree with diagnostic --cpu-fallback. ... ok
+test_role_identities_agree_with_collector_and_server_sidecar (docs.memory.test_run_managed_cell.ManagedCellTests.test_role_identities_agree_with_collector_and_server_sidecar) ... ok
+test_sampler_fail_recorded_not_replaced (docs.memory.test_run_managed_cell.ManagedCellTests.test_sampler_fail_recorded_not_replaced) ... ok
+test_sampler_modules_bound_and_backend_identity_consistent (docs.memory.test_run_managed_cell.ManagedCellTests.test_sampler_modules_bound_and_backend_identity_consistent) ... ok
+test_short_teardown_before_pad_fails_honestly (docs.memory.test_run_managed_cell.ManagedCellTests.test_short_teardown_before_pad_fails_honestly) ... ok
+test_successful_cell_uses_stop_file_not_only_sigterm (docs.memory.test_run_managed_cell.ManagedCellTests.test_successful_cell_uses_stop_file_not_only_sigterm) ... ok
+test_successful_observation_then_delayed_teardown (docs.memory.test_run_managed_cell.ManagedCellTests.test_successful_observation_then_delayed_teardown) ... ok
+test_unix_collector_starts_once_before_metadata_processing (docs.memory.test_run_managed_cell.ManagedCellTests.test_unix_collector_starts_once_before_metadata_processing) ... ok
+test_windows_conpty_starts_once_after_helpers_are_bound (docs.memory.test_run_managed_cell.ManagedCellTests.test_windows_conpty_starts_once_after_helpers_are_bound)
+The delayed Windows start includes the handed-off helper role. ... ok
+test_windows_non_conpty_handoff_does_not_require_helpers (docs.memory.test_run_managed_cell.ManagedCellTests.test_windows_non_conpty_handoff_does_not_require_helpers) ... ok
+test_windows_sampler_module_bound_when_producer_is_win32 (docs.memory.test_run_managed_cell.ManagedCellTests.test_windows_sampler_module_bound_when_producer_is_win32)
+Launch pin includes windows_process_sample.py only for win32 system producer. ... ok
+test_accepts_n16_in_help_choices (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_accepts_n16_in_help_choices) ... ok
+test_capture_frontend_bound_preserves_960_second_live_budget (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_capture_frontend_bound_preserves_960_second_live_budget) ... ok
+test_capture_frontend_timeout_is_failed_even_when_child_exits_zero (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_capture_frontend_timeout_is_failed_even_when_child_exits_zero) ... ok
+test_catalog_path_uses_operator_home_windows_profile (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_catalog_path_uses_operator_home_windows_profile) ... ok
+test_child_restoration_failure_preserves_orphan_risk_without_guessed_signal (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_child_restoration_failure_preserves_orphan_risk_without_guessed_signal) ... ok
+test_cpu_fallback_env_scrub_default_and_explicit_set (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_cpu_fallback_env_scrub_default_and_explicit_set)
+Inherited BOT_CPU is scrubbed; BOT_CPU=1 only when --cpu-fallback. ... ok
+test_cpu_fallback_flag_panel_only_and_metadata_names (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_cpu_fallback_flag_panel_only_and_metadata_names) ... ok
+test_direct_child_preexec_restores_prior_mask_without_unblocking_parent (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_direct_child_preexec_restores_prior_mask_without_unblocking_parent) ... ok
+test_direct_owner_child_env_scrubs_inherited_and_sets_only_after_validation (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_direct_owner_child_env_scrubs_inherited_and_sets_only_after_validation) ... ok
+test_direct_owner_cli_is_exact_and_path_flags_are_mode_only (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_direct_owner_cli_is_exact_and_path_flags_are_mode_only) ... usage: python3 -m unittest [-h] [--nav-captures] [--single-renderer]
+                           [--focused-one] [--focused-background]
+                           [--cpu-fallback] [--headless] [--tui-input-probes]
+                           [--debug] [--no-diagnostics] [--failure-capture]
+                           [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                           [--build-role {reference,candidate}] [--sustain]
+                           [--stack-logging | --stack-logging-lite]
+                           [--scheduling-profile] [--render-profile]
+                           [--gpu-completion-profile]
+                           [--responsiveness-profile] [--responsiveness-fine]
+                           [--observe OBSERVE] [--warmup WARMUP]
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture] [--run-dir RUN_DIR]
+                           [--frontend-handoff FRONTEND_HANDOFF]
+                           {panel,tui} {1,16,32,128}
+                           {idle,seeded-idle,active,lifecycle}
+python3 -m unittest: error: --run-dir and --frontend-handoff are valid and required only with --direct-owner-capture
+usage: python3 -m unittest [-h] [--nav-captures] [--single-renderer]
+                           [--focused-one] [--focused-background]
+                           [--cpu-fallback] [--headless] [--tui-input-probes]
+                           [--debug] [--no-diagnostics] [--failure-capture]
+                           [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                           [--build-role {reference,candidate}] [--sustain]
+                           [--stack-logging | --stack-logging-lite]
+                           [--scheduling-profile] [--render-profile]
+                           [--gpu-completion-profile]
+                           [--responsiveness-profile] [--responsiveness-fine]
+                           [--observe OBSERVE] [--warmup WARMUP]
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture] [--run-dir RUN_DIR]
+                           [--frontend-handoff FRONTEND_HANDOFF]
+                           {panel,tui} {1,16,32,128}
+                           {idle,seeded-idle,active,lifecycle}
+python3 -m unittest: error: --run-dir and --frontend-handoff are valid and required only with --direct-owner-capture
+usage: python3 -m unittest [-h] [--nav-captures] [--single-renderer]
+                           [--focused-one] [--focused-background]
+                           [--cpu-fallback] [--headless] [--tui-input-probes]
+                           [--debug] [--no-diagnostics] [--failure-capture]
+                           [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                           [--build-role {reference,candidate}] [--sustain]
+                           [--stack-logging | --stack-logging-lite]
+                           [--scheduling-profile] [--render-profile]
+                           [--gpu-completion-profile]
+                           [--responsiveness-profile] [--responsiveness-fine]
+                           [--observe OBSERVE] [--warmup WARMUP]
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture] [--run-dir RUN_DIR]
+                           [--frontend-handoff FRONTEND_HANDOFF]
+                           {panel,tui} {1,16,32,128}
+                           {idle,seeded-idle,active,lifecycle}
+python3 -m unittest: error: --direct-owner-capture requires the N1 TUI active diagnostic
+usage: python3 -m unittest [-h] [--nav-captures] [--single-renderer]
+                           [--focused-one] [--focused-background]
+                           [--cpu-fallback] [--headless] [--tui-input-probes]
+                           [--debug] [--no-diagnostics] [--failure-capture]
+                           [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                           [--build-role {reference,candidate}] [--sustain]
+                           [--stack-logging | --stack-logging-lite]
+                           [--scheduling-profile] [--render-profile]
+                           [--gpu-completion-profile]
+                           [--responsiveness-profile] [--responsiveness-fine]
+                           [--observe OBSERVE] [--warmup WARMUP]
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture] [--run-dir RUN_DIR]
+                           [--frontend-handoff FRONTEND_HANDOFF]
+                           {panel,tui} {1,16,32,128}
+                           {idle,seeded-idle,active,lifecycle}
+python3 -m unittest: error: --direct-owner-capture requires the N1 TUI active diagnostic
+usage: python3 -m unittest [-h] [--nav-captures] [--single-renderer]
+                           [--focused-one] [--focused-background]
+                           [--cpu-fallback] [--headless] [--tui-input-probes]
+                           [--debug] [--no-diagnostics] [--failure-capture]
+                           [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                           [--build-role {reference,candidate}] [--sustain]
+                           [--stack-logging | --stack-logging-lite]
+                           [--scheduling-profile] [--render-profile]
+                           [--gpu-completion-profile]
+                           [--responsiveness-profile] [--responsiveness-fine]
+                           [--observe OBSERVE] [--warmup WARMUP]
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture] [--run-dir RUN_DIR]
+                           [--frontend-handoff FRONTEND_HANDOFF]
+                           {panel,tui} {1,16,32,128}
+                           {idle,seeded-idle,active,lifecycle}
+python3 -m unittest: error: --direct-owner-capture requires the N1 TUI active diagnostic
+usage: python3 -m unittest [-h] [--nav-captures] [--single-renderer]
+                           [--focused-one] [--focused-background]
+                           [--cpu-fallback] [--headless] [--tui-input-probes]
+                           [--debug] [--no-diagnostics] [--failure-capture]
+                           [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                           [--build-role {reference,candidate}] [--sustain]
+                           [--stack-logging | --stack-logging-lite]
+                           [--scheduling-profile] [--render-profile]
+                           [--gpu-completion-profile]
+                           [--responsiveness-profile] [--responsiveness-fine]
+                           [--observe OBSERVE] [--warmup WARMUP]
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture] [--run-dir RUN_DIR]
+                           [--frontend-handoff FRONTEND_HANDOFF]
+                           {panel,tui} {1,16,32,128}
+                           {idle,seeded-idle,active,lifecycle}
+python3 -m unittest: error: --direct-owner-capture requires --no-diagnostics --sustain and real TUI
+usage: python3 -m unittest [-h] [--nav-captures] [--single-renderer]
+                           [--focused-one] [--focused-background]
+                           [--cpu-fallback] [--headless] [--tui-input-probes]
+                           [--debug] [--no-diagnostics] [--failure-capture]
+                           [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                           [--build-role {reference,candidate}] [--sustain]
+                           [--stack-logging | --stack-logging-lite]
+                           [--scheduling-profile] [--render-profile]
+                           [--gpu-completion-profile]
+                           [--responsiveness-profile] [--responsiveness-fine]
+                           [--observe OBSERVE] [--warmup WARMUP]
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture] [--run-dir RUN_DIR]
+                           [--frontend-handoff FRONTEND_HANDOFF]
+                           {panel,tui} {1,16,32,128}
+                           {idle,seeded-idle,active,lifecycle}
+python3 -m unittest: error: --direct-owner-capture is incompatible with other diagnostic modes
+ok
+test_direct_owner_consumes_only_the_pre_reserved_empty_run_directory (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_direct_owner_consumes_only_the_pre_reserved_empty_run_directory) ... ok
+test_direct_spawn_rejects_preblocked_stop_before_popen (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_direct_spawn_rejects_preblocked_stop_before_popen) ... ok
+test_failure_capture_env_scrubbed_unless_flag (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_failure_capture_env_scrubbed_unless_flag)
+Inherited BOT_MEMORY_FAILURE_CAPTURE must not leak when CLI flag is off. ... ok
+test_failure_capture_flag_independent_of_diagnostics (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_failure_capture_flag_independent_of_diagnostics) ... ok
+test_gpu_completion_profile_requires_panel_and_render_profile (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_gpu_completion_profile_requires_panel_and_render_profile) ... ok
+test_heaptrack_option_is_n1_tui_only_and_child_env_is_explicit (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_heaptrack_option_is_n1_tui_only_and_child_env_is_explicit) ... usage: python3 -m unittest [-h] [--nav-captures] [--single-renderer]
+                           [--focused-one] [--focused-background]
+                           [--cpu-fallback] [--headless] [--tui-input-probes]
+                           [--debug] [--no-diagnostics] [--failure-capture]
+                           [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                           [--build-role {reference,candidate}] [--sustain]
+                           [--stack-logging | --stack-logging-lite]
+                           [--scheduling-profile] [--render-profile]
+                           [--gpu-completion-profile]
+                           [--responsiveness-profile] [--responsiveness-fine]
+                           [--observe OBSERVE] [--warmup WARMUP]
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture] [--run-dir RUN_DIR]
+                           [--frontend-handoff FRONTEND_HANDOFF]
+                           {panel,tui} {1,16,32,128}
+                           {idle,seeded-idle,active,lifecycle}
+python3 -m unittest: error: --heaptrack-output requires the N1 TUI active diagnostic
+usage: python3 -m unittest [-h] [--nav-captures] [--single-renderer]
+                           [--focused-one] [--focused-background]
+                           [--cpu-fallback] [--headless] [--tui-input-probes]
+                           [--debug] [--no-diagnostics] [--failure-capture]
+                           [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                           [--build-role {reference,candidate}] [--sustain]
+                           [--stack-logging | --stack-logging-lite]
+                           [--scheduling-profile] [--render-profile]
+                           [--gpu-completion-profile]
+                           [--responsiveness-profile] [--responsiveness-fine]
+                           [--observe OBSERVE] [--warmup WARMUP]
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture] [--run-dir RUN_DIR]
+                           [--frontend-handoff FRONTEND_HANDOFF]
+                           {panel,tui} {1,16,32,128}
+                           {idle,seeded-idle,active,lifecycle}
+python3 -m unittest: error: --heaptrack-output requires the N1 TUI active diagnostic
+usage: python3 -m unittest [-h] [--nav-captures] [--single-renderer]
+                           [--focused-one] [--focused-background]
+                           [--cpu-fallback] [--headless] [--tui-input-probes]
+                           [--debug] [--no-diagnostics] [--failure-capture]
+                           [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                           [--build-role {reference,candidate}] [--sustain]
+                           [--stack-logging | --stack-logging-lite]
+                           [--scheduling-profile] [--render-profile]
+                           [--gpu-completion-profile]
+                           [--responsiveness-profile] [--responsiveness-fine]
+                           [--observe OBSERVE] [--warmup WARMUP]
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture] [--run-dir RUN_DIR]
+                           [--frontend-handoff FRONTEND_HANDOFF]
+                           {panel,tui} {1,16,32,128}
+                           {idle,seeded-idle,active,lifecycle}
+python3 -m unittest: error: --heaptrack-output requires the N1 TUI active diagnostic
+ok
+test_heaptrack_option_rejects_other_probes (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_heaptrack_option_rejects_other_probes) ... usage: python3 -m unittest [-h] [--nav-captures] [--single-renderer]
+                           [--focused-one] [--focused-background]
+                           [--cpu-fallback] [--headless] [--tui-input-probes]
+                           [--debug] [--no-diagnostics] [--failure-capture]
+                           [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                           [--build-role {reference,candidate}] [--sustain]
+                           [--stack-logging | --stack-logging-lite]
+                           [--scheduling-profile] [--render-profile]
+                           [--gpu-completion-profile]
+                           [--responsiveness-profile] [--responsiveness-fine]
+                           [--observe OBSERVE] [--warmup WARMUP]
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture] [--run-dir RUN_DIR]
+                           [--frontend-handoff FRONTEND_HANDOFF]
+                           {panel,tui} {1,16,32,128}
+                           {idle,seeded-idle,active,lifecycle}
+python3 -m unittest: error: --heaptrack-output is incompatible with other diagnostic probes
+ok
+test_help_survives_windows_redirected_output_encoding (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_help_survives_windows_redirected_output_encoding) ... ok
+test_import_survives_missing_unix_tty_modules (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_import_survives_missing_unix_tty_modules)
+Panel import/validate must work when pty/fcntl/termios are absent. ... ok
+test_linux_direct_child_responds_to_sigint_without_hard_kill (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_linux_direct_child_responds_to_sigint_without_hard_kill) ... ok
+test_linux_direct_child_restores_stop_mask_before_exec (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_linux_direct_child_restores_stop_mask_before_exec) ... ok
+test_linux_pending_parent_stop_runs_only_after_durable_handoff (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_linux_pending_parent_stop_runs_only_after_durable_handoff) ... ok
+test_nav_captures_allows_tui_data_only (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_nav_captures_allows_tui_data_only) ... ok
+test_nav_captures_requires_one_draw_panel_mode (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_nav_captures_requires_one_draw_panel_mode) ... ok
+test_partial_spawn_cleanup_signals_only_unique_owned_identity (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_partial_spawn_cleanup_signals_only_unique_owned_identity) ... ok
+test_prespawn_discovery_failure_restores_parent_mask_and_records_orphan_risk (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_prespawn_discovery_failure_restores_parent_mask_and_records_orphan_risk) ... ok
+test_rejects_conflicting_render_flags (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_rejects_conflicting_render_flags) ... ok
+test_rejects_invalid_n_without_launch (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_rejects_invalid_n_without_launch) ... ok
+test_rejects_panel_flags_on_tui (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_rejects_panel_flags_on_tui) ... ok
+test_render_profile_flag_independent_and_scrubbed (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_render_profile_flag_independent_and_scrubbed) ... ok
+test_requested_render_policy_metadata_names (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_requested_render_policy_metadata_names) ... ok
+test_resolve_rs2b0t_commit_fail_closed_windows (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_resolve_rs2b0t_commit_fail_closed_windows) ... ok
+test_resolve_rs2b0t_commit_real_git_when_path_ok (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_resolve_rs2b0t_commit_real_git_when_path_ok) ... ok
+test_responsiveness_profile_flag_independent_and_scrubbed (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_responsiveness_profile_flag_independent_and_scrubbed) ... ok
+test_rs2b0t_default_mac_only_not_windows (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_rs2b0t_default_mac_only_not_windows) ... ok
+test_spawn_and_exit_handoff_preserve_immutable_spawn_object (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_spawn_and_exit_handoff_preserve_immutable_spawn_object) ... ok
+test_stop_recorded_during_spawn_targets_only_registered_child_after_handoff (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_stop_recorded_during_spawn_targets_only_registered_child_after_handoff) ... ok
+test_unix_terminal_transport_loads_when_modules_present (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_unix_terminal_transport_loads_when_modules_present) ... ok
+test_win32_terminal_transport_selects_conpty_helper (docs.memory.test_run_diagnostic.RunDiagnosticCli.test_win32_terminal_transport_selects_conpty_helper) ... ok
+test_cli_requires_explicit_binary_role_and_manifest (docs.memory.test_build_provenance.BuildProvenanceTests.test_cli_requires_explicit_binary_role_and_manifest) ... ok
+test_corrupt_every_fixture_and_binary (docs.memory.test_build_provenance.BuildProvenanceTests.test_corrupt_every_fixture_and_binary) ... ok
+test_direct_owner_wrapper_binds_lineage_and_rejects_feature_or_identity_drift (docs.memory.test_build_provenance.BuildProvenanceTests.test_direct_owner_wrapper_binds_lineage_and_rejects_feature_or_identity_drift) ... ok
+test_main_invalid_manifest_stops_before_mkdir_or_child (docs.memory.test_build_provenance.BuildProvenanceTests.test_main_invalid_manifest_stops_before_mkdir_or_child) ... ok
+test_missing_invalid_build_and_feature_evidence (docs.memory.test_build_provenance.BuildProvenanceTests.test_missing_invalid_build_and_feature_evidence) ... ok
+test_mutation_after_preflight_rejected_including_manifest (docs.memory.test_build_provenance.BuildProvenanceTests.test_mutation_after_preflight_rejected_including_manifest) ... ok
+test_real_files_bound_without_checkout_source (docs.memory.test_build_provenance.BuildProvenanceTests.test_real_files_bound_without_checkout_source) ... ok
+test_same_hash_copy_rejected_symlink_accepted (docs.memory.test_build_provenance.BuildProvenanceTests.test_same_hash_copy_rejected_symlink_accepted) ... ok
+test_wrong_runtime_catalog_path_rejected (docs.memory.test_build_provenance.BuildProvenanceTests.test_wrong_runtime_catalog_path_rejected) ... ok
+test_bad_metadata_time_and_cli_preserved_as_errors (docs.memory.test_managed_receipt.ManagedReceiptTests.test_bad_metadata_time_and_cli_preserved_as_errors) ... ok
+test_cache_binding_verified_on_both_sides_of_launch (docs.memory.test_managed_receipt.ManagedReceiptTests.test_cache_binding_verified_on_both_sides_of_launch) ... ok
+test_changed_cache_file_or_snapshot_fails_completion (docs.memory.test_managed_receipt.ManagedReceiptTests.test_changed_cache_file_or_snapshot_fails_completion) ... ok
+test_direct_owner_raw_artifacts_are_conditional_required_and_hashed (docs.memory.test_managed_receipt.ManagedReceiptTests.test_direct_owner_raw_artifacts_are_conditional_required_and_hashed) ... ok
+test_failed_launcher_preserves_frontend_exit (docs.memory.test_managed_receipt.ManagedReceiptTests.test_failed_launcher_preserves_frontend_exit) ... ok
+test_foreign_artifact_changed_since_launch_is_failure (docs.memory.test_managed_receipt.ManagedReceiptTests.test_foreign_artifact_changed_since_launch_is_failure) ... ok
+test_missing_run_and_missing_raw_still_written (docs.memory.test_managed_receipt.ManagedReceiptTests.test_missing_run_and_missing_raw_still_written) ... ok
+test_no_overwrites (docs.memory.test_managed_receipt.ManagedReceiptTests.test_no_overwrites) ... ok
+test_opt_in_probe_existing_artifact_is_hashed (docs.memory.test_managed_receipt.ManagedReceiptTests.test_opt_in_probe_existing_artifact_is_hashed) ... ok
+test_opt_in_probe_raw_artifact_is_required_and_hashed (docs.memory.test_managed_receipt.ManagedReceiptTests.test_opt_in_probe_raw_artifact_is_required_and_hashed) ... ok
+test_receipt_hashes_actual_files_without_metric_acceptance (docs.memory.test_managed_receipt.ManagedReceiptTests.test_receipt_hashes_actual_files_without_metric_acceptance) ... ok
+test_runner_failure_keeps_true_child_exit_codes (docs.memory.test_managed_receipt.ManagedReceiptTests.test_runner_failure_keeps_true_child_exit_codes) ... ok
+test_sampler_failure_and_missing_output_reject (docs.memory.test_managed_receipt.ManagedReceiptTests.test_sampler_failure_and_missing_output_reject) ... ok
+
+----------------------------------------------------------------------
+Ran 142 tests in 35.368s
+
+OK (skipped=2)

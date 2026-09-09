@@ -1,0 +1,352 @@
+{
+  "commit": "07b5b29eebaa1fa1cf4d8cdf43891fa298100e97",
+  "scope": "committed Python controller and generated test dependencies only; no private fixture or live release",
+  "files": [
+    {
+      "path": "docs/memory/agg_cells.py",
+      "bytes": 4088,
+      "sha256": "3324c801bc344b3f77fff24ca8ba10503b8472bb814202997213ec7afcb6be50"
+    },
+    {
+      "path": "docs/memory/analysis.py",
+      "bytes": 19606,
+      "sha256": "d557c64af23a3e13443a051d9d232ff68c53026f881783a3019c8ca6319ef697"
+    },
+    {
+      "path": "docs/memory/build_provenance.py",
+      "bytes": 13973,
+      "sha256": "77e3aeddde61dfb62993794797f320078236fdb76b74d5db9c4c2cf863edb829"
+    },
+    {
+      "path": "docs/memory/cache_provenance.py",
+      "bytes": 4876,
+      "sha256": "e75edc94b34c6e31adc25d84ffc78fbe059ad6858cb34245fd110e0507a78adf"
+    },
+    {
+      "path": "docs/memory/cohort_reader.py",
+      "bytes": 54967,
+      "sha256": "cd383fc3c9ced01efd12c5bd077d74b20d70db2feb4b7001e0757e4c84603d40"
+    },
+    {
+      "path": "docs/memory/cpu_screen.py",
+      "bytes": 6835,
+      "sha256": "fab08d9a6a12f1740c25ff673bff71325847e799614acc1685c789dd1a8a200d"
+    },
+    {
+      "path": "docs/memory/existing-heaptrack-owner-replay-probe.py",
+      "bytes": 6883,
+      "sha256": "2bc050f3b030e47784c864e197a641d95eb6f4740472717631fef5807bbe654e"
+    },
+    {
+      "path": "docs/memory/heaptrack_capture.py",
+      "bytes": 14071,
+      "sha256": "8dae111ed7e82a6d184a5717ba9c9c594eb7c4ee0badc49e7f7073c1d9cae676"
+    },
+    {
+      "path": "docs/memory/heaptrack_owner_replay.py",
+      "bytes": 34821,
+      "sha256": "6d7faa8cb70a90330f2df5943551e5841d084808f45c8d2c7e38bae338ed660e"
+    },
+    {
+      "path": "docs/memory/heaptrack_owner_runner.py",
+      "bytes": 22886,
+      "sha256": "6263255770ec0ff27022c06b00ad28ee68e48e212dadc6d574206d6da85f74d4"
+    },
+    {
+      "path": "docs/memory/heaptrack_owner_smoke.py",
+      "bytes": 1242,
+      "sha256": "91e2ffcf38ee6be59320c25c9548dc6eb10eb309518df8d178e9012d7997aca8"
+    },
+    {
+      "path": "docs/memory/heaptrack_owner_throughput_audit.py",
+      "bytes": 4406,
+      "sha256": "7ed346dfc22fc3ac5d5bba5d139d493a1538c8a38364cef22dea999cbe224301"
+    },
+    {
+      "path": "docs/memory/heaptrack_owner_throughput_probe.py",
+      "bytes": 8442,
+      "sha256": "ca883dfd29d10564bd655374b674d876dc03dc31895f81df8efe5edfcc491164"
+    },
+    {
+      "path": "docs/memory/instrumentation_overhead.py",
+      "bytes": 40865,
+      "sha256": "adc534b6ca0f463bae81659d1b7ab4f33e94b01b493c46b52af08a260e5559aa"
+    },
+    {
+      "path": "docs/memory/managed_receipt.py",
+      "bytes": 10993,
+      "sha256": "e1da4bcbcf82c9434ba158d48b9f25a4671d41d54edebe61f1e82d8ef5ed075f"
+    },
+    {
+      "path": "docs/memory/managed_resource_binding.py",
+      "bytes": 9154,
+      "sha256": "febdacf42184972396efd05f1be69d79c5cf1a49d215f4593a7a99c40085b276"
+    },
+    {
+      "path": "docs/memory/matched_evidence_adapter.py",
+      "bytes": 88064,
+      "sha256": "0d9540390fc57c58694152b6dbeb83e98073c7a17936ec73cefb6abf3366e8d5"
+    },
+    {
+      "path": "docs/memory/n16_rss_trend.py",
+      "bytes": 2029,
+      "sha256": "25e6aa631aa650c5e12ec02d9beb2616192a1125875dda29b03f7f92da90df98"
+    },
+    {
+      "path": "docs/memory/n16_server_provenance_recovery.py",
+      "bytes": 7965,
+      "sha256": "fb9e977975d1bc9a7290e43256bbafdcd739f9bef858850e6480f3471109867e"
+    },
+    {
+      "path": "docs/memory/native_process_sample.py",
+      "bytes": 4240,
+      "sha256": "00cba968b0a037a55f6b39486b6c09fd74b1dc59eb468e2204583f1bd2f8d5c3"
+    },
+    {
+      "path": "docs/memory/operator_home.py",
+      "bytes": 2737,
+      "sha256": "31b9de9b4c2bbe5fbfb3206cebe10b2384e6ae626b018fbc399c0340e47533af"
+    },
+    {
+      "path": "docs/memory/process_accounting.py",
+      "bytes": 43229,
+      "sha256": "230423d0f42964b3cd9311da7e922753831c454cbc9a9962e7c17d2c82fbf697"
+    },
+    {
+      "path": "docs/memory/process_evidence.py",
+      "bytes": 9767,
+      "sha256": "30b09ea61d9a47a51e3f0535363c0762a3d1e77bd1d4b05a53855715dc0f4411"
+    },
+    {
+      "path": "docs/memory/qualify_control.py",
+      "bytes": 5860,
+      "sha256": "0dbc6775356acd4d967b70d42f575a72b05d3f063d1ca2ddd659605b6705fbb5"
+    },
+    {
+      "path": "docs/memory/reference_metrics.py",
+      "bytes": 139814,
+      "sha256": "4913d232e6a637a55d0c62d8faffce9d6667d9f3b1c22457b6dff43576d3297e"
+    },
+    {
+      "path": "docs/memory/resource_screen.py",
+      "bytes": 8424,
+      "sha256": "5acf5267af844d9ee1752f81f1b9f5695040c66f6bda6f79c2501a06917806f3"
+    },
+    {
+      "path": "docs/memory/run_current_tui_calibration.py",
+      "bytes": 27143,
+      "sha256": "9dba082d83dfa95fde3c29789c150fe5a62c69fdaf44983f68aef846135e5a28"
+    },
+    {
+      "path": "docs/memory/run_diagnostic.py",
+      "bytes": 42579,
+      "sha256": "8100cd7eba904d9da04e399bf271665bd369a457abaeb3084dde8cc21251b2c1"
+    },
+    {
+      "path": "docs/memory/run_managed_cell.py",
+      "bytes": 103816,
+      "sha256": "0454ba346e44f9562510bf912c49cb3ac59f448c43ab08cbea538ffc97446a4d"
+    },
+    {
+      "path": "docs/memory/server_resources.py",
+      "bytes": 14378,
+      "sha256": "a773ed84536063fe8bb3ae8e42ec3b9cdbe484c9ba934e76b541245b96d2e4b5"
+    },
+    {
+      "path": "docs/memory/summarize_control.py",
+      "bytes": 3196,
+      "sha256": "8c5fb29de8884f76009ead090d5b88017effee52e55a2015afe4b57299bd6056"
+    },
+    {
+      "path": "docs/memory/summarize_diagnostic.py",
+      "bytes": 4682,
+      "sha256": "576a8c0209b807cab5a7154bbb6e57d18dc5d1d905ec1680ddecef13767cb472"
+    },
+    {
+      "path": "docs/memory/test_build_provenance.py",
+      "bytes": 12131,
+      "sha256": "f73e7ffaa247ff22e2008267835dc64d1d99c9c1acb55da0afa75b9b274ae795"
+    },
+    {
+      "path": "docs/memory/test_cache_provenance.py",
+      "bytes": 3202,
+      "sha256": "9f76a2794d81e72a523e2f35feec484b147189834653c4291cac8a9e06a8043a"
+    },
+    {
+      "path": "docs/memory/test_cohort_reader.py",
+      "bytes": 64161,
+      "sha256": "7508999ad1616db7a1ec0d9f4255b4d282a81f3138071a34b09106219225a9b9"
+    },
+    {
+      "path": "docs/memory/test_cpu_screen.py",
+      "bytes": 3503,
+      "sha256": "b69f0af653ff275e5996dca9904ea1061e84ade9d67661922387d8815cb187dc"
+    },
+    {
+      "path": "docs/memory/test_current_tui_calibration.py",
+      "bytes": 23386,
+      "sha256": "8cfe5f1f3eff5841af1cf2364efdf063c1bae30c33ebff157bf0cf92d2094025"
+    },
+    {
+      "path": "docs/memory/test_heaptrack_capture.py",
+      "bytes": 4446,
+      "sha256": "6b01a72f056340756d676b34f7a7aa1b52846127d2c3824a1be34942f0277f07"
+    },
+    {
+      "path": "docs/memory/test_heaptrack_owner_replay.py",
+      "bytes": 24666,
+      "sha256": "00a683a3a1f7faae0c56692cefb801f1a76a2461d264983e81e38be8f63ab20a"
+    },
+    {
+      "path": "docs/memory/test_instrumentation_overhead.py",
+      "bytes": 28744,
+      "sha256": "2a6ef0a289929b2ae999f429fda78526ea66e43ff3e573f7ded6932ed33d3fee"
+    },
+    {
+      "path": "docs/memory/test_managed_receipt.py",
+      "bytes": 9824,
+      "sha256": "5ef36cb42ff1cd419e1b71854f3f5a14d102aa119eab01211c65af2784dac9fd"
+    },
+    {
+      "path": "docs/memory/test_managed_resource_binding.py",
+      "bytes": 12810,
+      "sha256": "a6c182b0e3f9c16e7f1366635ae24027fa82eb36e6a5629fbd5d0cd795ddc87d"
+    },
+    {
+      "path": "docs/memory/test_matched_evidence_adapter.py",
+      "bytes": 95992,
+      "sha256": "c0cbfc4ac047caa1689e290fafa7c999fbff59e7bbbba9184e0d53a8b17e5575"
+    },
+    {
+      "path": "docs/memory/test_n16_server_provenance_recovery.py",
+      "bytes": 5232,
+      "sha256": "aa63a29364c51fd176b719cedb3c97e2f362efd51f81c6ef6c0dc0ea8fd3e17d"
+    },
+    {
+      "path": "docs/memory/test_native_process_sample.py",
+      "bytes": 3203,
+      "sha256": "add97128e86cd43e525ebbb4e9e7fd5cd2c865e79e4c2a36370f59c5446d863e"
+    },
+    {
+      "path": "docs/memory/test_operator_home.py",
+      "bytes": 3079,
+      "sha256": "d9c331d9307d27b0b696cf4f4b16944dcf05614ba1ce27e307d035612f9cfdc0"
+    },
+    {
+      "path": "docs/memory/test_process_accounting.py",
+      "bytes": 37992,
+      "sha256": "2a7af9d486af3cee04365b4a19e890b30b3e00e8d3d22005984d090cc56254b7"
+    },
+    {
+      "path": "docs/memory/test_process_evidence.py",
+      "bytes": 4710,
+      "sha256": "6ae7d4f724911daa5fbd7901413926c3d665e3ebef7df5e483dbc27f9fe36288"
+    },
+    {
+      "path": "docs/memory/test_qualify_control.py",
+      "bytes": 9209,
+      "sha256": "94d252750a694664616ecbf4bcf182320613cb18ba2d2e7aa8b2f3e47421e576"
+    },
+    {
+      "path": "docs/memory/test_reference_metrics.py",
+      "bytes": 110237,
+      "sha256": "1a48e25a7c79064620e4d84e1802aa5addd2d8f83446ff550a5001fb5ca69355"
+    },
+    {
+      "path": "docs/memory/test_resource_screen.py",
+      "bytes": 5949,
+      "sha256": "765272ef7ed9a1d084cc9cbbdb9eb23dfda8930f1bb2410c282e61c8fb5a1345"
+    },
+    {
+      "path": "docs/memory/test_run_diagnostic.py",
+      "bytes": 40886,
+      "sha256": "d9145036ca7012ff7d61d24d1a3826d8f26a9daf808c7d9f0d591c5340d441c1"
+    },
+    {
+      "path": "docs/memory/test_run_managed_cell.py",
+      "bytes": 84701,
+      "sha256": "71fbb46b41a29bf0f0b203f1b99c05a35c2f07ea6f251590e09a24cacf5767a9"
+    },
+    {
+      "path": "docs/memory/test_server_resources.py",
+      "bytes": 8912,
+      "sha256": "1e62f9bfe8b566edd2167426017cdba6cc4e4a74b94eae14c9676cb97c705082"
+    },
+    {
+      "path": "docs/memory/test_tui_input_probe.py",
+      "bytes": 5645,
+      "sha256": "f9c623fe1bb9c7cfa14228d6be1af0de025d433b5ed57689163e320d778c9f3a"
+    },
+    {
+      "path": "docs/memory/test_validate_direct_owner_capture.py",
+      "bytes": 4966,
+      "sha256": "7d4c27be8258464bd72bd1f76bf9535f15959bf555b99953154b91fa59298ee4"
+    },
+    {
+      "path": "docs/memory/test_windows_conpty.py",
+      "bytes": 17091,
+      "sha256": "9b04f217e5fee23661741aa0e08496f43150264704aeee4b625c213187a16d42"
+    },
+    {
+      "path": "docs/memory/test_windows_process_parent.py",
+      "bytes": 5110,
+      "sha256": "07ff0348234bf15968c2fce252089943816db8d0cffcd4c4f2bcdf80b7f72ee6"
+    },
+    {
+      "path": "docs/memory/test_windows_process_sample.py",
+      "bytes": 14696,
+      "sha256": "2d36d0ed73fa8ec771fe45c7e536584903accf8fec514d66a9db8d52fe74140f"
+    },
+    {
+      "path": "docs/memory/tui_input_probe.py",
+      "bytes": 4442,
+      "sha256": "d0972e7c55bf7729fa7e518b38ada463e02aabcef33029dfe728a372e4290c5d"
+    },
+    {
+      "path": "docs/memory/validate_direct_owner_capture.py",
+      "bytes": 11555,
+      "sha256": "177dc432c3150c7ec6d2b9d814c796a646aebdca29eda4c388bc4ea065ff45dd"
+    },
+    {
+      "path": "docs/memory/windows-owner-census-analysis.py",
+      "bytes": 7626,
+      "sha256": "46c1d36c4fd6a2a86932e47872703982192dcc982e445f1f281e117ddfdc44f4"
+    },
+    {
+      "path": "docs/memory/windows-tile-boxed-background-screen-analysis.py",
+      "bytes": 17966,
+      "sha256": "a75bdc1640bb045cdbddf3bc6a639f67810d747cd079b5e11c5888436bc4155f"
+    },
+    {
+      "path": "docs/memory/windows-tile-boxed-focused-screen-analysis.py",
+      "bytes": 10953,
+      "sha256": "014a4acc88f021ef94288cee7358e7a5dca57ba3b851b82c61507f2be8da10cc"
+    },
+    {
+      "path": "docs/memory/windows-tile-boxed-long-screen-analysis.py",
+      "bytes": 12463,
+      "sha256": "4423787f28699c1aa631da343a465809dbdbc33a877456190753264a3d979f42"
+    },
+    {
+      "path": "docs/memory/windows-tile-cpu-paired-proof-check.py",
+      "bytes": 6690,
+      "sha256": "5c6f73119ebba742157d5df0a59602c294d7fb604fab6a4e073029f4a327e33e"
+    },
+    {
+      "path": "docs/memory/windows_conpty.py",
+      "bytes": 23857,
+      "sha256": "4a5399e38003e2b5a91e6b02be8c60583fce265231d57fa430058e765e388091"
+    },
+    {
+      "path": "docs/memory/windows_process_parent.py",
+      "bytes": 6215,
+      "sha256": "8a5b9f9665fd9d23d98abe1fae5ef057088bfa5d166943e956ab87e548a2d06b"
+    },
+    {
+      "path": "docs/memory/windows_process_sample.py",
+      "bytes": 16272,
+      "sha256": "bd381d1622e143cb21ac69bbaadac827cac1f677b89a8859d36705ff9d4962d5"
+    }
+  ],
+  "archive_sha256": "6b22f0c93eb014db94a0bbd46de5f68dbba2cfd6cb330bb768bc282f5177e20b"
+}
