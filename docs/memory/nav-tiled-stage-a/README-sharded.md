@@ -86,7 +86,12 @@ and leaves two additional seconds for sampling/reaping before admitting a child.
 A monotonic wall alarm covers setup, hashing, launches and aggregation. It raises
 through the existing bounded runner's cleanup/finally path, killing the owned
 group and waiting for its leader; SIGTERM/SIGHUP use that same cleanup path.
-A CPU profiling timer bounds supervisor CPU and is tightened after each waited
+A CPU profiling timer is armed before authorization parsing. Bootstrap is bounded
+by the smallest phase ceilings; only small hash-bound root/parent receipts and
+the non-restartable claim precede cumulative budget admission. Before source,
+input, native qualification or contract setup, both alarms use the carried prior
+budget plus all elapsed bootstrap work, not a fresh continuation allowance. An
+already exhausted budget refuses heavy setup. CPU is tightened after each waited
 child. Uncatchable supervisor SIGKILL cannot run Python cleanup: its durable claim
 still forbids automatic restart, and root must inspect any remaining owned work.
 
@@ -129,7 +134,7 @@ commands, never moving path-dependency bytes. Run existing `guards`, both
 `generated` variants and `test_stage_a.py --run RUN`. Then:
 
     python3 docs/memory/nav-tiled-stage-a/qualify_sharded.py ABSOLUTE_RUN \
-      singleton-qualification-02
+      singleton-qualification-03
 
 Choose a NEW numbered destination; an existing one is refused. This runs the new
 unit/guard suites through the shared runner under 360 wall / 300 CPU / 512 MiB

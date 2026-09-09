@@ -251,9 +251,10 @@ def row_peak(results,row):
 
 def run_phase(run,authorization,authorization_sha256,standin=False):
     started=(time.monotonic(),total_cpu(),time.process_time())
-    auth=read_ref(dict(path=str(authorization.absolute()),sha256=authorization_sha256))
-    if auth.get('phase') not in CEILINGS:raise ValueError('unknown phase')
-    with deadline(CEILINGS[auth['phase']][0]):
+    # A bounded bootstrap covers even authorization parsing. Only the small,
+    # hash-bound root/parent receipts may precede cumulative budget admission.
+    # Never grant a continuation the phase's fresh CPU allowance for setup.
+    with deadline(min(v[0] for v in CEILINGS.values())), cpu_deadline(min(v[1] for v in CEILINGS.values())):
         return _run_phase(run,authorization,authorization_sha256,standin,started)
 
 
@@ -276,20 +277,6 @@ def _run_phase(run,authorization,authorization_sha256,standin,started):
     write_json(out/'claim.json',dict(schema=SCHEMA,phase=phase,root=root_ref,
         authorization=auth_ref,status='claimed',interruption_budget_unknown=True),16384)
     claim_ref=reference(out/'claim.json')
-    # No external pack read before inherited original admission passes.
-    prereq=root['prerequisites'];stage.check_release(run,prereq,standin)
-    if not standin:
-        check_scheduler_qualification(root);native_preflight(auth,fresh=True)
-    pack=Path(prereq['input_path']);routes=Path(prereq['routes_path'])
-    if standin and (pack.resolve().parent!=run/'fixtures' or routes.resolve().parent!=run/'fixtures'):
-        raise ValueError('stand-in external input forbidden')
-    if not standin and (prereq['input_sha256']!=ORIGINAL_PACK or prereq['input_bytes']!=73438581 or prereq['routes_sha256']!=ORIGINAL_TSV):
-        raise ValueError('original real pack/full TSV required')
-    stage.admit(pack,prereq['input_sha256'],1024**2 if standin else 128*1024**2)
-    stage.admit(routes,prereq['routes_sha256'],65536)
-    rows=normalized_rows(routes)
-    if root.get('contract')!=contract(rows): raise ValueError('root schema/source/tool/schedule/shard contract changed')
-
     prior=dict(wall=0,cpu=0);ancestors=[]
     if phase!='F1':
         if auth.get('review_approved') is not True: raise ValueError('parent evidence review required')
@@ -347,10 +334,21 @@ def _run_phase(run,authorization,authorization_sha256,standin,started):
         storage_guard(dest)
 
     try:
-        remaining_wall=wall_limit-budget.snapshot()['wall']
-        if remaining_wall<=0:raise ValueError('setup exhausted global wall budget')
-        signal.setitimer(signal.ITIMER_REAL,remaining_wall)
-        with cpu_deadline(cpu_limit-budget.snapshot()['cpu']):
+        with budget.deadlines():
+            # No heavy setup or external pack read before the carried budget
+            # is established and both active alarms are narrowed to remaining.
+            prereq=root['prerequisites'];stage.check_release(run,prereq,standin)
+            if not standin:
+                check_scheduler_qualification(root);native_preflight(auth,fresh=True)
+            pack=Path(prereq['input_path']);routes=Path(prereq['routes_path'])
+            if standin and (pack.resolve().parent!=run/'fixtures' or routes.resolve().parent!=run/'fixtures'):
+                raise ValueError('stand-in external input forbidden')
+            if not standin and (prereq['input_sha256']!=ORIGINAL_PACK or prereq['input_bytes']!=73438581 or prereq['routes_sha256']!=ORIGINAL_TSV):
+                raise ValueError('original real pack/full TSV required')
+            stage.admit(pack,prereq['input_sha256'],1024**2 if standin else 128*1024**2)
+            stage.admit(routes,prereq['routes_sha256'],65536)
+            rows=normalized_rows(routes)
+            if root.get('contract')!=contract(rows): raise ValueError('root schema/source/tool/schedule/shard contract changed')
             if phase=='F1':
                 storage_guard(dest)
                 shutil.copyfile(pack,dest/'input.bin');(dest/'input.bin').chmod(0o444)
@@ -486,6 +484,17 @@ class Budget:
         self.wall_limit=wall;self.cpu_limit=cpu_limit
         self.prior=prior or dict(wall=0,cpu=0)
         self.penalty=0;self.pending=False;self.stopped=False
+
+    @contextmanager
+    def deadlines(self):
+        # run_phase owns handlers and their restoration. This scope replaces
+        # its bootstrap allowances, charging all elapsed bootstrap work too.
+        used=self.snapshot()
+        wall=self.wall_limit-used['wall'];cpu=self.cpu_limit-used['cpu']
+        if wall<=0 or cpu<=0:raise ValueError('setup exhausted global wall/CPU budget')
+        signal.setitimer(signal.ITIMER_REAL,wall)
+        signal.setitimer(signal.ITIMER_PROF,cpu)
+        yield
 
     def snapshot(self):
         own=time.process_time()-self.own_start

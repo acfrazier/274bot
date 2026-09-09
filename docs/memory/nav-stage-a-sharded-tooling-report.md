@@ -6,6 +6,10 @@ reviewed `f24de7c` diagnostic. No native/SSH/real-pack/live execution, productio
 optimization, cap increase, remote change or acceptance release occurred.
 Independent same-card review is required.
 
+The original implementation snapshot below was submitted as `5324f41` and
+REJECTED for an unguarded setup-CPU prefix. Its evidence/hashes remain historical;
+the **Setup-CPU correction** section at the end is the current tooling freeze.
+
 ## Delivered
 
 - `nav-tiled-stage-a/stage_probe.rs`: preserves ordered elapsed samples by
@@ -184,3 +188,88 @@ feasibility/projection and explicit temporal-method acceptance) clean six-pair
 routing. The original all-row temporal schedule stays unqualified. No routing
 CPU/p99 acceptance, deployed RSS/per-bot saving, Stage B, lifecycle/absolute gate
 or whole-branch Grok 4.6 acceptance is claimed here.
+
+## Setup-CPU correction — same-card review round 2
+
+Root and reviewer independently demonstrated the same defect in `5324f41`:
+`check_release`, source/input/contract and continuation setup ran before the
+supervisor CPU alarm. A 0.03-second test cap permitted 0.15 seconds of setup CPU.
+The wall-only outer guard did not enforce the CPU ceiling. The original root and
+reviewer reproductions, first-round archive and qualification are preserved.
+
+The correction arms wall AND CPU guards before reading authorization. A bounded
+bootstrap admits only small hash-bound root/parent receipts and the durable
+non-restartable phase claim. The parent budget is then validated before heavy
+work. Both alarms use the remaining cumulative allowance, including all measured
+bootstrap work, before release admission, source/input hashing, native checks,
+contract construction or ancestor output validation. Existing child reservation,
+reap, stop, final aggregation and publication accounting stay intact. Failed setup
+now also records the known cumulative budget when it has been established.
+
+New tests exercise actual process CPU, not mocked clocks: F1 setup alarm; F2 with
+0.29 seconds previously spent under a scaled 0.32 cumulative cap; and an exhausted
+0.32-second continuation that must refuse heavy admission entirely. Both tests
+fail on the original Git source and pass on the correction. They also assert no
+child launch and no restart. Minimal synthetic parent metadata in these prefix
+tests is never treated as complete native/output qualification.
+
+Commands from the checkout (absolute `RUN` remains `sharded-run-01`):
+
+1. `python3 diagnostics/nav-stage-a-sharded-tooling/setup_cpu_regression.py --baseline`:
+   expected exit 1, three failing cases; logs `22` and `26`. Log `26` fixes only
+   Python traceback source-line lookup so the printed lines come from the old
+   Git source. Log `22` retains the first execution and its misleading current-file
+   displayed source lines; the executed code was the original Git blob in both.
+   Log `21` retains the initial failing F1 test before the implementation edit.
+2. Same command without `--baseline`: exit 0, two tests pass, log `23`.
+3. `python3 docs/memory/nav-tiled-stage-a/qualify_sharded.py RUN singleton-qualification-03`:
+   exit 0, **19 tests pass in 90.495 s**, no unittest skips. This includes the
+   complete 4/114/708 generated mocked schedule, mutation/quantile/CPU/noise
+   tests and actual pipe-holding descendant cleanup. Four actual generated clean
+   probe children then complete new-driver F1; all 12 historical aggregate/layout
+   comparisons and unchanged `f24de7c` helper intervals pass. Log `24`.
+4. `python3 docs/memory/nav-tiled-stage-a/stage_a.py guards --run ABSOLUTE_STAGE/sharded-guards-02`:
+   exit 0; **17 legacy tests pass**, including between-repetition mutation.
+   Receipts and stdout/stderr are in that fresh guard directory; log `25` is empty.
+5. `python3 diagnostics/nav-stage-a-sharded-tooling/export_setup_correction.py`:
+   exit 0; readback verifies all **209 dense / 210 tiled original Git files**, all
+   four existing admissions/binaries, helper spans, complete raw aggregation,
+   single-copy storage and every new archive member. Log `27`.
+6. `python3 -m py_compile docs/memory/nav-tiled-stage-a/sharded.py docs/memory/nav-tiled-stage-a/test_sharded_guards.py`
+   and `git diff --check`: exit 0.
+
+The qualification's F1 CPU alarm returns after 0.037015 process CPU seconds; the
+near-exhausted F2 after 0.037397 seconds. This includes signal delivery and bounded
+failure serialization, not an assertion of sub-tick timer precision. The exhausted
+continuation refuses heavy setup in 0.000882 seconds. The complete mock matrix
+records 92.067721917 charged wall / 88.899 CPU seconds and 1,962,811 release bytes,
+with exactly one input copy. These are generated controller tests, NOT router
+performance, native feasibility or acceptance measurements.
+
+Only Python supervision/tests and documentation/manifest changed. The probe,
+production/helper bytes, compiler settings and four admitted binaries are unchanged;
+the fresh builds and generated clean/counting qualifications from round 1 are
+reused and revalidated, not rebuilt or re-admitted in place. The new qualification
+binds the corrected scheduler/test hashes. The original archive and qualification
+hashes above were independently rechecked unchanged. An attempted convenience
+`execute_code` readback was denied by headless policy; normal `read_file` of the
+already-produced readback log supplied the facts instead. No policy was changed.
+
+Current freeze:
+
+- Scheduler SHA256 `0794118e775f93ef27f120d41e8482d09ae27736a3bfa87970691b486c96b00e`.
+- Guard tests SHA256 `d1abe14589aed5128f37bd170b35d1466866edb7c45e408a28643c293b163ae1`.
+- Qualification `singleton-qualification-03/result.json` SHA256
+  `d67fce681b534a7bcdcc5a6d657cafdc4bf4459754a9019eac8dfb10871e358a`.
+- Proposed manifest SHA256 `1114272818a17be5b8408a7c913c15c2a0b68de6d835285bf080375be12f7c9b`.
+- Correction archive `diagnostics/nav-stage-a-sharded-tooling/setup-correction-01/evidence.tar.gz`:
+  **589,227 bytes**, SHA256 `57d9dd3bb608788e46ac7a6f956a7b387047e4702cdd18079cdac5ac3fb768ec`.
+  All **5,538 members** rehashed (5,537 payloads, 3,279,726 bytes). It supplements,
+  rather than replaces, the original source/build/evidence archive.
+- Correction `readback.json` SHA256
+  `02c21318f6b133d1743bcee924053dfba96fd74348b1b72ee68870d37ec54d69`.
+
+macOS qualification still explicitly reports `native_hard_as_qualified=false`.
+No native, SSH, real-pack or live execution occurred. Same-card Grok 4.5 review,
+root native qualification and separate F1/F2/new-method/acceptance releases remain
+required. The correction does not close any performance or whole-branch gate.

@@ -33,6 +33,64 @@ def setup_root(run):
 
 
 class Guards(unittest.TestCase):
+    def test_setup_cpu_budget_stops_admission(self):
+        with retained_fixture() as run:
+            with patch.dict(sh.CEILINGS,F1=[.75,.03,4]):
+                auth,_=setup_root(run)
+                def burn(*args):
+                    start=time.process_time()
+                    while time.process_time()-start<.15:pass
+                    self.fail('setup completed beyond global CPU cap')
+                start=time.process_time()
+                with patch.object(sh.stage,'check_release',burn),patch.object(sh,'launch') as launch:
+                    with self.assertRaisesRegex(sh.Deadline,'CPU'):
+                        sh.run_phase(run,auth,sh.stage.sha(auth),standin=True)
+                    launch.assert_not_called()
+                elapsed=time.process_time()-start
+                self.assertLess(elapsed,.12)
+                self.assertTrue((run/'release/F1/claim.json').exists())
+                with self.assertRaises(FileExistsError):
+                    sh.run_phase(run,auth,sh.stage.sha(auth),standin=True)
+                sh.write_json(run/'setup-cpu-proof.json',dict(cpu_seconds=elapsed,cap=.03,stopped=True))
+
+    def test_continuation_setup_uses_remaining_cpu(self):
+        # A deliberately minimal, hash-bound parent exercises only budget
+        # admission. No output/native qualification is faked into a launch.
+        for spent in (.29,.32):
+            with self.subTest(spent=spent),retained_fixture() as run:
+                with patch.dict(sh.CEILINGS,F1=[.75,.32,4],F2=[1,.32,118]):
+                    auth,_=setup_root(run)
+                    dest=run/'release';dest.mkdir();(dest/'F1').mkdir()
+                    parent=dest/'F1/result.json'
+                    sh.write_json(parent,dict(phase='F1',status='complete',root=sh.reference(auth),
+                        completed=4,budget=dict(wall=.1,cpu=spent)))
+                    path=run/'F2.json'
+                    sh.write_json(path,dict(schema=sh.SCHEMA,phase='F2',mode='standin',released=True,
+                        root=sh.reference(auth),parent=sh.reference(parent),review_approved=True))
+                    entered=[]
+                    def burn(*args):
+                        entered.append(True);start=time.process_time()
+                        while time.process_time()-start<.15:pass
+                        self.fail('continuation setup received fresh CPU allowance')
+                    start=time.process_time()
+                    with patch.object(sh.stage,'check_release',burn),patch.object(sh,'launch') as launch:
+                        if spent<.32:
+                            with self.assertRaisesRegex(sh.Deadline,'CPU'):
+                                sh.run_phase(run,path,sh.stage.sha(path),standin=True)
+                        else:
+                            with self.assertRaisesRegex(ValueError,'exhausted'):
+                                sh.run_phase(run,path,sh.stage.sha(path),standin=True)
+                            self.assertEqual(entered,[])
+                        launch.assert_not_called()
+                    elapsed=time.process_time()-start
+                    self.assertLess(elapsed,.12)
+                    failure=json.loads((dest/'F2/failure.json').read_text())
+                    self.assertGreaterEqual(failure['budget']['cpu'],spent)
+                    with self.assertRaises(FileExistsError):
+                        sh.run_phase(run,path,sh.stage.sha(path),standin=True)
+                    sh.write_json(run/'continuation-cpu-proof.json',dict(cpu_seconds=elapsed,
+                        prior_cpu=spent,cumulative_cap=.32,heavy_setup_entered=bool(entered),stopped=True))
+
     def test_driver_deadline_reaps_and_never_restarts(self):
         with retained_fixture() as run:
             auth,_=setup_root(run);launches=[]
