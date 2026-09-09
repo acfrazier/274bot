@@ -11,6 +11,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 12:27 UTC
+
+- Extension ccff4bbe22d63cdb8b11612aaf97bbbadcb256dc APPROVED t_2aabed22
+ actualGrok4.5/xai20260909_082232_c151b2,197s. Root fullbytescmp PASS and
+ every13445 archivedfiles hashverified. Source-only local payload3835731B
+ SHAcfa86be5987716f611d6727ce217c378e350749168517ec5353c3397acc33b02,
+13418files24209692B. Root now releases NEW nativeLinux staging/build/generated
+ qualification and guards ONLY; real19route extension remains unreleased.
+- User explicitly authorizes ongoing Concord storage offload/cleanup. Concord
+ actual50GB filesystem has11807068160B available. Current completed capture2003
+ occupies~3GB; local summaries present, alloc.raw/interpreted absent. Root
+ hashes full remote23files, verifies existing21local, then downloads missing2;
+ delete remote traces only after full localverification and no active readers.
+ No cleanup on separate HyperVbuilder implied. Preserve active source/cache/server.
+- StageA tooling t_fa5a3462 actualLuna/openai081932_b6218f continues. Card
+ comment binds appended4..6statefacts for future selectors, not assumed delivered
+ live; reviewer must check. No measurements released.
+
 ## Latest boundary — 2026-09-09 12:20 UTC
 
 - Root released independent StageA TOOLING ONLY t_fa5a3462 profileluna;
