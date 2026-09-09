@@ -11,6 +11,27 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 10:42 UTC
+
+- User paused both Hermes workers for usage, then explicitly authorized resume.
+  No reset credit used. Same cards unblocked, preserved WIP/review evidence.
+  t_3393f351 resumed actual Astra/openai20260909_064019_22c5ec;
+  t_7fe3337b resumed actual Grok4.6/xai20260909_064019_cd1ea8.
+  Previous interrupted runs are neither code failures nor review verdicts.
+- Tutorial91fcadd per-task APPROVED actual Grok4.5/xai233218_3ac352.
+  Final review remains active, inspecting documented pending-message drawing
+  precedence; root additionally confirmed Java continue-prompt colour128 vs
+  current BLACK. No final approval/new build/live action proof yet.
+- Isolated289 server was stopped/stale61312 after pause. Protected274/377
+  config hashes, pinned engine/content commits and8 cache archives reverified
+  unchanged before existing start script. Restart exit0, ownedPID49444;
+  receipt runtime/tutorial-input-server-restart-20260909. Root supervisor
+  session26485 keeps server alive; no native client launched.
+- Differential WIP supervisor had EOF-as-completion risk; root requested
+  actual EOF-before-leader-exit regression and preserved normal-exit descendant
+  cleanup/platform qualification requirements. No real-pack or measurement
+  release. Frozen candidate8385bab and reviewed source remain unchanged.
+
 ## Latest boundary — 2026-09-09 03:32 UTC
 
 - Nav8385bab APPROVED bounded generated evidence, same-card round2
