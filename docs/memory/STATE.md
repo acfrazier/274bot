@@ -11,6 +11,28 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 14:11 UTC
+
+- Completed cold/peak screen:12 clean processes and2 separate counting processes0,
+  full phases/summary/world-drop. Cold median108.637ms dense vs452.555ms tiled,
+  +343.919ms/+316.6% FAIL vs+10%; baseline range6.96% does not mask failure.
+  Construction peak142.625vs146.500MiB (+3.875) PASS8MiB. One-row route metrics
+  remain diagnostic only. Candidate PARKED for acceptance pending evidence review;
+  no StageB, further59case routing, cap increase or threshold waiver authorized.
+- Real layout: dense73285632 vs tiled4068608 requestedbytes, reduction69217024
+  (66.0105MiB); directory63616 entries/pool3090, narrowcounting0alloc/0bytes.
+  Clean world-live/input-dropped phaseRSS76273664vs7020544B is a microprobe
+  observation, not accepted deployed RSS/per-bot savings. All campaigngatesopen.
+- Full720file archive5169413B SHAeb545cb73f725cc07e307d24853be935614d1aea0c312ca1a617a823b87f5ba6
+  downloaded and independently verified; source/tool/binary/input/phase/metric
+  and originalGit209/210file audits PASS. Local diagnostics/nav-stage-a-native-preparation.
+  Root report nav-stage-a-cold-screen-report.md ready for independent review.
+- Root considered stopping after noticing outside-destination is not an immediate
+  router short-circuit, but entire98.086s clean+17.929s counting sequence had
+  completed; no matchingPID/no signal. No run interrupted. Preserve no-op receipt
+  and clarification; never describe the control as immediate-return. All root
+  measurement sessions closed; standalone289server remains separate/unchanged.
+
 ## Latest boundary — 2026-09-09 14:01 UTC
 
 - First-attempt failure evidence and isolated startup/cold gate proposal APPROVED
