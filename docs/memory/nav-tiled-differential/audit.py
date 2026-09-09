@@ -76,13 +76,13 @@ def audit(run):
                 for kind in re.findall(rb'kind: (\w+)',payload): routes['leg-'+kind.decode()]+=1
     assert inputs==[e['path'] for e in corpus]
     assert dict(records)==result['output_inventory']
-    pairs=5*(3*3*4)**2
+    pairs=sum(e['routes']=='all' for e in corpus)*(3*3*4)**2
     assert records['pair']==pairs
     assert records['options']==records['walking-options']==pairs*4*16
     assert records['budget']==pairs*3
     assert records['step']==(9*512+512)*2*4*2*8
     assert records['radius-selector']==pairs*2
-    assert records['fixed-selector']==5*90
+    assert records['fixed-selector']==sum(e['routes']=='all' for e in corpus)*h.fixed_selectors((run/'fixed.tsv').read_text())
     for kind in ('Door','Stairs','Ladder','Teleport','EssenceExit'):
         assert routes['leg-'+kind]>0,kind
     assert records['host-bank']>0 and records['after-bank']>0
@@ -98,9 +98,14 @@ def audit(run):
             else:f.seek(n,1)
             assert f.read(1)==b'\n'
     assert len(noncanonical)==2
+    from test_extension import assert_extension
+    extension={}
+    for arm in ('dense','tiled'):
+        extension[arm]=dict(generated=assert_extension(run/(arm+'-probe.out')),
+                           protocol=assert_extension(run/'protocol-fixture'/(arm+'.out'),True))
     report=dict(verified=True,input_count=len(corpus),input_bytes=sum(e['bytes'] for e in corpus),max_input_bytes=max(e['bytes'] for e in corpus),
         sources=sources,frames=dict(records),route_results=dict(routes),error_payload_counts=dict(errors),noncanonical_inputs=noncanonical,
-        corpus_sha256=h.sha(run/'corpus.json'),result_sha256=h.sha(run/'result.json'))
+        corpus_sha256=h.sha(run/'corpus.json'),result_sha256=h.sha(run/'result.json'),extension=extension)
     h.save(run/'audit.json',report)
     print(json.dumps({k:v for k,v in report.items() if k not in ('error_payload_counts','frames')},indent=2))
 

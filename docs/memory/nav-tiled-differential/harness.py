@@ -318,7 +318,7 @@ def qualify(run, real=None):
         raise ValueError('generated corpus cap')
     fixed_hash=sha(run/'fixed.tsv');fixed_selectors((run/'fixed.tsv').read_text())
     protocol=run/'protocol-fixture';protocol.mkdir(exist_ok=False)
-    shutil.copyfile(run/'inputs/routes-open.bin',protocol/'input.bin')
+    shutil.copyfile(run/'inputs/routes-extension.bin',protocol/'input.bin')
     shutil.copyfile(run/'fixed.tsv',protocol/'routes.tsv')
     protocol_hash=sha(protocol/'input.bin')
     for e in corpus:
@@ -375,7 +375,7 @@ def fixed_selectors(text):
         if len(v)!=10: raise ValueError('expected 10 integers per fixed route')
         if any(not -16384<=v[i]<=32767 for i in (0,1,3,4)) or any(not 0<=v[i]<=3 for i in (2,5)):
             raise ValueError('unsafe route coordinates')
-        if not (0<=v[6]<=15 and 0<=v[7]<=3 and 0<=v[8]<=4 and 0<=v[9]<=1):
+        if not (0<=v[6]<=15 and 0<=v[7]<=6 and 0<=v[8]<=4 and 0<=v[9]<=1):
             raise ValueError('unsafe route options/radius/model')
     return len(rows)
 
@@ -444,7 +444,7 @@ def main():
     if a.action=='prepare':
         run.mkdir(parents=True,exist_ok=False)
         tools=run/'tools';tools.mkdir()
-        for name in ('harness.py','generate.py','probe.rs','test_guard.py'):
+        for name in ('harness.py','generate.py','probe.rs','test_guard.py','test_admission.py','test_extension.py','audit.py'):
             (tools/name).write_bytes((HERE/name).read_bytes())
         materialize(run)
         import generate

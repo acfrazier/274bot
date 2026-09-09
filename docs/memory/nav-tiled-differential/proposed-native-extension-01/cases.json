@@ -1,0 +1,976 @@
+{
+  "bank": [
+    [
+      995,
+      10
+    ],
+    [
+      1712,
+      1
+    ]
+  ],
+  "case_count": 19,
+  "cases": [
+    {
+      "id": "spell-varrock-enabled",
+      "note": "Magic exactly 25 minimum adaptation, NOT source maxme. No packed quest/varp/worn req. Radius 4 is not arrival tolerance 8.",
+      "origins": [
+        {
+          "lines": [
+            11,
+            14
+          ],
+          "path": "e2e/nav-tele-smoke.ts",
+          "sha256": "1aebcdabc3d71ece90860a56c9254920a89ed4613b475cba1143ab05a21ca641",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        },
+        {
+          "lines": [
+            49,
+            54
+          ],
+          "path": "e2e/nav-tele-smoke.ts",
+          "sha256": "1aebcdabc3d71ece90860a56c9254920a89ed4613b475cba1143ab05a21ca641",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        },
+        {
+          "lines": [
+            86,
+            122
+          ],
+          "path": "e2e/nav-tele-smoke.ts",
+          "sha256": "1aebcdabc3d71ece90860a56c9254920a89ed4613b475cba1143ab05a21ca641",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        }
+      ],
+      "posthoc_source_arrival_tolerance": 8,
+      "requirement_edge": 2143,
+      "row": [
+        3222,
+        3218,
+        0,
+        3213,
+        3424,
+        0,
+        1,
+        4,
+        4,
+        0
+      ],
+      "status": "PROPOSED NATIVE ONLY; not executed or predicted"
+    },
+    {
+      "id": "spell-varrock-disabled",
+      "note": "Magic exactly 25 minimum adaptation, NOT source maxme. No packed quest/varp/worn req. Radius 4 is not arrival tolerance 8.",
+      "origins": [
+        {
+          "lines": [
+            11,
+            14
+          ],
+          "path": "e2e/nav-tele-smoke.ts",
+          "sha256": "1aebcdabc3d71ece90860a56c9254920a89ed4613b475cba1143ab05a21ca641",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        },
+        {
+          "lines": [
+            49,
+            54
+          ],
+          "path": "e2e/nav-tele-smoke.ts",
+          "sha256": "1aebcdabc3d71ece90860a56c9254920a89ed4613b475cba1143ab05a21ca641",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        },
+        {
+          "lines": [
+            86,
+            122
+          ],
+          "path": "e2e/nav-tele-smoke.ts",
+          "sha256": "1aebcdabc3d71ece90860a56c9254920a89ed4613b475cba1143ab05a21ca641",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        }
+      ],
+      "posthoc_source_arrival_tolerance": 8,
+      "requirement_edge": 2143,
+      "row": [
+        3222,
+        3218,
+        0,
+        3213,
+        3424,
+        0,
+        0,
+        4,
+        4,
+        0
+      ],
+      "status": "PROPOSED NATIVE ONLY; not executed or predicted"
+    },
+    {
+      "id": "spell-varrock-missing-runes",
+      "note": "Magic exactly 25 minimum adaptation, NOT source maxme. No packed quest/varp/worn req. Radius 4 is not arrival tolerance 8.",
+      "origins": [
+        {
+          "lines": [
+            11,
+            14
+          ],
+          "path": "e2e/nav-tele-smoke.ts",
+          "sha256": "1aebcdabc3d71ece90860a56c9254920a89ed4613b475cba1143ab05a21ca641",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        },
+        {
+          "lines": [
+            49,
+            54
+          ],
+          "path": "e2e/nav-tele-smoke.ts",
+          "sha256": "1aebcdabc3d71ece90860a56c9254920a89ed4613b475cba1143ab05a21ca641",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        },
+        {
+          "lines": [
+            86,
+            122
+          ],
+          "path": "e2e/nav-tele-smoke.ts",
+          "sha256": "1aebcdabc3d71ece90860a56c9254920a89ed4613b475cba1143ab05a21ca641",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        }
+      ],
+      "posthoc_source_arrival_tolerance": 8,
+      "requirement_edge": 2143,
+      "row": [
+        3222,
+        3218,
+        0,
+        3213,
+        3424,
+        0,
+        1,
+        1,
+        4,
+        0
+      ],
+      "status": "PROPOSED NATIVE ONLY; not executed or predicted"
+    },
+    {
+      "id": "glory-edgeville-carried",
+      "note": "Stress source post-hoc glory tolerance is 12 (not tele-smoke 8); both excluded from router acceptance. Requested radius 4 retained.",
+      "origins": [
+        {
+          "lines": [
+            237,
+            247
+          ],
+          "path": "e2e/nav-stress-live.ts",
+          "sha256": "b3fbe043e5354929a43b675244de9aade975262e3df12e4135f16c64360c2382",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        },
+        {
+          "lines": [
+            486,
+            504
+          ],
+          "path": "e2e/nav-stress-live.ts",
+          "sha256": "b3fbe043e5354929a43b675244de9aade975262e3df12e4135f16c64360c2382",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        }
+      ],
+      "posthoc_source_arrival_tolerance": 12,
+      "requirement_edge": 2166,
+      "row": [
+        3293,
+        3174,
+        0,
+        3087,
+        3496,
+        0,
+        1,
+        5,
+        4,
+        0
+      ],
+      "status": "PROPOSED NATIVE ONLY; not executed or predicted"
+    },
+    {
+      "id": "glory-edgeville-disabled",
+      "note": "Stress source post-hoc glory tolerance is 12 (not tele-smoke 8); both excluded from router acceptance. Requested radius 4 retained.",
+      "origins": [
+        {
+          "lines": [
+            237,
+            247
+          ],
+          "path": "e2e/nav-stress-live.ts",
+          "sha256": "b3fbe043e5354929a43b675244de9aade975262e3df12e4135f16c64360c2382",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        },
+        {
+          "lines": [
+            486,
+            504
+          ],
+          "path": "e2e/nav-stress-live.ts",
+          "sha256": "b3fbe043e5354929a43b675244de9aade975262e3df12e4135f16c64360c2382",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        }
+      ],
+      "posthoc_source_arrival_tolerance": 12,
+      "requirement_edge": 2166,
+      "row": [
+        3293,
+        3174,
+        0,
+        3087,
+        3496,
+        0,
+        0,
+        5,
+        4,
+        0
+      ],
+      "status": "PROPOSED NATIVE ONLY; not executed or predicted"
+    },
+    {
+      "id": "glory-edgeville-worn-not-carried",
+      "note": "Stress source post-hoc glory tolerance is 12 (not tele-smoke 8); both excluded from router acceptance. Requested radius 4 retained.",
+      "origins": [
+        {
+          "lines": [
+            237,
+            247
+          ],
+          "path": "e2e/nav-stress-live.ts",
+          "sha256": "b3fbe043e5354929a43b675244de9aade975262e3df12e4135f16c64360c2382",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        },
+        {
+          "lines": [
+            486,
+            504
+          ],
+          "path": "e2e/nav-stress-live.ts",
+          "sha256": "b3fbe043e5354929a43b675244de9aade975262e3df12e4135f16c64360c2382",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        }
+      ],
+      "posthoc_source_arrival_tolerance": 12,
+      "requirement_edge": 2166,
+      "row": [
+        3293,
+        3174,
+        0,
+        3087,
+        3496,
+        0,
+        1,
+        2,
+        4,
+        0
+      ],
+      "status": "PROPOSED NATIVE ONLY; not executed or predicted"
+    },
+    {
+      "id": "glory-edgeville-missing",
+      "note": "Stress source post-hoc glory tolerance is 12 (not tele-smoke 8); both excluded from router acceptance. Requested radius 4 retained.",
+      "origins": [
+        {
+          "lines": [
+            237,
+            247
+          ],
+          "path": "e2e/nav-stress-live.ts",
+          "sha256": "b3fbe043e5354929a43b675244de9aade975262e3df12e4135f16c64360c2382",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        },
+        {
+          "lines": [
+            486,
+            504
+          ],
+          "path": "e2e/nav-stress-live.ts",
+          "sha256": "b3fbe043e5354929a43b675244de9aade975262e3df12e4135f16c64360c2382",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        }
+      ],
+      "posthoc_source_arrival_tolerance": 12,
+      "requirement_edge": 2166,
+      "row": [
+        3293,
+        3174,
+        0,
+        3087,
+        3496,
+        0,
+        1,
+        0,
+        4,
+        0
+      ],
+      "status": "PROPOSED NATIVE ONLY; not executed or predicted"
+    },
+    {
+      "id": "mainland-stairs-f2p01",
+      "note": "Packed stair/reachability intent, no live stair assertion.",
+      "origins": [
+        {
+          "lines": [
+            4,
+            4
+          ],
+          "path": "tools/nav/mainland-routes.json",
+          "sha256": "a63752fe5713a7fe602e7f544d9eff5ff58e3ac9888e0e1cd07d0dc2f54c6c95",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        }
+      ],
+      "posthoc_source_arrival_tolerance": null,
+      "requirement_edge": null,
+      "row": [
+        3222,
+        3218,
+        0,
+        3208,
+        3220,
+        2,
+        0,
+        3,
+        0,
+        0
+      ],
+      "status": "PROPOSED NATIVE ONLY; not executed or predicted"
+    },
+    {
+      "id": "mainland-f2p06",
+      "note": "Root-selected radius4 and walking model adaptation of mainland OD.",
+      "origins": [
+        {
+          "lines": [
+            9,
+            9
+          ],
+          "path": "tools/nav/mainland-routes.json",
+          "sha256": "a63752fe5713a7fe602e7f544d9eff5ff58e3ac9888e0e1cd07d0dc2f54c6c95",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        }
+      ],
+      "posthoc_source_arrival_tolerance": null,
+      "requirement_edge": null,
+      "row": [
+        3213,
+        3424,
+        0,
+        3222,
+        3218,
+        0,
+        0,
+        3,
+        4,
+        1
+      ],
+      "status": "PROPOSED NATIVE ONLY; not executed or predicted"
+    },
+    {
+      "id": "ship-sarim-musa-coins5000",
+      "note": "Coins-only adaptation, fare30. No packed skill/quest/varp/worn req. Source OD is near, not equal to packed NPC at. Ship selection remains an intent.",
+      "origins": [
+        {
+          "lines": [
+            158,
+            164
+          ],
+          "path": "tools/nav/transport-heavy-routes.ts",
+          "sha256": "085316415c11eefad6d6605eb04d5029b3544e798cfc1d50748fc4daf6b1fe35",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        },
+        {
+          "lines": [
+            188,
+            218
+          ],
+          "path": "tools/nav/transport-heavy-routes.ts",
+          "sha256": "085316415c11eefad6d6605eb04d5029b3544e798cfc1d50748fc4daf6b1fe35",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        }
+      ],
+      "posthoc_source_arrival_tolerance": null,
+      "requirement_edge": 2089,
+      "row": [
+        3027,
+        3218,
+        0,
+        2956,
+        3143,
+        1,
+        0,
+        6,
+        0,
+        1
+      ],
+      "status": "PROPOSED NATIVE ONLY; not executed or predicted"
+    },
+    {
+      "id": "ship-sarim-musa-coins10",
+      "note": "Coins-only adaptation, fare30. No packed skill/quest/varp/worn req. Source OD is near, not equal to packed NPC at. Ship selection remains an intent.",
+      "origins": [
+        {
+          "lines": [
+            158,
+            164
+          ],
+          "path": "tools/nav/transport-heavy-routes.ts",
+          "sha256": "085316415c11eefad6d6605eb04d5029b3544e798cfc1d50748fc4daf6b1fe35",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        },
+        {
+          "lines": [
+            188,
+            218
+          ],
+          "path": "tools/nav/transport-heavy-routes.ts",
+          "sha256": "085316415c11eefad6d6605eb04d5029b3544e798cfc1d50748fc4daf6b1fe35",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        }
+      ],
+      "posthoc_source_arrival_tolerance": null,
+      "requirement_edge": 2089,
+      "row": [
+        3027,
+        3218,
+        0,
+        2956,
+        3143,
+        1,
+        0,
+        2,
+        0,
+        1
+      ],
+      "status": "PROPOSED NATIVE ONLY; not executed or predicted"
+    },
+    {
+      "id": "ship-sarim-musa-missing-coins",
+      "note": "Coins-only adaptation, fare30. No packed skill/quest/varp/worn req. Source OD is near, not equal to packed NPC at. Ship selection remains an intent.",
+      "origins": [
+        {
+          "lines": [
+            158,
+            164
+          ],
+          "path": "tools/nav/transport-heavy-routes.ts",
+          "sha256": "085316415c11eefad6d6605eb04d5029b3544e798cfc1d50748fc4daf6b1fe35",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        },
+        {
+          "lines": [
+            188,
+            218
+          ],
+          "path": "tools/nav/transport-heavy-routes.ts",
+          "sha256": "085316415c11eefad6d6605eb04d5029b3544e798cfc1d50748fc4daf6b1fe35",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        }
+      ],
+      "posthoc_source_arrival_tolerance": null,
+      "requirement_edge": 2089,
+      "row": [
+        3027,
+        3218,
+        0,
+        2956,
+        3143,
+        1,
+        0,
+        0,
+        0,
+        1
+      ],
+      "status": "PROPOSED NATIVE ONLY; not executed or predicted"
+    },
+    {
+      "id": "ship-ardy-brim-coins5000",
+      "note": "Coins-only adaptation, fare30. No packed skill/quest/varp/worn req. Source OD is near, not equal to packed NPC at. Ship selection remains an intent.",
+      "origins": [
+        {
+          "lines": [
+            165,
+            171
+          ],
+          "path": "tools/nav/transport-heavy-routes.ts",
+          "sha256": "085316415c11eefad6d6605eb04d5029b3544e798cfc1d50748fc4daf6b1fe35",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        },
+        {
+          "lines": [
+            188,
+            218
+          ],
+          "path": "tools/nav/transport-heavy-routes.ts",
+          "sha256": "085316415c11eefad6d6605eb04d5029b3544e798cfc1d50748fc4daf6b1fe35",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        }
+      ],
+      "posthoc_source_arrival_tolerance": null,
+      "requirement_edge": 2095,
+      "row": [
+        2683,
+        3272,
+        0,
+        2775,
+        3234,
+        1,
+        0,
+        6,
+        0,
+        1
+      ],
+      "status": "PROPOSED NATIVE ONLY; not executed or predicted"
+    },
+    {
+      "id": "ship-ardy-brim-coins10",
+      "note": "Coins-only adaptation, fare30. No packed skill/quest/varp/worn req. Source OD is near, not equal to packed NPC at. Ship selection remains an intent.",
+      "origins": [
+        {
+          "lines": [
+            165,
+            171
+          ],
+          "path": "tools/nav/transport-heavy-routes.ts",
+          "sha256": "085316415c11eefad6d6605eb04d5029b3544e798cfc1d50748fc4daf6b1fe35",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        },
+        {
+          "lines": [
+            188,
+            218
+          ],
+          "path": "tools/nav/transport-heavy-routes.ts",
+          "sha256": "085316415c11eefad6d6605eb04d5029b3544e798cfc1d50748fc4daf6b1fe35",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        }
+      ],
+      "posthoc_source_arrival_tolerance": null,
+      "requirement_edge": 2095,
+      "row": [
+        2683,
+        3272,
+        0,
+        2775,
+        3234,
+        1,
+        0,
+        2,
+        0,
+        1
+      ],
+      "status": "PROPOSED NATIVE ONLY; not executed or predicted"
+    },
+    {
+      "id": "ship-ardy-brim-missing-coins",
+      "note": "Coins-only adaptation, fare30. No packed skill/quest/varp/worn req. Source OD is near, not equal to packed NPC at. Ship selection remains an intent.",
+      "origins": [
+        {
+          "lines": [
+            165,
+            171
+          ],
+          "path": "tools/nav/transport-heavy-routes.ts",
+          "sha256": "085316415c11eefad6d6605eb04d5029b3544e798cfc1d50748fc4daf6b1fe35",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        },
+        {
+          "lines": [
+            188,
+            218
+          ],
+          "path": "tools/nav/transport-heavy-routes.ts",
+          "sha256": "085316415c11eefad6d6605eb04d5029b3544e798cfc1d50748fc4daf6b1fe35",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        }
+      ],
+      "posthoc_source_arrival_tolerance": null,
+      "requirement_edge": 2095,
+      "row": [
+        2683,
+        3272,
+        0,
+        2775,
+        3234,
+        1,
+        0,
+        0,
+        0,
+        1
+      ],
+      "status": "PROPOSED NATIVE ONLY; not executed or predicted"
+    },
+    {
+      "id": "HOST-glory-karamja-fetch-missing",
+      "note": "HOST-SPECIFIC proposal combines source Lumbridge origin with saved packed Glory Karamja destination. Fixed bank[(995,10),(1712,1)]. BankSession only after actual missing-item diagnosis/plan_bank_fetch output; BANK is not a graph edge.",
+      "origins": [
+        {
+          "lines": [
+            11,
+            14
+          ],
+          "path": "e2e/nav-tele-smoke.ts",
+          "sha256": "1aebcdabc3d71ece90860a56c9254920a89ed4613b475cba1143ab05a21ca641",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        }
+      ],
+      "posthoc_source_arrival_tolerance": null,
+      "requirement_edge": 2167,
+      "row": [
+        3222,
+        3218,
+        0,
+        2918,
+        3176,
+        0,
+        5,
+        0,
+        0,
+        0
+      ],
+      "status": "PROPOSED NATIVE ONLY; not executed or predicted"
+    },
+    {
+      "id": "HOST-glory-karamja-fetch-worn-only",
+      "note": "HOST-SPECIFIC proposal combines source Lumbridge origin with saved packed Glory Karamja destination. Fixed bank[(995,10),(1712,1)]. BankSession only after actual missing-item diagnosis/plan_bank_fetch output; BANK is not a graph edge.",
+      "origins": [
+        {
+          "lines": [
+            11,
+            14
+          ],
+          "path": "e2e/nav-tele-smoke.ts",
+          "sha256": "1aebcdabc3d71ece90860a56c9254920a89ed4613b475cba1143ab05a21ca641",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        }
+      ],
+      "posthoc_source_arrival_tolerance": null,
+      "requirement_edge": 2167,
+      "row": [
+        3222,
+        3218,
+        0,
+        2918,
+        3176,
+        0,
+        5,
+        2,
+        0,
+        0
+      ],
+      "status": "PROPOSED NATIVE ONLY; not executed or predicted"
+    },
+    {
+      "id": "HOST-glory-karamja-bank-disabled",
+      "note": "HOST-SPECIFIC proposal combines source Lumbridge origin with saved packed Glory Karamja destination. Fixed bank[(995,10),(1712,1)]. BankSession only after actual missing-item diagnosis/plan_bank_fetch output; BANK is not a graph edge.",
+      "origins": [
+        {
+          "lines": [
+            11,
+            14
+          ],
+          "path": "e2e/nav-tele-smoke.ts",
+          "sha256": "1aebcdabc3d71ece90860a56c9254920a89ed4613b475cba1143ab05a21ca641",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        }
+      ],
+      "posthoc_source_arrival_tolerance": null,
+      "requirement_edge": 2167,
+      "row": [
+        3222,
+        3218,
+        0,
+        2918,
+        3176,
+        0,
+        1,
+        0,
+        0,
+        0
+      ],
+      "status": "PROPOSED NATIVE ONLY; not executed or predicted"
+    },
+    {
+      "id": "HOST-glory-karamja-already-carried",
+      "note": "HOST-SPECIFIC proposal combines source Lumbridge origin with saved packed Glory Karamja destination. Fixed bank[(995,10),(1712,1)]. BankSession only after actual missing-item diagnosis/plan_bank_fetch output; BANK is not a graph edge.",
+      "origins": [
+        {
+          "lines": [
+            11,
+            14
+          ],
+          "path": "e2e/nav-tele-smoke.ts",
+          "sha256": "1aebcdabc3d71ece90860a56c9254920a89ed4613b475cba1143ab05a21ca641",
+          "source_commit": "100adccc037d9f6898080e1cad58fcfc43364775"
+        }
+      ],
+      "posthoc_source_arrival_tolerance": null,
+      "requirement_edge": 2167,
+      "row": [
+        3222,
+        3218,
+        0,
+        2918,
+        3176,
+        0,
+        5,
+        5,
+        0,
+        0
+      ],
+      "status": "PROPOSED NATIVE ONLY; not executed or predicted"
+    }
+  ],
+  "essence_limit": "Existing opts8 preseeded Aubury exit proof unchanged, not an entry-created full session roundtrip. No new essence rows.",
+  "exclusions": [
+    "membership",
+    "freeSlots",
+    "distanceBeforeTeleport",
+    "allowTeleportIds",
+    "foreign router policy",
+    "live logs/paint/arrival/pacing/account reproduction",
+    "entry-derived essence roundtrip"
+  ],
+  "frozen": {
+    "client": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+    "dense": "29b7aea779322c8611f83dc193e939ca7d756f75",
+    "tiled": "8385babb23fd15b876506d4a3f6154984a6b2df1"
+  },
+  "omitted_preset_fields": "All other inv/worn/stats/quests/varps empty; presets0..3 unchanged",
+  "presets": {
+    "4": {
+      "inv": [
+        [
+          563,
+          50
+        ],
+        [
+          556,
+          150
+        ],
+        [
+          554,
+          50
+        ]
+      ],
+      "name": "varrock-smoke-min25",
+      "stats": [
+        [
+          6,
+          25
+        ]
+      ]
+    },
+    "5": {
+      "inv": [
+        [
+          1712,
+          1
+        ]
+      ],
+      "name": "carried-glory4"
+    },
+    "6": {
+      "inv": [
+        [
+          995,
+          5000
+        ]
+      ],
+      "name": "ship-coins5000"
+    }
+  },
+  "requirements": {
+    "2089": {
+      "edge": {
+        "at": [
+          3026,
+          3217,
+          0
+        ],
+        "direction": 0,
+        "index": 2089,
+        "items": [
+          [
+            995,
+            30
+          ]
+        ],
+        "kind": 3,
+        "loc": 378,
+        "open": -1,
+        "option": 1,
+        "quests": [],
+        "skills": [],
+        "ticks": 7,
+        "to": [
+          2956,
+          3143,
+          1
+        ],
+        "varps": [],
+        "worn": []
+      },
+      "line": 54046,
+      "path": "diagnostics/native-nav-differential-preparation/results-760d3ac/metadata/root-real-selector-inventory.json",
+      "sha256": "7a0345a26fe3644d05f4b91d48d6b0713a1340605fc15c853bd3a587e3557edc"
+    },
+    "2095": {
+      "edge": {
+        "at": [
+          2679,
+          3275,
+          0
+        ],
+        "direction": 0,
+        "index": 2095,
+        "items": [
+          [
+            995,
+            30
+          ]
+        ],
+        "kind": 3,
+        "loc": 381,
+        "open": -1,
+        "option": 1,
+        "quests": [],
+        "skills": [],
+        "ticks": 7,
+        "to": [
+          2775,
+          3234,
+          1
+        ],
+        "varps": [],
+        "worn": []
+      },
+      "line": 54205,
+      "path": "diagnostics/native-nav-differential-preparation/results-760d3ac/metadata/root-real-selector-inventory.json",
+      "sha256": "7a0345a26fe3644d05f4b91d48d6b0713a1340605fc15c853bd3a587e3557edc"
+    },
+    "2143": {
+      "edge": {
+        "at": [
+          0,
+          0,
+          0
+        ],
+        "direction": 0,
+        "index": 2143,
+        "items": [
+          [
+            554,
+            1
+          ],
+          [
+            556,
+            3
+          ],
+          [
+            563,
+            1
+          ]
+        ],
+        "kind": 4,
+        "loc": 0,
+        "open": -1,
+        "option": 0,
+        "quests": [],
+        "skills": [
+          [
+            6,
+            25
+          ]
+        ],
+        "ticks": 3,
+        "to": [
+          3213,
+          3424,
+          0
+        ],
+        "varps": [],
+        "worn": []
+      },
+      "line": 55516,
+      "path": "diagnostics/native-nav-differential-preparation/results-760d3ac/metadata/root-real-selector-inventory.json",
+      "sha256": "7a0345a26fe3644d05f4b91d48d6b0713a1340605fc15c853bd3a587e3557edc"
+    },
+    "2166": {
+      "edge": {
+        "at": [
+          0,
+          0,
+          0
+        ],
+        "direction": 0,
+        "index": 2166,
+        "items": [
+          [
+            1712,
+            1
+          ]
+        ],
+        "kind": 4,
+        "loc": 1712,
+        "open": -1,
+        "option": 4,
+        "quests": [],
+        "skills": [],
+        "ticks": 2,
+        "to": [
+          3087,
+          3496,
+          0
+        ],
+        "varps": [],
+        "worn": []
+      },
+      "line": 56258,
+      "path": "diagnostics/native-nav-differential-preparation/results-760d3ac/metadata/root-real-selector-inventory.json",
+      "sha256": "7a0345a26fe3644d05f4b91d48d6b0713a1340605fc15c853bd3a587e3557edc"
+    },
+    "2167": {
+      "edge": {
+        "at": [
+          0,
+          0,
+          0
+        ],
+        "direction": 0,
+        "index": 2167,
+        "items": [
+          [
+            1712,
+            1
+          ]
+        ],
+        "kind": 4,
+        "loc": 1712,
+        "open": -1,
+        "option": 4,
+        "quests": [],
+        "skills": [],
+        "ticks": 2,
+        "to": [
+          2918,
+          3176,
+          0
+        ],
+        "varps": [],
+        "worn": []
+      },
+      "line": 56287,
+      "path": "diagnostics/native-nav-differential-preparation/results-760d3ac/metadata/root-real-selector-inventory.json",
+      "sha256": "7a0345a26fe3644d05f4b91d48d6b0713a1340605fc15c853bd3a587e3557edc"
+    }
+  },
+  "routes_sha256": "34a7d8ef78c8755dbe2ffc775977bdb4b8fc2ec8fd114fac3412b0a936d5edbc",
+  "row_schema": "from_x from_z from_level to_x to_z to_level option_bits state_family radius model",
+  "scope": "Static proposals only; NO real input execution or native release"
+}

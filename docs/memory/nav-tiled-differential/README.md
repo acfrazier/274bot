@@ -1,7 +1,8 @@
 # Frozen nav differential diagnostic
 
-Read `../nav-tiled-differential-report.md` for the actual result, failures and
-open real/native gates. This directory is task-owned diagnostic tooling only.
+Read `../nav-tiled-differential-report.md` for the original result and
+`../nav-corpus-extension-report.md` for the generated preset extension.
+This directory is task-owned diagnostic tooling only.
 Never point this card at a real pack. No default production input path exists.
 
 ## Generated operation
@@ -13,11 +14,12 @@ python3 docs/memory/nav-tiled-differential/harness.py prepare --run docs/memory/
 python3 docs/memory/nav-tiled-differential/harness.py build --run docs/memory/nav-tiled-differential/NEW
 python3 docs/memory/nav-tiled-differential/harness.py generated --run docs/memory/nav-tiled-differential/NEW
 python3 docs/memory/nav-tiled-differential/audit.py docs/memory/nav-tiled-differential/NEW
-python3 -m unittest discover -s docs/memory/nav-tiled-differential -p 'test_*.py' -v
+NAV_EXTENSION_RUN=docs/memory/nav-tiled-differential/NEW python3 -m unittest discover -s docs/memory/nav-tiled-differential -p 'test_*.py' -v
 ```
 
 Use a new run name, never overwrite a result. The checked-in immutable archives
-preserve the three development coverage stages; final evidence is run-03.
+preserve the three original development coverage stages (run-03) and the
+separate generated extension (corpus-extension-01).
 `audit.py RUN --archive-only` creates a new archive, skips target directories,
 and reads every archived file back to verify its SHA-256.
 
@@ -29,7 +31,7 @@ radius/bank orchestration. Generated input filenames, bytes, selector ordering,
 fixed route rows and tool recipes are frozen before either arm.
 
 `generated` also exercises the one-input executable protocol against an owned
-copy of generated `routes-open.bin`. Its receipt's executable argument `real`
+copy of generated `routes-extension.bin`. Its receipt's executable argument `real`
 does not mean production data or native guards were used. This protocol fixture
 is labeled separately in result.json and remains under GENERATED limits.
 
@@ -109,11 +111,45 @@ approach/calculate, never a new radius router.
 
 State families: 0 empty; 1 skills `(6,25),(2,3)`, completed quests `Rune Mysteries`
 and `é`, varp `(150,160)`; 2 carried `(995,10)` and worn 1712; 3 union of 1 and 2.
+Appended named presets (NOT mask bits): 4 `varrock-smoke-min25`, carried
+`(563,50),(556,150),(554,50)` and magic `(6,25)` only; 5 `carried-glory4`,
+carried `(1712,1)` only; 6 `ship-coins5000`, carried `(995,5000)` only.
+Every other field of those three independent presets is empty. Presets 0..3
+remain unchanged; 7 and larger, negative values and arbitrary state are rejected.
+Preset 4 deliberately selects the minimum level 25, not foreign `maxme`.
 Bank supply is fixed `(995,10),(1712,1)`. These are diagnostic facts, not live
 account facts. Root must choose meaningful real routes and explicitly retain
 unexercised cases; do not call a missing-requirement NoPath a successful
 bank/teleport proof. Arbitrary state snapshots need a separately reviewed
 extension, not an unrecorded edit to frozen selectors.
+
+The new generated pack isolates spell, glory and Boat gates on separate tiny
+planes. The original 90 fixed rows remain a prefix; 80 appended rows cover
+enabled/disabled/missing gates, radius 0/4 and both models. The full generated
+and one-input protocol outputs are compared across both original arms.
+`test_extension.py` independently checks exact states (including worn-only 2),
+successful Teleport and Boat, meaningful withdraw-1712 BankSession plans and
+NoPath controls. `audit.py` requires those assertions for both streams/arms;
+`result.json` alone denotes wire/process equality, not this stronger gate audit.
+`fixed-tele-model` intentionally always probes the teleport API regardless of
+option bits; enabled/disabled assertions refer to original host calculate.
+
+`proposed-native-extension-01/{cases.json,routes.tsv}` freezes source-hashed
+operator OD candidates and HOST-specific bank-fetch contrasts. It is NOT an
+authorization or a predicted route result. To reproduce the static files only:
+
+```sh
+python3 docs/memory/nav-tiled-differential/propose_extension.py --source /Users/acfrazier/experiments/rs2b0t --out docs/memory/nav-tiled-differential/NEW-PROPOSALS
+```
+
+That script reads only approved source files and already-saved selector metadata,
+never an actual pack. Varrock 2143 has no quest/varp/worn gate. Ship 2089/2095
+each costs coins30 and has no skill/quest/varp/worn gate. These are Rust graph
+facts, not membership/free-slot/policy acceptance. Requested radius4 stays
+distinct from source post-hoc tele-smoke arrival8 (stress glory uses12).
+No new essence entry/return cases: existing opts8 preseeded-session exit proof
+is not an entry-created roundtrip. Fresh native hard-AS qualification and root
+real-input release remain required; no Linux execution is authorized here.
 
 ## Safety and portability
 

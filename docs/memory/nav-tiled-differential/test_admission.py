@@ -45,9 +45,14 @@ class Admission(unittest.TestCase):
             with self.assertRaises(ValueError):h.verify_arm(root,'dense')
 
     def test_selector_malformed_and_bounds(self):
-        for row in ('1 2','100 200 4 102 202 3 0 0 0 0','0 0 0 0 0 0 16 0 0 0','0 0 0 0 0 0 0 4 0 0','0 0 0 0 0 0 0 0 0 2'):
+        for row in ('1 2','100 200 4 102 202 3 0 0 0 0','0 0 0 0 0 0 16 0 0 0','0 0 0 0 0 0 0 7 0 0','0 0 0 0 0 0 0 -1 0 0','0 0 0 0 0 0 0 0 0 2'):
             with self.subTest(row=row),self.assertRaises(ValueError):h.fixed_selectors(row)
         self.assertEqual(h.fixed_selectors('100 200 0 102 202 3 15 3 4 1'),1)
+
+    def test_named_extension_presets_admitted(self):
+        for preset in (4,5,6):
+            with self.subTest(preset=preset):
+                self.assertEqual(h.fixed_selectors(f'100 200 0 102 202 3 1 {preset} 4 1'),1)
 
     def test_output_truncation_missing_completion_count(self):
         with tempfile.TemporaryDirectory() as d:

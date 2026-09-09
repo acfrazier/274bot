@@ -98,6 +98,7 @@ fn fixed_searches(out: &mut impl Write, mut world: Arc<NavWorld>, selectors: &st
             }
         };
         debug(out, "fixed-selector", &v);
+        state(out, &facts(v[7] as u8));
         route(
             out,
             "fixed-model",
@@ -236,6 +237,26 @@ fn cells(out: &mut impl Write, c: &WorldCollision) {
 }
 fn facts(mask: u8) -> crate::WorldState {
     let mut s = crate::WorldState::empty();
+    // Named independent presets, not additional bitmask flags. Keep 0..3 exact.
+    match mask {
+        4 => {
+            s.stats.insert(6, 25); // Minimum Varrock level, not source maxme.
+            s.inv.insert(563, 50);
+            s.inv.insert(556, 150);
+            s.inv.insert(554, 50);
+            return s;
+        }
+        5 => {
+            s.inv.insert(1712, 1); // Carried charged glory, not worn.
+            return s;
+        }
+        6 => {
+            s.inv.insert(995, 5000); // Ship rich-probe coins only.
+            return s;
+        }
+        0..=3 => {}
+        _ => panic!("unsupported fixed facts preset"),
+    }
     if mask & 1 != 0 {
         s.stats.insert(6, 25);
         s.stats.insert(2, 3);

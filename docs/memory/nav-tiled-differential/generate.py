@@ -110,5 +110,26 @@ def generate(run):
             add('corner-%s-%04d'%(family,case),pack(65,3,pairs=pairs),kind='corner',coverage='local-3x3-'+family)
             transposed=[pairs[p*195+z*65+x] for p in range(4) for x in range(65) for z in range(3)]
             add('corner-z-%s-%04d'%(family,case),pack(3,65,pairs=transposed),kind='corner',coverage='local-3x3-z-'+family)
+    # Independent explicit wire requirements; never derive them from facts().
+    # Geometry is synthetic: three disconnected destination planes isolate gates.
+    # Numeric minima match saved real metadata 2143/2166/2089, NOT a live account.
+    pairs_wire = lambda v: U(len(v))+b''.join(I(a)+I(c) for a,c in v)
+    def gated(kind, at, to, ident, option, ticks, skills, items):
+        return (bytes([kind])+b''.join(I(v) for v in (*at,*to,ident,option,ticks))
+                +bytes([0])+I(-1)+pairs_wire(skills)+pairs_wire(items)+U(0)+U(0)+U(0))
+    add('routes-extension',pack(edges=[
+        gated(4,(0,0,0),(102,202,1),0,0,3,[(6,25)],[(554,1),(556,3),(563,1)]),
+        gated(4,(0,0,0),(102,202,2),1712,4,2,[],[(1712,1)]),
+        gated(3,(100,200,0),(102,202,3),378,1,7,[],[(995,30)]),
+    ],banks=[bank()]),routes='all',coverage='named-presets-gated-transports')
+    # Retain the original 90 rows verbatim as a prefix; append bounded controls.
+    cases=[(1,1,4),(1,0,4),(1,1,0),(1,1,1),(1,1,5),(1,1,6),(1,5,4),(1,5,0),
+           (2,1,5),(2,1,2),(2,5,0),(2,5,2),(2,4,0),(2,1,4),(2,0,5),
+           (3,0,6),(3,0,0),(3,0,2),(3,4,2),(3,1,6)]
+    with (run/'fixed.tsv').open('a') as f:
+        for level,bits,preset in cases:
+            for radius in (0,4):
+                for model in (0,1):
+                    f.write(f'100 200 0 102 202 {level} {bits} {preset} {radius} {model}\n')
     (run/'corpus.json').write_text(json.dumps(corpus,indent=2,sort_keys=True)+'\n')
     (run/'coverage.json').write_text(json.dumps({key:sum(e['coverage']==key for e in corpus) for key in sorted({e['coverage'] for e in corpus})},indent=2)+'\n')
