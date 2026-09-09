@@ -11,6 +11,19 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 18:02 UTC
+
+- Optimized original-owner binary built134.926s,95595384B SHA256
+  8e400e2d622af2c00280bfb91c741753e0da3df1736bb7d6fe7d0f8251394194.
+  Full original1124source/lock identities preserved; release/file/readelf/ldd
+  checks passed. No native/live admission from this build alone; builder idle.
+- TUI overlay5a7903e REJECTED same-card reviewer for timeout process-group/log
+  preservation, post-test lock assertions and synthetic-fixture wording.
+  Root independently found the runner gaps; Luna correction now active.
+- Offline live-invocation preparation t_53db9807 actualLuna/openai
+  20260909_135716_78b036 active, source/guard/admission review only; no private
+  inputs or live release. CoordinateSol experiment continues with focused tests.
+
 ## Latest boundary — 2026-09-09 17:55 UTC
 
 - Root fetched exact client-lock dependencies without lock changes; rerun client
