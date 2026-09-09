@@ -173,7 +173,7 @@ fn main() -> ExitCode {
         .take()
         .expect("bake_from_maps always stamps raw flags");
     let flags_bytes =
-        encode_flags_sidecar(collision.origin, collision.width, collision.height, &flags);
+        encode_flags_sidecar(collision.origin(), collision.width(), collision.height(), &flags);
     let flags_path = flags_out(&out);
 
     // The pack write: packed walk surface + transport edges + bank stands.
@@ -189,8 +189,8 @@ fn main() -> ExitCode {
     eprintln!(
         "nav-pack: baked {} mapsquares into a {}x{} collision grid, {} walkable tiles, {} transport edges, {} bank stands -> {} bytes -> {}; {} flag bytes -> {}",
         squares_baked(&maps_dir),
-        collision.width,
-        collision.height,
+        collision.width(),
+        collision.height(),
         walkable,
         graph.edges.len(),
         banks.len(),
@@ -216,8 +216,8 @@ fn squares_baked(maps_dir: &Path) -> usize {
 
 /// Count tiles with no walk-blocking flag on the bake's level-0 plane.
 fn walkable_tiles(c: &WorldCollision) -> usize {
-    (0..c.height)
-        .flat_map(|z| (0..c.width).map(move |x| (c.origin.x + x as i32, c.origin.z + z as i32)))
+    (0..c.height())
+        .flat_map(|z| (0..c.width()).map(move |x| (c.origin().x + x as i32, c.origin().z + z as i32)))
         .filter(|(x, z)| {
             c.walkable(WorldTile {
                 x: *x,

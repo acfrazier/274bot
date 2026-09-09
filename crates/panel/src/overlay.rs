@@ -124,18 +124,18 @@ mod tests {
     /// A `w`×`h` all-walkable level-0 world at (0,0).
     fn open_world(w: usize, h: usize) -> NavWorld {
         NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
+            WorldCollision::from_packed_parts(
+WorldTile {
                     x: 0,
                     z: 0,
                     level: 0,
                 },
-                width: w,
-                height: h,
-                walk: vec![0u8; w * h],
-                blocked: vec![0u64; (w * h).div_ceil(64)],
-                flags: None,
-            },
+w,
+h,
+vec![0u8; w * h],
+vec![0u64; (w * h).div_ceil(64)],
+None,
+).expect("packed parts"),
             TransportGraph::default(),
             Vec::new(),
         )

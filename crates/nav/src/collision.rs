@@ -48,29 +48,89 @@ const WALK_BITS: [(u32, u32); 8] = [
     (CollisionFlag::W_SW as u32, CollisionFlag::PL_WALK_SW as u32),
 ];
 
-/// Whole-world per-level collision: the compact packed walk surface per
-/// tile per level, four planes (levels 0..=3) like the client's
-/// `collision[4]`. Both buffers are level-major: index
-/// `level * width * height + z * width + x`, row-major `z` then `x`
-/// within each plane. A plane is only as dense as the maps stamped it;
-/// levels with no content are empty (walkable, never a level-0 reuse).
+/// Spatial tile edge length for the immutable packed collision directory.
+pub const COLLISION_TILE: usize = 32;
+
+/// Bytes of one dense pool entry: 1024 face bytes + 16 blocked words.
+pub const DENSE_TILE_BYTES: usize = 1024 + 16 * 8;
+
+const TILE: usize = COLLISION_TILE;
+const TILE_CELLS: usize = TILE * TILE;
+const DESC_UNIFORM: u64 = 0;
+const DESC_DENSE_BIT: u64 = 1 << 63;
+
+/// One dense 32×32 payload: faces then blocked words, C layout, 8-aligned.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct DenseTile {
+    faces: [u8; TILE_CELLS],
+    blocked: [u64; TILE_CELLS / 64],
+}
+
+const _: () = assert!(std::mem::size_of::<DenseTile>() == DENSE_TILE_BYTES);
+const _: () = assert!(std::mem::align_of::<DenseTile>() >= 8);
+
+/// Constructor shape error for [`WorldCollision::from_packed_parts`].
+/// Separate from wire [`PackError`] — never substituted for decode failures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PackedPartsError {
+    /// Width or height was zero.
+    ZeroDimension,
+    /// More than four level planes of cell data.
+    TooManyPlanes,
+    /// Face/blocked lengths disagree with each other or the dimensions.
+    InconsistentLength {
+        width: usize,
+        height: usize,
+        walk_len: usize,
+        blocked_words: usize,
+        expected_blocked_words: usize,
+    },
+}
+
+impl std::fmt::Display for PackedPartsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ZeroDimension => write!(f, "collision dimensions must be positive"),
+            Self::TooManyPlanes => write!(f, "collision has more than four level planes"),
+            Self::InconsistentLength {
+                width,
+                height,
+                walk_len,
+                blocked_words,
+                expected_blocked_words,
+            } => write!(
+                f,
+                "inconsistent packed parts {width}x{height}: walk_len={walk_len} blocked_words={blocked_words} expected_blocked={expected_blocked_words}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PackedPartsError {}
+
+/// Whole-world per-level collision: immutable 32×32 tiled packed walk
+/// surface per tile per level, four planes (levels 0..=3) like the client's
+/// `collision[4]`. Logical index order remains level-major:
+/// `level * width * height + z * width + x`. Storage is a directory of u64
+/// descriptors plus an exact dense-tile pool — not public dense Vecs.
 pub struct WorldCollision {
-    /// The tile at `walk[0]`; the grid spans `width` tiles in +x then
-    /// `height` rows in +z, replicated across all four level planes.
-    pub origin: WorldTile,
-    pub width: usize,
-    pub height: usize,
-    /// The packed walk surface: the raw `W_*` face flags per tile per
-    /// level (the old u16 walk word's bits 0-7), one byte per tile.
-    /// Always resident — the compact v7 wire form — and the router's
-    /// `step_ok` reads it, never the raw `flags`.
-    pub walk: Vec<u8>,
-    /// One `SQ_BLOCKED` bit per tile per level (the old u16 walk word's
-    /// bit 8: any `WALK_SCENERY`/`BLOCK_NPCS_AND_PLAYERS`/`WR_GRND`
-    /// constituent set), packed 64 cells per u64 word with the same
-    /// level-major indexing as `walk`. [`walk_word_from_parts`]
-    /// reconstructs the full derived word.
-    pub blocked: Vec<u64>,
+    origin: WorldTile,
+    width: usize,
+    height: usize,
+    /// Exact logical cell count retained from construction (may be a
+    /// synthetic short buffer covering fewer than four full planes).
+    logical_cells: usize,
+    tile_cols: usize,
+    tile_rows: usize,
+    /// Directory: one explicit u64 descriptor per spatial tile per present
+    /// plane strip. Bit 63 clear → uniform (low 9 bits face|blocked<<8);
+    /// bit 63 set → dense pool index in low 32 bits.
+    directory: Box<[u64]>,
+    dense: Box<[DenseTile]>,
+    /// Bits of the final blocked word above `logical_cells % 64`, preserved
+    /// so encode matches the original dense packing on non-word-aligned grids.
+    final_blocked_high_bits: u64,
     /// The raw baked flags per tile per level (the client's `W_*`/`V_*`
     /// wall bits, `WALK_SCENERY` footprints, and `WR_GRND` ground blocks,
     /// exactly as `CollisionMap.add_wall`/`add_loc`/`block_ground` stamp
@@ -81,6 +141,234 @@ pub struct WorldCollision {
 }
 
 impl WorldCollision {
+    /// Consume dense packed face/blocked buffers into immutable tiled storage.
+    /// Drops both input vectors after a successful count+fill conversion.
+    /// Rejects zero dimensions, more than four planes of cell data, and
+    /// inconsistent walk/blocked lengths. Does not change wire decode errors.
+    pub fn from_packed_parts(
+        origin: WorldTile,
+        width: usize,
+        height: usize,
+        walk: Vec<u8>,
+        blocked: Vec<u64>,
+        flags: Option<Vec<u32>>,
+    ) -> Result<Self, PackedPartsError> {
+        if width == 0 || height == 0 {
+            return Err(PackedPartsError::ZeroDimension);
+        }
+        let plane_cells = width
+            .checked_mul(height)
+            .ok_or(PackedPartsError::ZeroDimension)?;
+        if plane_cells == 0 {
+            return Err(PackedPartsError::ZeroDimension);
+        }
+        let logical_cells = walk.len();
+        if logical_cells == 0 {
+            return Err(PackedPartsError::InconsistentLength {
+                width,
+                height,
+                walk_len: 0,
+                blocked_words: blocked.len(),
+                expected_blocked_words: 0,
+            });
+        }
+        if logical_cells % plane_cells != 0 {
+            return Err(PackedPartsError::InconsistentLength {
+                width,
+                height,
+                walk_len: logical_cells,
+                blocked_words: blocked.len(),
+                expected_blocked_words: logical_cells.div_ceil(64),
+            });
+        }
+        let planes = logical_cells / plane_cells;
+        if planes == 0 || planes > LEVELS {
+            return Err(PackedPartsError::TooManyPlanes);
+        }
+        let expected_blocked = logical_cells.div_ceil(64);
+        if blocked.len() != expected_blocked {
+            return Err(PackedPartsError::InconsistentLength {
+                width,
+                height,
+                walk_len: logical_cells,
+                blocked_words: blocked.len(),
+                expected_blocked_words: expected_blocked,
+            });
+        }
+
+        let tile_cols = width.div_ceil(TILE);
+        let tile_rows = height.div_ceil(TILE);
+        let dir_len = planes
+            .checked_mul(tile_rows)
+            .and_then(|v| v.checked_mul(tile_cols))
+            .ok_or(PackedPartsError::ZeroDimension)?;
+
+        // Preserve unused high bits of the final blocked word for encode equality.
+        let rem = logical_cells % 64;
+        let final_blocked_high_bits = if rem == 0 {
+            0
+        } else {
+            let last = *blocked.last().unwrap_or(&0);
+            last & (!0u64 << rem)
+        };
+
+        // Count dense tiles (valid cells only decide uniformity).
+        let mut dense_count = 0usize;
+        for plane in 0..planes {
+            for tr in 0..tile_rows {
+                for tc in 0..tile_cols {
+                    if !tile_is_uniform(&walk, &blocked, width, height, plane, plane_cells, tr, tc)
+                    {
+                        dense_count += 1;
+                    }
+                }
+            }
+        }
+
+        let mut directory = vec![0u64; dir_len];
+        let mut dense = vec![
+            DenseTile {
+                faces: [0; TILE_CELLS],
+                blocked: [0; TILE_CELLS / 64],
+            };
+            dense_count
+        ];
+        let mut dense_i = 0usize;
+
+        for plane in 0..planes {
+            for tr in 0..tile_rows {
+                for tc in 0..tile_cols {
+                    let d_idx = plane * tile_rows * tile_cols + tr * tile_cols + tc;
+                    match tile_uniform_pair(
+                        &walk, &blocked, width, height, plane, plane_cells, tr, tc,
+                    ) {
+                        Some((face, blk)) => {
+                            directory[d_idx] = DESC_UNIFORM | u64::from(face) | (u64::from(blk) << 8);
+                        }
+                        None => {
+                            let entry = &mut dense[dense_i];
+                            fill_dense_tile(
+                                entry, &walk, &blocked, width, height, plane, plane_cells, tr, tc,
+                            );
+                            directory[d_idx] = DESC_DENSE_BIT | (dense_i as u64);
+                            dense_i += 1;
+                        }
+                    }
+                }
+            }
+        }
+        debug_assert_eq!(dense_i, dense_count);
+
+        // Drop dense inputs before returning (explicit end of their lifetime).
+        drop(walk);
+        drop(blocked);
+
+        Ok(Self {
+            origin,
+            width,
+            height,
+            logical_cells,
+            tile_cols,
+            tile_rows,
+            directory: directory.into_boxed_slice(),
+            dense: dense.into_boxed_slice(),
+            final_blocked_high_bits,
+            flags,
+        })
+    }
+
+    /// Geometry origin (read-only; changing it would invalidate tile indexes).
+    #[inline]
+    pub fn origin(&self) -> WorldTile {
+        self.origin
+    }
+
+    /// Grid width in tiles (read-only).
+    #[inline]
+    pub fn width(&self) -> usize {
+        self.width
+    }
+
+    /// Grid height in tiles (read-only).
+    #[inline]
+    pub fn height(&self) -> usize {
+        self.height
+    }
+
+    /// Exact logical packed cell count retained at freeze time.
+    #[inline]
+    pub fn logical_cell_count(&self) -> usize {
+        self.logical_cells
+    }
+
+    /// Number of global blocked words encode would emit (`ceil(cells/64)`).
+    #[inline]
+    pub fn blocked_word_count(&self) -> usize {
+        self.logical_cells.div_ceil(64)
+    }
+
+    /// Test/layout accounting: directory descriptor count.
+    #[inline]
+    pub fn directory_len(&self) -> usize {
+        self.directory.len()
+    }
+
+    /// Test/layout accounting: dense pool entry count.
+    #[inline]
+    pub fn dense_pool_len(&self) -> usize {
+        self.dense.len()
+    }
+
+    /// Test/layout accounting: tile columns / rows in the directory.
+    #[inline]
+    pub fn tile_grid(&self) -> (usize, usize) {
+        (self.tile_cols, self.tile_rows)
+    }
+
+    /// Logical `(face, blocked)` at dense index, or `None` past logical length.
+    #[inline]
+    pub fn packed_pair_at(&self, index: usize) -> Option<(u8, bool)> {
+        if index >= self.logical_cells {
+            return None;
+        }
+        Some(self.pair_at_index(index))
+    }
+
+    /// Iterate logical pairs in original level/z/x order. Allocates nothing.
+    pub fn packed_pairs(&self) -> PackedPairsIter<'_> {
+        PackedPairsIter {
+            collision: self,
+            index: 0,
+        }
+    }
+
+    /// Iterate reconstructed global blocked words in original order, including
+    /// preserved unused high bits on the final word. Allocates nothing.
+    pub fn packed_blocked_words(&self) -> PackedBlockedWordsIter<'_> {
+        PackedBlockedWordsIter {
+            collision: self,
+            word_i: 0,
+        }
+    }
+
+    /// Explicit O(cells) dense export for callers that need owned buffers.
+    /// Never used on load, routing, paint, or per-bot paths.
+    pub fn to_packed_parts(&self) -> (Vec<u8>, Vec<u64>) {
+        let mut walk = Vec::with_capacity(self.logical_cells);
+        let mut blocked = vec![0u64; self.blocked_word_count()];
+        for i in 0..self.logical_cells {
+            let (face, blk) = self.pair_at_index(i);
+            walk.push(face);
+            if blk {
+                blocked[i >> 6] |= 1u64 << (i & 63);
+            }
+        }
+        if let Some(last) = blocked.last_mut() {
+            *last |= self.final_blocked_high_bits;
+        }
+        (walk, blocked)
+    }
+
     /// The plane index for `level` (0..=3), `None` for unknown levels.
     fn plane(&self, level: i32) -> Option<usize> {
         (0..LEVELS as i32)
@@ -93,9 +381,40 @@ impl WorldCollision {
         self.width * self.height
     }
 
-    /// Whether the packed `SQ_BLOCKED` bit of the cell at `idx` is set.
-    fn cell_blocked(&self, idx: usize) -> bool {
-        (self.blocked[idx >> 6] >> (idx & 63)) & 1 != 0
+    #[inline]
+    fn pair_at_index(&self, index: usize) -> (u8, bool) {
+        debug_assert!(index < self.logical_cells);
+        let plane_cells = self.plane_cells();
+        let plane = index / plane_cells;
+        let within = index % plane_cells;
+        let lz = within / self.width;
+        let lx = within % self.width;
+        let tr = lz / TILE;
+        let tc = lx / TILE;
+        let local_z = lz % TILE;
+        let local_x = lx % TILE;
+        let local = local_z * TILE + local_x;
+        let d_idx = plane * self.tile_rows * self.tile_cols + tr * self.tile_cols + tc;
+        let desc = self.directory[d_idx];
+        if desc & DESC_DENSE_BIT == 0 {
+            let face = (desc & 0xff) as u8;
+            let blk = ((desc >> 8) & 1) != 0;
+            (face, blk)
+        } else {
+            let pool_i = (desc & 0xffff_ffff) as usize;
+            let tile = &self.dense[pool_i];
+            let face = tile.faces[local];
+            let blk = (tile.blocked[local >> 6] >> (local & 63)) & 1 != 0;
+            (face, blk)
+        }
+    }
+
+    /// Panic like the old dense index when a geometric cell is beyond the
+    /// retained synthetic short buffer.
+    #[inline]
+    fn pair_at_index_or_panic(&self, index: usize) -> (u8, bool) {
+        self.packed_pair_at(index)
+            .unwrap_or_else(|| panic!("collision index {index} past logical length {}", self.logical_cells))
     }
 
     /// The collision bitmask at `(x, z, level)`, `0` for tiles outside the
@@ -166,7 +485,8 @@ impl WorldCollision {
             return 0;
         }
         let idx = plane * self.plane_cells() + lz * self.width + lx;
-        walk_word_from_parts(self.walk[idx], self.cell_blocked(idx))
+        let (face, blk) = self.pair_at_index_or_panic(idx);
+        walk_word_from_parts(face, blk)
     }
 
     /// True when `t` sits on a baked level plane (0..=3), inside the grid
@@ -191,7 +511,10 @@ impl WorldCollision {
         let idx = plane * self.plane_cells() + lz * self.width + lx;
         match &self.flags {
             Some(flags) => flags[idx] & WALK_BLOCK == 0,
-            None => walk_word_from_parts(self.walk[idx], self.cell_blocked(idx)) & WALK_BLOCK == 0,
+            None => {
+                let (face, blk) = self.pair_at_index_or_panic(idx);
+                walk_word_from_parts(face, blk) & WALK_BLOCK == 0
+            }
         }
     }
 
@@ -220,7 +543,10 @@ impl WorldCollision {
         match &self.flags {
             Some(flags) => flags[idx] & SQ_BLOCKED == 0,
             // The packed blocked bit is exactly the SQ_BLOCKED presence.
-            None => !self.cell_blocked(idx),
+            None => {
+                let (_face, blk) = self.pair_at_index_or_panic(idx);
+                !blk
+            }
         }
     }
 
@@ -258,6 +584,165 @@ impl WorldCollision {
                     z,
                     level: t.level,
                 };
+            }
+        }
+    }
+}
+
+/// Iterator over logical `(face, blocked)` pairs in level/z/x order.
+pub struct PackedPairsIter<'a> {
+    collision: &'a WorldCollision,
+    index: usize,
+}
+
+impl Iterator for PackedPairsIter<'_> {
+    type Item = (u8, bool);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let pair = self.collision.packed_pair_at(self.index)?;
+        self.index += 1;
+        Some(pair)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = self.collision.logical_cells.saturating_sub(self.index);
+        (n, Some(n))
+    }
+}
+
+impl ExactSizeIterator for PackedPairsIter<'_> {}
+
+/// Iterator over reconstructed global blocked u64 words.
+pub struct PackedBlockedWordsIter<'a> {
+    collision: &'a WorldCollision,
+    word_i: usize,
+}
+
+impl Iterator for PackedBlockedWordsIter<'_> {
+    type Item = u64;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let words = self.collision.blocked_word_count();
+        if self.word_i >= words {
+            return None;
+        }
+        let base = self.word_i * 64;
+        let mut w = 0u64;
+        let end = (base + 64).min(self.collision.logical_cells);
+        for i in base..end {
+            let (_face, blk) = self.collision.pair_at_index(i);
+            if blk {
+                w |= 1u64 << (i & 63);
+            }
+        }
+        if self.word_i + 1 == words {
+            w |= self.collision.final_blocked_high_bits;
+        }
+        self.word_i += 1;
+        Some(w)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = self
+            .collision
+            .blocked_word_count()
+            .saturating_sub(self.word_i);
+        (n, Some(n))
+    }
+}
+
+impl ExactSizeIterator for PackedBlockedWordsIter<'_> {}
+
+fn cell_blocked_dense(blocked: &[u64], idx: usize) -> bool {
+    (blocked[idx >> 6] >> (idx & 63)) & 1 != 0
+}
+
+fn tile_is_uniform(
+    walk: &[u8],
+    blocked: &[u64],
+    width: usize,
+    height: usize,
+    plane: usize,
+    plane_cells: usize,
+    tr: usize,
+    tc: usize,
+) -> bool {
+    tile_uniform_pair(walk, blocked, width, height, plane, plane_cells, tr, tc).is_some()
+}
+
+fn tile_uniform_pair(
+    walk: &[u8],
+    blocked: &[u64],
+    width: usize,
+    height: usize,
+    plane: usize,
+    plane_cells: usize,
+    tr: usize,
+    tc: usize,
+) -> Option<(u8, bool)> {
+    let x0 = tc * TILE;
+    let z0 = tr * TILE;
+    let mut first: Option<(u8, bool)> = None;
+    for lz in 0..TILE {
+        let gz = z0 + lz;
+        if gz >= height {
+            break;
+        }
+        for lx in 0..TILE {
+            let gx = x0 + lx;
+            if gx >= width {
+                break;
+            }
+            let idx = plane * plane_cells + gz * width + gx;
+            if idx >= walk.len() {
+                // Past synthetic short buffer: no valid cells left in this strip.
+                break;
+            }
+            let pair = (walk[idx], cell_blocked_dense(blocked, idx));
+            match first {
+                None => first = Some(pair),
+                Some(f) if f != pair => return None,
+                Some(_) => {}
+            }
+        }
+    }
+    // No valid cells (tile entirely past short buffer) — treat as absent, not a uniform tile.
+    first
+}
+
+fn fill_dense_tile(
+    entry: &mut DenseTile,
+    walk: &[u8],
+    blocked: &[u64],
+    width: usize,
+    height: usize,
+    plane: usize,
+    plane_cells: usize,
+    tr: usize,
+    tc: usize,
+) {
+    entry.faces = [0; TILE_CELLS];
+    entry.blocked = [0; TILE_CELLS / 64];
+    let x0 = tc * TILE;
+    let z0 = tr * TILE;
+    for lz in 0..TILE {
+        let gz = z0 + lz;
+        if gz >= height {
+            break;
+        }
+        for lx in 0..TILE {
+            let gx = x0 + lx;
+            if gx >= width {
+                break;
+            }
+            let idx = plane * plane_cells + gz * width + gx;
+            if idx >= walk.len() {
+                break;
+            }
+            let local = lz * TILE + lx;
+            entry.faces[local] = walk[idx];
+            if cell_blocked_dense(blocked, idx) {
+                entry.blocked[local >> 6] |= 1u64 << (local & 63);
             }
         }
     }
@@ -375,8 +860,8 @@ pub fn bake_from_maps(
     }
 
     let (walk, blocked) = pack_walk(&flags);
-    Ok(WorldCollision {
-        origin: WorldTile {
+    Ok(WorldCollision::from_packed_parts(
+        WorldTile {
             x: min_x,
             z: min_z,
             level: 0,
@@ -385,8 +870,9 @@ pub fn bake_from_maps(
         height,
         walk,
         blocked,
-        flags: Some(flags),
-    })
+        Some(flags),
+    )
+    .expect("bake_from_maps produces consistent packed parts"))
 }
 
 /// Derive the walkable word from the raw collision flags. Footprint and
@@ -781,18 +1267,18 @@ mod tests {
     fn attach_flags_then_drop_leaves_walk_intact() {
         let flags = vec![CollisionFlag::W_N as u32; 4];
         let (walk, blocked) = pack_walk(&flags);
-        let mut c = WorldCollision {
-            origin: WorldTile {
+        let mut c = WorldCollision::from_packed_parts(
+            WorldTile {
                 x: 0,
                 z: 0,
                 level: 0,
             },
-            width: 1,
-            height: 1,
+            1,
+            1,
             walk,
             blocked,
-            flags: None,
-        };
+            None,
+        ).expect("packed parts");
         let w = c.walkable_word(0, 0, 0);
         c.attach_flags(flags.clone());
         assert!(c.flags.is_some());
@@ -1133,10 +1619,10 @@ mod tests {
         .unwrap();
         let wc = bake_from_maps(&fix.0, &defs(&[]), &HashSet::new()).unwrap();
         // Origin is the western/northern corner; both walkable tiles are in.
-        assert_eq!(wc.origin.x, 3200);
-        assert_eq!(wc.origin.z, 3200);
-        assert_eq!(wc.width, 3 * SQUARE);
-        assert_eq!(wc.height, 3 * SQUARE);
+        assert_eq!(wc.origin().x, 3200);
+        assert_eq!(wc.origin().z, 3200);
+        assert_eq!(wc.width(), 3 * SQUARE);
+        assert_eq!(wc.height(), 3 * SQUARE);
         assert!(wc.walkable(WorldTile {
             x: 3200,
             z: 3200,
@@ -1277,18 +1763,18 @@ mod tests {
         let mut padded = vec![0u32; 4 * plane];
         padded[..plane].copy_from_slice(&flags);
         let (walk, blocked) = pack_walk(&padded);
-        WorldCollision {
-            origin: WorldTile {
+        WorldCollision::from_packed_parts(
+            WorldTile {
                 x: 3200,
                 z: 3200,
                 level: 0,
             },
-            width: plane,
-            height: 1,
+            plane,
+            1,
             walk,
             blocked,
-            flags: Some(padded),
-        }
+            Some(padded),
+        ).expect("packed parts")
     }
 
     #[test]
@@ -1407,3 +1893,8 @@ mod tests {
         );
     }
 }
+
+/// Dense-oracle regressions (test-only sibling). Never linked into release builds.
+#[cfg(test)]
+#[path = "collision_tiled_oracle.rs"]
+mod tiled_oracle;

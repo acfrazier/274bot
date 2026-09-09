@@ -259,8 +259,8 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph, banks: &[BankS
         4 + 1
             + 12
             + 8
-            + collision.walk.len()
-            + collision.blocked.len() * 8
+            + collision.logical_cell_count()
+            + collision.blocked_word_count() * 8
             + 4
             + edge_count * 96
             + 4
@@ -268,17 +268,16 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph, banks: &[BankS
     );
     out.extend_from_slice(MAGIC);
     out.push(VERSION);
-    for v in [
-        collision.origin.x,
-        collision.origin.z,
-        collision.origin.level,
-    ] {
+    let origin = collision.origin();
+    for v in [origin.x, origin.z, origin.level] {
         out.extend_from_slice(&v.to_le_bytes());
     }
-    out.extend_from_slice(&(collision.width as u32).to_le_bytes());
-    out.extend_from_slice(&(collision.height as u32).to_le_bytes());
-    out.extend_from_slice(&collision.walk);
-    for w in &collision.blocked {
+    out.extend_from_slice(&(collision.width() as u32).to_le_bytes());
+    out.extend_from_slice(&(collision.height() as u32).to_le_bytes());
+    for (face, _) in collision.packed_pairs() {
+        out.push(face);
+    }
+    for w in collision.packed_blocked_words() {
         out.extend_from_slice(&w.to_le_bytes());
     }
     out.extend_from_slice(&(edge_count as u32).to_le_bytes());
@@ -400,20 +399,11 @@ pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankS
         graph.at.entry(e.at).or_default().push(i);
     }
     let banks = read_bank_stands(&mut r)?;
-    Ok((
-        WorldCollision {
-            origin,
-            width,
-            height,
-            // The packed walk surface is the resident form; the raw flags
-            // live only in the sidecar (loaded on demand for debug paints).
-            walk,
-            blocked,
-            flags: None,
-        },
-        graph,
-        banks,
-    ))
+    // Freeze tiled storage only after the full pack parse succeeded; drop
+    // both dense input vectors inside from_packed_parts before returning.
+    let collision = WorldCollision::from_packed_parts(origin, width, height, walk, blocked, None)
+        .expect("v8 decode dimensions already validated against walk/blocked lengths");
+    Ok((collision, graph, banks))
 }
 
 /// Serialize the raw baked flags to the sidecar byte format: magic
@@ -1310,41 +1300,41 @@ mod tests {
     fn v8_pack_has_no_resident_flags() {
         let flags = vec![0u32; 4 * 2 * 2];
         let (walk, blocked) = pack_walk(&flags);
-        let collision = WorldCollision {
-            origin: WorldTile {
+        let collision = WorldCollision::from_packed_parts(
+            WorldTile {
                 x: 0,
                 z: 0,
                 level: 0,
             },
-            width: 2,
-            height: 2,
+            2,
+            2,
             walk,
             blocked,
-            flags: None,
-        };
+            None,
+        ).expect("packed parts");
         let bytes = encode(&collision, &TransportGraph::default(), &[]);
         assert_eq!(bytes[4], VERSION);
         let (c, _, _) = decode(&bytes).unwrap();
         assert!(c.flags.is_none());
-        assert_eq!(c.walk.len(), 16);
+        assert_eq!(c.logical_cell_count(), 16);
     }
 
     #[test]
     fn v8_decode_rejects_v7_and_older() {
         let flags = vec![0u32; 4 * 2 * 2];
         let (walk, blocked) = pack_walk(&flags);
-        let collision = WorldCollision {
-            origin: WorldTile {
+        let collision = WorldCollision::from_packed_parts(
+            WorldTile {
                 x: 0,
                 z: 0,
                 level: 0,
             },
-            width: 2,
-            height: 2,
+            2,
+            2,
             walk,
             blocked,
-            flags: None,
-        };
+            None,
+        ).expect("packed parts");
         let mut bytes = encode(&collision, &TransportGraph::default(), &[]);
         bytes[4] = 7;
         assert!(matches!(decode(&bytes), Err(PackError::BadVersion(7))));
@@ -1380,18 +1370,18 @@ mod tests {
         // Distinct upper-plane content pins the four-plane wire layout.
         flags[plane.len()..2 * plane.len()].copy_from_slice(&[7; 6]);
         let (walk, blocked) = pack_walk(&flags);
-        let collision = WorldCollision {
-            origin: WorldTile {
+        let collision = WorldCollision::from_packed_parts(
+            WorldTile {
                 x: 3200,
                 z: 3200,
                 level: 0,
             },
-            width: 3,
-            height: 2,
+            3,
+            2,
             walk,
             blocked,
-            flags: None,
-        };
+            None,
+        ).expect("packed parts");
         let mut graph = TransportGraph::default();
         let door = TransportEdge {
             kind: TransportKind::Door,
@@ -1553,10 +1543,10 @@ mod tests {
 
         let bytes = encode(&collision, &graph, &[]);
         let (c, g, _) = decode(&bytes).unwrap();
-        assert_eq!(c.origin, collision.origin);
-        assert_eq!(c.width, collision.width);
-        assert_eq!(c.height, collision.height);
-        assert_eq!(c.walk, collision.walk);
+        assert_eq!(c.origin(), collision.origin());
+        assert_eq!(c.width(), collision.width());
+        assert_eq!(c.height(), collision.height());
+        assert_eq!(c.to_packed_parts().0, collision.to_packed_parts().0);
         assert!(c.flags.is_none());
         assert_eq!(g.edges, graph.edges);
         // The door edge's new fields round-trip on the wire.
@@ -1595,18 +1585,18 @@ mod tests {
         let mut flags = vec![0u32; 4 * plane.len()];
         flags[..plane.len()].copy_from_slice(&plane);
         let (walk, blocked) = pack_walk(&flags);
-        let collision = WorldCollision {
-            origin: WorldTile {
+        let collision = WorldCollision::from_packed_parts(
+            WorldTile {
                 x: 3200,
                 z: 3200,
                 level: 0,
             },
-            width: 3,
-            height: 2,
+            3,
+            2,
             walk,
             blocked,
-            flags: None,
-        };
+            None,
+        ).expect("packed parts");
         let graph = TransportGraph::default();
         let mut bytes = encode(&collision, &graph, &[]);
         // The version byte sits right after the 4-byte magic.
@@ -1624,18 +1614,18 @@ mod tests {
         let mut flags = vec![0u32; 4 * plane.len()];
         flags[..plane.len()].copy_from_slice(&plane);
         let (walk, blocked) = pack_walk(&flags);
-        let collision = WorldCollision {
-            origin: WorldTile {
+        let collision = WorldCollision::from_packed_parts(
+            WorldTile {
                 x: 3200,
                 z: 3200,
                 level: 0,
             },
-            width: 3,
-            height: 2,
+            3,
+            2,
             walk,
             blocked,
-            flags: None,
-        };
+            None,
+        ).expect("packed parts");
         let door = TransportEdge {
             kind: TransportKind::Door,
             at: WorldTile {
@@ -1669,7 +1659,7 @@ mod tests {
         assert_eq!(g.edges, graph.edges);
         assert_eq!(g.edges[0].worn_req, vec![772]);
         assert_eq!(g.at, graph.at);
-        assert_eq!(c.walk, collision.walk);
+        assert_eq!(c.to_packed_parts().0, collision.to_packed_parts().0);
         assert!(c.flags.is_none());
     }
 
@@ -1870,18 +1860,18 @@ op1=Open
             flags[z * SQUARE + x] |= f;
         }
         let (walk, blocked) = pack_walk(&flags);
-        WorldCollision {
-            origin: WorldTile {
+        WorldCollision::from_packed_parts(
+            WorldTile {
                 x: mx * SQUARE as i32,
                 z: mz * SQUARE as i32,
                 level: 0,
             },
-            width: SQUARE,
-            height: SQUARE,
+            SQUARE,
+            SQUARE,
             walk,
             blocked,
-            flags: None,
-        }
+            None,
+        ).expect("packed parts")
     }
 
     #[test]
@@ -2114,18 +2104,18 @@ blockwalk=yes
         // optional dialog choice.
         let flags = vec![0u32; 4 * 2 * 2];
         let (walk, blocked) = pack_walk(&flags);
-        let collision = WorldCollision {
-            origin: WorldTile {
+        let collision = WorldCollision::from_packed_parts(
+            WorldTile {
                 x: 3200,
                 z: 3200,
                 level: 0,
             },
-            width: 2,
-            height: 2,
+            2,
+            2,
             walk,
             blocked,
-            flags: None,
-        };
+            None,
+        ).expect("packed parts");
         let banks = vec![
             BankStand {
                 name: "Bank booth".into(),
@@ -2154,7 +2144,7 @@ blockwalk=yes
         assert_eq!(bytes[4], VERSION);
         let (c, g, out) = decode(&bytes).unwrap();
         assert_eq!(out, banks);
-        assert_eq!(c.walk, collision.walk);
+        assert_eq!(c.to_packed_parts().0, collision.to_packed_parts().0);
         assert!(g.edges.is_empty());
     }
 

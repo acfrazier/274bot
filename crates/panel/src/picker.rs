@@ -167,7 +167,7 @@ static REACH: Mutex<Option<ReachCache>> = Mutex::new(None);
 /// `find` never reads it.
 pub(crate) fn reach_bitset(world: &NavWorld) -> Option<Arc<[u64]>> {
     let c = &world.collision;
-    let key = (c.origin.x, c.origin.z, c.width, c.height);
+    let key = (c.origin().x, c.origin().z, c.width(), c.height());
     let mut guard = REACH.lock().unwrap();
     let bits = match guard.as_ref() {
         Some(cache) if cache.key == key => cache.bits.clone(),
@@ -188,10 +188,10 @@ pub(crate) fn reach_bitset(world: &NavWorld) -> Option<Arc<[u64]>> {
 /// (the standable test, not a directional mask).
 fn world_dots(world: &NavWorld, level: i32) -> impl Iterator<Item = Tile> + '_ {
     let c = &world.collision;
-    let o = c.origin;
-    (0..c.height)
+    let o = c.origin();
+    (0..c.height())
         .flat_map(move |z| {
-            (0..c.width).map(move |x| Tile {
+            (0..c.width()).map(move |x| Tile {
                 x: o.x + x as i32,
                 z: o.z + z as i32,
                 level,
@@ -212,19 +212,21 @@ fn world_dots(world: &NavWorld, level: i32) -> impl Iterator<Item = Tile> + '_ {
 /// this is the WalkTo level dropdown's option list.
 pub fn available_levels(world: &NavWorld) -> Vec<i32> {
     let c = &world.collision;
-    let plane = c.width * c.height;
+    let plane = c.width() * c.height();
     let mut levels = vec![0];
     for level in 1..4 {
         let base = level * plane;
         // The len guard keeps synthetic single-plane test worlds on [0].
-        if c.walk.len() < base + plane {
+        if c.logical_cell_count() < base + plane {
             continue;
         }
         // A plane has content when any face byte or any packed blocked
         // bit is set (planes can share a bit-plane word at small sizes,
         // so the word range alone cannot answer this).
-        let content = (base..base + plane)
-            .any(|i| c.walk[i] != 0 || (c.blocked[i >> 6] >> (i & 63)) & 1 != 0);
+        let content = (base..base + plane).any(|i| {
+            c.packed_pair_at(i)
+                .is_some_and(|(face, blk)| face != 0 || blk)
+        });
         if content {
             levels.push(level as i32);
         }
@@ -435,7 +437,7 @@ static FLOOD_CACHE: Mutex<Option<FloodCache>> = Mutex::new(None);
 /// cached; a cache hit only bumps `Arc` refcounts.
 fn flood_sets_for(world: &NavWorld, seeds: &[WorldTile]) -> Vec<Arc<HashSet<WorldTile>>> {
     let c = &world.collision;
-    let key = (c.origin.x, c.origin.z, c.width, c.height);
+    let key = (c.origin().x, c.origin().z, c.width(), c.height());
     let mut cache = FLOOD_CACHE.lock().unwrap();
     let fresh = cache
         .as_ref()
@@ -980,18 +982,18 @@ mod tests {
     /// A `w`×`h` all-walkable level-0 world at (0,0).
     fn open_world(w: usize, h: usize) -> NavWorld {
         NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
+            WorldCollision::from_packed_parts(
+WorldTile {
                     x: 0,
                     z: 0,
                     level: 0,
                 },
-                width: w,
-                height: h,
-                walk: vec![0u8; w * h],
-                blocked: vec![0u64; (w * h).div_ceil(64)],
-                flags: None,
-            },
+w,
+h,
+vec![0u8; w * h],
+vec![0u64; (w * h).div_ceil(64)],
+None,
+).expect("packed parts"),
             TransportGraph::default(),
             Vec::new(),
         )
@@ -1019,18 +1021,18 @@ mod tests {
         flags[2] = CollisionFlag::WALK_BLOCK_FLAGS as u32;
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         let w = NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
+            WorldCollision::from_packed_parts(
+                WorldTile {
                     x: 0,
                     z: 0,
                     level: 0,
                 },
-                width: 5,
-                height: 1,
+                5,
+                1,
                 walk,
                 blocked,
-                flags: None,
-            },
+                None,
+            ).expect("packed parts"),
             TransportGraph::default(),
             Vec::new(),
         );
@@ -1061,18 +1063,18 @@ mod tests {
         flags[9 + 4] = CollisionFlag::WALK_SCENERY as u32;
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         let w2 = NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
+            WorldCollision::from_packed_parts(
+                WorldTile {
                     x: 0,
                     z: 0,
                     level: 0,
                 },
-                width: 3,
-                height: 3,
+                3,
+                3,
                 walk,
                 blocked,
-                flags: None,
-            },
+                None,
+            ).expect("packed parts"),
             TransportGraph::default(),
             Vec::new(),
         );
@@ -1238,18 +1240,18 @@ mod tests {
         }
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
+            WorldCollision::from_packed_parts(
+                WorldTile {
                     x: 0,
                     z: 0,
                     level: 0,
                 },
-                width: w,
-                height: h,
+                w,
+                h,
                 walk,
                 blocked,
-                flags: None,
-            },
+                None,
+            ).expect("packed parts"),
             TransportGraph::default(),
             Vec::new(),
         )
@@ -1305,18 +1307,18 @@ mod tests {
         flags[9 + 3 + 1] = CollisionFlag::WR_GRND as u32;
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         let world = NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
+            WorldCollision::from_packed_parts(
+                WorldTile {
                     x: 0,
                     z: 0,
                     level: 0,
                 },
-                width: 3,
-                height: 3,
+                3,
+                3,
                 walk,
                 blocked,
-                flags: None,
-            },
+                None,
+            ).expect("packed parts"),
             TransportGraph::default(),
             Vec::new(),
         );

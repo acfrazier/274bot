@@ -609,12 +609,12 @@ pub(crate) fn step_ok(collision: &WorldCollision, cur: WorldTile, d: (i32, i32))
         z: cur.z + d.1,
         level: cur.level,
     };
-    let lx = nb.x - collision.origin.x;
-    let lz = nb.z - collision.origin.z;
+    let lx = nb.x - collision.origin().x;
+    let lz = nb.z - collision.origin().z;
     if lx < 0 || lz < 0 {
         return false;
     }
-    if lx as usize >= collision.width || lz as usize >= collision.height {
+    if lx as usize >= collision.width() || lz as usize >= collision.height() {
         return false;
     }
     let f = |x: i32, z: i32| collision.walkable_word(x, z, nb.level);
@@ -1182,14 +1182,14 @@ mod tests {
         let mut flags = vec![0u32; 4 * plane.len()];
         flags[..plane.len()].copy_from_slice(&plane);
         let (walk, blocked) = crate::collision::pack_walk(&flags);
-        WorldCollision {
-            origin: tile(ox, oz, 0),
+        WorldCollision::from_packed_parts(
+            tile(ox, oz, 0),
             width,
             height,
             walk,
             blocked,
-            flags: None,
-        }
+            None,
+        ).expect("packed parts")
     }
 
     /// A scratch mapsquare directory for one fixture, removed on drop.
@@ -2075,14 +2075,14 @@ mod tests {
     fn open_world(origin: WorldTile, width: usize, height: usize) -> WorldCollision {
         let flags = vec![0u32; width * height];
         let (walk, blocked) = crate::collision::pack_walk(&flags);
-        WorldCollision {
+        WorldCollision::from_packed_parts(
             origin,
             width,
             height,
             walk,
             blocked,
-            flags: None,
-        }
+            None,
+        ).expect("packed parts")
     }
 
     #[test]
@@ -2161,18 +2161,18 @@ mod tests {
             flags[z * 5 + 2] |= CollisionFlag::W_W as u32;
         }
         let (walk, blocked) = crate::collision::pack_walk(&flags);
-        let wc = WorldCollision {
-            origin: WorldTile {
+        let wc = WorldCollision::from_packed_parts(
+            WorldTile {
                 x: 3099,
                 z: 3518,
                 level: 0,
             },
-            width: 5,
-            height: 12,
+            5,
+            12,
             walk,
             blocked,
-            flags: None,
-        };
+            None,
+        ).expect("packed parts");
         let dest = tile(3102, 3525, 0);
         let g = teleport(dest, 3, vec![(6, 25)], vec![(554, 1), (556, 3), (563, 1)]);
         let from = tile(3100, 3519, 0);

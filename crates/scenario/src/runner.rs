@@ -495,12 +495,12 @@ impl ScenarioRunner {
             .is_some_and(|(bx, bz)| bx >= 3000 && bz >= 3000);
         let on_grid = match (self.nav_world.as_ref(), self.snapshot.tile()) {
             (Some(w), Some((x, z, l))) => {
-                let o = w.collision.origin;
+                let o = w.collision.origin();
                 l == o.level
                     && x >= o.x
                     && z >= o.z
-                    && x < o.x + w.collision.width as i32
-                    && z < o.z + w.collision.height as i32
+                    && x < o.x + w.collision.width() as i32
+                    && z < o.z + w.collision.height() as i32
             }
             // No world loaded: fall back to the base heuristic; a `Walk`
             // step fails with a clear "no nav world" message later.

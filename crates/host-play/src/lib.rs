@@ -5132,18 +5132,19 @@ mod tests {
 
     fn open_world(w: usize, h: usize) -> NavWorld {
         NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
+            WorldCollision::from_packed_parts(
+                WorldTile {
                     x: 0,
                     z: 0,
                     level: 0,
                 },
-                width: w,
-                height: h,
-                walk: vec![0u8; w * h],
-                blocked: vec![0u64; (w * h).div_ceil(64)],
-                flags: None,
-            },
+                w,
+                h,
+                vec![0u8; w * h],
+                vec![0u64; (w * h).div_ceil(64)],
+                None,
+            )
+            .expect("packed parts"),
             TransportGraph::default(),
             Vec::new(),
         )
@@ -5193,15 +5194,143 @@ mod tests {
 
     #[test]
     fn approach_candidates_avoid_occupied_target_and_stay_in_radius() {
-        let mut world = open_world(7,7);
-        world.collision.blocked[0] |= 1 << (3*7+3);
-        world.collision.walk[3*7+2] = 1; // A face wall does not occupy its floor tile.
-        let target = WorldTile {x:3,z:3,level:0};
-        let candidates = approach_tiles(&world, WorldTile{x:0,z:3,level:0}, target, 1);
-        assert_eq!(candidates.len(),8);
-        assert!(candidates.iter().all(|t|*t != target && (t.x-3).abs() <= 1 && (t.z-3).abs() <= 1));
-        assert_eq!(candidates[0].x,2);
-        assert!(approach_tiles(&world,target,target,0).is_empty());
+        // Mutate owned dense buffers before freeze — storage is immutable after construction.
+        let w = 7usize;
+        let h = 7usize;
+        let mut walk = vec![0u8; w * h];
+        let mut blocked = vec![0u64; (w * h).div_ceil(64)];
+        blocked[0] |= 1 << (3 * 7 + 3);
+        walk[3 * 7 + 2] = 1; // A face wall does not occupy its floor tile.
+        let world = NavWorld::from_parts(
+            WorldCollision::from_packed_parts(
+                WorldTile {
+                    x: 0,
+                    z: 0,
+                    level: 0,
+                },
+                w,
+                h,
+                walk,
+                blocked,
+                None,
+            )
+            .expect("packed parts"),
+            TransportGraph::default(),
+            Vec::new(),
+        );
+        let target = WorldTile {
+            x: 3,
+            z: 3,
+            level: 0,
+        };
+        let candidates = approach_tiles(&world, WorldTile { x: 0, z: 3, level: 0 }, target, 1);
+        assert_eq!(candidates.len(), 8);
+        assert!(candidates
+            .iter()
+            .all(|t| *t != target && (t.x - 3).abs() <= 1 && (t.z - 3).abs() <= 1));
+        assert_eq!(candidates[0].x, 2);
+        assert!(approach_tiles(&world, target, target, 0).is_empty());
+    }
+
+    #[test]
+    fn shared_world_storage_identity_across_sixteen_consumers() {
+        let world = Arc::new(open_world(8, 8));
+        let base = Arc::as_ptr(&world) as usize;
+        let mut handles = Vec::new();
+        for i in 0..16 {
+            let w = Arc::clone(&world);
+            handles.push(std::thread::spawn(move || {
+                // No conversion on read: walkable probes share the same Arc storage.
+                let t = WorldTile {
+                    x: (i % 8) as i32,
+                    z: (i / 8) as i32,
+                    level: 0,
+                };
+                assert!(w.collision.walkable(t) || !w.collision.walkable(t));
+                assert_eq!(Arc::as_ptr(&w) as usize, base);
+                Arc::as_ptr(&w) as usize
+            }));
+        }
+        let mut ids = Vec::new();
+        for h in handles {
+            ids.push(h.join().expect("consumer join"));
+        }
+        assert!(ids.iter().all(|&p| p == base));
+        assert_eq!(Arc::strong_count(&world), 1);
+    }
+
+    #[test]
+    fn retained_reader_weak_arc_drops_after_bounded_join() {
+        let world = Arc::new(open_world(4, 4));
+        let weak = Arc::downgrade(&world);
+        let reader = Arc::clone(&world);
+        let join = std::thread::spawn(move || {
+            assert!(reader.collision.walkable(WorldTile {
+                x: 0,
+                z: 0,
+                level: 0
+            }));
+            drop(reader);
+        });
+        join.join().expect("bounded join");
+        drop(world);
+        assert!(weak.upgrade().is_none(), "last owner drop must release storage");
+    }
+
+    #[test]
+    fn walk_arm_no_path_retains_old_route() {
+        let world = open_world(3, 3);
+        let travellers: Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let name = "retain";
+        let old = Route {
+            legs: vec![],
+            dest: WorldTile {
+                x: 1,
+                z: 1,
+                level: 0,
+            },
+            ticks: 0.0,
+        };
+        {
+            let arm = travellers
+                .lock()
+                .unwrap()
+                .entry(name.to_string())
+                .or_insert_with(|| Arc::new(Mutex::new(WalkArm::default())))
+                .clone();
+            arm.lock().unwrap().route = Some(old.clone());
+        }
+        // Destination outside the open 3×3 is NoPath; arm must keep old route.
+        let err = arm_walk_on(
+            &world,
+            Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            Tile {
+                x: 100,
+                z: 100,
+                level: 0,
+            },
+            FindOptions::default(),
+            &WorldState::empty(),
+            &[],
+            &travellers,
+            Some(name),
+        );
+        assert!(matches!(err, Err(NoPath)));
+        let kept = travellers
+            .lock()
+            .unwrap()
+            .get(name)
+            .unwrap()
+            .lock()
+            .unwrap()
+            .route
+            .clone();
+        assert_eq!(kept, Some(old));
     }
 
     #[test]
@@ -5986,18 +6115,18 @@ mod tests {
         });
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         let world = Some(Arc::new(NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
+            WorldCollision::from_packed_parts(
+                WorldTile {
                     x: 0,
                     z: 0,
                     level: 0,
                 },
-                width: 5,
-                height: 5,
+                5,
+                5,
                 walk,
                 blocked,
-                flags: None,
-            },
+                None,
+            ).expect("packed parts"),
             graph,
             Vec::new(),
         )));
@@ -6423,18 +6552,18 @@ mod tests {
         graph.edges.push(edge);
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         NavWorld::from_parts(
-            nav::collision::WorldCollision {
-                origin: WorldTile {
+            nav::collision::WorldCollision::from_packed_parts(
+                WorldTile {
                     x: 0,
                     z: 0,
                     level: 0,
                 },
-                width: 5,
-                height: 5,
+                5,
+                5,
                 walk,
                 blocked,
-                flags: None,
-            },
+                None,
+            ).expect("packed parts"),
             graph,
             vec![nav::pack::BankStand {
                 name: "Bank booth".into(),
@@ -7709,18 +7838,18 @@ mod tests {
         let names = api::obj_names::ObjNames::from_objs(&objs);
         let inv = vec![(1, 2)];
         let world = Some(Arc::new(NavWorld::from_parts(
-            nav::collision::WorldCollision {
-                origin: WorldTile {
+            nav::collision::WorldCollision::from_packed_parts(
+WorldTile {
                     x: 0,
                     z: 0,
                     level: 0,
                 },
-                width: 2,
-                height: 1,
-                walk: vec![0u8; 2],
-                blocked: vec![0u64; 2usize.div_ceil(64)],
-                flags: None,
-            },
+2,
+1,
+vec![0u8; 2],
+vec![0u64; 2usize.div_ceil(64)],
+None,
+).expect("packed parts"),
             nav::transport::TransportGraph::default(),
             vec![nav::pack::BankStand {
                 name: "Bank booth".into(),
@@ -8808,18 +8937,18 @@ export default class T extends LoopingBot {
         // transport edges — the collision+graph shape `find` consumes, built
         // directly (no pack file on disk in unit tests).
         nav_rig_with(Some(Arc::new(NavWorld::from_parts(
-            nav::collision::WorldCollision {
-                origin: WorldTile {
+            nav::collision::WorldCollision::from_packed_parts(
+WorldTile {
                     x: 0,
                     z: 0,
                     level: 0,
                 },
-                width: 40,
-                height: 1,
-                walk: vec![0u8; 40],
-                blocked: vec![0u64; 40usize.div_ceil(64)],
-                flags: None,
-            },
+40,
+1,
+vec![0u8; 40],
+vec![0u64; 40usize.div_ceil(64)],
+None,
+).expect("packed parts"),
             nav::transport::TransportGraph::default(),
             Vec::new(),
         ))))
@@ -9153,18 +9282,18 @@ export default class T extends LoopingBot {
             },
         ];
         let world = Some(Arc::new(NavWorld::from_parts(
-            nav::collision::WorldCollision {
-                origin: WorldTile {
+            nav::collision::WorldCollision::from_packed_parts(
+WorldTile {
                     x: 0,
                     z: 0,
                     level: 0,
                 },
-                width: 1,
-                height: 1,
-                walk: vec![0u8; 1],
-                blocked: vec![0u64; 1],
-                flags: None,
-            },
+1,
+1,
+vec![0u8; 1],
+vec![0u64; 1],
+None,
+).expect("packed parts"),
             TransportGraph {
                 teleports: glory.to_vec(),
                 ..TransportGraph::default()
@@ -9270,18 +9399,18 @@ export default class T extends LoopingBot {
         graph.edges.push(edge);
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         NavWorld::from_parts(
-            nav::collision::WorldCollision {
-                origin: WorldTile {
+            nav::collision::WorldCollision::from_packed_parts(
+                WorldTile {
                     x: 0,
                     z: 0,
                     level: 0,
                 },
-                width: 5,
-                height: 5,
+                5,
+                5,
                 walk,
                 blocked,
-                flags: None,
-            },
+                None,
+            ).expect("packed parts"),
             graph,
             Vec::new(),
         )
@@ -9357,18 +9486,18 @@ export default class T extends LoopingBot {
     /// latch.
     fn mine_nav_world() -> NavWorld {
         NavWorld::from_parts(
-            nav::collision::WorldCollision {
-                origin: WorldTile {
+            nav::collision::WorldCollision::from_packed_parts(
+WorldTile {
                     x: 2880,
                     z: 4800,
                     level: 0,
                 },
-                width: 64,
-                height: 64,
-                walk: vec![0u8; 64 * 64],
-                blocked: vec![0u64; (64usize * 64).div_ceil(64)],
-                flags: None,
-            },
+64,
+64,
+vec![0u8; 64 * 64],
+vec![0u64; (64usize * 64).div_ceil(64)],
+None,
+).expect("packed parts"),
             TransportGraph::default(),
             Vec::new(),
         )

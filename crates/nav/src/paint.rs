@@ -465,7 +465,7 @@ pub fn reach_seeds(graph: &TransportGraph) -> Vec<WorldTile> {
 /// ∪ teles. `find` never reads this; it is the debug overlay's in-graph
 /// answer.
 pub fn bake_reach(c: &WorldCollision, graph: &TransportGraph) -> Vec<u64> {
-    let mut bits = vec![0u64; c.walk.len().div_ceil(64)];
+    let mut bits = vec![0u64; c.logical_cell_count().div_ceil(64)];
     let mut seen: HashSet<WorldTile> = HashSet::new();
     let mut queue: VecDeque<WorldTile> = VecDeque::new();
     for seed in reach_seeds(graph) {
@@ -509,16 +509,17 @@ fn reach_cell_index(c: &WorldCollision, t: WorldTile) -> Option<usize> {
     if !(0..4).contains(&t.level) {
         return None;
     }
-    let lx = t.x - c.origin.x;
-    let lz = t.z - c.origin.z;
+    let origin = c.origin();
+    let lx = t.x - origin.x;
+    let lz = t.z - origin.z;
     if lx < 0 || lz < 0 {
         return None;
     }
     let (lx, lz) = (lx as usize, lz as usize);
-    if lx >= c.width || lz >= c.height {
+    if lx >= c.width() || lz >= c.height() {
         return None;
     }
-    Some(t.level as usize * c.width * c.height + lz * c.width + lx)
+    Some(t.level as usize * c.width() * c.height() + lz * c.width() + lx)
 }
 
 /// Set the walk-cell bit of `t` (a seed may sit outside the bake or on a
@@ -555,14 +556,14 @@ mod tests {
         let mut flags = vec![0u32; 4 * plane.len()];
         flags[..plane.len()].copy_from_slice(&plane);
         let (walk, blocked) = crate::collision::pack_walk(&flags);
-        WorldCollision {
-            origin: tile(0, 0, 0),
+        WorldCollision::from_packed_parts(
+            tile(0, 0, 0),
             width,
             height,
             walk,
             blocked,
-            flags: None,
-        }
+            None,
+        ).expect("packed parts")
     }
 
     fn edge(kind: TransportKind, at: WorldTile, to: WorldTile, loc_id: i32) -> TransportEdge {
@@ -988,7 +989,7 @@ mod tests {
             "find from outside the sealed courtyard is NoPath"
         );
         let bits = bake_reach(&c, &g);
-        assert_eq!(bits.len(), c.walk.len().div_ceil(64));
+        assert_eq!(bits.len(), c.logical_cell_count().div_ceil(64));
         assert!(
             !reached(&bits, &c, at),
             "no transport seeds flood the sealed courtyard"

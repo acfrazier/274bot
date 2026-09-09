@@ -199,12 +199,12 @@ impl<'a, F: FnMut(Tile)> Widget for Map<'a, F> {
         // zoom; `cell_of` rejects anything that lands outside).
         let half_x = (w * step) / 2;
         let half_z = (h * step) / 2;
-        let x_lo = (c.x - half_x - step).max(self.world.collision.origin.x);
-        let z_lo = (c.z - half_z - step).max(self.world.collision.origin.z);
+        let x_lo = (c.x - half_x - step).max(self.world.collision.origin().x);
+        let z_lo = (c.z - half_z - step).max(self.world.collision.origin().z);
         let x_hi = (c.x + half_x + step)
-            .min(self.world.collision.origin.x + self.world.collision.width as i32);
+            .min(self.world.collision.origin().x + self.world.collision.width() as i32);
         let z_hi = (c.z + half_z + step)
-            .min(self.world.collision.origin.z + self.world.collision.height as i32);
+            .min(self.world.collision.origin().z + self.world.collision.height() as i32);
         for z in z_lo..z_hi {
             for x in x_lo..x_hi {
                 if self.world.collision.walkable(WorldTile {

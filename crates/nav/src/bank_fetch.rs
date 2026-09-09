@@ -213,14 +213,14 @@ mod tests {
         let mut flags = vec![0u32; 4 * plane.len()];
         flags[..plane.len()].copy_from_slice(&plane);
         let (walk, blocked) = pack_walk(&flags);
-        WorldCollision {
-            origin: tile(0, 0, 0),
+        WorldCollision::from_packed_parts(
+            tile(0, 0, 0),
             width,
             height,
             walk,
             blocked,
-            flags: None,
-        }
+            None,
+        ).expect("packed parts")
     }
 
     /// The 5×5 grid split between x=1 and x=2: `W_E` on column 1 and

@@ -2041,18 +2041,18 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
             graph.edges.push(edge);
             let (walk, blocked) = nav::collision::pack_walk(&flags);
             NavWorld::from_parts(
-                nav::collision::WorldCollision {
-                    origin: WorldTile {
+                nav::collision::WorldCollision::from_packed_parts(
+                    WorldTile {
                         x: 0,
                         z: 0,
                         level: 0,
                     },
-                    width: 5,
-                    height: 5,
+                    5,
+                    5,
                     walk,
                     blocked,
-                    flags: None,
-                },
+                    None,
+                ).expect("packed parts"),
                 graph,
                 vec![nav::pack::BankStand {
                     name: "Bank booth".into(),

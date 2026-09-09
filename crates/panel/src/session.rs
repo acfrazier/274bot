@@ -593,17 +593,17 @@ fn publish_nav_debug(
     // toggle paints it, in scene coords. Tiles outside the pack grid read
     // as open — no phantom wall at the bake's edge.
     if settings.collision_fill || settings.nsew_labels {
-        let level = world.collision.origin.level;
-        let ox = world.collision.origin.x;
-        let oz = world.collision.origin.z;
-        let (ow, oh) = (world.collision.width as i32, world.collision.height as i32);
+        let level = world.collision.origin().level;
+        let ox = world.collision.origin().x;
+        let oz = world.collision.origin().z;
+        let (ow, oh) = (world.collision.width() as i32, world.collision.height() as i32);
         // Prefer the decoded flags sidecar when it matches this world's
         // grid; otherwise the walk word answers (the shared world's
         // `flags` field stays `None` — no walk-grid clone).
         let side = crate::picker::flags_sidecar_for(
-            world.collision.origin,
-            world.collision.width,
-            world.collision.height,
+            world.collision.origin(),
+            world.collision.width(),
+            world.collision.height(),
         );
         // The paint-only reach bitset, baked once per world. A missing
         // bitset defaults every cell to reached — no unreached tint.
@@ -3818,18 +3818,18 @@ mod tests {
     /// A `w`×`h` all-walkable level-0 world at (0,0).
     fn open_world(w: usize, h: usize) -> NavWorld {
         NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
+            WorldCollision::from_packed_parts(
+WorldTile {
                     x: 0,
                     z: 0,
                     level: 0,
                 },
-                width: w,
-                height: h,
-                walk: vec![0u8; w * h],
-                blocked: vec![0u64; (w * h).div_ceil(64)],
-                flags: None,
-            },
+w,
+h,
+vec![0u8; w * h],
+vec![0u64; (w * h).div_ceil(64)],
+None,
+).expect("packed parts"),
             TransportGraph::default(),
             Vec::new(),
         )
@@ -3841,18 +3841,18 @@ mod tests {
     /// synthesized by the router, so a walk out only arms with a latch.
     fn mine_world() -> NavWorld {
         NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
+            WorldCollision::from_packed_parts(
+WorldTile {
                     x: 2880,
                     z: 4800,
                     level: 0,
                 },
-                width: 64,
-                height: 64,
-                walk: vec![0u8; 64 * 64],
-                blocked: vec![0u64; (64usize * 64).div_ceil(64)],
-                flags: None,
-            },
+64,
+64,
+vec![0u8; 64 * 64],
+vec![0u64; (64usize * 64).div_ceil(64)],
+None,
+).expect("packed parts"),
             TransportGraph::default(),
             Vec::new(),
         )
@@ -3889,8 +3889,8 @@ mod tests {
         flags[2 * width + 2] = CollisionFlag::WR_GRND as u32;
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
+            WorldCollision::from_packed_parts(
+                WorldTile {
                     x: 3200,
                     z: 3200,
                     level: 0,
@@ -3899,8 +3899,8 @@ mod tests {
                 height,
                 walk,
                 blocked,
-                flags: None,
-            },
+                None,
+            ).expect("packed parts"),
             TransportGraph::default(),
             Vec::new(),
         )
@@ -4025,8 +4025,8 @@ mod tests {
         flags[2 * width + 2] = CollisionFlag::WR_GRND as u32;
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         let world = NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
+            WorldCollision::from_packed_parts(
+                WorldTile {
                     x: 3200,
                     z: 3200,
                     level: 0,
@@ -4035,8 +4035,8 @@ mod tests {
                 height,
                 walk,
                 blocked,
-                flags: None,
-            },
+                None,
+            ).expect("packed parts"),
             TransportGraph {
                 edges: vec![TransportEdge {
                     kind: TransportKind::Door,
@@ -4233,8 +4233,8 @@ mod tests {
         flags[width + 1] = CollisionFlag::W_S as u32;
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         let world = NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
+            WorldCollision::from_packed_parts(
+                WorldTile {
                     x: 3200,
                     z: 3200,
                     level: 0,
@@ -4243,8 +4243,8 @@ mod tests {
                 height,
                 walk,
                 blocked,
-                flags: None,
-            },
+                None,
+            ).expect("packed parts"),
             TransportGraph::default(),
             Vec::new(),
         );
@@ -4762,18 +4762,18 @@ mod tests {
     fn open_world_four_planes(w: usize, h: usize) -> NavWorld {
         let cells = w * h * 4;
         NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
+            WorldCollision::from_packed_parts(
+WorldTile {
                     x: 0,
                     z: 0,
                     level: 0,
                 },
-                width: w,
-                height: h,
-                walk: vec![0u8; cells],
-                blocked: vec![0u64; cells.div_ceil(64)],
-                flags: None,
-            },
+w,
+h,
+vec![0u8; cells],
+vec![0u64; cells.div_ceil(64)],
+None,
+).expect("packed parts"),
             TransportGraph::default(),
             Vec::new(),
         )
@@ -4931,18 +4931,18 @@ mod tests {
         }
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         let world = NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
+            WorldCollision::from_packed_parts(
+                WorldTile {
                     x: 0,
                     z: 0,
                     level: 0,
                 },
-                width: 3,
-                height: 3,
+                3,
+                3,
                 walk,
                 blocked,
-                flags: None,
-            },
+                None,
+            ).expect("packed parts"),
             TransportGraph::default(),
             Vec::new(),
         );
@@ -5012,18 +5012,18 @@ mod tests {
         graph.edges.push(edge);
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
+            WorldCollision::from_packed_parts(
+                WorldTile {
                     x: 0,
                     z: 0,
                     level: 0,
                 },
-                width: 5,
-                height: 5,
+                5,
+                5,
                 walk,
                 blocked,
-                flags: None,
-            },
+                None,
+            ).expect("packed parts"),
             graph,
             Vec::new(),
         )
@@ -5219,18 +5219,18 @@ mod tests {
         });
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         let world = NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
+            WorldCollision::from_packed_parts(
+                WorldTile {
                     x: 0,
                     z: 0,
                     level: 0,
                 },
-                width: 5,
-                height: 5,
+                5,
+                5,
                 walk,
                 blocked,
-                flags: None,
-            },
+                None,
+            ).expect("packed parts"),
             graph,
             Vec::new(),
         );
@@ -5312,18 +5312,18 @@ mod tests {
         });
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         let world = NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
+            WorldCollision::from_packed_parts(
+                WorldTile {
                     x: 3099,
                     z: 3518,
                     level: 0,
                 },
-                width: 5,
-                height: 12,
+                5,
+                12,
                 walk,
                 blocked,
-                flags: None,
-            },
+                None,
+            ).expect("packed parts"),
             graph,
             Vec::new(),
         );

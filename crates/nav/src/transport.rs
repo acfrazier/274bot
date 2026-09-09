@@ -792,10 +792,10 @@ fn web_far_side(at: WorldTile, dir: DoorDir, collision: &WorldCollision) -> Opti
         if collision.standable(t) {
             return Some(t);
         }
-        if x < collision.origin.x
-            || z < collision.origin.z
-            || (x - collision.origin.x) >= collision.width as i32
-            || (z - collision.origin.z) >= collision.height as i32
+        if x < collision.origin().x
+            || z < collision.origin().z
+            || (x - collision.origin().x) >= collision.width() as i32
+            || (z - collision.origin().z) >= collision.height() as i32
         {
             return None;
         }
@@ -4058,18 +4058,18 @@ mod tests {
         let mut flags = vec![0u32; 7 * 4];
         flags[..7].copy_from_slice(&[0x4020, 0x4120, 0x4120, 0x4120, 0x4120, 0x5028, 0x10080]);
         let (walk, blocked) = crate::collision::pack_walk(&flags);
-        let collision = WorldCollision {
-            origin: WorldTile {
+        let collision = WorldCollision::from_packed_parts(
+            WorldTile {
                 x: 2651,
                 z: 3292,
                 level: 0,
             },
-            width: 7,
-            height: 1,
+            7,
+            1,
             walk,
             blocked,
-            flags: Some(flags),
-        };
+            Some(flags),
+        ).expect("packed parts");
         let at = WorldTile {
             x: 2656,
             z: 3292,
@@ -4093,18 +4093,18 @@ mod tests {
         let mut flags = vec![0u32; 3 * 4];
         flags[1] = 0x100; // Adjacent scenery remains part of the web walk-out.
         let (walk, blocked) = crate::collision::pack_walk(&flags);
-        let collision = WorldCollision {
-            origin: WorldTile {
+        let collision = WorldCollision::from_packed_parts(
+            WorldTile {
                 x: 0,
                 z: 0,
                 level: 0,
             },
-            width: 3,
-            height: 1,
+            3,
+            1,
             walk,
             blocked,
-            flags: Some(flags),
-        };
+            Some(flags),
+        ).expect("packed parts");
         let at = WorldTile {
             x: 0,
             z: 0,

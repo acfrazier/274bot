@@ -2450,10 +2450,14 @@ mod tests {
     #[test]
     fn seed_runners_share_world_but_keep_independent_state() {
         let world = Arc::new(nav::world::NavWorld::from_parts(
-            nav::collision::WorldCollision {
-                origin: api::snapshot::WorldTile { x: 0, z: 0, level: 0 },
-                width: 1, height: 1, walk: vec![0; 4], blocked: vec![0], flags: None,
-            }, Default::default(), vec![],
+            nav::collision::WorldCollision::from_packed_parts(
+api::snapshot::WorldTile { x: 0, z: 0, level: 0 },
+1,
+1,
+vec![0; 4],
+vec![0],
+None,
+).expect("packed parts"), Default::default(), vec![],
         ));
         let mut a = seed_runner(seeded_idle_scenario(), "seed_a", Some(world.clone()));
         let b = seed_runner(seeded_idle_scenario(), "seed_b", Some(world.clone()));
@@ -2473,10 +2477,14 @@ mod tests {
         let _lock = env_lock();
         let _g = EnvGuard::clear(&["RS2B0T", "BOT_MEMORY_OUTPUT", "BOT_MEMORY_N", "BOT_MEMORY_WORKLOAD"]);
         let world = Arc::new(nav::world::NavWorld::from_parts(
-            nav::collision::WorldCollision {
-                origin: api::snapshot::WorldTile { x: 0, z: 0, level: 0 },
-                width: 1, height: 1, walk: vec![0; 4], blocked: vec![0], flags: None,
-            },
+            nav::collision::WorldCollision::from_packed_parts(
+api::snapshot::WorldTile { x: 0, z: 0, level: 0 },
+1,
+1,
+vec![0; 4],
+vec![0],
+None,
+).expect("packed parts"),
             Default::default(),
             vec![],
         ));
@@ -2527,10 +2535,14 @@ mod tests {
         let _lock = env_lock();
         let _g = EnvGuard::clear(&["RS2B0T", "BOT_MEMORY_OUTPUT"]);
         let world = Arc::new(nav::world::NavWorld::from_parts(
-            nav::collision::WorldCollision {
-                origin: api::snapshot::WorldTile { x: 1, z: 2, level: 0 },
-                width: 1, height: 1, walk: vec![0; 4], blocked: vec![0], flags: None,
-            },
+            nav::collision::WorldCollision::from_packed_parts(
+api::snapshot::WorldTile { x: 1, z: 2, level: 0 },
+1,
+1,
+vec![0; 4],
+vec![0],
+None,
+).expect("packed parts"),
             Default::default(),
             vec![],
         ));

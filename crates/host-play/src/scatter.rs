@@ -33,10 +33,10 @@ fn pack_path() -> PathBuf {
 fn walkable_seeds(world: &NavWorld) -> Vec<WorldTile> {
     let c = &world.collision;
     let bits = bake_reach(c, &world.graph);
-    let o = c.origin;
-    (0..c.height)
+    let o = c.origin();
+    (0..c.height())
         .flat_map(|z| {
-            (0..c.width).map(move |x| WorldTile {
+            (0..c.width()).map(move |x| WorldTile {
                 x: o.x + x as i32,
                 z: o.z + z as i32,
                 level: o.level,
@@ -140,18 +140,18 @@ mod tests {
         graph.edges.push(door(at, to));
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         let world = NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
+            WorldCollision::from_packed_parts(
+                WorldTile {
                     x: 3200,
                     z: 3200,
                     level: 0,
                 },
-                width: 3,
-                height: 2,
+                3,
+                2,
                 walk,
                 blocked,
-                flags: None,
-            },
+                None,
+            ).expect("packed parts"),
             graph,
             Vec::new(),
         );
@@ -195,18 +195,18 @@ mod tests {
         graph.edges.push(door(at, to));
         let (walk, blocked) = nav::collision::pack_walk(&flags);
         let world = NavWorld::from_parts(
-            WorldCollision {
-                origin: WorldTile {
+            WorldCollision::from_packed_parts(
+                WorldTile {
                     x: 0,
                     z: 0,
                     level: 0,
                 },
-                width: 5,
-                height: 5,
+                5,
+                5,
                 walk,
                 blocked,
-                flags: None,
-            },
+                None,
+            ).expect("packed parts"),
             graph,
             Vec::new(),
         );

@@ -119,18 +119,19 @@ impl NavWorld {
             }
         }
         let (walk, blocked) = crate::collision::pack_walk(&flags);
-        let collision = WorldCollision {
-            origin: WorldTile {
+        let collision = WorldCollision::from_packed_parts(
+            WorldTile {
                 x: grid.origin.x,
                 z: grid.origin.z,
                 level: grid.origin.level,
             },
-            width: grid.width,
-            height: grid.height,
+            grid.width,
+            grid.height,
             walk,
             blocked,
-            flags: None,
-        };
+            None,
+        )
+        .expect("from_grid produces consistent packed parts");
         let mut graph = TransportGraph::default();
         for d in &grid.doors {
             let i = graph.edges.len();
@@ -246,11 +247,11 @@ mod tests {
     #[test]
     fn open_grid_derives_an_all_walkable_world() {
         let w = NavWorld::from_grid(&StepGrid::fixture_open_3x3());
-        assert_eq!(w.collision.origin, tile(0, 0, 0));
-        assert_eq!(w.collision.width, 3);
-        assert_eq!(w.collision.height, 3);
-        for (i, wd) in w.collision.walk.iter().enumerate() {
-            assert_eq!(*wd, 0, "word {i} stays open");
+        assert_eq!(w.collision.origin(), tile(0, 0, 0));
+        assert_eq!(w.collision.width(), 3);
+        assert_eq!(w.collision.height(), 3);
+        for (i, (wd, _)) in w.collision.packed_pairs().enumerate() {
+            assert_eq!(wd, 0, "word {i} stays open");
         }
         assert!(w.graph.edges.is_empty());
     }
@@ -259,19 +260,18 @@ mod tests {
     fn blocked_tiles_stamp_every_direction_mask() {
         let w = NavWorld::from_grid(&StepGrid::fixture_door_corridor());
         let door_tile = tile(2, 0, 0);
-        let idx = (door_tile.z - w.collision.origin.z) as usize * w.collision.width
-            + (door_tile.x - w.collision.origin.x) as usize;
-        let blocked = (w.collision.blocked[idx >> 6] >> (idx & 63)) & 1 != 0;
+        let idx = (door_tile.z - w.collision.origin().z) as usize * w.collision.width()
+            + (door_tile.x - w.collision.origin().x) as usize;
+        let (face, blocked) = w.collision.packed_pair_at(idx).expect("door cell");
         assert_eq!(
-            walk_word_from_parts(w.collision.walk[idx], blocked),
+            walk_word_from_parts(face, blocked),
             BLOCKED,
             "the full directional stamp is in the packed walk surface"
         );
         // The full directional stamp is in the walk block masks, so the
         // router never steps onto it.
         assert_eq!(
-            walk_word_from_parts(w.collision.walk[idx], blocked)
-                & CollisionFlag::WALK_BLOCK_FLAGS as u32,
+            walk_word_from_parts(face, blocked) & CollisionFlag::WALK_BLOCK_FLAGS as u32,
             CollisionFlag::WALK_BLOCK_FLAGS as u32
         );
         assert!(w.collision.walkable(tile(0, 0, 0)));
@@ -330,7 +330,7 @@ mod tests {
         let path = dir.join("fixture.navpack");
         std::fs::write(&path, encode_grid(&StepGrid::fixture_door_corridor())).unwrap();
         let w = NavWorld::load_pack(&path).expect("pack loads");
-        assert_eq!(w.collision.width, 5);
+        assert_eq!(w.collision.width(), 5);
         assert_eq!(w.graph.edges.len(), 1);
         assert!(w.collision.walkable(tile(1, 0, 0)));
         assert!(!w.collision.walkable(tile(2, 0, 0)));
@@ -376,14 +376,14 @@ mod tests {
         // fall into the grid decoder and come out as a confusing BadMagic.
         let plane = vec![0u32; 4];
         let (walk, blocked) = crate::collision::pack_walk(&plane);
-        let collision = WorldCollision {
-            origin: tile(0, 0, 0),
-            width: 2,
-            height: 2,
+        let collision = WorldCollision::from_packed_parts(
+            tile(0, 0, 0),
+            2,
+            2,
             walk,
             blocked,
-            flags: None,
-        };
+            None,
+        ).expect("packed parts");
         let mut bytes = encode(&collision, &TransportGraph::default(), &[]);
         bytes[4] = 5;
         let dir = std::env::temp_dir().join(format!(
@@ -413,14 +413,14 @@ mod tests {
         let mut flags = vec![0u32; 4 * plane.len()];
         flags[..plane.len()].copy_from_slice(&plane);
         let (walk, blocked) = crate::collision::pack_walk(&flags);
-        let collision = WorldCollision {
-            origin: tile(0, 0, 0),
-            width: 5,
-            height: 1,
+        let collision = WorldCollision::from_packed_parts(
+            tile(0, 0, 0),
+            5,
+            1,
             walk,
             blocked,
-            flags: None,
-        };
+            None,
+        ).expect("packed parts");
         let mut graph = TransportGraph::default();
         graph.edges.push(TransportEdge {
             kind: TransportKind::Door,
@@ -451,8 +451,8 @@ mod tests {
         let path = dir.join("fixture.navpack");
         std::fs::write(&path, encode(&collision, &graph, &[])).unwrap();
         let w = NavWorld::load_pack(&path).expect("pack loads");
-        assert_eq!(w.collision.origin, tile(0, 0, 0));
-        assert_eq!(w.collision.walk, collision.walk);
+        assert_eq!(w.collision.origin(), tile(0, 0, 0));
+        assert_eq!(w.collision.to_packed_parts().0, collision.to_packed_parts().0);
         assert!(w.collision.flags.is_none());
         assert_eq!(w.graph.edges, graph.edges);
         assert_eq!(w.graph.at, graph.at);
@@ -476,14 +476,14 @@ mod tests {
         let mut flags = vec![0u32; 4 * plane.len()];
         flags[..plane.len()].copy_from_slice(&plane);
         let (walk, blocked) = crate::collision::pack_walk(&flags);
-        let collision = WorldCollision {
-            origin: tile(0, 0, 0),
-            width: 5,
-            height: 5,
+        let collision = WorldCollision::from_packed_parts(
+            tile(0, 0, 0),
+            5,
+            5,
             walk,
             blocked,
-            flags: None,
-        };
+            None,
+        ).expect("packed parts");
         let mut graph = TransportGraph::default();
         graph.teleports.push(TransportEdge {
             kind: TransportKind::Teleport,
@@ -541,14 +541,14 @@ mod tests {
         let mut flags = vec![0u32; 4 * plane.len()];
         flags[..plane.len()].copy_from_slice(&plane);
         let (walk, blocked) = crate::collision::pack_walk(&flags);
-        let collision = WorldCollision {
-            origin: tile(0, 0, 0),
-            width: 2,
-            height: 2,
+        let collision = WorldCollision::from_packed_parts(
+            tile(0, 0, 0),
+            2,
+            2,
             walk,
             blocked,
-            flags: None,
-        };
+            None,
+        ).expect("packed parts");
         let banks = vec![crate::pack::BankStand {
             name: "Bank booth".into(),
             tile: tile(1, 1, 0),
