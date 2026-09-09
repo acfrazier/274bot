@@ -11,6 +11,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 00:39 UTC
+
+- Parser correctiona55972a APPROVED actual Grok4.5/xai20260908_203046_6a6bdc.
+  Root built frozen Linux source in11.387seconds, source pre/post verified;
+  all41 Concord stage files and three ELF hashes/libraries verified. Source,
+  build and stage receipts: diagnostics/replay-native-a55972a-preparation/.
+- Root released t_276a9ed9 (Luna) for ONE fixture-only qualification at
+  /home/acfrazier/owner-native-a55972a/qualification-1:16core,42native tests,
+  unchanged9cases/3repetitions/caps; fresh admission and hashes mandatory.
+  Only after PASS, one retained controlled-smoke native/Python pair at the
+  separate saved-smoke-1 path is authorized, with exact output comparison and
+  Linux supervision. No production replay or capture is released.
+- 289 G9344ee64 APPROVED actual Grok4.5/xai20260908_202946_651b1e with inherited
+  suite failures explicit. Dependent fixture-isolation t_0c645ab5 is running
+  under Luna; H/live/whole-branch acceptance still await corrected offline gates.
+- The third G implementation session was20260908_202245_77ff06; earlier partial
+  session prefix below refers to that run. Restart recovery evidence is retained.
+
 ## Latest boundary — 2026-09-09 00:31 UTC
 
 - Empty-descriptor correction407c8e5 received report/test changes requested.
