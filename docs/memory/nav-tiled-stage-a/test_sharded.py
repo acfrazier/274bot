@@ -34,7 +34,11 @@ def matrix_fixture_doubles(run):
     original_read_ref=sh.read_ref
     original_write_json=sh.write_json
     original_storage_guard=sh.storage_guard
+    original_admit=sh.stage.admit
     reads={}
+    admissions={}
+    admit_calls=[]
+    stats={'admit_cache_hits':0}
     storage_calls=[]
 
     def cached_read_ref(ref,cap=256*1024):
@@ -51,6 +55,15 @@ def matrix_fixture_doubles(run):
             raise ValueError(f'bounded JSON output exceeded: {len(data)} > {cap}')
         path.write_bytes(data)
 
+    def cached_admit(path,expected_sha256,cap):
+        key=(str(path),str(expected_sha256),int(cap))
+        if key in admissions:
+            stats['admit_cache_hits']+=1
+            return admissions[key]
+        admit_calls.append(key)
+        admissions[key]=original_admit(path,expected_sha256,cap)
+        return admissions[key]
+
     def bounded_storage_guard(dest,reserve=0):
         storage_calls.append((Path(dest),reserve))
         if not Path(dest).is_dir() or reserve<0:
@@ -59,10 +72,12 @@ def matrix_fixture_doubles(run):
 
     with patch.object(sh,'read_ref',cached_read_ref),\
             patch.object(sh,'write_json',buffered_write_json),\
-            patch.object(sh,'storage_guard',bounded_storage_guard):
-        yield dict(reads=reads,storage_calls=storage_calls,
+            patch.object(sh,'storage_guard',bounded_storage_guard),\
+            patch.object(sh.stage,'admit',cached_admit):
+        yield dict(reads=reads,admissions=admissions,admit_calls=admit_calls,
+            stats=stats,storage_calls=storage_calls,
             original_read_ref=original_read_ref,original_write_json=original_write_json,
-            original_storage_guard=original_storage_guard)
+            original_storage_guard=original_storage_guard,original_admit=original_admit)
 
     # Keep these checks outside the patch so a future edit cannot silently
     # remove the explicit use of this double from the full-matrix fixture.
@@ -93,6 +108,20 @@ def audit_generated_matrix(results, phases, source=None):
     if not admitted:
         raise AssertionError('final real matrix audit did not admit bindings')
     return admitted
+
+
+def assert_final_mutations_rejected(results, phases, output, source=None):
+    original_output=output.read_bytes()
+    output.write_bytes(original_output+b'\n')
+    with unittest.TestCase().assertRaisesRegex(ValueError,'sha256'):
+        audit_generated_matrix(results,phases,source)
+    output.write_bytes(original_output)
+    record=output.with_name(output.name[:-4]+'.record.json')
+    original_record=record.read_bytes()
+    record.write_bytes(original_record+b'\n')
+    with unittest.TestCase().assertRaisesRegex(ValueError,'sha256'):
+        audit_generated_matrix(results,phases,source)
+    record.write_bytes(original_record)
 
 
 class Metrics(unittest.TestCase):
@@ -136,14 +165,16 @@ class Metrics(unittest.TestCase):
             self.assertIs(sh.read_ref,double['original_read_ref'])
             self.assertIs(sh.write_json,double['original_write_json'])
             self.assertIs(sh.storage_guard,double['original_storage_guard'])
+            self.assertIs(sh.stage.admit,double['original_admit'])
+            self.assertLess(len(double['admit_calls']),10000)
+            self.assertGreater(double['stats']['admit_cache_hits'],len(double['admit_calls']))
+            print('legacy matrix admissions:',len(double['admit_calls']),'cache hits:',double['stats']['admit_cache_hits'],flush=True)
             final_paths={'F1':run/'release/F1/result.json','F2':run/'release/F2/result.json',
                 'acceptance':run/'release/acceptance/result.json'}
             admitted=audit_generated_matrix(final_paths,('F1','F2','acceptance'))
             self.assertGreater(len(admitted),3*len(sh.schedule('acceptance')))
-            target=run/'release/acceptance'/('000-1-1-dense.out')
-            target.write_bytes(target.read_bytes()+b'\n')
-            with self.assertRaisesRegex(ValueError,'sha256'):
-                audit_generated_matrix(final_paths,('F1','F2','acceptance'))
+            assert_final_mutations_rejected(final_paths,('F1','F2','acceptance'),
+                run/'release/acceptance/000-1-1-dense.out')
 
     def test_coordinate_cf1_carries_binding_and_prior_ledger(self):
         with retained_fixture() as d:
@@ -239,17 +270,19 @@ class Metrics(unittest.TestCase):
                 self.assertIs(sh.read_ref,double['original_read_ref'])
                 self.assertIs(sh.write_json,double['original_write_json'])
                 self.assertIs(sh.storage_guard,double['original_storage_guard'])
+                self.assertIs(sh.stage.admit,double['original_admit'])
+                self.assertLess(len(double['admit_calls']),10000)
+                self.assertGreater(double['stats']['admit_cache_hits'],len(double['admit_calls']))
+                print('coordinate matrix admissions:',len(double['admit_calls']),'cache hits:',double['stats']['admit_cache_hits'],flush=True)
                 final_paths={'CF1':run/'coordinate-ebf0f30-full-01/CF1/result.json',
                     'CF2':run/'coordinate-ebf0f30-full-01/CF2/result.json',
                     'CA':run/'coordinate-ebf0f30-full-01/CA/result.json'}
                 admitted=audit_generated_matrix(final_paths,('CF1','CF2','CA'),
                     (source,source_hash,ref))
                 self.assertGreater(len(admitted),3*len(sh.schedule('CA')))
-                target=run/'coordinate-ebf0f30-full-01/CA'/('000-1-1-dense.out')
-                target.write_bytes(target.read_bytes()+b'\n')
-                with self.assertRaisesRegex(ValueError,'sha256'):
-                    audit_generated_matrix(final_paths,('CF1','CF2','CA'),
-                        (source,source_hash,ref))
+                assert_final_mutations_rejected(final_paths,('CF1','CF2','CA'),
+                    run/'coordinate-ebf0f30-full-01/CA/000-1-1-dense.out',
+                    (source,source_hash,ref))
                 self.assertEqual(launches,[(a,r) for phase in ('CF1','CF2','CA')
                     for _,r,a in sh.schedule(phase)])
                 final=json.loads(result.read_text())

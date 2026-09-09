@@ -1,0 +1,1 @@
+{"address_guard_active": false, "command": ["python3", "-m", "unittest", "-v", "test_sharded", "test_sharded_guards"], "cwd": ".", "failure": null, "limits": {"address": 4294967296, "cpu": 300, "file_size": 1048576, "output": 1048576, "rss": 536870912, "wall": 360}, "output_bytes": 8187, "returncode": 0, "sampled_group_peak_bytes": 98795520, "wall_seconds": 31.047599708}

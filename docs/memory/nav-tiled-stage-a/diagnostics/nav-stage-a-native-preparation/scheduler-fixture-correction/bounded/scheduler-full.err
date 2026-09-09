@@ -1,0 +1,34 @@
+test_budget_reservation_refund_and_deadline (test_sharded.Metrics) ... ok
+test_coordinate_cf1_carries_binding_and_prior_ledger (test_sharded.Metrics) ... ok
+test_coordinate_generated_qualification_has_separate_phase_and_budget (test_sharded.Metrics) ... ok
+test_coordinate_qualification_configuration_is_externally_bound (test_sharded.Metrics) ... ok
+test_coordinate_schedule_and_finite_budget_decision (test_sharded.Metrics) ... ok
+test_exact_quantiles (test_sharded.Metrics) ... ok
+test_full_coordinate_generated_protocol (test_sharded.Metrics) ... ok
+test_full_generated_protocol (test_sharded.Metrics) ... ok
+test_schedule_and_raw_contract (test_sharded.Metrics) ... ok
+test_scheduler_fixture_address_binds_to_qualification_cap (test_sharded.Metrics) ... ok
+test_continuation_original_auth_and_receipt_gaps (test_sharded_guards.Guards) ... ok
+test_continuation_setup_uses_remaining_cpu (test_sharded_guards.Guards) ... ok
+test_driver_deadline_reaps_and_never_restarts (test_sharded_guards.Guards) ... ok
+test_early_peak_and_storage_reservations (test_sharded_guards.Guards) ... ok
+test_failure_headroom_and_no_restart (test_sharded_guards.Guards) ... ok
+test_final_aggregation_output_mutation (test_sharded_guards.Guards) ... ok
+test_limits_receipt_exact_and_numeric_output (test_sharded_guards.Guards) ... ok
+test_mutation_after_child_and_loaded_config (test_sharded_guards.Guards) ... ok
+test_native_idle_fixed_window_contract (test_sharded_guards.Guards) ... ok
+test_native_idle_single_shot_fail_closed (test_sharded_guards.Guards) ... ok
+test_native_idle_wait_charged_and_interrupted (test_sharded_guards.Guards) ... ok
+test_native_idle_window_mutation_binding (test_sharded_guards.Guards) ... ok
+test_negative_row_cpu_rejected (test_sharded_guards.Guards) ... ok
+test_new_native_qualification_is_mandatory (test_sharded_guards.Guards) ... ok
+test_setup_claim_and_reservation_rejection (test_sharded_guards.Guards) ... ok
+test_setup_cpu_budget_stops_admission (test_sharded_guards.Guards) ... ok
+test_supervisor_cpu_and_interrupt (test_sharded_guards.Guards) ... ok
+test_weighted_cpu_noise_and_partial (test_sharded_guards.Guards) ... ok
+test_wrong_shard_and_repeated_ordinals (test_sharded_guards.Guards) ... ok
+
+----------------------------------------------------------------------
+Ran 29 tests in 30.982s
+
+OK
