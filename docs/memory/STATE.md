@@ -17,7 +17,7 @@ verify it on resume because a worker may finish after this snapshot.
   native3965 reaped and /proc3963/3964/3965 later absent. Identical manifest,
   unchanged caps; all3phaseCPU72.296/45.878/48.919 below180. Export archive
   381680bytes SHA62dc105b3095f274176a3ee9b84e31b53606cac504f6149f59930c420ef70cbd,
-  all19payloadhashes and13resultfilehashes verified locally. Receipt remains
+  all20payloadhashes and13resultfilehashes verified locally. Receipt remains
   validated_prefix_diagnostic, capture_completefalse, acceptancefalse.
 - Root independently reconciled descriptor size/count, stacks and families at
   peak160842811/89122, lastmark132027090/209263, EOF132028404/209283. Original
