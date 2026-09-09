@@ -1,0 +1,19 @@
+{
+  "scope": "fresh native generated qualification only; no private pack, CF1 or performance release",
+  "tool_commit": "a44a930e0b2a8bf546458fb160daa061c22a3dce",
+  "root": "/home/builder/nav-coordinate-a44a930-native-01",
+  "host": "274bot-builder",
+  "archive": "native-commit-source-a44a930e-linux-reference-01.tar.gz",
+  "archive_sha256": "bed8f5871cafac8dbc0987fe600baa235e3db1f3abf2039f0c7ef5fa603ba4ac",
+  "independent_archive_members_verified": 38,
+  "source_binding_sha256": "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb",
+  "native_reference_manifest_sha256": "8c7718c9eecbfd50d370493c892736a6a37f5ed12a02ef428b5e2948d689462c",
+  "runner_sha256": "4502a62d933b7182695f5589580f9f7dda2f3c7ba93423d54be36e2671159f70",
+  "reuse_root": false,
+  "initial_steps": {
+    "guards": 0,
+    "prepare": 0,
+    "build-clean": "running"
+  },
+  "packaging_label_note": "Reviewed helper reuses its kind variable in ls-tree iteration; archive name and scope text say commit. Structured candidate_id and externally verified source binding remain coordinate-ebf0f30. No source mutation or relabel was applied."
+}

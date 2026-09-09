@@ -11,6 +11,17 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 22:35 UTC
+
+- Root launched fresh reviewed navigationa44a930 native generated qualification
+  on274bot-builder at /home/builder/nav-coordinate-a44a930-native-01.
+  Archivebed8f587 all38 members independently verified; binding7b101c30 and
+  original Linux reference outputs retained. No reused builds/private inputs.
+- Native guards and prepare exited0; clean builds currently running. See
+  diagnostics/nav-stage-a-native-preparation/root-coordinate-native-launch-01.json.
+- This is generated native tooling qualification only; exact59 differential,
+  CF1/CF2/CA and memory/performance acceptance are not released or completed.
+
 ## Latest boundary — 2026-09-09 22:33 UTC
 
 - Controller07b5b29 APPROVED same-card round2 actualGrok4.5/xai180340_77a5ff;
