@@ -11,6 +11,26 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 03:25 UTC
+
+- Tutorial correction t_08298357 actual orch Astra/openai231914_18842e
+  remains in implementation. First production-handler/widget assertion failed
+  with no outbound bytes; corrected nullable message state and289-only LEFT
+  acknowledgement passes focused tests. Local kind0 message regression also
+  reproduced a separate source mismatch and is being corrected in add_chat.
+  No review, new build or live action/logout acceptance yet.
+- Nav t_797a8226 round1 reviewer requested report/wire-corpus corrections;
+  corrective implementer is finishing checks. Root explicitly keeps broader
+  baseline differential wire/optioned-route gates OPEN: hand expected errors,
+  running-only walk oracle and empty-graph encoding do not close design5.4/5.5.
+- Root queued t_3393f351 profile orch behind reviewed parent t_797a8226:
+  frozen original dense versus candidate differential harness, generated
+  qualification only, exact full route/ordered graph/wire/error outputs and
+  later real-mode admission/owned-process guards. Own new tooling/report only;
+  no production edits or real input execution. No worker run yet. Root will
+  separately release real-pack correctness only after harness review and
+  native guard qualification. No StageA/B or resident-saving claim.
+
 ## Latest boundary — 2026-09-09 03:19 UTC
 
 - Arrow correction1b38f18 APPROVED actual Grok4.5/xai225610_906ad2. Root
