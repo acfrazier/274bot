@@ -1,0 +1,37 @@
+Cloning into '/home/acfrazier/274bot-campaign/direct-owner-runtime-392dbecc-20260909/host'...
+Note: switching to 'dcdbeebf36665a1d07156402a5f64c823769e00d'.
+
+You are in 'detached HEAD' state. You can look around, make experimental
+changes and commit them, and you can discard any commits you make in this
+state without impacting any branches by switching back to a branch.
+
+If you want to create a new branch to retain commits you create, you may
+do so (now or later) by using -c with the switch command. Example:
+
+  git switch -c <new-branch-name>
+
+Or undo this operation with:
+
+  git switch -
+
+Turn off this advice by setting config variable advice.detachedHead to false
+
+Cloning into '/home/acfrazier/274bot-campaign/direct-owner-runtime-392dbecc-20260909/host/vendor/fr-client-rust'...
+Note: switching to 'b74dfb3c998b10371b263189774b055ecf880380'.
+
+You are in 'detached HEAD' state. You can look around, make experimental
+changes and commit them, and you can discard any commits you make in this
+state without impacting any branches by switching back to a branch.
+
+If you want to create a new branch to retain commits you create, you may
+do so (now or later) by using -c with the switch command. Example:
+
+  git switch -c <new-branch-name>
+
+Or undo this operation with:
+
+  git switch -
+
+Turn off this advice by setting config variable advice.detachedHead to false
+
+STAGED:1124 exact source members, clean diagnostic identities, binary hash and library checks; no application launch

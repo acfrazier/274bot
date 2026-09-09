@@ -1,0 +1,58 @@
+{
+  "scope": "Standalone immutable runtime/source staging only; no application execution, fixture access, runtime admission or live launch",
+  "started_unix": 1788987267.3543608,
+  "stage_script_sha256": "00117c01bacb04e21364408d857c9370c1fab04c6c48f3f25903d78b736ea30a",
+  "preparation_sha256": "72f22a6b242fed4d6bad0a5fc16da3bb853b15d20ab8e7fd1ada64d9881b961a",
+  "input_files": [
+    {
+      "name": "tui-play",
+      "bytes": 95595424,
+      "sha256": "392dbecc7a86f2fcd7e3f6b515aedceb3f3de3b1d4e140b95463bf20438c0c95",
+      "source": "builder/root-clean-build-01/tui-play"
+    },
+    {
+      "name": "host.bundle",
+      "bytes": 4828500,
+      "sha256": "36c0258903ec5d69ce772e19d5eea1efdcabe398ca0287bcd35e39c86bc7160b",
+      "source": "diagnostics/direct-owner-native-preparation/root-clean-source-01/host.bundle"
+    },
+    {
+      "name": "client.bundle",
+      "bytes": 702995,
+      "sha256": "fa64be6d6aee447c245bb8e339c55881ffd46b54152ae1d463409f6869f647f9",
+      "source": "diagnostics/direct-owner-native-preparation/root-clean-source-01/client.bundle"
+    },
+    {
+      "name": "materialization.json",
+      "bytes": 2072,
+      "sha256": "dae8ce184e610bf63389bac90a27ba4707e394df19c9bd441ec9afcabebbc40d",
+      "source": "diagnostics/direct-owner-native-preparation/root-clean-source-01/materialization.json"
+    },
+    {
+      "name": "build-result.json",
+      "bytes": 7242,
+      "sha256": "77a38d72ef65ec8d4ce30e200574d9422549ac5449fa66659576d89eece09d22",
+      "source": "diagnostics/direct-owner-native-preparation/root-clean-build-01-receipts/root-clean-build-01/result.json"
+    },
+    {
+      "name": "cargo-build-clean-derivative.log",
+      "bytes": 1945,
+      "sha256": "9c28353566837ac00772aee89f2b2ab3f9bf8f6b99d48c0240262fbd42f78700",
+      "source": "diagnostics/direct-owner-native-preparation/root-clean-build-01-receipts/root-clean-build-01/logs/cargo-build-clean-derivative.log"
+    },
+    {
+      "name": "frozen-direct-owner-source.tar.gz",
+      "bytes": 5075876,
+      "sha256": "2c36d254c37c5ed56a55f78728357296d62be602f8653ed9ec041cd37d099d5d",
+      "source": "diagnostics/direct-owner-native-preparation/artifact/frozen/frozen-direct-owner-source.tar.gz"
+    },
+    {
+      "name": "frozen-source-manifest.json",
+      "bytes": 327668,
+      "sha256": "ca69e70352c5f6f8d1c9db026959af6ba8fd64886be533a0095c3ca94bb5732e",
+      "source": "diagnostics/direct-owner-native-preparation/artifact/frozen/frozen-source-manifest.json"
+    }
+  ],
+  "live_qualified": false,
+  "runtime_manifest_issued": false
+}

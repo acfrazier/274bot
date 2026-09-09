@@ -11,6 +11,17 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 20:55 UTC
+
+- Root staged immutable runtime/source on Concord in new
+  /home/acfrazier/274bot-campaign/direct-owner-runtime-392dbecc-20260909.
+  Transfer2734566a checked; all1124 source bytes/modes/exact diagnostic HEADs,
+  clean branches/source digests and binary392dbecc verified. ELF/ldd exit0.
+- No app launch, fixture access, server/package/existing-runtime change. Downloaded
+  staging receipts match remote SHA256. See direct-owner-runtime-staging-report.md.
+- Runtime manifest/private admission/controller/native lifecycle remain pending;
+  old staging headroom is not fresh live preflight. Controller/navigation active.
+
 ## Latest boundary — 2026-09-09 20:50 UTC
 
 - Independent2791b6a APPROVED actualGrok4.6/xai163753_d59927 (670s). Root read

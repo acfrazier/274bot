@@ -1,0 +1,7 @@
+{
+  "archive": "diagnostics/direct-owner-native-preparation/root-runtime-inputs-01.tar.gz",
+  "bytes": 40257113,
+  "sha256": "2734566a7cfda4230a6f25cf885bcc8f6115fdd86a4c8858ff8a27a7584b10ed",
+  "stage_script_sha256": "00117c01bacb04e21364408d857c9370c1fab04c6c48f3f25903d78b736ea30a",
+  "scope": "Standalone source/binary staging only, no live admission"
+}

@@ -1,0 +1,3 @@
+c1b2e7c359bfa3ec8ba7e169efdd329b9a4440b1b4d5721d66f6355ef66bac32  /home/acfrazier/274bot-campaign/direct-owner-runtime-392dbecc-20260909/staging-launch.json
+37c471802d39f7dfbb8be317dfead92dde1ed52b08ebe6853074fc5100aeacb4  /home/acfrazier/274bot-campaign/direct-owner-runtime-392dbecc-20260909/staging-result.json
+8c9b50e266ed96872a80b43c2d2623afb059ffafaae64b8f856333563eafca36  /home/acfrazier/274bot-campaign/direct-owner-runtime-392dbecc-20260909/staging.log
