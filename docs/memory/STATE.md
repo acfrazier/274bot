@@ -11,6 +11,18 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 17:38 UTC
+
+- Owner frozen preparation03df80d/a7e112e APPROVED t_0a97cf2a, actualGrok4.5/xai
+  20260909_133312_c34916 (185s); independent originalH/C reconstruction and
+  exact1124member archive verified. Root separately rechecked artifact/script
+  bytes against reviewed commit and archive SHA2c36d254c37c5ed56a55f78728357296d62be602f8653ed9ec041cd37d099d5d.
+- Root runs reviewed generated Linux qualification in builder-owned fresh
+  direct-owner-a7e112e-1738/linux-qualification-01. No frontend/account/cache/server
+  use or live release. Builder rustc/Cargo1.98.0;35.7GB free before staging.
+- F1 evidence review t_96957a0c actualGrok4.6/xai20260909_133212_a287ec remains
+  active. No F2/refinement release; Concord idle.
+
 ## Latest boundary — 2026-09-09 17:32 UTC
 
 - Real F1 completed4/4, supervisor exited0. Charged29.501340CPU/40.090448wall;
