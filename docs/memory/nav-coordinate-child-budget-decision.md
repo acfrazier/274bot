@@ -13,7 +13,9 @@ new118. This is a finite candidate-transition allowance, not a retry allowance
 or a resettable allowance per candidate.
 
 The existing cumulative1800s wall and1500s CPU limits remain unchanged and
-continue to charge the old40.090448s wall/29.501340s CPU. Every per-child limit,
+continue to charge the old40.090448s wall/29.501340s CPU.
+Displayed durations are rounded; actual authorization carries exact receipt
+values and hashes, never rounded substitutes. Every per-child limit,
 reservation, headroom threshold, first-failure stop, owned cleanup and review
 boundary remains unchanged. CF1 receives at most4 fresh children; CF2 at most114
 only after CF1 evidence review. Failure does not replenish slots or authorize
