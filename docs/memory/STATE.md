@@ -11,6 +11,18 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 20:29 UTC
+
+- User requested Mac project cleanup after near disk exhaustion. Root removed92
+  inactive debug intermediate directories after inode/tracked/process/open-file
+  checks. Actual free space increased128.34 GiB; project269→140.37 GiB,
+  Mac now~452 GiB free. Source, raw evidence, release binaries and active caches
+  retained. See mac-project-cleanup-20260909.md and exact deletion receipts.
+- Workflow now calls for explicit reusable functional cache paths and root-owned
+  cleanup after evidence preservation. Performance isolation remains unchanged.
+- Transcript a3abbdd has completed same-card review; actual model/verdict check
+  precedes native release. Controller and navigation workers remain active.
+
 ## Latest boundary — 2026-09-09 20:06 UTC
 
 - Root independently verified all7 clean-build evidence hashes and stable source

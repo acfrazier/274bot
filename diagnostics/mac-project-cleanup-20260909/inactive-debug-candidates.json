@@ -1,0 +1,560 @@
+{
+  "scope": "Disposable inactive Rust debug intermediates only; preserve source, raw evidence, release outputs, and active general/worker caches",
+  "created_unix": 1788985654.438099,
+  "candidates": [
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_78c79ebc/target/debug/deps",
+      "device": 16777230,
+      "inode": 65518301,
+      "allocated_bytes": 3274256384
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_78c79ebc/target/debug/incremental",
+      "device": 16777230,
+      "inode": 65518303,
+      "allocated_bytes": 611532800
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_78c79ebc/target/debug/build",
+      "device": 16777230,
+      "inode": 65518304,
+      "allocated_bytes": 134438912
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_78c79ebc/target/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 65518302,
+      "allocated_bytes": 8212480
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/shared-nav-control/target/debug/deps",
+      "device": 16777230,
+      "inode": 66321316,
+      "allocated_bytes": 5149306880
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/shared-nav-control/target/debug/incremental",
+      "device": 16777230,
+      "inode": 66321318,
+      "allocated_bytes": 1296896000
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/shared-nav-control/target/debug/build",
+      "device": 16777230,
+      "inode": 66321319,
+      "allocated_bytes": 143245312
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/shared-nav-control/target/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 66321317,
+      "allocated_bytes": 9715712
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/latency-cohort-ledger/target/debug/deps",
+      "device": 16777230,
+      "inode": 67670209,
+      "allocated_bytes": 1049071616
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/latency-cohort-ledger/target/debug/incremental",
+      "device": 16777230,
+      "inode": 67670211,
+      "allocated_bytes": 533016576
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/latency-cohort-ledger/target/debug/build",
+      "device": 16777230,
+      "inode": 67670212,
+      "allocated_bytes": 31444992
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/latency-cohort-ledger/target/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 67670210,
+      "allocated_bytes": 2838528
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/host-debug-env-cache/target/debug/deps",
+      "device": 16777230,
+      "inode": 67885980,
+      "allocated_bytes": 840450048
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/host-debug-env-cache/target/debug/incremental",
+      "device": 16777230,
+      "inode": 67885982,
+      "allocated_bytes": 265117696
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/host-debug-env-cache/target/debug/build",
+      "device": 16777230,
+      "inode": 67885983,
+      "allocated_bytes": 31444992
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/host-debug-env-cache/target/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 67885981,
+      "allocated_bytes": 2822144
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/snapshot-frame-equivalence/target-frame-eq/debug/deps",
+      "device": 16777230,
+      "inode": 67358721,
+      "allocated_bytes": 6315491328
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/snapshot-frame-equivalence/target-frame-eq/debug/incremental",
+      "device": 16777230,
+      "inode": 67358723,
+      "allocated_bytes": 2373935104
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/snapshot-frame-equivalence/target-frame-eq/debug/build",
+      "device": 16777230,
+      "inode": 67358724,
+      "allocated_bytes": 208207872
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/snapshot-frame-equivalence/target-frame-eq/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 67358722,
+      "allocated_bytes": 11649024
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/panel-input-seam-trace/target/debug/deps",
+      "device": 16777230,
+      "inode": 67725328,
+      "allocated_bytes": 3632168960
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/panel-input-seam-trace/target/debug/incremental",
+      "device": 16777230,
+      "inode": 67725330,
+      "allocated_bytes": 885018624
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/panel-input-seam-trace/target/debug/build",
+      "device": 16777230,
+      "inode": 67725331,
+      "allocated_bytes": 169336832
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/panel-input-seam-trace/target/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 67725329,
+      "allocated_bytes": 10412032
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/latency-cohort-publisher/target/debug/deps",
+      "device": 16777230,
+      "inode": 67706105,
+      "allocated_bytes": 4566306816
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/latency-cohort-publisher/target/debug/incremental",
+      "device": 16777230,
+      "inode": 67706107,
+      "allocated_bytes": 1624170496
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/latency-cohort-publisher/target/debug/build",
+      "device": 16777230,
+      "inode": 67706108,
+      "allocated_bytes": 255201280
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/latency-cohort-publisher/target/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 67706106,
+      "allocated_bytes": 19390464
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/panel-memory-capture-arm/target/debug/deps",
+      "device": 16777230,
+      "inode": 67836063,
+      "allocated_bytes": 2953875456
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/panel-memory-capture-arm/target/debug/incremental",
+      "device": 16777230,
+      "inode": 67836065,
+      "allocated_bytes": 603152384
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/panel-memory-capture-arm/target/debug/build",
+      "device": 16777230,
+      "inode": 67836066,
+      "allocated_bytes": 160702464
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/panel-memory-capture-arm/target/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 67836064,
+      "allocated_bytes": 8880128
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_96df4eb8/target/debug/deps",
+      "device": 16777230,
+      "inode": 65538370,
+      "allocated_bytes": 2967515136
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_96df4eb8/target/debug/incremental",
+      "device": 16777230,
+      "inode": 65538372,
+      "allocated_bytes": 584654848
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_96df4eb8/target/debug/build",
+      "device": 16777230,
+      "inode": 65538373,
+      "allocated_bytes": 134438912
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_96df4eb8/target/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 65538371,
+      "allocated_bytes": 8097792
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/windows-panel-attribution/target/debug/deps",
+      "device": 16777230,
+      "inode": 66863573,
+      "allocated_bytes": 3846914048
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/windows-panel-attribution/target/debug/incremental",
+      "device": 16777230,
+      "inode": 66863575,
+      "allocated_bytes": 1219354624
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/windows-panel-attribution/target/debug/build",
+      "device": 16777230,
+      "inode": 66863576,
+      "allocated_bytes": 266465280
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/windows-panel-attribution/target/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 66863574,
+      "allocated_bytes": 16547840
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/windows-panel-attribution/vendor/fr-client-rust/target/debug/deps",
+      "device": 16777230,
+      "inode": 66879546,
+      "allocated_bytes": 994480128
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/windows-panel-attribution/vendor/fr-client-rust/target/debug/incremental",
+      "device": 16777230,
+      "inode": 66879548,
+      "allocated_bytes": 406274048
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/windows-panel-attribution/vendor/fr-client-rust/target/debug/build",
+      "device": 16777230,
+      "inode": 66879549,
+      "allocated_bytes": 29151232
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/windows-panel-attribution/vendor/fr-client-rust/target/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 66879547,
+      "allocated_bytes": 4136960
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_996dfe4f/target/debug/deps",
+      "device": 16777230,
+      "inode": 65334680,
+      "allocated_bytes": 791945216
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_996dfe4f/target/debug/incremental",
+      "device": 16777230,
+      "inode": 65334682,
+      "allocated_bytes": 245415936
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_996dfe4f/target/debug/build",
+      "device": 16777230,
+      "inode": 65334683,
+      "allocated_bytes": 29306880
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_996dfe4f/target/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 65334681,
+      "allocated_bytes": 2412544
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_97b84273/target/debug/deps",
+      "device": 16777230,
+      "inode": 65240358,
+      "allocated_bytes": 4100431872
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_97b84273/target/debug/incremental",
+      "device": 16777230,
+      "inode": 65240360,
+      "allocated_bytes": 636874752
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_97b84273/target/debug/build",
+      "device": 16777230,
+      "inode": 65240361,
+      "allocated_bytes": 134438912
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_97b84273/target/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 65240359,
+      "allocated_bytes": 8343552
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/windows-render-owner-census/target/debug/deps",
+      "device": 16777230,
+      "inode": 67500875,
+      "allocated_bytes": 5485641728
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/windows-render-owner-census/target/debug/incremental",
+      "device": 16777230,
+      "inode": 67500877,
+      "allocated_bytes": 2228031488
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/windows-render-owner-census/target/debug/build",
+      "device": 16777230,
+      "inode": 67500878,
+      "allocated_bytes": 225169408
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/windows-render-owner-census/target/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 67500876,
+      "allocated_bytes": 17268736
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/windows-render-owner-census/vendor/fr-client-rust/target/debug/deps",
+      "device": 16777230,
+      "inode": 67523833,
+      "allocated_bytes": 925323264
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/windows-render-owner-census/vendor/fr-client-rust/target/debug/incremental",
+      "device": 16777230,
+      "inode": 67523835,
+      "allocated_bytes": 300376064
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/windows-render-owner-census/vendor/fr-client-rust/target/debug/build",
+      "device": 16777230,
+      "inode": 67523836,
+      "allocated_bytes": 29151232
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/windows-render-owner-census/vendor/fr-client-rust/target/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 67523834,
+      "allocated_bytes": 2478080
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_e8ab1249/target/debug/deps",
+      "device": 16777230,
+      "inode": 65365417,
+      "allocated_bytes": 3862667264
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_e8ab1249/target/debug/incremental",
+      "device": 16777230,
+      "inode": 65365419,
+      "allocated_bytes": 477851648
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_e8ab1249/target/debug/build",
+      "device": 16777230,
+      "inode": 65365420,
+      "allocated_bytes": 134438912
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_e8ab1249/target/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 65365418,
+      "allocated_bytes": 8294400
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/deps",
+      "device": 16777230,
+      "inode": 70621181,
+      "allocated_bytes": 10411065344
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/incremental",
+      "device": 16777230,
+      "inode": 70621183,
+      "allocated_bytes": 3456720896
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/build",
+      "device": 16777230,
+      "inode": 70621184,
+      "allocated_bytes": 189878272
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-corrected/target/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 70621182,
+      "allocated_bytes": 14082048
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-01/target/debug/deps",
+      "device": 16777230,
+      "inode": 70475202,
+      "allocated_bytes": 10410332160
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-01/target/debug/incremental",
+      "device": 16777230,
+      "inode": 70475204,
+      "allocated_bytes": 3456581632
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-01/target/debug/build",
+      "device": 16777230,
+      "inode": 70475205,
+      "allocated_bytes": 189878272
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-01/target/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 70475203,
+      "allocated_bytes": 14077952
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-final/target/debug/deps",
+      "device": 16777230,
+      "inode": 70539688,
+      "allocated_bytes": 6123286528
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-final/target/debug/incremental",
+      "device": 16777230,
+      "inode": 70539690,
+      "allocated_bytes": 1875697664
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-final/target/debug/build",
+      "device": 16777230,
+      "inode": 70539691,
+      "allocated_bytes": 149049344
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-final/target/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 70539689,
+      "allocated_bytes": 10731520
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-green/target/debug/deps",
+      "device": 16777230,
+      "inode": 70604147,
+      "allocated_bytes": 1128538112
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-green/target/debug/incremental",
+      "device": 16777230,
+      "inode": 70604149,
+      "allocated_bytes": 290467840
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-green/target/debug/build",
+      "device": 16777230,
+      "inode": 70604150,
+      "allocated_bytes": 37408768
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/local-verification-green/target/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 70604148,
+      "allocated_bytes": 3215360
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/review-reverify-20260909152659/target/debug/deps",
+      "device": 16777230,
+      "inode": 70703107,
+      "allocated_bytes": 3942612992
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/review-reverify-20260909152659/target/debug/incremental",
+      "device": 16777230,
+      "inode": 70703109,
+      "allocated_bytes": 1027510272
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/review-reverify-20260909152659/target/debug/build",
+      "device": 16777230,
+      "inode": 70703110,
+      "allocated_bytes": 149049344
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/coverage-overlay/review-reverify-20260909152659/target/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 70703108,
+      "allocated_bytes": 10063872
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/borrowed-fingerprint-linux-freeze-20260907/targets/baseline/debug/deps",
+      "device": 16777230,
+      "inode": 66822118,
+      "allocated_bytes": 15994724352
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/borrowed-fingerprint-linux-freeze-20260907/targets/baseline/debug/incremental",
+      "device": 16777230,
+      "inode": 66822120,
+      "allocated_bytes": 1792544768
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/borrowed-fingerprint-linux-freeze-20260907/targets/baseline/debug/build",
+      "device": 16777230,
+      "inode": 66822121,
+      "allocated_bytes": 361955328
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/borrowed-fingerprint-linux-freeze-20260907/targets/baseline/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 66822119,
+      "allocated_bytes": 11005952
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/borrowed-fingerprint-linux-freeze-20260907/targets/candidate/debug/deps",
+      "device": 16777230,
+      "inode": 66901558,
+      "allocated_bytes": 15751086080
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/borrowed-fingerprint-linux-freeze-20260907/targets/candidate/debug/incremental",
+      "device": 16777230,
+      "inode": 66901560,
+      "allocated_bytes": 1757790208
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/borrowed-fingerprint-linux-freeze-20260907/targets/candidate/debug/build",
+      "device": 16777230,
+      "inode": 66901561,
+      "allocated_bytes": 361955328
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/borrowed-fingerprint-linux-freeze-20260907/targets/candidate/debug/.fingerprint",
+      "device": 16777230,
+      "inode": 66901559,
+      "allocated_bytes": 11005952
+    }
+  ],
+  "allocated_bytes_sum": 146237919232,
+  "process_path_conflicts": []
+}

@@ -129,6 +129,21 @@ a running worker, reclaim its run, inspect preserved changes, then update the
 brief/comment and resume with the appropriate profile. Do not retry an unchanged
 provider/model or credential failure. Preserve the failure and fix its cause.
 
+## Build-cache housekeeping
+
+Fresh evidence directories do not require fresh compiler caches. For functional
+regressions, reuse an explicitly named task cache when the test contract permits;
+keep raw logs, source hashes, and result receipts in fresh output directories.
+Do not change build isolation required by a matched performance protocol.
+
+At task completion, identify disposable compiler intermediates separately from
+source snapshots, raw measurements, and frozen release binaries. Root owns
+cleanup after verifying that no active worker or open file uses the selected
+paths. Retain the evidence needed to reproduce and review the result; cache
+removal is not a reason to delete a failed run. Check free space before another
+large build and report cache locations in the handoff so stale multi-gigabyte
+copies do not accumulate unnoticed.
+
 ## Proof, diagnosis and acceptance
 
 A failed live cell is a failed cell: preserve artifacts and report it. It is not
