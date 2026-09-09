@@ -8,12 +8,17 @@ import datetime
 import json
 import math
 import pathlib
+import re
 
 from build_provenance import file_sha256
 import cache_provenance as cp
 
 
 RAW_FILES = ('metadata.json', 'samples.jsonl', 'samples.qualification.jsonl')
+DIRECT_ADMISSION_BINDINGS = {
+    'release_contract', 'receipt_conflict', 'receipt_account',
+    'receipt_population', 'receipt_cache', 'receipt_server_health',
+}
 
 def utc_now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
@@ -38,9 +43,30 @@ def _timestamp(value):
     return datetime.datetime.fromisoformat(value[:-1] + '+00:00').timestamp()
 
 
+def _validated_bindings(value):
+    if not isinstance(value, dict) or set(value) != DIRECT_ADMISSION_BINDINGS:
+        raise ValueError('exact direct admission bindings are required')
+    normalized = {}
+    for label, entry in value.items():
+        if (not isinstance(label, str) or not label
+                or not isinstance(entry, dict) or set(entry) != {'path', 'sha256'}):
+            raise ValueError('invalid direct admission binding')
+        if not isinstance(entry['path'], str) or not entry['path']:
+            raise ValueError('invalid direct admission binding: ' + label)
+        path = pathlib.Path(entry['path']).resolve(strict=True)
+        digest = entry['sha256']
+        if (not isinstance(digest, str)
+                or re.fullmatch(r'[0-9a-f]{64}', digest) is None
+                or file_sha256(path) != digest):
+            raise ValueError('invalid direct admission binding: ' + label)
+        normalized[label] = {'path': str(path), 'sha256': digest}
+    return normalized
+
+
 def create_launch(path, *, cell_id, index, kind, effective_cli, binary,
                   manifest_path, server_identity_path, host_conditions_path,
-                  sampler_config, cache_provenance_path=None, capture_mode=None):
+                  sampler_config, cache_provenance_path=None, capture_mode=None,
+                  direct_admission_bindings=None):
     """Call immediately before starting the launcher; never overwrites a cell."""
     if not isinstance(cell_id, str) or not cell_id or type(index) is not int or index < 1:
         raise ValueError('invalid cell id/index')
@@ -59,6 +85,11 @@ def create_launch(path, *, cell_id, index, kind, effective_cli, binary,
         if capture_mode != 'direct-owner-v1':
             raise ValueError('invalid capture mode')
         value['capture_mode'] = capture_mode
+        value['direct_admission_bindings'] = _validated_bindings(
+            direct_admission_bindings
+        )
+    elif direct_admission_bindings is not None:
+        raise ValueError('direct admission bindings require direct owner mode')
     value['binary_sha256'] = file_sha256(value['binary'])
     if cache_provenance_path is not None:
         cache_path = pathlib.Path(cache_provenance_path).resolve(strict=True)
@@ -188,6 +219,19 @@ def complete(path, *, launch_path, run_dir, launcher_exit_code, sampler_result,
             receipt['cache_verified_after_completion_utc'] = utc_now()
         except (ValueError, OSError, TypeError, KeyError):
             errors.append('cache_provenance_changed_or_invalid')
+    if launch.get('capture_mode') == 'direct-owner-v1':
+        bindings = launch.get('direct_admission_bindings')
+        if not isinstance(bindings, dict) or set(bindings) != DIRECT_ADMISSION_BINDINGS:
+            errors.append('direct_admission_bindings_missing')
+        else:
+            for label, entry in bindings.items():
+                try:
+                    if (not isinstance(label, str) or not isinstance(entry, dict)
+                            or set(entry) != {'path', 'sha256'}
+                            or file_sha256(entry['path']) != entry['sha256']):
+                        raise ValueError('changed')
+                except (OSError, TypeError, ValueError, KeyError):
+                    errors.append('direct_admission_changed:' + str(label))
     if run_dir is not None:
         for name, digest in receipt['raw_hashes'].items():
             try:

@@ -246,6 +246,12 @@ def build_spec(args: argparse.Namespace, source: Mapping[str, Any]) -> Dict[str,
     direct = getattr(args, 'direct_owner_capture', False) is True
     if direct and (requested_n(args) != 1 or heaptrack_output is not None):
         raise CalibrationError('direct owner capture requires N1 and excludes Heaptrack')
+    release_contract = getattr(args, 'release_contract', None)
+    if direct and release_contract is None:
+        raise CalibrationError('direct owner capture requires an explicit root release contract')
+    release_contract_path = (
+        pathlib.Path(release_contract).resolve() if release_contract is not None else None
+    )
     if heaptrack_output is not None:
         if requested_n(args) != 1:
             raise CalibrationError("Heaptrack capture requires N1")
@@ -311,6 +317,7 @@ def build_spec(args: argparse.Namespace, source: Mapping[str, Any]) -> Dict[str,
             'frontend_wall_limit_s': DIRECT_FRONTEND_WALL_S,
             'outer_wall_limit_s': DIRECT_OUTER_WALL_S,
             'source_lineage': source.get('source_lineage'),
+            'release_contract': str(release_contract_path),
             'admission_receipts': admissions,
         }
     return spec
@@ -340,8 +347,8 @@ def validate_inputs(args: argparse.Namespace) -> Dict[str, Any]:
         if (source['host_sources_sha256'] != DIRECT_HOST_SOURCE_DIGEST
                 or source['client_sources_sha256'] != DIRECT_CLIENT_SOURCE_DIGEST):
             raise CalibrationError('direct owner source digest differs from fresh build')
-        for label in ('conflict_receipt', 'account_admission', 'population_admission',
-                      'cache_admission', 'server_health_receipt'):
+        for label in ('release_contract', 'conflict_receipt', 'account_admission',
+                      'population_admission', 'cache_admission', 'server_health_receipt'):
             path = getattr(args, label, None)
             if path is None or not pathlib.Path(path).resolve(strict=True).is_file():
                 raise CalibrationError('direct owner requires root admission receipt: ' + label)
@@ -496,6 +503,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--population-admission", type=pathlib.Path)
     p.add_argument("--cache-admission", type=pathlib.Path)
     p.add_argument("--server-health-receipt", type=pathlib.Path)
+    p.add_argument("--release-contract", type=pathlib.Path)
     p.add_argument("--preflight-only", action="store_true")
     return p
 

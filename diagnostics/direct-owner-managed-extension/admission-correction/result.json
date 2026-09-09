@@ -1,0 +1,67 @@
+{
+  "schema": "direct-owner-admission-correction-evidence-v1",
+  "task_id": "t_5c2087e1",
+  "generated_utc": "2026-09-09T23:26:35Z",
+  "branch": "codex/memory-diagnostics",
+  "implementation_base_commit": "236411d196476bb8582cb8985ccc75384122ac1a",
+  "scope": "generated controller validation only; no native or live launch",
+  "root_reproduction": {
+    "source": "diagnostics/direct-owner-managed-extension/root-admission-gap-01/result.json",
+    "cases_now_rejected": [
+      "untyped",
+      "expired",
+      "rejected",
+      "wrong_identity_and_conflict"
+    ],
+    "launcher_popen_calls_on_invalid_cases": 0,
+    "test": "test_direct_preflight_rejects_the_root_reproduced_semantic_gap"
+  },
+  "verification": [
+    {
+      "command": "python3 -m unittest -v -k direct test_run_managed_cell",
+      "result": "pass",
+      "tests_run": 7,
+      "skipped": 1,
+      "log": "macos-direct-managed-cell.log",
+      "sha256": "60bb87d36f16da72c03718281a632239f3cc54f06a86c5a2389341b2ae53d16e"
+    },
+    {
+      "command": "python3 -m unittest -v test_current_tui_calibration test_build_provenance test_managed_receipt",
+      "result": "pass",
+      "tests_run": 54,
+      "skipped": 0,
+      "log": "macos-supporting-regressions.log",
+      "sha256": "45474e238856e7174137bb83b68bd307e5fd5122923b6d08907b8fce53daeed3"
+    },
+    {
+      "command": "python3 -m unittest -v test_run_managed_cell",
+      "result": "one_preexisting_order_dependent_failure",
+      "tests_run": 55,
+      "failures": 1,
+      "skipped": 1,
+      "failure": "test_default_collector_stops_after_pad_before_generated_stop_and_c",
+      "log": "macos-current-test-run-managed-cell.log",
+      "sha256": "8dab3efbc16d469525006357fc2c1fe7304a6f6dcc48e25eeba75c8a8057a388"
+    },
+    {
+      "command": "git archive HEAD docs/memory; python3 -m unittest -v test_run_managed_cell",
+      "result": "same_preexisting_order_dependent_failure_at_unmodified_head",
+      "tests_run": 52,
+      "failures": 1,
+      "skipped": 1,
+      "failure": "test_default_collector_stops_after_pad_before_generated_stop_and_c",
+      "log": "head-baseline-test-run-managed-cell.log",
+      "sha256": "7dcc1fb97c58133da9e30a4ca9f5be7d556a4a4cea1cd18154c794a93a04e438"
+    },
+    {
+      "command": "python3 -m unittest -v test_run_managed_cell.ManagedCellTests.test_default_collector_stops_after_pad_before_generated_stop_and_c",
+      "result": "pass",
+      "tests_run": 1,
+      "skipped": 0,
+      "log": "macos-isolated-default-control.log",
+      "sha256": "0baa0b1e82102b55b3cc859084baa2f79499bb5b8b10e2b27aa166c0c3b18683"
+    }
+  ],
+  "native_or_live_run": false,
+  "next_owner": "root after same-card review"
+}

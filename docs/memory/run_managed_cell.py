@@ -17,6 +17,7 @@ import platform
 import re
 import signal
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -52,6 +53,9 @@ DIRECT_FRONTEND_WALL_S = 360.0
 DIRECT_OUTER_WALL_S = 365.0
 DIRECT_PREFLIGHT_MEM_AVAILABLE_BYTES = 805306368
 DIRECT_PREFLIGHT_DISK_FREE_BYTES = 268435456
+DIRECT_SERVER_PORT = 43594
+DIRECT_ADMISSION_KINDS = ('conflict', 'account', 'population', 'cache', 'server_health')
+DIRECT_CONFLICT_CLASSES = ('build', 'test', 'profiler', 'tui-panel-frontend')
 
 
 class CellError(RuntimeError):
@@ -194,7 +198,7 @@ def _validate_direct_contract(spec: Mapping[str, Any], contract: Any) -> None:
         'handoff_deadline_s', 'mem_available_floor_bytes',
         'frontend_rss_limit_bytes', 'owned_output_limit_bytes',
         'frontend_wall_limit_s', 'outer_wall_limit_s', 'source_lineage',
-        'admission_receipts',
+        'release_contract', 'admission_receipts',
     }
     if set(contract) != expected_keys:
         unknown = sorted(set(contract) - expected_keys)
@@ -241,8 +245,13 @@ def _validate_direct_contract(spec: Mapping[str, Any], contract: Any) -> None:
         raise CellError('direct owner owned paths do not match result/spec/cell/run reservation')
     if not isinstance(contract.get('source_lineage'), dict) or not contract['source_lineage']:
         raise CellError('direct owner source lineage missing')
+    if (not isinstance(contract.get('release_contract'), str)
+            or not contract['release_contract']):
+        raise CellError('direct owner root release contract missing')
+    if not isinstance(spec.get('cache_dir'), str) or not isinstance(spec.get('unpack_root'), str):
+        raise CellError('direct owner cache and unpack roots are required')
     admissions = contract.get('admission_receipts')
-    required = {'conflict', 'account', 'population', 'cache', 'server_health'}
+    required = set(DIRECT_ADMISSION_KINDS)
     if (not isinstance(admissions, dict) or set(admissions) != required
             or any(not isinstance(path, str) or not path for path in admissions.values())):
         raise CellError('direct owner root admission receipts missing')
@@ -599,6 +608,354 @@ def write_json(path: pathlib.Path, value: Any) -> None:
         out.write("\n")
 
 
+def _exact_object(value: Any, keys: set[str], label: str) -> Dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != keys:
+        raise CellError(f'direct owner {label} schema fields mismatch')
+    return value
+
+
+def _finite_time(value: Any, label: str) -> float:
+    if (not isinstance(value, (int, float)) or isinstance(value, bool)
+            or not math.isfinite(value) or value < 0):
+        raise CellError(f'direct owner {label} must be a finite nonnegative number')
+    return float(value)
+
+
+def _hex(value: Any, label: str, lengths=(64,)) -> str:
+    if (not isinstance(value, str) or len(value) not in lengths
+            or re.fullmatch(r'[0-9a-f]+', value) is None):
+        raise CellError(f'direct owner {label} identity is malformed')
+    return value
+
+
+def _basename(value: Any, label: str) -> str:
+    if (not isinstance(value, str) or not value or value in ('.', '..')
+            or pathlib.PurePath(value).name != value or '/' in value or '\\' in value):
+        raise CellError(f'direct owner {label} executable basename is malformed')
+    return value
+
+
+def _read_regular_json_binding(path_value: Any, label: str):
+    if not isinstance(path_value, str) or not path_value:
+        raise CellError(f'direct owner {label} path is missing')
+    path = pathlib.Path(path_value)
+    try:
+        before = path.lstat()
+        if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+            raise CellError(f'direct owner {label} is not a regular file')
+        if before.st_size <= 0 or before.st_size > 1024 * 1024:
+            raise CellError(f'direct owner {label} size is invalid')
+        raw = path.read_bytes()
+        after = path.lstat()
+    except OSError as exc:
+        raise CellError(f'direct owner {label} is unreadable') from exc
+    identity_before = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+    identity_after = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+    if identity_before != identity_after or stat.S_ISLNK(after.st_mode):
+        raise CellError(f'direct owner {label} changed while reading')
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise CellError(f'direct owner {label} is malformed JSON') from exc
+    if not isinstance(value, dict):
+        raise CellError(f'direct owner {label} must be an object')
+    return value, {
+        'path': str(path.resolve(strict=True)),
+        'sha256': hashlib.sha256(raw).hexdigest(),
+    }
+
+
+def probe_direct_server():
+    started = time.time()
+    try:
+        with socket.create_connection(('127.0.0.1', DIRECT_SERVER_PORT), timeout=2.0):
+            pass
+    except OSError as exc:
+        raise CellError('direct owner loopback server probe failed') from exc
+    ended = time.time()
+    return {
+        'host': '127.0.0.1', 'port': DIRECT_SERVER_PORT, 'succeeded': True,
+        'observed_start_unix_s': started, 'observed_end_unix_s': ended,
+    }
+
+
+def linux_executable_basename(pid: int) -> str:
+    try:
+        value = pathlib.Path(os.readlink(f'/proc/{pid}/exe')).name
+    except OSError as exc:
+        raise CellError('direct owner server executable identity unavailable') from exc
+    return _basename(value, 'server')
+
+
+def _direct_spec_binding(spec: Mapping[str, Any]) -> Dict[str, str]:
+    contract = spec['capture_contract']
+    return {
+        'result_path': str(_canonical(contract['owned_output_paths'][0])),
+        'cell_dir': str(_canonical(contract['cell_dir'])),
+        'run_dir': str(_canonical(contract['run_dir'])),
+        'frontend_handoff_path': str(_canonical(contract['frontend_handoff_path'])),
+        'build_manifest_path': str(pathlib.Path(spec['build_manifest']).resolve(strict=True)),
+        'binary_path': str(pathlib.Path(spec['binary']).resolve(strict=True)),
+        'nav_pack_path': str(pathlib.Path(spec['nav_pack']).resolve(strict=True)),
+        'nav_flags_path': str(pathlib.Path(spec['nav_flags']).resolve(strict=True)),
+        'catalog_path': str(pathlib.Path(spec['catalog_path']).resolve(strict=True)),
+        'cache_dir': str(pathlib.Path(spec['cache_dir']).resolve(strict=True)),
+        'unpack_root': str(pathlib.Path(spec['unpack_root']).resolve(strict=True)),
+    }
+
+
+def _direct_context(spec: Mapping[str, Any], provenance: Mapping[str, Any],
+                    cache_snapshot: Mapping[str, Any], server_sample: Mapping[str, Any],
+                    server_executable: str, fixture_binding: Any) -> Dict[str, Any]:
+    context = {
+        'fixture_binding_sha256': _hex(fixture_binding, 'fixture binding'),
+        'host_commit': provenance.get('build_commit'),
+        'client_commit': provenance.get('client_commit'),
+        'host_sources_sha256': provenance.get('host_sources_sha256'),
+        'client_sources_sha256': provenance.get('client_sources_sha256'),
+        'build_manifest_sha256': bp.file_sha256(spec['build_manifest']),
+        'binary_sha256': bp.file_sha256(spec['binary']),
+        'nav_pack_sha256': bp.file_sha256(spec['nav_pack']),
+        'nav_flags_sha256': bp.file_sha256(spec['nav_flags']),
+        'catalog_sha256': bp.file_sha256(spec['catalog_path']),
+        'cache_content_identity_sha256': cache_snapshot.get('content_identity_sha256'),
+        'cache_snapshot_version': cache_snapshot.get('snapshot_version'),
+        'server_pid': spec['game_server_pid'],
+        'server_start_identity': server_sample.get('start_identity'),
+        'server_executable_basename': _basename(server_executable, 'server'),
+    }
+    _hex(context['host_commit'], 'host commit', (40, 64))
+    _hex(context['client_commit'], 'client commit', (40, 64))
+    for key in (
+        'host_sources_sha256', 'client_sources_sha256', 'build_manifest_sha256',
+        'binary_sha256', 'nav_pack_sha256', 'nav_flags_sha256', 'catalog_sha256',
+        'cache_content_identity_sha256',
+    ):
+        _hex(context[key], key)
+    _hex(context['cache_snapshot_version'], 'cache snapshot version', (16,))
+    if (type(context['server_pid']) is not int or context['server_pid'] <= 0
+            or not isinstance(context['server_start_identity'], str)
+            or not context['server_start_identity']):
+        raise CellError('direct owner server identity is malformed')
+    return context
+
+
+def validate_direct_admissions(
+    spec: Mapping[str, Any], provenance: Mapping[str, Any],
+    before: Mapping[str, Any], server_sample: Mapping[str, Any],
+    cache_snapshot: Mapping[str, Any], *, now: float,
+    server_probe: Mapping[str, Any], server_executable: str,
+) -> Dict[str, Any]:
+    """Validate exact root release/receipt schemas without exposing payloads."""
+    contract = spec['capture_contract']
+    release, release_binding = _read_regular_json_binding(
+        contract['release_contract'], 'root release contract'
+    )
+    release_keys = {
+        'schema', 'mode', 'n', 'workload', 'frontend', 'issued_unix_s',
+        'observation_window', 'expires_unix_s', 'boot_id', 'context',
+        'spec_binding', 'receipt_bindings',
+    }
+    _exact_object(release, release_keys, 'root release contract')
+    if (release['schema'] != 'direct-owner-root-release-v1'
+            or release['mode'] != DIRECT_MODE or type(release['n']) is not int
+            or release['n'] != 1 or release['workload'] != 'active'
+            or release['frontend'] != 'tui'):
+        raise CellError('direct owner root release contract identity mismatch')
+    window = _exact_object(
+        release['observation_window'],
+        {'not_before_unix_s', 'not_after_unix_s'}, 'release observation window',
+    )
+    not_before = _finite_time(window['not_before_unix_s'], 'observation not-before')
+    not_after = _finite_time(window['not_after_unix_s'], 'observation not-after')
+    issued = _finite_time(release['issued_unix_s'], 'release issue time')
+    expires = _finite_time(release['expires_unix_s'], 'release expiry')
+    current = _finite_time(now, 'current time')
+    if not not_before < not_after <= issued <= current < expires:
+        raise CellError('direct owner root release contract is stale or temporally invalid')
+    boot_id = before.get('cgroup', {}).get('boot_id')
+    if not isinstance(boot_id, str) or not boot_id or release['boot_id'] != boot_id:
+        raise CellError('direct owner root release boot identity mismatch')
+    release_context = _exact_object(
+        release['context'], {
+            'fixture_binding_sha256', 'host_commit', 'client_commit',
+            'host_sources_sha256', 'client_sources_sha256',
+            'build_manifest_sha256', 'binary_sha256', 'nav_pack_sha256',
+            'nav_flags_sha256', 'catalog_sha256', 'cache_content_identity_sha256',
+            'cache_snapshot_version', 'server_pid', 'server_start_identity',
+            'server_executable_basename',
+        }, 'release context',
+    )
+    expected_context = _direct_context(
+        spec, provenance, cache_snapshot, server_sample, server_executable,
+        release_context.get('fixture_binding_sha256'),
+    )
+    if release_context != expected_context:
+        raise CellError('direct owner root release context identity mismatch')
+    spec_binding = _exact_object(
+        release['spec_binding'], {
+            'result_path', 'cell_dir', 'run_dir', 'frontend_handoff_path',
+            'build_manifest_path', 'binary_path', 'nav_pack_path', 'nav_flags_path',
+            'catalog_path', 'cache_dir', 'unpack_root',
+        }, 'release spec binding',
+    )
+    if spec_binding != _direct_spec_binding(spec):
+        raise CellError('direct owner root release spec/file binding mismatch')
+
+    actual_probe = _exact_object(
+        server_probe, {
+            'host', 'port', 'succeeded', 'observed_start_unix_s',
+            'observed_end_unix_s',
+        }, 'current server probe',
+    )
+    probe_start = _finite_time(actual_probe['observed_start_unix_s'], 'probe start')
+    probe_end = _finite_time(actual_probe['observed_end_unix_s'], 'probe end')
+    if (actual_probe['host'] != '127.0.0.1' or type(actual_probe['port']) is not int
+            or actual_probe['port'] != DIRECT_SERVER_PORT
+            or actual_probe['succeeded'] is not True
+            or not issued <= probe_start <= probe_end <= current):
+        raise CellError('direct owner current loopback server probe failed')
+
+    release_receipts = _exact_object(
+        release['receipt_bindings'], set(DIRECT_ADMISSION_KINDS),
+        'release receipt bindings',
+    )
+    bindings = {'release_contract': release_binding}
+    summaries = {}
+    for kind in DIRECT_ADMISSION_KINDS:
+        declared = _exact_object(
+            release_receipts[kind], {'path', 'sha256'}, f'{kind} receipt binding'
+        )
+        expected_path = pathlib.Path(contract['admission_receipts'][kind]).resolve(strict=True)
+        if (not isinstance(declared['path'], str)
+                or pathlib.Path(declared['path']).resolve(strict=True) != expected_path):
+            raise CellError(f'direct owner {kind} receipt path binding mismatch')
+        expected_digest = _hex(declared['sha256'], f'{kind} receipt digest')
+        receipt, binding = _read_regular_json_binding(str(expected_path), f'{kind} receipt')
+        if binding['sha256'] != expected_digest:
+            raise CellError(f'direct owner {kind} receipt hash binding mismatch')
+        common_keys = {
+            'schema', 'kind', 'mode', 'n', 'workload', 'frontend', 'admitted',
+            'observed_start_unix_s', 'observed_end_unix_s', 'boot_id',
+            'context', 'evidence',
+        }
+        _exact_object(receipt, common_keys, f'{kind} receipt')
+        expected_schema = f'direct-owner-{kind.replace("_", "-")}-admission-v1'
+        if (receipt['schema'] != expected_schema or receipt['kind'] != kind
+                or receipt['mode'] != DIRECT_MODE or type(receipt['n']) is not int
+                or receipt['n'] != 1 or receipt['workload'] != 'active'
+                or receipt['frontend'] != 'tui' or receipt['admitted'] is not True
+                or receipt['boot_id'] != boot_id or receipt['context'] != expected_context):
+            raise CellError(f'direct owner {kind} receipt admission/context mismatch')
+        observed_start = _finite_time(
+            receipt['observed_start_unix_s'], f'{kind} observation start'
+        )
+        observed_end = _finite_time(
+            receipt['observed_end_unix_s'], f'{kind} observation end'
+        )
+        if not not_before <= observed_start < observed_end <= not_after:
+            raise CellError(f'direct owner {kind} receipt observation is stale')
+        evidence = receipt['evidence']
+        if kind == 'conflict':
+            evidence = _exact_object(
+                evidence, {'checked_classes', 'matches'}, 'conflict evidence'
+            )
+            classes = evidence['checked_classes']
+            if (not isinstance(classes, list) or len(classes) != len(DIRECT_CONFLICT_CLASSES)
+                    or set(classes) != set(DIRECT_CONFLICT_CLASSES)
+                    or any(not isinstance(value, str) for value in classes)):
+                raise CellError('direct owner conflict classes omitted or unknown')
+            matches = evidence['matches']
+            if not isinstance(matches, list):
+                raise CellError('direct owner conflict matches must be a list')
+            for match in matches:
+                match = _exact_object(
+                    match, {'class', 'pid', 'start_identity', 'executable_basename'},
+                    'conflict match',
+                )
+                if (match['class'] not in DIRECT_CONFLICT_CLASSES
+                        or type(match['pid']) is not int or match['pid'] <= 0
+                        or not isinstance(match['start_identity'], str)
+                        or not match['start_identity']):
+                    raise CellError('direct owner conflict match identity is malformed')
+                _basename(match['executable_basename'], 'conflict match')
+            if matches:
+                raise CellError('direct owner conflicting process match admitted')
+            summary = {'checked_classes': list(classes), 'match_count': 0}
+        elif kind == 'account':
+            evidence = _exact_object(
+                evidence, {'fixture_binding_sha256', 'slot_count', 'active_slot_count'},
+                'account evidence',
+            )
+            if (evidence['fixture_binding_sha256'] != expected_context['fixture_binding_sha256']
+                    or type(evidence['slot_count']) is not int or evidence['slot_count'] != 1
+                    or type(evidence['active_slot_count']) is not int
+                    or evidence['active_slot_count'] != 1):
+                raise CellError('direct owner account receipt does not admit one active fixture')
+            summary = {'slot_count': 1, 'active_slot_count': 1}
+        elif kind == 'population':
+            evidence = _exact_object(
+                evidence, {'fixture_binding_sha256', 'requested_n', 'admitted_n', 'workload'},
+                'population evidence',
+            )
+            if (evidence['fixture_binding_sha256'] != expected_context['fixture_binding_sha256']
+                    or type(evidence['requested_n']) is not int or evidence['requested_n'] != 1
+                    or type(evidence['admitted_n']) is not int or evidence['admitted_n'] != 1
+                    or evidence['workload'] != 'active'):
+                raise CellError('direct owner population receipt mismatch')
+            summary = {'requested_n': 1, 'admitted_n': 1, 'workload': 'active'}
+        elif kind == 'cache':
+            evidence = _exact_object(
+                evidence, {'fixture_binding_sha256', 'content_identity_sha256', 'snapshot_version'},
+                'cache evidence',
+            )
+            if (evidence['fixture_binding_sha256'] != expected_context['fixture_binding_sha256']
+                    or evidence['content_identity_sha256'] != expected_context['cache_content_identity_sha256']
+                    or evidence['snapshot_version'] != expected_context['cache_snapshot_version']):
+                raise CellError('direct owner cache receipt identity mismatch')
+            summary = {
+                'content_identity_sha256': evidence['content_identity_sha256'],
+                'snapshot_version': evidence['snapshot_version'],
+            }
+        else:
+            evidence = _exact_object(
+                evidence, {'pid', 'start_identity', 'executable_basename', 'probe'},
+                'server health evidence',
+            )
+            declared_probe = _exact_object(
+                evidence['probe'], {'host', 'port', 'succeeded'},
+                'server health probe evidence',
+            )
+            if (type(evidence['pid']) is not int
+                    or evidence['pid'] != expected_context['server_pid']
+                    or evidence['start_identity'] != expected_context['server_start_identity']
+                    or _basename(evidence['executable_basename'], 'server health')
+                    != expected_context['server_executable_basename']
+                    or declared_probe != {
+                        'host': '127.0.0.1', 'port': DIRECT_SERVER_PORT,
+                        'succeeded': True,
+                    }):
+                raise CellError('direct owner server health receipt mismatch')
+            summary = {
+                'pid': evidence['pid'], 'start_identity': evidence['start_identity'],
+                'executable_basename': evidence['executable_basename'],
+                'probe': dict(declared_probe),
+            }
+        bindings['receipt_' + kind] = binding
+        summaries[kind] = {
+            'schema': receipt['schema'],
+            'observed_start_unix_s': observed_start,
+            'observed_end_unix_s': observed_end,
+            'evidence': summary,
+        }
+    return {
+        'bindings': bindings, 'receipt_summaries': summaries,
+        'release_expires_unix_s': expires, 'release_issued_unix_s': issued,
+        'release_observation_window': dict(window),
+        'context': expected_context,
+    }
+
+
 def preflight(
     spec: Mapping[str, Any],
     args: argparse.Namespace,
@@ -609,6 +966,9 @@ def preflight(
     sleep=time.sleep,
     platform_name=None,
     machine=None,
+    wall_time=time.time,
+    server_probe=probe_direct_server,
+    executable_basename=linux_executable_basename,
 ) -> Dict[str, Any]:
     """Verify build fixtures and live server identity. Never signals the server."""
     def validate_direct_snapshot(value, label):
@@ -666,6 +1026,7 @@ def preflight(
             "sample": sample(int(pid), timeout=sample_timeout),
         }
     direct_preflight = None
+    direct_cache_snapshot = None
     if direct:
         if server_sample.get('state') == 'Z' or not isinstance(server_sample.get('state'), str):
             raise CellError('direct owner server is zombie or process state unavailable')
@@ -683,16 +1044,17 @@ def preflight(
         free = disk_usage(_canonical(contract['cell_dir'])).free
         if free < DIRECT_PREFLIGHT_DISK_FREE_BYTES:
             raise CellError('direct owner preflight output filesystem below 256 MiB free')
-        admissions = {}
-        for label, value in sorted(contract['admission_receipts'].items()):
-            path = pathlib.Path(value)
-            info = path.lstat()
-            if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
-                raise CellError('direct owner admission receipt is not a regular file: ' + label)
-            loaded = json.loads(path.read_text())
-            if not isinstance(loaded, dict) or not loaded:
-                raise CellError('direct owner admission receipt is invalid: ' + label)
-            admissions[label] = {'path': str(path.resolve()), 'sha256': bp.file_sha256(path)}
+        try:
+            direct_cache_snapshot = cp.capture(spec['cache_dir'], spec['unpack_root'])
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            raise CellError('direct owner current cache identity is unavailable') from exc
+        current_probe = server_probe()
+        server_executable = executable_basename(int(spec['game_server_pid']))
+        admission = validate_direct_admissions(
+            spec, provenance, before, server_sample, direct_cache_snapshot,
+            now=wall_time(), server_probe=current_probe,
+            server_executable=server_executable,
+        )
         sleep(0.05)
         after = direct_snapshot()
         validate_direct_snapshot(after, 'after')
@@ -705,18 +1067,24 @@ def preflight(
             raise CellError('server identity changed during direct owner preflight')
         if server_after.get('state') == 'Z' or not isinstance(server_after.get('state'), str):
             raise CellError('direct owner server is zombie or process state unavailable')
-        for label, binding in admissions.items():
-            try:
-                if bp.file_sha256(binding['path']) != binding['sha256']:
-                    raise CellError('direct owner admission receipt changed: ' + label)
-            except OSError as exc:
-                raise CellError('direct owner admission receipt changed: ' + label) from exc
+        if (_basename(executable_basename(int(spec['game_server_pid'])), 'server')
+                != server_executable):
+            raise CellError('server executable identity changed during direct owner preflight')
+        try:
+            bp.recheck_files(admission['bindings'])
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            raise CellError('direct owner admission receipt changed during preflight') from exc
         if (after.get('vmstat') != before.get('vmstat')
                 or after.get('cgroup') != before.get('cgroup')):
             raise CellError('swap or OOM counters changed during direct owner preflight')
         direct_preflight = {
             'before': before, 'after': after, 'output_free_bytes': free,
-            'admission_receipts': admissions, 'server_after': server_after,
+            'admission_bindings': admission['bindings'],
+            'receipt_summaries': admission['receipt_summaries'],
+            'release_issued_unix_s': admission['release_issued_unix_s'],
+            'release_expires_unix_s': admission['release_expires_unix_s'],
+            'release_observation_window': admission['release_observation_window'],
+            'server_probe': current_probe, 'server_after': server_after,
         }
     return {
         "provenance": provenance,
@@ -727,6 +1095,7 @@ def preflight(
         "observe_s": float(spec["observe_s"]) if "observe_s" in spec else float(args.observe),
         "warmup_s": float(spec["warmup_s"]) if "warmup_s" in spec else float(args.warmup),
         "direct_preflight": direct_preflight,
+        "direct_cache_snapshot": direct_cache_snapshot,
     }
 
 
@@ -1441,7 +1810,12 @@ def run_managed_cell(
                     raise CellError(
                         f"unpack_root canonical {actual_unpack} != inherited {expected}"
                     )
-            snapshot = cp.capture(spec["cache_dir"], spec["unpack_root"])
+            snapshot = (
+                pf.get('direct_cache_snapshot') if direct
+                else cp.capture(spec["cache_dir"], spec["unpack_root"])
+            )
+            if not isinstance(snapshot, dict):
+                raise CellError('direct owner cache snapshot unavailable after preflight')
             cache_provenance_path = cell_dir / "cache-provenance.json"
             write_json(cache_provenance_path, snapshot)
 
@@ -1463,8 +1837,24 @@ def run_managed_cell(
             sampler_config=sampler_config,
             cache_provenance_path=str(cache_provenance_path) if cache_provenance_path is not None else None,
             capture_mode=DIRECT_MODE if direct else None,
+            direct_admission_bindings=(
+                (pf.get('direct_preflight') or {}).get('admission_bindings')
+                if direct else None
+            ),
         )
         report["launch_started_utc"] = launch_rec["started_utc"]
+
+        if direct:
+            direct_preflight = pf.get('direct_preflight') or {}
+            bindings = direct_preflight.get('admission_bindings')
+            expiry = direct_preflight.get('release_expires_unix_s')
+            if not isinstance(bindings, dict) or not bindings:
+                raise CellError('direct owner admission bindings unavailable before launch')
+            bp.recheck_files(pf['provenance']['files'])
+            bp.recheck_files(bindings)
+            if (not isinstance(expiry, (int, float)) or isinstance(expiry, bool)
+                    or not math.isfinite(expiry) or time.time() >= expiry):
+                raise CellError('direct owner root release expired before launch')
 
         launcher_log = cell_dir / "logs" / "launcher.log"
         env = dict(environment) if environment is not None else os.environ.copy()
@@ -1987,7 +2377,7 @@ def run_managed_cell(
         if direct:
             try:
                 bp.recheck_files(pf['provenance']['files'])
-                admissions = (pf.get('direct_preflight') or {}).get('admission_receipts')
+                admissions = (pf.get('direct_preflight') or {}).get('admission_bindings')
                 if not isinstance(admissions, dict) or not admissions:
                     raise ValueError('direct owner admission bindings unavailable')
                 bp.recheck_files(admissions)

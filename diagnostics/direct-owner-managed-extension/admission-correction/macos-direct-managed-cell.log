@@ -1,0 +1,12 @@
+test_direct_binding_toctou_after_preflight_stops_before_popen (test_run_managed_cell.ManagedCellTests) ... ok
+test_direct_contract_and_argv_paths_are_exact_and_mode_only (test_run_managed_cell.ManagedCellTests) ... ok
+test_direct_preflight_boundaries_counter_drift_and_receipt_mutation (test_run_managed_cell.ManagedCellTests) ... ok
+test_direct_preflight_rejects_missing_raw_swap_counters (test_run_managed_cell.ManagedCellTests) ... ok
+test_direct_preflight_rejects_the_root_reproduced_semantic_gap (test_run_managed_cell.ManagedCellTests) ... ok
+test_direct_receipt_and_release_schema_mutations_fail_closed (test_run_managed_cell.ManagedCellTests) ... ok
+test_linux_direct_lifecycle_keeps_collector_through_stop_c_and_exit (test_run_managed_cell.ManagedCellTests) ... skipped 'direct lifecycle qualification is Linux-only'
+
+----------------------------------------------------------------------
+Ran 7 tests in 0.578s
+
+OK (skipped=1)

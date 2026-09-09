@@ -9,6 +9,52 @@ import cache_provenance as cp
 
 
 class ManagedReceiptTests(unittest.TestCase):
+    def test_direct_launch_requires_exact_admission_binding_set(self):
+        admission = self.root / 'root-release.json'
+        admission.write_text('{}\n')
+        with self.assertRaisesRegex(ValueError, 'exact direct admission bindings'):
+            mr.create_launch(
+                self.root / 'direct-launch.json',
+                cell_id='direct', index=2, kind='diagnostic',
+                effective_cli=self.argv, binary=self.binary,
+                manifest_path=self.root / 'manifest.json',
+                server_identity_path=self.root / 'server_identity.json',
+                host_conditions_path=self.root / 'host_conditions.json',
+                sampler_config={'interval_s': 0.5},
+                capture_mode='direct-owner-v1',
+                direct_admission_bindings={
+                    'release_contract': {
+                        'path': str(admission),
+                        'sha256': mr.file_sha256(admission),
+                    },
+                },
+            )
+
+    def test_direct_admission_bindings_are_rechecked_at_completion(self):
+        admissions = {}
+        for label in sorted(mr.DIRECT_ADMISSION_BINDINGS):
+            admission = self.root / (label + '.json')
+            admission.write_text('{}\n')
+            admissions[label] = {
+                'path': str(admission.resolve()),
+                'sha256': mr.file_sha256(admission),
+            }
+        self.launch['capture_mode'] = 'direct-owner-v1'
+        self.launch['direct_admission_bindings'] = admissions
+        self.launch_path.write_text(json.dumps(self.launch))
+        self.meta['capture_mode'] = 'direct-owner-v1'
+        self.write_meta()
+        for name in ('samples.owners.jsonl', 'frontend-handoff.json',
+                     'direct-owner-guard.jsonl', 'direct-owner-guard-summary.json'):
+            parent = self.root / 'run' if name == 'samples.owners.jsonl' else self.root
+            (parent / name).write_text('{}\n')
+        pathlib.Path(admissions['release_contract']['path']).write_text(
+            '{"schema":"changed"}\n'
+        )
+        result = self.finish()
+        self.assertIn('direct_admission_changed:release_contract', result['binding_errors'])
+        self.assertEqual(result['status'], 'failed_or_unavailable')
+
     def test_direct_owner_raw_artifacts_are_conditional_required_and_hashed(self):
         self.launch['capture_mode'] = 'direct-owner-v1'
         self.launch_path.write_text(json.dumps(self.launch))

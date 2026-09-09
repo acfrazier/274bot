@@ -1,0 +1,69 @@
+test_argv_inconsistent_with_spec_rejected (test_run_managed_cell.ManagedCellTests) ... ok
+test_cache_changed_during_observation_fails_receipt (test_run_managed_cell.ManagedCellTests) ... ok
+test_cleanup_rechecks_parent_while_launcher_alive (test_run_managed_cell.ManagedCellTests) ... ok
+test_complete_cache_proof_pre_and_post (test_run_managed_cell.ManagedCellTests) ... ok
+test_conpty_discovery_empty_fails_closed (test_run_managed_cell.ManagedCellTests) ... ok
+test_conpty_helper_handoff_identity_and_parent_are_bound (test_run_managed_cell.ManagedCellTests) ... ok
+test_conpty_helper_handoff_missing_fails_closed (test_run_managed_cell.ManagedCellTests) ... ok
+test_conpty_helper_handoff_rejects_pid_reuse (test_run_managed_cell.ManagedCellTests) ... ok
+test_deadline_cleanup_owned_children_only (test_run_managed_cell.ManagedCellTests) ... ok
+test_default_collector_stops_after_pad_before_generated_stop_and_c (test_run_managed_cell.ManagedCellTests) ... FAIL
+test_default_no_cache_stays_compatible (test_run_managed_cell.ManagedCellTests) ... ok
+test_direct_contract_and_argv_paths_are_exact_and_mode_only (test_run_managed_cell.ManagedCellTests) ... ok
+test_direct_preflight_boundaries_counter_drift_and_receipt_mutation (test_run_managed_cell.ManagedCellTests) ... ok
+test_direct_preflight_rejects_missing_raw_swap_counters (test_run_managed_cell.ManagedCellTests) ... ok
+test_early_frontend_fail_stops_collector_no_retry (test_run_managed_cell.ManagedCellTests) ... ok
+test_exclusive_cell_create_no_overwrite (test_run_managed_cell.ManagedCellTests) ... ok
+test_guard_rejects_large_overshoot_skipped_grid_and_identity_failures (test_run_managed_cell.ManagedCellTests) ... ok
+test_guard_thresholds_accept_equal_and_fail_over_without_imputation (test_run_managed_cell.ManagedCellTests) ... ok
+test_handoff_identity_deadline_and_exit_proof_are_fail_closed (test_run_managed_cell.ManagedCellTests) ... ok
+test_identity_mismatch_cleanup_never_signals_foreign_process (test_run_managed_cell.ManagedCellTests) ... ok
+test_invalid_specs_and_actual_launcher_mismatch_precede_launch (test_run_managed_cell.ManagedCellTests) ... ok
+test_launcher_exit_does_not_leave_term_ignoring_frontend (test_run_managed_cell.ManagedCellTests) ... ok
+test_libproc_modules_include_native_and_identity_backend (test_run_managed_cell.ManagedCellTests) ... ok
+test_linux_direct_lifecycle_keeps_collector_through_stop_c_and_exit (test_run_managed_cell.ManagedCellTests) ... skipped 'direct lifecycle qualification is Linux-only'
+test_missing_metadata_no_retry_preserves_cell (test_run_managed_cell.ManagedCellTests) ... ok
+test_missing_or_duplicate_boundary_fails_durable_receipt (test_run_managed_cell.ManagedCellTests) ... ok
+test_module_mutation_before_completion_fails_runner (test_run_managed_cell.ManagedCellTests) ... ok
+test_native_backend_preflight_matches_native_collector_identity (test_run_managed_cell.ManagedCellTests) ... ok
+test_nonobject_server_identity_is_durable_preflight_failure (test_run_managed_cell.ManagedCellTests) ... ok
+test_owned_output_scanner_deduplicates_hardlinks_and_rejects_symlinks (test_run_managed_cell.ManagedCellTests) ... ok
+test_owned_output_scanner_fails_in_scan_disappearance_and_replayed_replacement (test_run_managed_cell.ManagedCellTests) ... ok
+test_owned_output_scanner_rejects_disappearance_but_allows_handoff_replacement (test_run_managed_cell.ManagedCellTests) ... ok
+test_paired_cache_fields_required_together (test_run_managed_cell.ManagedCellTests) ... ok
+test_parent_pid_rejects_foreign_and_accepts_owned_child (test_run_managed_cell.ManagedCellTests) ... ps: process id too large: 2000000001
+ok
+test_pid_alive_rejects_invalid_and_detects_live_child (test_run_managed_cell.ManagedCellTests) ... ok
+test_portable_cleanup_signal_labels_no_undefined_sigkill (test_run_managed_cell.ManagedCellTests) ... ok
+test_preflight_rejects_changed_binary_without_launch (test_run_managed_cell.ManagedCellTests) ... ok
+test_preflight_rejects_dead_server_identity (test_run_managed_cell.ManagedCellTests) ... ok
+test_real_delayed_qualification_controls_stop (test_run_managed_cell.ManagedCellTests) ... ok
+test_receipt_hashes_and_frontend_launcher_distinction (test_run_managed_cell.ManagedCellTests) ... ok
+test_relative_cell_root_and_accounting_path_reach_same_output (test_run_managed_cell.ManagedCellTests) ... ok
+test_requested_backend_spec_matches_diagnostic_argv (test_run_managed_cell.ManagedCellTests)
+spec.requested_backend must agree with diagnostic --cpu-fallback. ... ok
+test_role_identities_agree_with_collector_and_server_sidecar (test_run_managed_cell.ManagedCellTests) ... ok
+test_sampler_fail_recorded_not_replaced (test_run_managed_cell.ManagedCellTests) ... ok
+test_sampler_modules_bound_and_backend_identity_consistent (test_run_managed_cell.ManagedCellTests) ... ok
+test_short_teardown_before_pad_fails_honestly (test_run_managed_cell.ManagedCellTests) ... ok
+test_successful_cell_uses_stop_file_not_only_sigterm (test_run_managed_cell.ManagedCellTests) ... ok
+test_successful_observation_then_delayed_teardown (test_run_managed_cell.ManagedCellTests) ... ok
+test_unix_collector_starts_once_before_metadata_processing (test_run_managed_cell.ManagedCellTests) ... ok
+test_windows_conpty_starts_once_after_helpers_are_bound (test_run_managed_cell.ManagedCellTests)
+The delayed Windows start includes the handed-off helper role. ... ok
+test_windows_non_conpty_handoff_does_not_require_helpers (test_run_managed_cell.ManagedCellTests) ... ok
+test_windows_sampler_module_bound_when_producer_is_win32 (test_run_managed_cell.ManagedCellTests)
+Launch pin includes windows_process_sample.py only for win32 system producer. ... ok
+
+======================================================================
+FAIL: test_default_collector_stops_after_pad_before_generated_stop_and_c (test_run_managed_cell.ManagedCellTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/tmp/274bot-head-memory.69U69S/docs/memory/test_run_managed_cell.py", line 927, in test_default_collector_stops_after_pad_before_generated_stop_and_c
+    self.assertLess(stop_requests[0]['monotonic_s'], events['Stop'])
+AssertionError: 5.265196333 not less than 0.653344916
+
+----------------------------------------------------------------------
+Ran 52 tests in 36.347s
+
+FAILED (failures=1, skipped=1)

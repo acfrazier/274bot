@@ -29,6 +29,7 @@ class CurrentTuiCalibrationControls(unittest.TestCase):
             population_admission=root / "population.json",
             cache_admission=root / "cache-admission.json",
             server_health_receipt=root / "server-health.json",
+            release_contract=root / "root-release.json",
         )
 
     def test_direct_owner_spec_is_exact_opt_in_and_default_is_unchanged(self):
@@ -51,6 +52,7 @@ class CurrentTuiCalibrationControls(unittest.TestCase):
             self.assertEqual(contract["frontend_wall_limit_s"], 360)
             self.assertEqual(pathlib.Path(contract["frontend_handoff_path"]), pathlib.Path(contract["cell_dir"]) / "frontend-handoff.json")
             self.assertEqual(pathlib.Path(contract["run_dir"]), pathlib.Path(contract["cell_dir"]) / "frontend-run")
+            self.assertEqual(pathlib.Path(contract["release_contract"]), args.release_contract.resolve())
             argv = spec["diagnostic_argv"]
             for flag in ("--direct-owner-capture", "--frontend-handoff", "--run-dir", "--no-diagnostics", "--sustain"):
                 self.assertIn(flag, argv)
@@ -83,6 +85,13 @@ class CurrentTuiCalibrationControls(unittest.TestCase):
             args.heaptrack_output = None
             args.n = 16
             with self.assertRaises(runner.CalibrationError):
+                runner.build_spec(args, {})
+
+    def test_direct_owner_requires_explicit_root_release_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = self._direct_args(pathlib.Path(tmp))
+            args.release_contract = None
+            with self.assertRaisesRegex(runner.CalibrationError, 'release contract'):
                 runner.build_spec(args, {})
 
     def test_diagnostic_argv_is_exact_resource_only_contract(self):

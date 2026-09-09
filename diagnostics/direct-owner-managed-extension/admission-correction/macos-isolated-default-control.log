@@ -1,0 +1,6 @@
+test_default_collector_stops_after_pad_before_generated_stop_and_c (test_run_managed_cell.ManagedCellTests) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 1.678s
+
+OK

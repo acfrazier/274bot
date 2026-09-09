@@ -5,10 +5,12 @@ Uses real dummy processes and fixture scripts — no live bot/server/networking.
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 import pathlib
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -335,6 +337,7 @@ class ManagedCellTests(unittest.TestCase):
 
     def _direct_spec(self):
         spec = self.fx.base_spec(cell_id='direct_contract')
+        cache, unpack = _make_cache_tree(self.fx.root / 'direct-cache')
         result = (self.fx.root / 'direct_contract.json').resolve()
         spec_path = result.with_suffix(result.suffix + '.spec.json')
         cell_dir = result.with_suffix(result.suffix + '.cells') / 'direct_contract'
@@ -351,6 +354,7 @@ class ManagedCellTests(unittest.TestCase):
             diagnostic_argv=diag, n=1, warmup_s=30, observe_s=120,
             teardown_grace_s=60, sampler_interval_s=.5, max_wall_s=365,
             process_backend='system', requested_backend='none', heaptrack=None,
+            cache_dir=str(cache), unpack_root=str(unpack),
             capture_contract={
                 'mode': 'direct-owner-v1', 'cell_dir': str(cell_dir),
                 'run_dir': str(run_dir), 'frontend_handoff_path': str(handoff),
@@ -363,11 +367,137 @@ class ManagedCellTests(unittest.TestCase):
                 'owned_output_limit_bytes': 67108864,
                 'frontend_wall_limit_s': 360, 'outer_wall_limit_s': 365,
                 'source_lineage': {'bound': True},
+                'release_contract': str(self.fx.root / 'root-release.json'),
                 'admission_receipts': {name: str(self.fx.root / (name + '.json'))
                                        for name in ('conflict', 'account', 'population', 'cache', 'server_health')},
             },
         )
         return spec
+
+    def _direct_preflight_fixtures(self, spec, *, now=200.0):
+        manifest = json.loads(self.fx.manifest.read_text())
+        provenance = {
+            'status': 'verified',
+            'manifest_sha256': _sha(self.fx.manifest),
+            'build_commit': manifest['candidate']['commit'],
+            'client_commit': manifest['candidate']['client']['commit'],
+            'host_sources_sha256': manifest['candidate']['sources_sha256_pre'],
+            'client_sources_sha256': manifest['candidate']['client']['sources_sha256'],
+            'files': {
+                'manifest': {'path': str(self.fx.manifest.resolve()), 'sha256': _sha(self.fx.manifest)},
+                'binary': {'path': str(self.fx.binary.resolve()), 'sha256': _sha(self.fx.binary)},
+                'nav_pack': {'path': str(self.fx.nav_pack.resolve()), 'sha256': _sha(self.fx.nav_pack)},
+                'nav_flags': {'path': str(self.fx.nav_flags.resolve()), 'sha256': _sha(self.fx.nav_flags)},
+                'catalog': {'path': str(self.fx.catalog.resolve()), 'sha256': _sha(self.fx.catalog)},
+            },
+        }
+        cache = cp.capture(spec['cache_dir'], spec['unpack_root'])
+        server_start = json.loads(self.fx.server_identity.read_text())['start_identity']
+        context = {
+            'fixture_binding_sha256': 'f' * 64,
+            'host_commit': provenance['build_commit'],
+            'client_commit': provenance['client_commit'],
+            'host_sources_sha256': provenance['host_sources_sha256'],
+            'client_sources_sha256': provenance['client_sources_sha256'],
+            'build_manifest_sha256': provenance['manifest_sha256'],
+            'binary_sha256': _sha(self.fx.binary),
+            'nav_pack_sha256': _sha(self.fx.nav_pack),
+            'nav_flags_sha256': _sha(self.fx.nav_flags),
+            'catalog_sha256': _sha(self.fx.catalog),
+            'cache_content_identity_sha256': cache['content_identity_sha256'],
+            'cache_snapshot_version': cache['snapshot_version'],
+            'server_pid': self.fx.game_server.pid,
+            'server_start_identity': server_start,
+            'server_executable_basename': 'python3',
+        }
+        common = {
+            'mode': 'direct-owner-v1', 'n': 1, 'workload': 'active',
+            'frontend': 'tui', 'admitted': True,
+            'observed_start_unix_s': 101.0, 'observed_end_unix_s': 102.0,
+            'boot_id': 'boot', 'context': context,
+        }
+        evidence = {
+            'conflict': {
+                'checked_classes': ['build', 'test', 'profiler', 'tui-panel-frontend'],
+                'matches': [],
+            },
+            'account': {
+                'fixture_binding_sha256': 'f' * 64,
+                'slot_count': 1, 'active_slot_count': 1,
+            },
+            'population': {
+                'fixture_binding_sha256': 'f' * 64,
+                'requested_n': 1, 'admitted_n': 1, 'workload': 'active',
+            },
+            'cache': {
+                'fixture_binding_sha256': 'f' * 64,
+                'content_identity_sha256': cache['content_identity_sha256'],
+                'snapshot_version': cache['snapshot_version'],
+            },
+            'server_health': {
+                'pid': self.fx.game_server.pid,
+                'start_identity': server_start,
+                'executable_basename': 'python3',
+                'probe': {'host': '127.0.0.1', 'port': 43594, 'succeeded': True},
+            },
+        }
+        receipt_bindings = {}
+        for kind, path_value in spec['capture_contract']['admission_receipts'].items():
+            path = pathlib.Path(path_value)
+            receipt = {
+                'schema': f'direct-owner-{kind.replace("_", "-")}-admission-v1',
+                'kind': kind,
+                **common,
+                'evidence': evidence[kind],
+            }
+            path.write_text(json.dumps(receipt, sort_keys=True))
+            receipt_bindings[kind] = {'path': str(path.resolve()), 'sha256': _sha(path)}
+        contract = spec['capture_contract']
+        release = {
+            'schema': 'direct-owner-root-release-v1',
+            'mode': 'direct-owner-v1', 'n': 1, 'workload': 'active', 'frontend': 'tui',
+            'issued_unix_s': 120.0,
+            'observation_window': {'not_before_unix_s': 100.0, 'not_after_unix_s': 110.0},
+            'expires_unix_s': 300.0,
+            'boot_id': 'boot', 'context': context,
+            'spec_binding': {
+                'result_path': contract['owned_output_paths'][0],
+                'cell_dir': contract['cell_dir'], 'run_dir': contract['run_dir'],
+                'frontend_handoff_path': contract['frontend_handoff_path'],
+                'build_manifest_path': str(self.fx.manifest.resolve()),
+                'binary_path': str(self.fx.binary.resolve()),
+                'nav_pack_path': str(self.fx.nav_pack.resolve()),
+                'nav_flags_path': str(self.fx.nav_flags.resolve()),
+                'catalog_path': str(self.fx.catalog.resolve()),
+                'cache_dir': str(pathlib.Path(spec['cache_dir']).resolve()),
+                'unpack_root': str(pathlib.Path(spec['unpack_root']).resolve()),
+            },
+            'receipt_bindings': receipt_bindings,
+        }
+        release_path = pathlib.Path(contract['release_contract'])
+        release_path.write_text(json.dumps(release, sort_keys=True))
+
+        def sample(pid, *, timeout):
+            identity = server_start if pid == self.fx.game_server.pid else 'ambient-start'
+            return {'pid': pid, 'start_identity': identity, 'resident_bytes': 1, 'state': 'S'}
+
+        def snapshot(**changes):
+            value = {
+                'mem_available_bytes': 805306368,
+                'swap_total_bytes': 0,
+                'swap_free_bytes': 0,
+                'vmstat': {'pswpin': 0, 'pswpout': 0, 'oom_kill': 0},
+                'cgroup': {'identity': 'cg', 'boot_id': 'boot',
+                           'memory_events': {'oom': 0, 'oom_kill': 0}},
+            }
+            value.update(changes)
+            return value
+
+        return {
+            'provenance': provenance, 'cache': cache, 'context': context,
+            'release': release, 'release_path': release_path,
+            'sample': sample, 'snapshot': snapshot, 'now': now,
+        }
 
     def test_direct_contract_and_argv_paths_are_exact_and_mode_only(self):
         spec = self._direct_spec()
@@ -618,43 +748,251 @@ class ManagedCellTests(unittest.TestCase):
                 platform_name='linux', machine='x86_64',
             )
 
-    def test_direct_preflight_boundaries_counter_drift_and_receipt_mutation(self):
+    def test_direct_preflight_rejects_the_root_reproduced_semantic_gap(self):
         spec = self._direct_spec()
         self.fx.manifest_obj['candidate']['source_lineage'] = spec['capture_contract']['source_lineage']
         self.fx.manifest.write_text(json.dumps(self.fx.manifest_obj))
-        for label, path in spec['capture_contract']['admission_receipts'].items():
-            pathlib.Path(path).write_text(json.dumps({'fixture_kind': label}))
         server_identity = json.loads(self.fx.server_identity.read_text())['start_identity']
 
         def sample(pid, *, timeout):
             identity = server_identity if pid == self.fx.game_server.pid else 'ambient-start'
-            return {'pid': pid, 'start_identity': identity, 'resident_bytes': 1,
-                    'state': 'S'}
+            return {'pid': pid, 'start_identity': identity, 'resident_bytes': 1, 'state': 'S'}
 
-        def snapshot(**changes):
-            value = {
-                'mem_available_bytes': 805306368,
-                'swap_total_bytes': 0,
-                'swap_free_bytes': 0,
-                'vmstat': {'pswpin': 0, 'pswpout': 0, 'oom_kill': 0},
-                'cgroup': {'identity': 'cg', 'boot_id': 'boot',
-                           'memory_events': {'oom': 0, 'oom_kill': 0}},
-            }
-            value.update(changes)
-            return value
+        snapshot = {
+            'mem_available_bytes': 805306368,
+            'swap_total_bytes': 0,
+            'swap_free_bytes': 0,
+            'vmstat': {'pswpin': 0, 'pswpout': 0, 'oom_kill': 0},
+            'cgroup': {'identity': 'cg', 'boot_id': 'boot',
+                       'memory_events': {'oom': 0, 'oom_kill': 0}},
+        }
+        cases = {
+            'untyped': {'anything': True},
+            'expired': {'expires_unix': 0, 'observed_unix': 0},
+            'rejected': {'admitted': False, 'status': 'rejected'},
+            'wrong_identity_and_conflict': {
+                'server_pid': -1, 'server_start_identity': 'wrong',
+                'matches': [{'pid': 99, 'start_identity': 'wrong', 'class': 'frontend'}],
+            },
+        }
+        for name, receipt in cases.items():
+            with self.subTest(name=name):
+                for path in spec['capture_contract']['admission_receipts'].values():
+                    pathlib.Path(path).write_text(json.dumps(receipt))
+                pathlib.Path(spec['capture_contract']['release_contract']).write_text(
+                    json.dumps(receipt)
+                )
+                with mock.patch.object(rmc.bp, 'verify_direct_owner_build', return_value={
+                        'status': 'verified', 'files': {}}), \
+                        mock.patch.object(rmc.pa, 'process_sampler', return_value=sample), \
+                        mock.patch.object(rmc.subprocess, 'Popen') as popen:
+                    with self.assertRaises(rmc.CellError):
+                        rmc.preflight(
+                            spec, rmc.parse_diagnostic_argv(spec['diagnostic_argv']),
+                            direct_snapshot=mock.Mock(side_effect=[copy.deepcopy(snapshot),
+                                                                   copy.deepcopy(snapshot)]),
+                            disk_usage=lambda _path: mock.Mock(free=268435456),
+                            sleep=lambda _seconds: None,
+                            platform_name='linux', machine='x86_64',
+                        )
+                    popen.assert_not_called()
+
+    def test_direct_receipt_and_release_schema_mutations_fail_closed(self):
+        spec = self._direct_spec()
+        self.fx.manifest_obj['candidate']['source_lineage'] = spec['capture_contract']['source_lineage']
+        self.fx.manifest.write_text(json.dumps(self.fx.manifest_obj))
+
+        def run(fixtures, probe=None):
+            with mock.patch.object(rmc.bp, 'verify_direct_owner_build',
+                                   return_value=fixtures['provenance']), \
+                    mock.patch.object(rmc.pa, 'process_sampler',
+                                      return_value=fixtures['sample']):
+                return rmc.preflight(
+                    spec, rmc.parse_diagnostic_argv(spec['diagnostic_argv']),
+                    direct_snapshot=mock.Mock(side_effect=[fixtures['snapshot'](),
+                                                           fixtures['snapshot']()]),
+                    disk_usage=lambda _path: mock.Mock(free=268435456),
+                    sleep=lambda _seconds: None,
+                    platform_name='linux', machine='x86_64',
+                    wall_time=lambda: fixtures['now'],
+                    server_probe=lambda: probe or {
+                        'host': '127.0.0.1', 'port': 43594, 'succeeded': True,
+                        'observed_start_unix_s': 199.0, 'observed_end_unix_s': 199.1,
+                    },
+                    executable_basename=lambda _pid: 'python3',
+                )
+
+        def mutate_receipt(kind, change):
+            fixtures = self._direct_preflight_fixtures(spec)
+            path = pathlib.Path(spec['capture_contract']['admission_receipts'][kind])
+            value = json.loads(path.read_text())
+            change(value)
+            path.write_text(json.dumps(value, sort_keys=True))
+            release = fixtures['release']
+            release['receipt_bindings'][kind]['sha256'] = _sha(path)
+            fixtures['release_path'].write_text(json.dumps(release, sort_keys=True))
+            with self.assertRaises(rmc.CellError):
+                run(fixtures)
+
+        # Every receipt kind rejects omitted/unknown fields, rejection, stale
+        # observations, and an identity mismatch even when root re-hashes it.
+        for kind in ('conflict', 'account', 'population', 'cache', 'server_health'):
+            for label, change in (
+                ('missing', lambda value: value.pop('evidence')),
+                ('unknown', lambda value: value.__setitem__('unknown', True)),
+                ('rejected', lambda value: value.__setitem__('admitted', False)),
+                ('stale', lambda value: value.__setitem__('observed_end_unix_s', 99.0)),
+                ('identity', lambda value: value['context'].__setitem__(
+                    'binary_sha256', '0' * 64)),
+            ):
+                with self.subTest(kind=kind, mutation=label):
+                    mutate_receipt(kind, change)
+
+        # Common schema fields are exact in both name and JSON type.
+        for field, bad in (
+            ('schema', 1), ('kind', None), ('mode', ['direct-owner-v1']),
+            ('n', True), ('workload', 1), ('frontend', {}), ('admitted', 1),
+            ('observed_start_unix_s', '101'), ('observed_end_unix_s', float('inf')),
+            ('boot_id', ''), ('context', []),
+        ):
+            with self.subTest(field=field):
+                mutate_receipt('account', lambda value, field=field, bad=bad:
+                               value.__setitem__(field, bad))
+
+        specialized = (
+            ('conflict', lambda value: value['evidence'].__setitem__(
+                'checked_classes', 'build,test,profiler,tui-panel-frontend')),
+            ('conflict', lambda value: value['evidence'].__setitem__(
+                'checked_classes', ['build', 'test', 'profiler'])),
+            ('conflict', lambda value: value['evidence'].__setitem__(
+                'checked_classes', ['build', 'test', 'profiler', 'unknown'])),
+            ('conflict', lambda value: value['evidence'].__setitem__('matches', {})),
+            ('conflict', lambda value: value['evidence'].__setitem__('matches', [{
+                'class': 'test', 'pid': 99, 'start_identity': 'start:99',
+                'executable_basename': 'python3',
+            }])),
+            ('conflict', lambda value: value['evidence'].__setitem__('matches', [{
+                'class': 'test', 'pid': True, 'start_identity': 'start:99',
+                'executable_basename': 'python3',
+            }])),
+            ('conflict', lambda value: value['evidence'].__setitem__('matches', [{
+                'class': 'test', 'pid': 99, 'start_identity': '',
+                'executable_basename': 'python3',
+            }])),
+            ('conflict', lambda value: value['evidence'].__setitem__('matches', [{
+                'class': 'test', 'pid': 99, 'start_identity': 'start:99',
+                'executable_basename': '/usr/bin/python3',
+            }])),
+            ('account', lambda value: value['evidence'].__setitem__(
+                'fixture_binding_sha256', '0' * 64)),
+            ('account', lambda value: value['evidence'].__setitem__('slot_count', 2)),
+            ('account', lambda value: value['evidence'].__setitem__('active_slot_count', True)),
+            ('population', lambda value: value['evidence'].__setitem__(
+                'fixture_binding_sha256', '0' * 64)),
+            ('population', lambda value: value['evidence'].__setitem__('requested_n', True)),
+            ('population', lambda value: value['evidence'].__setitem__('admitted_n', 2)),
+            ('population', lambda value: value['evidence'].__setitem__('workload', 'idle')),
+            ('cache', lambda value: value['evidence'].__setitem__(
+                'fixture_binding_sha256', '0' * 64)),
+            ('cache', lambda value: value['evidence'].__setitem__(
+                'content_identity_sha256', '0' * 64)),
+            ('cache', lambda value: value['evidence'].__setitem__('snapshot_version', 'bad')),
+            ('server_health', lambda value: value['evidence'].__setitem__('pid', -1)),
+            ('server_health', lambda value: value['evidence'].__setitem__(
+                'start_identity', 'wrong')),
+            ('server_health', lambda value: value['evidence'].__setitem__(
+                'executable_basename', '/usr/bin/python3')),
+            ('server_health', lambda value: value['evidence']['probe'].__setitem__(
+                'succeeded', False)),
+            ('server_health', lambda value: value['evidence']['probe'].__setitem__(
+                'host', '0.0.0.0')),
+            ('server_health', lambda value: value['evidence']['probe'].__setitem__(
+                'port', 43595)),
+        )
+        for index, (kind, change) in enumerate(specialized):
+            with self.subTest(kind=kind, specialized=index):
+                mutate_receipt(kind, change)
+
+        # Each shared identity is compared with independently measured current
+        # state rather than accepted merely because all receipts repeat it.
+        fixtures = self._direct_preflight_fixtures(spec)
+        for context_field in fixtures['context']:
+            with self.subTest(context_field=context_field):
+                mutate_receipt(
+                    'account',
+                    lambda value, context_field=context_field:
+                    value['context'].__setitem__(context_field, None),
+                )
+
+        fixtures = self._direct_preflight_fixtures(spec)
+        left = pathlib.Path(spec['capture_contract']['admission_receipts']['account'])
+        right = pathlib.Path(spec['capture_contract']['admission_receipts']['population'])
+        left_bytes, right_bytes = left.read_bytes(), right.read_bytes()
+        left.write_bytes(right_bytes)
+        right.write_bytes(left_bytes)
+        fixtures['release']['receipt_bindings']['account']['sha256'] = _sha(left)
+        fixtures['release']['receipt_bindings']['population']['sha256'] = _sha(right)
+        fixtures['release_path'].write_text(json.dumps(fixtures['release'], sort_keys=True))
+        with self.assertRaises(rmc.CellError):
+            run(fixtures)
+
+        release_mutations = (
+            lambda value: value.__setitem__('unknown', True),
+            lambda value: value.pop('expires_unix_s'),
+            lambda value: value.__setitem__('schema', 'unknown'),
+            lambda value: value.__setitem__('expires_unix_s', 199.0),
+            lambda value: value['observation_window'].__setitem__('not_after_unix_s', 301.0),
+            lambda value: value['context'].__setitem__('server_start_identity', 'wrong'),
+            lambda value: value['spec_binding'].__setitem__('binary_path', '/wrong'),
+            lambda value: value['receipt_bindings']['cache'].__setitem__('sha256', '0' * 64),
+        )
+        for index, change in enumerate(release_mutations):
+            fixtures = self._direct_preflight_fixtures(spec)
+            release = fixtures['release']
+            change(release)
+            fixtures['release_path'].write_text(json.dumps(release, sort_keys=True))
+            with self.subTest(release_mutation=index), self.assertRaises(rmc.CellError):
+                run(fixtures)
+
+        fixtures = self._direct_preflight_fixtures(spec)
+        stale_current_probe = {
+            'host': '127.0.0.1', 'port': 43594, 'succeeded': True,
+            'observed_start_unix_s': 119.0, 'observed_end_unix_s': 119.1,
+        }
+        with self.assertRaisesRegex(rmc.CellError, 'current loopback server probe'):
+            run(fixtures, stale_current_probe)
+
+    def test_direct_preflight_boundaries_counter_drift_and_receipt_mutation(self):
+        spec = self._direct_spec()
+        self.fx.manifest_obj['candidate']['source_lineage'] = spec['capture_contract']['source_lineage']
+        self.fx.manifest.write_text(json.dumps(self.fx.manifest_obj))
+        fixtures = self._direct_preflight_fixtures(spec)
+        sample = fixtures['sample']
+        snapshot = fixtures['snapshot']
+        injected = {
+            'wall_time': lambda: fixtures['now'],
+            'server_probe': lambda: {
+                'host': '127.0.0.1', 'port': 43594, 'succeeded': True,
+                'observed_start_unix_s': 199.0, 'observed_end_unix_s': 199.1,
+            },
+            'executable_basename': lambda _pid: 'python3',
+        }
 
         args = rmc.parse_diagnostic_argv(spec['diagnostic_argv'])
         patches = (
-            mock.patch.object(rmc.bp, 'verify_direct_owner_build', return_value={
-                'status': 'verified', 'files': {}}),
+            mock.patch.object(rmc.bp, 'verify_direct_owner_build',
+                              return_value=fixtures['provenance']),
             mock.patch.object(rmc.pa, 'process_sampler', return_value=sample),
         )
         with patches[0], patches[1]:
             accepted = rmc.preflight(
                 spec, args, direct_snapshot=mock.Mock(side_effect=[snapshot(), snapshot()]),
                 disk_usage=lambda _path: mock.Mock(free=268435456),
-                sleep=lambda _seconds: None, platform_name='linux', machine='x86_64')
+                sleep=lambda _seconds: None, platform_name='linux', machine='x86_64',
+                **injected)
             self.assertEqual(accepted['direct_preflight']['output_free_bytes'], 268435456)
+            self.assertEqual(accepted['direct_preflight']['server_probe']['port'], 43594)
+            self.assertIn('release_contract', accepted['direct_preflight']['admission_bindings'])
 
         for label, before, after, free in (
             ('mem', snapshot(mem_available_bytes=805306367), snapshot(), 268435456),
@@ -667,40 +1005,141 @@ class ManagedCellTests(unittest.TestCase):
                 'memory_events': {'oom': 0, 'oom_kill': 0}}), 268435456),
         ):
             with self.subTest(label=label), \
-                    mock.patch.object(rmc.bp, 'verify_direct_owner_build', return_value={
-                        'status': 'verified', 'files': {}}), \
+                    mock.patch.object(rmc.bp, 'verify_direct_owner_build',
+                                      return_value=fixtures['provenance']), \
                     mock.patch.object(rmc.pa, 'process_sampler', return_value=sample), \
                     self.assertRaises(rmc.CellError):
                 rmc.preflight(
                     spec, args, direct_snapshot=mock.Mock(side_effect=[before, after]),
                     disk_usage=lambda _path, free=free: mock.Mock(free=free),
-                    sleep=lambda _seconds: None, platform_name='linux', machine='x86_64')
+                    sleep=lambda _seconds: None, platform_name='linux', machine='x86_64',
+                    **injected)
 
         receipt = pathlib.Path(spec['capture_contract']['admission_receipts']['conflict'])
         def mutate_receipt(_seconds):
             receipt.write_text('{"changed": true}\n')
-        with mock.patch.object(rmc.bp, 'verify_direct_owner_build', return_value={
-                'status': 'verified', 'files': {}}), \
+        with mock.patch.object(rmc.bp, 'verify_direct_owner_build',
+                               return_value=fixtures['provenance']), \
                 mock.patch.object(rmc.pa, 'process_sampler', return_value=sample), \
                 self.assertRaisesRegex(rmc.CellError, 'admission receipt changed'):
             rmc.preflight(
                 spec, args, direct_snapshot=mock.Mock(side_effect=[snapshot(), snapshot()]),
                 disk_usage=lambda _path: mock.Mock(free=268435456),
-                sleep=mutate_receipt, platform_name='linux', machine='x86_64')
+                sleep=mutate_receipt, platform_name='linux', machine='x86_64',
+                **injected)
+
+        self._direct_preflight_fixtures(spec)
+
+        changing_executable = mock.Mock(side_effect=['python3', 'other-server'])
+        with mock.patch.object(rmc.bp, 'verify_direct_owner_build',
+                               return_value=fixtures['provenance']), \
+                mock.patch.object(rmc.pa, 'process_sampler', return_value=sample), \
+                self.assertRaisesRegex(rmc.CellError, 'executable identity changed'):
+            rmc.preflight(
+                spec, args, direct_snapshot=mock.Mock(side_effect=[snapshot(), snapshot()]),
+                disk_usage=lambda _path: mock.Mock(free=268435456),
+                sleep=lambda _seconds: None, platform_name='linux', machine='x86_64',
+                executable_basename=changing_executable,
+                wall_time=injected['wall_time'], server_probe=injected['server_probe'],
+            )
 
         def zombie_sample(pid, *, timeout):
             value = sample(pid, timeout=timeout)
             if pid == self.fx.game_server.pid:
                 value['state'] = 'Z'
             return value
-        with mock.patch.object(rmc.bp, 'verify_direct_owner_build', return_value={
-                'status': 'verified', 'files': {}}), \
+        with mock.patch.object(rmc.bp, 'verify_direct_owner_build',
+                               return_value=fixtures['provenance']), \
                 mock.patch.object(rmc.pa, 'process_sampler', return_value=zombie_sample), \
                 self.assertRaisesRegex(rmc.CellError, 'zombie'):
             rmc.preflight(
                 spec, args, direct_snapshot=mock.Mock(side_effect=[snapshot(), snapshot()]),
                 disk_usage=lambda _path: mock.Mock(free=268435456),
-                sleep=lambda _seconds: None, platform_name='linux', machine='x86_64')
+                sleep=lambda _seconds: None, platform_name='linux', machine='x86_64',
+                **injected)
+
+    def test_direct_binding_toctou_after_preflight_stops_before_popen(self):
+        spec = self._direct_spec()
+        self.fx.manifest_obj['candidate']['source_lineage'] = spec['capture_contract']['source_lineage']
+        self.fx.manifest.write_text(json.dumps(self.fx.manifest_obj))
+        fixtures = self._direct_preflight_fixtures(spec)
+        server_sample = fixtures['sample'](self.fx.game_server.pid, timeout=2)
+        ambient_sample = fixtures['sample'](self.fx.helper.pid, timeout=2)
+        admission_bindings = {
+            'release_contract': {
+                'path': str(fixtures['release_path'].resolve()),
+                'sha256': _sha(fixtures['release_path']),
+            },
+            **{
+                'receipt_' + kind: {
+                    'path': str(pathlib.Path(path).resolve()),
+                    'sha256': _sha(pathlib.Path(path)),
+                }
+                for kind, path in spec['capture_contract']['admission_receipts'].items()
+            },
+        }
+        pf = {
+            'provenance': fixtures['provenance'],
+            'server_sample': server_sample,
+            'server_pid': self.fx.game_server.pid,
+            'ambient_identities': {
+                'ambient_helper': {'pid': self.fx.helper.pid, 'sample': ambient_sample},
+            },
+            'binary': str(self.fx.binary.resolve()),
+            'observe_s': 120.0, 'warmup_s': 30.0,
+            'direct_preflight': {
+                'admission_bindings': admission_bindings,
+                'release_expires_unix_s': time.time() + 60.0,
+            },
+            'direct_cache_snapshot': fixtures['cache'],
+        }
+        receipt = pathlib.Path(spec['capture_contract']['admission_receipts']['account'])
+        release = fixtures['release_path']
+        original_receipt = receipt.read_bytes()
+        original_release = release.read_bytes()
+        original_nav = self.fx.nav_pack.read_bytes()
+        real_wall_time = time.time
+        real_create = mr.create_launch
+        spec_path = pathlib.Path(spec['capture_contract']['owned_output_paths'][1])
+        spec_path.parent.mkdir(parents=True, exist_ok=True)
+        spec_path.write_text(json.dumps(spec))
+        cell_dir = pathlib.Path(spec['capture_contract']['cell_dir'])
+        for label, mutate, current_time in (
+            ('admission_receipt', lambda: receipt.write_text('{"changed":true}\n'), None),
+            ('release_contract', lambda: release.write_text('{"changed":true}\n'), None),
+            ('provenance_file', lambda: self.fx.nav_pack.write_text('changed\n'), None),
+            ('expired_release', lambda: None,
+             pf['direct_preflight']['release_expires_unix_s'] + 1.0),
+        ):
+            with self.subTest(binding=label):
+                receipt.write_bytes(original_receipt)
+                release.write_bytes(original_release)
+                self.fx.nav_pack.write_bytes(original_nav)
+                if cell_dir.exists():
+                    shutil.rmtree(cell_dir)
+
+                def mutate_after_launch_receipt(*args, **kwargs):
+                    result = real_create(*args, **kwargs)
+                    mutate()
+                    return result
+
+                with mock.patch.object(rmc, 'preflight', return_value=pf), \
+                        mock.patch.object(rmc, '_role_identity',
+                                          side_effect=lambda pid, **_kwargs: {
+                                              'pid': pid, 'start_identity': f'start:{pid}'}), \
+                        mock.patch.object(
+                            rmc.mr, 'create_launch', side_effect=mutate_after_launch_receipt), \
+                        mock.patch.object(
+                            rmc.time, 'time', side_effect=lambda current_time=current_time:
+                            current_time if current_time is not None else real_wall_time()), \
+                        mock.patch.object(rmc.subprocess, 'Popen') as popen:
+                    report = rmc.run_managed_cell(
+                        spec_path, cell_dir.parent,
+                        accounting_script=ACCOUNTING, _test_launcher=True,
+                    )
+                popen.assert_not_called()
+                self.assertFalse(report['launched'])
+                self.assertEqual(report['status'], 'failed_or_unavailable')
 
     def test_conpty_helper_handoff_missing_fails_closed(self):
         with mock.patch.object(rmc.sys, 'platform', 'win32'):
