@@ -26,10 +26,12 @@ private COW storage directly with the existing shared template, not with a
 second account. If this scene does not discriminate, report that result; no
 automatic N2/N16 escalation or repeated live attempt follows.
 
-The tiled navigation candidate is a separate shared fixed owner, parked on its
-reviewed cold-load gate failure. Do not change it or answer the pending operator
-startup-tradeoff question. Frozen-source staging below does not revert it in the
-campaign checkout.
+The tiled navigation candidate is a separate shared fixed owner. Its measured
+cold-load result failed the original gate, but the operator accepted the measured
+~344 ms startup tradeoff at 0036143; root provisionally retains the candidate.
+CPU, latency, Stage B and all other gates remain unchanged. This design neither
+changes navigation nor releases a capture or optimization. Frozen-source staging
+below does not revert navigation in the campaign checkout.
 
 ## 2. Source authority and evidence, not runtime assumptions
 
