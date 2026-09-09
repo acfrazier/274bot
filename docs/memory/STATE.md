@@ -11,6 +11,22 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 18:25 UTC
+
+- Offline owner preparation7924ae5 APPROVED actualGrok4.5/xai142123_9e285d;
+  original/reviewed source identities cannot be relabeled as derivative HEADs.
+  Root accepts preparation only. Controller design t_59c6d6f5 profileSol is now
+  running; no controller implementation or live release yet.
+- Coordinate refinementebf0f30 APPROVED actualGrok4.5/xai142123_90f246. Root
+  inspected minimal source diff and independently regenerated raw statistics;
+  accepts generated evidence, not native/real performance acceptance.
+- New t_47ab4258 profileSol plans exact refined native source/tool admissions
+  and budget continuity. Existing F1 costs and118child ceiling cannot be reset:
+  a new candidate needs a coherent reviewed schedule decision, not old-F2
+  relabeling. No real pack operation or extra child allowance released.
+- Native combined evidence t_ffc1ef40 Grok4.6 remains running. Builder/Concord
+  have no root campaign process; production binary unchanged.
+
 ## Latest boundary — 2026-09-09 18:17 UTC
 
 - TUI overlay25af151 APPROVED actualGrok4.5/xai140618_7af3eb. Root verified
