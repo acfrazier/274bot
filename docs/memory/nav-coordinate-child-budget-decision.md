@@ -1,4 +1,4 @@
-# Refined navigation: proposed four-child accounting exception
+# Refined navigation: reviewed four-child accounting exception
 
 Status: root ACCEPTED the independent review of proposal80b9fe0 alongside
 admission plana438547, taskt_47ab4258, actualGrok4.5/xai session
