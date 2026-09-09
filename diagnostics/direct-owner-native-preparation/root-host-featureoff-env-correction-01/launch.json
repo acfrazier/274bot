@@ -1,0 +1,18 @@
+{
+  "scope": "Original-source macOS full host suite, test environment correction only; not native/live/performance admission.",
+  "original_failure": "../root-host-featureoff-baseline-01/result.json",
+  "environment_change": {
+    "BOT_CPU": "unset",
+    "R274_TEST_FORCE_NO_GPU": "1"
+  },
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--locked",
+    "-p",
+    "host",
+    "--",
+    "--test-threads=1"
+  ]
+}

@@ -11,6 +11,19 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 19:08 UTC
+
+- Root traced renderer failure to test environment: BOT_CPU=1 forces both slot
+  preferences true, so no backend flip occurs. Existing host tests already use
+  R274_TEST_FORCE_NO_GPU to force CPU rendering while preserving request identity.
+- Original full suite PASS after only unsetting BOT_CPU and setting that test
+  hook (10.747s, clean source unchanged). Both failed and corrected receipts are
+  preserved separately. Coverage worker must qualify its own corrected environment;
+  no production/assertion change or native/live admission follows from this proof.
+- Controller round2 actualGrok4.5/xai150232_3c45c5 requested child-mask correction;
+  Sol150532_057058 now active. Prior lifecycle fixes accepted in that review.
+  Navigation tooling and coverage remain active; root test process complete.
+
 ## Latest boundary — 2026-09-09 19:05 UTC
 
 - Root original-source feature-off host baseline reproduced the candidate failure:

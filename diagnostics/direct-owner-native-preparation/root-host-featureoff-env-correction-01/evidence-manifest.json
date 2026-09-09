@@ -1,0 +1,17 @@
+{
+  "scope": "Original-source corrected test environment; not native/live/performance admission",
+  "files": {
+    "launch.json": {
+      "bytes": 424,
+      "sha256": "dfd0bde54587190022eb362019154337d3ee1d8e6980e8f0ff9d0fe975d6c7dd"
+    },
+    "result.json": {
+      "bytes": 1213,
+      "sha256": "3cbacee1c8b7a48a79991459da40a9b0a77c3c21c2a47fbf589f8805851892c6"
+    },
+    "logs/original-host-feature-off-env-corrected.log": {
+      "bytes": 17280,
+      "sha256": "173e65f94fa133053552b8eac6819faf465be5a2aaa4df659c4ebc5c80bfa909"
+    }
+  }
+}

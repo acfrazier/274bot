@@ -1,0 +1,39 @@
+{
+  "scope": "Original-source macOS full host suite, test environment correction only; not native/live/performance admission.",
+  "original_failure": "../root-host-featureoff-baseline-01/result.json",
+  "environment_change": {
+    "BOT_CPU": "unset",
+    "R274_TEST_FORCE_NO_GPU": "1"
+  },
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--locked",
+    "-p",
+    "host",
+    "--",
+    "--test-threads=1"
+  ],
+  "step": {
+    "name": "original-host-feature-off-env-corrected",
+    "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/root-host-featureoff-baseline-01/source",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "-p",
+      "host",
+      "--",
+      "--test-threads=1"
+    ],
+    "exit": 0,
+    "timed_out": false,
+    "wall_s": 10.7473205,
+    "log": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-native-preparation/root-host-featureoff-env-correction-01/logs/original-host-feature-off-env-corrected.log",
+    "log_bytes": 17280,
+    "log_sha256": "173e65f94fa133053552b8eac6819faf465be5a2aaa4df659c4ebc5c80bfa909"
+  },
+  "source_after_clean": true
+}
