@@ -11,6 +11,29 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 14:01 UTC
+
+- First-attempt failure evidence and isolated startup/cold gate proposal APPROVED
+  t_eb56e9b6, actualGrok4.5/xai095544_27c777,195s. Review
+  nav-stage-a-first-attempt-review.md. Full59case routing remains unqualified.
+- Root releases ONE cold/peak-only screen, same four admitted binaries copied
+  with unchanged admissions/qualification to concord-cold-screen-01. Same full
+  pack, same6pairs/order/caps. Only original reviewed row40 outside-destination
+  control, TSVSHA0694cd204e005868d3c772ccf65f389d9c57b8fcee0166279ac175c2c75c9516.
+  Auth root-cold-authorization.json SHA
+  c967039a1ad535d0d830bb4eb0b0057177ec9517b0b2e3ce73cf7d2a4624bf65.
+  Evaluate only peak+8MiB/cold+10% with originalnoise; all routeCPU/p99 diagnostic,
+  never fullStageAacceptance. Two separate counting diagnostics afterclean only.
+  Fresh14:01:03Z preflight sameboot2CPU,972984KiBavailable,0swap,98.32%idle,
+ 0steal,no ownedconflicts. Clear necessarygate failure parks/reviews candidate;
+  pass/inconclusive leaves routing/resource-phase plan pending. No59case retry.
+- User-authorized Concord offload: verified local archives preserve fullfailure;
+  removed redundant transfer/archive files and failed-release input copy,
+ 84101066B total. Rootinput-stage original pack, binaries and small receipts stay.
+  Reader visibility limited for protected unrelated services, explicitly recorded;
+  completed owned writers/no remaining probes and visible FDs checked. Receipt
+  diagnostics/nav-stage-a-native-preparation/archived-locally-removal-receipt.json.
+
 ## Latest boundary — 2026-09-09 13:54 UTC
 
 - Real Stage A attempt STOPPED on first baseline:00-dense returncode-9 after
