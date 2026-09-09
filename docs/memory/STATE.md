@@ -11,6 +11,29 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 12:11 UTC
+
+- Native differential report5999f85 APPROVED t_961e2009 actual Grok4.5/xai
+ 074928_7804c5,11m38s. Independent full archive/byte/frame/admission/provenance
+ checks reproduced root claims. Positive Teleport/BankSession and StageA/B OPEN.
+- Operator corpus mapping995fff1 APPROVED same-cardt_3cd7b8af round3 actual
+ Grok4.5/xai080230_afbd0e. Required numeric bindings/radii corrected. Root
+ released tool extension/generated qualification ONLY t_2aabed22, actual
+ Astra/openai080530_dd9750 running. Keep original0..3facts and all old artifacts;
+ append source-backed spell/carriedglory/ship presets, no foreign router policy.
+ No new real pack execution/native staging/measurement released on that card.
+- Ground tracea7f4909 APPROVED Grok4.5/xai075229_e64b14 then required final
+ Grok4.6/xai075729_f8ae77 t_99cec734 (6m9s), docs08a44be. Root fresh build
+ at08a44be7e6ad36327353c978f3103db266809a4f passed2.988s;
+ binary39450784B SHAa8bab7943c898cf151fe1f25437b843b060747d6c7ea0efda6f73134ec6347c8.
+ Root releases ONE bounded native ground-click observation with traceenv1,
+ max300s and firstingame/scene2 click within120s trace lifetime. No app launched
+ yet; preflight protected3configs/8cachehashes/engine+contentpins passed;
+ isolatedserver49444 remains. Source/body unchanged; no gameplay fix justified.
+ StreamAPI Ok is queue/no-op only, not TCP/server/player acceptance. No native
+ camera/pick-eye inference from pre-scene trace. Close then verify process
+ externally; never use post-close CUA methods that relaunch the stale bundle.
+
 ## Latest boundary — 2026-09-09 11:48 UTC
 
 - ONE native real comparison PASS:65142784 logical cells,40frozen routes,
