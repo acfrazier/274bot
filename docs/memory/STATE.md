@@ -11,6 +11,26 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 14:17 UTC
+
+- Cold result/disposition report492e485 is in independent evidence review
+  t_8693907a, actualGrok4.5/xai101247_c6b89d. Candidate remains parked. Root
+  asked an OPTIONAL operator question whether to permit only the measured
+  ~344ms startup tradeoff provisionally; no answer/waiver exists yet. Keep the
+  current10% limit and all other gates while pending; do not infer consent.
+- Root releases DESIGN ONLY t_360cbcc9 profileorch: direct live per-bot owner/
+  capacity capture proposal using existing source seams and completed PhaseA
+  ledger. It addresses the existing22.964MiB/additionalactivebot vs16MiB gap;
+  no repeatstructurallayout exercise, production/tool changes, live/capture/SSH,
+  optimization/default changes or newmeasurements. Same-card reviewer required.
+  Sourceanchors c0709ab/client3456, prior N1/N16TUI176.322/520.779MiB are
+  diagnostic snapshots, not new/current performanceacceptance. Root still owns
+  currentcandidate decisions, freezes and finalwholebranchGrok4.6.
+- Coldscreen archive+duplicateinput also removed from Concord after full local
+  verification,78607994B, receiptarchived-locally-cold-removal-receipt.json.
+  Complete local720file archive retained; original stagedpack/source/binaries
+  and smallreceipts remain. No capture or frontend process now running here.
+
 ## Latest boundary — 2026-09-09 14:11 UTC
 
 - Completed cold/peak screen:12 clean processes and2 separate counting processes0,
