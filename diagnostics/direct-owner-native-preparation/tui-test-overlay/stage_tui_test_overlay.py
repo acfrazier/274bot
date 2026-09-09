@@ -4,8 +4,9 @@
 The immutable frozen archive is the sole input.  A fresh extracted tree is
 created outside the checkout, the hash-bound patch is applied to exactly one
 source file, and every archive member is rehashed before optional bounded
-offline/locked TUI tests.  This helper never edits the source archive or the
-checkout and never launches a live frontend, account, vault, cache, or server.
+offline/locked TUI tests.  Tests may construct synthetic temporary vault
+fixtures, but this helper never accesses an operator/live vault, account,
+cache, server, or network, and never edits the source archive or checkout.
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import platform
+import signal
 import shutil
 import subprocess
 import sys
@@ -169,6 +171,21 @@ def cfg_test_contract(source: Path, patch: Path) -> dict[str, Any]:
     }
 
 
+def verify_locks(source: Path, manifest: dict[str, Any], phase: str) -> dict[str, Any]:
+    verified: dict[str, Any] = {}
+    for relative, expected in manifest["locks"].items():
+        path = source / relative
+        if not path.is_file() or path.is_symlink():
+            raise RuntimeError(f"{phase}: manifest lock is not a regular file: {relative}")
+        data = path.read_bytes()
+        actual = {"bytes": len(data), "sha256": sha256_bytes(data)}
+        wanted = {"bytes": expected["bytes"], "sha256": expected["sha256"]}
+        if actual != wanted:
+            raise RuntimeError(f"{phase}: lock identity mismatch: {relative}: {actual}")
+        verified[relative] = actual
+    return {"phase": phase, "verified": verified}
+
+
 def run_tests(source: Path, output: Path, timeout: int) -> dict[str, Any]:
     env = dict(os.environ)
     for name in ("LIVE", "BOT_VAULT_PASS", "BOT_VAULT", "BOT_CACHE", "BOT_CACHE_DIR", "BOT_SERVER", "BOT_HOST"):
@@ -181,10 +198,37 @@ def run_tests(source: Path, output: Path, timeout: int) -> dict[str, Any]:
         "--features", "memory-profile-no-alloc,memory-owner-capture",
         "--", "--test-threads=1",
     ]
-    started = subprocess.run(command, cwd=source, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout)
     log = output / "tui-tests.log"
-    log.write_text(started.stdout)
-    return {"command": command, "exit": started.returncode, "timeout_s": timeout, "log": str(log), "log_sha256": sha256_file(log), "log_bytes": log.stat().st_size}
+    timed_out = False
+    with log.open("w", encoding="utf-8") as stream:
+        process = subprocess.Popen(
+            command,
+            cwd=source,
+            env=env,
+            stdout=stream,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            os.killpg(process.pid, signal.SIGTERM)
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+    return {
+        "command": command,
+        "exit": process.returncode,
+        "timed_out": timed_out,
+        "timeout_s": timeout,
+        "log": str(log),
+        "log_sha256": sha256_file(log),
+        "log_bytes": log.stat().st_size,
+    }
 
 
 def main() -> int:
@@ -207,9 +251,13 @@ def main() -> int:
             source, identity = extract_and_verify(args.archive.resolve(), manifest, Path(temporary))
             patch_receipt = apply_patch(source, args.patch.resolve())
             contract = cfg_test_contract(source, args.patch.resolve())
+            lock_receipts = [verify_locks(source, manifest, "after-stage")]
             test_receipt = run_tests(source, output, args.timeout) if args.run_tests else None
-            # Preserve the staged tree as the explicit derived artifact only when requested by the caller.
-            if os.environ.get("KEEP_TUI_OVERLAY_TREE") == "1":
+            if test_receipt is not None:
+                lock_receipts.append(verify_locks(source, manifest, "after-tests"))
+            failed = test_receipt is not None and (test_receipt["exit"] != 0 or test_receipt["timed_out"])
+            # Retain failures for inspection; success is retained only on request.
+            if failed or os.environ.get("KEEP_TUI_OVERLAY_TREE") == "1":
                 kept = output / "derived-source"
                 shutil.copytree(source, kept, symlinks=True)
                 identity["derived_tree"] = str(kept)
@@ -222,10 +270,7 @@ def main() -> int:
                 "original_member_hashes_verified": True,
                 "patch": patch_receipt,
                 "cfg_test_contract": contract,
-                "locks": {
-                    path: {"bytes": manifest["locks"][path]["bytes"], "sha256": sha256_file(source / path)}
-                    for path in manifest["locks"]
-                },
+                "locks": lock_receipts,
                 "tests": test_receipt,
                 "linux_qualified": False,
                 "live_qualified": False,

@@ -39,8 +39,12 @@ Overlay
    `aee97345c86cff0eb3253ef56b3e64fd123991f57bebbe5fcb750d899839e28c`.
 6. Verifies that the guard field, helper implementation, and spawn branch are
    all `cfg(test)`-excluded, and records `non_test_source_modified: false`.
-7. Rechecks lockfile hashes and records that Linux/live qualification is
-   false.
+7. Rechecks every manifest lockfile (including the independent shade-probe
+   lock) after staging and, when tests run, after tests; each check asserts
+   both bytes and SHA-256 identity. Linux/live qualification remains false.
+8. Runs tests in an owned process group, streams output directly to the log,
+   terminates and reaps only that group on timeout, and retains the derived
+   tree and partial log for failed or timed-out runs.
 
 The resulting receipt is
 `tui-test-overlay/verification-receipt.json`. The original archive and
@@ -66,8 +70,9 @@ The two guard-covered preparation tests both executed and passed:
 The complete test log was 21,978 bytes with SHA-256
 `70b07a82eaa1677c66e1a060108e84cf1711db7be238ae51abb67599a27675cf`.
 The test process created no slot worker from either preparation fixture; the
-new assertions verified the absent arm and staged pending script. No live
-service, account, vault, cache, server, or network was used.
+new assertions verified the absent arm and staged pending script. The fixture
+harness may construct synthetic temporary vault fixtures, but no operator/live
+vault, account, cache, server, or network was accessed.
 
 Native handoff
 
