@@ -17,10 +17,26 @@ import shutil
 import sys
 
 SCHEMA = 'stage-a-singleton-v2'
+COORDINATE_SCHEMA = 'stage-a-coordinate-v1'
+COORDINATE_QUALIFICATION_SCHEMA = 'stage-a-coordinate-generated-v1'
 RAW_SCHEMA = 'stage-a-raw-v1'
 RAW_ORDER = 'sweep-row-lane/8/3'
 NATIVE_IDLE_SECONDS = 1.0
 CEILINGS = {'F1': [480,360,4], 'F2': [1800,1500,118], 'acceptance': [7200,6000,708]}
+COORDINATE_CEILINGS = {'CF1': [1800,1500,4], 'CF2': [1800,1500,114], 'CA': [7200,6000,708]}
+COORDINATE_QUALIFICATION_CEILINGS = {'GQ': [480,360,4]}
+ACCEPTED_DECISION_COMMIT = 'b00ba2c5d923c93f3161c1663ed3879bab8482af'
+ACCEPTED_DECISION_SHA256 = '6e53a13303442b5f6087e9321babc1d7be340031adf22a5a5c88c0edd7f225a7'
+PRIOR_F1_LEDGER = dict(schema='stage-a-prior-campaign-ledger-v1',candidate_id='tiled-8385',
+    authorization_sha256='d6da3b78dfdc419c53dea6c25bc131aebea9c3a380f7e12d858d2b4f0d194820',
+    claim_sha256='f25ef0b02697440f98d197ffab50f98ce1c5086661da444104c4455bb9cd336f',
+    checkpoint_sha256='b1d72bfc93e44f5be7fad48a0b2a50a56156ef3fc7a61b41abc04fa9d6c45665',
+    result_sha256='30d9e6ecb7c25b63214e61e9a342b468568dbe0682425c9fb5dd74f600e703ba',
+    audit_sha256='98366a1a5a4b3bccae346cb9deef041ab1b983c6a367a97b9346ce4875bdf81d',
+    archive_sha256='102c6d41806620247e3c9d23f19a743f4503ca53b556afd4d7da9f05851cf031',
+    wall=40.090448230999755,cpu=29.50134,supervisor_cpu=12.647822631999999,
+    waited_children_cpu=16.753525368,unknown_cpu_charge=0,
+    publication_reserved_wall=1,publication_reserved_cpu=.1,children=4,stopped=False)
 STORAGE = dict(release_bytes=512*1024**2, free_reserve_bytes=1024**3,
                child_bytes=256*1024, record_bytes=16384, json_bytes=256*1024)
 ORIGINAL_TSV = '49e348ea78806c8278d720d27b171c54a0a209930fa8191ffcd38d2e9bbbc125'
@@ -30,6 +46,43 @@ QUAL_LIMITS = dict(wall=360,cpu=300,rss=512*1024**2,address=4*1024**3,output=102
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def coordinate_budget(decision_sha256,prior_ledger):
+    if decision_sha256!=ACCEPTED_DECISION_SHA256:
+        raise ValueError('exact accepted root child decision hash required')
+    if prior_ledger!=PRIOR_F1_LEDGER:
+        raise ValueError('immutable old F1 receipt ledger required')
+    return dict(schema='stage-a-coordinate-budget-v1',candidate_id='coordinate-ebf0f30',
+        decision_commit=ACCEPTED_DECISION_COMMIT,decision_sha256=ACCEPTED_DECISION_SHA256,
+        cumulative_child_ceiling=122,fresh_child_ceiling=118,
+        cumulative_wall_ceiling=1800,cumulative_cpu_ceiling=1500,prior=dict(prior_ledger))
+
+
+def protocol(phase=None):
+    if phase in COORDINATE_QUALIFICATION_CEILINGS:
+        return dict(coordinate=True,tooling=True,schema=COORDINATE_QUALIFICATION_SCHEMA,
+            phases=('GQ',None,None),ceilings=COORDINATE_QUALIFICATION_CEILINGS,
+            candidate_id='coordinate-ebf0f30',source_binding=stage.SOURCE_BINDING_REF)
+    coordinate=phase in COORDINATE_CEILINGS if phase is not None else stage.SOURCE_BINDING is not None
+    return dict(coordinate=coordinate,tooling=False,schema=COORDINATE_SCHEMA if coordinate else SCHEMA,
+        phases=('CF1','CF2','CA') if coordinate else ('F1','F2','acceptance'),
+        ceilings=COORDINATE_CEILINGS if coordinate else CEILINGS,
+        candidate_id='coordinate-ebf0f30' if coordinate else None,
+        source_binding=stage.SOURCE_BINDING_REF if coordinate else None)
+
+
+def identity(phase):
+    spec=protocol(phase)
+    value=dict(schema=spec['schema'],phase=phase)
+    if spec['coordinate']:
+        value.update(candidate_id=spec['candidate_id'],source_binding=spec['source_binding'])
+    return value
+
+
+def coordinate_ledger_identity():
+    return dict(prior_campaign_ledger=dict(PRIOR_F1_LEDGER),
+        child_decision_sha256=ACCEPTED_DECISION_SHA256)
 
 
 def write_json(path,value,cap=256*1024):
@@ -66,21 +119,27 @@ def normalized_rows(path):
 
 
 def contract(rows):
-    return dict(schema=SCHEMA,raw_schema=RAW_SCHEMA,raw_order=RAW_ORDER,
+    spec=protocol()
+    value=dict(schema=spec['schema'],raw_schema=RAW_SCHEMA,raw_order=RAW_ORDER,
         tools=tool_hashes(),arms=stage.ARMS,client=stage.support.CLIENT,
         shard_sha256=[digest(r) for r in rows],
-        schedules={p:[list(x) for x in schedule(p)] for p in CEILINGS},
-        ceilings=CEILINGS,total=[9000,7500],child_limits=stage.LIMITS,
+        schedules={p:[list(x) for x in schedule(p)] for p in spec['ceilings']},
+        ceilings=spec['ceilings'],total=[9000,7500],child_limits=stage.LIMITS,
         headroom=[80,60],storage=STORAGE,
         native_idle_sample=dict(schema='stage-a-native-idle-v1',seconds=NATIVE_IDLE_SECONDS,
             method='proc-stat-single-delta-idle-plus-iowait',minimum_idle_percent=90,
             maximum_steal_ticks=0))
+    if spec['coordinate']:
+        value.update(candidate_id=spec['candidate_id'],source_binding=spec['source_binding'],
+            campaign_budget=coordinate_budget(ACCEPTED_DECISION_SHA256,PRIOR_F1_LEDGER))
+    return value
 
 
-def generated_authorization(run,pack,routes,destination):
+def generated_authorization(run,pack,routes,destination,source_binding_path=None,source_binding_sha256=None):
     # This convenience constructor cannot issue a real authorization or touch
     # anything outside the run's generated fixture directory.
     run=stage.owned(run)
+    stage.activate_run_binding(run,source_binding_path,source_binding_sha256)
     if pack.resolve().parent!=run/'fixtures' or routes.resolve().parent!=run/'fixtures':
         raise ValueError('stand-in cannot access external input')
     prerequisites=dict(released=True,mode='standin',limits=stage.LIMITS,
@@ -89,15 +148,24 @@ def generated_authorization(run,pack,routes,destination):
         manifest_sha256=stage.sha(stage.HERE/'proposed-manifest.json'),correctness_review_released=True,
         input_path=str(pack),input_sha256=stage.sha(pack),input_bytes=pack.stat().st_size,
         routes_path=str(routes),routes_sha256=stage.sha(routes))
+    spec=protocol('GQ') if stage.SOURCE_BINDING is not None else protocol()
+    if spec['coordinate']:
+        prerequisites.update(schema='stage-a-coordinate-release-v1',candidate_id=spec['candidate_id'],
+            source_binding=spec['source_binding'],phase='tooling-release')
     for variant in ('clean','counting'):
         p=run/f'qualification-{variant}/result.json'
         if p.exists(): prerequisites[variant+'_qualification_sha256']=stage.sha(p)
         for arm in stage.ARMS:
             p=run/f'{arm}-{variant}-admission.json'
             if p.exists(): prerequisites[f'{arm}-{variant}-admission_sha256']=stage.sha(p)
-    return dict(schema=SCHEMA,phase='F1',released=True,mode='standin',run=str(run),
+    value=dict(schema=spec['schema'],phase=spec['phases'][0],released=True,mode='standin',run=str(run),
         destination=str(stage.owned(destination)),prerequisites=prerequisites,
         contract=contract(normalized_rows(routes)))
+    if spec['coordinate']:
+        if not destination.name.startswith('coordinate-ebf0f30-'):
+            raise ValueError('coordinate destination namespace required')
+        value.update(candidate_id=spec['candidate_id'],source_binding=spec['source_binding'])
+    return value
 
 
 def storage_guard(dest,reserve=0):
@@ -137,10 +205,14 @@ def native_preflight(root,fresh=False):
 
 def check_scheduler_qualification(root):
     q=read_ref(root['scheduler_qualification'])
+    spec=protocol(root.get('phase'))
     if (q.get('qualified') is not True or q.get('native_hard_as_qualified') is not True
             or q.get('tools')!=tool_hashes() or q.get('platform')!=platform.platform()
             or q.get('hardware')!=stage.hardware() or q.get('python_sha256')!=stage.sha(sys.executable)):
         raise ValueError('native scheduler qualification missing/stale')
+    if spec['coordinate'] and (q.get('schema'),q.get('candidate_id'),q.get('source_binding'))!=(
+            COORDINATE_QUALIFICATION_SCHEMA,spec['candidate_id'],spec['source_binding']):
+        raise ValueError('coordinate scheduler qualification binding missing')
     guards=q['guards']
     for suffix,ref in guards.items():
         stage.admit(Path(ref['path']),ref['sha256'],1024**2)
@@ -154,10 +226,11 @@ def check_scheduler_qualification(root):
             or b'skipped' in Path(guards['.err']['path']).read_bytes()):
         raise ValueError('native scheduler guards failed/skipped')
     smoke=read_ref(q['smoke'])
-    if smoke.get('status')!='complete' or smoke.get('phase')!='F1' or smoke.get('completed')!=4:
+    first='GQ' if spec['coordinate'] else spec['phases'][0]
+    if smoke.get('status')!='complete' or smoke.get('phase')!=first or smoke.get('completed')!=4:
         raise ValueError('new probe smoke incomplete')
-    bind_entries(Path(q['smoke']['path']).parent,smoke['entries'],'F1')
-    collect(Path(q['smoke']['path']).parent,smoke['entries'],'F1')
+    bind_entries(Path(q['smoke']['path']).parent,smoke['entries'],first)
+    collect(Path(q['smoke']['path']).parent,smoke['entries'],first)
 
 
 def launch(run,arm,pack,selector,out,name,standin):
@@ -188,9 +261,12 @@ def validate_receipt(receipt,child_cpu):
 
 
 def bind_entries(dest,entries,phase):
+    entries=resolve_entries(dest,entries,phase)
     expected=schedule(phase)
     for i,entry in enumerate(entries):
         j,row,arm=expected[i]
+        if protocol(phase)['coordinate'] and any(entry.get(k)!=v for k,v in identity(phase).items()):
+            raise ValueError('entry coordinate identity binding')
         if entry['slot']!=[j,row,arm] or entry['name']!=f'{i:03d}-{j}-{row}-{arm}':
             raise ValueError('entry ordinal/path binding')
         if set(entry['files'])!={'.out','.err','.receipt.json'}:
@@ -201,7 +277,29 @@ def bind_entries(dest,entries,phase):
         stage.admit(record,digest((json.dumps(entry,sort_keys=True,separators=(',',':'),allow_nan=False)+'\n').encode()),16384)
 
 
+def resolve_entries(dest,entries,phase):
+    if not entries or 'record_sha256' not in entries[0]:return entries
+    if not protocol(phase)['coordinate']:
+        raise ValueError('record references reserved for coordinate protocol')
+    resolved=[]
+    for i,ref in enumerate(entries):
+        if set(ref)!= {'name','record_sha256'}:
+            raise ValueError('coordinate record reference fields')
+        expected=schedule(phase)[i];name=f'{i:03d}-{expected[0]}-{expected[1]}-{expected[2]}'
+        if ref['name']!=name:raise ValueError('coordinate record reference order')
+        path=dest/(name+'.record.json')
+        stage.admit(path,ref['record_sha256'],16384)
+        resolved.append(json.loads(path.read_text()))
+    return resolved
+
+
+def result_entries(dest,entries,phase):
+    if not protocol(phase)['coordinate']:return entries
+    return [dict(name=e['name'],record_sha256=stage.sha(dest/(e['name']+'.record.json'))) for e in entries]
+
+
 def collect(dest,entries,phase):
+    entries=resolve_entries(dest,entries,phase)
     expected=schedule(phase)
     if len(entries)!=len(expected):
         raise ValueError('partial schedule cannot aggregate')
@@ -223,8 +321,10 @@ def collect(dest,entries,phase):
 
 
 def aggregate(results):
-    if [slot for slot,_ in results]!=schedule('acceptance'):
+    phase='CA' if results and results[0][0][2] in ('dense','refined') and any(s[0][2]=='refined' for s in results) else 'acceptance'
+    if [slot for slot,_ in results]!=schedule(phase):
         raise ValueError('six complete replicates required')
+    candidate='refined' if phase=='CA' else 'tiled'
     batches={}
     peaks={r:{a:[] for a in stage.ARMS} for r in range(1,60)}
     for (j,row,arm),data in results:
@@ -238,9 +338,9 @@ def aggregate(results):
         if len(b['raw'])!=1416: raise ValueError('incomplete raw population')
         b['p99']=p99(b['raw']);b['lane_p99']=[p99(b['raw'][lane::3]) for lane in range(3)]
     metrics={name:stage.paired([batches[j,'dense'][key] for j in range(1,7)],
-        [batches[j,'tiled'][key] for j in range(1,7)],threshold,relative)
+        [batches[j,candidate][key] for j in range(1,7)],threshold,relative)
         for name,key,threshold,relative in [('route_cpu','cpu',.05,True),('route_p99','p99',2_000_000,False)]}
-    metrics['row_peak']={str(row):stage.paired(v['dense'],v['tiled'],8388608) for row,v in peaks.items()}
+    metrics['row_peak']={str(row):stage.paired(v['dense'],v[candidate],8388608) for row,v in peaks.items()}
     return dict(metrics=metrics,batches=[dict(pair=j,arm=a,**{k:v for k,v in b.items() if k!='raw'}) for (j,a),b in batches.items()])
 
 
@@ -250,60 +350,87 @@ def row_peak(results,row):
         if r==row:values[a].append((j,data[2]['process_peak_rss_bytes']))
     if any([j for j,_ in v]!=list(range(1,7)) for v in values.values()):
         raise ValueError('six row peak pairs required')
-    return stage.paired([v for _,v in values['dense']],[v for _,v in values['tiled']],8388608)
+    candidate=next(a for a in values if a!='dense')
+    return stage.paired([v for _,v in values['dense']],[v for _,v in values[candidate]],8388608)
 
 
-def run_phase(run,authorization,authorization_sha256,standin=False):
+def run_phase(run,authorization,authorization_sha256,standin=False,
+        source_binding_path=None,source_binding_sha256=None):
     started=(time.monotonic(),total_cpu(),time.process_time())
     # A bounded bootstrap covers even authorization parsing. Only the small,
     # hash-bound root/parent receipts may precede cumulative budget admission.
     # Never grant a continuation the phase's fresh CPU allowance for setup.
     with deadline(min(v[0] for v in CEILINGS.values())), cpu_deadline(min(v[1] for v in CEILINGS.values())):
+        run=stage.owned(run)
+        stage.activate_run_binding(run,source_binding_path,source_binding_sha256)
         return _run_phase(run,authorization,authorization_sha256,standin,started)
 
 
 def _run_phase(run,authorization,authorization_sha256,standin,started):
     start,cpu_start,own_start=started
     run=stage.owned(run);auth_ref=dict(path=str(authorization.absolute()),sha256=authorization_sha256)
-    auth=read_ref(auth_ref);phase=auth.get('phase')
-    if phase not in CEILINGS or auth.get('schema')!=SCHEMA or auth.get('released') is not True or auth.get('mode')!=('standin' if standin else 'real'):
+    auth=read_ref(auth_ref);phase=auth.get('phase');spec=protocol(phase)
+    if phase not in spec['ceilings'] or auth.get('schema')!=spec['schema'] or auth.get('released') is not True or auth.get('mode')!=('standin' if standin else 'real'):
         raise ValueError('explicit versioned phase authorization required')
-    root_ref=auth_ref if phase=='F1' else auth['root']
+    expected_budget=None
+    if spec['coordinate']:
+        if (auth.get('candidate_id'),auth.get('source_binding'))!=(spec['candidate_id'],spec['source_binding']):
+            raise ValueError('coordinate authorization identity missing')
+        if not spec['tooling']:
+            expected_budget=coordinate_budget(auth.get('child_decision_sha256'),auth.get('prior_campaign_ledger'))
+            if auth.get('campaign_budget')!=expected_budget:
+                raise ValueError('coordinate authorization budget missing')
+    first,second,acceptance=spec['phases']
+    root_ref=auth_ref if phase==first else auth['root']
     root=read_ref(root_ref)
-    if root.get('phase')!='F1' or root.get('run')!=str(run) or root.get('mode')!=auth['mode']:
+    if root.get('phase')!=first or root.get('run')!=str(run) or root.get('mode')!=auth['mode']:
         raise ValueError('original release identity mismatch')
+    if spec['coordinate'] and ((root.get('candidate_id'),root.get('source_binding'))!=(
+            spec['candidate_id'],spec['source_binding']) or
+            (not spec['tooling'] and root.get('campaign_budget')!=expected_budget)):
+        raise ValueError('coordinate root identity mismatch')
     dest=stage.owned(Path(root['destination']))
     if run not in dest.parents:raise ValueError('release destination outside admitted run')
-    if phase=='F1':dest.mkdir(parents=True,exist_ok=False)
+    if spec['coordinate'] and not dest.name.startswith('coordinate-ebf0f30-'):
+        raise ValueError('coordinate destination namespace required')
+    if phase==first:dest.mkdir(parents=True,exist_ok=False)
     out=dest/phase;out.mkdir(exist_ok=False)
     # Claim BEFORE hashing/staging/source admission. If setup is interrupted its
     # cost is unknown and this phase stays non-restartable, even with zero probes.
-    write_json(out/'claim.json',dict(schema=SCHEMA,phase=phase,root=root_ref,
+    write_json(out/'claim.json',dict(identity(phase),root=root_ref,
         authorization=auth_ref,status='claimed',interruption_budget_unknown=True),16384)
     claim_ref=reference(out/'claim.json')
-    prior=dict(wall=0,cpu=0);ancestors=[]
-    if phase!='F1':
+    prior=(dict(PRIOR_F1_LEDGER) if spec['coordinate'] and not spec['tooling'] else dict(wall=0,cpu=0));ancestors=[]
+    if phase!=first:
         if auth.get('review_approved') is not True: raise ValueError('parent evidence review required')
-        if phase=='acceptance' and auth.get('method_accepted') is not True: raise ValueError('root temporal method decision required')
+        if phase==acceptance and auth.get('method_accepted') is not True: raise ValueError('root temporal method decision required')
         parent_ref=auth['parent'];parent=read_ref(parent_ref)
-        wanted='F1' if phase=='F2' else 'F2'
+        wanted=first if phase==second else second
         if (parent.get('phase')!=wanted or parent.get('status')!='complete'
                 or parent.get('root')!=root_ref or parent.get('completed')!=len(schedule(wanted))):
             raise ValueError('incomplete or foreign continuation receipt')
+        if spec['coordinate'] and any(parent.get(k)!=v for k,v in identity(wanted).items()):
+            raise ValueError('foreign coordinate continuation')
         ancestors=[parent_ref,*parent.get('ancestors',[])]
-        if len(ancestors)!=(1 if phase=='F2' else 2): raise ValueError('broken F1/F2 chain')
+        if len(ancestors)!=(1 if phase==second else 2): raise ValueError('broken feasibility chain')
         prior=parent['budget']
         if (any(type(prior.get(k)) not in (float,int) or not math.isfinite(prior[k])
-                    or not 0<=prior[k]<=CEILINGS[wanted][i] for i,k in enumerate(('wall','cpu')))
+                    or not 0<=prior[k]<=spec['ceilings'][wanted][i] for i,k in enumerate(('wall','cpu')))
                 or prior.get('stopped') or prior.get('reserved_cpu') or prior.get('reserved_wall')):
             raise ValueError('interrupted/failed budget is not continuable')
-        if phase=='acceptance' and (7.5*prior['wall']>7200 or 7.5*prior['cpu']>6000):
+        projected=dict(wall=prior['wall'],cpu=prior['cpu'])
+        if spec['coordinate'] and not spec['tooling']:
+            projected={k:prior[k]-PRIOR_F1_LEDGER[k] for k in ('wall','cpu')}
+        if phase==acceptance and (7.5*projected['wall']>7200 or 7.5*projected['cpu']>6000):
             raise ValueError('full feasibility projection exceeds envelope')
-    ceiling=CEILINGS[phase]
+    ceiling=spec['ceilings'][phase]
     # Acceptance has its own phase cap as well as the total campaign cap.
-    wall_limit=min(9000,prior['wall']+7200) if phase=='acceptance' else ceiling[0]
-    cpu_limit=min(7500,prior['cpu']+6000) if phase=='acceptance' else ceiling[1]
-    budget=Budget(wall_limit,cpu_limit,prior)
+    wall_limit=min(9000,prior['wall']+7200) if phase==acceptance else ceiling[0]
+    cpu_limit=min(7500,prior['cpu']+6000) if phase==acceptance else ceiling[1]
+    child_limit=(prior.get('children',0)+ceiling[2] if phase==acceptance else
+        (ceiling[2] if spec['tooling'] else (122 if spec['coordinate'] else ceiling[2])))
+    budget=(Budget(wall_limit,cpu_limit,prior,child_limit=child_limit) if spec['coordinate']
+        else Budget(wall_limit,cpu_limit,prior))
     budget.start=start;budget.start_cpu=cpu_start;budget.own_start=own_start
 
     entries=[];chain=[];completed_data=[];checkpoint_ref=None
@@ -353,7 +480,7 @@ def _run_phase(run,authorization,authorization_sha256,standin,started):
             stage.admit(routes,prereq['routes_sha256'],65536)
             rows=normalized_rows(routes)
             if root.get('contract')!=contract(rows): raise ValueError('root schema/source/tool/schedule/shard contract changed')
-            if phase=='F1':
+            if phase==first:
                 storage_guard(dest)
                 shutil.copyfile(pack,dest/'input.bin');(dest/'input.bin').chmod(0o444)
                 selectors=dest/'selectors';selectors.mkdir()
@@ -362,14 +489,15 @@ def _run_phase(run,authorization,authorization_sha256,standin,started):
             for ref in reversed(ancestors):
                 receipt=read_ref(ref)
                 chain.extend(collect(Path(ref['path']).parent,receipt['entries'],receipt['phase']))
-            # Complete F2 receipt must bind the actual complete original F1.
-            if phase=='acceptance' and [slot for slot,_ in chain]!=schedule('F1')+schedule('F2'):
+            # Complete feasibility receipt must bind the actual complete first phase.
+            if phase==acceptance and [slot for slot,_ in chain]!=schedule(first)+schedule(second):
                 raise ValueError('partial feasibility cannot release acceptance')
             aggregates={row:data[-1]['aggregate'] for (_,row,_),data in chain}
             for i,slot in enumerate(schedule(phase)):
                 j,row,arm=slot;name=f'{i:03d}-{j}-{row}-{arm}'
                 bind();storage_guard(dest,1024**2);budget.reserve()
-                write_json(out/'checkpoint.json',dict(status='reserved',index=i,slot=slot,budget=budget.snapshot()),16384)
+                artifact_identity=identity(phase) if spec['coordinate'] else {}
+                write_json(out/'checkpoint.json',dict(artifact_identity,status='reserved',index=i,slot=slot,budget=budget.snapshot()),16384)
                 checkpoint_ref=reference(out/'checkpoint.json')
                 # Full child CPU is already reserved. Bound supervisor CPU
                 # independently while waiting, leaving two seconds for ps/reap.
@@ -387,20 +515,20 @@ def _run_phase(run,authorization,authorization_sha256,standin,started):
                 old=aggregates.setdefault(row,data[-1]['aggregate'])
                 if old!=data[-1]['aggregate']:raise ValueError('row aggregate mismatch')
                 budget.finish(True)
-                entry=dict(slot=list(slot),name=name,child_cpu=child_cpu,
+                entry=dict(artifact_identity,slot=list(slot),name=name,child_cpu=child_cpu,
                     files={suffix:stage.sha(out/(name+suffix)) for suffix in ('.out','.err','.receipt.json')})
                 write_json(out/(name+'.record.json'),entry,16384)
                 entries.append(entry)
-                write_json(out/'checkpoint.json',dict(status='validated',completed=len(entries),budget=budget.snapshot()),16384)
+                write_json(out/'checkpoint.json',dict(artifact_identity,status='validated',completed=len(entries),budget=budget.snapshot()),16384)
                 checkpoint_ref=reference(out/'checkpoint.json')
                 completed_data.append((slot,data))
-                if phase=='acceptance' and j==6 and arm=='dense':
+                if phase==acceptance and j==6 and arm=='dense':
                     metric=row_peak(completed_data,row)
                     if metric['classification']=='fail':
                         write_json(out/'early-gate.json',dict(row=row,metric=metric,scope='generated-only' if standin else 'park/review'))
                         raise ValueError('first evaluable row peak gate failure')
             bind();results=collect(out,entries,phase)
-            metrics=aggregate(results) if phase=='acceptance' else {}
+            metrics=aggregate(results) if phase==acceptance else {}
             bind()
             used=budget.snapshot()
             # Prepay a bounded final publication tail; no omitted supervisor CPU.
@@ -408,10 +536,10 @@ def _run_phase(run,authorization,authorization_sha256,standin,started):
             used['publication_reserved_wall']=used.get('publication_reserved_wall',0)+1
             used['publication_reserved_cpu']=used.get('publication_reserved_cpu',0)+.1
             if used['wall']>wall_limit or used['cpu']>cpu_limit:raise ValueError('finalization budget exhausted')
-            result=dict(schema=SCHEMA,phase=phase,status='complete',
-                scope='generated stand-in only' if standin else ('all-59 three-lane single-row-warmed Stage A routing comparison' if phase=='acceptance' else 'feasibility only'),
+            result=dict(identity(phase),**(coordinate_ledger_identity() if spec['coordinate'] and not spec['tooling'] else {}),status='complete',
+                scope='generated stand-in only' if standin else ('all-59 three-lane single-row-warmed Stage A routing comparison' if phase==acceptance else 'feasibility only'),
                 root=root_ref,authorization=auth_ref,ancestors=ancestors,completed=len(entries),
-                budget=used,claim=claim_ref,checkpoint=checkpoint_ref,entries=entries,**metrics)
+                budget=used,claim=claim_ref,checkpoint=checkpoint_ref,entries=result_entries(out,entries,phase),**metrics)
             final=out/'result.json';write_json(final,result)
             if budget.snapshot()['wall']>used['wall'] or budget.snapshot()['cpu']>used['cpu']:
                 raise ValueError('final publication exceeded prepaid tail')
@@ -420,7 +548,7 @@ def _run_phase(run,authorization,authorization_sha256,standin,started):
         if budget.pending:
             try:budget.finish(False)
             except ValueError:pass
-        write_json(out/'failure.json',dict(schema=SCHEMA,phase=phase,status='failed',error=repr(e),
+        write_json(out/'failure.json',dict(identity(phase),status='failed',error=repr(e),
             completed=len(entries),budget=budget.snapshot(),root=root_ref,authorization=auth_ref))
         # A final publication that overran its tail is not a continuation token.
         if (out/'result.json').exists():
@@ -434,8 +562,13 @@ def main():
     parser.add_argument('--authorization',required=True,type=Path)
     parser.add_argument('--authorization-sha256',required=True)
     parser.add_argument('--standin',action='store_true')
+    parser.add_argument('--source-binding',type=Path)
+    parser.add_argument('--source-binding-sha256')
     args=parser.parse_args()
-    run_phase(args.run,args.authorization,args.authorization_sha256,args.standin)
+    if bool(args.source_binding)!=bool(args.source_binding_sha256):
+        parser.error('source binding path and external SHA256 are a pair')
+    run_phase(args.run,args.authorization,args.authorization_sha256,args.standin,
+        args.source_binding,args.source_binding_sha256)
 
 
 def total_cpu():
@@ -481,13 +614,13 @@ def cpu_deadline(seconds):
 
 
 class Budget:
-    def __init__(self, wall, cpu_limit, prior=None, clock=time.monotonic, cpu=total_cpu):
+    def __init__(self, wall, cpu_limit, prior=None, clock=time.monotonic, cpu=total_cpu,child_limit=None):
         self.clock=clock;self.cpu_clock=cpu
         self.start=clock();self.start_cpu=cpu()
         self.own_start=time.process_time()
-        self.wall_limit=wall;self.cpu_limit=cpu_limit
+        self.wall_limit=wall;self.cpu_limit=cpu_limit;self.child_limit=child_limit
         self.prior=prior or dict(wall=0,cpu=0)
-        self.penalty=0;self.pending=False;self.stopped=False
+        self.penalty=0;self.pending=False;self.stopped=False;self.children=0
 
     @contextmanager
     def deadlines(self):
@@ -502,7 +635,7 @@ class Budget:
 
     def snapshot(self):
         own=time.process_time()-self.own_start
-        return dict(wall=self.prior['wall']+self.clock()-self.start,
+        value=dict(wall=self.prior['wall']+self.clock()-self.start,
                     cpu=self.prior['cpu']+self.cpu_clock()-self.start_cpu+self.penalty,
                     supervisor_cpu=self.prior.get('supervisor_cpu',0)+own,
                     waited_children_cpu=self.prior.get('waited_children_cpu',0)+max(0,self.cpu_clock()-self.start_cpu-own),
@@ -511,11 +644,16 @@ class Budget:
                     publication_reserved_cpu=self.prior.get('publication_reserved_cpu',0),
                     reserved_wall=120 if self.pending else 0,
                     reserved_cpu=90 if self.pending else 0, stopped=self.stopped)
+        if self.child_limit is not None:
+            value.update(children=self.prior.get('children',0)+self.children,
+                reserved_children=1 if self.pending else 0)
+        return value
 
     def reserve(self):
         used=self.snapshot()
         if (self.pending or self.stopped or used['wall']+120>self.wall_limit
-                or used['cpu']+90>self.cpu_limit):
+                or used['cpu']+90>self.cpu_limit
+                or self.child_limit is not None and used['children']+1>self.child_limit):
             raise ValueError('global wall/CPU reservation refused')
         self.pending=True
 
@@ -526,6 +664,7 @@ class Budget:
             # Unknown final child CPU never refunds; charge the full allowance
             # in addition to measured supervisor/waited CPU (conservative).
             self.penalty+=90;self.stopped=True
+        self.children+=1
         self.pending=False
         used=self.snapshot()
         if used['wall']>self.wall_limit or used['cpu']>self.cpu_limit:
@@ -534,13 +673,15 @@ class Budget:
 
 
 def schedule(phase):
-    if phase not in ('F1','F2','acceptance'):
+    if phase not in ('F1','F2','acceptance','CF1','CF2','CA','GQ'):
         raise ValueError('unknown phase')
-    if phase == 'acceptance':
+    if phase in ('acceptance','CA'):
+        candidate='refined' if phase=='CA' else 'tiled'
         return [(j,r,a) for j in range(1,7) for r in range(1,60)
-                for a in (('dense','tiled') if j%2 else ('tiled','dense'))]
-    return [(1,r,a) for r in (range(1,3) if phase=='F1' else range(3,60))
-            for a in (('dense','tiled') if r%2 else ('tiled','dense'))]
+                for a in (('dense',candidate) if j%2 else (candidate,'dense'))]
+    candidate='refined' if phase in ('CF1','CF2','GQ') else 'tiled'
+    return [(1,r,a) for r in (range(1,3) if phase in ('F1','CF1','GQ') else range(3,60))
+            for a in (('dense',candidate) if r%2 else (candidate,'dense'))]
 
 
 def raw_samples(summary, rows):

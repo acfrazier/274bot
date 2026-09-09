@@ -16,6 +16,7 @@ import sys
 import time
 import shutil
 import mmap
+import importlib.util
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
@@ -26,6 +27,13 @@ GENERATED = dict(wall=240, cpu=180, rss=1024*1024*1024, address=64*1024**3, outp
 BUILD = dict(wall=600, cpu=480, rss=6*1024**3, address=64*1024**3, output=8*1024**2, file_size=1024**3)
 REAL = dict(wall=900, cpu=800, rss=1024**3, address=4*1024**3, output=4*1024**3)
 
+_SOURCE_BINDING_PATH = HERE.parent/'nav-tiled-stage-a/source_binding.py'
+_SOURCE_BINDING_SPEC = importlib.util.spec_from_file_location('nav_coordinate_source_binding',_SOURCE_BINDING_PATH)
+if _SOURCE_BINDING_SPEC is None or _SOURCE_BINDING_SPEC.loader is None:
+    raise RuntimeError('coordinate source-binding verifier unavailable')
+source_binding = importlib.util.module_from_spec(_SOURCE_BINDING_SPEC)
+_SOURCE_BINDING_SPEC.loader.exec_module(source_binding)
+
 def sha(p):
     h = hashlib.sha256()
     with open(p, 'rb') as f:
@@ -34,6 +42,18 @@ def sha(p):
 
 def save(p, value):
     p.write_text(json.dumps(value, indent=2, sort_keys=True)+'\n')
+
+def load_source_binding(path, expected_sha256):
+    return source_binding.load(path,expected_sha256)
+
+def materialization_arms(binding=None):
+    return source_binding.arms(binding)
+
+def apply_source_overlays(dest,entries,binding,arm):
+    return source_binding.apply(dest,entries,binding,arm,lambda oid:git(ROOT,'cat-file','blob',oid))
+
+def verify_effective_sources(dest,entries,binding,arm,allowed_additions=()):
+    return source_binding.verify_effective(dest,entries,binding,arm,allowed_additions)
 
 def admit(p, expected, cap):
     st = p.lstat()
@@ -181,9 +201,16 @@ def cleanup_group(pgid):
 def git(repo, *args):
     return subprocess.check_output(['git', '-C', str(repo), *args])
 
-def materialize(run):
+def materialize(run,binding=None,binding_path=None,binding_sha256=None):
+    binding_ref=None
+    if binding is not None:
+        if binding_path is None or binding_sha256 is None:
+            raise ValueError('source binding path and external SHA256 required')
+        if load_source_binding(binding_path,binding_sha256)!=binding:
+            raise ValueError('loaded source binding changed')
+        binding_ref=source_binding.reference(binding_path,binding_sha256,binding)
     manifests = {}
-    for arm, commit in [('dense', BASE), ('tiled', CANDIDATE)]:
+    for arm, commit in materialization_arms(binding):
         dest = run/arm; dest.mkdir()
         entries = []
         for repo, rev, prefixes, prefix in [
@@ -199,6 +226,12 @@ def materialize(run):
                     raise ValueError('git object hash mismatch')
                 p = dest/(prefix+name); p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(b)
                 entries.append(dict(path=prefix+name, git_blob=oid, sha256=sha(p), size=len(b)))
+        effective=apply_source_overlays(dest,entries,binding,arm) if binding is not None else [dict(e,provenance='base') for e in entries]
+        if binding is not None:
+            verify_effective_sources(dest,entries,binding,arm)
+            save(dest/'effective-source-manifest.json',dict(schema='nav-effective-source-v1',
+                candidate_id=binding['candidate_id'],arm=arm,base_commit=commit,
+                source_binding=binding_ref,files=effective))
         # Bind original manifests too; standalone workspace changes only package membership.
         for name in ('Cargo.toml', 'Cargo.lock'):
             (dest/('original-'+name)).write_bytes(git(ROOT,'show',commit+':'+name))
@@ -232,25 +265,90 @@ def materialize(run):
         (nav/'src/host-probe.rs').write_text('\n\n'.join(extracts)+'\n')
         (dest/'original-host-lib.rs').write_text(host)
         save(dest/'host-spans.json',dict(commit=commit,source_sha256=hashlib.sha256(host.encode()).hexdigest(),spans=spans))
-        save(dest/'original-source-manifest.json', dict(commit=commit,client=CLIENT,files=entries))
+        original_manifest=dict(commit=commit,client=CLIENT,files=entries)
+        if binding_ref is not None:original_manifest['source_binding']=binding_ref
+        save(dest/'original-source-manifest.json',original_manifest)
         manifests[arm] = dict(commit=commit, client=CLIENT, original_files=entries)
+        if binding_ref is not None:
+            manifests[arm].update(arm=arm,base_commit=commit,effective_files=effective,
+                                  source_binding=binding_ref)
     save(run/'sources.json',manifests)
 
 def fingerprint_tree(path):
     return {str(p.relative_to(path)): sha(p) for p in sorted(path.rglob('*'))
             if p.is_file() and 'target' not in p.relative_to(path).parts}
 
-def verify_original_sources(dest):
+def source_context(run,binding_path=None,binding_sha256=None):
+    if not (run/'sources.json').exists():
+        if binding_path is not None or binding_sha256 is not None:
+            raise ValueError('legacy source cannot accept coordinate binding')
+        return dict(binding=None,reference=None,arms=dict(materialization_arms()),schema=None)
+    sources=json.loads((run/'sources.json').read_text())
+    refs={json.dumps(v['source_binding'],sort_keys=True) for v in sources.values()
+          if 'source_binding' in v}
+    if refs:
+        if len(refs)!=1 or binding_path is None or binding_sha256 is None:
+            raise ValueError('external source binding path and SHA256 required')
+        binding=load_source_binding(binding_path,binding_sha256)
+        ref=source_binding.reference(binding_path,binding_sha256,binding)
+        if refs!={json.dumps(ref,sort_keys=True)}:
+            raise ValueError('prepared source binding mismatch')
+        expected=dict(materialization_arms(binding))
+        if set(sources)!=set(expected) or any(sources[a].get('base_commit')!=c for a,c in expected.items()):
+            raise ValueError('prepared effective source identity mismatch')
+        return dict(binding=binding,reference=ref,binding_path=Path(binding_path).absolute(),arms=expected,
+                    schema='nav-coordinate-differential-admission-v1')
+    if binding_path is not None or binding_sha256 is not None:
+        raise ValueError('legacy source cannot accept coordinate binding')
+    return dict(binding=None,reference=None,arms=dict(materialization_arms()),
+                schema='nav-differential-admission-v1')
+
+def save_arm_admission(run,arm,context,binary,compiler):
+    if arm not in context['arms']:raise ValueError('arm outside source context')
+    value=dict(executable_sha256=sha(binary),source=fingerprint_tree(run/arm),toolchain=compiler)
+    if context['binding'] is not None:
+        value.update(schema=context['schema'],arm=arm,base_commit=context['arms'][arm],
+                     candidate_id=context['binding']['candidate_id'],source_binding=context['reference'],
+                     phase='generated-differential-admission',
+                     effective_source_manifest_sha256=sha(run/arm/'effective-source-manifest.json'))
+    save(run/(arm+'-admission.json'),value)
+
+def verify_source_context(context):
+    if context['binding'] is None:return
+    ref=context['reference'];path=context['binding_path'];binding=load_source_binding(path,ref['sha256'])
+    if binding!=context['binding'] or source_binding.reference(path,ref['sha256'],binding)!=ref:
+        raise ValueError('active source binding mutated')
+
+def verify_original_sources(dest,binding=None,arm=None):
     manifest=json.loads((dest/'original-source-manifest.json').read_text())
+    effective={e['path']:e for e in manifest['files']}
+    if binding is not None:
+        if arm not in dict(materialization_arms(binding)):
+            raise ValueError('bound arm identity mismatch')
+        em=json.loads((dest/'effective-source-manifest.json').read_text())
+        if (em.get('schema'),em.get('candidate_id'),em.get('arm'),em.get('base_commit'))!=(
+                'nav-effective-source-v1',binding['candidate_id'],arm,dict(materialization_arms(binding))[arm]):
+            raise ValueError('effective source manifest identity mismatch')
+        if manifest.get('source_binding')!=em.get('source_binding'):
+            raise ValueError('source binding reference mismatch')
+        source_binding.validate(binding)
+        effective={e['path']:e for e in em['files']}
+        if set(effective)!={e['path'] for e in manifest['files']}:
+            raise ValueError('effective source inventory mismatch')
+        overlays=[e for e in effective.values() if e.get('provenance')=='overlay']
+        expected_overlays=1 if arm=='refined' else 0
+        if len(overlays)!=expected_overlays:
+            raise ValueError('effective overlay count mismatch')
     suffixes={'crates/nav/Cargo.toml':b'\n[[bin]]\nname="differential-probe"\npath="src/differential.rs"\n',
               'crates/nav/src/router.rs':b'\n#[path="router-access.rs"]\npub mod differential_access;\n'}
     for entry in manifest['files']:
         b=(dest/entry['path']).read_bytes();suffix=suffixes.get(entry['path'],b'')
-        if len(b)!=entry['size']+len(suffix) or (suffix and not b.endswith(suffix)):
+        admitted=effective[entry['path']]
+        if len(b)!=admitted['size']+len(suffix) or (suffix and not b.endswith(suffix)):
             raise ValueError('unexpected original-source modification: '+entry['path'])
-        original=b[:entry['size']]
-        if hashlib.sha256(original).hexdigest()!=entry['sha256']: raise ValueError('original source changed: '+entry['path'])
-        if hashlib.sha1(b'blob '+str(len(original)).encode()+b'\0'+original).hexdigest()!=entry['git_blob']: raise ValueError('original Git object mismatch')
+        original=b[:admitted['size']]
+        if hashlib.sha256(original).hexdigest()!=admitted['sha256']: raise ValueError('original source changed: '+entry['path'])
+        if hashlib.sha1(b'blob '+str(len(original)).encode()+b'\0'+original).hexdigest()!=admitted['git_blob']: raise ValueError('original Git object mismatch')
     spans=json.loads((dest/'host-spans.json').read_text());host=(dest/'original-host-lib.rs').read_bytes()
     if hashlib.sha256(host).hexdigest()!=spans['source_sha256']: raise ValueError('host source changed')
     extracts=[]
@@ -259,6 +357,15 @@ def verify_original_sources(dest):
         if hashlib.sha256(b).hexdigest()!=s['sha256']: raise ValueError('host span changed')
         extracts.append(b)
     if (dest/'crates/nav/src/host-probe.rs').read_bytes()!=b'\n\n'.join(extracts)+b'\n': raise ValueError('host helpers not exact frozen spans')
+    additions={'crates/nav/src/differential.rs','crates/nav/src/probe.rs',
+               'crates/nav/src/router-access.rs','crates/nav/src/host-probe.rs'}
+    admitted_paths=set(effective)|additions
+    for p in dest.rglob('*'):
+        if p.is_symlink():raise ValueError('symlink in effective source')
+        if p.is_file():
+            rel=str(p.relative_to(dest))
+            if rel.startswith(('crates/nav/','crates/api/','vendor/fr-client-rust/crates/client/')) and rel not in admitted_paths:
+                raise ValueError('unadmitted effective source: '+rel)
 
 def toolchain():
     paths={name:subprocess.check_output(['rustup','which',name],text=True).strip() for name in ('rustc','cargo')}
@@ -266,10 +373,11 @@ def toolchain():
                 python_sha256=sha(sys.executable),rustc=subprocess.check_output(['rustc','-vV'],text=True),
                 cargo=subprocess.check_output(['cargo','-V'],text=True),platform=platform.platform())
 
-def build(run):
-    for arm in ('dense','tiled'):
+def build(run,binding_path=None,binding_sha256=None):
+    context=source_context(run,binding_path,binding_sha256)
+    for arm in context['arms']:
         dest=run/arm
-        verify_original_sources(dest)
+        verify_original_sources(dest,context['binding'],arm if context['binding'] else None)
         compiler=toolchain()
         # Independent targets/locks; offline resolution may prune unrelated workspace packages.
         cmd=['cargo','build','--offline','--manifest-path',str(dest/'Cargo.toml'),'-p','nav','--bin','differential-probe']
@@ -277,11 +385,18 @@ def build(run):
         r=bounded(cmd,run,name,cwd=dest,**BUILD)
         if r['failure']: raise RuntimeError('build failed; retained '+arm+'-build receipt')
         binary=dest/'target/debug/differential-probe'
-        save(run/(arm+'-admission.json'),dict(executable_sha256=sha(binary),source=fingerprint_tree(dest),toolchain=compiler))
+        save_arm_admission(run,arm,context,binary,compiler)
 
-def verify_arm(run, arm):
+def verify_arm(run, arm, context=None):
+    context=context or source_context(run)
+    verify_source_context(context)
     a=json.loads((run/(arm+'-admission.json')).read_text()); d=run/arm
-    verify_original_sources(d)
+    if context['binding'] is not None:
+        if (a.get('schema'),a.get('arm'),a.get('base_commit'),a.get('candidate_id'),a.get('source_binding'),a.get('phase'),a.get('effective_source_manifest_sha256'))!=(
+                context['schema'],arm,context['arms'][arm],
+                context['binding']['candidate_id'],context['reference'],'generated-differential-admission',sha(d/'effective-source-manifest.json')):
+            raise ValueError('coordinate admission binding mismatch')
+    verify_original_sources(d,context['binding'],arm if context['binding'] else None)
     if fingerprint_tree(d)!=a['source']: raise ValueError('frozen source moved: '+arm)
     admit(d/'target/debug/differential-probe',a['executable_sha256'],200*1024**2)
 
@@ -311,7 +426,8 @@ def output_inventory(path,expected):
     if last!=expected or counts.get('complete-input-count')!=1: raise ValueError('incomplete result stream')
     return counts
 
-def qualify(run, real=None):
+def qualify(run, real=None,binding_path=None,binding_sha256=None):
+    context=source_context(run,binding_path,binding_sha256)
     corpus=json.loads((run/'corpus.json').read_text())
     frozen=sha(run/'corpus.json')
     if len(corpus)>15000 or sum(e['bytes'] for e in corpus)>64*1024**2:
@@ -328,7 +444,7 @@ def qualify(run, real=None):
         if p.resolve().parent != (run/'inputs').resolve(): raise ValueError('input escaped corpus')
         if e['bytes']>1024**2: raise ValueError('generated input size cap')
         safe_wire(p.read_bytes(),65536)
-    for arm in ('dense','tiled'): verify_arm(run,arm)
+    for arm in context['arms']: verify_arm(run,arm,context)
     results=[]
     # Freeze the ordered selector list BEFORE either executable is started.
     selectors_file=run/'selectors.tsv'
@@ -338,33 +454,38 @@ def qualify(run, real=None):
          fixed_sha256=fixed_hash,
          protocol_fixture_sha256=protocol_hash,
          mode='real' if real else 'generated',limits=REAL if real else GENERATED,
+         source_binding=context['reference'],candidate_id=context['binding']['candidate_id'] if context['binding'] else None,
+         phase='native-release' if real else 'generated-qualification',
          tools={n:sha(HERE/n) for n in ('harness.py','probe.rs','generate.py')},
          compiler=subprocess.check_output(['rustc','-vV'],text=True),
          cargo=subprocess.check_output(['cargo','-V'],text=True),python=sys.version,platform=platform.platform()))
-    for arm in ('dense','tiled'):
-        verify_arm(run,arm)
+    for arm in context['arms']:
+        verify_arm(run,arm,context)
         if sha(selectors_file)!=selector_hash or sha(run/'corpus.json')!=frozen: raise ValueError('selector movement')
         if sha(run/'fixed.tsv')!=fixed_hash: raise ValueError('fixed selector movement')
         for e in corpus: admit(run/e['path'],e['sha256'],e['bytes'])
         r=bounded([str(run/arm/'target/debug/differential-probe'),str(selectors_file),str(run), 'real' if real else 'generated'],run,arm+'-probe',**(REAL if real else GENERATED))
         results.append(r)
-        verify_arm(run,arm)
+        verify_arm(run,arm,context)
         if r['failure'] is None: output_inventory(run/(arm+'-probe.out'),len(corpus))
     proto=[]
-    for arm in ('dense','tiled'):
-        verify_arm(run,arm);admit(protocol/'input.bin',protocol_hash,1024**2);admit(protocol/'routes.tsv',fixed_hash,65536)
+    for arm in context['arms']:
+        verify_arm(run,arm,context);admit(protocol/'input.bin',protocol_hash,1024**2);admit(protocol/'routes.tsv',fixed_hash,65536)
         r=bounded([str(run/arm/'target/debug/differential-probe'),str(protocol/'routes.tsv'),str(protocol),'real'],protocol,arm,**GENERATED)
         # This is the real protocol exercised with GENERATED BYTES ONLY. It
         # is not real-input authorization or native guard qualification.
         proto.append(r)
-        verify_arm(run,arm)
+        verify_arm(run,arm,context)
         if r['failure'] is None: output_inventory(protocol/(arm+'.out'),1)
-    comparison=compare_files(run/'dense-probe.out',run/'tiled-probe.out')
-    pc=compare_files(protocol/'dense.out',protocol/'tiled.out')
+    candidate_arm=next(a for a in context['arms'] if a!='dense')
+    comparison=compare_files(run/'dense-probe.out',run/(candidate_arm+'-probe.out'))
+    pc=compare_files(protocol/'dense.out',protocol/(candidate_arm+'.out'))
     qualified=all(not r['failure'] for r in results+proto) and comparison['equal'] and pc['equal']
     save(run/'result.json',dict(arms=results,comparison=comparison,generated_protocol_arms=proto,generated_protocol_comparison=pc,qualified=qualified,input_count=len(corpus),
+         source_binding=context['reference'],candidate_id=context['binding']['candidate_id'] if context['binding'] else None,
+         phase='native-release' if real else 'generated-qualification',
          output_inventory=output_inventory(run/'dense-probe.out',len(corpus)) if not results[0]['failure'] else None,
-         output_hashes={str(p.relative_to(run)):sha(p) for p in [run/'dense-probe.out',run/'tiled-probe.out',protocol/'dense.out',protocol/'tiled.out']}))
+         output_hashes={str(p.relative_to(run)):sha(p) for p in [run/'dense-probe.out',run/(candidate_arm+'-probe.out'),protocol/'dense.out',protocol/(candidate_arm+'.out')]}))
     if not qualified: raise RuntimeError('qualification failed; full retained outputs/result.json')
 
 def fixed_selectors(text):
@@ -389,8 +510,12 @@ def qualify_guards(run):
          native_real_qualified=platform.system()=='Linux' and receipt['failure'] is None and b'skipped' not in (run/'guard-tests.err').read_bytes()))
     if receipt['failure']: raise RuntimeError('guard qualification failed')
 
-def check_real_release(auth,run):
+def check_real_release(auth,run,context=None):
     # Validate release and platform before even stat/open of any real input.
+    context=context or source_context(run)
+    if context['binding'] is not None and (auth.get('schema'),auth.get('candidate_id'),auth.get('source_binding'),auth.get('phase'))!=(
+            'nav-coordinate-differential-release-v1',context['binding']['candidate_id'],context['reference'],'native-release'):
+        raise ValueError('coordinate source binding release missing')
     if platform.system()!='Linux': raise ValueError('real mode requires Linux hard-AS qualification; unavailable on Darwin')
     if auth.get('mode')!='real' or auth.get('released') is not True: raise ValueError('root release absent')
     for name in ('launch.json','result.json','sources.json'):
@@ -403,14 +528,15 @@ def check_real_release(auth,run):
         raise ValueError('native guards unqualified or moved')
     for name,key in [('guard-tests.receipt.json','receipt_sha256'),('guard-tests.out','stdout_sha256'),('guard-tests.err','stderr_sha256')]:
         admit(guard.parent/name,g[key],1024**2)
-    for arm in ('dense','tiled'):
-        verify_arm(run,arm)
+    for arm in context['arms']:
+        verify_arm(run,arm,context)
         if auth.get(arm+'_admission_sha256')!=sha(run/(arm+'-admission.json')): raise ValueError('source/executable release mismatch')
     if auth.get('limits')!=REAL: raise ValueError('real limits must be explicitly admitted unchanged')
 
-def real_run(run,authorization):
+def real_run(run,authorization,binding_path=None,binding_sha256=None):
     admit(authorization,sha(authorization),1024**2)
-    auth=json.loads(authorization.read_text());check_real_release(auth,run)
+    context=source_context(run,binding_path,binding_sha256)
+    auth=json.loads(authorization.read_text());check_real_release(auth,run,context)
     src=Path(auth['input_path']);route_path=Path(auth['routes_path'])
     admit(route_path,auth['routes_sha256'],65536);fixed_selectors(route_path.read_text())
     admit(src,auth['input_sha256'],128*1024**2)
@@ -424,36 +550,43 @@ def real_run(run,authorization):
             if b[:5]!=b'274V\x08': raise ValueError('real release only v8 packs')
             safe_wire(b,70_000_000)
     results=[]
-    for arm in ('dense','tiled'):
-        check_real_release(auth,run)
+    for arm in context['arms']:
+        check_real_release(auth,run,context)
         admit(dest/'input.bin',auth['input_sha256'],128*1024**2)
         admit(dest/'routes.tsv',auth['routes_sha256'],65536)
         r=bounded([str(run/arm/'target/debug/differential-probe'),str(dest/'routes.tsv'),str(dest),'real'],dest,arm,**REAL)
-        results.append(r);verify_arm(run,arm)
+        results.append(r);verify_arm(run,arm,context)
         admit(dest/'input.bin',auth['input_sha256'],128*1024**2);admit(dest/'routes.tsv',auth['routes_sha256'],65536)
         if r['failure'] is None: output_inventory(dest/(arm+'.out'),1)
-    comparison=compare_files(dest/'dense.out',dest/'tiled.out')
+    candidate_arm=next(a for a in context['arms'] if a!='dense')
+    comparison=compare_files(dest/'dense.out',dest/(candidate_arm+'.out'))
     save(dest/'result.json',dict(mode='real',comparison=comparison,arms=results,qualified=all(not r['failure'] for r in results) and comparison['equal']))
     if any(r['failure'] for r in results) or not comparison['equal']: raise RuntimeError('real comparison failed; retained evidence')
 
 def main():
     p=argparse.ArgumentParser(); p.add_argument('action',choices=['prepare','build','generated','guards','real']); p.add_argument('--run',type=Path,required=True)
     p.add_argument('--authorization',type=Path)
+    p.add_argument('--source-binding',type=Path);p.add_argument('--source-binding-sha256')
     a=p.parse_args(); run=a.run.resolve()
     if HERE not in run.parents: p.error('run must be owned by this tool directory')
+    if bool(a.source_binding)!=bool(a.source_binding_sha256):p.error('source binding path and external SHA256 are a pair')
     if a.action=='prepare':
+        binding=load_source_binding(a.source_binding,a.source_binding_sha256) if a.source_binding else None
         run.mkdir(parents=True,exist_ok=False)
         tools=run/'tools';tools.mkdir()
         for name in ('harness.py','generate.py','probe.rs','test_guard.py','test_admission.py','test_extension.py','audit.py'):
             (tools/name).write_bytes((HERE/name).read_bytes())
-        materialize(run)
+        if binding is not None:
+            (tools/'source_binding.py').write_bytes(_SOURCE_BINDING_PATH.read_bytes())
+            (tools/'coordinate-source-binding.json').write_bytes(a.source_binding.read_bytes())
+        materialize(run,binding,a.source_binding,a.source_binding_sha256)
         import generate
         generate.generate(run)
-    elif a.action=='build': build(run)
-    elif a.action=='generated': qualify(run)
+    elif a.action=='build': build(run,a.source_binding,a.source_binding_sha256)
+    elif a.action=='generated': qualify(run,binding_path=a.source_binding,binding_sha256=a.source_binding_sha256)
     elif a.action=='guards': qualify_guards(run)
     else:
         if not a.authorization: p.error('real mode requires root-issued authorization JSON')
-        real_run(run,a.authorization)
+        real_run(run,a.authorization,a.source_binding,a.source_binding_sha256)
 
 if __name__=='__main__': main()

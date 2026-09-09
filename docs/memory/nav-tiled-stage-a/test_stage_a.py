@@ -1,5 +1,6 @@
 """Synthetic-only tests. --run adds admitted frozen binary integration tests."""
 import copy
+import argparse
 import hashlib
 import json
 import os
@@ -46,6 +47,57 @@ class Unit(unittest.TestCase):
         with self.assertRaises(ValueError):s.support.safe_wire(s.wire.header(16000,16000),65536)
         # Truncation remains original decoder's job, not a fabricated oracle.
         s.support.safe_wire(b'274V',65536)
+
+    def test_coordinate_prepare_requires_exact_external_binding(self):
+        source=s.HERE/'coordinate-source-binding.json';digest=s.sha(source)
+        run=self.path/'coordinate-run'
+        try:
+            s.prepare(run,source,digest)
+            prepared=json.loads((run/'prepared.json').read_text())
+            self.assertEqual(prepared['candidate_id'],'coordinate-ebf0f30')
+            self.assertEqual(set(prepared['arms']),{'dense','refined'})
+            with self.assertRaises(ValueError):s.activate_run_binding(run)
+            context=s.activate_run_binding(run,source,digest)
+            self.assertEqual(context['arms']['refined'],'8385babb23fd15b876506d4a3f6154984a6b2df1')
+            effective=json.loads((run/'refined/effective-source-manifest.json').read_text())
+            self.assertEqual([e['path'] for e in effective['files'] if e['provenance']=='overlay'],
+                ['crates/nav/src/collision.rs'])
+            s.verify_original(run/'refined','refined')
+            with self.assertRaises(ValueError):s.activate_run_binding(run,source,'0'*64)
+        finally:
+            s.configure_source_binding()
+
+    def test_coordinate_admission_cannot_use_legacy_schema(self):
+        source=s.HERE/'coordinate-source-binding.json';digest=s.sha(source)
+        run=self.path/'coordinate-admission'
+        try:
+            s.prepare(run,source,digest)
+            with self.assertRaises(ValueError):s.build(run,'clean')
+            s.activate_run_binding(run,source,digest)
+            binary=run/'refined/target-clean/release/stage-a-probe';binary.parent.mkdir(parents=True)
+            binary.write_bytes(b'generated stage executable')
+            s.save_arm_admission(run,'refined','clean',binary,{'generated':True},['generated'])
+            self.assertEqual(s.verify_arm(run,'refined','clean'),binary)
+            admission=run/'refined-clean-admission.json';value=json.loads(admission.read_text())
+            self.assertEqual((value['candidate_id'],value['phase'],value['source_binding']['sha256']),
+                ('coordinate-ebf0f30','tooling-admission',digest))
+            value['schema']='stage-a-admission-v1';s.save(admission,value)
+            with self.assertRaises(ValueError):s.verify_arm(run,'refined','clean')
+        finally:
+            s.configure_source_binding()
+
+    def test_coordinate_external_binding_mutation_rejected_after_activation(self):
+        source=self.path/'external-coordinate-binding.json'
+        source.write_bytes((s.HERE/'coordinate-source-binding.json').read_bytes())
+        digest=s.sha(source);run=self.path/'coordinate-mutation'
+        try:
+            s.prepare(run,source,digest)
+            s.activate_run_binding(run,source,digest)
+            source.write_bytes(source.read_bytes()+b'\n')
+            with self.assertRaises(ValueError):s.tools()
+        finally:
+            s.configure_source_binding()
+
     def test_normal_current_vs_peak(self):
         r=self.bounded('import time; x=bytearray(8*1024**2); time.sleep(.15); del x; time.sleep(.15); print(7)')
         self.assertIsNone(r['failure']);self.assertGreater(r['sampled_group_peak_bytes'],0)
@@ -133,6 +185,33 @@ class Unit(unittest.TestCase):
                         self.assertFalse(receipt['qualified'])
                         self.assertIn('failure',receipt)
 
+    def test_coordinate_generated_release_uses_refined_arm_and_bound_namespace(self):
+        source=self.path/'external-coordinate-binding.json'
+        source.write_bytes((s.HERE/'coordinate-source-binding.json').read_bytes());digest=s.sha(source)
+        binding=s.source_binding.load(source,digest);ref=s.source_binding.reference(source,digest,binding)
+        run=self.path/'coordinate-release';run.mkdir();(run/'fixtures').mkdir()
+        s.save(run/'prepared.json',dict(arms=dict(s.source_binding.arms(binding)),
+            candidate_id=binding['candidate_id'],source_binding=ref))
+        pack=run/'fixtures/input.bin';pack.write_bytes(b'generated')
+        routes=run/'fixtures/routes.tsv';routes.write_text('0 0 0 0 0 0 0 0 0 0\n')
+        auth=dict(input_path=str(pack),input_sha256=s.sha(pack),input_bytes=pack.stat().st_size,
+            routes_path=str(routes),routes_sha256=s.sha(routes))
+        launches=[]
+        def launch(run,arm,variant,pack,routes,out,name,released=False):
+            launches.append(arm)
+            phases=[dict(phase=p,process_peak_rss_bytes=100,elapsed_ns=1,cpu_ns=1)
+                for p in s.PHASES]
+            return phases+[dict(aggregate={'calls':24},route_p99_ns=1)]
+        try:
+            with patch.object(s,'check_release'),patch.object(s,'run_one',launch):
+                s.released_run(run,auth,standin=True,binding_path=source,binding_sha256=digest)
+            self.assertEqual(set(launches),{'dense','refined'})
+            dest=run/'coordinate-ebf0f30-standin-release'
+            result=json.loads((dest/'result.json').read_text())
+            self.assertEqual((result['candidate_id'],result['source_binding']),('coordinate-ebf0f30',ref))
+        finally:
+            s.configure_source_binding()
+
     def test_baseline_repeat_noise_not_delta_noise(self):
         r=s.paired([100,200,100],[101,201,101],.1,True)
         self.assertEqual(r['classification'],'inconclusive');self.assertEqual(r['baseline_repeat_range'],1)
@@ -145,8 +224,9 @@ class Unit(unittest.TestCase):
             with self.assertRaises(ValueError):s.paired(b,c,.1,True)
 
 
-def integration(run):
-    run=s.owned(run); proof=run/'integration-tests';proof.mkdir()
+def integration(run,binding_path=None,binding_sha256=None):
+    run=s.owned(run);s.activate_run_binding(run,binding_path,binding_sha256)
+    proof=run/'integration-tests';proof.mkdir()
     def reject_mutation(path, action):
         data=path.read_bytes()
         try:
@@ -185,17 +265,26 @@ def integration(run):
     pack=run/'fixtures/gated.bin';route=run/'fixtures/routes.json'
     auth=dict(released=True,mode='standin',limits=s.LIMITS,tools=s.tools(),platform=platform.platform(),hardware=s.hardware(),order=json.loads((s.HERE/'proposed-manifest.json').read_text())['order'],correctness_review_released=True,
               manifest_sha256=s.sha(s.HERE/'proposed-manifest.json'),input_path=str(pack),input_sha256=s.sha(pack),input_bytes=pack.stat().st_size,routes_path=str(route),routes_sha256=s.sha(route))
+    if s.SOURCE_BINDING is not None:
+        auth.update(schema='stage-a-coordinate-release-v1',candidate_id=s.SOURCE_BINDING['candidate_id'],
+            source_binding=s.SOURCE_BINDING_REF,phase='tooling-release')
     for variant in ('clean','counting'):
         auth[variant+'_qualification_sha256']=s.sha(run/f'qualification-{variant}/result.json')
         for arm in s.ARMS:auth[f'{arm}-{variant}-admission_sha256']=s.sha(run/f'{arm}-{variant}-admission.json')
     for field,value in [('input_sha256','0'*64),('tools',{}),('limits',dict(s.LIMITS,wall=121)),('dense-clean-admission_sha256','0'*64),('clean_qualification_sha256','0'*64),('correctness_review_released',False)]:
         bad=dict(auth);bad[field]=value
-        try:s.released_run(run,bad,standin=True)
+        try:s.released_run(run,bad,standin=True,binding_path=binding_path,binding_sha256=binding_sha256)
         except ValueError:pass
         else:raise AssertionError('release mutation admitted: '+field)
-    s.released_run(run,auth,standin=True)
+    s.released_run(run,auth,standin=True,binding_path=binding_path,binding_sha256=binding_sha256)
     s.save(proof/'result.json',dict(qualified=True,scope='synthetic only',checks=['both-arm source/lock/binary/tool rejection','both-arm self-test','both-arm malformed decode and selector failures','phase ordering rejection','hash-bound release JSON stand-in and mutations'],tools=s.tools()))
 
 if __name__=='__main__':
-    if len(sys.argv)==3 and sys.argv[1]=='--run':integration(Path(sys.argv[2]))
+    if '--run' in sys.argv:
+        parser=argparse.ArgumentParser();parser.add_argument('--run',type=Path,required=True)
+        parser.add_argument('--source-binding',type=Path);parser.add_argument('--source-binding-sha256')
+        args=parser.parse_args()
+        if bool(args.source_binding)!=bool(args.source_binding_sha256):
+            parser.error('source binding path and external SHA256 are a pair')
+        integration(args.run,args.source_binding,args.source_binding_sha256)
     else:unittest.main()

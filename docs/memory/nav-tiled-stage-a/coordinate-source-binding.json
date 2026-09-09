@@ -1,0 +1,21 @@
+{
+  "schema": "nav-coordinate-source-v1",
+  "candidate_id": "coordinate-ebf0f30",
+  "dense_base": "29b7aea779322c8611f83dc193e939ca7d756f75",
+  "refined_base": "8385babb23fd15b876506d4a3f6154984a6b2df1",
+  "client": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+  "effective_tree_policy": "complete-base-plus-exact-overlays-v1",
+  "overlays": [
+    {
+      "arm": "refined",
+      "path": "crates/nav/src/collision.rs",
+      "source_commit": "ebf0f30f0422229ea75de39db06944091d6497a5",
+      "old_git_blob": "7446a044e12cddf4bd2d8ff0f7093cbaea4d7af1",
+      "old_sha256": "688713da89546ab61755f6cdb95714f466ff270657b5a936e53a5d2e4702b8ef",
+      "old_bytes": 65420,
+      "new_git_blob": "07e0b215aa1fd21df87f308f0a889aa4ce8bb4a7",
+      "new_sha256": "760ae7c88c35fac6183f2db51af1f69af8d5e3225110889bc84a5a4944720b0b",
+      "new_bytes": 65821
+    }
+  ]
+}

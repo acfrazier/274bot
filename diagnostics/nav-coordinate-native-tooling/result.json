@@ -1,0 +1,65 @@
+{
+  "schema": "nav-coordinate-tooling-evidence-v1",
+  "candidate_id": "coordinate-ebf0f30",
+  "source_binding": {
+    "schema": "nav-coordinate-source-v1",
+    "filename": "coordinate-source-binding.json",
+    "sha256": "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb"
+  },
+  "source": {
+    "dense_base": "29b7aea779322c8611f83dc193e939ca7d756f75",
+    "refined_base": "8385babb23fd15b876506d4a3f6154984a6b2df1",
+    "overlay_commit": "ebf0f30f0422229ea75de39db06944091d6497a5",
+    "overlay_git_blob": "07e0b215aa1fd21df87f308f0a889aa4ce8bb4a7",
+    "client": "3456edc8dabf7b25ada78110ffa56327af9f67a4"
+  },
+  "budget": {
+    "decision_commit": "b00ba2c5d923c93f3161c1663ed3879bab8482af",
+    "decision_sha256": "6e53a13303442b5f6087e9321babc1d7be340031adf22a5a5c88c0edd7f225a7",
+    "legacy_child_ceiling": 118,
+    "coordinate_cumulative_f1_f2_child_ceiling": 122,
+    "prior_children": 4,
+    "fresh_children": 118,
+    "phases": {
+      "CF1": 4,
+      "CF2": 114,
+      "CA": 708,
+      "GQ": 4
+    }
+  },
+  "generated_differential": {
+    "run": "docs/memory/nav-tiled-differential/coordinate-generated-02",
+    "qualified": true,
+    "input_count": 12954,
+    "input_bytes": 10601143,
+    "result_sha256": "28ba64267a38279d6b94ea7ce59ac424c4d57366b32750d9767f19266affe61e",
+    "audit_sha256": "4aadd1a9248a191b016c098c4c4226d2a532460e8533920b2e9c2a709fb69beb"
+  },
+  "generated_stage_a": {
+    "run": "docs/memory/nav-tiled-stage-a/coordinate-native-generated-04",
+    "admissions": {
+      "dense-clean": "85058bb12b349e1e3a6a770cb5ab61d3a2479ca0a37e97b972cb1ef7124963f2",
+      "refined-clean": "42e600310ddac0369402ac807b40714d3353f43bbb8150b8669e92fdf33070c1",
+      "dense-counting": "c1f36bbaf03c3e3daab16ba7dd5bf13d6452ddb5c7e804cfff053a026128d2c7",
+      "refined-counting": "2627dff30bfef8cdc635a797edbd457016f6095173a52136ebd4bfdb3597a168"
+    },
+    "clean_result_sha256": "793d97e7a5655ef6b04968872700294bd841aee91782f0525520eacfd2b589fe",
+    "counting_result_sha256": "49fd85fbc5d4ddc721d314c3c3b83f9d3d299d0c885d1f087698d2e5cbafd47f"
+  },
+  "generated_scheduler_qualification": {
+    "path": "docs/memory/nav-tiled-stage-a/coordinate-native-generated-04/coordinate-ebf0f30-qualification-03/result.json",
+    "result_sha256": "49152104c244730e82d07631169fb7b5d76c058e29b40669e85e0a6abc072df6",
+    "qualified": true,
+    "phase": "GQ",
+    "native_hard_as_qualified": false,
+    "generated_smoke_executed": false,
+    "comparisons": 12
+  },
+  "generated_guard_qualification": {
+    "path": "docs/memory/nav-tiled-stage-a/coordinate-native-guards-04/result.json",
+    "result_sha256": "da9e3e983e722b6cc7c79cc2fc0e1aaff80c3d9f79b9f3271d8509323cb1fcb1",
+    "qualified": true,
+    "native_hard_as_qualified": false
+  },
+  "scope": "generated/local tooling only; not native evidence, CF1, CF2, CA, acceptance, publication, or release approval"
+}

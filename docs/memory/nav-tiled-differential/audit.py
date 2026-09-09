@@ -26,7 +26,8 @@ def frames(path):
             assert f.read(1)==b'\n'
             yield tag,payload
 
-def audit(run):
+def audit(run,binding_path=None,binding_sha256=None):
+    context=h.source_context(run,binding_path,binding_sha256)
     result=json.loads((run/'result.json').read_text());corpus=json.loads((run/'corpus.json').read_text())
     assert result['qualified'] is True
     assert len(corpus)==len({e['path'] for e in corpus})==result['input_count']
@@ -38,8 +39,8 @@ def audit(run):
     for name,digest in launch['tools'].items():
         assert h.sha(run/'tools'/name)==digest
     sources={}
-    for arm,rev in [('dense',h.BASE),('tiled',h.CANDIDATE)]:
-        h.verify_arm(run,arm)
+    for arm,rev in context['arms'].items():
+        h.verify_arm(run,arm,context)
         d=run/arm;manifest=json.loads((d/'original-source-manifest.json').read_text())
         assert manifest['commit']==rev and manifest['client']==h.CLIENT
         # Compare every source manifest Git oid against the named commit tree,
@@ -56,8 +57,9 @@ def audit(run):
             executable_sha256=h.sha(d/'target/debug/differential-probe'),admission_sha256=h.sha(run/(arm+'-admission.json')),
             source_manifest_sha256=h.sha(d/'original-source-manifest.json'),lock_sha256=h.sha(d/'Cargo.lock'))
     for path,digest in result['output_hashes'].items(): assert h.sha(run/path)==digest
-    assert h.compare_files(run/'dense-probe.out',run/'tiled-probe.out')==result['comparison']
-    assert h.compare_files(run/'protocol-fixture/dense.out',run/'protocol-fixture/tiled.out')==result['generated_protocol_comparison']
+    candidate=next(arm for arm in context['arms'] if arm!='dense')
+    assert h.compare_files(run/'dense-probe.out',run/(candidate+'-probe.out'))==result['comparison']
+    assert h.compare_files(run/'protocol-fixture/dense.out',run/'protocol-fixture'/(candidate+'.out'))==result['generated_protocol_comparison']
     records=Counter();routes=Counter();errors=Counter();inputs=[];noncanonical=[];last_input=None
     # Framing lets the audit skip raw bytes safely; no newline heuristics for
     # binary collision/wire payloads. Full arm byte equality was checked above.
@@ -100,12 +102,13 @@ def audit(run):
     assert len(noncanonical)==2
     from test_extension import assert_extension
     extension={}
-    for arm in ('dense','tiled'):
+    for arm in context['arms']:
         extension[arm]=dict(generated=assert_extension(run/(arm+'-probe.out')),
                            protocol=assert_extension(run/'protocol-fixture'/(arm+'.out'),True))
     report=dict(verified=True,input_count=len(corpus),input_bytes=sum(e['bytes'] for e in corpus),max_input_bytes=max(e['bytes'] for e in corpus),
         sources=sources,frames=dict(records),route_results=dict(routes),error_payload_counts=dict(errors),noncanonical_inputs=noncanonical,
-        corpus_sha256=h.sha(run/'corpus.json'),result_sha256=h.sha(run/'result.json'),extension=extension)
+        corpus_sha256=h.sha(run/'corpus.json'),result_sha256=h.sha(run/'result.json'),extension=extension,
+        candidate_id=context['binding']['candidate_id'] if context['binding'] else None,source_binding=context['reference'])
     h.save(run/'audit.json',report)
     print(json.dumps({k:v for k,v in report.items() if k not in ('error_payload_counts','frames')},indent=2))
 
@@ -136,7 +139,9 @@ def archive(run):
     print(json.dumps(dict(archive=str(path),bytes=path.stat().st_size,sha256=h.sha(path),files=len(entries))))
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('run',type=Path);p.add_argument('--archive-only',action='store_true');a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('run',type=Path);p.add_argument('--archive-only',action='store_true')
+    p.add_argument('--source-binding',type=Path);p.add_argument('--source-binding-sha256');a=p.parse_args()
     run=a.run.resolve();assert h.HERE in run.parents
+    if bool(a.source_binding)!=bool(a.source_binding_sha256):p.error('source binding path and external SHA256 are a pair')
     if a.archive_only:archive(run)
-    else:audit(run)
+    else:audit(run,a.source_binding,a.source_binding_sha256)

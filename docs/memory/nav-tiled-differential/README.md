@@ -35,6 +35,35 @@ copy of generated `routes-extension.bin`. Its receipt's executable argument `rea
 does not mean production data or native guards were used. This protocol fixture
 is labeled separately in result.json and remains under GENERATED limits.
 
+### Coordinate-refined composite source
+
+The admitted coordinate candidate is `coordinate-ebf0f30`. It is the complete
+dense source tree plus exactly one `crates/nav/src/collision.rs` overlay; it is
+not a sparse collision-only checkout. The external binding document uses
+`nav-coordinate-source-v1` and must be accompanied by the caller-supplied digest
+`7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb`
+at every entry point. No command silently loads a mutable local binding.
+
+    BINDING=../nav-tiled-stage-a/coordinate-source-binding.json
+    BINDING_SHA=$(shasum -a 256 "$BINDING" | cut -d' ' -f1)
+    python3 harness.py prepare --run coordinate-generated-01 \
+      --source-binding "$BINDING" --source-binding-sha256 "$BINDING_SHA"
+    python3 harness.py build --run coordinate-generated-01 \
+      --source-binding "$BINDING" --source-binding-sha256 "$BINDING_SHA"
+    python3 harness.py generated --run coordinate-generated-01 \
+      --source-binding "$BINDING" --source-binding-sha256 "$BINDING_SHA"
+    python3 audit.py coordinate-generated-01 \
+      --source-binding "$BINDING" --source-binding-sha256 "$BINDING_SHA"
+    NAV_EXTENSION_RUN=$PWD/coordinate-generated-01 \
+      NAV_COORDINATE_SOURCE_BINDING="$BINDING" \
+      NAV_COORDINATE_SOURCE_BINDING_SHA256="$BINDING_SHA" \
+      python3 -m unittest -v test_extension
+
+Coordinate source-binding references stored in artifacts are portable and
+hash-bound. The live caller path is retained separately and re-hashed between
+launches, so path relocation does not rewrite evidence and path mutation does
+not evade admission. Generated output remains local tooling evidence only.
+
 The real wrapper is inaccessible on Darwin. Never treat the binary alone as an
 authorization boundary or sandbox: supported execution is through the harness.
 

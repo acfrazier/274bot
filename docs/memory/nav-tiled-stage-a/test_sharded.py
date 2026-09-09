@@ -3,12 +3,14 @@ import importlib.util
 from pathlib import Path
 import unittest
 import sharded as sh
+import qualify_sharded as qualify
 import tempfile
 import time
 import sys
 import subprocess
 import platform
 import json
+import copy
 from unittest.mock import patch
 from contextlib import contextmanager
 
@@ -42,7 +44,7 @@ def matrix_fixture_doubles(run):
     def buffered_write_json(path,value,cap=256*1024):
         data=(json.dumps(value,sort_keys=True,separators=(',',':'),allow_nan=False)+'\n').encode()
         if len(data)>cap:
-            raise ValueError('bounded JSON output exceeded')
+            raise ValueError(f'bounded JSON output exceeded: {len(data)} > {cap}')
         path.write_bytes(data)
 
     def bounded_storage_guard(dest,reserve=0):
@@ -63,6 +65,12 @@ def matrix_fixture_doubles(run):
 
 
 class Metrics(unittest.TestCase):
+    def coordinate_root(self,generated):
+        root=dict(generated)
+        root.update(sh.identity('CF1'),**sh.coordinate_ledger_identity(),
+            campaign_budget=sh.coordinate_budget(sh.ACCEPTED_DECISION_SHA256,copy.deepcopy(sh.PRIOR_F1_LEDGER)))
+        return root
+
     def test_full_generated_protocol(self):
         self.assertTrue(hasattr(sh,'run_phase'), 'phase driver missing')
         with retained_fixture() as d:
@@ -94,6 +102,105 @@ class Metrics(unittest.TestCase):
                 self.assertEqual(result['completed'],708)
                 self.assertEqual(len(list((run/'release').rglob('input.bin'))),1)
                 with self.assertRaises(FileExistsError):sh.run_phase(run,auth,sh.stage.sha(auth),standin=True)
+
+    def test_coordinate_cf1_carries_binding_and_prior_ledger(self):
+        with retained_fixture() as d:
+            run=Path(d);(run/'fixtures').mkdir()
+            source=sh.stage.HERE/'coordinate-source-binding.json';source_hash=sh.stage.sha(source)
+            binding=sh.stage.source_binding.load(source,source_hash)
+            ref=sh.stage.source_binding.reference(source,source_hash,binding)
+            sh.stage.save(run/'prepared.json',dict(arms=dict(sh.stage.source_binding.arms(binding)),
+                candidate_id=binding['candidate_id'],source_binding=ref))
+            pack=run/'fixtures/tiny.bin';pack.write_bytes(sh.stage.wire.pack(1,1))
+            routes=run/'fixtures/59.tsv';routes.write_text('0 0 0 0 0 0 0 0 0 0\n'*59)
+            generated=sh.generated_authorization(run,pack,routes,run/'coordinate-ebf0f30-release-01',
+                source,source_hash)
+            self.assertEqual((generated['schema'],generated['phase']),
+                (sh.COORDINATE_QUALIFICATION_SCHEMA,'GQ'))
+            self.assertNotIn('prior_campaign_ledger',generated)
+            root=self.coordinate_root(generated)
+            self.assertEqual((root['schema'],root['phase']),(sh.COORDINATE_SCHEMA,'CF1'))
+            self.assertEqual(root['campaign_budget']['prior'],sh.PRIOR_F1_LEDGER)
+            for field,value in [('schema',sh.SCHEMA),('child_decision_sha256','0'*64),
+                    ('prior_campaign_ledger',dict(sh.PRIOR_F1_LEDGER,children=0))]:
+                bad=run/('bad-'+field+'.json');sh.write_json(bad,dict(root,**{field:value}))
+                with self.assertRaises(ValueError):sh.run_phase(run,bad,sh.stage.sha(bad),standin=True,
+                    source_binding_path=source,source_binding_sha256=source_hash)
+            auth=run/'CF1.json';sh.write_json(auth,root)
+            with patch.object(sh.stage,'check_release'),patch.object(sh,'launch',lambda r,a,p,s,o,n,g:mock_output(o,n)):
+                result=sh.run_phase(run,auth,sh.stage.sha(auth),standin=True,
+                    source_binding_path=source,source_binding_sha256=source_hash)
+            value=json.loads(result.read_text())
+            self.assertEqual((value['schema'],value['phase'],value['candidate_id']),
+                (sh.COORDINATE_SCHEMA,'CF1','coordinate-ebf0f30'))
+            self.assertEqual(value['prior_campaign_ledger'],sh.PRIOR_F1_LEDGER)
+            self.assertEqual(value['budget']['children'],8)
+            self.assertEqual(value['completed'],4)
+            records=[json.loads((result.parent/(e['name']+'.record.json')).read_text()) for e in value['entries']]
+            self.assertTrue(all(e['candidate_id']=='coordinate-ebf0f30' and e['phase']=='CF1'
+                and e['source_binding']==ref for e in records))
+            sh.stage.configure_source_binding()
+
+    def test_coordinate_generated_qualification_has_separate_phase_and_budget(self):
+        with retained_fixture() as d:
+            run=Path(d);(run/'fixtures').mkdir();source=sh.stage.HERE/'coordinate-source-binding.json'
+            source_hash=sh.stage.sha(source);binding=sh.stage.source_binding.load(source,source_hash)
+            ref=sh.stage.source_binding.reference(source,source_hash,binding)
+            sh.stage.save(run/'prepared.json',dict(tools=sh.stage.tools(),arms=dict(sh.stage.source_binding.arms(binding)),
+                candidate_id=binding['candidate_id'],source_binding=ref))
+            pack=run/'fixtures/tiny.bin';pack.write_bytes(sh.stage.wire.pack(1,1))
+            routes=run/'fixtures/59.tsv';routes.write_text('0 0 0 0 0 0 0 0 0 0\n'*59)
+            auth=sh.generated_authorization(run,pack,routes,run/'coordinate-ebf0f30-generated-smoke-01',
+                source,source_hash)
+            path=run/'GQ.json';sh.write_json(path,auth)
+            try:
+                with patch.object(sh.stage,'check_release'),patch.object(sh,'launch',
+                        lambda run,arm,pack,selector,out,name,standin:mock_output(out,name)):
+                    result=sh.run_phase(run,path,sh.stage.sha(path),standin=True,
+                        source_binding_path=source,source_binding_sha256=source_hash)
+                value=json.loads(result.read_text())
+                self.assertEqual((value['schema'],value['phase'],value['completed']),
+                    (sh.COORDINATE_QUALIFICATION_SCHEMA,'GQ',4))
+                self.assertEqual(value['budget']['children'],4)
+                self.assertNotIn('prior_campaign_ledger',value)
+            finally:
+                sh.stage.configure_source_binding()
+
+    def test_full_coordinate_generated_protocol(self):
+        with retained_fixture() as d:
+            run=Path(d);(run/'fixtures').mkdir()
+            source=sh.stage.HERE/'coordinate-source-binding.json';source_hash=sh.stage.sha(source)
+            binding=sh.stage.source_binding.load(source,source_hash)
+            ref=sh.stage.source_binding.reference(source,source_hash,binding)
+            sh.stage.save(run/'prepared.json',dict(arms=dict(sh.stage.source_binding.arms(binding)),
+                candidate_id=binding['candidate_id'],source_binding=ref))
+            pack=run/'fixtures/tiny.bin';pack.write_bytes(sh.stage.wire.pack(1,1))
+            routes=run/'fixtures/59.tsv';routes.write_text('0 0 0 0 0 0 0 0 0 0\n'*59)
+            root=self.coordinate_root(sh.generated_authorization(
+                run,pack,routes,run/'coordinate-ebf0f30-full-01',source,source_hash))
+            root_path=run/'CF1.json';sh.write_json(root_path,root);launches=[]
+            def launch(run,arm,pack,selector,out,name,standin):
+                launches.append((arm,int(selector.stem)));return mock_output(out,name)
+            try:
+                with patch.object(sh.stage,'check_release'),patch.object(sh,'launch',launch),matrix_fixture_doubles(run):
+                    result=sh.run_phase(run,root_path,sh.stage.sha(root_path),standin=True,
+                        source_binding_path=source,source_binding_sha256=source_hash)
+                    for phase in ('CF2','CA'):
+                        auth=dict(sh.identity(phase),**sh.coordinate_ledger_identity(),released=True,mode='standin',
+                            root=sh.reference(root_path),parent=sh.reference(result),
+                            review_approved=True,campaign_budget=root['campaign_budget'])
+                        if phase=='CA':auth['method_accepted']=True
+                        path=run/(phase+'.json');sh.write_json(path,auth)
+                        result=sh.run_phase(run,path,sh.stage.sha(path),standin=True,
+                            source_binding_path=source,source_binding_sha256=source_hash)
+                self.assertEqual(launches,[(a,r) for phase in ('CF1','CF2','CA')
+                    for _,r,a in sh.schedule(phase)])
+                final=json.loads(result.read_text())
+                self.assertEqual((final['completed'],final['budget']['children']),(708,830))
+                self.assertEqual(final['source_binding'],ref)
+                self.assertLessEqual(result.stat().st_size,sh.STORAGE['json_bytes'])
+            finally:
+                sh.stage.configure_source_binding()
 
     def test_budget_reservation_refund_and_deadline(self):
         self.assertTrue(hasattr(sh,'Budget'), 'global budget missing')
@@ -156,6 +263,53 @@ class Metrics(unittest.TestCase):
         for field,value in [('raw_order','lane-row-sweep'),('raw_schema','old'),('raw_elapsed_ns',[1]*23),('route_p99_ns',1)]:
             with self.subTest(field=field), self.assertRaises(ValueError):
                 sh.raw_samples(dict(summary,**{field:value}),1)
+
+    def test_coordinate_schedule_and_finite_budget_decision(self):
+        self.assertEqual(sh.SCHEMA,'stage-a-singleton-v2')
+        self.assertEqual(sh.COORDINATE_SCHEMA,'stage-a-coordinate-v1')
+        self.assertEqual(sh.schedule('CF1'),[(1,1,'dense'),(1,1,'refined'),
+            (1,2,'refined'),(1,2,'dense')])
+        self.assertEqual(len(sh.schedule('CF2')),114)
+        self.assertEqual(len(sh.schedule('CA')),708)
+        self.assertEqual({row for _,row,_ in sh.schedule('CF1')+sh.schedule('CF2')},set(range(1,60)))
+        policy=sh.coordinate_budget(sh.ACCEPTED_DECISION_SHA256,copy.deepcopy(sh.PRIOR_F1_LEDGER))
+        self.assertEqual(policy['cumulative_child_ceiling'],122)
+        self.assertEqual(policy['fresh_child_ceiling'],118)
+        self.assertEqual(policy['prior']['wall'],40.090448230999755)
+        self.assertEqual(policy['prior']['cpu'],29.50134)
+        self.assertEqual(policy['prior']['children'],4)
+        with self.assertRaises(ValueError):sh.coordinate_budget(None,copy.deepcopy(sh.PRIOR_F1_LEDGER))
+        with self.assertRaises(ValueError):sh.coordinate_budget('0'*64,copy.deepcopy(sh.PRIOR_F1_LEDGER))
+        for key in ('wall','cpu','children','result_sha256'):
+            changed=copy.deepcopy(sh.PRIOR_F1_LEDGER)
+            changed[key]=changed[key]+1 if key!='result_sha256' else '0'*64
+            with self.subTest(key=key),self.assertRaises(ValueError):
+                sh.coordinate_budget(sh.ACCEPTED_DECISION_SHA256,changed)
+        old_cap=sh.Budget(1800,1500,copy.deepcopy(sh.PRIOR_F1_LEDGER),
+            clock=lambda:0,cpu=lambda:0,child_limit=118)
+        for _ in range(114):old_cap.reserve();old_cap.finish(True)
+        with self.assertRaises(ValueError):old_cap.reserve()
+        approved=sh.Budget(1800,1500,copy.deepcopy(sh.PRIOR_F1_LEDGER),
+            clock=lambda:0,cpu=lambda:0,child_limit=122)
+        for _ in range(118):approved.reserve();approved.finish(True)
+        self.assertEqual(approved.snapshot()['children'],122)
+
+    def test_coordinate_qualification_configuration_is_externally_bound(self):
+        with retained_fixture() as d:
+            run=Path(d);source=sh.stage.HERE/'coordinate-source-binding.json';digest=sh.stage.sha(source)
+            binding=sh.stage.source_binding.load(source,digest)
+            sh.stage.save(run/'prepared.json',dict(arms=dict(sh.stage.source_binding.arms(binding)),
+                candidate_id=binding['candidate_id'],
+                source_binding=sh.stage.source_binding.reference(source,digest,binding)))
+            try:
+                config=qualify.configuration(run,'coordinate-ebf0f30-qualification-01',source,digest)
+                self.assertEqual((config['phase'],config['reference_arm']),('GQ',{'dense':'dense','refined':'tiled'}))
+                with self.assertRaises(ValueError):
+                    qualify.configuration(run,'coordinate-ebf0f30-qualification-01',source,None)
+                with self.assertRaises(ValueError):
+                    qualify.configuration(run,'singleton-qualification-04',source,digest)
+            finally:
+                sh.stage.configure_source_binding()
 
     def test_exact_quantiles(self):
         spec = importlib.util.spec_from_file_location('sharded', Path(__file__).with_name('sharded.py'))

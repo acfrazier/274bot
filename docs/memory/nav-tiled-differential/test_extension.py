@@ -81,8 +81,12 @@ class Extension(unittest.TestCase):
         name=os.environ.get('NAV_EXTENSION_RUN')
         if not name:self.skipTest('set NAV_EXTENSION_RUN for frozen-arm generated integration')
         run=Path(name).resolve()
-        for arm in ('dense','tiled'):
-            h.verify_arm(run,arm)
+        binding=os.environ.get('NAV_COORDINATE_SOURCE_BINDING')
+        binding_sha256=os.environ.get('NAV_COORDINATE_SOURCE_BINDING_SHA256')
+        if bool(binding)!=bool(binding_sha256):raise ValueError('coordinate binding path/hash are a pair')
+        context=h.source_context(run,Path(binding).resolve() if binding else None,binding_sha256)
+        for arm in context['arms']:
+            h.verify_arm(run,arm,context)
             for path,protocol in [(run/(arm+'-probe.out'),False),(run/'protocol-fixture'/(arm+'.out'),True)]:
                 with self.subTest(arm=arm,path=str(path)):
                     counts=assert_extension(path,protocol)

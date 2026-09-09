@@ -170,3 +170,64 @@ The comparison requires preserved `run-05` fixture outputs and Git ancestor
 `f24de7c`; root must stage that evidence for native qualification, not replace it.
 Tests print retained fixture locations. Actual native hard-AS evidence remains
 mandatory; a macOS success reports `native_hard_as_qualified=false`.
+
+## Coordinate-refined candidate admission
+
+`coordinate-ebf0f30` uses the separate `stage-a-coordinate-v1` contract. It never
+falls back to `stage-a-singleton-v2`. Every coordinate entry point requires both
+an external `coordinate-source-binding.json` path and its caller-supplied SHA-256
+(`7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb`).
+The binding materializes the complete dense source tree at
+`29b7aea779322c8611f83dc193e939ca7d756f75`, then overlays only the admitted
+`navigation.rs` blob from `ebf0f30`. The portable artifact reference records the
+binding schema, candidate, filename, and digest; the live entry point separately
+retains and re-hashes the caller's path before every launch.
+
+The accepted accounting decision is commit
+`b00ba2c5d923c93f3161c1663ed3879bab8482af`, document SHA-256
+`6e53a13303442b5f6087e9321babc1d7be340031adf22a5a5c88c0edd7f225a7`.
+It admits cumulative ceilings of 1,800 wall seconds, 1,500 CPU seconds, and 122
+children only after the immutable old F1 ledger (4 children) is supplied. Thus
+the coordinate path has exactly 118 fresh children: CF1 has 4 and CF2 has 114.
+Acceptance has a separate 708-child method-equality schedule with 7,200 wall and
+6,000 CPU seconds. The historical 118-child ceiling remains the legacy default;
+without the reviewed 122-child decision, the prior four children leave room for
+only 114 fresh children and the complete coordinate F1/F2 schedule is rejected.
+
+Coordinate artifacts use candidate-bearing run names and the phase names `CF1`,
+`CF2`, and `CA`. Authorizations and results carry the exact source-binding
+reference, decision digest, and prior ledger. Claims, checkpoints, and child
+records carry the candidate, binding reference, and phase. Coordinate result
+files use hash-bound references to per-child records so the existing 256 KiB
+JSON cap is preserved. Parent records and ledgers are revalidated on every
+continuation; no mutable counter reset can create additional child allowance.
+
+Generated differential and Stage A qualification remain tooling evidence only.
+They do not authorize or claim real CF1/CF2/CA measurements. Real native phases
+still require a fresh reviewed authorization, independent build admissions, the
+Linux scheduler qualification, the matching complete root review, and the
+ordinary no-retry/release guards.
+The coordinate scheduler smoke is labeled `GQ` under
+`stage-a-coordinate-generated-v1`; its four children are a separate tooling
+budget and are not charged to or represented as CF1.
+
+Typical local entry points are:
+
+    BINDING=$PWD/coordinate-source-binding.json
+    BINDING_SHA=$(shasum -a 256 "$BINDING" | cut -d' ' -f1)
+    python3 stage_a.py prepare --run coordinate-native-build-01 \
+      --source-binding "$BINDING" --source-binding-sha256 "$BINDING_SHA"
+    python3 stage_a.py build --run coordinate-native-build-01 --variant clean \
+      --source-binding "$BINDING" --source-binding-sha256 "$BINDING_SHA"
+    python3 stage_a.py build --run coordinate-native-build-01 --variant counting \
+      --source-binding "$BINDING" --source-binding-sha256 "$BINDING_SHA"
+    python3 stage_a.py generated --run coordinate-native-build-01 \
+      --source-binding "$BINDING" --source-binding-sha256 "$BINDING_SHA"
+    python3 qualify_sharded.py coordinate-native-build-01 \
+      coordinate-ebf0f30-qualification-01 --source-binding "$BINDING" \
+      --source-binding-sha256 "$BINDING_SHA"
+
+The root preparation helpers expose the same source-binding pair. Coordinate
+packaging adds the binding validator, binding document, and only the admitted
+overlay blob to the frozen Git-object payload; it does not ship the whole
+collision commit or its tree.

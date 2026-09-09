@@ -16,6 +16,7 @@ import sys
 import time
 import shutil
 import mmap
+import source_binding
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
@@ -181,9 +182,14 @@ def cleanup_group(pgid):
 def git(repo, *args):
     return subprocess.check_output(['git', '-C', str(repo), *args])
 
-def materialize(run):
+def materialize(run,binding=None,binding_path=None,binding_sha256=None):
+    binding_ref=None
+    if binding is not None:
+        if binding_path is None or binding_sha256 is None or source_binding.load(binding_path,binding_sha256)!=binding:
+            raise ValueError('source binding path and external SHA256 required')
+        binding_ref=source_binding.reference(binding_path,binding_sha256,binding)
     manifests = {}
-    for arm, commit in [('dense', BASE), ('tiled', CANDIDATE)]:
+    for arm, commit in source_binding.arms(binding):
         dest = run/arm; dest.mkdir()
         entries = []
         for repo, rev, prefixes, prefix in [
@@ -199,6 +205,15 @@ def materialize(run):
                     raise ValueError('git object hash mismatch')
                 p = dest/(prefix+name); p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(b)
                 entries.append(dict(path=prefix+name, git_blob=oid, sha256=sha(p), size=len(b)))
+        if binding is not None:
+            effective=source_binding.apply(dest,entries,binding,arm,
+                lambda oid:git(ROOT,'cat-file','blob',oid))
+            source_binding.verify_effective(dest,entries,binding,arm)
+            save(dest/'effective-source-manifest.json',dict(schema='nav-effective-source-v1',
+                candidate_id=binding['candidate_id'],arm=arm,base_commit=commit,
+                source_binding=binding_ref,files=effective))
+        else:
+            effective=[dict(e,provenance='base') for e in entries]
         # Bind original manifests too; standalone workspace changes only package membership.
         for name in ('Cargo.toml', 'Cargo.lock'):
             (dest/('original-'+name)).write_bytes(git(ROOT,'show',commit+':'+name))
@@ -232,8 +247,13 @@ def materialize(run):
         (nav/'src/host-probe.rs').write_text('\n\n'.join(extracts)+'\n')
         (dest/'original-host-lib.rs').write_text(host)
         save(dest/'host-spans.json',dict(commit=commit,source_sha256=hashlib.sha256(host.encode()).hexdigest(),spans=spans))
-        save(dest/'original-source-manifest.json', dict(commit=commit,client=CLIENT,files=entries))
+        original_manifest=dict(commit=commit,client=CLIENT,files=entries)
+        if binding_ref is not None:original_manifest['source_binding']=binding_ref
+        save(dest/'original-source-manifest.json',original_manifest)
         manifests[arm] = dict(commit=commit, client=CLIENT, original_files=entries)
+        if binding_ref is not None:
+            manifests[arm].update(arm=arm,base_commit=commit,effective_files=effective,
+                                  source_binding=binding_ref)
     save(run/'sources.json',manifests)
 
 def fingerprint_tree(path):

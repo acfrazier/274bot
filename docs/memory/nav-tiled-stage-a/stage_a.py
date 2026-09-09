@@ -16,14 +16,21 @@ import sys
 
 import frozen_support as support
 import frozen_generate as wire
+import source_binding
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
-ARMS = {'dense': support.BASE, 'tiled': support.CANDIDATE}
+LEGACY_ARMS = {'dense': support.BASE, 'tiled': support.CANDIDATE}
+ARMS = dict(LEGACY_ARMS)
+SOURCE_BINDING = None
+SOURCE_BINDING_REF = None
+SOURCE_BINDING_PATH = None
 FROZEN = {
-    'frozen_support.py': '099c4bf8e25bf09b6181e5d51575872340f3b27fc286341315fc6fa799969ba6',
+    'frozen_support.py': '8707784bdea6df255ce3eee4329918d58524dfe5c2053a891e7fc5c3355c22ae',
     'frozen_probe.rs': 'ee91e2370d04de8a1c9b9d55eaf9cbb3c8bbd9d0153b4748208fc50656e40cd8',
     'frozen_generate.py': 'f51c88b73186b9e7a50ea45494cc160523339d2be9c6e10f8134d7de05bdd784',
+    'source_binding.py': '004b1ee9fd8958ef1097bda5b2546766b31de00e0a4b197f49687c95778888c9',
+    'coordinate-source-binding.json': '7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb',
 }
 TOOLS = (*FROZEN, 'stage_a.py', 'stage_probe.rs', 'allocator.rs', 'test_stage_a.py', 'proposed-manifest.json')
 LIMITS = dict(wall=120, cpu=90, rss=1024**3, address=4*1024**3, output=256*1024)
@@ -39,6 +46,37 @@ sha = support.sha
 save = support.save
 admit = support.admit
 
+def configure_source_binding(path=None,expected_sha256=None):
+    global ARMS,SOURCE_BINDING,SOURCE_BINDING_REF,SOURCE_BINDING_PATH
+    if path is None and expected_sha256 is None:
+        ARMS=dict(LEGACY_ARMS);SOURCE_BINDING=None;SOURCE_BINDING_REF=None;SOURCE_BINDING_PATH=None
+    elif path is None or expected_sha256 is None:
+        raise ValueError('source binding path and external SHA256 are a pair')
+    else:
+        binding=source_binding.load(path,expected_sha256)
+        ARMS=dict(source_binding.arms(binding));SOURCE_BINDING=binding
+        SOURCE_BINDING_REF=source_binding.reference(path,expected_sha256,binding)
+        SOURCE_BINDING_PATH=Path(path).absolute()
+    return dict(arms=dict(ARMS),binding=SOURCE_BINDING,reference=SOURCE_BINDING_REF)
+
+def activate_run_binding(run,path=None,expected_sha256=None):
+    if not (Path(run)/'prepared.json').exists():
+        if path is not None or expected_sha256 is not None:
+            raise ValueError('coordinate run requires prepared source binding')
+        return configure_source_binding()
+    prepared=json.loads((Path(run)/'prepared.json').read_text())
+    expected=prepared.get('source_binding')
+    if expected is None:
+        if path is not None or expected_sha256 is not None:
+            raise ValueError('legacy run cannot accept coordinate binding')
+        return configure_source_binding()
+    if path is None or expected_sha256 is None:
+        raise ValueError('external source binding path and SHA256 required')
+    context=configure_source_binding(path,expected_sha256)
+    if context['reference']!=expected or prepared.get('candidate_id')!=SOURCE_BINDING['candidate_id'] or prepared.get('arms')!=ARMS:
+        configure_source_binding();raise ValueError('prepared source binding mismatch')
+    return context
+
 def owned(path):
     path = Path(path).absolute()
     if HERE not in path.parents or path == HERE:
@@ -47,7 +85,16 @@ def owned(path):
         raise ValueError('symlink output path')
     return path
 
+def verify_active_source_binding():
+    binding=SOURCE_BINDING;ref=SOURCE_BINDING_REF;path=SOURCE_BINDING_PATH
+    if binding is None:return
+    if ref is None or path is None:raise ValueError('active source binding reference missing')
+    current=source_binding.load(path,ref['sha256'])
+    if current!=binding or source_binding.reference(path,ref['sha256'],current)!=ref:
+        raise ValueError('active source binding mutated')
+
 def tools():
+    verify_active_source_binding()
     for name, digest in FROZEN.items(): admit(HERE/name, digest, 128*1024)
     return {n: sha(HERE/n) for n in TOOLS}
 
@@ -98,14 +145,18 @@ pub fn layout(c: &WorldCollision)->[usize;10] {
 }
 '''
 
-def prepare(run):
+def prepare(run,binding_path=None,binding_sha256=None):
+    context=configure_source_binding(binding_path,binding_sha256)
     run=owned(run); run.mkdir(parents=True,exist_ok=False)
     tool_hashes=tools()
     # Copied helper executes materialization only; its correctness probe is never run.
     support.HERE=run/'immutable-helper'; support.HERE.mkdir()
     shutil.copyfile(HERE/'frozen_probe.rs',support.HERE/'probe.rs')
     support.ROOT=ROOT
-    support.materialize(run)
+    try:
+        support.materialize(run,context['binding'],binding_path,binding_sha256)
+    finally:
+        support.HERE=HERE
     facts=span((HERE/'frozen_probe.rs').read_text(),'fn facts(')
     for arm in ARMS:
         dest=run/arm; nav=dest/'crates/nav'; src=nav/'src'
@@ -118,22 +169,37 @@ def prepare(run):
         shutil.copyfile(HERE/'stage_probe.rs',src/'stage_probe.rs')
         shutil.copyfile(HERE/'allocator.rs',src/'stage-allocator.rs')
         verify_original(dest, arm)
-    save(run/'prepared.json',dict(tools=tool_hashes,arms=ARMS,client=support.CLIENT,
-         trees={a:tree(run/a) for a in ARMS}, compiler=support.toolchain()))
+    prepared=dict(tools=tool_hashes,arms=ARMS,client=support.CLIENT,
+         trees={a:tree(run/a) for a in ARMS}, compiler=support.toolchain())
+    if SOURCE_BINDING is not None:
+        prepared.update(candidate_id=SOURCE_BINDING['candidate_id'],source_binding=SOURCE_BINDING_REF)
+    save(run/'prepared.json',prepared)
     fixtures(run)
 
 def verify_original(dest, arm):
     manifest=json.loads((dest/'original-source-manifest.json').read_text())
     if manifest['commit'] != ARMS[arm] or manifest['client'] != support.CLIENT:
         raise ValueError('wrong arm source')
+    effective={e['path']:e for e in manifest['files']}
+    if SOURCE_BINDING is not None:
+        em=json.loads((dest/'effective-source-manifest.json').read_text())
+        if (em.get('schema'),em.get('candidate_id'),em.get('arm'),em.get('base_commit'),em.get('source_binding'))!=(
+                'nav-effective-source-v1',SOURCE_BINDING['candidate_id'],arm,ARMS[arm],SOURCE_BINDING_REF):
+            raise ValueError('effective source manifest identity')
+        effective={e['path']:e for e in em['files']}
+        if set(effective)!={e['path'] for e in manifest['files']}:
+            raise ValueError('effective source inventory mismatch')
+        if len([e for e in effective.values() if e.get('provenance')=='overlay'])!=(1 if arm=='refined' else 0):
+            raise ValueError('effective overlay count mismatch')
     suffixes={'crates/nav/Cargo.toml':NAV_SUFFIX,'crates/nav/src/router.rs':ROUTER_SUFFIX,
               'crates/nav/src/collision.rs':COLLISION_SUFFIX}
     for e in manifest['files']:
         data=(dest/e['path']).read_bytes(); suffix=suffixes.get(e['path'],'').encode()
-        if len(data)!=e['size']+len(suffix) or (suffix and not data.endswith(suffix)):
+        admitted=effective[e['path']]
+        if len(data)!=admitted['size']+len(suffix) or (suffix and not data.endswith(suffix)):
             raise ValueError('original source suffix changed: '+e['path'])
-        original=data[:e['size']]
-        if hashlib.sha256(original).hexdigest()!=e['sha256'] or hashlib.sha1(b'blob '+str(len(original)).encode()+b'\0'+original).hexdigest()!=e['git_blob']:
+        original=data[:admitted['size']]
+        if hashlib.sha256(original).hexdigest()!=admitted['sha256'] or hashlib.sha1(b'blob '+str(len(original)).encode()+b'\0'+original).hexdigest()!=admitted['git_blob']:
             raise ValueError('original source hash changed: '+e['path'])
     host=(dest/'original-host-lib.rs').read_bytes(); spans=json.loads((dest/'host-spans.json').read_text())
     if spans['commit']!=ARMS[arm] or hashlib.sha256(host).hexdigest()!=spans['source_sha256']: raise ValueError('host source mismatch')
@@ -143,9 +209,31 @@ def verify_original(dest, arm):
         if hashlib.sha256(b).hexdigest()!=s['sha256']: raise ValueError('host span mismatch')
         extracts.append(b)
     if (dest/'crates/nav/src/host-probe.rs').read_bytes()!=b'\n\n'.join(extracts)+b'\n': raise ValueError('host helper mismatch')
+    additions={'crates/nav/src/differential.rs','crates/nav/src/probe.rs','crates/nav/src/router-access.rs',
+        'crates/nav/src/host-probe.rs','crates/nav/src/stage-layout.rs','crates/nav/src/stage-facts.rs',
+        'crates/nav/src/stage.rs','crates/nav/src/stage_probe.rs','crates/nav/src/stage-allocator.rs'}
+    admitted_paths=set(effective)|additions
+    for p in dest.rglob('*'):
+        if p.is_symlink():raise ValueError('symlink in effective source')
+        if p.is_file():
+            rel=str(p.relative_to(dest))
+            if rel.startswith(('crates/nav/','crates/api/','vendor/fr-client-rust/crates/client/')) and rel not in admitted_paths:
+                raise ValueError('unadmitted effective source: '+rel)
 
-def build(run, variant):
-    run=owned(run); prep=json.loads((run/'prepared.json').read_text())
+def save_arm_admission(run,arm,variant,binary,compiler,command):
+    dest=run/arm
+    value=dict(arm=arm,commit=ARMS[arm],variant=variant,client=support.CLIENT,
+        executable_sha256=sha(binary),source=tree(dest),tools=tools(),compiler=compiler,
+        lock_sha256=sha(dest/'Cargo.lock'),command=command)
+    if SOURCE_BINDING is not None:
+        value.update(schema='stage-a-coordinate-admission-v1',candidate_id=SOURCE_BINDING['candidate_id'],
+            source_binding=SOURCE_BINDING_REF,phase='tooling-admission',
+            effective_source_manifest_sha256=sha(dest/'effective-source-manifest.json'))
+    save(run/f'{arm}-{variant}-admission.json',value)
+
+def build(run, variant,binding_path=None,binding_sha256=None):
+    run=owned(run);activate_run_binding(run,binding_path,binding_sha256)
+    prep=json.loads((run/'prepared.json').read_text())
     if prep['tools']!=tools(): raise ValueError('prepared tool mutation')
     for arm in ARMS:
         receipt_path=run/f'{arm}-{variant}-admission.json'
@@ -171,14 +259,15 @@ def build(run, variant):
         receipt=support.bounded(cmd,run,arm+'-'+variant+'-build',cwd=dest,**BUILD)
         if receipt['failure']: raise RuntimeError('build failed; receipt preserved')
         binary=target/'release/stage-a-probe'
-        save(receipt_path,dict(arm=arm,commit=ARMS[arm],variant=variant,client=support.CLIENT,
-             executable_sha256=sha(binary),source=tree(dest),tools=tools(),compiler=compiler,
-             lock_sha256=sha(dest/'Cargo.lock'),command=cmd))
+        save_arm_admission(run,arm,variant,binary,compiler,cmd)
 
 def verify_arm(run, arm, variant):
     if arm not in ARMS or variant not in ('clean','counting'): raise ValueError('unsupported arm/variant')
     run=owned(run); a=json.loads((run/f'{arm}-{variant}-admission.json').read_text()); dest=run/arm
     if (a['arm'],a['commit'],a['variant'],a['client'])!=(arm,ARMS[arm],variant,support.CLIENT): raise ValueError('admission identity')
+    if SOURCE_BINDING is not None and (a.get('schema'),a.get('candidate_id'),a.get('source_binding'),a.get('phase'),a.get('effective_source_manifest_sha256'))!=(
+            'stage-a-coordinate-admission-v1',SOURCE_BINDING['candidate_id'],SOURCE_BINDING_REF,'tooling-admission',sha(dest/'effective-source-manifest.json')):
+        raise ValueError('coordinate admission identity')
     verify_original(dest,arm)
     if a['tools']!=tools() or a['source']!=tree(dest): raise ValueError('admitted source/tool moved')
     if sha(dest/'Cargo.lock')!=a['lock_sha256']: raise ValueError('admitted lock moved')
@@ -255,8 +344,9 @@ def run_one(run, arm, variant, pack, routes, outdir, name, released=False):
          diagnostic=variant=='counting',receipt=r,data=data))
     return data
 
-def generated(run, variant):
-    run=owned(run); corpus=json.loads((run/'fixtures.json').read_text()); results=[]
+def generated(run, variant,binding_path=None,binding_sha256=None):
+    run=owned(run);activate_run_binding(run,binding_path,binding_sha256)
+    corpus=json.loads((run/'fixtures.json').read_text()); results=[]
     dest=run/('qualification-'+variant);dest.mkdir()
     routes=run/'fixtures/routes.tsv';admit(routes,corpus['routes_sha256'],65536)
     for e in corpus['corpus']:
@@ -271,14 +361,19 @@ def generated(run, variant):
         results.append(dict(fixture=e['name'],summary=pair))
     if not all(results[0]['summary'][0]['aggregate'][k]>0 for k in ('routes','no_path','tiles')): raise ValueError('route coverage absent')
     if not all(results[2]['summary'][0]['aggregate'][k]>0 for k in ('transports','banks')): raise ValueError('gated coverage absent')
-    save(dest/'result.json',dict(qualified=True,scope='synthetic tooling qualification only',variant=variant,results=results,
+    source_identity=(dict(schema='stage-a-coordinate-generated-result-v1',candidate_id=SOURCE_BINDING['candidate_id'],
+        source_binding=SOURCE_BINDING_REF,phase='tooling-qualification') if SOURCE_BINDING else {})
+    save(dest/'result.json',dict(source_identity,qualified=True,scope='synthetic tooling qualification only',variant=variant,results=results,
          tools=tools(),platform=platform.platform(),native_hard_as_qualified=False))
 
-def guards(run):
+def guards(run,binding_path=None,binding_sha256=None):
+    configure_source_binding(binding_path,binding_sha256)
     run=owned(run);run.mkdir(parents=True,exist_ok=False)
     r=support.bounded([sys.executable,str(HERE/'test_stage_a.py'),'-v'],run,'guards',wall=60,cpu=30,rss=512*1024**2,address=4*1024**3,output=1024**2)
     passed=r['failure'] is None and b'skipped' not in (run/'guards.err').read_bytes()
-    save(run/'result.json',dict(qualified=passed,native_hard_as_qualified=passed and platform.system()=='Linux',
+    source_identity=(dict(schema='stage-a-coordinate-guard-result-v1',candidate_id=SOURCE_BINDING['candidate_id'],
+        source_binding=SOURCE_BINDING_REF,phase='tooling-guards') if SOURCE_BINDING else {})
+    save(run/'result.json',dict(source_identity,qualified=passed,native_hard_as_qualified=passed and platform.system()=='Linux',
         tools=tools(),platform=platform.platform(),evidence={n:sha(run/n) for n in ('guards.out','guards.err','guards.receipt.json')}))
     if not passed: raise RuntimeError('guard tests failed; retained evidence')
 
@@ -296,6 +391,9 @@ def paired(baseline, candidate, threshold, relative=False):
 
 def check_release(run, auth, standin=False):
     # Never stat/read an external pack until ALL release prerequisites pass.
+    if SOURCE_BINDING is not None and (auth.get('schema'),auth.get('candidate_id'),auth.get('source_binding'),auth.get('phase'))!=(
+            'stage-a-coordinate-release-v1',SOURCE_BINDING['candidate_id'],SOURCE_BINDING_REF,'tooling-release'):
+        raise ValueError('coordinate source binding release missing')
     if auth.get('released') is not True or auth.get('mode')!=('standin' if standin else 'real'): raise ValueError('explicit root release required')
     if not standin and platform.system()!='Linux': raise ValueError('native Linux hard-AS qualification required')
     if auth.get('limits')!=LIMITS: raise ValueError('bounds may not be relaxed')
@@ -308,6 +406,8 @@ def check_release(run, auth, standin=False):
         p=run/f'qualification-{variant}/result.json'
         q=json.loads(p.read_text())
         if auth.get(variant+'_qualification_sha256')!=sha(p) or q.get('qualified') is not True or q.get('tools')!=tools() or q.get('variant')!=variant or q.get('platform')!=platform.platform(): raise ValueError('generated qualification missing or stale')
+        if SOURCE_BINDING is not None and (q.get('candidate_id'),q.get('source_binding'))!=(SOURCE_BINDING['candidate_id'],SOURCE_BINDING_REF):
+            raise ValueError('generated qualification source binding stale')
         for arm in ARMS:
             verify_arm(run,arm,variant)
             if auth.get(f'{arm}-{variant}-admission_sha256')!=sha(run/f'{arm}-{variant}-admission.json'): raise ValueError('root arm binding missing')
@@ -318,14 +418,16 @@ def check_release(run, auth, standin=False):
         if json.loads((guard.parent/'guards.receipt.json').read_text()).get('failure') is not None or b'skipped' in (guard.parent/'guards.err').read_bytes(): raise ValueError('failed or skipped native guards')
     if not auth.get('hardware') or auth.get('correctness_review_released') is not True: raise ValueError('root hardware/correctness release missing')
 
-def released_run(run, auth, standin=False):
-    run=owned(run);check_release(run,auth,standin)
+def released_run(run, auth, standin=False,binding_path=None,binding_sha256=None):
+    run=owned(run);activate_run_binding(run,binding_path,binding_sha256);check_release(run,auth,standin)
     pack=Path(auth['input_path']);route=Path(auth['routes_path'])
     if standin and (pack.resolve().parent!=run/'fixtures' or route.resolve().parent!=run/'fixtures'): raise ValueError('stand-in cannot read external input')
     admit(pack,auth['input_sha256'],1024**2 if standin else 128*1024**2)
     if pack.stat().st_size!=auth['input_bytes']: raise ValueError('root input length mismatch')
     admit(route,auth['routes_sha256'],65536);rows=selectors(route)
-    dest=run/('standin-release' if standin else 'real-release');dest.mkdir()
+    release_name=('standin-release' if standin else 'real-release')
+    if SOURCE_BINDING is not None:release_name=SOURCE_BINDING['candidate_id']+'-'+release_name
+    dest=run/release_name;dest.mkdir()
     shutil.copyfile(pack,dest/'input.bin');save(dest/'authorization.json',auth)
     normalized=''.join(' '.join(map(str,r))+'\n' for r in rows).encode()
     normalized_hash=hashlib.sha256(normalized).hexdigest()
@@ -337,8 +439,13 @@ def released_run(run, auth, standin=False):
         if (dest/'input.bin').stat().st_size!=input_bytes: raise ValueError('root input length mismatch')
         admit(dest/'routes.tsv',normalized_hash,65536)
     schedule=json.loads((HERE/'proposed-manifest.json').read_text())['order']
+    if SOURCE_BINDING is not None:schedule=['refined' if arm=='tiled' else arm for arm in schedule]
     results=[]
-    save(dest/'launch.json',dict(order=schedule,authorization=auth,normalized_routes_sha256=normalized_hash,hardware=hardware()))
+    release_identity=(dict(schema='stage-a-coordinate-result-v1',candidate_id=SOURCE_BINDING['candidate_id'],
+        source_binding=SOURCE_BINDING_REF,phase='tooling-qualification')
+        if SOURCE_BINDING is not None else {})
+    save(dest/'launch.json',dict(release_identity,order=schedule,authorization=auth,
+        normalized_routes_sha256=normalized_hash,hardware=hardware()))
     try:
         for i,arm in enumerate(schedule):
             check_release(run,auth,standin)
@@ -356,22 +463,27 @@ def released_run(run, auth, standin=False):
                        'cold':phases['retained_input']['elapsed_ns']+phases['decoded_converted_retained_input']['elapsed_ns'],
                        'route_cpu':phases['hot_routes']['cpu_ns'],'route_p99':summary['route_p99_ns']}[name]
                 samples[r['arm']].append(value)
-            metrics[name]=paired(samples['dense'],samples['tiled'],threshold,relative)
+            candidate='refined' if SOURCE_BINDING is not None else 'tiled'
+            metrics[name]=paired(samples['dense'],samples[candidate],threshold,relative)
         bind_copies()
-        save(dest/'result.json',dict(scope='stand-in qualification only' if standin else 'Stage A only; no resident acceptance',metrics=metrics,results=results))
+        save(dest/'result.json',dict(release_identity,
+            scope='stand-in qualification only' if standin else 'Stage A only; no resident acceptance',metrics=metrics,results=results))
     except BaseException as e:
-        save(dest/'result.json',dict(qualified=False,failure=repr(e),results=results));raise
+        save(dest/'result.json',dict(release_identity,qualified=False,failure=repr(e),results=results));raise
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('action',choices=['prepare','build','generated','guards','real']);p.add_argument('--run',type=Path,required=True)
     p.add_argument('--variant',choices=['clean','counting'],default='clean');p.add_argument('--authorization',type=Path);p.add_argument('--authorization-sha256')
+    p.add_argument('--source-binding',type=Path);p.add_argument('--source-binding-sha256')
     a=p.parse_args();run=owned(a.run)
-    if a.action=='prepare':prepare(run)
-    elif a.action=='build':build(run,a.variant)
-    elif a.action=='generated':generated(run,a.variant)
-    elif a.action=='guards':guards(run)
+    if bool(a.source_binding)!=bool(a.source_binding_sha256):p.error('source binding path and external SHA256 are a pair')
+    if a.action=='prepare':prepare(run,a.source_binding,a.source_binding_sha256)
+    elif a.action=='build':build(run,a.variant,a.source_binding,a.source_binding_sha256)
+    elif a.action=='generated':generated(run,a.variant,a.source_binding,a.source_binding_sha256)
+    elif a.action=='guards':guards(run,a.source_binding,a.source_binding_sha256)
     else:
         if not a.authorization or not a.authorization_sha256: p.error('root authorization path AND external hash required')
-        admit(a.authorization,a.authorization_sha256,1024**2);released_run(run,json.loads(a.authorization.read_text()))
+        activate_run_binding(run,a.source_binding,a.source_binding_sha256)
+        admit(a.authorization,a.authorization_sha256,1024**2);released_run(run,json.loads(a.authorization.read_text()),binding_path=a.source_binding,binding_sha256=a.source_binding_sha256)
 
 if __name__=='__main__':main()
