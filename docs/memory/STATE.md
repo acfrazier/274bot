@@ -11,6 +11,34 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-09 02:26 UTC
+
+- Census3d32602 APPROVED actual Grok4.5/xai20260908_221202_bf852a. Root
+  independently reproduced frozen213-input digest3d89f927. Native offline
+  first build exit101 lacked zlib-rs; locked fetch completed with all source
+  bytes unchanged, then offline release build passed in56.10s. Binary SHA
+  c2e83b352abd6608a560fb26f59b2ade09ffe664c1d6bd8d20dded27ee7c367e.
+- Linux all7 fixtures pass; real-mode generated native result binds identities.
+  RSS400MiB fixture killed by RSS guard; CPU spin killed at30.08s;512MiB AS
+  limit independently observed and600MiB allocation rejected. Root first
+  qualification wrapper failed selecting two receipts (child and outer reject);
+  preserved that failure and continued only unfinished CPU/AS checks. Tool
+  limits/source unchanged. Native artifacts nav-census-3d32602-0218 on builder.
+  Root releases ONE exact73438581B/SHA2f393138... real pack census after fresh
+  admission and local evidence retrieval, no retries/cap increases. This is
+  hypothetical storage screening only, not runtime representation or RSS saving.
+- 289 aggregate e4834d7 and whole-branch0227f3f APPROVED actual Grok4.5
+  20260908_220659_2e28d6 / Grok4.6 20260908_221302_f73107 (code0406ceb).
+  Native reviewed standalone build passed; isolated server61312 ready on three
+  loopback ports with protected274/377 hashes unchanged. Root live client61759
+  reaches stable rendered tutorial room, root inspected screenshot. User reports
+  overhead NPC hint arrow does not blink and significantly lags NPC movement.
+  Owned client stopped/reaped-15, not logout proof; server supervisor14070 stays.
+- Arrow corrective card t_1ced5ad3 assigned Luna in FR-client-289, bounded
+  redraw/upload cause + minimal fix + meaningful regression; same-card review,
+  corrective Grok4.6 and fresh live visual proof required. Main memory work
+  continues separately. Action/logout/whole-client acceptance remain open.
+
 ## Latest boundary — 2026-09-09 02:09 UTC
 
 - Census d0120da failed round2 actual Grok4.5/xai20260908_215658_4d2c7d:
