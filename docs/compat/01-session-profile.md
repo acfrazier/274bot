@@ -81,9 +81,18 @@ represent game content or a live session.
 - The first synthetic constructor run exposed an incorrect expected default
   hostname in the test (`localhost` versus preserved `127.0.0.1`). Correcting
   that assertion passed. The initial failure log remains in the evidence folder.
-- macOS 289 engine startup passed readiness checks at game 44594 / HTTP 1080.
-  Startup evidence is preparation only; no account login or gameplay acceptance
-  is claimed here. The existing 274 engine was left running.
+- The real profile asset checks initialized both local fixtures on macOS,
+  including matching server CRCs and shared client bindings. Revision 274 loaded
+  its existing snapshot/nav; 289 used its separate cache/HTTP/unpack and reported
+  navigation unavailable plus the expected bot-operation gate. These are
+  development-candidate asset checks, pending the final integrated candidate.
+  The first 289 engine launch exited after readiness; its probe was terminated
+  and preserved as a failed preparation attempt. Keeping the launcher session
+  alive allowed the new engine PID91467 to remain ready before and after the
+  successful asset check. No account login or gameplay acceptance is claimed.
+  The existing 274 engine PID1852 was left running.
+
+Run the reusable asset diagnostic with `cargo run --locked -p host-play --example profile_check -- --revision 289 --initialize` (omit `--initialize` for construction only). It does not start account slots.
 
 Raw logs: `evidence/session-profile/host/`. Client-specific tests and lifecycle
 proof belong to the client report `docs/revision-289/session-profile-client.md`.
