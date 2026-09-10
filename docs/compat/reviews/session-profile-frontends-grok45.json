@@ -1,0 +1,116 @@
+{
+  "task_id": "t_879d9607",
+  "runs": [
+    {
+      "id": 1088,
+      "profile": "sol",
+      "status": "review",
+      "outcome": "review_requested",
+      "started_at": 1789053579,
+      "ended_at": 1789057917,
+      "summary": "Committed immutable profile/revision wiring for panel, TUI, and host-play at 7aaa8c39, including checked template reuse, target-aware vault/catalog behavior, pre-mutation 289 refusal, pre-bind panel selection with restart-required immutability, and full catalog identity checks that preserve custom cards. Frontend fixture tests construct real 274/289 clients from private eight-JAG copies; root retains native macOS proof.",
+      "error": null,
+      "metadata": {
+        "commit": "7aaa8c390533fa0cd994cca7201ea739865ef94d",
+        "changed_product_files": [
+          "crates/host-play/src/main.rs",
+          "crates/panel/src/app.rs",
+          "crates/panel/src/main.rs",
+          "crates/panel/src/picker.rs",
+          "crates/panel/src/session.rs",
+          "crates/panel/src/ui_state.rs",
+          "crates/panel/src/window.rs",
+          "crates/tui/src/bin.rs"
+        ],
+        "report": "docs/compat/01-session-profile-frontends.md",
+        "evidence": "docs/compat/evidence/session-profile/frontends/",
+        "tests": [
+          "cargo test -p host-play: pass",
+          "cargo test -p panel --features memory-profile: 384 passed",
+          "cargo test -p tui --features memory-profile: 89 passed",
+          "cargo check -p host-play -p panel -p tui --all-targets: pass",
+          "cargo clippy -p panel -p tui --all-targets -- -D warnings: pass",
+          "cargo clippy -p host-play --bin host-play -- -D warnings: pass",
+          "cargo fmt --all -- --check: pass"
+        ],
+        "working_tree_note": "Only root-owned untracked docs/compat/briefs/09-session-profile-integration-review.md remains; it was not staged or committed.",
+        "raw_log_whitespace": "Three exact Cargo logs retain Cargo's trailing blank line; source/docs excluding raw logs pass git diff --check.",
+        "worker_session_id": "20260910_111939_4f88e7"
+      },
+      "worker_pid": null,
+      "step_key": null
+    },
+    {
+      "id": 1093,
+      "profile": "reviewer",
+      "status": "done",
+      "outcome": "completed",
+      "started_at": 1789057969,
+      "ended_at": 1789058161,
+      "summary": "Reviewed and approved immutable frontend profile wiring at 7aaa8c39. Cold artifact read of brief 08 + product diff matched handoff: panel/TUI/host-play parse shared profile flags, bind one ServerProfile/SharedClientTemplate, refuse 289 before vault/memory mutation on production paths, target-aware vault/catalog/navflags/scatter, pre-bind catalog identity (incl. same-root source edit) without clearing custom cards, restart-required revision/bind lock. Independently re-ran focused panel/tui/host-play tests (all ok). Native macOS UI proof remains root.",
+      "error": null,
+      "metadata": {
+        "review_outcome": "approved",
+        "review_round": 1,
+        "review_lens": "artifact",
+        "commit": "7aaa8c390533fa0cd994cca7201ea739865ef94d",
+        "branch": "codex/rs2b0t-multirevision",
+        "reviewer_checks": [
+          "brief 08 vs allowed product files only in 7aaa8c39",
+          "host-play main: parse_profile_args, bind+template before vault, require_bot_operation before open/upsert",
+          "panel: configure/bind/rebind refuse, revision UI pre-session wording, CLI>saved effective label, vault_path reset refuse on invalid selection",
+          "panel catalog_root pre-bind explicit path; CatalogIdentity capture/compare; custom File cards preserved on mismatch",
+          "panel scatter uses template.scatter_tile_for; navflags bound path",
+          "panel/tui boot paths refuse 289 before prepare_unseeded/live unlock",
+          "tui run_with_template + profile_password_for + parser/fixture construction",
+          "independent re-run: bind_refuses_catalog_source, explicit_profile_wins, prebind_explicit_catalog, invalid_profile_refuses, frontend_parser_prepares (panel+tui), old_prefs_default_revision, host-play shared_profile_parser x2 \u2014 all pass",
+          "evidence logs claim 384 panel / 89 tui / host-play pass; native macOS deferred to root"
+        ],
+        "acceptance_criteria": {
+          "consistent_cli_profile_revision": "pass",
+          "panel_revision_persist_and_immutability": "pass",
+          "checked_template_production_startup": "pass",
+          "target_sensitive_vault_catalog": "pass",
+          "catalog_identity_no_ambient_reread": "pass",
+          "bound_navflags_and_scatter": "pass",
+          "lifecycle_preserved_native_deferred": "pass",
+          "fixture_real_client_construction": "pass"
+        },
+        "non_blocking_notes": [
+          "debug_main_buttons still consults ambient bot_target but debug_section is gated by bound options.host via debug_ui/is_local_engine",
+          "TUI has no stress scatter path; panel scatter uses shared template",
+          "root owns native macOS UI proof and any remaining profile.rs integration"
+        ],
+        "changed_product_files_verified": [
+          "crates/host-play/src/main.rs",
+          "crates/panel/src/app.rs",
+          "crates/panel/src/main.rs",
+          "crates/panel/src/picker.rs",
+          "crates/panel/src/session.rs",
+          "crates/panel/src/ui_state.rs",
+          "crates/panel/src/window.rs",
+          "crates/tui/src/bin.rs"
+        ],
+        "worker_session_id": "20260910_123250_73d488"
+      },
+      "worker_pid": null,
+      "step_key": null
+    }
+  ],
+  "actual_sessions": [
+    {
+      "id": "20260910_111939_4f88e7",
+      "model": "gpt-5.6-sol",
+      "billing_provider": "openai-codex",
+      "started_at": 1789053581.189225,
+      "ended_at": 1789057917.7266402
+    },
+    {
+      "id": "20260910_123250_73d488",
+      "model": "grok-4.5",
+      "billing_provider": "xai-oauth",
+      "started_at": 1789057971.304868,
+      "ended_at": 1789058161.651359
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 # Session profile frontend wiring
 
-Status: implementation complete; native macOS proof remains with the root integrator.
+Status: frontend commit `7aaa8c39` approved by completed actual Grok 4.5 review
+(card `t_879d9607`). Root integration and native macOS proof remain open.
 
 ## What changed
 
@@ -31,3 +32,13 @@ Raw logs: `docs/compat/evidence/session-profile/frontends/`.
 ## Remaining integrated proof
 
 The root integrator owns native macOS UI/visual validation with the prepared proof vault. No live gameplay was launched by this frontend task, and offline construction tests are not represented as 289 gameplay acceptance.
+
+## Root follow-up to the review
+
+The reviewer noted that the debug heading still called the legacy ambient-target
+button helper. The local/public send gate was already bound, but an explicit
+local profile could display the wrong buttons when the ambient target differed.
+Root routed that one presentation call through the bound session target and
+checked the existing local and public button tests. This small follow-up is
+included in the fresh Grok 4.6 integration review. The completed Grok 4.5 receipt
+is `reviews/session-profile-frontends-grok45.json`; it covers `7aaa8c39`.

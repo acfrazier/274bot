@@ -46,8 +46,9 @@ use crate::resource::{
     cpu_from_delta, format_bots, format_rss_caption, sample_process, traffic_from_samples, Metric,
 };
 use crate::session::{
-    debug_dest_cheats, debug_main_buttons, debug_maxme_cheats, script_active, script_pause_enabled,
-    script_status_text, script_stop_enabled, stream_capture, Session, PROCESS,
+    debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, script_active,
+    script_pause_enabled, script_status_text, script_stop_enabled, stream_capture, Session,
+    PROCESS,
 };
 use crate::theme::{
     applet_offset, apply_amber, apply_amber_current, fit_applet, game_window_title,
@@ -1732,7 +1733,7 @@ fn debug_section(ui: &Ui, session: &mut Session) {
         return;
     }
     let show_tutskip = session.focused_tutorial_skipped() == Some(false);
-    let main = debug_main_buttons(show_tutskip);
+    let main = debug_main_buttons_for(session.target(), show_tutskip);
     let avail = ui.content_region_avail()[0];
     // Packed one row even when a scrollbar trims avail below MIN_BUTTON —
     // stacking turns DebugPanel/Lumbridge/maxme/Teles into four strip-width
