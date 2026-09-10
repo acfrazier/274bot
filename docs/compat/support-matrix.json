@@ -5,7 +5,8 @@
   "policy": {
     "host_boundary": "map the JavaScript surface to Rust host APIs; do not clone the foreign runtime, policy, tables, routers, banking, loadout, navigation, recovery, quest, clue, gatherer, or market-maker planners",
     "missing_capability": "BLOCKED: missing <op> with source evidence; imports/startup are not functional support",
-    "walk_to": "WalkTo remains native 274bot navigation and is not a JsLibrary card"
+    "walk_to": "WalkTo remains native 274bot navigation and is not a JsLibrary card",
+    "script_suitability": "Script loading and starting are revision agnostic. Users determine suitability for their chosen revision and platform; host/client boundaries refuse unsupported operations. This evidence ledger is not a loading or starting allowlist."
   },
   "catalogs": [
     {
