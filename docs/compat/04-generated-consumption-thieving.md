@@ -19,7 +19,28 @@ The selected server facts are the same in both revisions for the required exampl
 
 ## Provenance and reproduction
 
-Each payload records the pinned engine/content commit IDs, SHA-256/byte identities for packed item/NPC/config inputs, all local decoder imports (including ObjType and NpcType), the consumption/pickpocket DB files, and `consume_effects.rs2`, plus the selected cache identity. The dirty-input gate checks these exact paths in both checkouts. No absolute path or timestamp is serialized.
+Each payload records the pinned engine/content commit IDs, SHA-256/byte identities for packed item/NPC/config inputs (including both `data/pack/server/obj.dat` and `data/pack/server/npc.dat`), all local decoder imports (including ObjType and NpcType), the consumption/pickpocket DB files, and `consume_effects.rs2`, plus the selected cache identity. The dirty-input gate checks these exact paths in both checkouts. No absolute path or timestamp is serialized.
+
+## Runtime mismatch inventory
+
+The current handwritten `api::content::FOOD_HEALS` values do not all describe the selected server action. The following entries differ; each generated row is a single consumption action, not a whole multi-bite item total:
+
+| Handwritten name/value | Generated value | Alias(es) | Derivation |
+| --- | ---: | --- | --- |
+| Anchovies / 1 | 3 | `anchovies` | `consume_normal.dbrow` / `heal_3` |
+| Bread / 5 | 4 | `bread` | `consume_normal.dbrow` / `heal_4` |
+| Stew / 11 | 9 | `stew` | `consume_normal.dbrow` / `heal_9` |
+| Plain pizza / 7 | 5 | `plain_pizza`, `half_plain_pizza` | `consume_normal.dbrow` / `heal_5` |
+| Meat pizza / 8 | 7 | `meat_pizza`, `half_meat_pizza` | `consume_normal.dbrow` / `heal_7` |
+| Anchovy pizza / 9 | 8 | `anchovie_pizza`, `half_anchovie_pizza` | `consume_normal.dbrow` / `heal_8` |
+| Pineapple pizza / 11 | 10 | `pineapple_pizza`, `half_pineapple_pizza` | `consume_normal.dbrow` / `heal_10` |
+| Redberry pie / 6 | 3 | `redberry_pie` | `consume_normal.dbrow` / `heal_3` |
+| Meat pie / 6 | 4 | `meat_pie` | `consume_normal.dbrow` / `heal_4` |
+| Apple pie / 7 | 5 | `apple_pie` | `consume_normal.dbrow` / `heal_5` |
+
+The remaining handwritten food names matched the generated fixed-heal view in the selected revisions. The generated pickpocket levels also match the current policy for every named spot: Guard 40, Knight of Ardougne 55, Paladin 70, Hero 80, Man 1, and Woman 1. These are reported facts for the runtime worker; this task does not alter Rust policy.
+
+The parser has a fixture test at `tools/game-data/generate.test.ts`. It exercises repeated consumable and NPC rows, repeated loot rows, multi-column stat tuples, pocket text, and a zero-heal row that remains `not_fixed_hp_heal`.
 
 From this checkout, using the pinned engine dependencies:
 
