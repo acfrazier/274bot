@@ -9,7 +9,6 @@ struct Slot {
     snapshot: Value,
     logs: VecDeque<String>,
     requests: VecDeque<String>,
-    navigation: VecDeque<String>,
     last_capture: Option<Instant>,
     sent_batches: u64,
     request_batches: u64,
@@ -48,15 +47,6 @@ pub(crate) fn requests(name: &str, reqs: &[script::shim::InteractReq]) {
         for req in reqs {
             bounded_push(&mut slot.requests, &format!("{req:?}"))
         }
-    }
-}
-pub(crate) fn enabled() -> bool {
-    SLOTS.get().is_some()
-}
-pub(crate) fn navigation(name: &str, event: impl FnOnce() -> String) {
-    let Some(all) = SLOTS.get() else { return };
-    if let Some(slot) = all.lock().unwrap().get_mut(name) {
-        bounded_push(&mut slot.navigation, &event());
     }
 }
 pub(crate) fn sent(name: &str, wrote: bool) {
@@ -103,7 +93,8 @@ pub(crate) fn sample(name: &str) -> Value {
     let Some(slot) = all.get(name) else {
         return Value::Null;
     };
-    json!({"client":slot.snapshot,"snapshot_age_ms":slot.last_capture.map(|t|t.elapsed().as_millis()),"recent_logs":slot.logs,"recent_requests":slot.requests,"recent_navigation":slot.navigation,"request_batches":slot.request_batches,"sent_batches":slot.sent_batches})
+    // Detailed navigation history belongs to the excluded campaign capture hooks.
+    json!({"client":slot.snapshot,"snapshot_age_ms":slot.last_capture.map(|t|t.elapsed().as_millis()),"recent_logs":slot.logs,"recent_requests":slot.requests,"recent_navigation":Value::Null,"request_batches":slot.request_batches,"sent_batches":slot.sent_batches})
 }
 #[cfg(test)]
 mod tests {

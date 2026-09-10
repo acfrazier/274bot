@@ -109,15 +109,16 @@ impl ScenarioRunner {
         Self::with_data(scenario, nav_world)
     }
 
+    /// Share the immutable navigation world without cloning its contents.
+    pub fn shared_world(&self) -> Option<Arc<NavWorld>> {
+        self.nav_world.clone()
+    }
+
     /// Runner with injected nav data: the whole-world [`NavWorld`]
     /// (collision + transport graph) both `Walk` and `Follow` steps route
     /// on. `None` keeps no world loaded, so a nav step fails with a clear
     /// "no nav world" message (the live [`ScenarioRunner::new`] loads the
     /// default pack path).
-    pub fn shared_world(&self) -> Option<Arc<NavWorld>> {
-        self.nav_world.clone()
-    }
-
     pub fn with_world(scenario: Scenario, nav_world: Option<Arc<NavWorld>>) -> Self {
         Self::with_data(scenario, nav_world)
     }
