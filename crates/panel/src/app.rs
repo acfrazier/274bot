@@ -359,6 +359,8 @@ fn boot_for(mode: &RunMode, vault_pass: Option<&str>) -> Option<Boot> {
 /// fatal `FAIL:` message for live-harness failures; the vault unlock
 /// failure is non-fatal (the in-panel prompt covers typing).
 fn boot_execute(state: &mut PanelState, boot: Boot) -> Result<(), String> {
+    state.session.ensure_profile_bound()?;
+    state.session.require_bot_operation()?;
     match boot {
         #[cfg(feature = "memory-profile")]
         Boot::Memory(config) => {
@@ -519,6 +521,22 @@ pub enum RunMode {
     Interactive,
     Live(String),
     Smoke,
+}
+
+#[derive(Debug, Clone)]
+pub struct PanelArgs {
+    pub mode: RunMode,
+    pub profile: host_play::ProfileOptions,
+}
+
+pub fn parse_args(
+    args: impl IntoIterator<Item = impl AsRef<str>>,
+    env_live: Option<&str>,
+) -> Result<PanelArgs, (i32, String)> {
+    let (profile, rest) =
+        host_play::parse_profile_args(args).map_err(|msg| (2, format!("panel-play: {msg}")))?;
+    let mode = parse_live_args(rest, env_live)?;
+    Ok(PanelArgs { mode, profile })
 }
 
 impl RunMode {
@@ -1532,7 +1550,13 @@ fn vault_unlock_prompt(ui: &Ui, session: &mut Session) {
         .hint("vault passphrase")
         .build();
     let w = ui.content_region_avail()[0];
-    let exists = Session::default_vault_exists();
+    let exists = match session.default_vault_exists() {
+        Ok(exists) => exists,
+        Err(error) => {
+            session.error = Some(format!("server profile: {error}"));
+            false
+        }
+    };
     let label = if exists {
         "Unlock vault"
     } else {
@@ -3234,6 +3258,35 @@ fn chrome_color_field(ui: &Ui, label: &str, color: &mut String) -> bool {
 }
 
 fn global_config_section(ui: &Ui, session: &mut Session) {
+    ui.text_colored([1.0, 1.0, 1.0, 1.0], "Server:");
+    ui.same_line();
+    ui.text_colored(session.ui.chrome.accent_rgba(), session.server_label());
+    let revision_preview = session
+        .effective_revision_label()
+        .unwrap_or_else(|error| format!("invalid: {error}"));
+    let revision_label = if session.profile_bound() {
+        "Bound session revision"
+    } else {
+        "Revision before session"
+    };
+    ui.set_next_item_width(-1.0);
+    if let Some(_open) = ui.begin_combo(revision_label, &revision_preview) {
+        for revision in [274_u16, 289] {
+            let selected = revision_preview == revision.to_string();
+            if ui
+                .selectable_config(revision.to_string())
+                .selected(selected)
+                .build()
+            {
+                session.error = session.set_server_revision(revision).err();
+            }
+            if selected {
+                ui.set_item_default_focus();
+            }
+        }
+    }
+    ui.text_wrapped("The active server profile is immutable. Restart to apply a revision change; explicit CLI/environment selection still wins.");
+    ui.spacing();
     ui.text_colored([1.0, 1.0, 1.0, 1.0], "Slot:");
     ui.same_line();
     let slot = session.focused_name().unwrap_or_else(|| "—".into());
@@ -3999,13 +4052,18 @@ fn arm_scenario_shots(state: &mut PanelState) {
 }
 
 /// Open the 274bot panel window. Call after the vault has been started.
-/// `mode` selects the normal interactive panel, a `--live NAME` harness,
+/// `args.mode` selects the normal interactive panel, a `--live NAME` harness,
 /// or `--smoke` (temp `test` vault, one whole-window shot at scene 2,
 /// exit 0).
-pub fn run_panel(mode: RunMode) -> Result<(), window::PanelError> {
+pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     let scale = Arc::new(AtomicU32::new(1.0f32.to_bits()));
     let frame_scale = Arc::clone(&scale);
     let mut state = PanelState::default();
+    state
+        .session
+        .configure_profile(args.profile)
+        .map_err(window::PanelError::ServerProfile)?;
+    let mode = args.mode;
 
     // Deferred boot: unlock / live-harness spawn slot threads, and a slot
     // renderer is built lazily at its first paint — spawning before GPU
@@ -4218,23 +4276,86 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use std::time::{Duration, Instant, SystemTime};
 
     use dear_imgui_rs::{ConfigFlags, Id, Key, WindowFlags};
+    use host_play::profile::ProfileEnvironment;
+    use host_play::SharedClientTemplate;
 
     use super::{
         apply_loadouts_scratch, apply_only_render_selected, apply_ui_scale, boot_for,
         capture_key_ch, chooser_should_open_popup, clamp_hop_label_px, debug_caption,
         edit_parameters_enabled, game_window_flags, live_null_tick, live_script_tick,
-        live_smoke_tick, live_stress_tick, log_follow_bottom, manual_shot_label, parse_live_args,
-        random_status_text, runner_config, smoke_settled, smoke_should_fire, sync_loadouts_scratch,
-        Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, RunMode, BASE_WINDOW_H,
-        BASE_WINDOW_W, LIVE_USAGE, SMOKE_DEADLINE, SMOKE_SETTLE,
+        live_smoke_tick, live_stress_tick, log_follow_bottom, manual_shot_label, parse_args,
+        parse_live_args, random_status_text, runner_config, smoke_settled, smoke_should_fire,
+        sync_loadouts_scratch, Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress,
+        RunMode, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, SMOKE_DEADLINE, SMOKE_SETTLE,
     };
     use crate::theme::{
         applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
     };
     use crate::window::RedrawMode;
+
+    fn checked_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf) {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../host-play/tests/fixtures/profile");
+        let root = std::env::temp_dir().join(format!(
+            "274bot-panel-profile-{revision}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let cache = root.join("cache");
+        std::fs::create_dir_all(&cache).unwrap();
+        for jag in [
+            "title",
+            "config",
+            "interface",
+            "media",
+            "versionlist",
+            "textures",
+            "wordenc",
+            "sounds",
+        ] {
+            std::fs::copy(fixture.join(jag), cache.join(jag)).unwrap();
+        }
+        let manifest = fixture.join(format!("manifest-{revision}.json"));
+        (root, cache, manifest)
+    }
+
+    #[test]
+    fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
+        for revision in [274_u16, 289] {
+            let (root, cache, manifest) = checked_fixture(revision);
+            let args = parse_args(
+                [
+                    "--smoke".to_string(),
+                    "--profile".to_string(),
+                    format!("local-{revision}"),
+                    "--cache".to_string(),
+                    cache.display().to_string(),
+                    "--cache-manifest".to_string(),
+                    manifest.display().to_string(),
+                ],
+                None,
+            )
+            .expect("frontend and shared flags parse in either order");
+            let env = ProfileEnvironment {
+                home: Some(root.clone()),
+                working_dir: Some(root.clone()),
+                rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
+                rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
+                ..ProfileEnvironment::default()
+            };
+            let selection = args.profile.resolve_with_env(None, &env).unwrap();
+            assert_eq!(selection.game_host(), "127.0.0.1");
+            let profile = selection.bind().unwrap();
+            let template = SharedClientTemplate::load(profile).unwrap();
+            let client = template.prepare_client(274_000_001, true).unwrap();
+            drop(client);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
 
     #[test]
     fn boot_is_deferred_and_maps_live_smoke_and_vault_pass() {

@@ -84,10 +84,20 @@ struct FlagSidecar {
 /// The session's decoded flags sidecar; `None` while no collision paint
 /// is on (see [`FlagSidecar`]).
 static FLAGS: Mutex<Option<FlagSidecar>> = Mutex::new(None);
+/// Immutable process-profile path installed before any panel session starts.
+static BOUND_NAV_FLAGS: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+pub(crate) fn set_navflags_path(path: PathBuf) {
+    *BOUND_NAV_FLAGS.lock().unwrap() = Some(path);
+    *FLAGS.lock().unwrap() = None;
+}
 
 /// The flags sidecar path: `$NAV_FLAGS`, else the pack path with its
 /// extension swapped to `.navflags` (the `nav-pack` write target).
 pub(crate) fn navflags_path() -> PathBuf {
+    if let Some(path) = BOUND_NAV_FLAGS.lock().unwrap().clone() {
+        return path;
+    }
     match std::env::var("NAV_FLAGS") {
         Ok(p) => PathBuf::from(p),
         Err(_) => host_play::default_pack_path().with_extension("navflags"),

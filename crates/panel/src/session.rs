@@ -27,9 +27,10 @@ use client::render::nav_debug::{
 use client::sound::output::AudioOut;
 use host::{map_image_to_applet, FrameBuf, InputEv, SlotInput};
 use host_play::audio::{AudioChange, AudioGate};
+use host_play::profile::{CatalogIdentity, ProfileEnvironment};
 use host_play::{
-    open_vault, run_with_io, scatter_tile_for, Play, PlayOptions, ScriptNavPaint, SlotArm,
-    SlotStatus, WalkArm,
+    open_vault, run_with_io, run_with_template, Play, PlayOptions, ProfileOptions, ScriptNavPaint,
+    ServerProfile, SharedClientTemplate, SlotArm, SlotStatus, WalkArm,
 };
 use nav::paint::{
     collision_at_with, hop_captions, hull_targets, reached, remaining_path_tiles, remaining_trail,
@@ -778,6 +779,18 @@ pub struct Session {
     /// walkable tile (every slot is a full Client and seeds itself).
     scatter: Arc<AtomicBool>,
     options: PlayOptions,
+    /// Immutable checked server/profile binding for production panel sessions.
+    /// `None` exists only for legacy unit-test constructors.
+    server_profile: Option<Arc<ServerProfile>>,
+    /// Cache/interface/nav resources decoded once for every slot in this process.
+    template: Option<Arc<SharedClientTemplate>>,
+    /// Startup inputs retained until unlock/live boot. `None` is the explicit
+    /// legacy unit-test path.
+    profile_options: Option<ProfileOptions>,
+    /// Ambient profile inputs captured once when production CLI options arrive.
+    profile_environment: Option<ProfileEnvironment>,
+    /// Full catalog identity captured with the currently registered cards.
+    catalog_loaded: Option<CatalogIdentity>,
     /// Multibox wall membership (chooser / latch / bulk ops). The UI reads
     /// it for the chooser and rail; [`Session`] methods drive it.
     pub wall: Wall,
@@ -1006,6 +1019,174 @@ impl Session {
                     mainland: false,
                 }
             },
+            server_profile: None,
+            template: None,
+            profile_options: None,
+            profile_environment: None,
+            catalog_loaded: None,
+        }
+    }
+
+    /// Install production launch inputs while the locked panel still exposes
+    /// its saved revision selector. Resolution is deferred until unlock/live boot.
+    pub fn configure_profile(&mut self, options: ProfileOptions) -> Result<(), String> {
+        if self.server_profile.is_some() {
+            return Err("server profile is already bound; restart to change revision".into());
+        }
+        self.profile_options = Some(options);
+        self.profile_environment = Some(ProfileEnvironment::capture());
+        Ok(())
+    }
+
+    fn resolve_profile(&self) -> Result<host_play::ProfileSelection, String> {
+        let options = self
+            .profile_options
+            .as_ref()
+            .ok_or_else(|| "no production server profile was configured".to_string())?;
+        let env = self
+            .profile_environment
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(ProfileEnvironment::capture);
+        options.resolve_with_env(Some(self.ui.server_revision), &env)
+    }
+
+    /// Resolve and freeze the panel's process profile before vault mutation.
+    pub fn bind_profile(&mut self) -> Result<(), String> {
+        let env = self
+            .profile_environment
+            .clone()
+            .unwrap_or_else(ProfileEnvironment::capture);
+        self.bind_profile_with_env(&env)
+    }
+
+    fn bind_profile_with_env(
+        &mut self,
+        env: &host_play::profile::ProfileEnvironment,
+    ) -> Result<(), String> {
+        if self.server_profile.is_some() {
+            return Err("server profile is already bound; restart to change revision".into());
+        }
+        let options = self
+            .profile_options
+            .as_ref()
+            .ok_or_else(|| "no production server profile was configured".to_string())?;
+        let selection = options.resolve_with_env(Some(self.ui.server_revision), env)?;
+        let profile = selection.bind()?;
+        if self.catalog_loaded.is_some() && self.catalog_loaded.as_ref() != profile.catalog() {
+            return Err(
+                "catalog source changed after cards were loaded; restart before binding".into(),
+            );
+        }
+        let template = SharedClientTemplate::load(Arc::clone(&profile))?;
+        crate::picker::set_navflags_path(profile.nav_flags().to_path_buf());
+        self.options = PlayOptions {
+            host: profile.client().game_host().to_string(),
+            port: profile.client().game_port(),
+            cache_dir: profile.client().cache_dir().display().to_string(),
+            lowmem: true,
+            mainland: false,
+        };
+        self.server_profile = Some(profile);
+        self.template = Some(template);
+        Ok(())
+    }
+
+    pub fn ensure_profile_bound(&mut self) -> Result<(), String> {
+        if self.server_profile.is_none() && self.profile_options.is_some() {
+            self.bind_profile()?;
+        }
+        Ok(())
+    }
+
+    pub fn require_bot_operation(&self) -> Result<(), String> {
+        self.server_profile
+            .as_ref()
+            .map_or(Ok(()), |profile| profile.require_bot_operation())
+    }
+
+    pub fn set_server_revision(&mut self, revision: u16) -> Result<(), String> {
+        if self.server_profile.is_some() {
+            return Err("server profile is already bound; restart to change revision".into());
+        }
+        if !matches!(revision, 274 | 289) {
+            return Err(format!("unsupported revision {revision}; use 274 or 289"));
+        }
+        let previous = self.ui.server_revision;
+        self.ui.server_revision = revision;
+        if let Some(loaded) = &self.catalog_loaded {
+            let selected = self
+                .catalog_root()?
+                .as_deref()
+                .map(CatalogIdentity::capture)
+                .transpose()?;
+            if selected.as_ref() != Some(loaded) {
+                self.ui.server_revision = previous;
+                return Err(
+                    "revision would change the loaded catalog; restart before changing it".into(),
+                );
+            }
+        }
+        crate::ui_state::save(&self.ui);
+        Ok(())
+    }
+
+    pub fn profile_bound(&self) -> bool {
+        self.server_profile.is_some()
+    }
+
+    pub fn server_label(&self) -> String {
+        if let Some(profile) = &self.server_profile {
+            return profile.label();
+        }
+        self.profile_options.as_ref().map_or_else(
+            || "legacy local-274 · revision 274".into(),
+            |_| {
+                self.resolve_profile().map_or_else(
+                    |error| format!("invalid profile: {error}"),
+                    |profile| profile.label(),
+                )
+            },
+        )
+    }
+
+    pub fn effective_revision_label(&self) -> Result<String, String> {
+        if let Some(profile) = &self.server_profile {
+            return Ok(profile.revision().as_i32().to_string());
+        }
+        match self.profile_options.as_ref() {
+            Some(_) => self
+                .resolve_profile()
+                .map(|selection| selection.revision().as_i32().to_string()),
+            None => Ok(self.ui.server_revision.to_string()),
+        }
+    }
+
+    fn target(&self) -> client::BotTarget {
+        self.server_profile
+            .as_ref()
+            .map_or_else(client::bot_target, |profile| profile.target())
+    }
+
+    fn vault_path(&self) -> Result<PathBuf, String> {
+        if let Some(profile) = &self.server_profile {
+            return Ok(profile.vault_path().to_path_buf());
+        }
+        match self.profile_options.as_ref() {
+            Some(_) => self
+                .resolve_profile()
+                .map(|selection| selection.vault_path().to_path_buf()),
+            None => Ok(default_vault_path()),
+        }
+    }
+
+    fn catalog_root(&self) -> Result<Option<PathBuf>, String> {
+        match self.server_profile.as_ref() {
+            Some(profile) => Ok(profile.catalog().map(|catalog| catalog.root.clone())),
+            None if self.profile_options.is_some() => self
+                .resolve_profile()
+                .map(|selection| selection.catalog_root().map(Path::to_path_buf)),
+            None => Ok(script::rs2b0t_root()),
         }
     }
 
@@ -1020,8 +1201,13 @@ impl Session {
         if self.rs2b0t_filled {
             return;
         }
-        let Some(root) = script::rs2b0t_root() else {
-            return;
+        let root = match self.catalog_root() {
+            Ok(Some(root)) => root,
+            Ok(None) => return,
+            Err(error) => {
+                self.error = Some(format!("server profile: {error}"));
+                return;
+            }
         };
         self.rs2b0t_filled = true;
         if let Err(e) = self
@@ -1030,6 +1216,11 @@ impl Session {
         {
             if host::debug_enabled() {
                 eprintln!("[panel] $RS2B0T registry: {e}");
+            }
+        } else {
+            match CatalogIdentity::capture(&root) {
+                Ok(identity) => self.catalog_loaded = Some(identity),
+                Err(error) => self.error = Some(error),
             }
         }
     }
@@ -1048,11 +1239,23 @@ impl Session {
         if self.rs2b0t_filled {
             return;
         }
+        let selected = match self.catalog_root() {
+            Ok(selected) => selected,
+            Err(error) => {
+                self.error = Some(format!("server profile: {error}"));
+                return;
+            }
+        };
         self.rs2b0t_filled = true;
-        if let Some(root) = script::rs2b0t_root() {
+        if let Some(root) = selected {
             if let Err(e) = self.js.register_rs2b0t(&root, &self.rs2b0t_path_file()) {
                 if host::debug_enabled() {
                     eprintln!("[panel] $RS2B0T registry: {e}");
+                }
+            } else {
+                match CatalogIdentity::capture(&root) {
+                    Ok(identity) => self.catalog_loaded = Some(identity),
+                    Err(error) => self.error = Some(error),
                 }
             }
             return;
@@ -1076,6 +1279,29 @@ impl Session {
     /// Import catalog cards from a clone root that contains
     /// `src/bot/scripts/index.ts`. Persists `rs2b0t-path` and clears defer.
     pub fn import_rs2b0t_catalog(&mut self, root: &Path) -> Result<usize, String> {
+        if self.server_profile.is_some() {
+            return Err(
+                "catalog selection changed after server profile binding; restart with --catalog"
+                    .into(),
+            );
+        }
+        if self.profile_options.is_some() {
+            match self.catalog_root()? {
+                Some(selected) if selected != root => {
+                    return Err(format!(
+                        "selected catalog is {}; restart with --catalog {} to change it",
+                        selected.display(),
+                        root.display()
+                    ));
+                }
+                Some(_) => {}
+                None => {
+                    if let Some(options) = self.profile_options.as_mut() {
+                        options.catalog_root = Some(root.to_path_buf());
+                    }
+                }
+            }
+        }
         if !crate::script_picker::rs2b0t_root_has_index(root) {
             return Err(format!(
                 "no catalog at {}",
@@ -1083,6 +1309,7 @@ impl Session {
             ));
         }
         let n = self.js.register_rs2b0t(root, &self.rs2b0t_path_file())?;
+        self.catalog_loaded = Some(CatalogIdentity::capture(root)?);
         let _ = script::clear_rs2b0t_import_at(&self.rs2b0t_import_file());
         self.ui.script_catalog_last_dir = Some(root.to_path_buf());
         if self.persist_ui {
@@ -1193,7 +1420,14 @@ impl Session {
 
     /// Unlock (or first-run create) the default vault and start the play.
     pub fn unlock(&mut self, pass: &str) -> bool {
-        self.unlock_at(&default_vault_path(), pass)
+        let path = match self.vault_path() {
+            Ok(path) => path,
+            Err(error) => {
+                self.error = Some(format!("server profile: {error}"));
+                return false;
+            }
+        };
+        self.unlock_at(&path, pass)
     }
 
     /// Unlock (or first-run create) the vault at `path` and start the play.
@@ -1209,8 +1443,8 @@ impl Session {
     }
 
     /// Whether the default vault file exists (locked prompt: Unlock vs Create).
-    pub fn default_vault_exists() -> bool {
-        default_vault_path().is_file()
+    pub fn default_vault_exists(&self) -> Result<bool, String> {
+        self.vault_path().map(|path| path.is_file())
     }
 
     /// Delete `path` while locked. Refuses if a vault is open so a running
@@ -1235,18 +1469,42 @@ impl Session {
     }
 
     pub fn reset_vault(&mut self) -> bool {
-        self.reset_vault_at(&default_vault_path())
+        let path = match self.vault_path() {
+            Ok(path) => path,
+            Err(error) => {
+                self.error = Some(format!("server profile: {error}"));
+                return false;
+            }
+        };
+        self.reset_vault_at(&path)
     }
 
     /// Open the vault and attach an empty [`Play`]. Does **not** spawn a
     /// slot — the boot spawns the focused profile after this; MultiBox
     /// spawns the wall members.
     fn start_vault(&mut self, path: &Path, pass: &str) -> bool {
+        if let Err(msg) = self
+            .ensure_profile_bound()
+            .and_then(|()| self.require_bot_operation())
+        {
+            self.error = Some(msg);
+            return false;
+        }
         match open_vault(path, pass) {
             Ok(vault) => {
                 self.error = None;
-                self.start_play(vault);
-                true
+                match self.start_play(vault) {
+                    Ok(()) => true,
+                    Err(msg) => {
+                        push_log(
+                            &mut self.log_by.lock().unwrap(),
+                            PROCESS,
+                            format!("profile: {msg}"),
+                        );
+                        self.error = Some(msg);
+                        false
+                    }
+                }
             }
             Err(e) => {
                 let msg = e.to_string();
@@ -1266,8 +1524,8 @@ impl Session {
     /// then `login_all`. Slot threads keep using real `Focus` → `set_draw`.
     pub fn live_prepare_null_raster(&mut self) -> Result<(), String> {
         self.persist_ui = false;
-        let pass = host_play::live_vault_passphrase();
-        let entries = null_raster_live_entries_for_target(client::bot_target());
+        let pass = host_play::live_vault_passphrase_for(self.target());
+        let entries = null_raster_live_entries_for_target(self.target());
         let entry_refs: Vec<(&str, &str)> = entries
             .iter()
             .map(|(u, p)| (u.as_str(), p.as_str()))
@@ -1356,12 +1614,12 @@ impl Session {
     fn live_prepare_stress(&mut self, n: usize, full_rate: bool) -> Result<(), String> {
         self.persist_ui = false;
         let n = n.max(1);
-        let names = stress_live_entries_for_target(n, client::bot_target());
+        let names = stress_live_entries_for_target(n, self.target());
         let entries: Vec<(&str, &str)> = names
             .iter()
             .map(|(u, p)| (u.as_str(), p.as_str()))
             .collect();
-        let pass = host_play::live_vault_passphrase();
+        let pass = host_play::live_vault_passphrase_for(self.target());
         let path = temp_live_vault_from(&entries, 274_000_100, &pass);
         // Empty Play first: do not spawn last_focus before s00 focuses.
         if !self.start_vault(&path, &pass) {
@@ -1441,8 +1699,8 @@ impl Session {
             }
         }
         self.set_script_settings_inject(inject);
-        let entries = host_play::mint_live_entries(&names);
-        let pass = host_play::live_vault_passphrase();
+        let entries = host_play::mint_live_entries_for_target(&names, self.target());
+        let pass = host_play::live_vault_passphrase_for(self.target());
         let path = temp_live_vault_from(&entries, 274_000_001, &pass);
         if !self.unlock_at(&path, &pass) {
             return Err(self
@@ -1562,7 +1820,7 @@ impl Session {
 
     /// Empty `Play` (shared cache + FIFO + per-frame hook) then spawn the
     /// first focused profile only. Parked names are started from [`select`].
-    fn start_play(&mut self, vault: Vault) {
+    fn start_play(&mut self, vault: Vault) -> Result<(), String> {
         let focus = Arc::clone(&self.focus);
         let log_by = Arc::clone(&self.log_by);
         let mainland = Arc::clone(&self.mainland);
@@ -1582,285 +1840,294 @@ impl Session {
         // audio device must not re-open cpal (or re-log) every frame.
         let audio_fail: Arc<Mutex<Option<(String, Instant)>>> = Arc::new(Mutex::new(None));
         let options = self.options.clone();
-        let play = run_with_io(
-            &options,
-            Vec::new(),
-            |_| (None, None),
-            move |c, name, hold| {
-                // Flat model: every slot is a full Client; draw gates the
-                // slot's renderer per the wall policy (focused always,
-                // members when only-render-selected is off).
-                let (focused, draw) = {
-                    let f = focus.lock().unwrap();
-                    (f.focused.clone(), draw_for_slot(&f, name))
-                };
-                c.set_draw(draw);
-                // Nav-debug scene paint: only the focused drawing slot
-                // publishes; a slot that stops drawing stores None so a
-                // stale paint cannot linger.
-                let layers = nav_publish.lock().unwrap().settings.clone();
-                let drawing = focused.as_deref() == Some(name) && draw;
-                let walk = match travellers.lock().unwrap().get(name).cloned() {
-                    Some(arm) => {
-                        let arm = arm.lock().unwrap();
-                        (arm.route.clone(), arm.traveller.current_aim())
-                    }
-                    None => (None, None),
-                };
-                let (driven, live) = match scenario.lock().unwrap().as_ref() {
-                    Some(runner) if runner.drives(name) => {
-                        (true, (runner.armed_route().cloned(), runner.current_aim()))
-                    }
-                    _ => (false, (None, None)),
-                };
-                let script = script_nav_paint
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .map(|h| h.of(name))
-                    .unwrap_or((None, None));
-                let (route, click) = live_or_walk_paint(driven, live, walk, script);
-                match crate::picker::pack() {
-                    Some(world) => {
-                        let here = c.local_player.as_ref().map(|lp| WorldTile {
-                            x: c.map_build_base_x + lp.route_x[0],
-                            z: c.map_build_base_z + lp.route_z[0],
-                            level: 0,
-                        });
-                        // Run orb (varp 173 / 274 overlay), not the run
-                        // animation — the anim is only true while a run
-                        // cycle plays.
-                        let run_on = c.run_enabled();
-                        // Full tryMove BFS (every scene tile, src→dest),
-                        // not the entity walk buffer (capped at 9) or the
-                        // MOVE waypoint list (capped at 25).
-                        let base_x = c.map_build_base_x;
-                        let base_z = c.map_build_base_z;
-                        let trail_all: Vec<WorldTile> = c
-                            .try_move_path
-                            .iter()
-                            .map(|&(sx, sz)| WorldTile {
-                                x: base_x + sx,
-                                z: base_z + sz,
-                                level: 0,
-                            })
-                            .collect();
-                        let trail_world = remaining_trail(&trail_all, here);
-                        publish_nav_debug(
-                            c,
-                            &world,
-                            route.as_ref(),
-                            here,
-                            &trail_world,
-                            run_on,
-                            click,
-                            &layers,
-                            drawing,
-                        );
-                        if drawing && layers.camera_follow {
-                            apply_path_camera(c, route.as_ref(), here);
-                        }
-                    }
-                    None => c.set_nav_debug_paint(None),
+        let scatter_template = self.template.clone();
+        let per_frame = move |c: &mut client::client::Client, name: &str, hold: bool| {
+            // Flat model: every slot is a full Client; draw gates the
+            // slot's renderer per the wall policy (focused always,
+            // members when only-render-selected is off).
+            let (focused, draw) = {
+                let f = focus.lock().unwrap();
+                (f.focused.clone(), draw_for_slot(&f, name))
+            };
+            c.set_draw(draw);
+            // Nav-debug scene paint: only the focused drawing slot
+            // publishes; a slot that stops drawing stores None so a
+            // stale paint cannot linger.
+            let layers = nav_publish.lock().unwrap().settings.clone();
+            let drawing = focused.as_deref() == Some(name) && draw;
+            let walk = match travellers.lock().unwrap().get(name).cloned() {
+                Some(arm) => {
+                    let arm = arm.lock().unwrap();
+                    (arm.route.clone(), arm.traveller.current_aim())
                 }
-                // Focused-slot speaker: at most one cpal speaker, fed by
-                // this slot's Client audio state (midi/waves/fade), gated
-                // on focus + the Music/SFX toggle — `lowmem` (toggle off)
-                // never opens cpal. The gate reconciles every frame; the
-                // open closure runs on this slot's thread.
-                let change = audio.frame(name, focused.as_deref(), || {
-                    let now = Instant::now();
-                    if let Some((who, at)) = audio_fail.lock().unwrap().as_ref() {
-                        if who == name && now.duration_since(*at) < AUDIO_OPEN_RETRY {
-                            return None;
-                        }
+                None => (None, None),
+            };
+            let (driven, live) = match scenario.lock().unwrap().as_ref() {
+                Some(runner) if runner.drives(name) => {
+                    (true, (runner.armed_route().cloned(), runner.current_aim()))
+                }
+                _ => (false, (None, None)),
+            };
+            let script = script_nav_paint
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|h| h.of(name))
+                .unwrap_or((None, None));
+            let (route, click) = live_or_walk_paint(driven, live, walk, script);
+            match crate::picker::pack() {
+                Some(world) => {
+                    let here = c.local_player.as_ref().map(|lp| WorldTile {
+                        x: c.map_build_base_x + lp.route_x[0],
+                        z: c.map_build_base_z + lp.route_z[0],
+                        level: 0,
+                    });
+                    // Run orb (varp 173 / 274 overlay), not the run
+                    // animation — the anim is only true while a run
+                    // cycle plays.
+                    let run_on = c.run_enabled();
+                    // Full tryMove BFS (every scene tile, src→dest),
+                    // not the entity walk buffer (capped at 9) or the
+                    // MOVE waypoint list (capped at 25).
+                    let base_x = c.map_build_base_x;
+                    let base_z = c.map_build_base_z;
+                    let trail_all: Vec<WorldTile> = c
+                        .try_move_path
+                        .iter()
+                        .map(|&(sx, sz)| WorldTile {
+                            x: base_x + sx,
+                            z: base_z + sz,
+                            level: 0,
+                        })
+                        .collect();
+                    let trail_world = remaining_trail(&trail_all, here);
+                    publish_nav_debug(
+                        c,
+                        &world,
+                        route.as_ref(),
+                        here,
+                        &trail_world,
+                        run_on,
+                        click,
+                        &layers,
+                        drawing,
+                    );
+                    if drawing && layers.camera_follow {
+                        apply_path_camera(c, route.as_ref(), here);
                     }
-                    match AudioOut::try_open(c.midi.clone(), c.waves.clone(), c.fade.clone()) {
-                        Ok(out) => {
-                            *audio_fail.lock().unwrap() = None;
-                            push_log(
-                                &mut log_by.lock().unwrap(),
-                                name,
-                                format!("audio: speaker open ({} Hz)", out.sample_rate),
-                            );
-                            Some(out)
-                        }
-                        Err(e) => {
-                            *audio_fail.lock().unwrap() = Some((name.to_string(), now));
-                            push_log(&mut log_by.lock().unwrap(), name, format!("audio: {e}"));
-                            None
-                        }
+                }
+                None => c.set_nav_debug_paint(None),
+            }
+            // Focused-slot speaker: at most one cpal speaker, fed by
+            // this slot's Client audio state (midi/waves/fade), gated
+            // on focus + the Music/SFX toggle — `lowmem` (toggle off)
+            // never opens cpal. The gate reconciles every frame; the
+            // open closure runs on this slot's thread.
+            let change = audio.frame(name, focused.as_deref(), || {
+                let now = Instant::now();
+                if let Some((who, at)) = audio_fail.lock().unwrap().as_ref() {
+                    if who == name && now.duration_since(*at) < AUDIO_OPEN_RETRY {
+                        return None;
                     }
-                });
-                if change == AudioChange::Closed {
+                }
+                match AudioOut::try_open(c.midi.clone(), c.waves.clone(), c.fade.clone()) {
+                    Ok(out) => {
+                        *audio_fail.lock().unwrap() = None;
+                        push_log(
+                            &mut log_by.lock().unwrap(),
+                            name,
+                            format!("audio: speaker open ({} Hz)", out.sample_rate),
+                        );
+                        Some(out)
+                    }
+                    Err(e) => {
+                        *audio_fail.lock().unwrap() = Some((name.to_string(), now));
+                        push_log(&mut log_by.lock().unwrap(), name, format!("audio: {e}"));
+                        None
+                    }
+                }
+            });
+            if change == AudioChange::Closed {
+                push_log(
+                    &mut log_by.lock().unwrap(),
+                    name,
+                    "audio: speaker closed".into(),
+                );
+            }
+            // Reconcile the client's actual `lowmem` mode to the
+            // Music/SFX gate (toggle on = highmem): a lowmem spawn
+            // skipped the sound load, so flipping the toggle
+            // mid-session must re-run it live, not on the next
+            // respawn. `set_lowmem` is idempotent — per-frame is cheap.
+            c.set_lowmem(!audio.music_on(name));
+            if c.ingame
+                && c.scene_state == 2
+                && seed_on_first_world(c.last_login_reconnect)
+                && mainland_sent.lock().unwrap().insert(name.to_string())
+            {
+                if scatter.load(Ordering::Relaxed) {
+                    let t = scatter_template.as_ref().map_or_else(
+                        || host_play::scatter_tile_for(c.login_uid),
+                        |template| template.scatter_tile_for(c.login_uid),
+                    );
+                    api::interact::seed_at(c, t.level, t.x, t.z);
                     push_log(
                         &mut log_by.lock().unwrap(),
                         name,
-                        "audio: speaker closed".into(),
+                        format!("{name}: scatter seed {} {} {}", t.level, t.x, t.z),
+                    );
+                } else if mainland.load(Ordering::Relaxed) {
+                    api::interact::mainland_hop(c);
+                    push_log(
+                        &mut log_by.lock().unwrap(),
+                        name,
+                        format!("{name}: mainland hop queued"),
                     );
                 }
-                // Reconcile the client's actual `lowmem` mode to the
-                // Music/SFX gate (toggle on = highmem): a lowmem spawn
-                // skipped the sound load, so flipping the toggle
-                // mid-session must re-run it live, not on the next
-                // respawn. `set_lowmem` is idempotent — per-frame is cheap.
-                c.set_lowmem(!audio.music_on(name));
-                if c.ingame
-                    && c.scene_state == 2
-                    && seed_on_first_world(c.last_login_reconnect)
-                    && mainland_sent.lock().unwrap().insert(name.to_string())
-                {
-                    if scatter.load(Ordering::Relaxed) {
-                        let t = scatter_tile_for(c.login_uid);
-                        api::interact::seed_at(c, t.level, t.x, t.z);
-                        push_log(
-                            &mut log_by.lock().unwrap(),
-                            name,
-                            format!("{name}: scatter seed {} {} {}", t.level, t.x, t.z),
-                        );
-                    } else if mainland.load(Ordering::Relaxed) {
-                        api::interact::mainland_hop(c);
-                        push_log(
-                            &mut log_by.lock().unwrap(),
-                            name,
-                            format!("{name}: mainland hop queued"),
-                        );
-                    }
-                }
+            }
 
-                // Shared `--live script_*` runner: tick the scenario's
-                // driven slot and its companion slots, before the
-                // local-player gate (seeding must observe frames with no
-                // player decode yet). Hold freezes scenario follow the
-                // same way `step_nav_bot` freezes (route stays latched).
-                if let Some(runner) = scenario.lock().unwrap().as_mut() {
-                    if runner.drives(name) {
-                        if fire_pending_catalog_start(&pending_script, &script_start_handle, runner)
-                        {
-                            runner.tick_with_hold(c, hold);
-                        }
-                    } else if let Some(index) = runner.companion_for(name) {
-                        runner.companion_tick(index, c);
+            // Shared `--live script_*` runner: tick the scenario's
+            // driven slot and its companion slots, before the
+            // local-player gate (seeding must observe frames with no
+            // player decode yet). Hold freezes scenario follow the
+            // same way `step_nav_bot` freezes (route stays latched).
+            if let Some(runner) = scenario.lock().unwrap().as_mut() {
+                if runner.drives(name) {
+                    if fire_pending_catalog_start(&pending_script, &script_start_handle, runner) {
+                        runner.tick_with_hold(c, hold);
                     }
+                } else if let Some(index) = runner.companion_for(name) {
+                    runner.companion_tick(index, c);
                 }
+            }
 
-                let (rx, rz) = match &c.local_player {
-                    Some(lp) => (lp.route_x[0], lp.route_z[0]),
-                    None => return,
-                };
-                let here = Tile {
-                    x: c.map_build_base_x + rx,
-                    z: c.map_build_base_z + rz,
-                    level: c.minusedlevel,
-                };
-                // Publish the slot's gating facts (inv/equipment/stats/
-                // varps/quests) for the UI thread's WalkTo routing: a
-                // toll/cart edge is only usable when the search can prove
-                // the player pays it. The snapshot rebuild is incremental
-                // — views copy only when a family's gen moved, so a quiet
-                // frame publishes nothing new.
-                {
-                    let mut states = nav_states.lock().unwrap();
-                    let slot = states
-                        .entry(name.to_string())
-                        .or_insert_with(|| (GameSnapshot::new(), WorldState::empty()));
-                    if slot.0.rebuild(c) {
-                        slot.1 = WorldState::from_snapshot(&slot.0);
-                    }
+            let (rx, rz) = match &c.local_player {
+                Some(lp) => (lp.route_x[0], lp.route_z[0]),
+                None => return,
+            };
+            let here = Tile {
+                x: c.map_build_base_x + rx,
+                z: c.map_build_base_z + rz,
+                level: c.minusedlevel,
+            };
+            // Publish the slot's gating facts (inv/equipment/stats/
+            // varps/quests) for the UI thread's WalkTo routing: a
+            // toll/cart edge is only usable when the search can prove
+            // the player pays it. The snapshot rebuild is incremental
+            // — views copy only when a family's gen moved, so a quiet
+            // frame publishes nothing new.
+            {
+                let mut states = nav_states.lock().unwrap();
+                let slot = states
+                    .entry(name.to_string())
+                    .or_insert_with(|| (GameSnapshot::new(), WorldState::empty()));
+                if slot.0.rebuild(c) {
+                    slot.1 = WorldState::from_snapshot(&slot.0);
                 }
-                // Guardian hold freezes WalkArm follow; the armed route
-                // stays latched and resumes when hold lifts.
-                if !WalkArm::may_follow(hold) {
+            }
+            // Guardian hold freezes WalkArm follow; the armed route
+            // stays latched and resumes when hold lifts.
+            if !WalkArm::may_follow(hold) {
+                return;
+            }
+            let Some(arm) = travellers.lock().unwrap().get(name).cloned() else {
+                return;
+            };
+            {
+                let mut latch = tick_latch.lock().unwrap();
+                if latch.get(name) == Some(&(c.gens.player, here)) {
                     return;
                 }
-                let Some(arm) = travellers.lock().unwrap().get(name).cloned() else {
+                latch.insert(name.to_string(), (c.gens.player, here));
+            }
+            let finished = {
+                let states = nav_states.lock().unwrap();
+                let Some(snapshot) = nav_snapshot_for_follow(&states, name) else {
                     return;
                 };
-                {
-                    let mut latch = tick_latch.lock().unwrap();
-                    if latch.get(name) == Some(&(c.gens.player, here)) {
+                let mut arm = arm.lock().unwrap();
+                let world = crate::picker::pack();
+                // BankBudget session first. Walk follows the stand
+                // sub-route; Open / Deposit / Withdraw / Wear / Close
+                // freeze follow (never mid-session final_route).
+                if arm.bank_fetch.is_some() {
+                    host_play::step_walk_arm_bank_fetch(
+                        c,
+                        snapshot,
+                        &mut arm,
+                        world.as_deref(),
+                        Some((here.x, here.z, here.level)),
+                    );
+                    if host_play::walk_arm_bank_fetch_freezes_follow(&arm) {
                         return;
                     }
-                    latch.insert(name.to_string(), (c.gens.player, here));
                 }
-                let finished = {
-                    let states = nav_states.lock().unwrap();
-                    let Some(snapshot) = nav_snapshot_for_follow(&states, name) else {
-                        return;
-                    };
-                    let mut arm = arm.lock().unwrap();
-                    let world = crate::picker::pack();
-                    // BankBudget session first. Walk follows the stand
-                    // sub-route; Open / Deposit / Withdraw / Wear / Close
-                    // freeze follow (never mid-session final_route).
-                    if arm.bank_fetch.is_some() {
-                        host_play::step_walk_arm_bank_fetch(
-                            c,
-                            snapshot,
-                            &mut arm,
-                            world.as_deref(),
-                            Some((here.x, here.z, here.level)),
-                        );
-                        if host_play::walk_arm_bank_fetch_freezes_follow(&arm) {
-                            return;
-                        }
-                    }
-                    let Some(route) = arm.route.clone() else {
-                        return;
-                    };
-                    let walking_stand = arm.bank_fetch.as_ref().is_some_and(|p| {
-                        matches!(
-                            p.steps.front(),
-                            Some(nav::bank_fetch::BankStep::Walk { x, z, level })
-                                if route.dest.x == *x
-                                    && route.dest.z == *z
-                                    && route.dest.level == *level
-                        )
-                    });
-                    // The follow surface reads the canonical base + route-head
-                    // tile from a snapshot rebuilt off the same client; the
-                    // run is polled one step per player-info tick. The packed
-                    // teleport list rides along so a jewellery rub hop can
-                    // answer the destination dialog's choice for its landing.
-                    let mut options = TravelOptions {
-                        // Exact arrival: the armed dest must be stood on
-                        // before the route clears (the v1 traveller arrived
-                        // the same way).
-                        close_enough: 0,
-                        teleports: world.as_ref().map(|w| w.graph.teleports.as_slice()),
-                        edges: world.as_ref().map(|w| w.graph.edges.as_slice()),
-                        ..TravelOptions::default()
-                    };
-                    let outcome = arm.traveller.follow(c, snapshot, route, &mut options);
-                    if walking_stand
-                        && matches!(
-                            &outcome,
-                            Some(o) if !matches!(o, nav::traveller::TravelOutcome::Arrived { .. })
-                        )
-                    {
-                        // Stand Walk stalled / refused → NoPath.
-                        arm.bank_fetch = None;
-                        arm.route = None;
-                        return;
-                    }
-                    if outcome.is_some() {
-                        arm.route = None;
-                        true
-                    } else {
-                        false
-                    }
+                let Some(route) = arm.route.clone() else {
+                    return;
                 };
-                if finished {
-                    walk_clear.store(true, Ordering::Relaxed);
+                let walking_stand = arm.bank_fetch.as_ref().is_some_and(|p| {
+                    matches!(
+                        p.steps.front(),
+                        Some(nav::bank_fetch::BankStep::Walk { x, z, level })
+                            if route.dest.x == *x
+                                && route.dest.z == *z
+                                && route.dest.level == *level
+                    )
+                });
+                // The follow surface reads the canonical base + route-head
+                // tile from a snapshot rebuilt off the same client; the
+                // run is polled one step per player-info tick. The packed
+                // teleport list rides along so a jewellery rub hop can
+                // answer the destination dialog's choice for its landing.
+                let mut options = TravelOptions {
+                    // Exact arrival: the armed dest must be stood on
+                    // before the route clears (the v1 traveller arrived
+                    // the same way).
+                    close_enough: 0,
+                    teleports: world.as_ref().map(|w| w.graph.teleports.as_slice()),
+                    edges: world.as_ref().map(|w| w.graph.edges.as_slice()),
+                    ..TravelOptions::default()
+                };
+                let outcome = arm.traveller.follow(c, snapshot, route, &mut options);
+                if walking_stand
+                    && matches!(
+                        &outcome,
+                        Some(o) if !matches!(o, nav::traveller::TravelOutcome::Arrived { .. })
+                    )
+                {
+                    // Stand Walk stalled / refused → NoPath.
+                    arm.bank_fetch = None;
+                    arm.route = None;
+                    return;
                 }
-            },
-        );
+                if outcome.is_some() {
+                    arm.route = None;
+                    true
+                } else {
+                    false
+                }
+            };
+            if finished {
+                walk_clear.store(true, Ordering::Relaxed);
+            }
+        };
+        let play = match self.template.clone() {
+            Some(template) => run_with_template(
+                template,
+                options.mainland,
+                Vec::new(),
+                |_| (None, None),
+                per_frame,
+            )?,
+            None => run_with_io(&options, Vec::new(), |_| (None, None), per_frame),
+        };
         *self.script_start_handle.lock().unwrap() = Some(play.script_start_handle());
         *self.script_nav_paint.lock().unwrap() = Some(play.script_nav_paint());
         self.play = Some(play);
         crate::picker::set_pack(self.play.as_ref().and_then(|p| p.world()));
         self.statuses = self.play.as_ref().map(|p| p.statuses()).unwrap_or_default();
         self.vault = Some(vault);
+        Ok(())
     }
 
     /// After unlock/`spawn_all`: restore `last_focus` when it is still a
@@ -2396,7 +2663,7 @@ impl Session {
         Some(arm)
     }
 
-    /// Register per-slot IO and spawn via [`Play::spawn_slot`] when a play
+    /// Register per-slot IO and spawn via [`Play::try_spawn_slot`] when a play
     /// is live. Without `play` (unit tests / pre-unlock) only the IO map is
     /// filled so focus can attach. `arm` carries the spawn's login intent:
     /// `None` logs in immediately (CLI/e2e); panel paths pass
@@ -2433,12 +2700,15 @@ impl Session {
         let pixels = FrameBuf::new();
         self.audio.set_music(username, !lowmem);
         if let Some(play) = &mut self.play {
-            play.spawn_slot(
+            if let Err(error) = play.try_spawn_slot(
                 profile,
                 Some(Arc::clone(&input)),
                 Some(Arc::clone(&pixels)),
                 arm,
-            );
+            ) {
+                self.error = Some(error);
+                return;
+            }
         }
         self.slots
             .insert(username.to_string(), SlotIo { input, pixels });
@@ -3425,7 +3695,8 @@ mod tests {
     use client::io::ServerProt;
     use client::render::nav_debug::{FACE_N, FACE_S};
     use host::{FrameBuf, InputEv, SlotInput};
-    use host_play::{SlotArm, SlotStatus};
+    use host_play::profile::ProfileEnvironment;
+    use host_play::{ProfileOptions, SlotArm, SlotStatus};
     use nav::collision::WorldCollision;
     use nav::paint::{MAX_DRAW_TILES, NEAR_FULL_DENSITY};
     use nav::router::{Leg, Route};
@@ -3442,6 +3713,86 @@ mod tests {
 
     use crate::nav_settings::{effective, NavSettings};
     use script::IsolatedEnv;
+
+    fn checked_profile_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf) {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../host-play/tests/fixtures/profile");
+        let root = std::env::temp_dir().join(format!(
+            "274bot-panel-session-profile-{revision}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let cache = root.join("cache");
+        std::fs::create_dir_all(&cache).unwrap();
+        for jag in [
+            "title",
+            "config",
+            "interface",
+            "media",
+            "versionlist",
+            "textures",
+            "wordenc",
+            "sounds",
+        ] {
+            std::fs::copy(fixture.join(jag), cache.join(jag)).unwrap();
+        }
+        let manifest = fixture.join(format!("manifest-{revision}.json"));
+        (root, cache, manifest)
+    }
+
+    #[test]
+    fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
+        let (root, cache, manifest) = checked_profile_fixture(274);
+        let mut session = Session::new();
+        session.ui.server_revision = 289;
+        session
+            .configure_profile(ProfileOptions {
+                profile: Some("local-274".into()),
+                cache_dir: Some(cache),
+                cache_manifest: Some(manifest),
+                ..ProfileOptions::default()
+            })
+            .unwrap();
+        let env = ProfileEnvironment {
+            home: Some(root.clone()),
+            working_dir: Some(root.clone()),
+            rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
+            rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
+            ..ProfileEnvironment::default()
+        };
+        session.bind_profile_with_env(&env).unwrap();
+        assert!(session.server_label().starts_with("local-274"));
+        assert_eq!(session.catalog_root().unwrap(), None);
+        assert!(session.set_server_revision(289).is_err());
+        assert!(session.bind_profile_with_env(&env).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn invalid_profile_refuses_vault_reset_without_deleting_explicit_path() {
+        let root =
+            std::env::temp_dir().join(format!("274bot-panel-invalid-reset-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let intended = root.join("intended.vault");
+        std::fs::write(&intended, b"do not delete").unwrap();
+
+        let mut session = Session::new();
+        session
+            .configure_profile(ProfileOptions {
+                revision: Some("275".into()),
+                vault_path: Some(intended.clone()),
+                ..ProfileOptions::default()
+            })
+            .unwrap();
+        assert!(!session.reset_vault());
+        assert!(intended.is_file());
+        assert!(session
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("unsupported revision")));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     /// `register_name` is the ScriptRegistry name; `folder` is the class
     /// file (`{folder}/{folder}.ts`) and the JS import binding.
@@ -3465,6 +3816,90 @@ mod tests {
         }
         std::fs::write(scripts.join("index.ts"), index).unwrap();
         root
+    }
+
+    #[test]
+    fn prebind_explicit_catalog_beats_ambient_and_mismatch_preserves_custom_cards() {
+        let iso = IsolatedEnv::enter("prebind-catalog");
+        let explicit = write_looping_catalog(&iso.dir.join("explicit"), &[("Chosen", "Chosen")]);
+        let ambient = write_looping_catalog(&iso.dir.join("ambient"), &[("Ambient", "Ambient")]);
+        iso.set_rs2b0t(&ambient);
+
+        let mut session = Session::new();
+        session.persist_ui = false;
+        session
+            .configure_profile(ProfileOptions {
+                profile: Some("local-274".into()),
+                catalog_root: Some(explicit.clone()),
+                ..ProfileOptions::default()
+            })
+            .unwrap();
+        assert_eq!(session.catalog_root().unwrap(), Some(explicit.clone()));
+        session.fill_rs2b0t_cards_once();
+        assert!(session
+            .js
+            .get(script::ScriptSource::Catalog, "Chosen")
+            .is_some());
+        assert!(session
+            .js
+            .get(script::ScriptSource::Catalog, "Ambient")
+            .is_none());
+
+        let custom = iso.dir.join("custom.ts");
+        std::fs::write(
+            &custom,
+            "export default class Custom extends LoopingBot { override loop() {} }",
+        )
+        .unwrap();
+        session.js.load(&custom).unwrap();
+        let error = session.import_rs2b0t_catalog(&ambient).unwrap_err();
+        assert!(error.contains("selected catalog"));
+        assert!(session
+            .js
+            .get(script::ScriptSource::File, "custom")
+            .is_some());
+        assert!(session
+            .js
+            .get(script::ScriptSource::Catalog, "Chosen")
+            .is_some());
+    }
+
+    #[test]
+    fn bind_refuses_catalog_source_edited_after_locked_browse_and_warmup() {
+        let (root, cache, manifest) = checked_profile_fixture(274);
+        let catalog = write_looping_catalog(&root.join("catalog"), &[("Chosen", "Chosen")]);
+        let source = catalog.join("src/bot/scripts/Chosen/Chosen.ts");
+        let mut session = Session::new();
+        session.persist_ui = false;
+        session
+            .configure_profile(ProfileOptions {
+                profile: Some("local-274".into()),
+                cache_dir: Some(cache),
+                cache_manifest: Some(manifest),
+                catalog_root: Some(catalog),
+                ..ProfileOptions::default()
+            })
+            .unwrap();
+        session.fill_rs2b0t_cards_once();
+        session
+            .js
+            .ensure_js(script::ScriptSource::Catalog, "Chosen")
+            .unwrap();
+        std::fs::write(
+            source,
+            "export default class Chosen extends LoopingBot { override loop() { this.walk(); } }",
+        )
+        .unwrap();
+        let env = ProfileEnvironment {
+            home: Some(root.clone()),
+            working_dir: Some(root.clone()),
+            rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
+            rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
+            ..ProfileEnvironment::default()
+        };
+        let error = session.bind_profile_with_env(&env).unwrap_err();
+        assert!(error.contains("catalog source changed"));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

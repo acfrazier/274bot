@@ -28,6 +28,8 @@ use winit::window::{Window, WindowId};
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum PanelError {
+    #[error("server profile: {0}")]
+    ServerProfile(String),
     #[error("event loop error: {0}")]
     EventLoop(#[from] winit::error::EventLoopError),
     #[error("window creation failed: {0}")]
