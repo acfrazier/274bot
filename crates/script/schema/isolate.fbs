@@ -202,10 +202,12 @@ table Snapshot {
   count_dialog_open: bool;
   withdraw_x_result_seq: ulong;
   withdraw_x_result: bool;
+  withdraw_load_result_seq: ulong;
+  withdraw_load_result: bool;
 }
 
 // One shim interact request, tagged by `op`:
-// "open-booth" | "open-stand" | "walk" | "walk-near" | "walk-to" | "deposit" | "withdraw" | "withdraw-x" | "close"
+// "open-booth" | "open-stand" | "walk" | "walk-near" | "walk-to" | "deposit" | "withdraw" | "withdraw-x" | "withdraw-load" | "close"
 // | "held" | "npc" | "loc" | "obj" | "player" | "use-on" | "use-widget-on"
 // | "continue" | "answer" | "answer-count" | "if-button" | "close-modal" | "side-tab"
 // | "wear" | "set-run" | "set-retaliate" | "set-note-mode" | "set-camera-yaw".

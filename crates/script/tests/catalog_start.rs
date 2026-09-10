@@ -47,6 +47,8 @@ fn empty_snap() -> script::isolate_fb::SnapshotInput<'static> {
         count_dialog_open: false,
         withdraw_x_result_seq: 0,
         withdraw_x_result: false,
+        withdraw_load_result_seq: 0,
+        withdraw_load_result: false,
         hold: false,
         ours: false,
         npcs: &[],

@@ -33,6 +33,20 @@ pub enum PendingWithdrawXPhase {
     Settlement,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingWithdrawResult {
+    WithdrawX,
+    WithdrawLoad,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PendingFillBaseline {
+    pub bank_item_id: i32,
+    pub before_used: usize,
+    pub before_count: i32,
+    pub before_stock: i32,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct PendingWithdrawX {
     pub item_id: i32,
@@ -43,6 +57,8 @@ pub struct PendingWithdrawX {
     pub phase: PendingWithdrawXPhase,
     pub deadline: Option<Instant>,
     pub remaining: Duration,
+    pub result: PendingWithdrawResult,
+    pub fill: Option<PendingFillBaseline>,
 }
 
 impl PendingWithdrawX {
@@ -63,7 +79,28 @@ impl PendingWithdrawX {
             phase: PendingWithdrawXPhase::Dialog,
             deadline: Some(Instant::now() + remaining),
             remaining,
+            result: PendingWithdrawResult::WithdrawX,
+            fill: None,
         }
+    }
+
+    pub fn waiting_load_dialog(
+        bank_item_id: i32,
+        count: i32,
+        before_used: usize,
+        before_count: i32,
+        before_stock: i32,
+        bank_generation: u64,
+    ) -> Self {
+        let mut pending = Self::waiting_dialog(bank_item_id, count, 0, 0, bank_generation);
+        pending.result = PendingWithdrawResult::WithdrawLoad;
+        pending.fill = Some(PendingFillBaseline {
+            bank_item_id,
+            before_used,
+            before_count,
+            before_stock,
+        });
+        pending
     }
 
     pub fn waiting_settlement(mut self) -> Self {
@@ -120,6 +157,8 @@ pub struct SlotScript {
     pending_withdraw_x: Option<PendingWithdrawX>,
     withdraw_x_result_seq: u64,
     withdraw_x_result: bool,
+    withdraw_load_result_seq: u64,
+    withdraw_load_result: bool,
     work_epoch: u64,
 }
 
@@ -149,6 +188,8 @@ impl SlotScript {
             pending_withdraw_x: None,
             withdraw_x_result_seq: 0,
             withdraw_x_result: false,
+            withdraw_load_result_seq: 0,
+            withdraw_load_result: false,
             work_epoch: 0,
         }
     }
@@ -177,6 +218,8 @@ impl SlotScript {
                 self.pending_withdraw_x = None;
                 self.withdraw_x_result_seq = 0;
                 self.withdraw_x_result = false;
+                self.withdraw_load_result_seq = 0;
+                self.withdraw_load_result = false;
                 self.state = RunState::Running;
                 Ok(())
             }
@@ -223,6 +266,8 @@ impl SlotScript {
                 self.pending_withdraw_x = None;
                 self.withdraw_x_result_seq = 0;
                 self.withdraw_x_result = false;
+                self.withdraw_load_result_seq = 0;
+                self.withdraw_load_result = false;
                 // Fresh isolate: the first posted snapshot is a keyframe.
                 self.last_snapshot = None;
                 self.last_world_id = None;
@@ -293,7 +338,9 @@ impl SlotScript {
     /// after a panic — `is_up` must not resurrect or wipe an error).
     pub fn on_is_up(&mut self, up: bool) {
         if !up {
-            self.pending_withdraw_x = None;
+            if self.pending_withdraw_x.is_some() {
+                self.complete_current_withdrawal(false);
+            }
             self.work_epoch = self.work_epoch.wrapping_add(1);
         }
         if !self.has_instance() {
@@ -309,7 +356,6 @@ impl SlotScript {
     /// Re-gate a started script and invalidate deferred actions and snapshot
     /// deltas at a connection boundary. Operator run intent is retained.
     pub fn reset_session_work(&mut self) {
-        self.pending_withdraw_x = None;
         self.on_is_up(false);
         #[cfg(feature = "load")]
         {
@@ -350,6 +396,11 @@ impl SlotScript {
         (self.withdraw_x_result_seq, self.withdraw_x_result)
     }
 
+    /// Last host-owned withdrawLoad result posted to this isolate.
+    pub fn withdraw_load_result(&self) -> (u64, bool) {
+        (self.withdraw_load_result_seq, self.withdraw_load_result)
+    }
+
     /// Lifecycle stamp used to reject work that raced a stop/reconnect.
     pub fn work_epoch(&self) -> u64 {
         self.work_epoch
@@ -360,6 +411,20 @@ impl SlotScript {
         self.pending_withdraw_x = None;
         self.withdraw_x_result_seq = self.withdraw_x_result_seq.wrapping_add(1);
         self.withdraw_x_result = result;
+    }
+
+    pub fn complete_withdraw_load(&mut self, result: bool) {
+        self.pending_withdraw_x = None;
+        self.withdraw_load_result_seq = self.withdraw_load_result_seq.wrapping_add(1);
+        self.withdraw_load_result = result;
+    }
+
+    /// Complete the armed shared withdrawal continuation on its result channel.
+    pub fn complete_current_withdrawal(&mut self, result: bool) {
+        match self.pending_withdraw_x.map(|pending| pending.result) {
+            Some(PendingWithdrawResult::WithdrawLoad) => self.complete_withdraw_load(result),
+            Some(PendingWithdrawResult::WithdrawX) | None => self.complete_withdraw_x(result),
+        }
     }
 
     /// Post the host's FlatBuffer snapshot blob into a Load isolate (no-op
@@ -802,10 +867,27 @@ mod tests {
 
         slot.start_compiled(Box::new(Noop)).unwrap();
         slot.set_pending_withdraw_x(Some(PendingWithdrawX::waiting_dialog(2, 7, 0, 7, 3)));
+        let before_reset = slot.withdraw_x_result();
         slot.reset_session_work();
         assert!(
             slot.pending_withdraw_x().is_none(),
             "reconnect/session reset aborts pending work"
+        );
+        assert_eq!(
+            slot.withdraw_x_result(),
+            (before_reset.0.wrapping_add(1), false),
+            "session reset publishes an explicit abort even if a later bank reuses the generation"
+        );
+
+        slot.set_pending_withdraw_x(Some(PendingWithdrawX::waiting_load_dialog(
+            2, 20, 1, 0, 20, 3,
+        )));
+        let before_load_reset = slot.withdraw_load_result();
+        slot.reset_session_work();
+        assert_eq!(
+            slot.withdraw_load_result(),
+            (before_load_reset.0.wrapping_add(1), false),
+            "withdrawLoad gets the same explicit abort on generation-reusing session reset"
         );
 
         let settlement = PendingWithdrawX::waiting_dialog(2, 7, 0, 7, 3).waiting_settlement();

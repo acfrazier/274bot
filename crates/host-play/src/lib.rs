@@ -777,12 +777,12 @@ fn script_observe(
                         && snap.bank_session_generation() == pending.bank_generation
                 });
                 if !valid_session {
-                    slot.complete_withdraw_x(false);
+                    slot.complete_current_withdrawal(false);
                 } else {
                     match pending.phase {
                         script::slot::PendingWithdrawXPhase::Dialog => {
                             if pending.expired() {
-                                slot.complete_withdraw_x(false);
+                                slot.complete_current_withdrawal(false);
                             } else if snapshot.is_some_and(GameSnapshot::count_dialog_open) {
                                 let sent = snapshot.is_some_and(|snap| {
                                     matches!(
@@ -796,7 +796,7 @@ fn script_observe(
                                     slot.set_pending_withdraw_x(Some(pending.waiting_settlement()));
                                     pending_withdraw_x_active = true;
                                 } else {
-                                    slot.complete_withdraw_x(false);
+                                    slot.complete_current_withdrawal(false);
                                 }
                             } else {
                                 pending_withdraw_x_active = true;
@@ -828,10 +828,49 @@ fn script_observe(
                                     )
                                 })
                             };
-                            if current >= pending.target || (current > pending.before && full) {
-                                slot.complete_withdraw_x(true);
+                            let load_settled = pending.fill.is_some_and(|fill| {
+                                let (used, count) = inv.map_or_else(
+                                    || {
+                                        snapshot.map_or((0, 0), |snap| {
+                                            let inventory = snap.inventory();
+                                            (
+                                                inventory.len(),
+                                                inventory
+                                                    .iter()
+                                                    .filter(|item| item.def.id == fill.bank_item_id)
+                                                    .map(|item| item.count)
+                                                    .sum::<i32>(),
+                                            )
+                                        })
+                                    },
+                                    |rows| {
+                                        (
+                                            rows.len(),
+                                            rows.iter()
+                                                .filter(|(id, _)| *id == fill.bank_item_id)
+                                                .map(|(_, count)| *count)
+                                                .sum::<i32>(),
+                                        )
+                                    },
+                                );
+                                let stock = snapshot.map_or(fill.before_stock, |snap| {
+                                    snap.bank()
+                                        .iter()
+                                        .find(|item| item.def.id == fill.bank_item_id)
+                                        .map_or(0, |item| item.count)
+                                });
+                                used > fill.before_used
+                                    || count > fill.before_count
+                                    || stock < fill.before_stock
+                            });
+                            if load_settled
+                                || (pending.fill.is_none()
+                                    && (current >= pending.target
+                                        || (current > pending.before && full)))
+                            {
+                                slot.complete_current_withdrawal(true);
                             } else if pending.expired() {
-                                slot.complete_withdraw_x(false);
+                                slot.complete_current_withdrawal(false);
                             } else {
                                 pending_withdraw_x_active = true;
                             }
@@ -867,6 +906,7 @@ fn script_observe(
                     .get(name)
                     .is_some_and(|b| b.allow_teleports);
                 let (withdraw_x_result_seq, withdraw_x_result) = slot.withdraw_x_result();
+                let (withdraw_load_result_seq, withdraw_load_result) = slot.withdraw_load_result();
                 let bytes = with_script_snapshot_input(
                     tick,
                     here,
@@ -880,6 +920,8 @@ fn script_observe(
                     teleports_enabled,
                     withdraw_x_result_seq,
                     withdraw_x_result,
+                    withdraw_load_result_seq,
+                    withdraw_load_result,
                     |input| slot.encode_snapshot_delta(input, force_banks),
                 );
                 slot.post_snapshot(bytes);
@@ -971,6 +1013,7 @@ fn script_observe(
             let mut dispatchable = Vec::with_capacity(interact.len());
             let mut armed = None;
             let mut rejected_withdraw_x = 0usize;
+            let mut rejected_withdraw_load = 0usize;
             for req in interact {
                 match req {
                     script::shim::InteractReq::WithdrawX {
@@ -1054,6 +1097,76 @@ fn script_observe(
                     script::shim::InteractReq::WithdrawX { .. } => {
                         rejected_withdraw_x += 1;
                     }
+                    script::shim::InteractReq::WithdrawLoad {
+                        name: item_name,
+                        bank_generation,
+                    } if armed.is_none()
+                        && !pending_withdraw_x_active
+                        && snapshot.bank_component_id() >= 0
+                        && snapshot.bank_loaded()
+                        && !snapshot.count_dialog_open()
+                        && snapshot.bank_session_generation() == bank_generation =>
+                    {
+                        let capacity = snapshot.inventory_size().max(0) as usize;
+                        let used = inv.map_or_else(|| snapshot.inventory().len(), <[_]>::len);
+                        let free = capacity.saturating_sub(used);
+                        let mut accepted = false;
+                        if free > 0 {
+                            let mut ix = api::interact::Interactions::new(snapshot, driver);
+                            let wanted = item_name.to_lowercase();
+                            if let Some(item) = snapshot.bank().iter().find(|item| {
+                                item.count > 0
+                                    && obj_names
+                                        .and_then(|names| names.name(item.def.id))
+                                        .is_some_and(|name| name.eq_ignore_ascii_case(&wanted))
+                            }) {
+                                let bank_item_id = item.def.id;
+                                let count = item.count.min(free as i32);
+                                if let Some((op, needs_dialog)) =
+                                    fill_withdraw_action(&item.actions, count, item.count)
+                                {
+                                    let sent = matches!(
+                                        ix.interact(
+                                            api::interact::OpTarget::Item(item),
+                                            api::interact::ActionSpec::Operation(op),
+                                        ),
+                                        api::interact::SendResult::Sent { .. }
+                                    );
+                                    if sent {
+                                        let before_count = snapshot
+                                            .inventory()
+                                            .iter()
+                                            .filter(|held| held.def.id == bank_item_id)
+                                            .map(|held| held.count)
+                                            .sum();
+                                        let pending =
+                                            script::slot::PendingWithdrawX::waiting_load_dialog(
+                                                bank_item_id,
+                                                count,
+                                                used,
+                                                before_count,
+                                                item.count,
+                                                bank_generation,
+                                            );
+                                        armed = Some(if needs_dialog {
+                                            pending
+                                        } else {
+                                            pending.waiting_settlement()
+                                        });
+                                        wrote = true;
+                                        pending_withdraw_x_active = true;
+                                        accepted = true;
+                                    }
+                                }
+                            }
+                        }
+                        if !accepted {
+                            rejected_withdraw_load += 1;
+                        }
+                    }
+                    script::shim::InteractReq::WithdrawLoad { .. } => {
+                        rejected_withdraw_load += 1;
+                    }
                     req => dispatchable.push(req),
                 }
             }
@@ -1068,12 +1181,15 @@ fn script_observe(
                 name,
                 dispatchable,
             );
-            if armed.is_some() || rejected_withdraw_x != 0 {
+            if armed.is_some() || rejected_withdraw_x != 0 || rejected_withdraw_load != 0 {
                 if let Some(slot) = script_slot(scripts, name) {
                     let mut slot = slot.lock().unwrap();
                     if Some(slot.work_epoch()) == slot_work_epoch {
                         for _ in 0..rejected_withdraw_x {
                             slot.complete_withdraw_x(false);
+                        }
+                        for _ in 0..rejected_withdraw_load {
+                            slot.complete_withdraw_load(false);
                         }
                         if let Some(pending) = armed {
                             if matches!(
@@ -1090,32 +1206,46 @@ fn script_observe(
                 }
             }
         } else {
-            let rejected = interact
+            let rejected_x = interact
                 .iter()
                 .filter(|req| matches!(req, script::shim::InteractReq::WithdrawX { .. }))
                 .count();
-            if rejected != 0 {
+            let rejected_load = interact
+                .iter()
+                .filter(|req| matches!(req, script::shim::InteractReq::WithdrawLoad { .. }))
+                .count();
+            if rejected_x != 0 || rejected_load != 0 {
                 if let Some(slot) = script_slot(scripts, name) {
                     let mut slot = slot.lock().unwrap();
                     if Some(slot.work_epoch()) == slot_work_epoch {
-                        for _ in 0..rejected {
+                        for _ in 0..rejected_x {
                             slot.complete_withdraw_x(false);
+                        }
+                        for _ in 0..rejected_load {
+                            slot.complete_withdraw_load(false);
                         }
                     }
                 }
             }
         }
     } else if !interact.is_empty() {
-        let rejected = interact
+        let rejected_x = interact
             .iter()
             .filter(|req| matches!(req, script::shim::InteractReq::WithdrawX { .. }))
             .count();
-        if rejected != 0 {
+        let rejected_load = interact
+            .iter()
+            .filter(|req| matches!(req, script::shim::InteractReq::WithdrawLoad { .. }))
+            .count();
+        if rejected_x != 0 || rejected_load != 0 {
             if let Some(slot) = script_slot(scripts, name) {
                 let mut slot = slot.lock().unwrap();
                 if Some(slot.work_epoch()) == slot_work_epoch {
-                    for _ in 0..rejected {
+                    for _ in 0..rejected_x {
                         slot.complete_withdraw_x(false);
+                    }
+                    for _ in 0..rejected_load {
+                        slot.complete_withdraw_load(false);
                     }
                 }
             }
@@ -1348,7 +1478,7 @@ fn dispatch_script_interact(
             // `script_observe` consumes this variant so it can arm the
             // slot-owned continuation only after the X action was sent.
             // Direct callers cannot safely create host pending state.
-            InteractReq::WithdrawX { .. } => {}
+            InteractReq::WithdrawX { .. } | InteractReq::WithdrawLoad { .. } => {}
             InteractReq::Held { name, action } => {
                 // rs2b0t `Item.interact` / `Inventory.first`: one name → one
                 // held row (same as Withdraw's `.find`). A name the table
@@ -1712,6 +1842,20 @@ fn all_slot(actions: &[Option<String>]) -> Option<i32> {
         .map(|i| i as i32 + 1)
 }
 
+/// Select one bounded fill operation in compatibility order: an exact
+/// amount, then All only when the requested fill consumes current stock,
+/// then the host-owned X continuation.
+fn fill_withdraw_action(actions: &[Option<String>], count: i32, stock: i32) -> Option<(i32, bool)> {
+    action_slot(actions, &format!("Withdraw {count}"))
+        .map(|op| (op, false))
+        .or_else(|| {
+            (count == stock)
+                .then(|| all_slot(actions).map(|op| (op, false)))
+                .flatten()
+        })
+        .or_else(|| action_slot(actions, "Withdraw X").map(|op| (op, true)))
+}
+
 fn norm_action(s: &str) -> String {
     s.to_lowercase()
         .chars()
@@ -1810,6 +1954,8 @@ fn script_snapshot_fb(
         teleports_enabled,
         0,
         false,
+        0,
+        false,
         |input| script::isolate_fb::encode_snapshot_delta(last, input, force_banks),
     )
 }
@@ -1852,6 +1998,8 @@ fn with_script_snapshot_input<R>(
     teleports_enabled: bool,
     withdraw_x_result_seq: u64,
     withdraw_x_result: bool,
+    withdraw_load_result_seq: u64,
+    withdraw_load_result: bool,
     f: impl FnOnce(&script::isolate_fb::SnapshotInput<'_>) -> R,
 ) -> R {
     use script::isolate_fb::{
@@ -2564,6 +2712,8 @@ fn with_script_snapshot_input<R>(
         count_dialog_open: snapshot.is_some_and(GameSnapshot::count_dialog_open),
         withdraw_x_result_seq,
         withdraw_x_result,
+        withdraw_load_result_seq,
+        withdraw_load_result,
         hold,
         ours,
         npcs: &npcs,
@@ -6508,6 +6658,8 @@ export default class T extends LoopingBot {
     async loop() {
         if (!globalThis.__started) {
             globalThis.__started = true;
+            globalThis.__clock = 0;
+            globalThis.performance.now = () => globalThis.__clock;
             globalThis.__posted_result = await Bank.withdrawX('Knife', 7);
             return;
         }
@@ -6592,9 +6744,48 @@ export default class T extends LoopingBot {
                 .is_some(),
             "a successful X action arms one host-owned continuation"
         );
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("globalThis.__clock = 9001")
+            .expect("advance the isolate clock beyond the former JS timeout");
 
         snap.rebuild(&c);
         let before_wait = c.out.pos;
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            2,
+            Some((3205, 3205, 0)),
+            Some(&empty_inv),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            true,
+            false,
+        );
+        assert_eq!(
+            c.out.pos, before_wait,
+            "the host sends no amount before the dialog is posted"
+        );
+        assert_eq!(
+            script_slot(&scripts, "alice")
+                .unwrap()
+                .lock()
+                .unwrap()
+                .probe("typeof globalThis.__posted_result")
+                .unwrap(),
+            "undefined",
+            "the held frame cannot consume the pending JavaScript result"
+        );
+
         script_observe(
             &mut c,
             "alice",
@@ -6614,9 +6805,21 @@ export default class T extends LoopingBot {
             false,
         );
         assert_eq!(
-            c.out.pos, before_wait,
-            "the host sends no amount before the dialog is posted"
+            script_slot(&scripts, "alice")
+                .unwrap()
+                .lock()
+                .unwrap()
+                .probe("typeof globalThis.__posted_result")
+                .unwrap(),
+            "undefined",
+            "resume without host outcome keeps the promise pending"
         );
+        assert!(script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .pending_withdraw_x()
+            .is_some());
 
         c.apply_p_countdialog();
         c.bump_gens(ServerProt::P_COUNTDIALOG);
@@ -6780,6 +6983,124 @@ export default class T extends LoopingBot {
             .lock()
             .unwrap()
             .stop();
+    }
+
+    #[test]
+    fn withdraw_load_selects_exact_then_all_then_x() {
+        let actions = vec![
+            None,
+            Some("Withdraw 5".into()),
+            Some("Withdraw All".into()),
+            Some("Withdraw X".into()),
+        ];
+        assert_eq!(fill_withdraw_action(&actions, 5, 20), Some((2, false)));
+        assert_eq!(fill_withdraw_action(&actions, 20, 20), Some((3, false)));
+        assert_eq!(fill_withdraw_action(&actions, 7, 20), Some((4, true)));
+        assert_eq!(fill_withdraw_action(&[None], 7, 20), None);
+    }
+
+    #[test]
+    fn withdraw_load_composes_all_send_and_observed_fill_result() {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let (navs, world) = empty_nav();
+        let source = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__fill_result = await Bank.withdrawLoad('Knife');
+    }
+}
+"#;
+        script_slot_or_insert(&scripts, "alice")
+            .lock()
+            .unwrap()
+            .start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+            .expect("withdraw-load isolate starts");
+
+        let mut c = bank_fetch_client();
+        let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let before_inv = [(1, 3)];
+
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&before_inv),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .probe("true")
+            .unwrap();
+        let before_send = c.out.pos;
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            false,
+            1,
+            Some((3205, 3205, 0)),
+            Some(&before_inv),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        assert!(c.out.pos > before_send, "Withdraw-All reaches the driver");
+
+        let filled_inv = [(1, 3), (2, 20)];
+        snap.rebuild(&c);
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            2,
+            Some((3205, 3205, 0)),
+            Some(&filled_inv),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        assert_eq!(
+            script_slot(&scripts, "alice")
+                .unwrap()
+                .lock()
+                .unwrap()
+                .probe("globalThis.__fill_result")
+                .unwrap(),
+            true
+        );
     }
 
     #[test]

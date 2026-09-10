@@ -148,6 +148,8 @@ const VT_SNAP_BANK_GENERATION: VOffsetT = 118;
 const VT_SNAP_COUNT_DIALOG_OPEN: VOffsetT = 120;
 const VT_SNAP_WITHDRAW_X_RESULT_SEQ: VOffsetT = 122;
 const VT_SNAP_WITHDRAW_X_RESULT: VOffsetT = 124;
+const VT_SNAP_WITHDRAW_LOAD_RESULT_SEQ: VOffsetT = 126;
+const VT_SNAP_WITHDRAW_LOAD_RESULT: VOffsetT = 128;
 
 // SideTabIface: { index, id }
 const VT_STI_INDEX: VOffsetT = 4;
@@ -393,6 +395,8 @@ pub struct SnapshotInput<'a> {
     pub hold: bool,
     pub ours: bool,
     pub npcs: &'a [SceneEntityInput<'a>],
+    pub withdraw_load_result_seq: u64,
+    pub withdraw_load_result: bool,
     pub locs: &'a [SceneEntityInput<'a>],
     pub players: &'a [SceneEntityInput<'a>],
     pub ground: &'a [SceneEntityInput<'a>],
@@ -874,6 +878,12 @@ impl Verifiable for SnapshotReader<'_> {
                 false,
             )?
             .visit_field::<bool>("withdraw_x_result", VT_SNAP_WITHDRAW_X_RESULT, false)?
+            .visit_field::<u64>(
+                "withdraw_load_result_seq",
+                VT_SNAP_WITHDRAW_LOAD_RESULT_SEQ,
+                false,
+            )?
+            .visit_field::<bool>("withdraw_load_result", VT_SNAP_WITHDRAW_LOAD_RESULT, false)?
             .finish();
         Ok(())
     }
@@ -1000,6 +1010,26 @@ impl SnapshotReader<'_> {
     }
     pub fn withdraw_x_result(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_WITHDRAW_X_RESULT, None) }.unwrap_or(false)
+    }
+    pub fn has_withdraw_load_result_seq(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<u64>(VT_SNAP_WITHDRAW_LOAD_RESULT_SEQ, None)
+                .is_some()
+        }
+    }
+    pub fn withdraw_load_result_seq(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_WITHDRAW_LOAD_RESULT_SEQ, None) }.unwrap_or(0)
+    }
+    pub fn has_withdraw_load_result(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<bool>(VT_SNAP_WITHDRAW_LOAD_RESULT, None)
+                .is_some()
+        }
+    }
+    pub fn withdraw_load_result(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_WITHDRAW_LOAD_RESULT, None) }.unwrap_or(false)
     }
     pub fn has_bank_note_on(&self) -> bool {
         unsafe { self.tab.get::<i32>(VT_SNAP_BANK_NOTE_ON, None).is_some() }
@@ -1468,6 +1498,8 @@ pub struct SnapshotFingerprint {
     pub hold: bool,
     pub ours: bool,
     pub npcs: Vec<SceneEntityFp>,
+    pub withdraw_load_result_seq: u64,
+    pub withdraw_load_result: bool,
     pub locs: Vec<SceneEntityFp>,
     pub players: Vec<SceneEntityFp>,
     pub ground: Vec<SceneEntityFp>,
@@ -1586,6 +1618,8 @@ impl SnapshotFingerprint {
             count_dialog_open: input.count_dialog_open,
             withdraw_x_result_seq: input.withdraw_x_result_seq,
             withdraw_x_result: input.withdraw_x_result,
+            withdraw_load_result_seq: input.withdraw_load_result_seq,
+            withdraw_load_result: input.withdraw_load_result,
             hold: input.hold,
             ours: input.ours,
             npcs: input.npcs.iter().map(entity_fp).collect(),
@@ -1696,6 +1730,8 @@ pub struct DeltaMask {
     pub count_dialog_open: bool,
     pub withdraw_x_result_seq: bool,
     pub withdraw_x_result: bool,
+    pub withdraw_load_result_seq: bool,
+    pub withdraw_load_result: bool,
     pub hold: bool,
     pub ours: bool,
     pub npcs: bool,
@@ -1762,6 +1798,8 @@ impl DeltaMask {
             count_dialog_open: true,
             withdraw_x_result_seq: true,
             withdraw_x_result: true,
+            withdraw_load_result_seq: true,
+            withdraw_load_result: true,
             hold: true,
             ours: true,
             npcs: true,
@@ -1835,6 +1873,9 @@ impl DeltaMask {
             count_dialog_open: next.count_dialog_open != last.count_dialog_open,
             withdraw_x_result_seq: next.withdraw_x_result_seq != last.withdraw_x_result_seq,
             withdraw_x_result: next.withdraw_x_result != last.withdraw_x_result,
+            withdraw_load_result_seq: next.withdraw_load_result_seq
+                != last.withdraw_load_result_seq,
+            withdraw_load_result: next.withdraw_load_result != last.withdraw_load_result,
             // SEC-004: re-post hold every tick so JS cannot clear
             // `__rs2b0t_host.hold` in onPaint and unfreeze loop().
             hold: true,
@@ -2271,6 +2312,15 @@ fn encode_snapshot_masked_into(
     }
     if mask.withdraw_x_result {
         b.push_slot_always(VT_SNAP_WITHDRAW_X_RESULT, input.withdraw_x_result);
+    }
+    if mask.withdraw_load_result_seq {
+        b.push_slot_always(
+            VT_SNAP_WITHDRAW_LOAD_RESULT_SEQ,
+            input.withdraw_load_result_seq,
+        );
+    }
+    if mask.withdraw_load_result {
+        b.push_slot_always(VT_SNAP_WITHDRAW_LOAD_RESULT, input.withdraw_load_result);
     }
     if mask.hold {
         b.push_slot_always(VT_SNAP_HOLD, input.hold);
@@ -3280,6 +3330,15 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                     .bank_generation()
                     .ok_or_else(|| "withdraw-x has no bank_generation".to_string())?,
             }),
+            "withdraw-load" => out.push(crate::shim::InteractReq::WithdrawLoad {
+                name: row
+                    .name()
+                    .ok_or_else(|| "withdraw-load has no name".to_string())?
+                    .to_string(),
+                bank_generation: row
+                    .bank_generation()
+                    .ok_or_else(|| "withdraw-load has no bank_generation".to_string())?,
+            }),
             "held" => out.push(crate::shim::InteractReq::Held {
                 name: row
                     .name()
@@ -3408,6 +3467,7 @@ fn interact_off<'b>(
         InteractReq::Deposit { .. } => "deposit",
         InteractReq::Withdraw { .. } => "withdraw",
         InteractReq::WithdrawX { .. } => "withdraw-x",
+        InteractReq::WithdrawLoad { .. } => "withdraw-load",
         InteractReq::Held { .. } => "held",
         InteractReq::Close => "close",
         InteractReq::Npc { .. } => "npc",
@@ -3441,6 +3501,7 @@ fn interact_off<'b>(
         InteractReq::Deposit { name }
         | InteractReq::Withdraw { name, .. }
         | InteractReq::WithdrawX { name, .. }
+        | InteractReq::WithdrawLoad { name, .. }
         | InteractReq::Held { name, .. }
         | InteractReq::Npc { name, .. }
         | InteractReq::Player { name, .. }
@@ -3562,6 +3623,12 @@ fn interact_off<'b>(
             b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
             b.push_slot_always(VT_IN_BANK_GENERATION, *bank_generation);
         }
+        InteractReq::WithdrawLoad {
+            bank_generation, ..
+        } => {
+            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
+            b.push_slot_always(VT_IN_BANK_GENERATION, *bank_generation);
+        }
         InteractReq::Held { .. } => {
             b.push_slot_always(VT_IN_NAME, name_off.unwrap());
             b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
@@ -3680,6 +3747,8 @@ pub(crate) mod tests {
             count_dialog_open: false,
             withdraw_x_result_seq: 0,
             withdraw_x_result: false,
+            withdraw_load_result_seq: 0,
+            withdraw_load_result: false,
             hold: false,
             ours: false,
             npcs: &[],

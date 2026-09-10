@@ -526,6 +526,8 @@ pub(crate) fn content_json() -> String {
     };
     serde_json::json!({
         "food_heals": api::content::FOOD_HEALS,
+        "common_bank_loot": api::content::COMMON_BANK_LOOT,
+        "random_event_casket_id": api::content::RANDOM_EVENT_CASKET_ID,
         "cow_fields": COW_FIELDS.iter().map(|f| {
             serde_json::json!({"name": f.name, "x": f.x, "z": f.z, "level": f.level})
         }).collect::<Vec<_>>(),
@@ -653,6 +655,10 @@ pub enum InteractReq {
         action: String,
         bank_generation: u64,
     },
+    /// Fill free inventory slots from one fresh bank row. Rust selects
+    /// Withdraw-All or the shared Withdraw-X continuation and observes settlement.
+    #[serde(rename = "withdraw-load")]
+    WithdrawLoad { name: String, bank_generation: u64 },
     /// Interact with the held item named `name` using the action label
     /// (`Bury`, `Wear`, …). The host resolves the name through ObjNames
     /// and dispatches the item's menu op (rs2b0t `Item.interact`).

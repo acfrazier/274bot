@@ -215,6 +215,34 @@ pub const ROCK_TYPE_NAMES: &[&str] = &[
     "Runite",
 ];
 
+/// Lowercase substrings treated as common loot by the compatibility API.
+/// The policy stays in Rust; shims only publish and invoke it.
+pub const COMMON_BANK_LOOT: &[&str] = &[
+    "uncut",
+    "sapphire",
+    "emerald",
+    "ruby",
+    "diamond",
+    "opal",
+    "jade",
+    "topaz",
+    "strange fruit",
+    "beer",
+    "kebab",
+];
+
+/// Random-event fishing casket id in both selected 274 and 289 content/cache inputs.
+pub const RANDOM_EVENT_CASKET_ID: i32 = 405;
+
+/// Match one observed object against the host-owned common-loot policy.
+pub fn matches_common_bank_loot(name: &str, id: i32) -> bool {
+    id == RANDOM_EVENT_CASKET_ID
+        || (!name.is_empty()
+            && COMMON_BANK_LOOT
+                .iter()
+                .any(|part| name.to_ascii_lowercase().contains(part)))
+}
+
 /// Existing supported food heals, shared by compatibility readers.
 pub const FOOD_HEALS: &[(&str, i32)] = &[
     ("Shark", 20),
@@ -290,5 +318,31 @@ mod tests {
             .expect("rune_chainbody");
         assert_eq!(row.id, 1113);
         assert_eq!(row.name, "Rune chainbody");
+    }
+
+    #[test]
+    fn common_bank_loot_matches_names_and_verified_casket_id() {
+        assert!(matches_common_bank_loot("Uncut sapphire", -1));
+        assert!(matches_common_bank_loot("STRANGE FRUIT", -1));
+        assert!(matches_common_bank_loot("", 405));
+        assert!(!matches_common_bank_loot("Rune scimitar", -1));
+        assert!(!matches_common_bank_loot("", -1));
+        assert_eq!(RANDOM_EVENT_CASKET_ID, 405);
+        assert_eq!(
+            COMMON_BANK_LOOT,
+            [
+                "uncut",
+                "sapphire",
+                "emerald",
+                "ruby",
+                "diamond",
+                "opal",
+                "jade",
+                "topaz",
+                "strange fruit",
+                "beer",
+                "kebab",
+            ]
+        );
     }
 }
