@@ -1162,7 +1162,7 @@ impl Session {
         }
     }
 
-    fn target(&self) -> client::BotTarget {
+    pub(crate) fn target(&self) -> client::BotTarget {
         self.server_profile
             .as_ref()
             .map_or_else(client::bot_target, |profile| profile.target())

@@ -1,0 +1,57 @@
+   Compiling bindgen v0.71.1
+   Compiling swc_common v9.2.0
+   Compiling naga v29.0.4
+   Compiling tungstenite v0.24.0
+   Compiling deno_permissions v0.72.0
+   Compiling panel v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/panel)
+   Compiling swc_ecma_ast v9.0.0
+   Compiling swc_ecma_loader v9.0.0
+   Compiling v8 v137.2.1
+   Compiling wgpu-naga-bridge v29.0.4
+   Compiling wgpu-hal v29.0.4
+   Compiling serde_v8 v0.264.0
+   Compiling deno_core v0.355.0
+   Compiling wgpu-core-deps-apple v29.0.4
+   Compiling wgpu-core v29.0.4
+   Compiling swc_ecma_lexer v12.0.0
+   Compiling swc_ecma_visit v9.0.0
+   Compiling swc_ecma_codegen v11.0.0
+   Compiling swc_ecma_parser v12.0.0
+   Compiling deno_web v0.244.0
+   Compiling deno_console v0.213.0
+   Compiling deno_features v0.10.0
+   Compiling deno_webidl v0.213.0
+   Compiling deno_url v0.213.0
+   Compiling swc_ecma_utils v13.1.0
+   Compiling swc_ecma_transforms_base v13.0.0
+   Compiling dprint-swc-ext v0.24.0
+   Compiling wgpu v29.0.4
+   Compiling swc_ecma_transforms_react v15.0.0
+   Compiling swc_ecma_transforms_classes v13.0.0
+   Compiling swc_ecma_transforms_proposal v13.0.0
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/vendor/fr-client-rust/crates/client)
+   Compiling dear-imgui-wgpu v0.15.1
+   Compiling swc_ecma_transforms_typescript v15.0.0
+   Compiling deno_crypto v0.227.0
+   Compiling deno_ast v0.49.0
+   Compiling rustyscript v0.12.3
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/api)
+   Compiling nav v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/nav)
+   Compiling host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/host)
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/script)
+   Compiling scenario v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/scenario)
+   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/host-play)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 16.96s
+     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/target/debug/deps/panel-5073545f22009603)
+
+running 1 test
+test session::tests::debug_main_buttons_prod_is_debug_panel_only ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 383 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (/Users/acfrazier/experiments/274bot/target/debug/deps/panel_play-41b51ac0a19320d9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
