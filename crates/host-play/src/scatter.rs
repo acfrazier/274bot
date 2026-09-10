@@ -46,27 +46,27 @@ fn walkable_seeds(world: &NavWorld) -> Vec<WorldTile> {
         .collect()
 }
 
+pub(crate) fn shuffled_for_world(world: Option<&NavWorld>) -> Vec<WorldTile> {
+    let mut tiles = world.map(walkable_seeds).unwrap_or_default();
+    if tiles.is_empty() {
+        tiles.push(LUMBRIDGE);
+    }
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(1);
+    let mut rng = nanos ^ 0x9e37_79b9_7f4a_7c15;
+    for i in (1..tiles.len()).rev() {
+        rng = rng.wrapping_mul(1664525).wrapping_add(1013904223);
+        let j = (rng as usize) % (i + 1);
+        tiles.swap(i, j);
+    }
+    tiles
+}
+
 fn shuffled_walkable() -> &'static [WorldTile] {
     static TILES: OnceLock<Vec<WorldTile>> = OnceLock::new();
-    TILES.get_or_init(|| {
-        let mut tiles = NavWorld::load_pack(&pack_path())
-            .map(|w| walkable_seeds(&w))
-            .unwrap_or_default();
-        if tiles.is_empty() {
-            tiles.push(LUMBRIDGE);
-        }
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(1);
-        let mut rng = nanos ^ 0x9e37_79b9_7f4a_7c15;
-        for i in (1..tiles.len()).rev() {
-            rng = rng.wrapping_mul(1664525).wrapping_add(1013904223);
-            let j = (rng as usize) % (i + 1);
-            tiles.swap(i, j);
-        }
-        tiles
-    })
+    TILES.get_or_init(|| shuffled_for_world(NavWorld::load_pack(&pack_path()).ok().as_ref()))
 }
 
 /// A walkable tile for this uid (stable for the process, shuffled pack).

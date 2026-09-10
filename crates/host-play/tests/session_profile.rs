@@ -1,0 +1,432 @@
+//! Profile selection and actual shared-client construction, without game servers.
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+
+use client::{io::ClientRevision, BotTarget};
+use host_play::profile::{
+    CacheManifest, NavAvailability, NavManifest, ProfileEnvironment, HOST_BOUNDARY_NOT_QUALIFIED,
+};
+use host_play::{parse_profile_args, ProfileOptions, SharedClientTemplate};
+
+static NEXT: AtomicUsize = AtomicUsize::new(0);
+static CLIENTS: Mutex<()> = Mutex::new(());
+const ARCHIVES: [&str; 8] = [
+    "title",
+    "config",
+    "interface",
+    "media",
+    "versionlist",
+    "textures",
+    "wordenc",
+    "sounds",
+];
+
+struct Fixture(PathBuf);
+impl Fixture {
+    fn new() -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "274bot-session-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/profile");
+        for file in ARCHIVES
+            .into_iter()
+            .chain(["manifest-274.json", "manifest-289.json"])
+        {
+            std::fs::copy(source.join(file), path.join(file)).unwrap();
+        }
+        Self(path)
+    }
+    fn env(&self) -> ProfileEnvironment {
+        ProfileEnvironment {
+            home: Some(self.0.clone()),
+            rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
+            rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
+            ..Default::default()
+        }
+    }
+    fn options(&self, revision: u16) -> ProfileOptions {
+        ProfileOptions {
+            revision: Some(revision.to_string()),
+            cache_dir: Some(self.0.clone()),
+            cache_manifest: Some(self.0.join(format!("manifest-{revision}.json"))),
+            nav_pack: Some(self.0.join("missing.navpack")),
+            ..Default::default()
+        }
+    }
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn flags_are_order_independent_and_override_saved_or_environment_revision() {
+    let fixture = Fixture::new();
+    let mut environment = fixture.env();
+    environment.revision = Some("377".into());
+    for args in [
+        vec![
+            "--revision",
+            "289",
+            "--host",
+            "localhost",
+            "--port",
+            "45123",
+            "--script",
+            "foo",
+        ],
+        vec![
+            "--port",
+            "45123",
+            "--script",
+            "foo",
+            "--host",
+            "localhost",
+            "--revision",
+            "289",
+        ],
+    ] {
+        let (options, rest) = parse_profile_args(args).unwrap();
+        assert_eq!(rest, ["--script", "foo"]);
+        let selected = options.resolve_with_env(Some(377), &environment).unwrap();
+        assert_eq!(selected.revision(), ClientRevision::R289);
+        assert_eq!(selected.game_host(), "localhost");
+        assert_eq!(selected.game_port(), 45123);
+        assert_eq!(selected.asset_port(), 1080);
+        assert!(selected.vault_path().ends_with("vault-289"));
+        assert!(selected
+            .cache_dir()
+            .ends_with("lostcity-289/engine/data/pack/client"));
+        assert!(selected.nav_pack().ends_with("289/274bot.navpack"));
+    }
+    let (options, _) = parse_profile_args(["--profile", "local-274"]).unwrap();
+    environment.profile = Some("unsupported".into());
+    let selected = options.resolve_with_env(Some(289), &environment).unwrap();
+    assert_eq!(selected.revision(), ClientRevision::R274);
+    assert_eq!(selected.game_port(), 43594);
+    assert!(selected.vault_path().ends_with(".274bot/vault"));
+
+    let mut environment = fixture.env();
+    environment.working_dir = Some(fixture.0.clone());
+    let (options, _) =
+        parse_profile_args(["--cache", "relative-cache", "--vault", "relative-vault"]).unwrap();
+    let selected = options.resolve_with_env(None, &environment).unwrap();
+    assert_eq!(selected.cache_dir(), fixture.0.join("relative-cache"));
+    assert_eq!(selected.vault_path(), fixture.0.join("relative-vault"));
+}
+
+#[test]
+fn invalid_revision_public_pairing_and_conflicts_fail_before_vault_access() {
+    let fixture = Fixture::new();
+    for args in [
+        vec!["--revision", "377"],
+        vec!["--revision"],
+        vec!["--port", "0"],
+        vec!["--revision", "--prod"],
+    ] {
+        assert!(parse_profile_args(args).is_err());
+    }
+    for args in [
+        vec!["--prod", "--revision", "289"],
+        vec!["--profile", "local-274", "--revision", "289"],
+        vec!["--profile", "local-289", "--prod"],
+        vec!["--profile", "public-274", "--host", "localhost"],
+        vec!["--profile", "public-274", "--http-port", "80"],
+    ] {
+        let (options, _) = parse_profile_args(args).unwrap();
+        assert!(options.resolve_with_env(None, &fixture.env()).is_err());
+    }
+    assert!(!fixture.0.join(".274bot").exists());
+}
+
+#[test]
+fn cache_and_nav_mismatch_are_rejected_before_creating_resources() {
+    let fixture = Fixture::new();
+    let mut options = fixture.options(289);
+    options.cache_manifest = Some(fixture.0.join("manifest-274.json"));
+    let selection = options.resolve_with_env(None, &fixture.env()).unwrap();
+    assert!(selection
+        .bind()
+        .unwrap_err()
+        .contains("cache/profile mismatch"));
+    options.cache_manifest = Some(fixture.0.join("manifest-289.json"));
+    let nav = fixture.0.join("wrong.navpack");
+    std::fs::write(&nav, b"fixture-nav").unwrap();
+    options.nav_pack = Some(nav.clone());
+    let selection = options.resolve_with_env(None, &fixture.env()).unwrap();
+    assert!(selection
+        .bind()
+        .unwrap_err()
+        .contains("navigation/profile mismatch"));
+    let manifest = NavManifest {
+        revision: 274,
+        cache_id: "wrong".into(),
+        nav_sha256: "wrong".into(),
+        flags_sha256: None,
+    };
+    std::fs::write(
+        host_play::profile::nav_manifest_path(&nav),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    assert!(selection
+        .bind()
+        .unwrap_err()
+        .contains("navigation/profile mismatch"));
+    assert!(!selection.vault_path().exists());
+    assert!(!selection.unpack_dir().exists());
+}
+
+#[test]
+fn invalid_explicit_rsa_fails_without_fallback_and_binding_detects_resource_changes() {
+    let fixture = Fixture::new();
+    let options = fixture.options(274);
+    for modulus in ["", "not-a-number", "0", "-23"] {
+        let mut environment = fixture.env();
+        environment.rsa_modulus = Some(modulus.into());
+        assert!(options
+            .resolve_with_env(None, &environment)
+            .unwrap()
+            .bind()
+            .is_err());
+    }
+    let profile = options
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind()
+        .unwrap();
+    assert!(matches!(
+        profile.nav_availability(),
+        NavAvailability::Unavailable(_)
+    ));
+    profile.validate_resources().unwrap();
+    std::fs::write(fixture.0.join("config"), b"changed after binding").unwrap();
+    assert!(profile
+        .validate_resources()
+        .unwrap_err()
+        .contains("cache changed"));
+    assert!(!profile.vault_path().exists());
+}
+
+#[test]
+fn both_revisions_reach_real_shared_client_constructor_and_keep_the_binding() {
+    let _clients = CLIENTS.lock().unwrap();
+    for revision in [274, 289] {
+        let fixture = Fixture::new();
+        let options = fixture.options(revision);
+        let profile = options
+            .resolve_with_env(None, &fixture.env())
+            .unwrap()
+            .bind()
+            .unwrap();
+        let template = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
+        let mut first = template.prepare_client(740_001, false).unwrap();
+        let second = template.prepare_client(740_002, true).unwrap();
+        assert_eq!(first.revision().as_i32(), i32::from(revision));
+        assert_eq!(first.login_uid, 740_001);
+        assert_eq!(second.login_uid, 740_002);
+        assert!(Arc::ptr_eq(
+            first.session_profile().unwrap(),
+            profile.client()
+        ));
+        assert!(Arc::ptr_eq(
+            first.session_profile().unwrap(),
+            second.session_profile().unwrap()
+        ));
+        assert!(Arc::ptr_eq(&first.cache, &second.cache));
+        assert!(Arc::ptr_eq(&first.ifaces, &second.ifaces));
+        assert_eq!(first.cache.objs[0].name, "Fixture obj");
+        assert_eq!(first.session_target(), BotTarget::Local);
+        first.config.host = "invalid.invalid".into();
+        first.config.port = 1;
+        first.config.cache_dir = "invalid-cache".into();
+        assert_eq!(first.session_profile().unwrap().game_host(), "127.0.0.1");
+        assert_eq!(
+            first.session_profile().unwrap().cache_dir(),
+            fixture.0.as_path()
+        );
+        assert_eq!(template.scatter_tile_for(42), template.scatter_tile_for(42));
+    }
+}
+
+#[test]
+fn revision_289_refuses_slots_and_scripts_before_arms_or_queue_mutation() {
+    let _clients = CLIENTS.lock().unwrap();
+    let fixture = Fixture::new();
+    let profile = fixture
+        .options(289)
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind()
+        .unwrap();
+    let template = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
+    let account = vault::Profile {
+        username: "fixture".into(),
+        password: "fixture".into(),
+        uid: 42,
+        settings: Default::default(),
+    };
+    let mut play = host_play::run_with_template(
+        Arc::clone(&template),
+        false,
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    )
+    .unwrap();
+    assert_eq!(
+        play.try_spawn_slot(account.clone(), None, None, None)
+            .unwrap_err(),
+        HOST_BOUNDARY_NOT_QUALIFIED
+    );
+    assert!(play.statuses().is_empty());
+    assert!(play.login_queue_uids().is_empty());
+    assert_eq!(
+        play.script_start("fixture", script::CompiledId("walk-to".into()))
+            .unwrap_err(),
+        HOST_BOUNDARY_NOT_QUALIFIED
+    );
+    assert!(host_play::run_with_template(
+        template,
+        false,
+        vec![account],
+        |_| panic!("per-slot must not run"),
+        |_, _, _| {}
+    )
+    .is_err());
+    assert!(!profile.vault_path().exists());
+}
+
+#[test]
+fn bound_public_client_refuses_fixture_cheats_after_mutable_config_changes() {
+    let _clients = CLIENTS.lock().unwrap();
+    let fixture = Fixture::new();
+    let mut options = fixture.options(274);
+    options.prod = true;
+    let profile = options
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind()
+        .unwrap();
+    let template = SharedClientTemplate::load(profile).unwrap();
+    let mut client = template.prepare_client(740_003, true).unwrap();
+    client.config.host = "127.0.0.1".into();
+    client.config.port = 43594;
+    let position = client.out.pos;
+    assert!(!api::interact::cheat(&mut client, "ping"));
+    api::interact::mainland_hop(&mut client);
+    assert_eq!(client.out.pos, position);
+}
+
+#[test]
+fn catalog_identity_and_cache_revision_are_frozen_at_bind() {
+    let fixture = Fixture::new();
+    let root = fixture.0.join("catalog");
+    std::fs::create_dir_all(root.join("src/bot")).unwrap();
+    std::fs::write(root.join("src/bot/Fixture.js"), "export default {};").unwrap();
+    let mut options = fixture.options(274);
+    options.catalog_root = Some(root.clone());
+    let profile = options
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind()
+        .unwrap();
+    profile.validate_catalog().unwrap();
+    assert_eq!(profile.catalog().unwrap().root, root);
+    std::fs::write(
+        root.join("src/bot/Fixture.js"),
+        "export default { changed: true };",
+    )
+    .unwrap();
+    assert!(profile
+        .validate_catalog()
+        .unwrap_err()
+        .contains("catalog changed"));
+    let first = CacheManifest::capture(274, &fixture.0).unwrap();
+    let second = CacheManifest::capture(289, &fixture.0).unwrap();
+    assert_ne!(first.identity(), second.identity());
+}
+
+#[test]
+fn navigation_and_scatter_use_the_selected_shared_world_and_validate_its_sidecar() {
+    use api::snapshot::WorldTile;
+    use nav::collision::{pack_walk, WorldCollision};
+    use nav::transport::{TransportEdge, TransportGraph, TransportKind};
+    use sha2::{Digest, Sha256};
+    let fixture = Fixture::new();
+    let mut options = fixture.options(289);
+    let origin = WorldTile {
+        x: 4500,
+        z: 4600,
+        level: 0,
+    };
+    let adjacent = WorldTile { x: 4501, ..origin };
+    let (walk, blocked) = pack_walk(&[0; 8]);
+    let collision = WorldCollision {
+        origin,
+        width: 2,
+        height: 1,
+        walk,
+        blocked,
+        flags: None,
+    };
+    let mut graph = TransportGraph::default();
+    graph.edges.push(TransportEdge {
+        kind: TransportKind::Door,
+        at: origin,
+        to: adjacent,
+        loc_id: 1,
+        option: 1,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+    });
+    let bytes = nav::pack::encode(&collision, &graph, &[]);
+    let flags = nav::pack::encode_flags_sidecar(origin, 2, 1, &[0; 8]);
+    let pack = fixture.0.join("selected.navpack");
+    let flags_path = fixture.0.join("selected.navflags");
+    std::fs::write(&pack, &bytes).unwrap();
+    std::fs::write(&flags_path, &flags).unwrap();
+    let manifest = NavManifest {
+        revision: 289,
+        cache_id: CacheManifest::capture(289, &fixture.0).unwrap().identity(),
+        nav_sha256: format!("{:x}", Sha256::digest(&bytes)),
+        flags_sha256: Some(format!("{:x}", Sha256::digest(&flags))),
+    };
+    std::fs::write(
+        host_play::profile::nav_manifest_path(&pack),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    options.nav_pack = Some(pack);
+    options.nav_flags = Some(flags_path.clone());
+    let profile = options
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind()
+        .unwrap();
+    assert_eq!(profile.nav_availability(), &NavAvailability::Bound);
+    let template = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
+    let first = template.world().unwrap();
+    let second = template.world().unwrap();
+    assert!(Arc::ptr_eq(&first, &second));
+    assert_eq!(first.collision.origin, origin);
+    for uid in [0, 1, -5, i32::MIN] {
+        assert!([origin, adjacent].contains(&template.scatter_tile_for(uid)));
+    }
+    std::fs::write(flags_path, b"different flags").unwrap();
+    assert!(profile
+        .validate_resources()
+        .unwrap_err()
+        .contains("flags changed"));
+}
