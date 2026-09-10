@@ -90,7 +90,10 @@ fn wait_for(
     while Instant::now() < deadline {
         pump_once(client, snapshot, pump);
         if ready(snapshot) {
-            println!("{}", json!({"phase": phase, "tile": snapshot.tile()}));
+            println!(
+                "{}",
+                json!({"phase": phase, "tile": snapshot.tile(), "scene": snapshot.scene_state()})
+            );
             return;
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -188,7 +191,7 @@ fn prepare_door(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut Pum
         pump,
         Duration::from_secs(30),
         "door-outside",
-        |s| s.tile() == Some((2813, 3436, 0)),
+        |s| s.ingame() && s.scene_state() == 2 && s.tile() == Some((2813, 3436, 0)),
     );
     let before = door(snapshot);
     if before.is_some_and(|(_, id)| id == DOOR_OPEN) {
