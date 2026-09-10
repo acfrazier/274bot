@@ -181,6 +181,8 @@ fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
         count_dialog_open: false,
         withdraw_x_result_seq: 0,
         withdraw_x_result: false,
+        withdraw_load_result_seq: 0,
+        withdraw_load_result: false,
         hold: false,
         ours: false,
         npcs: &[],
@@ -2448,6 +2450,65 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+fn isolate_common_bank_loot_uses_rust_predicate_and_preserves_short_circuit() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+import { COMMON_BANK_LOOT, matchesCommonBankLoot, depositMatcher } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    loop() {
+        let calls = 0;
+        const ownTrue = depositMatcher(() => { calls += 1; return true; }, true);
+        const ownFalse = depositMatcher(() => { calls += 1; return false; }, false);
+        const includeCommon = depositMatcher(() => false, true);
+        globalThis.__common = {
+            names: COMMON_BANK_LOOT.slice(),
+            sapphire: matchesCommonBankLoot('Uncut sapphire'),
+            casket: matchesCommonBankLoot('', 405),
+            negative: matchesCommonBankLoot('Rune scimitar', 1333),
+            own: ownTrue('Rune scimitar', 1333),
+            excluded: ownFalse('Uncut ruby', 1621),
+            included: includeCommon('Uncut ruby', 1621),
+            calls,
+        };
+        Bank.depositAllMatching(depositMatcher(() => false, true));
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let bank_side = [item_row(405, Some("Mystery box"), 1, &[], false, -1, 0)];
+    let mut snap = base_snapshot();
+    snap.bank_side = &bank_side;
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    let value: serde_json::Value = iso.probe("globalThis.__common").unwrap();
+    assert_eq!(
+        value["names"],
+        serde_json::json!(api::content::COMMON_BANK_LOOT)
+    );
+    assert_eq!(value["sapphire"], true);
+    assert_eq!(value["casket"], true);
+    assert_eq!(value["negative"], false);
+    assert_eq!(value["own"], true);
+    assert_eq!(value["excluded"], false);
+    assert_eq!(value["included"], true);
+    assert_eq!(
+        value["calls"], 2,
+        "own=true short-circuits the Rust common arm"
+    );
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::Deposit {
+            name: "Mystery box".into()
+        }],
+        "the observed id reaches the Rust predicate even when its name is unrelated"
+    );
+    iso.join();
+}
+
+#[test]
 fn isolate_bank_items_do_not_invent_ops_and_withdraw_x_throws() {
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
@@ -2573,6 +2634,87 @@ export default class T extends LoopingBot {
         "non-positive requests are successful no-ops"
     );
     iso.join();
+}
+
+#[test]
+fn isolate_bank_withdraw_load_queues_one_host_owned_request() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = await Bank.withdrawLoad('Yew logs');
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let ops = [
+        "Withdraw 1".into(),
+        "Withdraw All".into(),
+        "Withdraw X".into(),
+    ];
+    let bank = [item_row(1515, Some("Yew logs"), 80, &ops, false, -1, 0)];
+    let inv = [nc(Some("Knife"), 1)];
+    let mut snap = base_snapshot();
+    snap.inv = &inv;
+    snap.inv_size = 28;
+    snap.bank = &bank;
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    snap.bank_generation = 12;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::WithdrawLoad {
+            name: "Yew logs".into(),
+            bank_generation: 12,
+        }]
+    );
+    assert_eq!(iso.probe("typeof globalThis.__ok").unwrap(), "undefined");
+    iso.join();
+}
+
+#[test]
+fn isolate_bank_withdraw_load_handles_stale_and_full_snapshots_without_requests() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = await Bank.withdrawLoad('Yew logs');
+    }
+}
+"#;
+    let bank = [nc(Some("Yew logs"), 80)];
+
+    let stale = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut stale_snap = base_snapshot();
+    stale_snap.bank = &bank;
+    post_snapshot_input(&stale, &stale_snap);
+    stale.on_game_tick(1);
+    let _ = stale.probe("1 + 1");
+    assert_eq!(stale.probe("globalThis.__ok").unwrap(), false);
+    assert!(stale.drain_interacts().is_empty());
+    stale.join();
+
+    let full = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let inv = [nc(Some("Knife"), 1)];
+    let mut full_snap = base_snapshot();
+    full_snap.inv = &inv;
+    full_snap.inv_size = 1;
+    full_snap.bank = &bank;
+    full_snap.bank_open = true;
+    full_snap.bank_loaded = true;
+    post_snapshot_input(&full, &full_snap);
+    full.on_game_tick(1);
+    let _ = full.probe("1 + 1");
+    assert_eq!(full.probe("globalThis.__ok").unwrap(), true);
+    assert!(full.drain_interacts().is_empty());
+    full.join();
 }
 
 #[test]

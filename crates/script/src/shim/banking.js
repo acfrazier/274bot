@@ -8,25 +8,25 @@ import { Execution } from '../execution/Execution.js';
 const notImpl = (name, reason) =>
     new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
 
-// The rs2b0t bankRules junk list, kept as data. Names match as
-// substrings; one that is not a 274 obj never matches a posted row (the
-// host resolves names through ObjNames), so it drops itself.
-export const COMMON_BANK_LOOT = [];
+// Rust owns the published list and predicate. These are thin mappings so
+// catalog callers keep their names and optional observed object id.
+export const COMMON_BANK_LOOT = Object.freeze(
+    (globalThis.__rs2b0t_host?.content?.common_bank_loot || []).slice(),
+);
 
-/** Never matches a posted obj id. Catalog compares against this sentinel. */
-export const RANDOM_EVENT_CASKET_ID = -1;
+export const RANDOM_EVENT_CASKET_ID =
+    globalThis.__rs2b0t_host?.content?.random_event_casket_id ?? -1;
 
-export function matchesCommonBankLoot(_name) {
-    throw notImpl('matchesCommonBankLoot');
+export function matchesCommonBankLoot(name, id = -1) {
+    return globalThis.rustyscript.functions.__rs2b0t_matches_common_bank_loot(
+        String(name ?? ''),
+        Number.isSafeInteger(id) ? id : -1,
+    );
 }
 
-// The rs2b0t depositMatcher shape, minus the obj-id arm (posted rows
-// carry names only). Common-junk matching is not impl — no policy table.
 export function depositMatcher(own, includeCommon) {
-    if (includeCommon) {
-        throw notImpl('depositMatcher.includeCommon');
-    }
-    return (name) => own(name);
+    if (typeof own !== 'function') throw notImpl('depositMatcher', 'requires a function');
+    return (name, id = -1) => own(name) || (!!includeCommon && matchesCommonBankLoot(name, id));
 }
 
 export function depositAllExcept(keep) {

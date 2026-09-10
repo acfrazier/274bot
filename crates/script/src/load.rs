@@ -1462,6 +1462,18 @@ mod isolate {
             .map_err(|e| format!("register withdraw: {e}"))?;
         runtime
             .register_function(
+                "__rs2b0t_matches_common_bank_loot",
+                |args: &[serde_json::Value]| {
+                    let name = args.first().and_then(|v| v.as_str()).unwrap_or("");
+                    let id = args.get(1).and_then(|v| v.as_i64()).unwrap_or(-1);
+                    Ok(serde_json::Value::Bool(i32::try_from(id).ok().is_some_and(
+                        |id| api::content::matches_common_bank_loot(name, id),
+                    )))
+                },
+            )
+            .map_err(|e| format!("register common bank loot: {e}"))?;
+        runtime
+            .register_function(
                 "__rs2b0t_selected_loadout",
                 |args: &[serde_json::Value]| {
                     let rows: Vec<crate::loadouts_store::Loadout> = serde_json::from_value(
@@ -1786,6 +1798,19 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             set(&mut scope, obj, "withdraw_x_result", result.into())?;
         } else if !had {
             set(&mut scope, obj, "withdraw_x_result", falsy)?;
+        }
+        if snap.has_withdraw_load_result_seq() {
+            let seq = num(&mut scope, snap.withdraw_load_result_seq() as f64);
+            set(&mut scope, obj, "withdraw_load_result_seq", seq)?;
+        } else if !had {
+            let seq = num(&mut scope, 0.0);
+            set(&mut scope, obj, "withdraw_load_result_seq", seq)?;
+        }
+        if snap.has_withdraw_load_result() {
+            let result = v8::Boolean::new(&mut scope, snap.withdraw_load_result());
+            set(&mut scope, obj, "withdraw_load_result", result.into())?;
+        } else if !had {
+            set(&mut scope, obj, "withdraw_load_result", falsy)?;
         }
         if snap.has_bank_note_on() {
             let bank_note_on = num(&mut scope, snap.bank_note_on() as f64);

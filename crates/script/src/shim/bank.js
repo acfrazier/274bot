@@ -60,15 +60,15 @@ function withdrawXRow(row, count, landsAsId) {
     });
     return (async () => {
         try {
-            // The Rust host owns the 3000 ms dialog and 4000 ms settlement
-            // deadlines. This outer wait is bounded too, including a rejected
-            // request whose bank generation never changes.
+            // Rust owns the bounded dialog/settlement deadline and always posts
+            // an outcome, including rejection and session abort. Do not race it
+            // with an isolate wall clock that keeps advancing during Pause/hold.
             await Execution.delayUntil(
                 () =>
                     (Number(snap().withdraw_x_result_seq) || 0) !== resultSeq ||
                     !Bank.isOpen() ||
                     Bank.snapshotGeneration() !== generation,
-                8000,
+                0,
             );
             return (
                 Bank.isOpen() &&
@@ -141,7 +141,7 @@ export const Bank = new Proxy(
                 throw notImpl('Bank.depositAllMatching', 'requires a function');
             }
             for (const row of snap().bank_side || []) {
-                if (row && typeof row.name === 'string' && predicate(row.name)) {
+                if (row && typeof row.name === 'string' && predicate(row.name, row.id ?? -1)) {
                     queue({ op: 'deposit', name: row.name });
                 }
             }
@@ -338,8 +338,34 @@ export const Bank = new Proxy(
                 .filter((r) => r && r.id === want)
                 .reduce((sum, row) => sum + (typeof row.count === 'number' ? row.count : 0), 0);
         },
-        async withdrawLoad(_name) {
-            throw notImpl('Bank.withdrawLoad');
+        async withdrawLoad(name) {
+            if (!Bank.ready()) return false;
+            if (Inventory.isFull()) return true;
+            const wanted = String(name).toLowerCase();
+            const row = (snap().bank || []).find(
+                (r) =>
+                    r &&
+                    typeof r.name === 'string' &&
+                    r.name.toLowerCase() === wanted &&
+                    Number(r.count) > 0,
+            );
+            if (!row) return false;
+            const generation = Bank.snapshotGeneration();
+            const resultSeq = Number(snap().withdraw_load_result_seq) || 0;
+            queue({ op: 'withdraw-load', name: row.name, bank_generation: generation });
+            await Execution.delayUntil(
+                () =>
+                    (Number(snap().withdraw_load_result_seq) || 0) !== resultSeq ||
+                    !Bank.isOpen() ||
+                    Bank.snapshotGeneration() !== generation,
+                0,
+            );
+            return (
+                Bank.isOpen() &&
+                Bank.snapshotGeneration() === generation &&
+                (Number(snap().withdraw_load_result_seq) || 0) !== resultSeq &&
+                snap().withdraw_load_result === true
+            );
         },
         async openNearestAccess(access, _log) {
             if ((access?.name ?? 'Bank booth').toLowerCase() !== 'bank booth' ||
