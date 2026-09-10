@@ -11,6 +11,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-10 00:47 UTC
+
+- CF2 session6547 TERMINAL exit1 after57/114, native idle/steal pre-child admission
+  failure. Exact failed CPU delta not retained: cannot distinguish idle/steal.
+  No next child launched, no successfulCF2result, no restart/resume/CA allowed.
+- Root archived316files SHA45bed027 (887779B), downloaded and independently
+  hashed/checked all61fresh completed raw children/pack/59selectors/ledger.
+  root-failure-audit qualified=false; partial evidence verified only. Cumulative
+ 65children/478.864614688wall/364.395005CPU; no unknown/pending. Report
+  nav-coordinate-cf2-failure-report.md. Postfailure process inventory clean.
+- Account identity fidelity review t_d6f23813 remains active; owner live unissued.
+  No native process active. Next independent failure audit, then park/review
+  method decision; do not turn partial navigation evidence into acceptance.
+
 ## Latest boundary — 2026-09-10 00:44 UTC
 
 - CF2 actual session6547 remains live; latest checkpoint56/114 children completed,
