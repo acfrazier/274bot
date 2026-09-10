@@ -1,0 +1,97 @@
+{
+  "task_id": "t_60bd2a51",
+  "run": {
+    "id": 1081,
+    "profile": "branchreviewer",
+    "step_key": null,
+    "status": "done",
+    "outcome": "completed",
+    "summary": "APPROVE frozen client 8b1a809 (product cf386ae) vs published base 9b41e6e, plus host mint_live_names correction. Independent Grok 4.6 whole-client review: RGBA/coverage overlay freeze punch/hold, boxed appearances, constructors/Arc, unpack/home compose, no host deps. Receipts recount 774/990/2 GPU ignored then both explicit GPU tests green; host 441/0/7 live ignored. Later profile/live/native/377 gates outstanding. Report docs/compat/reviews/client-grok46.md. No product edits.",
+    "error": null,
+    "metadata": {
+      "review_outcome": "approved",
+      "review_lens": "artifact",
+      "reviewer_profile": "branchreviewer",
+      "actual_model": "grok-4.6",
+      "provider": "xai-oauth",
+      "session": "20260910_100829_e357e9",
+      "started_at": "2026-09-10T14:08:56Z",
+      "ended_at": "2026-09-10T14:16:26Z",
+      "report": "docs/compat/reviews/client-grok46.md",
+      "client_base": "9b41e6e06b9fd42dc2247fc813a303c3fcb92941",
+      "client_candidate": "8b1a80918f87089e4eb339f1d0e216c1b163348d",
+      "client_product": "cf386ae5c82071ef661f4a1eb4d38e22b41718d3",
+      "source_289": "c18f3a1148e9caee73426e162677328ca64d1a83",
+      "common_ancestor": "4f2048ea10f75b3bb92ff45610b35ba7313b0308",
+      "host_base": "b2bd5023489ab2e0b6ba690f228217e8984ac91b",
+      "host_candidate": "391726831b3dc97d3614bb8ad8ddb48f75c1e85d",
+      "product_code_edited_by_reviewer": false,
+      "other_trial_report_read": false,
+      "suites_rerun": false,
+      "blocking_findings": [],
+      "client_baseline": [
+        774,
+        0,
+        0
+      ],
+      "client_workspace": [
+        990,
+        0,
+        2
+      ],
+      "client_explicit_gpu": [
+        2,
+        0,
+        0
+      ],
+      "host_crates_with_memory_profile": [
+        441,
+        0,
+        7
+      ],
+      "explicit_gpu_tests": [
+        "npc_hint_production_gpu_blink_move_clear_cache_and_freeze",
+        "gpu_ground_input_composed"
+      ],
+      "remaining_gates": [
+        "host 289 profile binding",
+        "direct host writers",
+        "Linux/Windows native",
+        "live/public acceptance",
+        "377",
+        "tutorial/audio parity",
+        "mixed fleets"
+      ],
+      "tool_restrictions": [
+        "single-query blocked execute_code and python heredoc"
+      ],
+      "reviewer_checks": [
+        "frozen manifest sha a975118db49f01361b3a085ec4708ff6073ea14bcc3b134b60ac769084b58724",
+        "merge-base 4f2048ea of 9b41e6e and c18f3a1",
+        "no overlay_epoch leftovers",
+        "punch_minimap = live || (overlay_changed && !pending && held)",
+        "side/chat force retained; main modal via sealed RGBA compare",
+        "combined freeze red poison vs green held minimap",
+        "274 viewport/sealed tests still expect GPU",
+        "appearance Box::new(Packet::new) on 274 and 289 writers",
+        "default 274 + explicit 274/289 Arc identity",
+        "CLIENT_UNPACK_DIR then operator_home",
+        "274-only anim/socket/sprite/profiling files unchanged",
+        "no host crate deps in client",
+        "mint_live_names base36 low digits; red live11089_0; 12-char limit",
+        "workspace 990/0/2; explicit GPU 2/0; host 441/0/7"
+      ],
+      "worker_session_id": "20260910_100829_e357e9"
+    },
+    "worker_pid": null,
+    "started_at": 1789049309,
+    "ended_at": 1789049806
+  },
+  "actual_session": {
+    "id": "20260910_100829_e357e9",
+    "model": "grok-4.6",
+    "billing_provider": "xai-oauth",
+    "started_at": 1789049310.331409,
+    "ended_at": 1789049806.926712
+  }
+}

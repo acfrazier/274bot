@@ -1,0 +1,207 @@
+{
+  "frozen_at": "2026-09-10T14:07:26.317851+00:00",
+  "host": {
+    "base": "b2bd5023489ab2e0b6ba690f228217e8984ac91b",
+    "candidate": "391726831b3dc97d3614bb8ad8ddb48f75c1e85d",
+    "scope": [
+      "crates/host-play/src/lib.rs::mint_live_names",
+      "extended existing uniqueness regression",
+      "milestone evidence; later profile and live work is pending"
+    ]
+  },
+  "client": {
+    "base": "9b41e6e06b9fd42dc2247fc813a303c3fcb92941",
+    "candidate": "8b1a80918f87089e4eb339f1d0e216c1b163348d",
+    "product": "cf386ae5c82071ef661f4a1eb4d38e22b41718d3",
+    "source_289": "c18f3a1148e9caee73426e162677328ca64d1a83",
+    "common_ancestor": "4f2048ea10f75b3bb92ff45610b35ba7313b0308"
+  },
+  "prerequisite_review": {
+    "task": "t_e8e16acd",
+    "run": 1080,
+    "profile": "reviewer",
+    "actual_model": "grok-4.5",
+    "session": "20260910_100328_c8347f",
+    "verdict": "approved"
+  },
+  "tests": {
+    "client_baseline": [
+      774,
+      0,
+      0
+    ],
+    "client_workspace": [
+      990,
+      0,
+      2
+    ],
+    "client_explicit_gpu": [
+      2,
+      0,
+      0
+    ],
+    "host_crates_with_memory_profile": [
+      441,
+      0,
+      7
+    ],
+    "counts_order": [
+      "passed",
+      "failed",
+      "ignored"
+    ]
+  },
+  "scope_limits": [
+    "source/regression milestone only",
+    "host 289 profile and direct writers pending",
+    "no new local gameplay proof",
+    "native Linux/Windows execution unavailable in this session",
+    "full377, native rewrites, tutorial/audio parity and publication outside this milestone"
+  ],
+  "evidence": [
+    {
+      "path": "vendor/fr-client-rust/docs/revision-289/evidence/bothost-integration/00-gpu-falsification-before-fix.log",
+      "sha256": "82c45c0dab19b65c5ae7989ab482cc59363e751873f40fe571217dac08e1a3e7"
+    },
+    {
+      "path": "vendor/fr-client-rust/docs/revision-289/evidence/bothost-integration/01-gpu-falsification-after-build-fix.log",
+      "sha256": "84de767e2ad83e970a19213e1d5c8670f4681d5f199d278eb59d17b55552e5e4"
+    },
+    {
+      "path": "vendor/fr-client-rust/docs/revision-289/evidence/bothost-integration/02-gpu-falsification-current-merge.log",
+      "sha256": "fa727f2b64f91402d4ac182053e0f56d9f5a9a1bae816d503135021a38523832"
+    },
+    {
+      "path": "vendor/fr-client-rust/docs/revision-289/evidence/bothost-integration/03-combined-freeze-red.log",
+      "sha256": "546e28b46fd16b2b8d57a769a53f940261d4b1e0c143521cb442500434b84a6a"
+    },
+    {
+      "path": "vendor/fr-client-rust/docs/revision-289/evidence/bothost-integration/04-combined-freeze-green.log",
+      "sha256": "42d53582c22f6f9b470358189eccdad6be54a4a143bbef764f548c6b672a9ea6"
+    },
+    {
+      "path": "vendor/fr-client-rust/docs/revision-289/evidence/bothost-integration/05-shared-constructor-regression.log",
+      "sha256": "d5924de1384c1d74beba48d4d03b137f184ea86d8e1ea84a026f9c25cb06a7d5"
+    },
+    {
+      "path": "vendor/fr-client-rust/docs/revision-289/evidence/bothost-integration/06-tutorial-presentation-cpu.log",
+      "sha256": "e57724465925a2ef3953a15c06af3296f996294a397812412751577a63891ae6"
+    },
+    {
+      "path": "vendor/fr-client-rust/docs/revision-289/evidence/bothost-integration/07-cargo-fmt-check.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "vendor/fr-client-rust/docs/revision-289/evidence/bothost-integration/08-cargo-clippy.log",
+      "sha256": "22cf1995465bc736f8fc4ac15df3d2bd2a54913eec6dbb0b62ee631ec87796fa"
+    },
+    {
+      "path": "vendor/fr-client-rust/docs/revision-289/evidence/bothost-integration/09-cargo-clippy-after-fixes.log",
+      "sha256": "b40f9e6cccfeded2cb2e9bc38cecab99a385a178b2389c43aac578d619628013"
+    },
+    {
+      "path": "vendor/fr-client-rust/docs/revision-289/evidence/bothost-integration/10-cargo-clippy-pass.log",
+      "sha256": "e678e81134fe35c0c948fb3cdfb9c5955ae740cfa7226bdcb4959bd8a1b46ccd"
+    },
+    {
+      "path": "vendor/fr-client-rust/docs/revision-289/evidence/bothost-integration/11-cargo-clippy-pass.log",
+      "sha256": "36f2424966c0a5b8bbc846bbbbf914651de0b3e74c4673af191982719b21cd73"
+    },
+    {
+      "path": "vendor/fr-client-rust/docs/revision-289/evidence/bothost-integration/12-cargo-clippy-pass.log",
+      "sha256": "22f19db586232f6a65af9abf4049cbd6ed9320fe7b63b8211f693bbf139172ff"
+    },
+    {
+      "path": "vendor/fr-client-rust/docs/revision-289/evidence/bothost-integration/13-cargo-clippy-pass.log",
+      "sha256": "d8164783988a8de40d19e1f2b63d8122578418d5922125ea03e83bc8a4dc981a"
+    },
+    {
+      "path": "vendor/fr-client-rust/docs/revision-289/evidence/bothost-integration/14-cargo-test-workspace.log",
+      "sha256": "dce7b4d16c6dfe189be81d577748d540d1f029bbc755ae6e71cb91854fcc67c4"
+    },
+    {
+      "path": "vendor/fr-client-rust/docs/revision-289/evidence/bothost-integration/15-cargo-test-client-ignored-gpu.log",
+      "sha256": "a22d29e37ffa20303c9386573337589e8d7de223527ed24516575a47cc732887"
+    },
+    {
+      "path": "vendor/fr-client-rust/docs/revision-289/evidence/bothost-integration/root-explicit-gpu-receipt.json",
+      "sha256": "83d8e2d4e1a932312412633ccc40e013425c74a888723ac82a7b0aac252290ef"
+    },
+    {
+      "path": "vendor/fr-client-rust/docs/revision-289/evidence/bothost-integration/root-explicit-gpu.log",
+      "sha256": "50d53d2595b97be2104f392de9a5184136e205ce6d8b3564db42d080a275b0bb"
+    },
+    {
+      "path": "vendor/fr-client-rust/docs/revision-289/evidence/bothost-integration/summary.json",
+      "sha256": "efa340ebec9413ee6856d25a2f3e7dfb0e4a2e8081ebaa8275e1df286e814feb"
+    },
+    {
+      "path": "docs/compat/evidence/client-baseline-274/cargo-test.log",
+      "sha256": "e675dd98ce86fe5cd5a707a666267866941ebc37547046b2f6f5f7598ea8d4db"
+    },
+    {
+      "path": "docs/compat/evidence/client-baseline-274/receipt.json",
+      "sha256": "f82687c596b981eabe9039e4c21dc803b7ad8d9f79603e32c15170f68c9fda11"
+    },
+    {
+      "path": "docs/compat/evidence/client-milestone/host-crates-after-name-fix-receipt.json",
+      "sha256": "2309a6adbd35f33738277a24c8e039a087d116495e4625d606ecc0c928b017ac"
+    },
+    {
+      "path": "docs/compat/evidence/client-milestone/host-crates-after-name-fix.log",
+      "sha256": "fa0f101b57b847787e8e7038c688264ccab75ccab79626ea7508dea3e445269a"
+    },
+    {
+      "path": "docs/compat/evidence/client-milestone/host-crates-client-files.json",
+      "sha256": "dbdfa7253a42f79a5dae3347b917402d683c9f9e5462380b527ab838ed8f43a2"
+    },
+    {
+      "path": "docs/compat/evidence/client-milestone/host-crates-receipt.json",
+      "sha256": "28cc9ff3ceb344f63776abba299fc57744eaa9e503fe8fe6a5f2a448388ac025"
+    },
+    {
+      "path": "docs/compat/evidence/client-milestone/host-crates.log",
+      "sha256": "eb09f0170b73128de77482a15abe20fdad0ca16d554ba36bad6aa0d41d46a5e0"
+    },
+    {
+      "path": "docs/compat/evidence/client-milestone/host-format-receipt.json",
+      "sha256": "a1112dc11ed4807cc35163a82f6cbdad40a0ea3ab2cb5b1db4fcaee7d43507b6"
+    },
+    {
+      "path": "docs/compat/evidence/client-milestone/host-format.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "docs/compat/evidence/client-milestone/live-name-red.log",
+      "sha256": "d8bde518d7002eea782f89b6dcdb650d11328412024b81d52d0bdbc180ae0d1e"
+    },
+    {
+      "path": "vendor/fr-client-rust/docs/revision-289/bothost-integration-report.md",
+      "sha256": "b8be9a53b84f2b331ae455f3b70e968290a40f4b33096b061ec8021b46f3db35"
+    },
+    {
+      "path": "docs/compat/client-integration-milestone.md",
+      "sha256": "9f34b9b44ba9dbc05f48f471722cba7c54c50a027752bff06cf39b05b5dc2e55"
+    },
+    {
+      "path": "docs/compat/briefs/04-client-milestone-review.md",
+      "sha256": "a897d4ea1eb857423c28fe0e41d6e6f05a35b298bec99d05745a6eb4ecc36af0"
+    },
+    {
+      "path": "docs/compat/fixture-inputs.json",
+      "sha256": "3dd10824b75e58d352b81bd7526da97dfb984c499ac5c2eab100909dbda8b2a7"
+    },
+    {
+      "path": "docs/compat/fixture-inputs.md",
+      "sha256": "18763ae15ec57c97f955192fb6bb870e76689c614d17886fce9b4ebdd243d04e"
+    },
+    {
+      "path": "docs/compat/reviews/client-task-grok45.json",
+      "sha256": "52205cfe7610e10cbe0442fe38a44352dd97ee9580162fd087680161281e865e"
+    },
+    {
+      "path": "crates/host-play/src/lib.rs",
+      "sha256": "024af984b92976e71f2ca14feb3aae41b1e01da63117c7b3a5cb99b8974be882"
+    }
+  ]
+}
