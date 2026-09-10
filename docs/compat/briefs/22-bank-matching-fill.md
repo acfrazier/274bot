@@ -1,5 +1,25 @@
 # Common-loot matching and bank fill capability
 
+## Root correction carried into this family (21:24 UTC)
+
+Before extending the shared banking service, close the parent candidate's
+confirmed Pause/Guardian outcome gap. The new bank.js outer 8000 ms
+Execution.delayUntil timer advances while Rust's 3000/4000 ms deadline is
+frozen. After a long Pause/hold the JS promise can return false on Resume while
+Rust keeps sending/completing the old operation. Use the existing host-owned
+bounded operation/result as the authority without a competing JS wall clock.
+Every rejected/aborted request must resolve, including actual session reset
+with bank generation reused; reset_session_work currently clears pending
+without advancing the outcome. Preserve zero/no-op, noted and fixed paths.
+Add composed Pause/hold beyond the old outer bound -> Resume -> actual posted
+success, plus reset/abort/no-late-result cases. A controlled isolate clock is
+suitable; do not sleep long or rewrite generic Execution semantics. Root
+withholds whole banking acceptance until this correction and same-card review.
+
+Never temporarily restore/stash/copy over shared WIP for verification; use a
+separate archive/export of exact host and client source.
+
+
 Use configured `sol` defaults, then same-card `reviewer` and stop. This task
 depends on completed source review of first banking family t_e52e0a03; read its
 actual result and report before implementation. Host branch is
