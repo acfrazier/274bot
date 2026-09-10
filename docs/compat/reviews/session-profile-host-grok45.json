@@ -1,0 +1,74 @@
+{
+  "task_id": "t_30007871",
+  "run": {
+    "id": 1091,
+    "profile": "reviewer",
+    "status": "done",
+    "outcome": "completed",
+    "started_at": 1789055262,
+    "ended_at": 1789055464,
+    "summary": "Reviewed and approved host immutable profile backend at 0cc8b0b7 (932e480a+0cc8b0b7) on codex/rs2b0t-multirevision. Round-1 artifact review plus independent re-run: 9/9 session_profile tests and strict api/host/host-play Clippy --no-deps clean. Contract covered: CLI/env/saved precedence and negatives, immutable bind, shared template/slot/reconnect path, public cheat refusal, 289 action gate before mutation, legacy retained. Client dep c8e6155 (WT tip 2be16970 docs-only) and 450/0/7 affected receipt noted; frontend/coherent/Grok4.6 remain root-owned. Report docs/compat/reviews/session-profile-host-grok45.md.",
+    "error": null,
+    "metadata": {
+      "review_outcome": "approved",
+      "review_round": 1,
+      "review_lens": "artifact + independent focused execution",
+      "branch": "codex/rs2b0t-multirevision",
+      "host_commit": "0cc8b0b7d77ecbb533f9b0be7669b8967f1dc256",
+      "host_implementation_commits": [
+        "932e480a",
+        "0cc8b0b7"
+      ],
+      "client_dependency_handoff": "c8e61557bf5b208eb4ffb589fd0a797fbf7d42ab",
+      "client_wt_tip": "2be1697060e4d2b8b709ad4d5e54d12513b38333",
+      "host_gitlink_at_head": "58120f28ee5208553ca07f41cb364f2cf98ea280",
+      "reviewer_profile": "reviewer",
+      "reviewer_model": "grok-4.5",
+      "reviewer_provider": "xai-oauth",
+      "product_code_edited_by_reviewer": false,
+      "focused_tests_passed": 9,
+      "focused_tests_failed": 0,
+      "clippy_host_no_deps": "clean",
+      "affected_tests_passed": 450,
+      "affected_tests_failed": 0,
+      "affected_tests_ignored": 7,
+      "report": "docs/compat/01-session-profile.md",
+      "review_report": "docs/compat/reviews/session-profile-host-grok45.md",
+      "reviewer_checks": [
+        "branch HEAD 0cc8b0b7 on codex/rs2b0t-multirevision",
+        "cold host diff 932e480a..0cc8b0b7 scope only",
+        "profile bind/precedence/negatives/RSA/CRC/nav/catalog/vault",
+        "SharedClientTemplate + prepare_client_with_profile + PlayConnection::Bound",
+        "289 require_bot_operation before spawn/script/cheat/wire",
+        "session_target bound public cheat refusal",
+        "legacy PlayOptions path retained",
+        "reviewer re-run session_profile 9/0",
+        "reviewer re-run clippy api/host/host-play --no-deps -D warnings clean",
+        "evidence 450/0/7 affected-tests-client-c8e6155",
+        "local-274/289 asset logs init-only no gameplay claim",
+        "wrote session-profile-host-grok45.md"
+      ],
+      "remaining_gates": [
+        "client same-card review t_1b93f768",
+        "frontend t_879d9607",
+        "host gitlink update after client close",
+        "coherent integration",
+        "native Mac frontend",
+        "Grok 4.6 milestone"
+      ],
+      "artifacts": [
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/reviews/session-profile-host-grok45.md"
+      ],
+      "worker_session_id": "20260910_114743_5b127f"
+    },
+    "worker_pid": null,
+    "step_key": null
+  },
+  "actual_session": {
+    "id": "20260910_114743_5b127f",
+    "model": "grok-4.5",
+    "billing_provider": "xai-oauth",
+    "started_at": 1789055264.121849,
+    "ended_at": 1789055464.939542
+  }
+}

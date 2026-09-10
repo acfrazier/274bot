@@ -1,0 +1,10 @@
+{
+  "command": "CARGO_TARGET_DIR=campaign/target/client cargo test --locked --workspace",
+  "client_candidate": "2be1697060e4d2b8b709ad4d5e54d12513b38333",
+  "client_product": "c8e61557bf5b208eb4ffb589fd0a797fbf7d42ab",
+  "passed": 1001,
+  "failed": 0,
+  "ignored": 2,
+  "suites": 77,
+  "exit_code": 0
+}

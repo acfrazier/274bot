@@ -1,0 +1,115 @@
+{
+  "task_id": "t_1b93f768",
+  "implementation_run": {
+    "id": 1087,
+    "profile": "sol",
+    "status": "review",
+    "outcome": "review_requested",
+    "started_at": 1789052857,
+    "ended_at": 1789055307,
+    "summary": "Implemented and committed immutable client session profiles binding login/reconnect transport, RSA, revision, HTTP/bootstrap roots, render resources, OnDemand identity/transport, and adoption compatibility. Added nine real socket/HTTP tests, preserved red/final evidence, passed focused suites, repeated default-parallel profile tests, full client all-target tests, format, and strict Clippy.",
+    "error": null,
+    "metadata": {
+      "branch": "codex/bothost-274-289",
+      "changed_files": [
+        "crates/client/src/session.rs",
+        "crates/client/src/client/client.rs",
+        "crates/client/src/io/client_stream.rs",
+        "crates/client/src/io/ondemand.rs",
+        "crates/client/src/render/draw.rs",
+        "crates/client/src/lib.rs",
+        "crates/client/tests/session_profile.rs",
+        "docs/revision-289/session-profile-client.md",
+        "docs/revision-289/evidence/session-profile-client/00-red.md",
+        "docs/revision-289/evidence/session-profile-client/10-final.md"
+      ],
+      "commits": [
+        "c8e61557bf5b208eb4ffb589fd0a797fbf7d42ab",
+        "2be1697060e4d2b8b709ad4d5e54d12513b38333"
+      ],
+      "evidence": [
+        "docs/revision-289/session-profile-client.md",
+        "docs/revision-289/evidence/session-profile-client/00-red.md",
+        "docs/revision-289/evidence/session-profile-client/10-final.md"
+      ],
+      "tests_run": [
+        "cargo fmt --all -- --check",
+        "cargo test -p client --test session_profile --test from_shared --test client_stream --test login --test ondemand --test maininit -- --test-threads=1",
+        "cargo test -p client --test session_profile (twice, default parallel)",
+        "cargo test -p client --all-targets",
+        "cargo clippy -p client --all-targets -- -D warnings",
+        "git diff --check"
+      ],
+      "verification": "All commands passed on final code; working tree clean. Full client all-targets had zero failures in every executed target summary; one existing explicit GPU-adapter test remained ignored. No live gameplay claim.",
+      "worker_session_id": "20260910_110737_d2653a"
+    },
+    "worker_pid": null,
+    "step_key": null
+  },
+  "review_run": {
+    "id": 1092,
+    "profile": "reviewer",
+    "status": "done",
+    "outcome": "completed",
+    "started_at": 1789055323,
+    "ended_at": 1789055649,
+    "summary": "Reviewed and approved client session-profile binding at c8e6155 (docs 2be1697) on codex/bothost-274-289. Verified additive API, frozen login/reconnect/RSA/asset HTTP/CRC, OnDemand identity reject+share, pre-take adoption reject, resource roots, real socket/HTTP tests, focused suites, fmt, and strict Clippy. Client-only offline evidence; root owns host gitlink/integration.",
+    "error": null,
+    "metadata": {
+      "review_outcome": "approved",
+      "review_round": 1,
+      "review_lens": "artifact",
+      "base": "58120f28ee5208553ca07f41cb364f2cf98ea280",
+      "commits": [
+        "c8e61557bf5b208eb4ffb589fd0a797fbf7d42ab",
+        "2be1697060e4d2b8b709ad4d5e54d12513b38333"
+      ],
+      "branch": "codex/bothost-274-289",
+      "changed_files": [
+        "crates/client/src/session.rs",
+        "crates/client/src/client/client.rs",
+        "crates/client/src/io/client_stream.rs",
+        "crates/client/src/io/ondemand.rs",
+        "crates/client/src/render/draw.rs",
+        "crates/client/src/lib.rs",
+        "crates/client/tests/session_profile.rs",
+        "docs/revision-289/session-profile-client.md",
+        "docs/revision-289/evidence/session-profile-client/00-red.md",
+        "docs/revision-289/evidence/session-profile-client/10-final.md"
+      ],
+      "reviewer_checks": [
+        "cold-read brief 07 vs session.rs/public API",
+        "login/reconnect frozen host/port/revision/RSA + clear_frame_end preserved",
+        "asset endpoint + expected_crc fail-closed without overwriting jag_checksum",
+        "OnDemand hub identity (target/revision/cache/content_id/tables sha) reject before join; share + last-subscriber stop",
+        "adopt_from identity gate before stream take",
+        "resource_cache_dir/unpack_dir/media/textures/jagfx binding",
+        "explicit HTTPS/WSS honor port; ambient wrappers keep 443",
+        "independent cargo: session_profile 9/9 (serial+parallel), focused from_shared/client_stream/login/ondemand/maininit all pass, fmt --check, clippy -D warnings, git diff --check",
+        "scope: client crate + revision-289 docs only; working tree clean"
+      ],
+      "non_blocking_notes": [
+        "Legacy OnDemand::new still maps identity-mismatch Err to None via Option API; bound from_shared_with_profile Result path fails closed as required. Host should use bound constructors only.",
+        "No live gameplay/performance claim; root owns host integration and workspace gates."
+      ],
+      "tests_run": [
+        "cargo test -p client --test session_profile -- --test-threads=1",
+        "cargo test -p client --test session_profile",
+        "cargo test -p client --test session_profile --test from_shared --test client_stream --test login --test ondemand --test maininit -- --test-threads=1",
+        "cargo fmt --all -- --check",
+        "cargo clippy -p client --all-targets -- -D warnings",
+        "git diff --check"
+      ],
+      "worker_session_id": "20260910_114843_501760"
+    },
+    "worker_pid": null,
+    "step_key": null
+  },
+  "actual_review_session": {
+    "id": "20260910_114843_501760",
+    "model": "grok-4.5",
+    "billing_provider": "xai-oauth",
+    "started_at": 1789055324.264488,
+    "ended_at": 1789055650.055658
+  }
+}

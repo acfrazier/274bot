@@ -1,0 +1,12 @@
+{
+  "command": "env -u SKIP_GPU CARGO_TARGET_DIR=campaign/target/client cargo test --locked -p client -- --ignored",
+  "client_product": "c8e61557bf5b208eb4ffb589fd0a797fbf7d42ab",
+  "passed": 2,
+  "failed": 0,
+  "ignored": 0,
+  "exit_code": 0,
+  "tests": [
+    "render::backend::gpu::overlay_tests::npc_hint_production_gpu_blink_move_clear_cache_and_freeze",
+    "gpu_ground_input_composed"
+  ]
+}
