@@ -1,0 +1,15 @@
+{
+  "task": "t_23695d9d",
+  "run": 1118,
+  "scope": "source-only provisioning/recovery design",
+  "report": "docs/compat/04-provisioning-recovery-design.md",
+  "report_sha256": "22b80f5447d263afec31a6c55cb78caccbfe6ce2d3547cbf046814f5553c3cdd",
+  "actual_session": {
+    "id": "20260910_160320_a6f819",
+    "model": "grok-4.6",
+    "provider": "xai-oauth",
+    "started_at": 1789070601.5722182,
+    "ended_at": 1789071063.674613
+  },
+  "product_or_live_acceptance": false
+}

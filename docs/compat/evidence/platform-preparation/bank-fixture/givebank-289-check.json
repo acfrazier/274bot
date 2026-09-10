@@ -1,0 +1,17 @@
+{
+  "task": "t_b237feb4",
+  "purpose": "guarded local 289 givebank fixture",
+  "root_branch": "codex/revision-289-engine-env",
+  "engine_branch": "codex/revision-289-engine-env",
+  "engine_baseline_commit": "a275ea812f34342cbaf7faf2e3558dcd6ca187d0",
+  "source_file": "engine/src/network/game/client/handler/ClientCheatHandler.ts",
+  "before_sha256": "d206a141b61edb8610f645b7ff6b68e2d29017cdd00c8552e1639b1bdcf00d69",
+  "after_sha256": "30466707ab67003aa4b54be9e451982ac8b0267bb24839b6eb15971e7c08db33",
+  "candidate_sha256": "30466707ab67003aa4b54be9e451982ac8b0267bb24839b6eb15971e7c08db33",
+  "checks": [
+    {"command": "git diff --check", "result": "passed"},
+    {"command": "npx eslint --no-warn-ignored src/network/game/client/handler/ClientCheatHandler.ts", "result": "passed"}
+  ],
+  "scope": "19 added lines: explicit !Environment.node.production && player.staffModLevel >= 4 guard; bank and item lookup by name; count clamped to [1, 0x7fffffff]; existing branches preserved.",
+  "runtime_policy": "No engine restart, live client, account/database/key/cache changes, remote or process actions."
+}

@@ -1,6 +1,6 @@
 # Platform fixture preparation
 
-Updated 2026-09-10. Scope: isolated 289 engine setup and loopback asset readiness.
+Updated 2026-09-10. Current fixture refresh is recorded below. Scope: isolated 289 engine setup and loopback asset readiness.
 These receipts do not establish client login, host actions, rendering or script
 qualification. Concord is TUI-only; Linux compilation belongs on the Hyper-V
 builder. Windows native and macOS frontend checks remain in the campaign plan.
@@ -76,3 +76,34 @@ results, not the final source or native/live acceptance:
 Logs, source identities, commands and exit statuses are in
 `evidence/platform-preparation/build-preflight/`. Final platform proofs must
 rebuild the later reviewed candidate and record its executable identity.
+
+## Reviewed local bank fixture refresh
+
+Engine commit `cc359656b4acd216ca452495874b6beba9a0ac75` adds only the local
+givebank fixture branch, with an explicit non-production and staff >= 4 guard.
+It passed Luna implementation checks and actual Grok 4.5 review on the same
+card `t_b237feb4`. The one source file has SHA-256
+`30466707ab67003aa4b54be9e451982ac8b0267bb24839b6eb15971e7c08db33`.
+
+Root restarted its isolated Mac 289 engine and applied the same reviewed file
+to the three isolated platform fixtures. Each updater verified all 1,213
+original runtime files before replacing that single source file and retained
+the prior manifest. Current shared runtime manifest SHA-256:
+`a8490093c5af0dc947d10aaa121842b94bf8a01048fc673916b232b200cf027f`.
+The v2 archive above remains the original archive; later setups must apply the
+recorded guarded patch. No keys, accounts, databases or client cache changed.
+
+All four restarted fixtures passed `/rs2.cgi` and `/crc` HTTP 200 checks with
+the same 40-byte CRC response. All three remote runtime manifests and 1,213
+files were rechecked after startup. Observed PIDs: Mac 10828, Windows 17968,
+Hyper-V 3644 and Concord 135117. Remote parents use SSH keepalives. These are
+readiness observations, not banking or client-gameplay qualification.
+
+The prior Hyper-V SSH parent had ended with a jump-host timeout, leaving no
+engine or game listeners. The new process was started after the verified
+update. The Windows stdin-based updater stalled before mutation; root stopped
+only that identified updater and used SFTP successfully. A later oversized
+read-only command also ran successfully after transferring its checker file.
+Failures, ownership checks, model identities and successful refresh receipts
+are retained in `evidence/platform-preparation/bank-fixture/`. The shared Mac
+274 engine and operator-stopped Concord 274 system unit were not changed.
