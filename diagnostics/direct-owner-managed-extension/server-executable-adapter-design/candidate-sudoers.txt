@@ -1,0 +1,31 @@
+# CANDIDATE ONLY. Not authorized by t_f227a361 or this file.
+# Do not install. Native qualification must first confirm:
+#   /usr/bin/sudo exists and is the sudo used by the controller argv
+#   /usr/bin/readlink is GNU readlink and supports -n
+#   @includedir /etc/sudoers.d (or equivalent) is enabled
+#   the then-current admitted server PID and start_identity
+# Historical failure PID 726 / start linux_proc_start_ticks:595 is NOT a live identity.
+# Substitute ADMITTED_PID with that fresh positive decimal PID. Do not use a glob.
+#
+# File: /etc/sudoers.d/274bot-direct-owner-exe-identity
+# Owner: root:root
+# Mode: 0440
+# Validate with: visudo -cf /etc/sudoers.d/274bot-direct-owner-exe-identity
+#
+# Exact sudoers line (single command, single user, NOPASSWD, no ALL, no -E, no shell):
+acfrazier ALL=(root) NOPASSWD: /usr/bin/readlink -n /proc/ADMITTED_PID/exe
+#
+# Matching controller argv after a later implementation (not present now):
+#   /usr/bin/sudo -n -- /usr/bin/readlink -n /proc/ADMITTED_PID/exe
+#
+# Post-grant check, still not this card:
+#   sudo -n -- /usr/bin/readlink -n /proc/ADMITTED_PID/exe
+# must exit 0, print one absolute path, and not prompt.
+#
+# Rejected broader alternatives (do not install):
+#   acfrazier ALL=(root) NOPASSWD: ALL
+#   acfrazier ALL=(root) NOPASSWD: /usr/bin/readlink
+#   acfrazier ALL=(root) NOPASSWD: /usr/bin/readlink -n /proc/[0-9]*/exe
+#   Defaults:acfrazier !authenticate
+#
+# When the server PID changes, replace this file; do not leave the old PID granted.

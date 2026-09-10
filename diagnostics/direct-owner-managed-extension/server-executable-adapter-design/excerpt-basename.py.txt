@@ -1,0 +1,5 @@
+def _basename(value: Any, label: str) -> str:
+    if (not isinstance(value, str) or not value or value in ('.', '..')
+            or pathlib.PurePath(value).name != value or '/' in value or '\\' in value):
+        raise CellError(f'direct owner {label} executable basename is malformed')
+    return value

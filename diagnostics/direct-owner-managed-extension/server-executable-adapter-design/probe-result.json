@@ -1,0 +1,448 @@
+{
+  "argv_all_pass": true,
+  "designed_argv_cases": [
+    {
+      "accepted": true,
+      "argv": [
+        "/usr/bin/sudo",
+        "-n",
+        "--",
+        "/usr/bin/readlink",
+        "-n",
+        "/proc/726/exe"
+      ],
+      "expect_ok": true,
+      "name": "pid_726",
+      "pass": true
+    },
+    {
+      "accepted": true,
+      "argv": [
+        "/usr/bin/sudo",
+        "-n",
+        "--",
+        "/usr/bin/readlink",
+        "-n",
+        "/proc/1/exe"
+      ],
+      "expect_ok": true,
+      "name": "pid_1",
+      "pass": true
+    },
+    {
+      "accepted": false,
+      "expect_ok": false,
+      "name": "zero",
+      "pass": true
+    },
+    {
+      "accepted": false,
+      "expect_ok": false,
+      "name": "negative",
+      "pass": true
+    },
+    {
+      "accepted": false,
+      "expect_ok": false,
+      "name": "bool",
+      "pass": true
+    },
+    {
+      "accepted": false,
+      "expect_ok": false,
+      "name": "str",
+      "pass": true
+    },
+    {
+      "accepted": false,
+      "expect_ok": false,
+      "name": "float",
+      "pass": true
+    }
+  ],
+  "designed_parser_cases": [
+    {
+      "accepted": true,
+      "expect_ok": true,
+      "name": "ok_usr",
+      "pass": true,
+      "value": "game-server"
+    },
+    {
+      "accepted": true,
+      "expect_ok": true,
+      "name": "ok_nested",
+      "pass": true,
+      "value": "server"
+    },
+    {
+      "accepted": false,
+      "error": "size",
+      "expect_ok": false,
+      "name": "empty",
+      "pass": true
+    },
+    {
+      "accepted": false,
+      "error": "control",
+      "expect_ok": false,
+      "name": "newline",
+      "pass": true
+    },
+    {
+      "accepted": false,
+      "error": "path",
+      "expect_ok": false,
+      "name": "relative",
+      "pass": true
+    },
+    {
+      "accepted": false,
+      "error": "components",
+      "expect_ok": false,
+      "name": "dotdot",
+      "pass": true
+    },
+    {
+      "accepted": false,
+      "error": "path",
+      "expect_ok": false,
+      "name": "double_slash",
+      "pass": true
+    },
+    {
+      "accepted": false,
+      "error": "control",
+      "expect_ok": false,
+      "name": "nul",
+      "pass": true
+    },
+    {
+      "accepted": false,
+      "error": "control",
+      "expect_ok": false,
+      "name": "deleted",
+      "pass": true
+    },
+    {
+      "accepted": false,
+      "error": "path",
+      "expect_ok": false,
+      "name": "comm_like",
+      "pass": true
+    },
+    {
+      "accepted": false,
+      "error": "control",
+      "expect_ok": false,
+      "name": "execstart_like",
+      "pass": true
+    },
+    {
+      "accepted": false,
+      "error": "size",
+      "expect_ok": false,
+      "name": "too_long",
+      "pass": true
+    },
+    {
+      "accepted": false,
+      "error": "path",
+      "expect_ok": false,
+      "name": "root_only",
+      "pass": true
+    },
+    {
+      "accepted": false,
+      "error": "control",
+      "expect_ok": false,
+      "name": "space_name",
+      "pass": true
+    }
+  ],
+  "executable_basename_sites": [
+    {
+      "line": 682,
+      "text": "def linux_executable_basename(pid: int) -> str:"
+    },
+    {
+      "line": 971,
+      "text": "executable_basename=linux_executable_basename,"
+    },
+    {
+      "line": 1052,
+      "text": "server_executable = executable_basename(int(spec['game_server_pid']))"
+    },
+    {
+      "line": 1070,
+      "text": "if (_basename(executable_basename(int(spec['game_server_pid'])), 'server')"
+    }
+  ],
+  "failure": {
+    "error_cause": "[Errno 13] Permission denied: '/proc/726/exe'",
+    "error_message": "direct owner server executable identity unavailable",
+    "error_type": "CellError",
+    "euid": 1000,
+    "server_pid": 726,
+    "start_identity": "linux_proc_start_ticks:595",
+    "unit": "MainPID=726\nAmbientCapabilities=cap_net_bind_service\nUser=acfrazier\nNoNewPrivileges=yes\n"
+  },
+  "files": {
+    "failure_json": {
+      "sha256": "0cd3d2ba1138385373b05b8dc9612169e9a42891087fc59c614271ea904edd1e"
+    },
+    "frozen_tar_sha256": "2c36d254c37c5ed56a55f78728357296d62be602f8653ed9ec041cd37d099d5d",
+    "plan": {
+      "sha256": "c1588bc2c8ce54861d93fc63c75a29dd2aecbe90034208bf1c66fdd23335cea5"
+    },
+    "question": {
+      "sha256": "e8bfd651535d2614df9d1b5095eac8a0d49a97f1c612544cfbe0f9c9dc7f6cf4"
+    },
+    "run_diagnostic.py": {
+      "bytes": 42579,
+      "sha256": "8100cd7eba904d9da04e399bf271665bd369a457abaeb3084dde8cc21251b2c1"
+    },
+    "run_managed_cell.py": {
+      "bytes": 124154,
+      "git_blob": "2c00e549317bbf7cce2222047e38470f0dde1e69",
+      "matches_6f2b410_blob": true,
+      "sha256": "012d7007a79e30567c7a3f8b9ad86cd3d2b49bf3d409a395af0a83290aaf35b1"
+    },
+    "server_resources.py": {
+      "bytes": 14378,
+      "sha256": "a773ed84536063fe8bb3ae8e42ec3b9cdbe484c9ba934e76b541245b96d2e4b5"
+    }
+  },
+  "frozen_controller": {
+    "bytes": 59944,
+    "has_linux_executable_basename": false,
+    "path": "direct-owner-source/docs/memory/run_managed_cell.py",
+    "same_as_6f2b410_checkout": false,
+    "sha256": "2cf52030391705e8ff73603982d4a37f26c8c411e7798d9b449823280b59c2f4"
+  },
+  "functions": {
+    "_basename": {
+      "end_line": 637,
+      "sha256": "13162086fde85014b2378848d9f33e41b3e48122cafdd70fbbd8a8f89ce20311",
+      "start_line": 631
+    },
+    "linux_executable_basename": {
+      "end_line": 689,
+      "sha256": "3922dd4f2bd7847d227d7e9c7b15364784d8e1aa3745ce626ec77041eee44bde",
+      "start_line": 682
+    },
+    "probe_direct_server": {
+      "end_line": 681,
+      "sha256": "0962946c2ab3bad3527de3494d275a78fa1c6d3dd25bfd83311d6ba3ae2ea934",
+      "start_line": 668
+    }
+  },
+  "native_commands": false,
+  "observations_from_source": {
+    "controller_has_no_sudo": true,
+    "controller_uses_os_readlink_only_for_server_exe": true,
+    "current_probe_is_tcp_loopback_43594": true,
+    "diagnostic_exe_is_own_children_not_server": true,
+    "preflight_calls_executable_basename_twice": true,
+    "sampler_reads_stat_not_exe": true
+  },
+  "parser_all_pass": true,
+  "permission_changes": false,
+  "plan_5_3_forbids_permission_change": true,
+  "question_forbids_comm_execstart": true,
+  "schema": "server-executable-adapter-source-probe-v1",
+  "searches": {
+    "controller": {
+      "/proc/{pid}/exe": [
+        {
+          "line": 684,
+          "text": "        value = pathlib.Path(os.readlink(f'/proc/{pid}/exe')).name"
+        }
+      ],
+      "AmbientCapabilities": [],
+      "ExecStart": [],
+      "executable_basename": [
+        {
+          "line": 682,
+          "text": "def linux_executable_basename(pid: int) -> str:"
+        },
+        {
+          "line": 725,
+          "text": "        'server_executable_basename': _basename(server_executable, 'server'),"
+        },
+        {
+          "line": 786,
+          "text": "            'server_executable_basename',"
+        },
+        {
+          "line": 873,
+          "text": "                    match, {'class', 'pid', 'start_identity', 'executable_basename'},"
+        },
+        {
+          "line": 881,
+          "text": "                _basename(match['executable_basename'], 'conflict match')"
+        },
+        {
+          "line": 922,
+          "text": "                evidence, {'pid', 'start_identity', 'executable_basename', 'probe'},"
+        },
+        {
+          "line": 932,
+          "text": "                    or _basename(evidence['executable_basename'], 'server health')"
+        },
+        {
+          "line": 933,
+          "text": "                    != expected_context['server_executable_basename']"
+        },
+        {
+          "line": 941,
+          "text": "                'executable_basename': evidence['executable_basename'],"
+        },
+        {
+          "line": 971,
+          "text": "    executable_basename=linux_executable_basename,"
+        },
+        {
+          "line": 1052,
+          "text": "        server_executable = executable_basename(int(spec['game_server_pid']))"
+        },
+        {
+          "line": 1070,
+          "text": "        if (_basename(executable_basename(int(spec['game_server_pid'])), 'server')"
+        }
+      ],
+      "linux_executable_basename": [
+        {
+          "line": 682,
+          "text": "def linux_executable_basename(pid: int) -> str:"
+        },
+        {
+          "line": 971,
+          "text": "    executable_basename=linux_executable_basename,"
+        }
+      ],
+      "os.readlink": [
+        {
+          "line": 684,
+          "text": "        value = pathlib.Path(os.readlink(f'/proc/{pid}/exe')).name"
+        }
+      ],
+      "probe_direct_server": [
+        {
+          "line": 668,
+          "text": "def probe_direct_server():"
+        },
+        {
+          "line": 970,
+          "text": "    server_probe=probe_direct_server,"
+        }
+      ],
+      "readlink": [
+        {
+          "line": 684,
+          "text": "        value = pathlib.Path(os.readlink(f'/proc/{pid}/exe')).name"
+        }
+      ],
+      "server_executable_basename": [
+        {
+          "line": 725,
+          "text": "        'server_executable_basename': _basename(server_executable, 'server'),"
+        },
+        {
+          "line": 786,
+          "text": "            'server_executable_basename',"
+        },
+        {
+          "line": 933,
+          "text": "                    != expected_context['server_executable_basename']"
+        }
+      ],
+      "sudo": []
+    },
+    "diagnostic_exe": [
+      {
+        "line": 347,
+        "text": "            exe = pathlib.Path(os.readlink(entry / 'exe')).resolve()"
+      }
+    ],
+    "plan_permission": [
+      {
+        "line": 49,
+        "text": "have no inspected-source delta. This is source-reading lineage, NOT permission"
+      },
+      {
+        "line": 338,
+        "text": "   No cache rebuild, account reset, server restart, installation or permission"
+      },
+      {
+        "line": 345,
+        "text": "   not permission to consume unrelated process resources. No AS cap guessed for"
+      },
+      {
+        "line": 424,
+        "text": "  launch guard is a specific prerequisite to report, not permission to weaken it."
+      }
+    ],
+    "plan_restart": [
+      {
+        "line": 338,
+        "text": "   No cache rebuild, account reset, server restart, installation or permission"
+      }
+    ],
+    "sampler": {
+      "/proc/": [
+        {
+          "line": 34,
+          "text": "    \"\"\"Parse Linux /proc/PID/stat without splitting the command name naively.\"\"\""
+        },
+        {
+          "line": 37,
+          "text": "        raise SampleError(\"malformed /proc/PID/stat\")"
+        },
+        {
+          "line": 41,
+          "text": "        raise SampleError(\"short /proc/PID/stat\")"
+        },
+        {
+          "line": 51,
+          "text": "        raise SampleError(\"non-numeric /proc/PID/stat counter\") from exc"
+        },
+        {
+          "line": 129,
+          "text": "            \"rss\": f\"/proc/{pid}/stat field 24 rss pages \u00d7 SC_PAGE_SIZE (current resident set; approximate)\","
+        },
+        {
+          "line": 130,
+          "text": "            \"cpu\": f\"/proc/{pid}/stat utime/stime \u00f7 SC_CLK_TCK (cumulative process CPU)\","
+        },
+        {
+          "line": 131,
+          "text": "            \"identity\": f\"/proc/{pid}/stat field 22 starttime ticks\","
+        },
+        {
+          "line": 197,
+          "text": "        path = pathlib.Path(\"/proc/pressure/memory\")"
+        }
+      ],
+      "comm": [
+        {
+          "line": 34,
+          "text": "    \"\"\"Parse Linux /proc/PID/stat without splitting the command name naively.\"\"\""
+        },
+        {
+          "line": 138,
+          "text": "    command = [\"/bin/ps\", \"-o\", \"rss=\", \"-o\", \"utime=\", \"-o\", \"stime=\", \"-o\", \"lstart=\", \"-p\", str(pid)]"
+        },
+        {
+          "line": 140,
+          "text": "        result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=timeout)"
+        }
+      ],
+      "exe": [],
+      "readlink": [],
+      "sudo": []
+    }
+  },
+  "ssh": false,
+  "sudo_invoked": false
+}

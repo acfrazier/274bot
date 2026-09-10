@@ -1,0 +1,12 @@
+def probe_direct_server():
+    started = time.time()
+    try:
+        with socket.create_connection(('127.0.0.1', DIRECT_SERVER_PORT), timeout=2.0):
+            pass
+    except OSError as exc:
+        raise CellError('direct owner loopback server probe failed') from exc
+    ended = time.time()
+    return {
+        'host': '127.0.0.1', 'port': DIRECT_SERVER_PORT, 'succeeded': True,
+        'observed_start_unix_s': started, 'observed_end_unix_s': ended,
+    }

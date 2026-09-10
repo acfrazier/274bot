@@ -1,0 +1,6 @@
+def linux_executable_basename(pid: int) -> str:
+    try:
+        value = pathlib.Path(os.readlink(f'/proc/{pid}/exe')).name
+    except OSError as exc:
+        raise CellError('direct owner server executable identity unavailable') from exc
+    return _basename(value, 'server')
