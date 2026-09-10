@@ -5,10 +5,12 @@ controlled live/native qualification, not another reviewer trial. Host branch
 `codex/rs2b0t-multirevision`; client branch `codex/bothost-274-289`.
 
 Review frozen host base `41d896b3007e476c76a9c01352b64d5afd5ed901` to head
-`b9cacc6e5b3b5101cd2baf6b2a91e9ecf13f84f8`, including client base
+`fede3c0dd5d5fbdc7fd7def10f2eb43630b8f16f`, including client base
 `2be1697060e4d2b8b709ad4d5e54d12513b38333` to
 `6cb5a0b17aeef74da6b57b205e916681daee4f76`.
-The parent snapshot card must have completed its actual Grok 4.5 review.
+The parent snapshot card must have completed its actual Grok 4.5 corrective review.
+This candidate includes the response-15 retained-scene correction in fede3c0d;
+the earlier b9cacc6e binary is superseded and is not an acceptance candidate.
 Other prerequisite same-card approvals: public profile `t_96dc78da`, outbound
 `t_b22abf57`, original live harness `t_079d478d`. Their receipts are under
 `docs/compat/evidence/{public-profile-correction,host-boundary}`.

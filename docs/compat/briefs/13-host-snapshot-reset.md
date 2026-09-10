@@ -5,7 +5,9 @@
 Root reclaimed Sol run 1105 and completed the preserved implementation inline
 under manually claimed run 1106. That run's inherited Sol label does not identify
 an actual model run. Review the final named host/client commits in the handoff.
-Root owns Git hygiene; do not stash, checkout, reset, restore or edit the index.
+Root owns integration/Git hygiene. Implementers may stage and commit only their
+scoped changes as required by the workflow; do not move/stash/reset/restore
+another worker's files or index entries. Reviewers make no index changes.
 
 `Client::tcp_in` can call `lost_con` and continue draining packets in the same
 frame. The successful grant now records `session_start_gens`, alongside the
