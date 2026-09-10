@@ -179,6 +179,52 @@ fn run() -> Result<(), String> {
         if snapshot.tile() != Some((3220, 3212, 0)) {
             return Err("relog did not retain acknowledged mainland seed".into());
         }
+
+        // Hans patrols beyond this tile's NPC visibility range. Prepare a
+        // temporary local Hans through the existing engine fixture command,
+        // and observe its new nearby identity before the action baseline.
+        // The engine expires this NPC after 500 cycles; no server patch is
+        // required and creating it is never counted as interaction proof.
+        let before_npcs: Vec<_> = snapshot.npcs().iter().map(|npc| npc.index).collect();
+        record(
+            "npc-fixture-before-seed",
+            &snapshot,
+            json!({"npcs": snapshot.npcs()}),
+        );
+        if !interact::cheat(&mut client, "npcadd hans") {
+            return Err("local fixture npcadd hans refused".into());
+        }
+        let is_prepared_npc = |npc: &api::snapshot::NpcView| {
+            !before_npcs.contains(&npc.index)
+                && npc.name.as_deref() == Some("Hans")
+                && npc.tile.level == 0
+                && npc.tile.x.abs_diff(3220) <= 2
+                && npc.tile.z.abs_diff(3212) <= 2
+                && npc
+                    .actions
+                    .iter()
+                    .flatten()
+                    .any(|action| action.eq_ignore_ascii_case("Talk-to"))
+        };
+        wait_for(
+            &mut client,
+            &mut snapshot,
+            &mut pump,
+            "npc-fixture-seed",
+            Duration::from_secs(30),
+            |s| s.npcs().iter().any(is_prepared_npc),
+        )?;
+        let prepared_npc = snapshot
+            .npcs()
+            .iter()
+            .find(|npc| is_prepared_npc(npc))
+            .ok_or("acknowledged local Hans missing")?
+            .index;
+        record(
+            "npc-fixture-seeded",
+            &snapshot,
+            json!({"npc_index": prepared_npc}),
+        );
         record("baseline-after-preparation", &snapshot, json!({}));
 
         let before_walk = snapshot.tile().ok_or("missing walk origin")?;
@@ -212,7 +258,8 @@ fn run() -> Result<(), String> {
             .npcs()
             .iter()
             .find(|npc| {
-                npc.name.as_deref() == Some("Hans")
+                npc.index == prepared_npc
+                    && npc.name.as_deref() == Some("Hans")
                     && npc
                         .actions
                         .iter()

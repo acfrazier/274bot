@@ -1,5 +1,21 @@
 # Step 4C: controlled host boundary live harness
 
+## Live fixture correction, 2026-09-10
+
+The original frozen harness passed 274 but failed 289 after login and observed
+walk because visible Hans was absent. Read `02-host-boundary.md` and retained
+`evidence/host-boundary/live/r289-fede3c0d.{log,json}`. Root has changed only the
+harness to prepare a temporary nearby Hans via the existing local npcadd command,
+observe a new nearby identity, then establish the action baseline. Exact NPC
+dialogue, loc-change and logout assertions and action deadlines remain.
+Review the committed harness correction against `fede3c0d`, including the source
+of npcadd (non-production/staff guard, 500-cycle expiry) and primary patrol data.
+No live launch or worker source edits. Inspect named commits/source exports;
+never stash/reset/restore/checkout or alter shared WIP/index. This is corrective
+source review before a justified live reproduction, not a claim of acceptance.
+
+## Original task brief
+
 Root implements this bounded task inline on `codex/rs2b0t-multirevision`.
 Follow plan step 4 and the approved/corrected design report. Product scope:
 `crates/host-play/tests/revision_boundary_live.rs` only. The constructor,
