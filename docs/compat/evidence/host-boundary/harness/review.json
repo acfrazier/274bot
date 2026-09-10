@@ -1,0 +1,16 @@
+{
+  "task": "t_079d478d",
+  "run_id": 1101,
+  "commit": "2f1d9709",
+  "verdict": "approved",
+  "actual_session": {
+    "id": "20260910_135359_681e61",
+    "model": "grok-4.5",
+    "billing_provider": "xai-oauth",
+    "started_at": 1789062840.2540228,
+    "ended_at": 1789062966.9492009
+  },
+  "checks": "Focused harness compile and strict Clippy; default run stays ignored",
+  "live_run": false,
+  "workflow_note": "Reviewer temporarily stashed concurrent source edits, then restored them with stash pop exit 0 and no reported conflicts. No campaign stash remains. Source approval is retained; future briefs explicitly prohibit stash/reset/restore/index mutation in the shared checkout. Integrated testing after worker commits remains required."
+}

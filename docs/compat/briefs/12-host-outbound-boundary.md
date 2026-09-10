@@ -50,3 +50,8 @@ Retain meaningful failures and final logs under
 `docs/compat/evidence/host-boundary/outbound/`; write concise source/test findings
 to `docs/compat/02a-host-outbound.md`. Commit only scoped files, call
 kanban_request_review with reviewer `reviewer` on this same card, then stop.
+
+Reviewer isolation: never stash, reset, restore, checkout, alter the index, or
+otherwise move another worker's files in this shared checkout. Use git show
+for the named commit, existing receipts, or a separate temporary source export
+if a clean source test is needed. Root owns shared worktree/Git hygiene.

@@ -1,0 +1,8 @@
+{
+  "freshRsaKeyPair": true,
+  "privateKeyRemainsLocal": true,
+  "freshSqliteSchema": true,
+  "publicKeySha256": "2684d949348dc4caeb158a1d466ebb55bf0ff29c511b21e84d08c0affe875b0e",
+  "platform": "linux",
+  "node": "v24.20.0"
+}

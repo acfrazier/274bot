@@ -134,10 +134,20 @@ boundary and the controlled local action sequence on both revisions. Design
 card `t_d6761a15` approved the design under actual Grok 4.6 (run 1096,
 session `20260910_132555_633342`). Root corrected its numeric blacklist mistake:
 legality must follow named packets, since ids 51/224 have valid R289 meanings.
-Implementation cards `t_b22abf57` (outbound) and `t_0be9adbf` (snapshots/reset)
-are running under configured Sol, with same-card reviewer handoffs required.
-Root owns the narrow local proof while ordinary 289 slots/guardians remain
-gated for step 5. Briefs 12/13 give disjoint implementation ownership.
+Outbound card `t_b22abf57` is accepted at `e946c2f9` after actual Grok 4.5 review
+(run 1102, session `20260910_135900_8cf8e7`), including 173 passing API tests.
+Root's narrow live harness `2f1d9709` passed same-card Grok 4.5 source review
+on `t_079d478d` (run 1101, session `20260910_135359_681e61`). Live proof has not
+run. Ordinary 289 slots/guardians remain gated for step 5.
+
+Snapshot/reset card `t_0be9adbf` is still implementing. Root reclaimed its
+initial Sol run after finding an ambiguous equal-family-delta tick heuristic;
+brief 13 now requires a real successful PLAYER_INFO observation from a small
+generic client seam, plus a shared host publication helper for the harness.
+Existing family counters/framing and ownership must survive. This is an
+implementation correction, not a failed live test. Root owns the client gitlink
+and harness adaptation after that helper is ready. Final integrated source
+checks/review and local 274/289 actions remain required.
 
 Operator platform clarification: validate step 3 on macOS first. Linux and
 Windows do not have a 289 engine configured; prepare those isolated engines
@@ -158,13 +168,16 @@ free disk. No SSH trust/key configuration was changed.
 Separate 289 fixtures are being prepared under each machine's existing campaign
 root at `multirevision-20260910/server-289`. Bundle SHA-256
 `d8361199f7f3af851c175e030b1e787cb62137de1ce62b6701bcde07cd75f2e8`
-contains the pinned engine/cache/scripts and content maps; no account/key/database
-material was copied. Concord and Windows extracted and verified all 1,212 files,
-installed locked dependencies and generated fresh local RSA keys and SQLite
-schemas. The builder is staging the same bundle. These are setup receipts;
-engine readiness and platform client qualification are still pending. Existing
-274 fixtures remain unchanged. Concord remains TUI-only with Linux compilation
-on the builder.
+was the initial bundle. Its builder startup failed because it omitted
+`data/raw/wordenc`. The complete corrected archive SHA-256 is
+`6524c4835aa825dc3994d7ae1a6536c1141836367eacaeccd5a3d61a5a373171`.
+All three machines now have verified 1,213-file runtimes, locked dependencies,
+fresh local RSA keys and SQLite schemas. All three passed World-ready,
+loopback `44594/1080/9898`, and asset HTTP 200 observations. The operator stopped
+Concord's existing 274 system service before its 289 smoke. Existing 274 files
+and service definitions are unchanged; Concord remains TUI-only, with Linux
+compilation on the builder. Read `platform-preparation.md` and the raw receipts.
+These setup results do not qualify host login, gameplay or native rendering.
 
 Then follow steps 4–9 in order: host boundary and local live actions, world and
 guardian binding, required Rust capabilities, every enabled card/option proof,

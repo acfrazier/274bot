@@ -1,0 +1,1 @@
+2026-09-10: Start-Process returned PID 16560, but the subsequent SSH probe found no process, no listeners and empty stdout/stderr logs after the launching SSH session exited. No engine readiness is claimed. A second launch retains the SSH parent through WaitForExit and records a separate held-process receipt.

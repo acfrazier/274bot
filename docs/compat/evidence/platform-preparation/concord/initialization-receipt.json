@@ -1,0 +1,7 @@
+{
+  "freshRsaKeyPair": true,
+  "privateKeyRemainsLocal": true,
+  "freshSqliteSchema": true,
+  "publicKeySha256": "a902396704a49f98bb43835b655a5121bc6df0349be12463b56019196508e07f",
+  "privateKeyMode": "600"
+}

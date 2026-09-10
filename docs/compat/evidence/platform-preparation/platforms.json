@@ -1,0 +1,64 @@
+{
+  "scope": "Pinned 289 fixture setup and engine/asset readiness; no client or gameplay qualification",
+  "runtime_manifest_sha256": "7cea872135aa1af6e26512b9270b7718bb363a4991ffeb8e97630b0544577e0b",
+  "complete_bundle_sha256": "6524c4835aa825dc3994d7ae1a6536c1141836367eacaeccd5a3d61a5a373171",
+  "machines": {
+    "windows": {
+      "asset_http": 200,
+      "time_utc": "2026-09-10T17:57:47.8124409Z",
+      "listeners": [
+        {
+          "LocalAddress": "127.0.0.1",
+          "LocalPort": 44594,
+          "OwningProcess": 5052
+        },
+        {
+          "LocalAddress": "127.0.0.1",
+          "LocalPort": 9898,
+          "OwningProcess": 5052
+        },
+        {
+          "LocalAddress": "127.0.0.1",
+          "LocalPort": 1080,
+          "OwningProcess": 5052
+        }
+      ],
+      "hostname": "DESKTOP-SL99R6C",
+      "lifetime": "held SSH session",
+      "runtime_manifest_sha256": "7cea872135aa1af6e26512b9270b7718bb363a4991ffeb8e97630b0544577e0b",
+      "revision": 289,
+      "pid": 5052,
+      "qualification": "Engine startup/loopback asset readiness only; no host login or gameplay"
+    },
+    "builder": {
+      "time_utc": "2026-09-10T17:55:25Z",
+      "hostname": "274bot-builder",
+      "revision": 289,
+      "asset_http": 200,
+      "listeners": [
+        "LISTEN 0      511        127.0.0.1:44594      0.0.0.0:*    users:((\"MainThread\",pid=1911,fd=71))",
+        "LISTEN 0      511        127.0.0.1:9898       0.0.0.0:*    users:((\"MainThread\",pid=1911,fd=77))",
+        "LISTEN 0      511        127.0.0.1:1080       0.0.0.0:*    users:((\"MainThread\",pid=1911,fd=75))"
+      ],
+      "runtime_manifest_sha256": "7cea872135aa1af6e26512b9270b7718bb363a4991ffeb8e97630b0544577e0b",
+      "client_cache_files_unchanged": true,
+      "qualification": "Engine startup/loopback asset readiness only; no host login or gameplay"
+    },
+    "concord": {
+      "time_utc": "2026-09-10T18:00:51Z",
+      "hostname": "concord",
+      "revision": 289,
+      "asset_http": 200,
+      "listeners": [
+        "LISTEN 0      511        127.0.0.1:1080       0.0.0.0:*    users:((\"MainThread\",pid=134858,fd=86))",
+        "LISTEN 0      511        127.0.0.1:44594      0.0.0.0:*    users:((\"MainThread\",pid=134858,fd=85))",
+        "LISTEN 0      511        127.0.0.1:9898       0.0.0.0:*    users:((\"MainThread\",pid=134858,fd=87))"
+      ],
+      "runtime_manifest_sha256": "7cea872135aa1af6e26512b9270b7718bb363a4991ffeb8e97630b0544577e0b",
+      "client_cache_files_unchanged": true,
+      "existing_274_service": "stopped by operator before smoke",
+      "memory": "               total        used        free      shared  buff/cache   available\nMem:            1967        1152         314           1         692         814\nSwap:              0           0           0\n",
+      "qualification": "Engine startup/loopback asset readiness only; no host login or gameplay; TUI-only platform"
+    }
+  }
+}
