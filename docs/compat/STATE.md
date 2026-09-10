@@ -230,3 +230,11 @@ the corrected library invocation ran the four tests. Logs are in
 `evidence/script-loading-policy/`. This mechanical policy removal will be
 included in the next coherent integration review; it does not qualify live
 289 bot operations by itself.
+
+Step-5 source preparation is running on `t_13a850d5` under actual Sol session
+`20260910_151010_46fed4` (`gpt-5.6-sol` / `openai-codex`). Its scope is the
+verified nav manifest/bake and selected content/control/guardian audit; root
+retains external fixtures and live qualification. Combined step-4 integration
+review `t_0ec632f9` is queued behind the snapshot review, with the frozen contract
+in brief 15. Banking source gaps for the next capability task are recorded in
+`banking-capability-audit.md`; ledger statuses remain unqualified.
