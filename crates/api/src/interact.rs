@@ -24,6 +24,11 @@ pub const OFF_ISLAND_TELE: &str = "0,50,50,20,20";
 /// The send-side driver the kernel writes through. `Client` implements it
 /// over `doAction`/`tryMove`/`out`; tests use a recording stub.
 pub trait Driver {
+    /// Target captured by a bound session. Legacy recorders retain the existing
+    /// process default; real bound clients never re-read it for cheat policy.
+    fn session_target(&self) -> client::BotTarget {
+        client::bot_target()
+    }
     /// Write a menu option at `slot` (the `doAction` path).
     fn set_menu(&mut self, slot: i32, action: i32, a: i32, b: i32, c: i32);
     /// Dispatch the menu option at `slot`. Returns true iff the driver
@@ -76,6 +81,9 @@ pub trait Driver {
 }
 
 impl Driver for Client {
+    fn session_target(&self) -> client::BotTarget {
+        Client::session_target(self)
+    }
     fn set_menu(&mut self, slot: i32, action: i32, a: i32, b: i32, c: i32) {
         self.menu_action[slot as usize] = action;
         self.menu_param_a[slot as usize] = a;
@@ -262,7 +270,7 @@ pub const MAXME_SETSTATS: &[&str] = &[
 ];
 
 pub fn cheat<D: Driver + ?Sized>(driver: &mut D, cmd: &str) -> bool {
-    if !cheat_allowed(client::bot_target()) {
+    if !cheat_allowed(driver.session_target()) {
         return false;
     }
     let out = driver.out();
@@ -282,7 +290,7 @@ pub fn cheat_allowed(target: client::BotTarget) -> bool {
 /// Does **not** relog — side icons stay tutorial-locked until a clean
 /// IF_BUTTON logout + login (scenario `StepKind::Relog`).
 pub fn mainland_hop<D: Driver + ?Sized>(driver: &mut D) {
-    if !cheat_allowed(client::bot_target()) {
+    if !cheat_allowed(driver.session_target()) {
         return;
     }
     let tele = format!("tele {OFF_ISLAND_TELE}");

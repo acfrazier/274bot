@@ -122,6 +122,23 @@ pub fn prepare_client(
     client
 }
 
+/// Construct a slot with all connection/resource inputs bound before the
+/// client's OnDemand setup. The caller shares one profile across its slots.
+pub fn prepare_client_with_profile(
+    profile: Arc<client::session::ClientSessionProfile>,
+    uid: i32,
+    members: bool,
+    lowmem: bool,
+    cache: Arc<Cache>,
+    ifaces: Arc<Vec<Option<Box<IfType>>>>,
+    ifaces_mut: impl Into<Arc<Vec<Option<Arc<IfTypeMut>>>>>,
+) -> Result<Client, String> {
+    let config = profile.client_config(members, lowmem);
+    let mut client = Client::from_shared_with_profile(config, cache, ifaces, ifaces_mut, profile)?;
+    client.login_uid = uid;
+    Ok(client)
+}
+
 impl Host {
     /// Spawn one slot thread. Builds a `Client` from the shared cache/iface
     /// template (see [`prepare_client`]), then drives `mainloop` via

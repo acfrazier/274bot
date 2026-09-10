@@ -2324,7 +2324,9 @@ dependencies = [
  "rand_core",
  "scenario",
  "script",
+ "serde",
  "serde_json",
+ "sha2",
  "vault",
  "windows-sys 0.59.0",
 ]

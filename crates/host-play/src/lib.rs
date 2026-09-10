@@ -3,11 +3,15 @@
 //! this library so it can poll per-slot state instead of scraping logs.
 
 pub mod audio;
+pub mod profile;
+pub use profile::{
+    parse_profile_args, parse_revision, ProfileOptions, ProfileSelection, ServerProfile,
+};
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::AssertUnwindSafe;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -191,6 +195,105 @@ pub struct PlayOptions {
     pub lowmem: bool,
     /// After scene 2, queue rs2b0t `mainlandAccount` tele+setvar (no relog).
     pub mainland: bool,
+}
+
+/// Production launch input. Connection fields come only from the immutable
+/// profile; `PlayOptions` remains the legacy 274 caller interface.
+#[derive(Clone)]
+pub struct ProfilePlayOptions {
+    pub profile: Arc<ServerProfile>,
+    pub mainland: bool,
+}
+
+/// One validated asset decode for a process profile. Preparing clients clones
+/// only the shared Arcs; mutable interface overlays remain per client.
+pub struct SharedClientTemplate {
+    profile: Arc<ServerProfile>,
+    cache: Arc<Cache>,
+    ifaces: Arc<Vec<Option<Box<IfType>>>>,
+    ifaces_mut: Arc<Vec<Option<Arc<IfTypeMut>>>>,
+    world: Option<Arc<NavWorld>>,
+    scatter: std::sync::OnceLock<Vec<WorldTile>>,
+}
+
+impl SharedClientTemplate {
+    pub fn load(profile: Arc<ServerProfile>) -> Result<Arc<Self>, String> {
+        profile.validate_resources()?;
+        let (cache, ifaces, ifaces_mut) = load_template_checked(profile.client().cache_dir())?;
+        let world = match profile.nav_availability() {
+            profile::NavAvailability::Unavailable(_) => None,
+            profile::NavAvailability::Legacy274 | profile::NavAvailability::Bound => {
+                Some(Arc::new(NavWorld::load_pack(profile.nav_pack()).map_err(
+                    |e| format!("navigation {}: {e}", profile.nav_pack().display()),
+                )?))
+            }
+        };
+        Ok(Arc::new(Self {
+            profile,
+            cache: Arc::new(cache),
+            ifaces: Arc::new(ifaces),
+            ifaces_mut: Arc::new(ifaces_mut),
+            world,
+            scatter: std::sync::OnceLock::new(),
+        }))
+    }
+
+    pub fn profile(&self) -> &Arc<ServerProfile> {
+        &self.profile
+    }
+    pub fn world(&self) -> Option<Arc<NavWorld>> {
+        self.world.clone()
+    }
+
+    /// Stable account scatter over this template's selected navigation world.
+    /// The seed vector is shared once per template, as are the world tables.
+    pub fn scatter_tile_for(&self, uid: i32) -> WorldTile {
+        let tiles = self
+            .scatter
+            .get_or_init(|| scatter::shuffled_for_world(self.world.as_deref()));
+        tiles[(uid.unsigned_abs() as usize) % tiles.len()]
+    }
+
+    /// This constructor is usable for protocol qualification before bot action
+    /// support is released. It does not start a host loop or any bot policy.
+    pub fn prepare_client(&self, uid: i32, lowmem: bool) -> Result<Client, String> {
+        host::prepare_client_with_profile(
+            Arc::clone(self.profile.client()),
+            uid,
+            true,
+            lowmem,
+            Arc::clone(&self.cache),
+            Arc::clone(&self.ifaces),
+            Arc::clone(&self.ifaces_mut),
+        )
+    }
+}
+
+#[derive(Clone)]
+enum PlayConnection {
+    Legacy(PlayOptions),
+    Bound {
+        template: Arc<SharedClientTemplate>,
+        mainland: bool,
+    },
+}
+
+impl PlayConnection {
+    fn profile(&self) -> Option<&Arc<ServerProfile>> {
+        match self {
+            Self::Legacy(_) => None,
+            Self::Bound { template, .. } => Some(template.profile()),
+        }
+    }
+
+    fn require_bot_operation(&self) -> Result<(), String> {
+        self.profile().map_or(Ok(()), |p| p.require_bot_operation())
+    }
+
+    fn target(&self) -> BotTarget {
+        self.profile()
+            .map_or_else(client::bot_target, |p| p.target())
+    }
 }
 
 /// Pollable per-slot view; the slot threads update it after each frame.
@@ -3012,7 +3115,7 @@ pub struct Play {
     /// Shared status rows; panel tests push fakes here for `pump_status`.
     pub statuses: Arc<Mutex<Vec<SlotStatus>>>,
     handles: HashMap<String, thread::JoinHandle<()>>,
-    options: PlayOptions,
+    connection: PlayConnection,
     cache: Arc<Cache>,
     /// The shared obj-id → name table every script ctx resolves `has_item`
     /// against (built once from `cache.objs`).
@@ -3061,6 +3164,7 @@ pub struct Play {
 #[derive(Clone)]
 pub struct ScriptStartHandle {
     scripts: ScriptWall,
+    profile: Option<Arc<ServerProfile>>,
 }
 
 impl ScriptStartHandle {
@@ -3075,6 +3179,10 @@ impl ScriptStartHandle {
         settings_bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
     ) -> Result<(), String> {
+        if let Some(profile) = &self.profile {
+            profile.require_bot_operation()?;
+            profile.validate_catalog()?;
+        }
         if debug_enabled() {
             eprintln!("[script {name}] start load");
         }
@@ -3097,15 +3205,44 @@ impl Play {
     fn new(options: &PlayOptions) -> Play {
         let (cache, ifaces, ifaces_mut_template) = load_template(&options.cache_dir);
         let cache = Arc::new(cache);
+        Self::assemble(
+            PlayConnection::Legacy(options.clone()),
+            cache,
+            Arc::new(ifaces),
+            Arc::new(ifaces_mut_template),
+            NavWorld::load_pack(&default_pack_path()).ok().map(Arc::new),
+        )
+    }
+
+    fn from_template(template: Arc<SharedClientTemplate>, mainland: bool) -> Play {
+        Self::assemble(
+            PlayConnection::Bound {
+                template: Arc::clone(&template),
+                mainland,
+            },
+            Arc::clone(&template.cache),
+            Arc::clone(&template.ifaces),
+            Arc::clone(&template.ifaces_mut),
+            template.world.clone(),
+        )
+    }
+
+    fn assemble(
+        connection: PlayConnection,
+        cache: Arc<Cache>,
+        ifaces: Arc<Vec<Option<Box<IfType>>>>,
+        ifaces_mut_template: Arc<Vec<Option<Arc<IfTypeMut>>>>,
+        world: Option<Arc<NavWorld>>,
+    ) -> Play {
         let obj_names = Arc::new(api::obj_names::ObjNames::from_objs(&cache.objs));
         Play {
             statuses: Arc::new(Mutex::new(Vec::new())),
             handles: HashMap::new(),
-            options: options.clone(),
+            connection,
             cache,
             obj_names,
-            ifaces: Arc::new(ifaces),
-            ifaces_mut_template: Arc::new(ifaces_mut_template),
+            ifaces,
+            ifaces_mut_template,
             queue: Arc::new(Mutex::new(LoginQueue::default())),
             per_frame: Arc::new(|_: &mut Client, _: &str, _hold: bool| {}),
             spawned: HashSet::new(),
@@ -3116,9 +3253,14 @@ impl Play {
             cheats: Arc::new(Mutex::new(HashMap::new())),
             wires: Arc::new(Mutex::new(HashMap::new())),
             navs: Arc::new(Mutex::new(HashMap::new())),
-            world: NavWorld::load_pack(&default_pack_path()).ok().map(Arc::new),
+            world,
             wakes: HashMap::new(),
         }
+    }
+
+    /// The immutable process profile, absent only for the legacy 274 entry.
+    pub fn server_profile(&self) -> Option<&Arc<ServerProfile>> {
+        self.connection.profile()
     }
 
     /// Make `name` the focused slot — the one the panel samples (the old
@@ -3243,6 +3385,7 @@ impl Play {
     /// the picker id has no ported script yet, or `Err` when the slot
     /// already runs one. The slot thread gates it on `is_up`.
     pub fn script_start(&self, name: &str, id: script::CompiledId) -> Result<(), String> {
+        self.connection.require_bot_operation()?;
         if !self.slot_active(name) {
             return Err(format!("no slot: {name}"));
         }
@@ -3266,6 +3409,10 @@ impl Play {
         settings_bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
     ) -> Result<(), String> {
+        self.connection.require_bot_operation()?;
+        if let Some(profile) = self.connection.profile() {
+            profile.validate_catalog()?;
+        }
         if !self.slot_active(name) {
             return Err(format!("no slot: {name}"));
         }
@@ -3289,6 +3436,7 @@ impl Play {
     pub fn script_start_handle(&self) -> ScriptStartHandle {
         ScriptStartHandle {
             scripts: Arc::clone(&self.scripts),
+            profile: self.connection.profile().cloned(),
         }
     }
 
@@ -3353,7 +3501,9 @@ impl Play {
     /// writes `CLIENT_CHEAT` through the slot's Driver and flushes. No-op
     /// when the user is not a running slot, or when the target is Prod.
     pub fn cheat(&self, user: &str, cmd: &str) {
-        if !api::interact::cheat_allowed(client::bot_target()) {
+        if self.connection.require_bot_operation().is_err()
+            || !api::interact::cheat_allowed(self.connection.target())
+        {
             return;
         }
         if let Some(q) = self.cheats.lock().unwrap().get_mut(user) {
@@ -3367,6 +3517,9 @@ impl Play {
     /// on the slot's Driver and flushes. No-op when the user is not a
     /// running slot.
     pub fn queue_wire(&self, user: &str, cmd: WireCmd) {
+        if self.connection.require_bot_operation().is_err() {
+            return;
+        }
         if let Some(q) = self.wires.lock().unwrap().get_mut(user) {
             q.push_back(cmd);
         }
@@ -3444,12 +3597,25 @@ impl Play {
         mailbox: Option<Arc<FrameBuf>>,
         arm: Option<Arc<SlotArm>>,
     ) {
+        if let Err(error) = self.try_spawn_slot(profile, input, mailbox, arm) {
+            eprintln!("[host-play] {error}");
+        }
+    }
+
+    pub fn try_spawn_slot(
+        &mut self,
+        profile: Profile,
+        input: Option<Arc<SlotInput>>,
+        mailbox: Option<Arc<FrameBuf>>,
+        arm: Option<Arc<SlotArm>>,
+    ) -> Result<(), String> {
+        self.connection.require_bot_operation()?;
         // Keep the vault credentials on the wall for later spawns and
         // DC-reconnect re-handshakes.
         self.profiles
             .insert(profile.username.clone(), profile.clone());
         if !self.spawned.insert(profile.username.clone()) {
-            return;
+            return Ok(());
         }
         let arm = arm.unwrap_or_else(|| SlotArm::new(profile.uid, true));
         // `stop_slot` leaves the FIFO by `arm.uid`; force it from the
@@ -3467,7 +3633,7 @@ impl Play {
         let (wake, park) = wake_channel();
         self.wakes.insert(profile.username.clone(), wake);
         spawn_slot_thread(
-            &self.options,
+            &self.connection,
             profile,
             input,
             mailbox,
@@ -3487,6 +3653,7 @@ impl Play {
             Arc::clone(&self.per_frame),
             &mut self.handles,
         );
+        Ok(())
     }
 }
 
@@ -3532,6 +3699,49 @@ where
         play.spawn_slot(profile, slot_input, slot_mailbox, None);
     }
     play
+}
+
+/// Checked production path. Callers can load the template before opening a
+/// vault, then hand the same shared resources to this function after unlock.
+pub fn run_with_template<F, G>(
+    template: Arc<SharedClientTemplate>,
+    mainland: bool,
+    profiles: Vec<Profile>,
+    per_slot: F,
+    per_frame: G,
+) -> Result<Play, String>
+where
+    F: Fn(&str) -> (Option<Arc<SlotInput>>, Option<Arc<FrameBuf>>),
+    G: Fn(&mut Client, &str, bool) + Send + Sync + 'static,
+{
+    if !profiles.is_empty() {
+        template.profile().require_bot_operation()?;
+    }
+    template.profile().validate_resources()?;
+    let mut play = Play::from_template(template, mainland);
+    play.per_frame = Arc::new(per_frame);
+    for profile in profiles {
+        let (input, mailbox) = per_slot(&profile.username);
+        play.try_spawn_slot(profile, input, mailbox, None)?;
+    }
+    Ok(play)
+}
+
+pub fn run_with_profile(
+    options: &ProfilePlayOptions,
+    profiles: Vec<Profile>,
+) -> Result<Play, String> {
+    if !profiles.is_empty() {
+        options.profile.require_bot_operation()?;
+    }
+    let template = SharedClientTemplate::load(Arc::clone(&options.profile))?;
+    run_with_template(
+        template,
+        options.mainland,
+        profiles,
+        |_| (None, None),
+        |_, _, _| {},
+    )
 }
 
 /// Wall spawn for the e2e ladder: every profile spawns one full `Client`
@@ -3597,7 +3807,7 @@ fn login_retry_wait(backoff: &mut LoginBackoff, code: i32) -> Duration {
 /// because the closure moves most of them (allowed: see `script_observe`).
 #[allow(clippy::too_many_arguments)]
 fn spawn_slot_thread(
-    options: &PlayOptions,
+    connection: &PlayConnection,
     profile: Profile,
     slot_input: Option<Arc<SlotInput>>,
     slot_mailbox: Option<Arc<FrameBuf>>,
@@ -3620,8 +3830,11 @@ fn spawn_slot_thread(
     let username = profile.username.clone();
     let uid = profile.uid;
     let password = profile.password.clone();
-    let config = bot_client_config(options, &profile);
-    let mainland = options.mainland;
+    let connection = connection.clone();
+    let mainland = match &connection {
+        PlayConnection::Legacy(options) => options.mainland,
+        PlayConnection::Bound { mainland, .. } => *mainland,
+    };
 
     handles.insert(
         username.clone(),
@@ -3653,13 +3866,21 @@ fn spawn_slot_thread(
             // The park end survives re-login rounds (run_client is entered
             // once per ingame stretch), so wrap it once here.
             let park = park.map(Arc::new);
-            let mut client = prepare_client(
-                config,
-                uid,
-                slot_cache,
-                ifaces_template.clone(),
-                ifaces_mut_template.clone(),
-            );
+            let mut client = match &connection {
+                PlayConnection::Legacy(options) => prepare_client(
+                    bot_client_config(options, &profile), uid, slot_cache,
+                    ifaces_template.clone(), ifaces_mut_template.clone(),
+                ),
+                PlayConnection::Bound { template, .. } => match template.prepare_client(uid, profile.settings.lowmem) {
+                    Ok(client) => client,
+                    Err(error) => {
+                        if let Some(row) = slot_statuses.lock().unwrap().iter_mut().find(|s| s.username == username) {
+                            row.error = Some(error);
+                        }
+                        return;
+                    }
+                },
+            };
             #[cfg(test)]
             {
                 // Unit tests spawn slots with no web server on :80; shrink
@@ -3677,6 +3898,12 @@ fn spawn_slot_thread(
             // the Client, and no `Renderer` is constructed for a headless
             // slot.
             client.maininit();
+            if client.error_loading && connection.profile().is_some() {
+                if let Some(row) = slot_statuses.lock().unwrap().iter_mut().find(|s| s.username == username) {
+                    row.error = Some(format!("profile asset initialization failed: {}", client.last_progress_message));
+                }
+                return;
+            }
             if client.error_loading && debug_enabled() {
                 eprintln!("[host-play] slot {username}: maininit failed");
             }
@@ -3965,6 +4192,41 @@ pub fn open_vault(path: &Path, passphrase: &str) -> Result<Vault, VaultError> {
 /// (the client's `load_cache` is private; this mirrors it with the same
 /// public `Cache::unpack` / `IfType::unpack` entry points).
 type IfaceTables = (Cache, Vec<Option<Box<IfType>>>, Vec<Option<Arc<IfTypeMut>>>);
+fn load_template_checked(cache_dir: &Path) -> Result<IfaceTables, String> {
+    let config =
+        std::fs::read(cache_dir.join("config")).map_err(|e| format!("config archive: {e}"))?;
+    let interface = std::fs::read(cache_dir.join("interface"))
+        .map_err(|e| format!("interface archive: {e}"))?;
+    std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let cache = Cache::unpack(&JagFile::new(config));
+        let (ifaces, mutable) = IfType::unpack(&JagFile::new(interface));
+        if cache.objs.is_empty()
+            || cache.npcs.is_empty()
+            || cache.locs.is_empty()
+            || !ifaces.iter().any(Option::is_some)
+        {
+            return Err(format!(
+                "missing required config/interface tables at {}",
+                cache_dir.display()
+            ));
+        }
+        Ok((
+            cache,
+            ifaces,
+            mutable
+                .into_iter()
+                .map(|v| v.map(|b| Arc::new(*b)))
+                .collect(),
+        ))
+    }))
+    .map_err(|_| {
+        format!(
+            "invalid config/interface archives at {}",
+            cache_dir.display()
+        )
+    })?
+}
+
 fn load_template(cache_dir: &str) -> IfaceTables {
     let cache = match std::fs::read(format!("{cache_dir}/config")) {
         Ok(bytes) => {

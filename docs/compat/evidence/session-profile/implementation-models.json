@@ -1,0 +1,24 @@
+[
+  {
+    "task_id": "t_1b93f768",
+    "profile": "sol",
+    "actual_session": {
+      "id": "20260910_110737_d2653a",
+      "model": "gpt-5.6-sol",
+      "billing_provider": "openai-codex",
+      "started_at": 1789052860.2791731,
+      "ended_at": null
+    }
+  },
+  {
+    "task_id": "t_879d9607",
+    "profile": "sol",
+    "actual_session": {
+      "id": "20260910_111939_4f88e7",
+      "model": "gpt-5.6-sol",
+      "billing_provider": "openai-codex",
+      "started_at": 1789053581.189225,
+      "ended_at": null
+    }
+  }
+]
