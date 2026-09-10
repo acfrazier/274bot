@@ -1,0 +1,199 @@
+{
+  "commit": "bb267d1c29a6219c9722fbc941fba143dc815c63",
+  "platform": "darwin",
+  "python": "3.9.6 (default, Jan  9 2026, 11:03:41) \n[Clang 17.0.0 (clang-1700.6.4.2)]",
+  "repo": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f",
+  "branch": "codex/memory-diagnostics",
+  "head": "8894e786c80cf158f6f7270581b96c1c0527ef3a",
+  "findings": [
+    {
+      "id": "missing_cache_dir_unpack_root",
+      "confirmed": true,
+      "when": "validate_spec of frozen lifecycle spec",
+      "error": "CellError: direct owner cache and unpack roots are required"
+    },
+    {
+      "id": "fixtures_keyerror_without_cache_tree",
+      "confirmed": true,
+      "when": "_direct_preflight_fixtures(spec) before cache roots exist",
+      "error": "KeyError: 'cache_dir'"
+    },
+    {
+      "id": "helper_start_identity_synthetic",
+      "confirmed": true,
+      "when": "fixtures['sample'] for ambient helper",
+      "generated": "ambient-start",
+      "live": "macos_lstart:Wed Sep 9 20:09:47 2026",
+      "note": "9344d75 used sr.sample_process for both server and helper."
+    },
+    {
+      "id": "release_json_expiry_not_current",
+      "confirmed": true,
+      "when": "generated private-root-release.json contents",
+      "file_expires_unix_s": 300.0,
+      "now_unix_s": 1788998987.7868428,
+      "note": "pre-Popen uses mocked direct_preflight.release_expires_unix_s, not this field."
+    }
+  ],
+  "probes": {
+    "extracted_missing": [],
+    "linux_skip_decorator": {
+      "skipUnless_linux": true,
+      "reason_on_this_platform": "direct lifecycle qualification is Linux-only"
+    },
+    "validate_spec_frozen": {
+      "ok": false,
+      "error": {
+        "type": "CellError",
+        "message": "direct owner cache and unpack roots are required",
+        "traceback": "Traceback (most recent call last):\n  File \"/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-managed-extension/lifecycle-escalation/probe_frozen_bb267d1.py\", line 190, in main\n    rmc.validate_spec(spec)\n  File \"/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/lifecycle-escalation-bb267d1-3g9_6e9c/docs/memory/run_managed_cell.py\", line 182, in validate_spec\n    _validate_direct_contract(out, contract)\n  File \"/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/lifecycle-escalation-bb267d1-3g9_6e9c/docs/memory/run_managed_cell.py\", line 252, in _validate_direct_contract\n    raise CellError('direct owner cache and unpack roots are required')\nrun_managed_cell.CellError: direct owner cache and unpack roots are required\n"
+      }
+    },
+    "fixtures_frozen": {
+      "ok": false,
+      "error": {
+        "type": "KeyError",
+        "message": "'cache_dir'",
+        "traceback": "Traceback (most recent call last):\n  File \"/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-managed-extension/lifecycle-escalation/probe_frozen_bb267d1.py\", line 204, in main\n    case._direct_preflight_fixtures(spec)\n  File \"/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/lifecycle-escalation-bb267d1-3g9_6e9c/docs/memory/test_run_managed_cell.py\", line 394, in _direct_preflight_fixtures\n    cache = cp.capture(spec['cache_dir'], spec['unpack_root'])\nKeyError: 'cache_dir'\n"
+      }
+    },
+    "live_identities": {
+      "server": "macos_lstart:Wed Sep 9 20:09:47 2026",
+      "helper": "macos_lstart:Wed Sep 9 20:09:47 2026",
+      "sidecar": "macos_lstart:Wed Sep 9 20:09:47 2026"
+    },
+    "validate_spec_with_cache_roots": {
+      "ok": true
+    },
+    "fixtures_with_cache_roots": {
+      "ok": true
+    },
+    "generated_samples": {
+      "server": {
+        "pid": 34013,
+        "start_identity": "macos_lstart:Wed Sep 9 20:09:47 2026",
+        "resident_bytes": 1,
+        "state": "S"
+      },
+      "helper": {
+        "pid": 34012,
+        "start_identity": "ambient-start",
+        "resident_bytes": 1,
+        "state": "S"
+      },
+      "server_matches_live": true,
+      "helper_matches_live": false,
+      "server_matches_sidecar": true
+    },
+    "expiry": {
+      "file_expires_unix_s": 300.0,
+      "file_issued_unix_s": 120.0,
+      "observation_window": {
+        "not_after_unix_s": 110.0,
+        "not_before_unix_s": 100.0
+      },
+      "now_unix_s": 1788998987.7868428,
+      "fake_pf_expiry_would_be": 1788999047.7868428,
+      "file_expiry_in_past": true
+    },
+    "six_files": {
+      "keys": [
+        "receipt_account",
+        "receipt_cache",
+        "receipt_conflict",
+        "receipt_population",
+        "receipt_server_health",
+        "release_contract"
+      ],
+      "exact_set": true,
+      "files": [
+        {
+          "label": "release_contract",
+          "exists": true,
+          "size": 3600,
+          "sha256": "5cff2e422eaf9fa42562d77dc006044449147e9a747c874044c6af758a330be6",
+          "regular_file": true
+        },
+        {
+          "label": "receipt_conflict",
+          "exists": true,
+          "size": 1468,
+          "sha256": "bf1dcc490096703db68b8c556588e3d78ef0ba14af18579972cfa1f2b46d1a41",
+          "regular_file": true
+        },
+        {
+          "label": "receipt_account",
+          "exists": true,
+          "size": 1514,
+          "sha256": "cfe2fda43bedcf673be5dfe6fe23a53b754bb67901d6981c8d03c08355d67bb5",
+          "regular_file": true
+        },
+        {
+          "label": "receipt_population",
+          "exists": true,
+          "size": 1536,
+          "sha256": "5155ec239c5ae66a72648e6357b5136643456738ab77ddd96602b20a570a1f3e",
+          "regular_file": true
+        },
+        {
+          "label": "receipt_cache",
+          "exists": true,
+          "size": 1604,
+          "sha256": "1ebdc93e3d557db061613179b6f23834844040806d0e044112ae005019dead68",
+          "regular_file": true
+        },
+        {
+          "label": "receipt_server_health",
+          "exists": true,
+          "size": 1563,
+          "sha256": "37c09dd4e6c0bf5a6b2ed08511b955c8c7a2d3ea580a4bfaeeeab9ea669201bd",
+          "regular_file": true
+        }
+      ]
+    },
+    "pre_popen_hash_recheck": {
+      "ok": true
+    },
+    "create_launch_bindings": {
+      "ok": true,
+      "keys": [
+        "receipt_account",
+        "receipt_cache",
+        "receipt_conflict",
+        "receipt_population",
+        "receipt_server_health",
+        "release_contract"
+      ]
+    },
+    "manifest_cache_context": {
+      "cache_content_identity_sha256": "8d0e32e5c7bc77664c7bc4d430b52efc8a222b57be44055d650a2c88386a156d",
+      "cache_snapshot_version": "f6abf579a56025a1",
+      "server_start_identity": "macos_lstart:Wed Sep 9 20:09:47 2026",
+      "server_executable_basename": "python3",
+      "source_lineage_in_spec": {
+        "fixture": true
+      },
+      "manifest_has_source_lineage": false,
+      "cache_snapshot_schema": 1,
+      "cache_file_count": 20
+    },
+    "server_executable_basename": {
+      "generated": "python3",
+      "sys_executable_name": "python3"
+    },
+    "diagnostic_argv": {
+      "ok": true,
+      "frontend": "tui",
+      "n": 1,
+      "workload": "active",
+      "direct_owner_capture": true
+    }
+  },
+  "coverage_limits": [
+    "macOS cannot execute the Linux-only dummy /proc launcher, Linux process identity format, or collector lifecycle.",
+    "preflight remains mocked in this test; production admission temporal/lineage checks are not executed by it.",
+    "complete() remains mocked; receipt hashing is not lifecycle evidence."
+  ],
+  "stage": "/var/folders/hr/3wvmv8g57073j_51vlbmc8sh0000gn/T/lifecycle-escalation-bb267d1-3g9_6e9c",
+  "stage_removed": true
+}
