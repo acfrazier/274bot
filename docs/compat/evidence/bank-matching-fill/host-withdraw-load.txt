@@ -1,0 +1,9 @@
+   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/t_41b2f50e-06077fe9/crates/host-play)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.13s
+     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/debug/deps/host_play-53fbf083d960886f)
+
+running 2 tests
+test tests::withdraw_load_selects_exact_then_all_then_x ... ok
+test tests::withdraw_load_composes_all_send_and_observed_fill_result ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 120 filtered out; finished in 0.07s
