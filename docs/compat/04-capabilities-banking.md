@@ -4,7 +4,9 @@ Current status (2026-09-10 20:53 UTC): source correction in progress. Candidate
 host `8a60eef77e9c4e74c3ee81332e495fb9331c046a` / client
 `56d80272bcbda3eb1e22db096c1c5e21d3497de4` is not yet accepted. Same-card
 Grok 4.5 review requested changes, and root found additional concrete outcome
-and supported-option gaps. No banking live acceptance is claimed.
+and supported-option gaps. The direct fixed-transfer bank-return cells subsequently passed on both
+revisions (03-world-capabilities.md); named access and Withdraw-X live
+qualification are not claimed.
 
 ## Implemented candidate
 

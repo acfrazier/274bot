@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-10 20:54 UTC. The full implementation plan remains authorized:
+Updated 2026-09-10 21:12 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -15,7 +15,7 @@ results and failed cells; this state identifies current work.
    Loader evidence is not live gameplay acceptance.
 2. Bothost client reconciliation and independent whole-client Grok 4.6 review
    completed. The later accepted publication/session seam is client commit
-   `6cb5a0b17aeef74da6b57b205e916681daee4f76`. Banking client edits are still WIP.
+   `6cb5a0b17aeef74da6b57b205e916681daee4f76`. Banking client facts are committed at 56d8027; host corrections remain active.
    Client provenance and preservation results live in its integration report.
 3. Immutable server/revision/resource binding reaches actual shared templates
    and both frontends. Local 274/289 remain distinct. Public configuration uses
@@ -48,9 +48,12 @@ Root reverified all 486 exported source files after build. Both nav_full cells
 passed actual cross-square arrival at (3220,3264,0), with engine-speed override
 cleared. Both final door and lamp Guardian cells passed at frozen 43a57c36/client
 6cb5a0b1 after diagnosed fixture corrections. All six scoped world cells are
-recorded in 03-world-capabilities.md. Bank return remains pending banking
-completion; step 5 as a whole is not yet accepted. No ordinary
-289 operation-gate removal has happened.
+recorded in 03-world-capabilities.md. Both fixed-transfer bank-return cells
+also passed at frozen 469a50ba/client 56d8027, using the independently reviewed
+freshness path while named access/Withdraw-X corrections continue. All eight
+scoped world cells now pass. Root has prepared ordinary 289 operation-gate
+removal in profile.rs and the existing spawn test; focused validation and
+combined integration review precede real catalog runs.
 
 ## Active and queued implementation
 
@@ -112,3 +115,13 @@ Full 377, mixed fleets, tutorial/audio parity and the named quest/clue/gatherer/
 MarketMaker rewrites remain deferred. Do not shrink the enabled ledger or add
 script revision allowlists to make acceptance pass. Do not restart the completed
 memory optimization campaign or turn elapsed diagnostic time into savings claims.
+
+
+## Newly prepared follow-on capabilities
+
+After matching/fill and loadout source review, the serialized shared-file queue
+continues with spell facts/targeted inventory cast (`t_63138b8b`, brief 27),
+PeriodicBank (`t_51452e47`, brief 28), then DeathRecovery (`t_0c5ce97f`, brief 29).
+They use Sol defaults and same-card Grok 4.5 review. These are scoped tasks,
+not source or live acceptance. Autocast/special/teleport, hostile facts, shop,
+make menus and fire remain subsequent capability work from the existing design.
