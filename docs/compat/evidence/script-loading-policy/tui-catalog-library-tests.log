@@ -1,0 +1,13 @@
+   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/host-play)
+   Compiling tui v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/tui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.75s
+     Running unittests src/lib.rs (target/debug/deps/tui-8da0527782d7720b)
+
+running 4 tests
+test script_shape::tests::deferred_browse_shows_import_catalog ... ok
+test bin::tests::first_browse_without_rs2b0t_opens_catalog_prompt ... ok
+test bin::tests::defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards ... ok
+test bin::tests::import_rs2b0t_catalog_persists_path_and_registers_cards ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 85 filtered out; finished in 0.04s
+

@@ -359,7 +359,7 @@ fn both_revisions_reach_real_shared_client_constructor_and_keep_the_binding() {
 }
 
 #[test]
-fn revision_289_refuses_slots_and_scripts_before_arms_or_queue_mutation() {
+fn revision_289_slot_qualification_gate_does_not_gate_script_loading() {
     let _clients = CLIENTS.lock().unwrap();
     let fixture = Fixture::new();
     let profile = fixture
@@ -393,8 +393,20 @@ fn revision_289_refuses_slots_and_scripts_before_arms_or_queue_mutation() {
     assert_eq!(
         play.script_start("fixture", script::CompiledId("walk-to"))
             .unwrap_err(),
-        HOST_BOUNDARY_NOT_QUALIFIED
+        "no slot: fixture"
     );
+    // The loader/start handle accepts the user's script under revision 289.
+    // Runtime actions remain subject to the actual host/client capabilities.
+    play.script_start_handle()
+        .start_load(
+            "fixture",
+            "export function tick(api) {}".into(),
+            script::LoadShape::NativeTick,
+            None,
+            vec![],
+        )
+        .unwrap();
+    play.script_stop("fixture");
     assert!(host_play::run_with_template(
         template,
         false,
@@ -430,7 +442,7 @@ fn bound_public_client_refuses_fixture_cheats_after_mutable_config_changes() {
 }
 
 #[test]
-fn catalog_identity_and_cache_revision_are_frozen_at_bind() {
+fn catalog_is_a_default_path_while_cache_identity_remains_revision_bound() {
     let fixture = Fixture::new();
     let root = fixture.0.join("catalog");
     std::fs::create_dir_all(root.join("src/bot")).unwrap();
@@ -442,17 +454,20 @@ fn catalog_identity_and_cache_revision_are_frozen_at_bind() {
         .unwrap()
         .bind()
         .unwrap();
-    profile.validate_catalog().unwrap();
-    assert_eq!(profile.catalog().unwrap().root, root);
+    assert_eq!(profile.catalog_root(), Some(root.as_path()));
     std::fs::write(
         root.join("src/bot/Fixture.js"),
         "export default { changed: true };",
     )
     .unwrap();
-    assert!(profile
-        .validate_catalog()
-        .unwrap_err()
-        .contains("catalog changed"));
+    profile.validate_resources().unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+    // Binding a server neither reads nor qualifies the user's script tree.
+    options
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind()
+        .unwrap();
     let first = CacheManifest::capture(274, &fixture.0).unwrap();
     let second = CacheManifest::capture(289, &fixture.0).unwrap();
     assert_ne!(first.identity(), second.identity());

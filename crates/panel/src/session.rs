@@ -27,7 +27,7 @@ use client::render::nav_debug::{
 use client::sound::output::AudioOut;
 use host::{map_image_to_applet, FrameBuf, InputEv, SlotInput};
 use host_play::audio::{AudioChange, AudioGate};
-use host_play::profile::{CatalogIdentity, ProfileEnvironment};
+use host_play::profile::ProfileEnvironment;
 use host_play::{
     open_vault, run_with_io, run_with_template, Play, PlayOptions, ProfileOptions, ScriptNavPaint,
     ServerProfile, SharedClientTemplate, SlotArm, SlotStatus, WalkArm,
@@ -789,8 +789,6 @@ pub struct Session {
     profile_options: Option<ProfileOptions>,
     /// Ambient profile inputs captured once when production CLI options arrive.
     profile_environment: Option<ProfileEnvironment>,
-    /// Full catalog identity captured with the currently registered cards.
-    catalog_loaded: Option<CatalogIdentity>,
     /// Multibox wall membership (chooser / latch / bulk ops). The UI reads
     /// it for the chooser and rail; [`Session`] methods drive it.
     pub wall: Wall,
@@ -1023,7 +1021,6 @@ impl Session {
             template: None,
             profile_options: None,
             profile_environment: None,
-            catalog_loaded: None,
         }
     }
 
@@ -1073,11 +1070,6 @@ impl Session {
             .ok_or_else(|| "no production server profile was configured".to_string())?;
         let selection = options.resolve_with_env(Some(self.ui.server_revision), env)?;
         let profile = selection.bind()?;
-        if self.catalog_loaded.is_some() && self.catalog_loaded.as_ref() != profile.catalog() {
-            return Err(
-                "catalog source changed after cards were loaded; restart before binding".into(),
-            );
-        }
         let template = SharedClientTemplate::load(Arc::clone(&profile))?;
         crate::picker::set_navflags_path(profile.nav_flags().to_path_buf());
         self.options = PlayOptions {
@@ -1112,21 +1104,7 @@ impl Session {
         if !matches!(revision, 274 | 289) {
             return Err(format!("unsupported revision {revision}; use 274 or 289"));
         }
-        let previous = self.ui.server_revision;
         self.ui.server_revision = revision;
-        if let Some(loaded) = &self.catalog_loaded {
-            let selected = self
-                .catalog_root()?
-                .as_deref()
-                .map(CatalogIdentity::capture)
-                .transpose()?;
-            if selected.as_ref() != Some(loaded) {
-                self.ui.server_revision = previous;
-                return Err(
-                    "revision would change the loaded catalog; restart before changing it".into(),
-                );
-            }
-        }
         crate::ui_state::save(&self.ui);
         Ok(())
     }
@@ -1182,7 +1160,7 @@ impl Session {
 
     fn catalog_root(&self) -> Result<Option<PathBuf>, String> {
         match self.server_profile.as_ref() {
-            Some(profile) => Ok(profile.catalog().map(|catalog| catalog.root.clone())),
+            Some(profile) => Ok(profile.catalog_root().map(Path::to_path_buf)),
             None if self.profile_options.is_some() => self
                 .resolve_profile()
                 .map(|selection| selection.catalog_root().map(Path::to_path_buf)),
@@ -1217,11 +1195,6 @@ impl Session {
             if host::debug_enabled() {
                 eprintln!("[panel] $RS2B0T registry: {e}");
             }
-        } else {
-            match CatalogIdentity::capture(&root) {
-                Ok(identity) => self.catalog_loaded = Some(identity),
-                Err(error) => self.error = Some(error),
-            }
         }
     }
 
@@ -1252,11 +1225,6 @@ impl Session {
                 if host::debug_enabled() {
                     eprintln!("[panel] $RS2B0T registry: {e}");
                 }
-            } else {
-                match CatalogIdentity::capture(&root) {
-                    Ok(identity) => self.catalog_loaded = Some(identity),
-                    Err(error) => self.error = Some(error),
-                }
             }
             return;
         }
@@ -1279,29 +1247,6 @@ impl Session {
     /// Import catalog cards from a clone root that contains
     /// `src/bot/scripts/index.ts`. Persists `rs2b0t-path` and clears defer.
     pub fn import_rs2b0t_catalog(&mut self, root: &Path) -> Result<usize, String> {
-        if self.server_profile.is_some() {
-            return Err(
-                "catalog selection changed after server profile binding; restart with --catalog"
-                    .into(),
-            );
-        }
-        if self.profile_options.is_some() {
-            match self.catalog_root()? {
-                Some(selected) if selected != root => {
-                    return Err(format!(
-                        "selected catalog is {}; restart with --catalog {} to change it",
-                        selected.display(),
-                        root.display()
-                    ));
-                }
-                Some(_) => {}
-                None => {
-                    if let Some(options) = self.profile_options.as_mut() {
-                        options.catalog_root = Some(root.to_path_buf());
-                    }
-                }
-            }
-        }
         if !crate::script_picker::rs2b0t_root_has_index(root) {
             return Err(format!(
                 "no catalog at {}",
@@ -1309,7 +1254,6 @@ impl Session {
             ));
         }
         let n = self.js.register_rs2b0t(root, &self.rs2b0t_path_file())?;
-        self.catalog_loaded = Some(CatalogIdentity::capture(root)?);
         let _ = script::clear_rs2b0t_import_at(&self.rs2b0t_import_file());
         self.ui.script_catalog_last_dir = Some(root.to_path_buf());
         if self.persist_ui {
@@ -3835,7 +3779,7 @@ mod tests {
     }
 
     #[test]
-    fn prebind_explicit_catalog_beats_ambient_and_mismatch_preserves_custom_cards() {
+    fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
         let iso = IsolatedEnv::enter("prebind-catalog");
         let explicit = write_looping_catalog(&iso.dir.join("explicit"), &[("Chosen", "Chosen")]);
         let ambient = write_looping_catalog(&iso.dir.join("ambient"), &[("Ambient", "Ambient")]);
@@ -3868,20 +3812,19 @@ mod tests {
         )
         .unwrap();
         session.js.load(&custom).unwrap();
-        let error = session.import_rs2b0t_catalog(&ambient).unwrap_err();
-        assert!(error.contains("selected catalog"));
+        session.import_rs2b0t_catalog(&ambient).unwrap();
         assert!(session
             .js
             .get(script::ScriptSource::File, "custom")
             .is_some());
         assert!(session
             .js
-            .get(script::ScriptSource::Catalog, "Chosen")
+            .get(script::ScriptSource::Catalog, "Ambient")
             .is_some());
     }
 
     #[test]
-    fn bind_refuses_catalog_source_edited_after_locked_browse_and_warmup() {
+    fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
         let (root, cache, manifest) = checked_profile_fixture(274);
         let catalog = write_looping_catalog(&root.join("catalog"), &[("Chosen", "Chosen")]);
         let source = catalog.join("src/bot/scripts/Chosen/Chosen.ts");
@@ -3889,7 +3832,7 @@ mod tests {
         session.persist_ui = false;
         session
             .configure_profile(ProfileOptions {
-                profile: Some("local-274".into()),
+                revision: None,
                 cache_dir: Some(cache),
                 cache_manifest: Some(manifest),
                 catalog_root: Some(catalog),
@@ -3913,8 +3856,19 @@ mod tests {
             rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
             ..ProfileEnvironment::default()
         };
-        let error = session.bind_profile_with_env(&env).unwrap_err();
-        assert!(error.contains("catalog source changed"));
+        session.set_server_revision(289).unwrap();
+        assert!(session
+            .js
+            .get(script::ScriptSource::Catalog, "Chosen")
+            .is_some());
+        session.set_server_revision(274).unwrap();
+        session.bind_profile_with_env(&env).unwrap();
+        let another = write_looping_catalog(&root.join("another"), &[("Another", "Another")]);
+        session.import_rs2b0t_catalog(&another).unwrap();
+        assert!(session
+            .js
+            .get(script::ScriptSource::Catalog, "Another")
+            .is_some());
         std::fs::remove_dir_all(root).unwrap();
     }
 

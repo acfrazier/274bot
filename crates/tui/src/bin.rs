@@ -420,7 +420,7 @@ impl TuiSession {
 
     fn catalog_root(&self) -> Option<PathBuf> {
         match self.server_profile.as_ref() {
-            Some(profile) => profile.catalog().map(|catalog| catalog.root.clone()),
+            Some(profile) => profile.catalog_root().map(Path::to_path_buf),
             None => script::rs2b0t_root(),
         }
     }
@@ -830,12 +830,6 @@ impl TuiSession {
     }
 
     fn import_rs2b0t_catalog(&mut self, app: &mut TuiApp, root: &Path) -> Result<usize, String> {
-        if self.server_profile.is_some() {
-            return Err(
-                "catalog selection changed after server profile binding; restart with --catalog"
-                    .into(),
-            );
-        }
         if !rs2b0t_root_has_index(root) {
             return Err(format!(
                 "no catalog at {}",

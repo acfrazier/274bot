@@ -1,0 +1,33 @@
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/vendor/fr-client-rust/crates/client)
+   Compiling panel v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/panel)
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/api)
+   Compiling nav v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/nav)
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/script)
+   Compiling host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/host)
+   Compiling scenario v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/scenario)
+   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/host-play)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.33s
+     Running unittests src/lib.rs (target/debug/deps/panel-4474d42cc0cf38eb)
+
+running 9 tests
+test script_picker::tests::needs_catalog_prompt_when_no_root_and_not_deferred ... ok
+test script_picker::tests::kind_badge_is_js_for_catalog_cards ... ok
+test script_picker::tests::rs2b0t_root_has_index_checks_catalog_file ... ok
+test ui_state::tests::script_catalog_last_dir_persist_roundtrip ... ok
+test session::tests::defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards ... ok
+test session::tests::import_rs2b0t_catalog_persists_path_and_registers_cards ... ok
+test session::tests::on_script_browse_open_with_rs2b0t_env_still_fills_catalog ... ok
+test session::tests::explicit_catalog_default_allows_manual_import_and_preserves_custom_cards ... ok
+test session::tests::live_prepare_script_sets_script_sel_for_catalog_start_script ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 372 filtered out; finished in 1.94s
+
+   Compiling panel v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/panel)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.16s
+     Running unittests src/lib.rs (target/debug/deps/panel-4474d42cc0cf38eb)
+
+running 1 test
+test session::tests::revision_and_binding_allow_already_loaded_scripts_and_source_edits ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 380 filtered out; finished in 0.04s
+
