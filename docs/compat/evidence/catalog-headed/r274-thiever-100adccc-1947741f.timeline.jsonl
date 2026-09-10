@@ -1,0 +1,225 @@
+{"elapsed_seconds": 38.503269, "line": "[host-play] slot livemidwzz_0: thread up"}
+{"elapsed_seconds": 38.541584, "line": "274bot: loaded snapshot (4556 models, 336 anim records)"}
+{"elapsed_seconds": 38.688013, "line": "[panel] livemidwzz_0: livemidwzz_0: slot up"}
+{"elapsed_seconds": 38.753571, "line": "[host-play] slot livemidwzz_0: handshake begin reconnect=false"}
+{"elapsed_seconds": 38.789145, "line": "[host-play] slot livemidwzz_0: handshake ok"}
+{"elapsed_seconds": 38.853111, "line": "[host] hitch livemidwzz_0: frame_us=63491 paints=1 skips=0 ticks=0"}
+{"elapsed_seconds": 38.855726, "line": "[panel] livemidwzz_0: livemidwzz_0: scene 1"}
+{"elapsed_seconds": 39.454992, "line": "[host] hitch livemidwzz_0: frame_us=57798 paints=25 skips=0 ticks=1"}
+{"elapsed_seconds": 39.456131, "line": "[panel] livemidwzz_0: livemidwzz_0: mainland hop queued"}
+{"elapsed_seconds": 39.457813, "line": "[panel] livemidwzz_0: livemidwzz_0: ingame"}
+{"elapsed_seconds": 39.457848, "line": "[panel] livemidwzz_0: livemidwzz_0: scene 2"}
+{"elapsed_seconds": 39.457872, "line": "live script_thiever: running step 1/6"}
+{"elapsed_seconds": 40.003364, "line": "[host] slot livemidwzz_0: d_loop_us=7414 d_raster_us=235464 d_observe_us=36444 max_observe_us=1900 d_paints=50 d_skips=0 d_ticks=3 window_ms=0"}
+{"elapsed_seconds": 40.037015, "line": "[panel] livemidwzz_0: livemidwzz_0: scene 1"}
+{"elapsed_seconds": 40.141169, "line": "[panel] livemidwzz_0: livemidwzz_0: ingame"}
+{"elapsed_seconds": 40.141239, "line": "[panel] livemidwzz_0: livemidwzz_0: scene 2"}
+{"elapsed_seconds": 41.153215, "line": "[host] slot livemidwzz_0: d_loop_us=9305 d_raster_us=133336 d_observe_us=45633 max_observe_us=3021 d_paints=50 d_skips=0 d_ticks=1 window_ms=1149"}
+{"elapsed_seconds": 42.162007, "line": "live script_thiever: running step 2/6"}
+{"elapsed_seconds": 42.317898, "line": "[host] slot livemidwzz_0: d_loop_us=1065 d_raster_us=130696 d_observe_us=24916 max_observe_us=807 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164"}
+{"elapsed_seconds": 42.436547, "line": "[host-play] slot livemidwzz_0: handshake begin reconnect=true"}
+{"elapsed_seconds": 42.453708, "line": "[panel] livemidwzz_0: livemidwzz_0: scene 0"}
+{"elapsed_seconds": 42.987625, "line": "[host-play] slot livemidwzz_0: handshake ok"}
+{"elapsed_seconds": 43.03704, "line": "[panel] livemidwzz_0: livemidwzz_0: scene 1"}
+{"elapsed_seconds": 43.891257, "line": "[panel] livemidwzz_0: livemidwzz_0: ingame"}
+{"elapsed_seconds": 43.891328, "line": "[panel] livemidwzz_0: livemidwzz_0: scene 2"}
+{"elapsed_seconds": 44.172076, "line": "[host] slot livemidwzz_0: d_loop_us=14511 d_raster_us=163144 d_observe_us=71441 max_observe_us=4540 d_paints=50 d_skips=0 d_ticks=1 window_ms=0"}
+{"elapsed_seconds": 45.328341, "line": "[host] slot livemidwzz_0: d_loop_us=1059 d_raster_us=144500 d_observe_us=30847 max_observe_us=3130 d_paints=50 d_skips=0 d_ticks=3 window_ms=1156"}
+{"elapsed_seconds": 45.911993, "line": "live script_thiever: running step 3/6"}
+{"elapsed_seconds": 46.057878, "line": "[panel] livemidwzz_0: livemidwzz_0: scene 1"}
+{"elapsed_seconds": 46.203751, "line": "[panel] livemidwzz_0: livemidwzz_0: ingame"}
+{"elapsed_seconds": 46.203839, "line": "[panel] livemidwzz_0: livemidwzz_0: scene 2"}
+{"elapsed_seconds": 46.487369, "line": "[host] slot livemidwzz_0: d_loop_us=11908 d_raster_us=182333 d_observe_us=80973 max_observe_us=8218 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 47.630579, "line": "[host] slot livemidwzz_0: d_loop_us=905 d_raster_us=231225 d_observe_us=23913 max_observe_us=2142 d_paints=50 d_skips=0 d_ticks=2 window_ms=1143"}
+{"elapsed_seconds": 48.203667, "line": "live script_thiever: running step 4/6"}
+{"elapsed_seconds": 48.772311, "line": "[host] slot livemidwzz_0: d_loop_us=896 d_raster_us=231914 d_observe_us=28147 max_observe_us=2929 d_paints=50 d_skips=0 d_ticks=2 window_ms=1141"}
+{"elapsed_seconds": 49.641173, "line": "live script_thiever: running step 5/6"}
+{"elapsed_seconds": 49.655636, "line": "[script livemidwzz_0] start load"}
+{"elapsed_seconds": 49.695887, "line": "live script_thiever: running step 6/6"}
+{"elapsed_seconds": 49.695968, "line": "[host] hitch livemidwzz_0: observe_us=40744 paints=288 skips=0 ticks=12"}
+{"elapsed_seconds": 49.937251, "line": "[host] slot livemidwzz_0: d_loop_us=1014 d_raster_us=224575 d_observe_us=73111 max_observe_us=40744 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164"}
+{"elapsed_seconds": 50.860211, "line": "[script livemidwzz_0] thieving 'Guard' (Pickpocket) within 19 of (2661, 3306, 0), banking off"}
+{"elapsed_seconds": 50.860291, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3554) }"}
+{"elapsed_seconds": 50.861993, "line": "[panel] livemidwzz_0: script: thieving 'Guard' (Pickpocket) within 19 of (2661, 3306, 0), banking off"}
+{"elapsed_seconds": 51.09666, "line": "[host] slot livemidwzz_0: d_loop_us=1002 d_raster_us=197305 d_observe_us=45811 max_observe_us=15134 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 52.250789, "line": "[host] slot livemidwzz_0: d_loop_us=1205 d_raster_us=192139 d_observe_us=41512 max_observe_us=6415 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 53.395081, "line": "[host] slot livemidwzz_0: d_loop_us=1120 d_raster_us=194117 d_observe_us=41424 max_observe_us=6511 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144"}
+{"elapsed_seconds": 54.551129, "line": "[host] slot livemidwzz_0: d_loop_us=984 d_raster_us=223211 d_observe_us=34643 max_observe_us=4172 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 55.713903, "line": "[host] slot livemidwzz_0: d_loop_us=1003 d_raster_us=212270 d_observe_us=37963 max_observe_us=6001 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162"}
+{"elapsed_seconds": 56.866149, "line": "[host] slot livemidwzz_0: d_loop_us=1080 d_raster_us=202013 d_observe_us=36961 max_observe_us=4257 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 58.031087, "line": "[host] slot livemidwzz_0: d_loop_us=1184 d_raster_us=202749 d_observe_us=35946 max_observe_us=4191 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164"}
+{"elapsed_seconds": 59.177243, "line": "[host] slot livemidwzz_0: d_loop_us=1062 d_raster_us=198678 d_observe_us=33667 max_observe_us=4031 d_paints=50 d_skips=0 d_ticks=1 window_ms=1146"}
+{"elapsed_seconds": 60.336997, "line": "[host] slot livemidwzz_0: d_loop_us=1225 d_raster_us=196680 d_observe_us=39378 max_observe_us=4155 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 61.063292, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3555) }"}
+{"elapsed_seconds": 61.482233, "line": "[host] slot livemidwzz_0: d_loop_us=1127 d_raster_us=203266 d_observe_us=40544 max_observe_us=4231 d_paints=50 d_skips=0 d_ticks=2 window_ms=1145"}
+{"elapsed_seconds": 62.643702, "line": "[host] slot livemidwzz_0: d_loop_us=916 d_raster_us=200086 d_observe_us=34289 max_observe_us=4231 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161"}
+{"elapsed_seconds": 63.794289, "line": "[host] slot livemidwzz_0: d_loop_us=952 d_raster_us=219257 d_observe_us=35609 max_observe_us=4252 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150"}
+{"elapsed_seconds": 64.659373, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3555) }"}
+{"elapsed_seconds": 64.935046, "line": "[host] slot livemidwzz_0: d_loop_us=1160 d_raster_us=235770 d_observe_us=42543 max_observe_us=6761 d_paints=50 d_skips=0 d_ticks=2 window_ms=1140"}
+{"elapsed_seconds": 66.070394, "line": "[host] slot livemidwzz_0: d_loop_us=1318 d_raster_us=252852 d_observe_us=45523 max_observe_us=5643 d_paints=50 d_skips=0 d_ticks=2 window_ms=1135"}
+{"elapsed_seconds": 67.215618, "line": "[host] slot livemidwzz_0: d_loop_us=1417 d_raster_us=257846 d_observe_us=45765 max_observe_us=5751 d_paints=50 d_skips=0 d_ticks=2 window_ms=1145"}
+{"elapsed_seconds": 68.252597, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3555) }"}
+{"elapsed_seconds": 68.369695, "line": "[host] slot livemidwzz_0: d_loop_us=1503 d_raster_us=262268 d_observe_us=44396 max_observe_us=5642 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 69.506287, "line": "[host] hitch livemidwzz_0: observe_us=81201 paints=1145 skips=0 ticks=45"}
+{"elapsed_seconds": 69.583755, "line": "[host] slot livemidwzz_0: d_loop_us=1229 d_raster_us=228295 d_observe_us=116633 max_observe_us=81201 d_paints=50 d_skips=0 d_ticks=2 window_ms=1214"}
+{"elapsed_seconds": 70.064845, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3555) }"}
+{"elapsed_seconds": 70.737455, "line": "[host] slot livemidwzz_0: d_loop_us=1284 d_raster_us=238713 d_observe_us=40237 max_observe_us=5563 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153"}
+{"elapsed_seconds": 71.884249, "line": "[host] slot livemidwzz_0: d_loop_us=1405 d_raster_us=250718 d_observe_us=41370 max_observe_us=5850 d_paints=50 d_skips=0 d_ticks=2 window_ms=1146"}
+{"elapsed_seconds": 73.022802, "line": "[host] slot livemidwzz_0: d_loop_us=1302 d_raster_us=230001 d_observe_us=31967 max_observe_us=4564 d_paints=50 d_skips=0 d_ticks=2 window_ms=1138"}
+{"elapsed_seconds": 73.655755, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3555) }"}
+{"elapsed_seconds": 74.177418, "line": "[host] slot livemidwzz_0: d_loop_us=1340 d_raster_us=230751 d_observe_us=38157 max_observe_us=4350 d_paints=50 d_skips=0 d_ticks=1 window_ms=1154"}
+{"elapsed_seconds": 75.323463, "line": "[host] slot livemidwzz_0: d_loop_us=1404 d_raster_us=242695 d_observe_us=41198 max_observe_us=7274 d_paints=50 d_skips=0 d_ticks=2 window_ms=1146"}
+{"elapsed_seconds": 75.455547, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3555) }"}
+{"elapsed_seconds": 76.464544, "line": "[host] slot livemidwzz_0: d_loop_us=1328 d_raster_us=245989 d_observe_us=38971 max_observe_us=5437 d_paints=50 d_skips=0 d_ticks=2 window_ms=1141"}
+{"elapsed_seconds": 77.619289, "line": "[host] slot livemidwzz_0: d_loop_us=1459 d_raster_us=273363 d_observe_us=40584 max_observe_us=6010 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 78.752431, "line": "[host] slot livemidwzz_0: d_loop_us=1625 d_raster_us=265139 d_observe_us=41042 max_observe_us=5387 d_paints=50 d_skips=0 d_ticks=2 window_ms=1133"}
+{"elapsed_seconds": 79.503727, "line": "PASS: live script_thiever {\"scenario\":\"thiever\",\"outcome\":\"PASS\",\"predicate\":\"stat_xp_gain(17)>=1\",\"ticks\":45,\"elapsed_ms\":31004,\"tile\":[2656,3308,0],\"inv\":[{\"id\":379,\"name\":\"Lobster\",\"count\":1},{\"id\":379,\"name\":\"Lobster\",\"count\":1},{\"id\":379,\"name\":\"Lobster\",\"count\":1},{\"id\":379,\"name\":\"Lobster\",\"count\":1},{\"id\":379,\"name\":\"Lobster\",\"count\":1},{\"id\":379,\"name\":\"Lobster\",\"count\":1},{\"id\":379,\"name\":\"Lobster\",\"count\":1},{\"id\":379,\"name\":\"Lobster\",\"count\":1},{\"id\":379,\"name\":\"Lobster\",\"count\":1},{\"id\":379,\"name\":\"Lobster\",\"count\":1},{\"id\":995,\"name\":\"Coins\",\"count\":30}],\"stat\":{\"runenergy\":100},\"chat\":[{\"text\":\"You pick the guard's pocket.\"},{\"text\":\"You attempt to pick the guard's pocket.\"},{\"text\":\"You're stunned!\"},{\"text\":\"You're stunned!\"},{\"text\":\"You've been stunned!\"},{\"text\":\"You fail to pick the guard's pocket.\"},{\"text\":\"You attempt to pick the guard's pocket.\"},{\"text\":\"You've been stunned!\"},{\"text\":\"You fail to pick the guard's pocket.\"},{\"text\":\"You attempt to pick the guard's pocket.\"},{\"text\":\"Congratulations, you just advanced a hitpoints level.\"},{\"text\":\"Congratulations, you just advanced a thieving level.\"},{\"text\":\"Welcome to RuneScape.\"}],\"scene\":2}"}
+{"elapsed_seconds": 79.89514, "line": "[host] slot livemidwzz_0: d_loop_us=1570 d_raster_us=260987 d_observe_us=41100 max_observe_us=5640 d_paints=50 d_skips=0 d_ticks=2 window_ms=1142"}
+{"elapsed_seconds": 81.047397, "line": "[host] slot livemidwzz_0: d_loop_us=1566 d_raster_us=259033 d_observe_us=41004 max_observe_us=5423 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 82.19192, "line": "[host] slot livemidwzz_0: d_loop_us=1362 d_raster_us=248572 d_observe_us=41134 max_observe_us=5654 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144"}
+{"elapsed_seconds": 83.351172, "line": "[host] slot livemidwzz_0: d_loop_us=1165 d_raster_us=215547 d_observe_us=35052 max_observe_us=4138 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 84.508488, "line": "[host] slot livemidwzz_0: d_loop_us=1296 d_raster_us=229587 d_observe_us=39013 max_observe_us=5539 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 85.657751, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3555) }"}
+{"elapsed_seconds": 85.664051, "line": "[host] slot livemidwzz_0: d_loop_us=1561 d_raster_us=262113 d_observe_us=42061 max_observe_us=5890 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 86.824199, "line": "[host] slot livemidwzz_0: d_loop_us=1385 d_raster_us=270871 d_observe_us=35211 max_observe_us=5182 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160"}
+{"elapsed_seconds": 87.459195, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3554) }"}
+{"elapsed_seconds": 87.973047, "line": "[host] slot livemidwzz_0: d_loop_us=1393 d_raster_us=254078 d_observe_us=41600 max_observe_us=5690 d_paints=50 d_skips=0 d_ticks=1 window_ms=1148"}
+{"elapsed_seconds": 89.11964, "line": "[host] slot livemidwzz_0: d_loop_us=1583 d_raster_us=261127 d_observe_us=40096 max_observe_us=5754 d_paints=50 d_skips=0 d_ticks=2 window_ms=1146"}
+{"elapsed_seconds": 90.267506, "line": "[host] slot livemidwzz_0: d_loop_us=1847 d_raster_us=274873 d_observe_us=40987 max_observe_us=5450 d_paints=50 d_skips=0 d_ticks=2 window_ms=1147"}
+{"elapsed_seconds": 91.416275, "line": "[host] slot livemidwzz_0: d_loop_us=1291 d_raster_us=248143 d_observe_us=39877 max_observe_us=5605 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148"}
+{"elapsed_seconds": 92.556111, "line": "[host] slot livemidwzz_0: d_loop_us=1594 d_raster_us=256646 d_observe_us=41505 max_observe_us=5714 d_paints=50 d_skips=0 d_ticks=2 window_ms=1139"}
+{"elapsed_seconds": 93.705184, "line": "[host] slot livemidwzz_0: d_loop_us=1459 d_raster_us=249816 d_observe_us=39235 max_observe_us=5720 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 94.852946, "line": "[host] slot livemidwzz_0: d_loop_us=1655 d_raster_us=252491 d_observe_us=41880 max_observe_us=5542 d_paints=50 d_skips=0 d_ticks=2 window_ms=1147"}
+{"elapsed_seconds": 95.999453, "line": "[host] slot livemidwzz_0: d_loop_us=1491 d_raster_us=244217 d_observe_us=42907 max_observe_us=5775 d_paints=50 d_skips=0 d_ticks=2 window_ms=1146"}
+{"elapsed_seconds": 97.149276, "line": "[host] slot livemidwzz_0: d_loop_us=944 d_raster_us=189203 d_observe_us=32305 max_observe_us=4080 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 97.658987, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3554) }"}
+{"elapsed_seconds": 98.307462, "line": "[host] slot livemidwzz_0: d_loop_us=1077 d_raster_us=205242 d_observe_us=35313 max_observe_us=5457 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 99.445267, "line": "[host] slot livemidwzz_0: d_loop_us=1189 d_raster_us=262972 d_observe_us=37278 max_observe_us=5269 d_paints=50 d_skips=0 d_ticks=2 window_ms=1137"}
+{"elapsed_seconds": 100.59832, "line": "[host] slot livemidwzz_0: d_loop_us=1070 d_raster_us=220766 d_observe_us=30316 max_observe_us=4129 d_paints=50 d_skips=0 d_ticks=1 window_ms=1153"}
+{"elapsed_seconds": 101.242344, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3554) }"}
+{"elapsed_seconds": 101.478223, "line": "[panel] shot thiever paint -> /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/catalog-headed/r274-thiever-100adccc-1947741f/shots/2026-09-10T22-40-58_16167/2026-09-10T22-42-00_thiever_paint.png"}
+{"elapsed_seconds": 101.756744, "line": "[host] slot livemidwzz_0: d_loop_us=1005 d_raster_us=213138 d_observe_us=30874 max_observe_us=4071 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 102.908754, "line": "[host] slot livemidwzz_0: d_loop_us=1103 d_raster_us=194304 d_observe_us=31507 max_observe_us=4122 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 104.076384, "line": "[host] slot livemidwzz_0: d_loop_us=1057 d_raster_us=189056 d_observe_us=29908 max_observe_us=4118 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167"}
+{"elapsed_seconds": 104.860093, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3557) }"}
+{"elapsed_seconds": 105.234614, "line": "[host] slot livemidwzz_0: d_loop_us=1030 d_raster_us=185169 d_observe_us=29656 max_observe_us=4015 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 106.384222, "line": "[host] slot livemidwzz_0: d_loop_us=1033 d_raster_us=203878 d_observe_us=30464 max_observe_us=4033 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 107.255636, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3557) }"}
+{"elapsed_seconds": 107.541713, "line": "[host] slot livemidwzz_0: d_loop_us=1039 d_raster_us=192464 d_observe_us=31157 max_observe_us=5767 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 108.705179, "line": "[host] slot livemidwzz_0: d_loop_us=1078 d_raster_us=200912 d_observe_us=33609 max_observe_us=4227 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163"}
+{"elapsed_seconds": 109.857953, "line": "[host] slot livemidwzz_0: d_loop_us=1133 d_raster_us=218723 d_observe_us=34917 max_observe_us=4299 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 111.012172, "line": "[host] slot livemidwzz_0: d_loop_us=1130 d_raster_us=200157 d_observe_us=32162 max_observe_us=4259 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 112.167113, "line": "[host] slot livemidwzz_0: d_loop_us=1095 d_raster_us=190527 d_observe_us=29883 max_observe_us=4042 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 113.330507, "line": "[host] slot livemidwzz_0: d_loop_us=984 d_raster_us=191365 d_observe_us=28850 max_observe_us=4003 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163"}
+{"elapsed_seconds": 114.500353, "line": "[host] slot livemidwzz_0: d_loop_us=923 d_raster_us=184864 d_observe_us=30132 max_observe_us=3951 d_paints=50 d_skips=0 d_ticks=2 window_ms=1169"}
+{"elapsed_seconds": 115.657409, "line": "[host] slot livemidwzz_0: d_loop_us=992 d_raster_us=184043 d_observe_us=30464 max_observe_us=4075 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 116.820728, "line": "[host] slot livemidwzz_0: d_loop_us=1042 d_raster_us=186025 d_observe_us=26874 max_observe_us=4042 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163"}
+{"elapsed_seconds": 117.450176, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3556) }"}
+{"elapsed_seconds": 117.96358, "line": "[host] slot livemidwzz_0: d_loop_us=927 d_raster_us=186487 d_observe_us=29511 max_observe_us=4233 d_paints=50 d_skips=0 d_ticks=1 window_ms=1142"}
+{"elapsed_seconds": 119.115237, "line": "[host] slot livemidwzz_0: d_loop_us=1026 d_raster_us=211563 d_observe_us=30312 max_observe_us=4100 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 119.858604, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3556) }"}
+{"elapsed_seconds": 120.27351, "line": "[host] slot livemidwzz_0: d_loop_us=1044 d_raster_us=198562 d_observe_us=31637 max_observe_us=5541 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 121.435864, "line": "[host] slot livemidwzz_0: d_loop_us=941 d_raster_us=188946 d_observe_us=28452 max_observe_us=3959 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162"}
+{"elapsed_seconds": 122.588699, "line": "[host] slot livemidwzz_0: d_loop_us=955 d_raster_us=174389 d_observe_us=29760 max_observe_us=3984 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 123.443543, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3556) }"}
+{"elapsed_seconds": 123.742024, "line": "[host] slot livemidwzz_0: d_loop_us=1008 d_raster_us=178782 d_observe_us=29293 max_observe_us=4142 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153"}
+{"elapsed_seconds": 124.907704, "line": "[host] slot livemidwzz_0: d_loop_us=1032 d_raster_us=180551 d_observe_us=40580 max_observe_us=14165 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165"}
+{"elapsed_seconds": 126.067623, "line": "[host] slot livemidwzz_0: d_loop_us=1063 d_raster_us=181149 d_observe_us=32856 max_observe_us=5871 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 126.454805, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3554) }"}
+{"elapsed_seconds": 127.209584, "line": "[host] slot livemidwzz_0: d_loop_us=1024 d_raster_us=175688 d_observe_us=30170 max_observe_us=4025 d_paints=50 d_skips=0 d_ticks=2 window_ms=1141"}
+{"elapsed_seconds": 128.240043, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3554) }"}
+{"elapsed_seconds": 128.362167, "line": "[host] slot livemidwzz_0: d_loop_us=1040 d_raster_us=176701 d_observe_us=32817 max_observe_us=5777 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 129.516757, "line": "[host] slot livemidwzz_0: d_loop_us=992 d_raster_us=180839 d_observe_us=31352 max_observe_us=5461 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 130.037073, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3554) }"}
+{"elapsed_seconds": 130.669293, "line": "[host] slot livemidwzz_0: d_loop_us=996 d_raster_us=184889 d_observe_us=32182 max_observe_us=4226 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 131.836162, "line": "[host] slot livemidwzz_0: d_loop_us=958 d_raster_us=176851 d_observe_us=31071 max_observe_us=5451 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166"}
+{"elapsed_seconds": 131.851901, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3554) }"}
+{"elapsed_seconds": 132.991316, "line": "[host] slot livemidwzz_0: d_loop_us=1030 d_raster_us=182213 d_observe_us=41478 max_observe_us=14469 d_paints=50 d_skips=0 d_ticks=1 window_ms=1155"}
+{"elapsed_seconds": 134.141506, "line": "[host] slot livemidwzz_0: d_loop_us=1111 d_raster_us=223462 d_observe_us=32660 max_observe_us=5117 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150"}
+{"elapsed_seconds": 135.294031, "line": "[host] slot livemidwzz_0: d_loop_us=1157 d_raster_us=215921 d_observe_us=33127 max_observe_us=4458 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 136.447177, "line": "[host] slot livemidwzz_0: d_loop_us=1131 d_raster_us=201360 d_observe_us=34661 max_observe_us=4362 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153"}
+{"elapsed_seconds": 137.614343, "line": "[host] slot livemidwzz_0: d_loop_us=1189 d_raster_us=201151 d_observe_us=34616 max_observe_us=4113 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167"}
+{"elapsed_seconds": 138.768605, "line": "[host] slot livemidwzz_0: d_loop_us=1150 d_raster_us=195717 d_observe_us=32241 max_observe_us=4117 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 139.923078, "line": "[host] slot livemidwzz_0: d_loop_us=1120 d_raster_us=193063 d_observe_us=31731 max_observe_us=3995 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 141.055185, "line": "[host] slot livemidwzz_0: d_loop_us=1112 d_raster_us=196856 d_observe_us=33365 max_observe_us=4155 d_paints=50 d_skips=0 d_ticks=2 window_ms=1132"}
+{"elapsed_seconds": 142.062116, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3554) }"}
+{"elapsed_seconds": 142.198251, "line": "[host] slot livemidwzz_0: d_loop_us=1108 d_raster_us=207373 d_observe_us=35193 max_observe_us=4862 d_paints=50 d_skips=0 d_ticks=2 window_ms=1143"}
+{"elapsed_seconds": 143.362527, "line": "[host] slot livemidwzz_0: d_loop_us=1128 d_raster_us=214860 d_observe_us=34865 max_observe_us=4794 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164"}
+{"elapsed_seconds": 144.517417, "line": "[host] slot livemidwzz_0: d_loop_us=1117 d_raster_us=216875 d_observe_us=33671 max_observe_us=4143 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 145.654115, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3554) }"}
+{"elapsed_seconds": 145.66083, "line": "[host] slot livemidwzz_0: d_loop_us=1225 d_raster_us=217878 d_observe_us=35763 max_observe_us=5351 d_paints=50 d_skips=0 d_ticks=2 window_ms=1143"}
+{"elapsed_seconds": 146.795828, "line": "[host] slot livemidwzz_0: d_loop_us=1310 d_raster_us=242529 d_observe_us=36269 max_observe_us=4523 d_paints=50 d_skips=0 d_ticks=1 window_ms=1134"}
+{"elapsed_seconds": 147.940587, "line": "[host] slot livemidwzz_0: d_loop_us=1412 d_raster_us=235600 d_observe_us=40984 max_observe_us=5943 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144"}
+{"elapsed_seconds": 149.098087, "line": "[host] slot livemidwzz_0: d_loop_us=1194 d_raster_us=217117 d_observe_us=36403 max_observe_us=5392 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 149.254773, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3555) }"}
+{"elapsed_seconds": 150.252838, "line": "[host] slot livemidwzz_0: d_loop_us=1079 d_raster_us=204603 d_observe_us=35275 max_observe_us=4143 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 151.397831, "line": "[host] slot livemidwzz_0: d_loop_us=1087 d_raster_us=224657 d_observe_us=34029 max_observe_us=4233 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144"}
+{"elapsed_seconds": 152.54737, "line": "[host] slot livemidwzz_0: d_loop_us=1045 d_raster_us=199645 d_observe_us=32744 max_observe_us=4309 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 153.697077, "line": "[host] slot livemidwzz_0: d_loop_us=1305 d_raster_us=226023 d_observe_us=38327 max_observe_us=7248 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 154.849021, "line": "[host] slot livemidwzz_0: d_loop_us=1453 d_raster_us=246637 d_observe_us=40286 max_observe_us=5626 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 155.993639, "line": "[host] slot livemidwzz_0: d_loop_us=1505 d_raster_us=259916 d_observe_us=41157 max_observe_us=6010 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144"}
+{"elapsed_seconds": 157.143697, "line": "[host] slot livemidwzz_0: d_loop_us=1710 d_raster_us=266122 d_observe_us=41898 max_observe_us=5737 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150"}
+{"elapsed_seconds": 158.293346, "line": "[host] slot livemidwzz_0: d_loop_us=1594 d_raster_us=255774 d_observe_us=42484 max_observe_us=6109 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 159.436815, "line": "[host] slot livemidwzz_0: d_loop_us=1298 d_raster_us=246952 d_observe_us=41545 max_observe_us=5610 d_paints=50 d_skips=0 d_ticks=2 window_ms=1143"}
+{"elapsed_seconds": 159.448884, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3556) }"}
+{"elapsed_seconds": 160.583678, "line": "[host] slot livemidwzz_0: d_loop_us=1446 d_raster_us=255224 d_observe_us=36547 max_observe_us=6058 d_paints=50 d_skips=0 d_ticks=1 window_ms=1146"}
+{"elapsed_seconds": 161.262291, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3556) }"}
+{"elapsed_seconds": 161.721729, "line": "[host] slot livemidwzz_0: d_loop_us=1495 d_raster_us=256709 d_observe_us=44010 max_observe_us=7167 d_paints=50 d_skips=0 d_ticks=2 window_ms=1138"}
+{"elapsed_seconds": 162.869976, "line": "[host] slot livemidwzz_0: d_loop_us=1507 d_raster_us=239875 d_observe_us=40106 max_observe_us=5246 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148"}
+{"elapsed_seconds": 164.030034, "line": "[host] slot livemidwzz_0: d_loop_us=1411 d_raster_us=247339 d_observe_us=41366 max_observe_us=5674 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160"}
+{"elapsed_seconds": 165.174272, "line": "[host] slot livemidwzz_0: d_loop_us=1048 d_raster_us=205503 d_observe_us=33140 max_observe_us=4306 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144"}
+{"elapsed_seconds": 166.329966, "line": "[host] slot livemidwzz_0: d_loop_us=1019 d_raster_us=203469 d_observe_us=33317 max_observe_us=4098 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 167.476946, "line": "[host] slot livemidwzz_0: d_loop_us=1007 d_raster_us=203325 d_observe_us=33825 max_observe_us=4321 d_paints=50 d_skips=0 d_ticks=2 window_ms=1146"}
+{"elapsed_seconds": 168.633698, "line": "[host] slot livemidwzz_0: d_loop_us=1063 d_raster_us=212075 d_observe_us=34361 max_observe_us=4320 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 169.783762, "line": "[host] slot livemidwzz_0: d_loop_us=973 d_raster_us=196822 d_observe_us=32142 max_observe_us=4126 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150"}
+{"elapsed_seconds": 170.932096, "line": "[host] slot livemidwzz_0: d_loop_us=1202 d_raster_us=242017 d_observe_us=40208 max_observe_us=5705 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148"}
+{"elapsed_seconds": 171.452275, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3554) }"}
+{"elapsed_seconds": 172.076279, "line": "[host] slot livemidwzz_0: d_loop_us=1398 d_raster_us=259075 d_observe_us=40449 max_observe_us=5719 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144"}
+{"elapsed_seconds": 173.226708, "line": "[host] slot livemidwzz_0: d_loop_us=1472 d_raster_us=278869 d_observe_us=36393 max_observe_us=5479 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150"}
+{"elapsed_seconds": 174.364138, "line": "[host] slot livemidwzz_0: d_loop_us=1407 d_raster_us=281408 d_observe_us=41941 max_observe_us=5982 d_paints=50 d_skips=0 d_ticks=1 window_ms=1137"}
+{"elapsed_seconds": 175.065236, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3555) }"}
+{"elapsed_seconds": 175.495113, "line": "[host] slot livemidwzz_0: d_loop_us=1500 d_raster_us=259346 d_observe_us=40524 max_observe_us=5748 d_paints=50 d_skips=0 d_ticks=2 window_ms=1130"}
+{"elapsed_seconds": 176.665059, "line": "[host] slot livemidwzz_0: d_loop_us=945 d_raster_us=193790 d_observe_us=31926 max_observe_us=4166 d_paints=50 d_skips=0 d_ticks=2 window_ms=1169"}
+{"elapsed_seconds": 177.814366, "line": "[host] slot livemidwzz_0: d_loop_us=1527 d_raster_us=266878 d_observe_us=43946 max_observe_us=6306 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 178.666499, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3554) }"}
+{"elapsed_seconds": 178.975574, "line": "[host] slot livemidwzz_0: d_loop_us=1308 d_raster_us=225725 d_observe_us=39597 max_observe_us=6123 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161"}
+{"elapsed_seconds": 180.117792, "line": "[host] slot livemidwzz_0: d_loop_us=1403 d_raster_us=253945 d_observe_us=39931 max_observe_us=5610 d_paints=50 d_skips=0 d_ticks=2 window_ms=1142"}
+{"elapsed_seconds": 181.263708, "line": "[host] slot livemidwzz_0: d_loop_us=1355 d_raster_us=262580 d_observe_us=39973 max_observe_us=5824 d_paints=50 d_skips=0 d_ticks=2 window_ms=1145"}
+{"elapsed_seconds": 182.418181, "line": "[host] slot livemidwzz_0: d_loop_us=1340 d_raster_us=242749 d_observe_us=39273 max_observe_us=5139 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 183.581968, "line": "[host] slot livemidwzz_0: d_loop_us=1300 d_raster_us=236396 d_observe_us=39265 max_observe_us=5594 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163"}
+{"elapsed_seconds": 184.732128, "line": "[host] slot livemidwzz_0: d_loop_us=1324 d_raster_us=231206 d_observe_us=42239 max_observe_us=5917 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150"}
+{"elapsed_seconds": 185.880465, "line": "[host] slot livemidwzz_0: d_loop_us=1552 d_raster_us=249682 d_observe_us=44390 max_observe_us=5885 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148"}
+{"elapsed_seconds": 187.0356, "line": "[host] slot livemidwzz_0: d_loop_us=1388 d_raster_us=239508 d_observe_us=38644 max_observe_us=5606 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 188.1745, "line": "[host] slot livemidwzz_0: d_loop_us=1644 d_raster_us=253285 d_observe_us=45119 max_observe_us=5780 d_paints=50 d_skips=0 d_ticks=1 window_ms=1138"}
+{"elapsed_seconds": 188.851003, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3555) }"}
+{"elapsed_seconds": 189.313309, "line": "[host] slot livemidwzz_0: d_loop_us=1495 d_raster_us=244420 d_observe_us=43572 max_observe_us=5828 d_paints=50 d_skips=0 d_ticks=2 window_ms=1138"}
+{"elapsed_seconds": 190.464365, "line": "[host] slot livemidwzz_0: d_loop_us=1283 d_raster_us=239996 d_observe_us=42281 max_observe_us=6306 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 190.662882, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3555) }"}
+{"elapsed_seconds": 191.616271, "line": "[host] slot livemidwzz_0: d_loop_us=1597 d_raster_us=238259 d_observe_us=41645 max_observe_us=5716 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 192.76734, "line": "[host] slot livemidwzz_0: d_loop_us=1717 d_raster_us=271719 d_observe_us=42047 max_observe_us=5858 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 193.906339, "line": "[host] slot livemidwzz_0: d_loop_us=1603 d_raster_us=291248 d_observe_us=41116 max_observe_us=5489 d_paints=50 d_skips=0 d_ticks=2 window_ms=1138"}
+{"elapsed_seconds": 195.061428, "line": "[host] slot livemidwzz_0: d_loop_us=1597 d_raster_us=264397 d_observe_us=41352 max_observe_us=5340 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 196.20628, "line": "[host] slot livemidwzz_0: d_loop_us=1509 d_raster_us=255465 d_observe_us=42729 max_observe_us=5635 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144"}
+{"elapsed_seconds": 197.350579, "line": "[host] slot livemidwzz_0: d_loop_us=1341 d_raster_us=240213 d_observe_us=40118 max_observe_us=5432 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144"}
+{"elapsed_seconds": 198.501438, "line": "[host] slot livemidwzz_0: d_loop_us=1545 d_raster_us=266226 d_observe_us=41937 max_observe_us=5978 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150"}
+{"elapsed_seconds": 199.644635, "line": "[host] slot livemidwzz_0: d_loop_us=1616 d_raster_us=268974 d_observe_us=43577 max_observe_us=5633 d_paints=50 d_skips=0 d_ticks=2 window_ms=1143"}
+{"elapsed_seconds": 200.792468, "line": "[host] slot livemidwzz_0: d_loop_us=1661 d_raster_us=266875 d_observe_us=39303 max_observe_us=5724 d_paints=50 d_skips=0 d_ticks=1 window_ms=1147"}
+{"elapsed_seconds": 200.85617, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3555) }"}
+{"elapsed_seconds": 201.945376, "line": "[host] slot livemidwzz_0: d_loop_us=1603 d_raster_us=285737 d_observe_us=41972 max_observe_us=5792 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 203.088498, "line": "[host] slot livemidwzz_0: d_loop_us=1416 d_raster_us=262397 d_observe_us=37988 max_observe_us=4764 d_paints=50 d_skips=0 d_ticks=2 window_ms=1143"}
+{"elapsed_seconds": 204.23906, "line": "[host] slot livemidwzz_0: d_loop_us=1275 d_raster_us=240697 d_observe_us=35732 max_observe_us=4398 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150"}
+{"elapsed_seconds": 204.460839, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3555) }"}
+{"elapsed_seconds": 205.389121, "line": "[host] slot livemidwzz_0: d_loop_us=1448 d_raster_us=245348 d_observe_us=39076 max_observe_us=5820 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150"}
+{"elapsed_seconds": 206.530564, "line": "[host] slot livemidwzz_0: d_loop_us=1732 d_raster_us=254552 d_observe_us=45267 max_observe_us=5698 d_paints=50 d_skips=0 d_ticks=2 window_ms=1141"}
+{"elapsed_seconds": 207.682201, "line": "[host] slot livemidwzz_0: d_loop_us=1584 d_raster_us=249386 d_observe_us=40470 max_observe_us=4968 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 208.071619, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3556) }"}
+{"elapsed_seconds": 208.831923, "line": "[host] slot livemidwzz_0: d_loop_us=1761 d_raster_us=259688 d_observe_us=44079 max_observe_us=5800 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 209.970018, "line": "[host] slot livemidwzz_0: d_loop_us=1322 d_raster_us=261037 d_observe_us=41023 max_observe_us=6041 d_paints=50 d_skips=0 d_ticks=2 window_ms=1138"}
+{"elapsed_seconds": 211.125239, "line": "[host] slot livemidwzz_0: d_loop_us=1634 d_raster_us=256037 d_observe_us=41765 max_observe_us=5486 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 212.259605, "line": "[host] slot livemidwzz_0: d_loop_us=1893 d_raster_us=268443 d_observe_us=45262 max_observe_us=6134 d_paints=50 d_skips=0 d_ticks=2 window_ms=1134"}
+{"elapsed_seconds": 213.405729, "line": "[host] slot livemidwzz_0: d_loop_us=1244 d_raster_us=219213 d_observe_us=32443 max_observe_us=3999 d_paints=50 d_skips=0 d_ticks=2 window_ms=1146"}
+{"elapsed_seconds": 214.567801, "line": "[host] slot livemidwzz_0: d_loop_us=1012 d_raster_us=193895 d_observe_us=35105 max_observe_us=4422 d_paints=50 d_skips=0 d_ticks=1 window_ms=1162"}
+{"elapsed_seconds": 215.730761, "line": "[host] slot livemidwzz_0: d_loop_us=1041 d_raster_us=193185 d_observe_us=35462 max_observe_us=4372 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162"}
+{"elapsed_seconds": 216.88508, "line": "[host] slot livemidwzz_0: d_loop_us=1503 d_raster_us=257570 d_observe_us=43664 max_observe_us=6003 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 218.030777, "line": "[host] slot livemidwzz_0: d_loop_us=1509 d_raster_us=247810 d_observe_us=45075 max_observe_us=5921 d_paints=50 d_skips=0 d_ticks=2 window_ms=1145"}
+{"elapsed_seconds": 218.254664, "line": "[script livemidwzz_0] interact Npc { name: \"Guard\", action: \"Pickpocket\", index: Some(3555) }"}

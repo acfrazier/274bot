@@ -1,0 +1,55 @@
+Task t_90b60f12: Complete BoneBurier bank routing and withdrawal results
+  status:    done
+  assignee:  reviewer
+  workspace: dir @ /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision
+  max-retries: 1 (task)
+  created:   2026-09-10 17:30 by orch
+  started:   2026-09-10 18:01
+  completed: 2026-09-10 19:20
+  parents:   t_41b2f50e, t_d68ee0fc
+  children:  t_779f58e5, t_dde220ef
+
+Body:
+Implement docs/compat/briefs/31-bone-burier-bank-loop.md after matching/fill source review. The headed run exposed missing off-scene bank routing and an undefined Bank.withdraw result. Use Rust navigation and honest dispatch outcomes, preserve lifecycle and existing bounds, run composed regressions, commit scoped source, then hand this same card to reviewer and stop. Root owns strengthened scenario/harness and LIVE. Use profile defaults without overrides.
+
+Latest summary:
+Reviewed and approved commit 2f9099f7 for brief 31 bank routing/withdrawal results. Round-1 artifact review plus independent re-runs confirm nearest packed-booth routing, bounded deposit (no 27×N amplification), completion-backed ordinary withdraw true/false, lifecycle freeze/abort, and both Bone Burier captures. LIVE remains root-owned.
+
+Comments (5):
+  [2026-09-10 17:50] orch: Root committed the corrected full-loop fixture and independent witness at f2b04198. The operator confirmed retaining planned nearest-bank travel after root explained that the frozen API includes it. Brief 31 remains current: complete Rust routing and honest withdrawal results; no fixture relocation to avoid the capability. All stock is seeded before Start; root owns headed LIVE. Root also owns game.js return-shape correction and combat_style_contract.rs, which are outside your scoped edits.
+  [2026-09-10 18:02] orch: BLOCKED: Root is restoring the required missing parent review before dependent implementation resumes.
+  [2026-09-10 18:13] orch: Brief 31 now includes the headed BankFletcher duplicate-deposit amplification (27 JS named rows times 27 Rust matching rows -> 729 Deposit-All writes, buffer panic). Complete observed bounded deposit helper behavior in the same bank-transfer family; no packet-buffer resize workaround. Corrective parent t_d68ee0fc is the required real review gate. Root owns count-dialog fix 76d61beb, ScriptRunner.stop propagation, headed diagnostics and startup tracing. Read the updated brief before resuming.
+  [2026-09-10 18:24] orch: Root committed 1947741f: requested Stop now reaps the slot before pending continuations (two-line insertion at script_observe start), with load.rs/slot.rs lifecycle edits and regressions. Keep these when editing bank transfer paths. Corrective review 1140 completed and is accepted. All your scoped implementation remains brief 31; new commits only, no amend.
+  [2026-09-10 18:45] sol: hotspot: crates/host-play/src/lib.rs — root is concurrently advancing/formatting the shared branch while brief 31 adds ordinary bank continuation and composed regressions here; I am preserving 1947741f+ lifecycle changes and will commit only scoped paths.
+
+Events (84):
+  [2026-09-10 19:04] [run 1141] heartbeat
+  [2026-09-10 19:05] [run 1141] heartbeat
+  [2026-09-10 19:06] [run 1141] heartbeat
+  [2026-09-10 19:07] [run 1141] heartbeat
+  [2026-09-10 19:08] [run 1141] heartbeat
+  [2026-09-10 19:09] [run 1141] heartbeat
+  [2026-09-10 19:10] [run 1141] heartbeat
+  [2026-09-10 19:11] [run 1141] heartbeat
+  [2026-09-10 19:12] [run 1141] heartbeat
+  [2026-09-10 19:13] [run 1141] heartbeat
+  [2026-09-10 19:14] [run 1141] heartbeat
+  [2026-09-10 19:15] [run 1141] heartbeat
+  [2026-09-10 19:15] [run 1141] review_requested {'summary': 'Implemented brief 31 in commit 2f9099f7: Rust-owned nearest packed-booth routing, bounded observed deposit iteration, completion-backed ordinary withdrawals, lifecycle-safe fail-closed result plumbing, exact-source coverage for both Bone Burier captures, and capability/evidence records. Verified 158 script isolate, 44 script lib, and 125 host-play tests plus fmt, diff check, and strict clippy; unr', 'implementer': 'sol', 'reviewer': 'reviewer'}
+  [2026-09-10 19:16] [run 1149] claimed {'lock': 'merlot.local:28215', 'expires': 1789083106, 'run_id': 1149, 'source_status': 'review'}
+  [2026-09-10 19:16] [run 1149] spawned {'pid': 36152}
+  [2026-09-10 19:16] [run 1149] heartbeat
+  [2026-09-10 19:17] [run 1149] heartbeat
+  [2026-09-10 19:18] [run 1149] heartbeat
+  [2026-09-10 19:20] [run 1149] heartbeat
+  [2026-09-10 19:20] [run 1149] completed {'result_len': 0, 'summary': 'Reviewed and approved commit 2f9099f7 for brief 31 bank routing/withdrawal results. Round-1 artifact review plus independent re-runs confirm nearest packed-booth routing, bounded deposit (no 27×N amplification), completion-backed ordinary withdraw true/false, lifecycle freeze/abort, and both Bone Burier captures. LIVE remains root-owned.'}
+
+Runs (4):
+  #1137 reclaimed    @sol  51s  2026-09-10 18:01
+        ! manual_reclaim: Parent t_41b2f50e skipped same-card review and released this dependent worker prematurely; preserve WIP while root restores the review dependenc
+  #1138 blocked      @sol  2s  2026-09-10 18:02
+        → Root is restoring the required missing parent review before dependent implementation resumes.
+  #1141 review_requested @sol  3488s  2026-09-10 18:17
+        → Implemented brief 31 in commit 2f9099f7: Rust-owned nearest packed-booth routing, bounded observed deposit iteration, completion-backed ordinary withdrawals, li
+  #1149 completed    @reviewer  211s  2026-09-10 19:16
+        → Reviewed and approved commit 2f9099f7 for brief 31 bank routing/withdrawal results. Round-1 artifact review plus independent re-runs confirm nearest packed-boot

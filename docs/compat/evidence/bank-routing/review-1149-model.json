@@ -1,0 +1,12 @@
+{
+  "task": "t_90b60f12",
+  "run": 1149,
+  "session": "20260910_191646_79c933",
+  "model": "grok-4.5",
+  "provider": "xai-oauth",
+  "started_at": 1789082207.758018,
+  "ended_at": 1789082417.655784,
+  "verdict": "APPROVED",
+  "host_commit": "2f9099f703e243a00713d99a63e93afeb83a8408",
+  "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4"
+}

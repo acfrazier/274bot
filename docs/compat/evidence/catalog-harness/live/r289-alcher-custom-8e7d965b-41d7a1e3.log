@@ -1,0 +1,51 @@
+
+running 1 test
+{"phase":"identity","revision":289,"profile":"local-289 · 127.0.0.1:44594 · revision 289","cache_id":"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack","nav_sha256":"131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924","catalog_commit":"8e7d965be2071d6ec65c3265e12af797082d720a","catalog_identity":"289-updated frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"Alcher","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a/src/bot/scripts/Alcher/Alcher.ts","source_sha256":"1a09baa1117544a2bb80da145829e69c9ced029ad5af533616afa8e7a36f2032","compiled_sha256":"b135fe3d8a67fa4856830370523147832ce791f08c2e08290c2cf7cf82afab1e","siblings":[{"module":"/rs2b0t/bot/scripts/bot/AlcherLogic.js","compiled_sha256":"d531c3378e4510631386b4406dccc335ca1535ff38212f26bf9212fe19d8b61c"}],"settings":{"customItem":"rune_chainbody","alchs":1.0,"items":["custom"]}},"account":"liveqxvt0k_0","engine_speed_ms":null}
+[host-play] slot liveqxvt0k_0: thread up
+274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+[host-play] slot liveqxvt0k_0: handshake begin reconnect=false
+[host-play] slot liveqxvt0k_0: handshake ok
+[host] slot liveqxvt0k_0: d_loop_us=2383 d_raster_us=0 d_observe_us=25690 max_observe_us=1880 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot liveqxvt0k_0: queued mainland tele+setvar (scene 2)
+[host-play] slot liveqxvt0k_0: handshake begin reconnect=true
+[host-play] slot liveqxvt0k_0: handshake ok
+[host-play] slot liveqxvt0k_0: queued mainland tele+setvar (scene 2)
+[host] slot liveqxvt0k_0: d_loop_us=8166 d_raster_us=0 d_observe_us=35955 max_observe_us=2328 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+{"phase":"baseline-after-preparation","scenario":"alcher_custom","account":"liveqxvt0k_0","observation":{"ingame":true,"scene_state":2,"player":"Liveqxvt0k 0","tile":[3185,3440,0],"tick":14,"items":{},"bank":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":55,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":166636,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]]}}
+[script liveqxvt0k_0] start load
+{"phase":"start","account":"liveqxvt0k_0","count":1}
+[host] hitch liveqxvt0k_0: observe_us=56813 paints=0 skips=87 ticks=14
+[script liveqxvt0k_0] custom item: Rune chainbody (rune_chainbody, 30000gp each)
+[script liveqxvt0k_0] Alcher — High Level Alchemy on 1 item(s), richest first: Rune chainbody
+[script liveqxvt0k_0] banking at Bank booth (Bank booth / Use-quickly)
+[script liveqxvt0k_0] interact OpenBooth { x: 3186, z: 3440, level: 0, id: 2213, name: Some("Bank booth"), action: Some("Use-quickly") }
+[host] slot liveqxvt0k_0: d_loop_us=18301 d_raster_us=0 d_observe_us=159513 max_observe_us=56813 d_paints=0 d_skips=50 d_ticks=14 window_ms=8643
+[host] slot liveqxvt0k_0: d_loop_us=1357 d_raster_us=0 d_observe_us=61317 max_observe_us=6490 d_paints=0 d_skips=50 d_ticks=2 window_ms=1172
+[script liveqxvt0k_0] interact Close
+[shim-close] sent
+test catalog_boundary_live has been running for over 60 seconds
+[script liveqxvt0k_0] interact Held { name: "Staff of fire", action: "Wield" }
+[shim-held] Staff of fire Wield slot=0 -> sent
+[host] slot liveqxvt0k_0: d_loop_us=1277 d_raster_us=0 d_observe_us=61740 max_observe_us=7690 d_paints=0 d_skips=50 d_ticks=2 window_ms=1160
+[script liveqxvt0k_0] wore Staff of fire — casts need only Nature runes now
+[script liveqxvt0k_0] interact OpenBooth { x: 3186, z: 3440, level: 0, id: 2213, name: Some("Bank booth"), action: Some("Use-quickly") }
+[host] slot liveqxvt0k_0: d_loop_us=1169 d_raster_us=0 d_observe_us=69174 max_observe_us=8717 d_paints=0 d_skips=50 d_ticks=2 window_ms=1161
+[host] slot liveqxvt0k_0: d_loop_us=1224 d_raster_us=0 d_observe_us=55691 max_observe_us=6746 d_paints=0 d_skips=50 d_ticks=2 window_ms=1182
+[script liveqxvt0k_0] interact SetNoteMode { on: true }
+[shim-note] on=true sent
+[host] slot liveqxvt0k_0: d_loop_us=2510 d_raster_us=0 d_observe_us=68340 max_observe_us=4062 d_paints=0 d_skips=50 d_ticks=2 window_ms=1152
+[script liveqxvt0k_0] withdrew 1 Rune chainbody (noted, 30000gp each)
+[script liveqxvt0k_0] withdrew 1 Nature runes
+[script liveqxvt0k_0] interact Close
+[shim-close] sent
+[host] slot liveqxvt0k_0: d_loop_us=1141 d_raster_us=0 d_observe_us=62693 max_observe_us=7773 d_paints=0 d_skips=50 d_ticks=2 window_ms=1157
+[script liveqxvt0k_0] restocked: 1 Rune chainbody notes + 1 Nature runes
+[script liveqxvt0k_0] interact SideTab { tab: 6 }
+[host] slot liveqxvt0k_0: d_loop_us=776 d_raster_us=0 d_observe_us=36325 max_observe_us=6346 d_paints=0 d_skips=50 d_ticks=2 window_ms=1185
+[script liveqxvt0k_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] slot liveqxvt0k_0: d_loop_us=1430 d_raster_us=0 d_observe_us=75736 max_observe_us=7227 d_paints=0 d_skips=50 d_ticks=2 window_ms=1157
+PASS: catalog_boundary_live: {"scenario":"alcher_custom","runner":"Some(Evidence { scenario: \"alcher_custom\", outcome: \"PASS\", predicate: \"stat_xp_gain(6)>=1\", ticks: 39, elapsed_ms: 43312, message: None, tile: Some([3185, 3440, 0]), inv: [InvRow { id: 995, name: Some(\"Coins\"), count: 30000 }], stat: Some(StatRow { runenergy: 100 }), chat: [ChatRow { text: \"This item can not be withdrawn as a note.\", username: None }, ChatRow { text: \"set tutorial: to 1000\", username: None }, ChatRow { text: \"Welcome to RuneScape.\", username: None }], scene: 2 })","core":{"case":"alcher_custom","baseline":{"ingame":true,"scene_state":2,"player":"Liveqxvt0k 0","tile":[3185,3440,0],"tick":14,"items":{},"bank":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":55,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":166636,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]]},"latest":{"ingame":true,"scene_state":2,"player":"Liveqxvt0k 0","tile":[3185,3440,0],"tick":31,"items":{"Coins":30000},"bank":{},"bank_open":false,"bank_loaded":false,"bank_generation":4,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":55,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":166701,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[7,"This item can not be withdrawn as a note."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]]},"max_items":{"Coins":30000,"Nature rune":1,"Rune chainbody":1,"Staff of fire":1},"max_xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":166701,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"saw_bury_chat":false,"post_start_observations":412,"bone_bank_cycle":{"first_batch_buried":false,"opened":null,"withdrawn":null,"buried_after_withdrawal":false},"ordered_first_exhausted":false}}
+test catalog_boundary_live ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 67.75s
+
