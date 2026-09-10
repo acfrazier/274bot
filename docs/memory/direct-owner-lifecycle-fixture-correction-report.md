@@ -2,7 +2,7 @@ Direct-owner lifecycle fixture correction
 
 Scope
 
-Updated docs/memory/test_run_managed_cell.py only for the Linux-only direct-owner lifecycle fixture. The fixture now declares its generated private-root-release.json release_contract path and materializes that reviewed release contract plus five typed admission receipts through _direct_preflight_fixtures, then passes real hash-bound files and a six-entry admission binding map (release_contract plus receipt_conflict/account/population/cache/server_health) through the mocked preflight result. The test-only expiry is finite and starts 60 seconds from fixture setup, so the real pre-Popen expiry and file rechecks execute without weakening production rules.
+Updated docs/memory/test_run_managed_cell.py only for the Linux-only direct-owner lifecycle fixture. The fixture now supplies generated private cache and unpack roots required by validation and fixture materialization, declares its generated private-root-release.json release_contract path, and materializes that reviewed release contract plus five typed admission receipts through _direct_preflight_fixtures. It then passes real hash-bound files and a six-entry admission binding map (release_contract plus receipt_conflict/account/population/cache/server_health) through the mocked preflight result. The test-only expiry is finite and starts 60 seconds from fixture setup, so the real pre-Popen expiry and file rechecks execute without weakening production rules.
 
 Preserved checks
 
@@ -15,7 +15,7 @@ Preserved checks
 Verification on macOS
 
 - py_compile of test_run_managed_cell.py, run_managed_cell.py, and managed_receipt.py: PASS.
-- Four affected direct-owner contract/preflight/TOCTOU tests: 4/4 PASS after the release_contract correction.
+- Five affected direct-owner contract/preflight/TOCTOU tests: 5/5 PASS after the release_contract and cache-root corrections.
 - Linux lifecycle test: SKIPPED (Linux-only; macOS cannot qualify it).
 - Full test_run_managed_cell module: 55 tests, 1 Linux-only skip, 10 pre-existing macOS collector failures; failures are unrelated default/system/libproc collector timing behavior and were preserved.
 

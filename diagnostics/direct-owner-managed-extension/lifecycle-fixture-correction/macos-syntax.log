@@ -1,3 +1,2 @@
-py_compile_exit=0
-focused_exit=0
-linux_only_invocation_exit=0
+$ python3 -m py_compile docs/memory/test_run_managed_cell.py docs/memory/run_managed_cell.py docs/memory/managed_receipt.py
+PASS (exit 0)

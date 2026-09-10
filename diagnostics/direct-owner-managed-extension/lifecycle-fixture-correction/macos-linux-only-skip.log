@@ -1,5 +1,8 @@
+$ python3 -m unittest docs.memory.test_run_managed_cell.ManagedCellTests.test_linux_direct_lifecycle_keeps_collector_through_stop_c_and_exit
 s
 ----------------------------------------------------------------------
 Ran 1 test in 0.000s
 
 OK (skipped=1)
+
+Linux-only test is not executable on macOS; native Linux qualification remains root-owned.

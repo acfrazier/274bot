@@ -2040,10 +2040,12 @@ class ManagedCellTests(unittest.TestCase):
         cell_dir = result_path.with_suffix(result_path.suffix + '.cells') / cell_id
         run_dir = cell_dir / 'frontend-run'
         handoff = cell_dir / 'frontend-handoff.json'
+        cache, unpack = _make_cache_tree(self.fx.root / 'private-lifecycle-cache')
         spec = self.fx.base_spec(cell_id=cell_id)
         spec.update(n=1, warmup_s=30, observe_s=120, teardown_grace_s=60,
                     sampler_interval_s=.5, max_wall_s=365, process_backend='system',
-                    requested_backend='none', heaptrack=None)
+                    requested_backend='none', heaptrack=None,
+                    cache_dir=str(cache), unpack_root=str(unpack))
         spec['diagnostic_argv'] = [
             '--binary', str(self.fx.binary), '--build-manifest', str(self.fx.manifest),
             '--build-role', 'candidate', '--no-diagnostics', '--sustain', '--warmup', '30',
