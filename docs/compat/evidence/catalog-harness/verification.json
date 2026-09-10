@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-09-10T21:04:23Z",
+  "verification_base": {
+    "git_head": "e7d793fdaad024b945d48959c35b9ddcb9a1fd8c",
+    "mode": "clean HEAD archive plus only the task's harness and report; shared-worktree sibling edits were excluded"
+  },
+  "harness": {
+    "path": "crates/host-play/tests/catalog_boundary_live.rs",
+    "sha256": "39bf282bc148f2d111cb07865b7ce58b17e6018e228195b7a51b4216652ef58e"
+  },
+  "report": {
+    "path": "docs/compat/05a-catalog-live-harness.md",
+    "sha256": "5168674e261f6ebfdab3c62fe5205797ba4ab880380b38c6e1a575309d3c274d"
+  },
+  "live_launch_performed": false,
+  "checks": [
+    {
+      "command": "cargo fmt --check -- crates/host-play/tests/catalog_boundary_live.rs",
+      "exit_code": 0,
+      "result": "pass"
+    },
+    {
+      "command": "cargo test -p host-play --test catalog_boundary_live --features memory-profile -- --skip catalog_boundary_live",
+      "exit_code": 0,
+      "result": "8 passed; 0 failed; 1 filtered out"
+    },
+    {
+      "command": "cargo clippy -p host-play --test catalog_boundary_live --features memory-profile --no-deps -- -D warnings",
+      "exit_code": 0,
+      "result": "pass"
+    },
+    {
+      "command": "cargo test -p host-play --features memory-profile --no-run",
+      "exit_code": 0,
+      "result": "all host-play test targets compiled"
+    },
+    {
+      "command": "cargo test -p host-play --test catalog_boundary_live --features memory-profile catalog_boundary_live",
+      "exit_code": 0,
+      "result": "0 passed; 0 failed; 1 ignored; 8 filtered out"
+    },
+    {
+      "command": "git diff --check -- crates/host-play/tests/catalog_boundary_live.rs docs/compat/05a-catalog-live-harness.md",
+      "exit_code": 0,
+      "result": "pass"
+    }
+  ],
+  "notes": [
+    "Offline checks are implementation verification, not live catalog evidence.",
+    "The source-identity tests verified both frozen registries and all ten catalog/card source combinations against support-matrix.json.",
+    "No live client was launched by this task.",
+    "Revision 289 remains fail-closed while its selected profile exposes no bot operation."
+  ]
+}
