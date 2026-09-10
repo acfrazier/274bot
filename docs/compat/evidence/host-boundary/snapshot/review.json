@@ -1,0 +1,30 @@
+{
+  "task": "t_0be9adbf",
+  "initial_host": "15b706f67b3cef58f61fe874a512a7de3149b9fc",
+  "corrected_host": "fede3c0dd5d5fbdc7fd7def10f2eb43630b8f16f",
+  "client": "6cb5a0b17aeef74da6b57b205e916681daee4f76",
+  "rounds": [
+    {
+      "verdict": "changes requested: retained scene grid missing",
+      "actual_session": {
+        "id": "20260910_150509_d75b62",
+        "model": "grok-4.5",
+        "billing_provider": "xai-oauth",
+        "started_at": 1789067110.336287,
+        "ended_at": 1789067677.162399
+      }
+    },
+    {
+      "verdict": "approved scene-grid correction",
+      "actual_session": {
+        "id": "20260910_152111_481ade",
+        "model": "grok-4.5",
+        "billing_provider": "xai-oauth",
+        "started_at": 1789068072.349025,
+        "ended_at": 1789068182.527044
+      }
+    }
+  ],
+  "freeze_note": "Corrective implementer handed off its scoped working-tree patch after interpreting the brief index rule as barring its own commit. Root committed that identical patch as fede3c0d before the corrective review completed and recorded the mapping on the card. The independent Grok 4.6 integration review names the corrected immutable commit. No world-worker source was included.",
+  "live_run": false
+}

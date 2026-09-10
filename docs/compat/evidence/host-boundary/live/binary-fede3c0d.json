@@ -1,0 +1,9 @@
+{
+  "source_host": "fede3c0dd5d5fbdc7fd7def10f2eb43630b8f16f",
+  "source_client": "6cb5a0b17aeef74da6b57b205e916681daee4f76",
+  "source_files_verified": 481,
+  "binary": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/host-boundary-live/revision-boundary-fede3c0d",
+  "binary_sha256": "3ce3ec1d1570e7cab2f0999490630457ea6a8c16760abaaa54fc2136cb8b6444",
+  "binary_bytes": 47632248,
+  "live_run": false
+}
