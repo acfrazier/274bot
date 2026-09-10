@@ -216,6 +216,20 @@ pub struct SharedClientTemplate {
     scatter: std::sync::OnceLock<Vec<WorldTile>>,
 }
 
+/// One-use proof that the template's frozen resource identities were checked
+/// immediately before Play construction. Private fields prevent callers from
+/// bypassing [`ServerProfile::validate_resources`].
+pub struct ValidatedTemplate {
+    template: Arc<SharedClientTemplate>,
+}
+
+impl ValidatedTemplate {
+    /// The exact template whose profile produced this validation proof.
+    pub fn template(&self) -> &Arc<SharedClientTemplate> {
+        &self.template
+    }
+}
+
 impl SharedClientTemplate {
     pub fn load(profile: Arc<ServerProfile>) -> Result<Arc<Self>, String> {
         profile.validate_resources()?;
@@ -243,6 +257,15 @@ impl SharedClientTemplate {
     }
     pub fn world(&self) -> Option<Arc<NavWorld>> {
         self.world.clone()
+    }
+
+    /// Revalidate the selected cache and navigation bytes and return the
+    /// consuming handoff required by [`run_prepared_template`].
+    pub fn validate_for_play(self: &Arc<Self>) -> Result<ValidatedTemplate, String> {
+        self.profile.validate_resources()?;
+        Ok(ValidatedTemplate {
+            template: Arc::clone(self),
+        })
     }
 
     /// Stable account scatter over this template's selected navigation world.
@@ -4362,7 +4385,28 @@ where
     if !profiles.is_empty() {
         template.profile().require_bot_operation()?;
     }
-    template.profile().validate_resources()?;
+    let validated = template.validate_for_play()?;
+    run_prepared_template(validated, mainland, profiles, per_slot, per_frame)
+}
+
+/// Construct Play from a just-validated, one-use template handoff. The public
+/// checked convenience entry remains [`run_with_template`]; callers cannot
+/// construct this function's ticket without running the final validation.
+pub fn run_prepared_template<F, G>(
+    validated: ValidatedTemplate,
+    mainland: bool,
+    profiles: Vec<Profile>,
+    per_slot: F,
+    per_frame: G,
+) -> Result<Play, String>
+where
+    F: Fn(&str) -> (Option<Arc<SlotInput>>, Option<Arc<FrameBuf>>),
+    G: Fn(&mut Client, &str, bool) + Send + Sync + 'static,
+{
+    let template = validated.template;
+    if !profiles.is_empty() {
+        template.profile().require_bot_operation()?;
+    }
     let mut play = Play::from_template(template, mainland);
     play.per_frame = Arc::new(per_frame);
     for profile in profiles {

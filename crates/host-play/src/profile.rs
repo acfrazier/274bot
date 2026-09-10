@@ -570,6 +570,12 @@ impl ProfileSelection {
         }))
     }
 
+    /// Bind the immutable profile, preserve the template loader's second
+    /// resource validation, and decode the shared process resources once.
+    pub fn prepare_template(&self) -> Result<Arc<crate::SharedClientTemplate>, String> {
+        crate::SharedClientTemplate::load(self.bind()?)
+    }
+
     fn validate_nav(
         &self,
         cache_id: &str,
