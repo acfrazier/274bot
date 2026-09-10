@@ -1,13 +1,15 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "generator": "tools/game-data/generate.ts",
   "revisions": [
     {
       "revision": 274,
       "output": "crates/api/data/game-data/274.json",
       "records": 3894,
-      "bytes": 1224991,
-      "sha256": "6e1fddb01f5549bf03181326a80a9b6c1ffca2595ee2897cc144cfaea9ac8c64",
+      "consumption": 250,
+      "pickpocket": 12,
+      "bytes": 1372202,
+      "sha256": "c83042956ea6896e9fd5de9927556399fdc8c2d10732b0e59c98cfabd3a5d6a2",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -22,11 +24,48 @@
           "sha256": "d26317cabdb6dd6eaa0bd983362fa9820f8ed063e73b7be145df30fb8fc1a914"
         }
       ],
+      "content_inputs": [
+        {
+          "path": "scripts/player/configs/consumption/consume.dbtable",
+          "bytes": 400,
+          "sha256": "501ebc5625d14d3cc719df05d72cbed0aaa8d97547469bbcd5787a2b6cbc627f"
+        },
+        {
+          "path": "scripts/player/configs/consumption/consume_normal.dbrow",
+          "bytes": 5825,
+          "sha256": "86a28c697072eb8c2321b8f86a1321a7ab3a2cc000c2905905a588eb39c5a5da"
+        },
+        {
+          "path": "scripts/player/configs/consumption/consume_effects.dbrow",
+          "bytes": 9036,
+          "sha256": "d97a0404917ff92534d134ac27ae0035430eac943ef65a38a785a0b60f4ad269"
+        },
+        {
+          "path": "scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable",
+          "bytes": 223,
+          "sha256": "f999e5eeebf60d74a9473ab8109b6b72678f3bb95fd9ae5b09892ac360e8d00d"
+        },
+        {
+          "path": "scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow",
+          "bytes": 3552,
+          "sha256": "c284d00db20d20d141d712619883e9b43262eecac9cd6bc589becd8bace3478b"
+        },
+        {
+          "path": "scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2",
+          "bytes": 6851,
+          "sha256": "6eace195d85d2a3d7752406978355288721a63cd764374c8a8f3670963fd4e01"
+        }
+      ],
       "decoder_sources": [
         {
           "path": "src/cache/config/ObjType.ts",
           "bytes": 9998,
           "sha256": "61e07de093787c88a00a7224ed9ecffa9be9c1770176650b30926e69fd0ea42b"
+        },
+        {
+          "path": "src/cache/config/NpcType.ts",
+          "bytes": 7848,
+          "sha256": "a0a883b92f9ea6b0d44c8cd7e3455531619838cd974203b0d6d58fc2ef45d323"
         },
         {
           "path": "src/cache/config/ConfigType.ts",
@@ -109,8 +148,10 @@
       "revision": 289,
       "output": "crates/api/data/game-data/289.json",
       "records": 4089,
-      "bytes": 1287486,
-      "sha256": "8d7c4a6be44ba4d9607c78830f333d33050442edcd29f5b2d6ef017224bf67db",
+      "consumption": 250,
+      "pickpocket": 12,
+      "bytes": 1434697,
+      "sha256": "63289f8b2b6a0d6094d11bb9ec3b651a3b78acdfe45ea258b04bbe2e00078276",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
@@ -125,11 +166,48 @@
           "sha256": "3eeb1085547fb3af66db55ec4368357dbbad5178b7747f8b7cb0339fdd04a4ce"
         }
       ],
+      "content_inputs": [
+        {
+          "path": "scripts/player/configs/consumption/consume.dbtable",
+          "bytes": 400,
+          "sha256": "501ebc5625d14d3cc719df05d72cbed0aaa8d97547469bbcd5787a2b6cbc627f"
+        },
+        {
+          "path": "scripts/player/configs/consumption/consume_normal.dbrow",
+          "bytes": 5825,
+          "sha256": "86a28c697072eb8c2321b8f86a1321a7ab3a2cc000c2905905a588eb39c5a5da"
+        },
+        {
+          "path": "scripts/player/configs/consumption/consume_effects.dbrow",
+          "bytes": 9036,
+          "sha256": "d97a0404917ff92534d134ac27ae0035430eac943ef65a38a785a0b60f4ad269"
+        },
+        {
+          "path": "scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable",
+          "bytes": 223,
+          "sha256": "f999e5eeebf60d74a9473ab8109b6b72678f3bb95fd9ae5b09892ac360e8d00d"
+        },
+        {
+          "path": "scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow",
+          "bytes": 3552,
+          "sha256": "c284d00db20d20d141d712619883e9b43262eecac9cd6bc589becd8bace3478b"
+        },
+        {
+          "path": "scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2",
+          "bytes": 6851,
+          "sha256": "6eace195d85d2a3d7752406978355288721a63cd764374c8a8f3670963fd4e01"
+        }
+      ],
       "decoder_sources": [
         {
           "path": "src/cache/config/ObjType.ts",
           "bytes": 9994,
           "sha256": "35172ca7bcd3804bb4e389d45b7d1b8af405e1a57248d374516b46a252d22b84"
+        },
+        {
+          "path": "src/cache/config/NpcType.ts",
+          "bytes": 8038,
+          "sha256": "6bb2ca25ef36e9b06808067846e25e0a135aba4b41d3ddd087592b1138868520"
         },
         {
           "path": "src/cache/config/ConfigType.ts",

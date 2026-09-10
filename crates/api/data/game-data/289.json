@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "revision": 289,
   "provenance": {
     "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
@@ -16,11 +16,48 @@
         "sha256": "3eeb1085547fb3af66db55ec4368357dbbad5178b7747f8b7cb0339fdd04a4ce"
       }
     ],
+    "content_inputs": [
+      {
+        "path": "scripts/player/configs/consumption/consume.dbtable",
+        "bytes": 400,
+        "sha256": "501ebc5625d14d3cc719df05d72cbed0aaa8d97547469bbcd5787a2b6cbc627f"
+      },
+      {
+        "path": "scripts/player/configs/consumption/consume_normal.dbrow",
+        "bytes": 5825,
+        "sha256": "86a28c697072eb8c2321b8f86a1321a7ab3a2cc000c2905905a588eb39c5a5da"
+      },
+      {
+        "path": "scripts/player/configs/consumption/consume_effects.dbrow",
+        "bytes": 9036,
+        "sha256": "d97a0404917ff92534d134ac27ae0035430eac943ef65a38a785a0b60f4ad269"
+      },
+      {
+        "path": "scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable",
+        "bytes": 223,
+        "sha256": "f999e5eeebf60d74a9473ab8109b6b72678f3bb95fd9ae5b09892ac360e8d00d"
+      },
+      {
+        "path": "scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow",
+        "bytes": 3552,
+        "sha256": "c284d00db20d20d141d712619883e9b43262eecac9cd6bc589becd8bace3478b"
+      },
+      {
+        "path": "scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2",
+        "bytes": 6851,
+        "sha256": "6eace195d85d2a3d7752406978355288721a63cd764374c8a8f3670963fd4e01"
+      }
+    ],
     "decoder_sources": [
       {
         "path": "src/cache/config/ObjType.ts",
         "bytes": 9994,
         "sha256": "35172ca7bcd3804bb4e389d45b7d1b8af405e1a57248d374516b46a252d22b84"
+      },
+      {
+        "path": "src/cache/config/NpcType.ts",
+        "bytes": 8038,
+        "sha256": "6bb2ca25ef36e9b06808067846e25e0a135aba4b41d3ddd087592b1138868520"
       },
       {
         "path": "src/cache/config/ConfigType.ts",
@@ -53256,6 +53293,6701 @@
       "wear_position": -1,
       "wear_position_2": -1,
       "wear_position_3": -1
+    }
+  ],
+  "consumption": [
+    {
+      "action": "consume",
+      "item": {
+        "alias": "chocolaty_milk",
+        "id": 1977,
+        "name": "Chocolaty milk"
+      },
+      "source_row": "chocolaty_milk_consume",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 4,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_chocolate_bomb1",
+        "id": 2179,
+        "name": "Unfinished bowl"
+      },
+      "source_row": "heal_0",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_chocolate_bomb2",
+        "id": 2181,
+        "name": "Unfinished bowl"
+      },
+      "source_row": "heal_0",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_chocolate_bomb3",
+        "id": 2183,
+        "name": "Unfinished bowl"
+      },
+      "source_row": "heal_0",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_worm_hole",
+        "id": 2189,
+        "name": "Unfinished bowl"
+      },
+      "source_row": "heal_0",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_veg_ball",
+        "id": 2193,
+        "name": "Unfinished bowl"
+      },
+      "source_row": "heal_0",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "fruitless_batta",
+        "id": 2261,
+        "name": "Unfinished batta"
+      },
+      "source_row": "heal_0",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "fruit_batta_lime",
+        "id": 2263,
+        "name": "Unfinished batta"
+      },
+      "source_row": "heal_0",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "fruit_batta_orange",
+        "id": 2265,
+        "name": "Unfinished batta"
+      },
+      "source_row": "heal_0",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "fruit_batta_pineapple",
+        "id": 2267,
+        "name": "Unfinished batta"
+      },
+      "source_row": "heal_0",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "fruit_batta_limeorange",
+        "id": 2269,
+        "name": "Unfinished batta"
+      },
+      "source_row": "heal_0",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "fruit_batta_limepineapple",
+        "id": 2271,
+        "name": "Unfinished batta"
+      },
+      "source_row": "heal_0",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "fruit_batta_orangepineapple",
+        "id": 2273,
+        "name": "Unfinished batta"
+      },
+      "source_row": "heal_0",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_fruit_batta",
+        "id": 2275,
+        "name": "Unfinished batta"
+      },
+      "source_row": "heal_0",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_worm_batta",
+        "id": 2251,
+        "name": "Unfinished batta"
+      },
+      "source_row": "heal_0",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_cheese+tom_batta",
+        "id": 2257,
+        "name": "Unfinished batta"
+      },
+      "source_row": "heal_0",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_vegetable_batta",
+        "id": 2279,
+        "name": "Unfinished batta"
+      },
+      "source_row": "heal_0",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_worm_crunchies",
+        "id": 2203,
+        "name": "Unfinished crunchy"
+      },
+      "source_row": "heal_0",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_chocchip_crunchies",
+        "id": 2207,
+        "name": "Unfinished crunchy"
+      },
+      "source_row": "heal_0",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_spicy_crunchies",
+        "id": 2211,
+        "name": "Unfinished crunchy"
+      },
+      "source_row": "heal_0",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_toad_crunchies",
+        "id": 2215,
+        "name": "Unfinished crunchy"
+      },
+      "source_row": "heal_0",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "cabbage",
+        "id": 1965,
+        "name": "Cabbage"
+      },
+      "source_row": "heal_1",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 1,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "equa_leaves",
+        "id": 2128,
+        "name": "Equa leaves"
+      },
+      "source_row": "heal_1",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 1,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "pot_of_cream",
+        "id": 2130,
+        "name": "Pot of cream"
+      },
+      "source_row": "heal_1",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 1,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "banana",
+        "id": 1963,
+        "name": "Banana"
+      },
+      "source_row": "heal_2",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 2,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "tbwt_sliced_banana",
+        "id": 3162,
+        "name": "Sliced banana"
+      },
+      "source_row": "heal_2",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 2,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "spinach_roll",
+        "id": 1969,
+        "name": "Spinach roll"
+      },
+      "source_row": "heal_2",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 2,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "lemon",
+        "id": 2102,
+        "name": "Lemon"
+      },
+      "source_row": "heal_2",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 2,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "lemon_chunks",
+        "id": 2104,
+        "name": "Lemon chunks"
+      },
+      "source_row": "heal_2",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 2,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "lemon_slices",
+        "id": 2106,
+        "name": "Lemon slices"
+      },
+      "source_row": "heal_2",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 2,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "orange",
+        "id": 2108,
+        "name": "Orange"
+      },
+      "source_row": "heal_2",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 2,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "orange_chunks",
+        "id": 2110,
+        "name": "Orange chunks"
+      },
+      "source_row": "heal_2",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 2,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "orange_slices",
+        "id": 2112,
+        "name": "Orange slices"
+      },
+      "source_row": "heal_2",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 2,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "pineapple_chunks",
+        "id": 2116,
+        "name": "Pineapple chunks"
+      },
+      "source_row": "heal_2",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 2,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "pineapple_ring",
+        "id": 2118,
+        "name": "Pineapple ring"
+      },
+      "source_row": "heal_2",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 2,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "lime",
+        "id": 2120,
+        "name": "Lime"
+      },
+      "source_row": "heal_2",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 2,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "lime_chunks",
+        "id": 2122,
+        "name": "Lime chunks"
+      },
+      "source_row": "heal_2",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 2,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "lime_slices",
+        "id": 2124,
+        "name": "Lime slices"
+      },
+      "source_row": "heal_2",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 2,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "dwellberries",
+        "id": 2126,
+        "name": "Dwellberries"
+      },
+      "source_row": "heal_2",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 2,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "king_worm",
+        "id": 2162,
+        "name": "King worm"
+      },
+      "source_row": "heal_2",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 2,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "tomato",
+        "id": 1982,
+        "name": "Tomato"
+      },
+      "source_row": "heal_2",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 2,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "cheese",
+        "id": 1985,
+        "name": "Cheese"
+      },
+      "source_row": "heal_2",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 2,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "cooked_ugthanki_meat",
+        "id": 1861,
+        "name": "Ugthanki meat"
+      },
+      "source_row": "heal_3",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "cooked_chicken",
+        "id": 2140,
+        "name": "Cooked chicken"
+      },
+      "source_row": "heal_3",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "cooked_meat",
+        "id": 2142,
+        "name": "Cooked meat"
+      },
+      "source_row": "heal_3",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "chocolate_bar",
+        "id": 1973,
+        "name": "Chocolate bar"
+      },
+      "source_row": "heal_3",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "toads_legs",
+        "id": 2152,
+        "name": "Toad's legs"
+      },
+      "source_row": "heal_3",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "equa_toads_legs",
+        "id": 2154,
+        "name": "Equa toad's legs"
+      },
+      "source_row": "heal_3",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "spicy_toads_legs",
+        "id": 2156,
+        "name": "Spicy toad's legs"
+      },
+      "source_row": "heal_3",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "seasoned_toads_legs",
+        "id": 2158,
+        "name": "Seasoned legs"
+      },
+      "source_row": "heal_3",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "spicy_worm",
+        "id": 2160,
+        "name": "Spicy worm"
+      },
+      "source_row": "heal_3",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "redberry_pie",
+        "id": 2325,
+        "name": "Redberry pie"
+      },
+      "source_row": "heal_3",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "half_a_redberry_pie",
+        "id": 2333,
+        "name": "Half a redberry pie"
+      },
+      "source_row": "heal_3",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "shrimp",
+        "id": 315,
+        "name": "Shrimps"
+      },
+      "source_row": "heal_3",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "anchovies",
+        "id": 319,
+        "name": "Anchovies"
+      },
+      "source_row": "heal_3",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "tbwt_cooked_karambwanji",
+        "id": 3151,
+        "name": "Karambwanji"
+      },
+      "source_row": "heal_3",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "bread",
+        "id": 2309,
+        "name": "Bread"
+      },
+      "source_row": "heal_4",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 4,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "cake",
+        "id": 1891,
+        "name": "Cake"
+      },
+      "source_row": "heal_4",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 4,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "partial_cake",
+        "id": 1893,
+        "name": "2/3 cake"
+      },
+      "source_row": "heal_4",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 4,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "cake_slice",
+        "id": 1895,
+        "name": "Slice of cake"
+      },
+      "source_row": "heal_4",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 4,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "meat_pie",
+        "id": 2327,
+        "name": "Meat pie"
+      },
+      "source_row": "heal_4",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 4,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "half_a_meat_pie",
+        "id": 2331,
+        "name": "Half a meat pie"
+      },
+      "source_row": "heal_4",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 4,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "sardine",
+        "id": 325,
+        "name": "Sardine"
+      },
+      "source_row": "heal_4",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 4,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "chocolate_cake",
+        "id": 1897,
+        "name": "Chocolate cake"
+      },
+      "source_row": "heal_5",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 5,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "partial_chocolate_cake",
+        "id": 1899,
+        "name": "2/3 chocolate cake"
+      },
+      "source_row": "heal_5",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 5,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "chocolate_slice",
+        "id": 1901,
+        "name": "Chocolate slice"
+      },
+      "source_row": "heal_5",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 5,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "apple_pie",
+        "id": 2323,
+        "name": "Apple pie"
+      },
+      "source_row": "heal_5",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 5,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "half_an_apple_pie",
+        "id": 2335,
+        "name": "Half an apple pie"
+      },
+      "source_row": "heal_5",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 5,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "half_plain_pizza",
+        "id": 2291,
+        "name": "1/2 plain pizza"
+      },
+      "source_row": "heal_5",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 5,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "plain_pizza",
+        "id": 2289,
+        "name": "Plain pizza"
+      },
+      "source_row": "heal_5",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 5,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "herring",
+        "id": 347,
+        "name": "Herring"
+      },
+      "source_row": "heal_5",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 5,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "cooked_rabbit",
+        "id": 3228,
+        "name": "Cooked rabbit"
+      },
+      "source_row": "heal_5",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 5,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "ugthanki_kebab_bad",
+        "id": 1883,
+        "name": "Ugthanki kebab"
+      },
+      "source_row": "heal_6",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 6,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "giant_carp",
+        "id": 337,
+        "name": "Giant carp"
+      },
+      "source_row": "heal_6",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 6,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "mackerel",
+        "id": 355,
+        "name": "Mackerel"
+      },
+      "source_row": "heal_6",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 6,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "chocchip_crunchies",
+        "id": 2209,
+        "name": "Chocchip crunchies"
+      },
+      "source_row": "heal_7",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 7,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "spicy_crunchies",
+        "id": 2213,
+        "name": "Spicy crunchies"
+      },
+      "source_row": "heal_7",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 7,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "premade_chocchip_crunchies",
+        "id": 2239,
+        "name": "Chocchip crunchies"
+      },
+      "source_row": "heal_7",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 7,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "premade_spicy_crunchies",
+        "id": 2241,
+        "name": "Spicy crunchies"
+      },
+      "source_row": "heal_7",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 7,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "meat_pizza",
+        "id": 2293,
+        "name": "Meat pizza"
+      },
+      "source_row": "heal_7",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 7,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "half_meat_pizza",
+        "id": 2295,
+        "name": "1/2 meat pizza"
+      },
+      "source_row": "heal_7",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 7,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "trout",
+        "id": 333,
+        "name": "Trout"
+      },
+      "source_row": "heal_7",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 7,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "cod",
+        "id": 339,
+        "name": "Cod"
+      },
+      "source_row": "heal_7",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 7,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "worm_crunchies",
+        "id": 2205,
+        "name": "Worm crunchies"
+      },
+      "source_row": "heal_8",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 8,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "toad_crunchies",
+        "id": 2217,
+        "name": "Toad crunchies"
+      },
+      "source_row": "heal_8",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 8,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "premade_worm_crunchies",
+        "id": 2237,
+        "name": "Worm crunchies"
+      },
+      "source_row": "heal_8",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 8,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "premade_toad_crunchies",
+        "id": 2243,
+        "name": "Toad crunchies"
+      },
+      "source_row": "heal_8",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 8,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "anchovie_pizza",
+        "id": 2297,
+        "name": "Anchovy pizza"
+      },
+      "source_row": "heal_8",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 8,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "half_anchovie_pizza",
+        "id": 2299,
+        "name": "1/2 anchovy pizza"
+      },
+      "source_row": "heal_8",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 8,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "pike",
+        "id": 351,
+        "name": "Pike"
+      },
+      "source_row": "heal_8",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 8,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "salmon",
+        "id": 329,
+        "name": "Salmon"
+      },
+      "source_row": "heal_9",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 9,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "stew",
+        "id": 2003,
+        "name": "Stew"
+      },
+      "source_row": "heal_9",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 9,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "premade_vegetable_batta",
+        "id": 2227,
+        "name": "Vegetable batta"
+      },
+      "source_row": "heal_10",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 10,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "vegetable_batta",
+        "id": 2281,
+        "name": "Vegetable batta"
+      },
+      "source_row": "heal_10",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 10,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "pineapple_pizza",
+        "id": 2301,
+        "name": "Pineapple pizza"
+      },
+      "source_row": "heal_10",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 10,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "half_pineapple_pizza",
+        "id": 2303,
+        "name": "1/2pineapple pizza"
+      },
+      "source_row": "heal_10",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 10,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "tuna",
+        "id": 361,
+        "name": "Tuna"
+      },
+      "source_row": "heal_10",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 10,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "cooked_chompy",
+        "id": 2878,
+        "name": "Cooked chompy"
+      },
+      "source_row": "heal_10",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 10,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "premade_worm_batta",
+        "id": 2219,
+        "name": "Worm batta"
+      },
+      "source_row": "heal_11",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 11,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "premade_toad_batta",
+        "id": 2221,
+        "name": "Toad batta"
+      },
+      "source_row": "heal_11",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 11,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "premade_cheese+tom_batta",
+        "id": 2223,
+        "name": "Cheese+tom batta"
+      },
+      "source_row": "heal_11",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 11,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "premade_fruit_batta",
+        "id": 2225,
+        "name": "Fruit batta"
+      },
+      "source_row": "heal_11",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 11,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "worm_batta",
+        "id": 2253,
+        "name": "Worm batta"
+      },
+      "source_row": "heal_11",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 11,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "toad_batta",
+        "id": 2255,
+        "name": "Toad batta"
+      },
+      "source_row": "heal_11",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 11,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "cheese+tom_batta",
+        "id": 2259,
+        "name": "Cheese+tom batta"
+      },
+      "source_row": "heal_11",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 11,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "fruit_batta",
+        "id": 2277,
+        "name": "Fruit batta"
+      },
+      "source_row": "heal_11",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 11,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "premade_worm_hole",
+        "id": 2233,
+        "name": "Worm hole"
+      },
+      "source_row": "heal_12",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 12,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "premade_veg_ball",
+        "id": 2235,
+        "name": "Veg ball"
+      },
+      "source_row": "heal_12",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 12,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "worm_hole",
+        "id": 2191,
+        "name": "Worm hole"
+      },
+      "source_row": "heal_12",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 12,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "veg_ball",
+        "id": 2195,
+        "name": "Veg ball"
+      },
+      "source_row": "heal_12",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 12,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "lobster",
+        "id": 379,
+        "name": "Lobster"
+      },
+      "source_row": "heal_12",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 12,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "bass",
+        "id": 365,
+        "name": "Bass"
+      },
+      "source_row": "heal_13",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 13,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "pumpkin",
+        "id": 1959,
+        "name": "Pumpkin"
+      },
+      "source_row": "heal_14",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 14,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "easter_egg",
+        "id": 1961,
+        "name": "Easter egg"
+      },
+      "source_row": "heal_14",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 14,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "lava_eel",
+        "id": 2149,
+        "name": "Lava eel"
+      },
+      "source_row": "heal_14",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 14,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "cooked_oomlie",
+        "id": 2343,
+        "name": "Cooked oomlie wrap"
+      },
+      "source_row": "heal_14",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 14,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "swordfish",
+        "id": 373,
+        "name": "Swordfish"
+      },
+      "source_row": "heal_14",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 14,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "premade_chocolate_bomb",
+        "id": 2229,
+        "name": "Chocolate bomb"
+      },
+      "source_row": "heal_15",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 15,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "premade_tangled_toads_legs",
+        "id": 2231,
+        "name": "Tangled toad's legs"
+      },
+      "source_row": "heal_15",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 15,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "chocolate_bomb",
+        "id": 2185,
+        "name": "Chocolate bomb"
+      },
+      "source_row": "heal_15",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 15,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "tangled_toads_legs",
+        "id": 2187,
+        "name": "Tangled toad's legs"
+      },
+      "source_row": "heal_15",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 15,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "tbwt_cooked_karambwan",
+        "id": 3144,
+        "name": "Cooked karambwan"
+      },
+      "source_row": "heal_18",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 18,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "ugthanki_kebab",
+        "id": 1885,
+        "name": "Ugthanki kebab"
+      },
+      "source_row": "heal_19",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 19,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "curry",
+        "id": 2011,
+        "name": "Curry"
+      },
+      "source_row": "heal_19",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 19,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "shark",
+        "id": 385,
+        "name": "Shark"
+      },
+      "source_row": "heal_20",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 20,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "seaturtle",
+        "id": 397,
+        "name": "Sea turtle"
+      },
+      "source_row": "heal_21",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 21,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "mantaray",
+        "id": 391,
+        "name": "Manta ray"
+      },
+      "source_row": "heal_22",
+      "source_file": "consume_normal.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 22,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "1dose1attack",
+        "id": 125,
+        "name": "Attack potion(1)"
+      },
+      "source_row": "attack_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": 3,
+          "percent": 10
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "2dose1attack",
+        "id": 123,
+        "name": "Attack potion(2)"
+      },
+      "source_row": "attack_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": 3,
+          "percent": 10
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "3dose1attack",
+        "id": 121,
+        "name": "Attack potion(3)"
+      },
+      "source_row": "attack_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": 3,
+          "percent": 10
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "4dose1attack",
+        "id": 2428,
+        "name": "Attack potion(4)"
+      },
+      "source_row": "attack_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": 3,
+          "percent": 10
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "1dose1strength",
+        "id": 119,
+        "name": "Strength potion(1)"
+      },
+      "source_row": "strength_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "strength",
+          "base": 3,
+          "percent": 10
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "2dose1strength",
+        "id": 117,
+        "name": "Strength potion(2)"
+      },
+      "source_row": "strength_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "strength",
+          "base": 3,
+          "percent": 10
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "3dose1strength",
+        "id": 115,
+        "name": "Strength potion(3)"
+      },
+      "source_row": "strength_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "strength",
+          "base": 3,
+          "percent": 10
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "strength4",
+        "id": 113,
+        "name": "Strength potion(4)"
+      },
+      "source_row": "strength_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "strength",
+          "base": 3,
+          "percent": 10
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "1dose1defense",
+        "id": 137,
+        "name": "Defence potion(1)"
+      },
+      "source_row": "defence_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "defence",
+          "base": 3,
+          "percent": 10
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "2dose1defense",
+        "id": 135,
+        "name": "Defence potion(2)"
+      },
+      "source_row": "defence_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "defence",
+          "base": 3,
+          "percent": 10
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "3dose1defense",
+        "id": 133,
+        "name": "Defence potion(3)"
+      },
+      "source_row": "defence_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "defence",
+          "base": 3,
+          "percent": 10
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "4dose1defense",
+        "id": 2432,
+        "name": "Defence potion(4)"
+      },
+      "source_row": "defence_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "defence",
+          "base": 3,
+          "percent": 10
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "1dose2attack",
+        "id": 149,
+        "name": "Super attack(1)"
+      },
+      "source_row": "super_attack_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": 5,
+          "percent": 15
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "2dose2attack",
+        "id": 147,
+        "name": "Super attack(2)"
+      },
+      "source_row": "super_attack_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": 5,
+          "percent": 15
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "3dose2attack",
+        "id": 145,
+        "name": "Super attack(3)"
+      },
+      "source_row": "super_attack_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": 5,
+          "percent": 15
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "4dose2attack",
+        "id": 2436,
+        "name": "Super attack(4)"
+      },
+      "source_row": "super_attack_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": 5,
+          "percent": 15
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "1dosefisherspotion",
+        "id": 155,
+        "name": "Fishing potion(1)"
+      },
+      "source_row": "fishing_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "fishing",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "2dosefisherspotion",
+        "id": 153,
+        "name": "Fishing potion(2)"
+      },
+      "source_row": "fishing_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "fishing",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "3dosefisherspotion",
+        "id": 151,
+        "name": "Fishing potion(3)"
+      },
+      "source_row": "fishing_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "fishing",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "4dosefisherspotion",
+        "id": 2438,
+        "name": "Fishing potion(4)"
+      },
+      "source_row": "fishing_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "fishing",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "1dose2strength",
+        "id": 161,
+        "name": "Super strength(1)"
+      },
+      "source_row": "super_strength_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "strength",
+          "base": 5,
+          "percent": 15
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "2dose2strength",
+        "id": 159,
+        "name": "Super strength(2)"
+      },
+      "source_row": "super_strength_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "strength",
+          "base": 5,
+          "percent": 15
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "3dose2strength",
+        "id": 157,
+        "name": "Super strength(3)"
+      },
+      "source_row": "super_strength_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "strength",
+          "base": 5,
+          "percent": 15
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "4dose2strength",
+        "id": 2440,
+        "name": "Super strength(4)"
+      },
+      "source_row": "super_strength_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "strength",
+          "base": 5,
+          "percent": 15
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "1dose2defense",
+        "id": 167,
+        "name": "Super defence(1)"
+      },
+      "source_row": "super_defence_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "defence",
+          "base": 5,
+          "percent": 15
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "2dose2defense",
+        "id": 165,
+        "name": "Super defence(2)"
+      },
+      "source_row": "super_defence_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "defence",
+          "base": 5,
+          "percent": 15
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "3dose2defense",
+        "id": 163,
+        "name": "Super defence(3)"
+      },
+      "source_row": "super_defence_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "defence",
+          "base": 5,
+          "percent": 15
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "4dose2defense",
+        "id": 2442,
+        "name": "Super defence(4)"
+      },
+      "source_row": "super_defence_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "defence",
+          "base": 5,
+          "percent": 15
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "1doserangerspotion",
+        "id": 173,
+        "name": "Ranging potion(1)"
+      },
+      "source_row": "range_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "ranged",
+          "base": 4,
+          "percent": 10
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "2doserangerspotion",
+        "id": 171,
+        "name": "Ranging potion(2)"
+      },
+      "source_row": "range_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "ranged",
+          "base": 4,
+          "percent": 10
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "3doserangerspotion",
+        "id": 169,
+        "name": "Ranging potion(3)"
+      },
+      "source_row": "range_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "ranged",
+          "base": 4,
+          "percent": 10
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "4doserangerspotion",
+        "id": 2444,
+        "name": "Ranging potion(4)"
+      },
+      "source_row": "range_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "ranged",
+          "base": 4,
+          "percent": 10
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "asgarnian_ale",
+        "id": 1905,
+        "name": "Asgarnian ale"
+      },
+      "source_row": "asgarnian_ale_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -2,
+          "percent": -5
+        },
+        {
+          "stat": "strength",
+          "base": 2,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 2,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "wizards_mind_bomb",
+        "id": 1907,
+        "name": "Wizard's mind bomb"
+      },
+      "source_row": "wizards_mind_bomb_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "magic",
+          "base": 2,
+          "percent": 2
+        },
+        {
+          "stat": "attack",
+          "base": -1,
+          "percent": -5
+        },
+        {
+          "stat": "strength",
+          "base": -1,
+          "percent": -5
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": -5
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 1,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "greenmans_ale",
+        "id": 1909,
+        "name": "Greenman's ale"
+      },
+      "source_row": "greenmans_ale_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "herblore",
+          "base": 1,
+          "percent": 0
+        },
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -3,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 1,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "dragon_bitter",
+        "id": 1911,
+        "name": "Dragon bitter"
+      },
+      "source_row": "dragon_bitter_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "strength",
+          "base": 2,
+          "percent": 0
+        },
+        {
+          "stat": "attack",
+          "base": -2,
+          "percent": -5
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 1,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "dwarven_stout",
+        "id": 1913,
+        "name": "Dwarven stout"
+      },
+      "source_row": "dwarven_stout_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "mining",
+          "base": 1,
+          "percent": 0
+        },
+        {
+          "stat": "smithing",
+          "base": 1,
+          "percent": 0
+        },
+        {
+          "stat": "attack",
+          "base": -2,
+          "percent": 4
+        },
+        {
+          "stat": "strength",
+          "base": -2,
+          "percent": 4
+        },
+        {
+          "stat": "defence",
+          "base": -2,
+          "percent": 4
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 1,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "grog",
+        "id": 1915,
+        "name": "Grog"
+      },
+      "source_row": "grog_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "strength",
+          "base": 1,
+          "percent": 4
+        },
+        {
+          "stat": "attack",
+          "base": -5,
+          "percent": -3
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "beer",
+        "id": 1917,
+        "name": "Beer"
+      },
+      "source_row": "beer_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "strength",
+          "base": 1,
+          "percent": 2
+        },
+        {
+          "stat": "attack",
+          "base": -1,
+          "percent": -6
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 1,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "jug_wine",
+        "id": 1993,
+        "name": "Jug of wine"
+      },
+      "source_row": "wine_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -2,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 11,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "half_full_wine_jug",
+        "id": 1989,
+        "name": "Half full wine jug"
+      },
+      "source_row": "half_wine_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -2,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 7,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "jug_bad_wine",
+        "id": 1991,
+        "name": "Jug of bad wine"
+      },
+      "source_row": "bad_wine_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "magic_cabbage",
+        "id": 1967,
+        "name": "Cabbage"
+      },
+      "source_row": "cabbage_draynor_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "defence",
+          "base": 1,
+          "percent": 2
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 1,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "jangerberries",
+        "id": 247,
+        "name": "Jangerberries"
+      },
+      "source_row": "jangerberries_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": 2,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": 1,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "prayer",
+          "base": 1,
+          "percent": 0
+        },
+        {
+          "stat": "hitpoints",
+          "base": 2,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "1dosestatrestore",
+        "id": 131,
+        "name": "Restore potion(1)"
+      },
+      "source_row": "restore_potion_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "attack",
+          "base": 10,
+          "percent": 30
+        },
+        {
+          "stat": "defence",
+          "base": 10,
+          "percent": 30
+        },
+        {
+          "stat": "strength",
+          "base": 10,
+          "percent": 30
+        },
+        {
+          "stat": "ranged",
+          "base": 10,
+          "percent": 30
+        },
+        {
+          "stat": "magic",
+          "base": 10,
+          "percent": 30
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "2dosestatrestore",
+        "id": 129,
+        "name": "Restore potion(2)"
+      },
+      "source_row": "restore_potion_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "attack",
+          "base": 10,
+          "percent": 30
+        },
+        {
+          "stat": "defence",
+          "base": 10,
+          "percent": 30
+        },
+        {
+          "stat": "strength",
+          "base": 10,
+          "percent": 30
+        },
+        {
+          "stat": "ranged",
+          "base": 10,
+          "percent": 30
+        },
+        {
+          "stat": "magic",
+          "base": 10,
+          "percent": 30
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "3dosestatrestore",
+        "id": 127,
+        "name": "Restore potion(3)"
+      },
+      "source_row": "restore_potion_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "attack",
+          "base": 10,
+          "percent": 30
+        },
+        {
+          "stat": "defence",
+          "base": 10,
+          "percent": 30
+        },
+        {
+          "stat": "strength",
+          "base": 10,
+          "percent": 30
+        },
+        {
+          "stat": "ranged",
+          "base": 10,
+          "percent": 30
+        },
+        {
+          "stat": "magic",
+          "base": 10,
+          "percent": 30
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "4dosestatrestore",
+        "id": 2430,
+        "name": "Restore potion(4)"
+      },
+      "source_row": "restore_potion_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "attack",
+          "base": 10,
+          "percent": 30
+        },
+        {
+          "stat": "defence",
+          "base": 10,
+          "percent": 30
+        },
+        {
+          "stat": "strength",
+          "base": 10,
+          "percent": 30
+        },
+        {
+          "stat": "ranged",
+          "base": 10,
+          "percent": 30
+        },
+        {
+          "stat": "magic",
+          "base": 10,
+          "percent": 30
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "4doseprayerrestore",
+        "id": 2434,
+        "name": "Prayer potion(4)"
+      },
+      "source_row": "prayer_potion_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "prayer",
+          "base": 7,
+          "percent": 25
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "3doseprayerrestore",
+        "id": 139,
+        "name": "Prayer potion(3)"
+      },
+      "source_row": "prayer_potion_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "prayer",
+          "base": 7,
+          "percent": 25
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "2doseprayerrestore",
+        "id": 141,
+        "name": "Prayer potion(2)"
+      },
+      "source_row": "prayer_potion_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "prayer",
+          "base": 7,
+          "percent": 25
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "1doseprayerrestore",
+        "id": 143,
+        "name": "Prayer potion(1)"
+      },
+      "source_row": "prayer_potion_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "prayer",
+          "base": 7,
+          "percent": 25
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "1dosepotionofzamorak",
+        "id": 193,
+        "name": "Zamorak potion(1)"
+      },
+      "source_row": "zamorak_brew_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": 2,
+          "percent": 20
+        },
+        {
+          "stat": "strength",
+          "base": 2,
+          "percent": 12
+        },
+        {
+          "stat": "defence",
+          "base": -2,
+          "percent": -10
+        },
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": -12
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "prayer",
+          "base": 0,
+          "percent": 10
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "2dosepotionofzamorak",
+        "id": 191,
+        "name": "Zamorak potion(2)"
+      },
+      "source_row": "zamorak_brew_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": 2,
+          "percent": 20
+        },
+        {
+          "stat": "strength",
+          "base": 2,
+          "percent": 12
+        },
+        {
+          "stat": "defence",
+          "base": -2,
+          "percent": -10
+        },
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": -12
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "prayer",
+          "base": 0,
+          "percent": 10
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "3dosepotionofzamorak",
+        "id": 189,
+        "name": "Zamorak potion(3)"
+      },
+      "source_row": "zamorak_brew_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": 2,
+          "percent": 20
+        },
+        {
+          "stat": "strength",
+          "base": 2,
+          "percent": 12
+        },
+        {
+          "stat": "defence",
+          "base": -2,
+          "percent": -10
+        },
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": -12
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "prayer",
+          "base": 0,
+          "percent": 10
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "4dosepotionofzamorak",
+        "id": 2450,
+        "name": "Zamorak potion(4)"
+      },
+      "source_row": "zamorak_brew_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": 2,
+          "percent": 20
+        },
+        {
+          "stat": "strength",
+          "base": 2,
+          "percent": 12
+        },
+        {
+          "stat": "defence",
+          "base": -2,
+          "percent": -10
+        },
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": -12
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "prayer",
+          "base": 0,
+          "percent": 10
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "vodka",
+        "id": 2015,
+        "name": "Vodka"
+      },
+      "source_row": "bottle_alcohol_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "strength",
+          "base": 1,
+          "percent": 5
+        },
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": -2
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 5,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "whisky",
+        "id": 2017,
+        "name": "Whisky"
+      },
+      "source_row": "bottle_alcohol_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "strength",
+          "base": 1,
+          "percent": 5
+        },
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": -2
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 5,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "gin",
+        "id": 2019,
+        "name": "Gin"
+      },
+      "source_row": "bottle_alcohol_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "strength",
+          "base": 1,
+          "percent": 5
+        },
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": -2
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 5,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "brandy",
+        "id": 2021,
+        "name": "Brandy"
+      },
+      "source_row": "bottle_alcohol_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "strength",
+          "base": 1,
+          "percent": 5
+        },
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": -2
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 5,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "premade_blurberry_special",
+        "id": 2028,
+        "name": "Blurberry special"
+      },
+      "source_row": "cocktail_effect1",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": -2
+        },
+        {
+          "stat": "strength",
+          "base": 2,
+          "percent": 5
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 7,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "blurberry_special",
+        "id": 2064,
+        "name": "Blurberry special"
+      },
+      "source_row": "cocktail_effect1",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": -2
+        },
+        {
+          "stat": "strength",
+          "base": 2,
+          "percent": 5
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 7,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "premade_choc_saturday",
+        "id": 2030,
+        "name": "Choc saturday"
+      },
+      "source_row": "cocktail_effect2",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": -2
+        },
+        {
+          "stat": "strength",
+          "base": 2,
+          "percent": 5
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 5,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "chocolate_saturday",
+        "id": 2074,
+        "name": "Choc saturday"
+      },
+      "source_row": "cocktail_effect2",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": -2
+        },
+        {
+          "stat": "strength",
+          "base": 2,
+          "percent": 5
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 5,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "premade_drunk_dragon",
+        "id": 2032,
+        "name": "Drunk dragon"
+      },
+      "source_row": "cocktail_effect2",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": -2
+        },
+        {
+          "stat": "strength",
+          "base": 2,
+          "percent": 5
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 5,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "drunk_dragon",
+        "id": 2092,
+        "name": "Drunk dragon"
+      },
+      "source_row": "cocktail_effect2",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": -2
+        },
+        {
+          "stat": "strength",
+          "base": 2,
+          "percent": 5
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 5,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "premade_wizard_blizzard",
+        "id": 2040,
+        "name": "Wizard blizzard"
+      },
+      "source_row": "cocktail_effect3",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": -2
+        },
+        {
+          "stat": "strength",
+          "base": 1,
+          "percent": 6
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 5,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "wizard_blizzard",
+        "id": 2054,
+        "name": "Wizard blizzard"
+      },
+      "source_row": "cocktail_effect3",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": -2
+        },
+        {
+          "stat": "strength",
+          "base": 1,
+          "percent": 6
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 5,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "premade_sgg",
+        "id": 2038,
+        "name": "Sgg"
+      },
+      "source_row": "cocktail_effect3",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": -2
+        },
+        {
+          "stat": "strength",
+          "base": 1,
+          "percent": 6
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 5,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "sgg",
+        "id": 2080,
+        "name": "Sgg"
+      },
+      "source_row": "cocktail_effect3",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": -2
+        },
+        {
+          "stat": "strength",
+          "base": 1,
+          "percent": 6
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 5,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "premade_pineapple_punch",
+        "id": 2036,
+        "name": "Pineapple punch"
+      },
+      "source_row": "cocktail_effect4",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 9,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "pineapple_punch",
+        "id": 2048,
+        "name": "Pineapple punch"
+      },
+      "source_row": "cocktail_effect4",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 9,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "premade_fruit_blast",
+        "id": 2034,
+        "name": "Fruit blast"
+      },
+      "source_row": "cocktail_effect4",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 9,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "fruit_blast",
+        "id": 2084,
+        "name": "Fruit blast"
+      },
+      "source_row": "cocktail_effect4",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 9,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "spoilt_cocktail",
+        "id": 2094,
+        "name": "Odd cocktail"
+      },
+      "source_row": "odd_cocktail_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "spoilt_cocktail_fruity",
+        "id": 2096,
+        "name": "Odd cocktail"
+      },
+      "source_row": "odd_cocktail_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "spoilt_cocktail_creamy",
+        "id": 2098,
+        "name": "Odd cocktail"
+      },
+      "source_row": "odd_cocktail_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "spoilt_cocktail_slice",
+        "id": 2100,
+        "name": "Odd cocktail"
+      },
+      "source_row": "odd_cocktail_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_wizard_blizzard1",
+        "id": 2050,
+        "name": "Unfinished cocktail"
+      },
+      "source_row": "odd_cocktail_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_wizard_blizzard2",
+        "id": 2052,
+        "name": "Unfinished cocktail"
+      },
+      "source_row": "odd_cocktail_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_blurberry_special1",
+        "id": 2056,
+        "name": "Unfinished cocktail"
+      },
+      "source_row": "odd_cocktail_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_blurberry_special2",
+        "id": 2058,
+        "name": "Unfinished cocktail"
+      },
+      "source_row": "odd_cocktail_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_blurberry_special3",
+        "id": 2060,
+        "name": "Unfinished cocktail"
+      },
+      "source_row": "odd_cocktail_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_blurberry_special4",
+        "id": 2062,
+        "name": "Unfinished cocktail"
+      },
+      "source_row": "odd_cocktail_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_chocolate_saturday1",
+        "id": 2066,
+        "name": "Unfinished cocktail"
+      },
+      "source_row": "odd_cocktail_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_chocolate_saturday2",
+        "id": 2068,
+        "name": "Unfinished cocktail"
+      },
+      "source_row": "odd_cocktail_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_chocolate_saturday3",
+        "id": 2070,
+        "name": "Unfinished cocktail"
+      },
+      "source_row": "odd_cocktail_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_chocolate_saturday4",
+        "id": 2072,
+        "name": "Unfinished cocktail"
+      },
+      "source_row": "odd_cocktail_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_sgg1",
+        "id": 2076,
+        "name": "Unfinished cocktail"
+      },
+      "source_row": "odd_cocktail_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_sgg2",
+        "id": 2078,
+        "name": "Unfinished cocktail"
+      },
+      "source_row": "odd_cocktail_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_drunk_dragon1",
+        "id": 2086,
+        "name": "Unfinished cocktail"
+      },
+      "source_row": "odd_cocktail_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_drunk_dragon2",
+        "id": 2088,
+        "name": "Unfinished cocktail"
+      },
+      "source_row": "odd_cocktail_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_drunk_dragon3",
+        "id": 2090,
+        "name": "Unfinished cocktail"
+      },
+      "source_row": "odd_cocktail_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_fruit_blast1",
+        "id": 2082,
+        "name": "Unfinished cocktail"
+      },
+      "source_row": "odd_cocktail_effect2",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_pineapple_punch1",
+        "id": 2042,
+        "name": "Unfinished cocktail"
+      },
+      "source_row": "odd_cocktail_effect2",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_pineapple_punch2",
+        "id": 2044,
+        "name": "Unfinished cocktail"
+      },
+      "source_row": "odd_cocktail_effect2",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "unfinished_pineapple_punch3",
+        "id": 2046,
+        "name": "Unfinished cocktail"
+      },
+      "source_row": "odd_cocktail_effect2",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 0,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "cup_of_tea",
+        "id": 1978,
+        "name": "Cup of tea"
+      },
+      "source_row": "tea_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": 2,
+          "percent": 2
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "spoilt_gnomebowl",
+        "id": 2173,
+        "name": "Odd gnomebowl"
+      },
+      "source_row": "odd_gnomefood_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "spoilt_batta",
+        "id": 2245,
+        "name": "Odd batta"
+      },
+      "source_row": "odd_gnomefood_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "spoilt_crunchies",
+        "id": 2197,
+        "name": "Odd crunchies"
+      },
+      "source_row": "odd_gnomefood_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "attack",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "strength",
+          "base": -3,
+          "percent": 0
+        },
+        {
+          "stat": "defence",
+          "base": -1,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "moonlight_mead",
+        "id": 2955,
+        "name": "Moonlight mead"
+      },
+      "source_row": "moonlight_mead_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 4,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "1dose1agility",
+        "id": 3038,
+        "name": "Agility potion(1)"
+      },
+      "source_row": "1agility_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "agility",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "2dose1agility",
+        "id": 3036,
+        "name": "Agility potion(2)"
+      },
+      "source_row": "1agility_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "agility",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "3dose1agility",
+        "id": 3034,
+        "name": "Agility potion(3)"
+      },
+      "source_row": "1agility_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "agility",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "4dose1agility",
+        "id": 3032,
+        "name": "Agility potion(4)"
+      },
+      "source_row": "1agility_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "agility",
+          "base": 3,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "1dose2restore",
+        "id": 3030,
+        "name": "Super restore(1)"
+      },
+      "source_row": "2restore_potion_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "attack",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "strength",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "ranged",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "magic",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "defence",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "prayer",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "herblore",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "thieving",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "crafting",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "runecraft",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "mining",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "smithing",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "fishing",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "cooking",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "firemaking",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "woodcutting",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "fletching",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "agility",
+          "base": 8,
+          "percent": 25
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "2dose2restore",
+        "id": 3028,
+        "name": "Super restore(2)"
+      },
+      "source_row": "2restore_potion_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "attack",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "strength",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "ranged",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "magic",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "defence",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "prayer",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "herblore",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "thieving",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "crafting",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "runecraft",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "mining",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "smithing",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "fishing",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "cooking",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "firemaking",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "woodcutting",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "fletching",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "agility",
+          "base": 8,
+          "percent": 25
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "3dose2restore",
+        "id": 3026,
+        "name": "Super restore(3)"
+      },
+      "source_row": "2restore_potion_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "attack",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "strength",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "ranged",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "magic",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "defence",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "prayer",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "herblore",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "thieving",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "crafting",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "runecraft",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "mining",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "smithing",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "fishing",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "cooking",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "firemaking",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "woodcutting",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "fletching",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "agility",
+          "base": 8,
+          "percent": 25
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "4dose2restore",
+        "id": 3024,
+        "name": "Super restore(4)"
+      },
+      "source_row": "2restore_potion_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [
+        {
+          "stat": "attack",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "strength",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "ranged",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "magic",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "defence",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "prayer",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "herblore",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "thieving",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "crafting",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "runecraft",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "mining",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "smithing",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "fishing",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "cooking",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "firemaking",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "woodcutting",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "fletching",
+          "base": 8,
+          "percent": 25
+        },
+        {
+          "stat": "agility",
+          "base": 8,
+          "percent": 25
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "1dose1energy",
+        "id": 3014,
+        "name": "Energy potion(1)"
+      },
+      "source_row": "1energy_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [],
+      "heal_energy": [
+        1000
+      ],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "2dose1energy",
+        "id": 3012,
+        "name": "Energy potion(2)"
+      },
+      "source_row": "1energy_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [],
+      "heal_energy": [
+        1000
+      ],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "3dose1energy",
+        "id": 3010,
+        "name": "Energy potion(3)"
+      },
+      "source_row": "1energy_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [],
+      "heal_energy": [
+        1000
+      ],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "4dose1energy",
+        "id": 3008,
+        "name": "Energy potion(4)"
+      },
+      "source_row": "1energy_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [],
+      "heal_energy": [
+        1000
+      ],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "1dose2energy",
+        "id": 3022,
+        "name": "Super energy(1)"
+      },
+      "source_row": "2energy_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [],
+      "heal_energy": [
+        2000
+      ],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "2dose2energy",
+        "id": 3020,
+        "name": "Super energy(2)"
+      },
+      "source_row": "2energy_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [],
+      "heal_energy": [
+        2000
+      ],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "3dose2energy",
+        "id": 3018,
+        "name": "Super energy(3)"
+      },
+      "source_row": "2energy_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [],
+      "heal_energy": [
+        2000
+      ],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "4dose2energy",
+        "id": 3016,
+        "name": "Super energy(4)"
+      },
+      "source_row": "2energy_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [],
+      "stat_heal": [],
+      "heal_energy": [
+        2000
+      ],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "1dose1magic",
+        "id": 3046,
+        "name": "Magic potion(1)"
+      },
+      "source_row": "1magic_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "magic",
+          "base": 4,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "2dose1magic",
+        "id": 3044,
+        "name": "Magic potion(2)"
+      },
+      "source_row": "1magic_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "magic",
+          "base": 4,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "3dose1magic",
+        "id": 3042,
+        "name": "Magic potion(3)"
+      },
+      "source_row": "1magic_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "magic",
+          "base": 4,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "4dose1magic",
+        "id": 3040,
+        "name": "Magic potion(4)"
+      },
+      "source_row": "1magic_consumable_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "magic",
+          "base": 4,
+          "percent": 0
+        }
+      ],
+      "stat_heal": [],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    },
+    {
+      "action": "consume",
+      "item": {
+        "alias": "viking_tankard_full",
+        "id": 3803,
+        "name": "Beer"
+      },
+      "source_row": "viking_beer_effect",
+      "source_file": "consume_effects.dbrow",
+      "stat_change": [
+        {
+          "stat": "strength",
+          "base": 2,
+          "percent": 4
+        },
+        {
+          "stat": "attack",
+          "base": -2,
+          "percent": -10
+        }
+      ],
+      "stat_heal": [
+        {
+          "stat": "hitpoints",
+          "base": 4,
+          "percent": 0
+        }
+      ],
+      "heal_energy": [],
+      "qualification": "not_fixed_hp_heal"
+    }
+  ],
+  "pickpocket": [
+    {
+      "group": "pickpocket_man",
+      "npcs": [
+        {
+          "alias": "man",
+          "id": 1,
+          "name": "Man"
+        },
+        {
+          "alias": "man2",
+          "id": 2,
+          "name": "Man"
+        },
+        {
+          "alias": "man3",
+          "id": 3,
+          "name": "Man"
+        },
+        {
+          "alias": "al_kharid_man",
+          "id": 16,
+          "name": "Man"
+        },
+        {
+          "alias": "ardougnian_male1",
+          "id": 24,
+          "name": "Man"
+        }
+      ],
+      "level": 1,
+      "experience": 80,
+      "stun_ticks": 8,
+      "stun_damage": 1,
+      "success_chance": {
+        "numerator": 180,
+        "denominator": 240
+      },
+      "loot": [
+        {
+          "item": {
+            "alias": "coins",
+            "id": 995,
+            "name": "Coins"
+          },
+          "min": 3,
+          "max": 3,
+          "weight": 128
+        }
+      ],
+      "pocket": "man's pocket"
+    },
+    {
+      "group": "pickpocket_woman",
+      "npcs": [
+        {
+          "alias": "woman",
+          "id": 4,
+          "name": "Woman"
+        },
+        {
+          "alias": "woman2",
+          "id": 5,
+          "name": "Woman"
+        },
+        {
+          "alias": "woman3",
+          "id": 6,
+          "name": "Woman"
+        },
+        {
+          "alias": "ardougnian_female1",
+          "id": 25,
+          "name": "Woman"
+        }
+      ],
+      "level": 1,
+      "experience": 80,
+      "stun_ticks": 8,
+      "stun_damage": 1,
+      "success_chance": {
+        "numerator": 180,
+        "denominator": 240
+      },
+      "loot": [
+        {
+          "item": {
+            "alias": "coins",
+            "id": 995,
+            "name": "Coins"
+          },
+          "min": 3,
+          "max": 3,
+          "weight": 128
+        }
+      ],
+      "pocket": "woman's pocket"
+    },
+    {
+      "group": "pickpocket_farmer",
+      "npcs": [
+        {
+          "alias": "farmer1",
+          "id": 7,
+          "name": "Farmer"
+        }
+      ],
+      "level": 10,
+      "experience": 145,
+      "stun_ticks": 8,
+      "stun_damage": 1,
+      "success_chance": {
+        "numerator": 150,
+        "denominator": 240
+      },
+      "loot": [
+        {
+          "item": {
+            "alias": "coins",
+            "id": 995,
+            "name": "Coins"
+          },
+          "min": 9,
+          "max": 9,
+          "weight": 123
+        }
+      ],
+      "pocket": "farmer's pocket"
+    },
+    {
+      "group": "pickpocket_warrior",
+      "npcs": [
+        {
+          "alias": "warrior_woman",
+          "id": 15,
+          "name": "Warrior woman"
+        },
+        {
+          "alias": "al_kharid_warrior",
+          "id": 18,
+          "name": "Al-Kharid warrior"
+        }
+      ],
+      "level": 25,
+      "experience": 260,
+      "stun_ticks": 8,
+      "stun_damage": 2,
+      "success_chance": {
+        "numerator": 100,
+        "denominator": 240
+      },
+      "loot": [
+        {
+          "item": {
+            "alias": "coins",
+            "id": 995,
+            "name": "Coins"
+          },
+          "min": 18,
+          "max": 18,
+          "weight": 128
+        }
+      ],
+      "pocket": "warrior's pocket"
+    },
+    {
+      "group": "pickpocket_rogue",
+      "npcs": [
+        {
+          "alias": "rogue",
+          "id": 187,
+          "name": "Rogue"
+        }
+      ],
+      "level": 32,
+      "experience": 365,
+      "stun_ticks": 8,
+      "stun_damage": 2,
+      "success_chance": {
+        "numerator": 74,
+        "denominator": 240
+      },
+      "loot": [
+        {
+          "item": {
+            "alias": "coins",
+            "id": 995,
+            "name": "Coins"
+          },
+          "min": 25,
+          "max": 40,
+          "weight": 108
+        },
+        {
+          "item": {
+            "alias": "airrune",
+            "id": 556,
+            "name": "Air rune"
+          },
+          "min": 8,
+          "max": 8,
+          "weight": 8
+        },
+        {
+          "item": {
+            "alias": "jug_wine",
+            "id": 1993,
+            "name": "Jug of wine"
+          },
+          "min": 1,
+          "max": 1,
+          "weight": 6
+        },
+        {
+          "item": {
+            "alias": "lockpick",
+            "id": 1523,
+            "name": "Lockpick"
+          },
+          "min": 1,
+          "max": 1,
+          "weight": 5
+        },
+        {
+          "item": {
+            "alias": "iron_dagger_p",
+            "id": 1219,
+            "name": "Iron dagger(p)"
+          },
+          "min": 1,
+          "max": 1,
+          "weight": 1
+        }
+      ],
+      "pocket": "rogue's pocket"
+    },
+    {
+      "group": "pickpocket_guard",
+      "npcs": [
+        {
+          "alias": "guard1",
+          "id": 9,
+          "name": "Guard"
+        },
+        {
+          "alias": "guard2",
+          "id": 10,
+          "name": "Guard"
+        },
+        {
+          "alias": "ardougne_guard",
+          "id": 32,
+          "name": "Guard"
+        }
+      ],
+      "level": 40,
+      "experience": 468,
+      "stun_ticks": 8,
+      "stun_damage": 2,
+      "success_chance": {
+        "numerator": 50,
+        "denominator": 240
+      },
+      "loot": [
+        {
+          "item": {
+            "alias": "coins",
+            "id": 995,
+            "name": "Coins"
+          },
+          "min": 30,
+          "max": 30,
+          "weight": 128
+        }
+      ],
+      "pocket": "guard's pocket"
+    },
+    {
+      "group": "pickpocket_knight_of_ardougne",
+      "npcs": [
+        {
+          "alias": "knight_of_ardougne",
+          "id": 23,
+          "name": "Knight of Ardougne"
+        },
+        {
+          "alias": "knight_of_ardougne2",
+          "id": 26,
+          "name": "Knight of Ardougne"
+        }
+      ],
+      "level": 55,
+      "experience": 843,
+      "stun_ticks": 8,
+      "stun_damage": 3,
+      "success_chance": {
+        "numerator": 50,
+        "denominator": 240
+      },
+      "loot": [
+        {
+          "item": {
+            "alias": "coins",
+            "id": 995,
+            "name": "Coins"
+          },
+          "min": 50,
+          "max": 50,
+          "weight": 128
+        }
+      ],
+      "pocket": "knight's pocket"
+    },
+    {
+      "group": "pickpocket_watchman",
+      "npcs": [
+        {
+          "alias": "yanille_watchman",
+          "id": 34,
+          "name": "Watchman"
+        }
+      ],
+      "level": 65,
+      "experience": 1375,
+      "stun_ticks": 8,
+      "stun_damage": 3,
+      "success_chance": {
+        "numerator": 15,
+        "denominator": 160
+      },
+      "loot": [
+        {
+          "item": {
+            "alias": "coins",
+            "id": 995,
+            "name": "Coins"
+          },
+          "min": 60,
+          "max": 60,
+          "weight": 128
+        },
+        {
+          "item": {
+            "alias": "bread",
+            "id": 2309,
+            "name": "Bread"
+          },
+          "min": 1,
+          "max": 1,
+          "weight": 128
+        }
+      ],
+      "pocket": "watchman's pocket"
+    },
+    {
+      "group": "pickpocket_paladin",
+      "npcs": [
+        {
+          "alias": "paladin",
+          "id": 20,
+          "name": "Paladin"
+        }
+      ],
+      "level": 70,
+      "experience": 1518,
+      "stun_ticks": 8,
+      "stun_damage": 3,
+      "success_chance": {
+        "numerator": 50,
+        "denominator": 150
+      },
+      "loot": [
+        {
+          "item": {
+            "alias": "coins",
+            "id": 995,
+            "name": "Coins"
+          },
+          "min": 80,
+          "max": 80,
+          "weight": 128
+        },
+        {
+          "item": {
+            "alias": "chaosrune",
+            "id": 562,
+            "name": "Chaos rune"
+          },
+          "min": 2,
+          "max": 2,
+          "weight": 128
+        }
+      ],
+      "pocket": "paladin's pocket"
+    },
+    {
+      "group": "pickpocket_gnome",
+      "npcs": [
+        {
+          "alias": "gnome",
+          "id": 66,
+          "name": "Gnome"
+        },
+        {
+          "alias": "browclothedgnome",
+          "id": 67,
+          "name": "Gnome"
+        },
+        {
+          "alias": "darkskinned_gnome",
+          "id": 68,
+          "name": "Gnome"
+        },
+        {
+          "alias": "gnomechildgreen",
+          "id": 159,
+          "name": "Gnome child"
+        },
+        {
+          "alias": "gnomechildblue",
+          "id": 160,
+          "name": "Gnome child"
+        },
+        {
+          "alias": "gnomechild",
+          "id": 161,
+          "name": "Gnome child"
+        },
+        {
+          "alias": "gnomefemale",
+          "id": 168,
+          "name": "Gnome woman"
+        },
+        {
+          "alias": "gnomefemale_dskinned",
+          "id": 169,
+          "name": "Gnome woman"
+        }
+      ],
+      "level": 75,
+      "experience": 1983,
+      "stun_ticks": 8,
+      "stun_damage": 1,
+      "success_chance": {
+        "numerator": 8,
+        "denominator": 120
+      },
+      "loot": [
+        {
+          "item": {
+            "alias": "king_worm",
+            "id": 2162,
+            "name": "King worm"
+          },
+          "min": 1,
+          "max": 1,
+          "weight": 55
+        },
+        {
+          "item": {
+            "alias": "coins",
+            "id": 995,
+            "name": "Coins"
+          },
+          "min": 300,
+          "max": 300,
+          "weight": 30
+        },
+        {
+          "item": {
+            "alias": "swamp_toad",
+            "id": 2150,
+            "name": "Swamp toad"
+          },
+          "min": 1,
+          "max": 1,
+          "weight": 28
+        },
+        {
+          "item": {
+            "alias": "gold_ore",
+            "id": 444,
+            "name": "Gold ore"
+          },
+          "min": 1,
+          "max": 1,
+          "weight": 8
+        },
+        {
+          "item": {
+            "alias": "earthrune",
+            "id": 557,
+            "name": "Earth rune"
+          },
+          "min": 1,
+          "max": 1,
+          "weight": 5
+        },
+        {
+          "item": {
+            "alias": "fire_orb",
+            "id": 569,
+            "name": "Fire orb"
+          },
+          "min": 1,
+          "max": 1,
+          "weight": 2
+        }
+      ],
+      "pocket": "gnome's pocket"
+    },
+    {
+      "group": "pickpocket_hero",
+      "npcs": [
+        {
+          "alias": "hero",
+          "id": 21,
+          "name": "Hero"
+        }
+      ],
+      "level": 80,
+      "experience": 2733,
+      "stun_ticks": 10,
+      "stun_damage": 4,
+      "success_chance": {
+        "numerator": 6,
+        "denominator": 100
+      },
+      "loot": [
+        {
+          "item": {
+            "alias": "coins",
+            "id": 995,
+            "name": "Coins"
+          },
+          "min": 200,
+          "max": 300,
+          "weight": 105
+        },
+        {
+          "item": {
+            "alias": "deathrune",
+            "id": 560,
+            "name": "Death rune"
+          },
+          "min": 2,
+          "max": 2,
+          "weight": 8
+        },
+        {
+          "item": {
+            "alias": "jug_wine",
+            "id": 1993,
+            "name": "Jug of wine"
+          },
+          "min": 1,
+          "max": 1,
+          "weight": 6
+        },
+        {
+          "item": {
+            "alias": "bloodrune",
+            "id": 565,
+            "name": "Blood rune"
+          },
+          "min": 1,
+          "max": 1,
+          "weight": 5
+        },
+        {
+          "item": {
+            "alias": "fire_orb",
+            "id": 569,
+            "name": "Fire orb"
+          },
+          "min": 1,
+          "max": 1,
+          "weight": 2
+        },
+        {
+          "item": {
+            "alias": "diamond",
+            "id": 1601,
+            "name": "Diamond"
+          },
+          "min": 1,
+          "max": 1,
+          "weight": 1
+        },
+        {
+          "item": {
+            "alias": "gold_ore",
+            "id": 444,
+            "name": "Gold ore"
+          },
+          "min": 1,
+          "max": 1,
+          "weight": 1
+        }
+      ],
+      "pocket": "hero's pocket"
+    },
+    {
+      "group": "pickpocket_viking",
+      "npcs": [
+        {
+          "alias": "viking_man",
+          "id": 1305,
+          "name": "Agnar"
+        },
+        {
+          "alias": "viking_man2",
+          "id": 1306,
+          "name": "Freidir"
+        },
+        {
+          "alias": "viking_man3",
+          "id": 1307,
+          "name": "Borrokar"
+        },
+        {
+          "alias": "viking_man4",
+          "id": 1308,
+          "name": "Lanzig"
+        },
+        {
+          "alias": "viking_man5",
+          "id": 1309,
+          "name": "Pontak"
+        },
+        {
+          "alias": "viking_woman",
+          "id": 1310,
+          "name": "Freygerd"
+        },
+        {
+          "alias": "viking_woman2",
+          "id": 1311,
+          "name": "Lensa"
+        },
+        {
+          "alias": "viking_woman3",
+          "id": 1312,
+          "name": "Jennella"
+        },
+        {
+          "alias": "viking_woman4",
+          "id": 1313,
+          "name": "Sassilik"
+        },
+        {
+          "alias": "viking_woman_indoors",
+          "id": 1314,
+          "name": "Inga"
+        }
+      ],
+      "level": 45,
+      "experience": 650,
+      "stun_ticks": 8,
+      "stun_damage": 2,
+      "success_chance": {
+        "numerator": 40,
+        "denominator": 240
+      },
+      "loot": [
+        {
+          "item": {
+            "alias": "coins",
+            "id": 995,
+            "name": "Coins"
+          },
+          "min": 40,
+          "max": 40,
+          "weight": 128
+        }
+      ],
+      "pocket": "Fremennik's pocket"
     }
   ]
 }
