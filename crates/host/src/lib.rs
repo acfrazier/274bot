@@ -945,6 +945,40 @@ pub fn publish_snapshot(snapshot: &mut GameSnapshot, client: &Client, result: Dr
     snapshot.rebuild_from_drain(client, player_info);
 }
 
+/// Result of publishing a frontend-owned snapshot from the client's real
+/// generation/session watermarks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrontendPublication {
+    /// Logout or a successful login/reconnect replaced the observed session.
+    pub session_boundary: bool,
+    /// The snapshot was reset or at least one packet family moved.
+    pub changed: bool,
+}
+
+impl Host {
+    /// Publish a snapshot owned outside the slot loop while preserving the
+    /// production [`Pump`] and [`publish_snapshot`] semantics. Frontends call
+    /// this from the post-drain frame hook; `last` is its incremental pump
+    /// cursor (separate from snapshot gens because PLAYER_INFO is a tick edge),
+    /// so no second world copy or pointer/socket identity heuristic is needed.
+    pub fn publish_frontend_snapshot(
+        last: &mut client::client::ClientGens,
+        snapshot: &mut GameSnapshot,
+        client: &Client,
+    ) -> FrontendPublication {
+        let mut pump = Pump::from_gens(*last);
+        let result = pump.drain_client(client);
+        *last = pump.last();
+        let session_boundary = result.session_changed || !client.ingame;
+        let changed = session_boundary || result.dirty.any();
+        publish_snapshot(snapshot, client, result);
+        FrontendPublication {
+            session_boundary,
+            changed,
+        }
+    }
+}
+
 /// Run on/off from the orb pair. 152 visible and 153 hidden → running;
 /// the inverse → walking. Both the same (unpacked defaults) is unknown —
 /// a packed jag starts with `hide = false` on every component.
