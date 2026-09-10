@@ -432,6 +432,7 @@ impl AppWindow {
     where
         F: FnMut(&imgui::Ui, &mut Gpu),
     {
+        let _profile_frame = client::profiling::UI_FRAME.start();
         self.imgui
             .platform
             .prepare_frame(&self.window, &mut self.imgui.context);

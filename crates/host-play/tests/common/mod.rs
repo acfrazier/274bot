@@ -90,7 +90,7 @@ pub fn profiles(entries: &[(&str, &str)]) -> Vec<Profile> {
 
 /// Engine + cache defaults (matches `client-play` / the operator syntax).
 pub fn options() -> PlayOptions {
-    let home = std::env::var("HOME").unwrap();
+    let home = client::operator_home().expect("operator home (HOME or USERPROFILE) set");
     PlayOptions {
         host: "127.0.0.1".into(),
         port: 43594,

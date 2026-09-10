@@ -14,7 +14,7 @@
 //! agility shortcuts port `resolveShortcutPlacements`. Doors derive two
 //! edges per jm2 placement — `dir` and its opposite — from the door
 //! configs + the baked collision (`at` = the loc tile, `to` each
-//! direction's far-side walk-out, `open_loc_id` from the config's
+//! direction's adjacent standable tile, `open_loc_id` from the config's
 //! `next_loc_stage`). Boats are
 //! an explicit 2004 route table (dock NPC tile → destination ship deck,
 //! then a loc-backed Cross on the boat-side `_gangplank_disembark`),
@@ -123,15 +123,15 @@ pub struct TransportGraph {
 
 /// Derive the transport graph from `content_root` (the Server content tree:
 /// `scripts/`, `pack/loc.pack`, `maps/*.jm2`) plus the client loc defs,
-/// and the baked whole-world [`WorldCollision`] (the door edges walk their
-/// `to` far side out to a standable tile on it; door edges carry `dir` and
+/// and the baked whole-world [`WorldCollision`] (door edges place their
+/// `to` on an adjacent standable tile; door edges carry `dir` and
 /// `open_loc_id`, every other kind keeps `dir: None`/`open_loc_id: None`).
 ///
 /// Doors come from `scripts/doors/configs/*.loc` + the jm2 LOC placements;
 /// ladders/stairs from `scripts/ladders+stairs/scripts/*.rs2`; agility
 /// shortcuts from `scripts/skill_agility/scripts/*.rs2`. Placements and
 /// destinations that resolve emit an edge — doors emit two per placement
-/// (`dir` and its opposite, each with its own far-side walk-out); `at` the
+/// (`dir` and its opposite, each with an adjacent standable destination); `at` the
 /// loc tile, `to` the resolved landing (no walkability filter — the router
 /// applies the collision map). Boats, gnome gliders, the Rune Mysteries
 /// essence-mine wizards and Elkoy's maze escorts are the explicit 2004
@@ -504,9 +504,8 @@ fn parse_jm2_locs(text: &str, mx: i32, mz: i32) -> Vec<Placement> {
 /// the jm2 LOC placements, two edges per placement: `at` = the door loc
 /// tile, `dir` =
 /// the placement angle's wall orientation and its opposite (a door is
-/// bidirectional), `to` = each direction's far-side tile (walking outward
-/// from `at` in the wall's far direction until
-/// [`WorldCollision::standable`] accepts one), `open_loc_id` = the
+/// bidirectional), `to` = each direction's adjacent tile when
+/// [`WorldCollision::standable`] accepts it (otherwise no edge), `open_loc_id` = the
 /// config's `param=next_loc_stage` open leaf. `option` 1 is the `Open` op;
 /// each `to` is that crossing's arrival side, never a snap. Quest-gated
 /// doors (`scripts/quests/*/configs/*.loc` and
@@ -578,8 +577,8 @@ fn door_edges(
                 level: p.level,
             };
             // A door is bidirectional: an edge in `dir` and one in its
-            // opposite, each with its own far-side walk-out (a direction
-            // whose far side never resolves yields no edge).
+            // opposite, each with an adjacent standable destination. A blocked
+            // neighbor yields no edge; opening a door cannot erase scenery.
             for dir in [dir, opposite(dir)] {
                 let Some(to) = door_far_side(at, dir, collision) else {
                     continue;
@@ -626,10 +625,6 @@ fn opposite(dir: DoorDir) -> DoorDir {
     }
 }
 
-/// The far-side tile of a door at `at`: walk outward in the wall's far
-/// direction (`dir`: N→+z, S→-z, E→+x, W→-x) one tile at a time until
-/// `collision.standable` accepts one. A door whose far side never becomes
-/// standable inside the bake yields no edge.
 /// Slashable webs (`bigweb_slashable` / loc 733): two edges per
 /// far-side dir — `oplocu` with an unequippable knife (`option` 0,
 /// `item_req`), and `oploc1` Slash (`option` 1) when any
@@ -675,7 +670,7 @@ fn web_edges(
             level: p.level,
         };
         for dir in [dir, opposite(dir)] {
-            let Some(to) = door_far_side(at, dir, collision) else {
+            let Some(to) = web_far_side(at, dir, collision) else {
                 bump(skipped, SKIP_WEB_NO_FAR, 1);
                 continue;
             };
@@ -762,7 +757,25 @@ fn slash_weapon_ids(content_root: &Path, objs: &HashMap<String, i32>) -> Vec<i32
     ids
 }
 
+/// A wall door can expose the adjacent tile, not erase intervening scenery.
 fn door_far_side(at: WorldTile, dir: DoorDir, collision: &WorldCollision) -> Option<WorldTile> {
+    let (dx, dz) = match dir {
+        DoorDir::N => (0, 1),
+        DoorDir::S => (0, -1),
+        DoorDir::E => (1, 0),
+        DoorDir::W => (-1, 0),
+    };
+    let to = WorldTile {
+        x: at.x + dx,
+        z: at.z + dz,
+        level: at.level,
+    };
+    collision.standable(to).then_some(to)
+}
+
+// Web footprint traversal retains its existing behavior in this wall-door
+// correction; webs are not shape-0 wall doors and need separate validation.
+fn web_far_side(at: WorldTile, dir: DoorDir, collision: &WorldCollision) -> Option<WorldTile> {
     let (dx, dz) = match dir {
         DoorDir::N => (0, 1),
         DoorDir::S => (0, -1),
@@ -2865,7 +2878,7 @@ const SHANTAY_SOUTH_TICKS: i32 = 2;
 /// (`op1=Open`) once their config's name-keyed blocks resolve through the
 /// loc id map ([`parse_door_config_ids`]), and derive their two
 /// crossings like every door: `at` the placement tile (m51_50 (4,27)/
-/// (4,28) = (3268,3227)/(3268,3228)), `to` the far-side walk-out,
+/// (4,28) = (3268,3227)/(3268,3228)), `to` the adjacent standable tile,
 /// `open_loc_id` the config's `next_loc_stage` leaf (loc 1562/1563),
 /// `item_req` the 10-coin toll. The Shantay henge doorway (loc 4031,
 /// `op1=Go-through`) derives two `TransportKind::Door` edges, one per
@@ -4039,6 +4052,77 @@ mod tests {
     }
 
     #[test]
+    fn door_far_side_does_not_skip_bank_return_obstacles() {
+        // Captured at (2651..=2657,3292): counter/plant/bench footprints
+        // separate Door1530 at2656 from the old bogus west landing2651.
+        let mut flags = vec![0u32; 7 * 4];
+        flags[..7].copy_from_slice(&[0x4020, 0x4120, 0x4120, 0x4120, 0x4120, 0x5028, 0x10080]);
+        let (walk, blocked) = crate::collision::pack_walk(&flags);
+        let collision = WorldCollision {
+            origin: WorldTile {
+                x: 2651,
+                z: 3292,
+                level: 0,
+            },
+            width: 7,
+            height: 1,
+            walk,
+            blocked,
+            flags: Some(flags),
+        };
+        let at = WorldTile {
+            x: 2656,
+            z: 3292,
+            level: 0,
+        };
+        assert_eq!(door_far_side(at, DoorDir::W, &collision), None);
+        assert_eq!(
+            door_far_side(at, DoorDir::E, &collision),
+            Some(WorldTile {
+                x: 2657,
+                z: 3292,
+                level: 0
+            })
+        );
+        assert_eq!(door_far_side(at, DoorDir::N, &collision), None);
+        assert_eq!(door_far_side(at, DoorDir::S, &collision), None);
+    }
+
+    #[test]
+    fn web_far_side_preserves_multi_tile_footprint_crossing() {
+        let mut flags = vec![0u32; 3 * 4];
+        flags[1] = 0x100; // Adjacent scenery remains part of the web walk-out.
+        let (walk, blocked) = crate::collision::pack_walk(&flags);
+        let collision = WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: 3,
+            height: 1,
+            walk,
+            blocked,
+            flags: Some(flags),
+        };
+        let at = WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        assert_eq!(
+            web_far_side(at, DoorDir::E, &collision),
+            Some(WorldTile {
+                x: 2,
+                z: 0,
+                level: 0
+            })
+        );
+        assert_eq!(door_far_side(at, DoorDir::E, &collision), None);
+        assert_eq!(web_far_side(at, DoorDir::W, &collision), None);
+    }
+
+    #[test]
     fn derive_transports_door_edge_at_dir_to_open_loc_id() {
         let fx = Fixture::new();
         fx.write("pack/loc.pack", "1530=loc_1530\n1531=loc_1531\n");
@@ -4048,7 +4132,7 @@ mod tests {
         );
         // m44_53 local (0,46) = absolute (2816,3438). Wall 980 (angle
         // SOUTH) sits on the door's south approach tile (2816,3437), so
-        // the south-bound far-side walk-out stops on that tile — its W_S
+        // the south-bound adjacent destination accepts that tile — its W_S
         // face flag stands (face flags never disqualify). The closed
         // door's own angle-NORTH stamp puts W_S on (2816,3439), which also
         // stands.
@@ -4076,9 +4160,15 @@ mod tests {
             .filter(|e| e.kind == TransportKind::Door && e.loc_id == 1530)
             .collect();
         // Two edges per placement: `dir` and its opposite, each with its
-        // own far side. `at` is the door loc tile, `to` the far side
-        // walked out to standability.
+        // own adjacent standable destination. `at` is the door loc tile.
         assert_eq!(doors.len(), 2);
+        for edge in &doors {
+            assert_eq!(edge.at.level, edge.to.level);
+            assert_eq!(
+                (edge.at.x - edge.to.x).abs() + (edge.at.z - edge.to.z).abs(),
+                1
+            );
+        }
         let n = doors
             .iter()
             .find(|e| e.dir == Some(DoorDir::N))
@@ -4109,7 +4199,7 @@ mod tests {
                 level: 0
             }
         );
-        // The south-bound walk-out stops on wall 980's own tile: its W_S
+        // The south-bound destination is wall 980's own tile: its W_S
         // face flag stands (the wall's face flag never disqualifies).
         assert_eq!(
             s.to,
@@ -4638,7 +4728,7 @@ switch_coord (loc_coord) {
 
         // The Catherby door (loc 1530 @ 2816,3438,0, angle 1): two edges
         // per placement — `at` the loc tile, `dir` N and S, each `to` the
-        // far side walked out to standability, `Open` op 1, one tick.
+        // adjacent standable destination, `Open` op 1, one tick.
         let doors: Vec<_> = graph
             .edges
             .iter()

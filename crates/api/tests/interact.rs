@@ -2709,3 +2709,78 @@ fn create_interactions_wires_snapshot_and_driver() {
         }
     ));
 }
+
+#[test]
+fn pending_door_step_is_one_cardinal_packet_with_normal_gates() {
+    let mut s = scene();
+    s.client.local_player = Some(ClientPlayer::at(5, 5));
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    let tile = WorldTile {
+        x: 3205,
+        z: 3206,
+        level: 0,
+    };
+    assert!(matches!(
+        Interactions::new(&snap, &mut rec).pending_door_step(tile),
+        SendResult::Sent { .. }
+    ));
+    assert_eq!(
+        rec.out.0,
+        vec![
+            OutByte::Enc(ClientProt::MOVE_GAMECLICK.id),
+            OutByte::P1(5),
+            OutByte::P1(0),
+            OutByte::P2(3205),
+            OutByte::P2(3206)
+        ]
+    );
+    assert!(rec.moves.is_empty());
+    for dest in [
+        WorldTile {
+            x: 3205,
+            z: 3205,
+            level: 0,
+        },
+        WorldTile {
+            x: 3206,
+            z: 3206,
+            level: 0,
+        },
+        WorldTile {
+            x: 3205,
+            z: 3207,
+            level: 0,
+        },
+        WorldTile { level: 1, ..tile },
+    ] {
+        let mut rec = Recorder::default();
+        assert!(matches!(
+            Interactions::new(&snap, &mut rec).pending_door_step(dest),
+            SendResult::Refused { .. }
+        ));
+        assert!(rec.out.0.is_empty());
+    }
+    s.client.scene_state = 1;
+    let snap = rebuild(&mut s.client);
+    let mut rec = Recorder::default();
+    assert!(matches!(
+        Interactions::new(&snap, &mut rec).pending_door_step(tile),
+        SendResult::Refused { .. }
+    ));
+    assert!(rec.out.0.is_empty());
+}
+
+#[test]
+fn pending_door_packet_matches_client_one_tile_walk() {
+    let mut c = Client::new(cfg());
+    c.ingame = true;
+    c.local_player = Some(ClientPlayer::at(5, 5));
+    c.out.random = Some(Isaac::new(&[1, 2, 3, 4]));
+    assert!(walk(&mut c, 5, 6));
+    let expected = c.out.data()[..c.out.pos].to_vec();
+    c.out.pos = 0;
+    c.out.random = Some(Isaac::new(&[1, 2, 3, 4]));
+    api::prot::WalkStep { x: 5, z: 6 }.write(&mut c.out);
+    assert_eq!(&c.out.data()[..c.out.pos], expected);
+}

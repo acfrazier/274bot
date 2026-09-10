@@ -34,7 +34,8 @@ export const Traversal = proxy('Traversal', {
         if (!target) return false;
         if (arrived) return true;
         queue({
-            op: 'walk',
+            op: radius > 0 ? 'walk-near' : 'walk',
+            ...(radius > 0 ? { radius } : {}),
             x: target.x,
             z: target.z,
             level: target.level,

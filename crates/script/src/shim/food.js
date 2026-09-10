@@ -8,33 +8,7 @@ export const FOOD_OPTIONS = [
 
 export const MIN_EAT_HP = 5;
 
-const FOOD_HEAL = {
-    Shark: 20,
-    Lobster: 12,
-    Swordfish: 14,
-    Tuna: 10,
-    Salmon: 9,
-    Trout: 7,
-    Pike: 8,
-    Bass: 13,
-    Herring: 5,
-    Sardine: 4,
-    Anchovies: 1,
-    Shrimps: 3,
-    'Cooked meat': 3,
-    'Cooked chicken': 3,
-    Bread: 5,
-    Stew: 11,
-    Cake: 4,
-    'Chocolate cake': 5,
-    'Plain pizza': 7,
-    'Meat pizza': 8,
-    'Anchovy pizza': 9,
-    'Pineapple pizza': 11,
-    'Redberry pie': 6,
-    'Meat pie': 6,
-    'Apple pie': 7,
-};
+const FOOD_HEAL = Object.fromEntries(globalThis.__rs2b0t_host?.content?.food_heals || []);
 
 export function foodHealAmount(foodName) {
     const key = String(foodName || '').trim();

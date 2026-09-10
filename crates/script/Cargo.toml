@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 
 [features]
+# Opt-in counters for the host-play memory-profile harness (V8 heap /
+# snapshot inflight). Isolate hooks compile only with this feature.
+memory-profile = []
 # rustyscript pulls V8 into the build; `load` gates the JS isolate so
 # crates that only need compiled scripts stay V8-free. On for script tests
 # (they exercise Load) and for panel/host-play; nothing else depends on

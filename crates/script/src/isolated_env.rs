@@ -5,8 +5,13 @@
 //! panel prefs, catalog path, JS store, settings, and loadouts.
 //! [`IsolatedEnv`] pins those lookups to a unique scratch on **this
 //! thread only** and restores on drop.
+//!
+//! Production home reads use a tiny local Windows `USERPROFILE` adapter
+//! (same rules as `client::operator_home`) so this crate stays free of a
+//! production `client` dependency.
 
 use std::cell::RefCell;
+use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -24,12 +29,37 @@ enum Rs2b0tOverride {
     Set(PathBuf),
 }
 
+/// Same shape as `client::operator_home` / `env::var("HOME")`. Kept local so
+/// `script` does not take a production `client` dependency.
+fn operator_home() -> Result<String, env::VarError> {
+    operator_home_from(env::var("HOME"), || env::var("USERPROFILE"))
+}
+
+fn operator_home_from(
+    home: Result<String, env::VarError>,
+    userprofile: impl FnOnce() -> Result<String, env::VarError>,
+) -> Result<String, env::VarError> {
+    #[cfg(windows)]
+    {
+        match home {
+            Ok(h) => Ok(h),
+            Err(_) => userprofile(),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = userprofile;
+        home
+    }
+}
+
 /// `$HOME`, or this thread's [`IsolatedEnv`] scratch when a test pinned one.
+/// On native Windows, falls back to `USERPROFILE` when `HOME` is unset.
 pub fn bot_home() -> PathBuf {
     if let Some(home) = HOME_OVERRIDE.with(|c| c.borrow().clone()) {
         return home;
     }
-    match std::env::var("HOME") {
+    match operator_home() {
         Ok(h) if !h.is_empty() => PathBuf::from(h),
         _ => PathBuf::from("."),
     }
@@ -260,5 +290,50 @@ mod tests {
             );
         }
         assert!(rs2b0t_env().is_none());
+    }
+
+    #[test]
+    fn operator_home_selector_matches_client_rules() {
+        use super::operator_home_from;
+        use std::env::VarError;
+        assert_eq!(
+            operator_home_from(Ok("/explicit".into()), || Ok("/profile".into())).unwrap(),
+            "/explicit"
+        );
+        assert_eq!(
+            operator_home_from(Ok(String::new()), || Ok("/profile".into())).unwrap(),
+            ""
+        );
+        let missing = Err(VarError::NotPresent);
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                operator_home_from(missing.clone(), || Ok(r"C:\Users\op".into())).unwrap(),
+                r"C:\Users\op"
+            );
+            assert!(operator_home_from(missing.clone(), || missing).is_err());
+        }
+        #[cfg(not(windows))]
+        {
+            assert!(operator_home_from(missing.clone(), || Ok("/ignored".into())).is_err());
+            assert!(operator_home_from(missing.clone(), || missing).is_err());
+        }
+    }
+    #[test]
+    fn operator_home_never_queries_profile_for_explicit_home() {
+        assert_eq!(
+            super::operator_home_from(Ok("/explicit".into()), || panic!(
+                "unexpected USERPROFILE read"
+            ))
+            .unwrap(),
+            "/explicit"
+        );
+        #[cfg(not(windows))]
+        assert!(
+            super::operator_home_from(Err(std::env::VarError::NotPresent), || panic!(
+                "Unix queried USERPROFILE"
+            ))
+            .is_err()
+        );
     }
 }

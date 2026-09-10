@@ -1,8 +1,8 @@
 # 274bot
 
-**Alpha `0.1.2`.** A Rust **bot host** for RuneScape revision 274 (~2004): N clients in one process, shared type tables, a login FIFO, an encrypted vault, an agent API, a native panel, a headless TUI, whole-world nav, and a host-scoped random-event guardian.
+**Alpha.** A Rust **bot host** for RuneScape revision 274 (~2004): N clients in one process, shared type tables, a login FIFO, an encrypted vault, an agent API, a native panel, a headless TUI, whole-world nav, and a host-scoped random-event guardian.
 
-This tag is the public surface for the **host + API + nav execute + guardian + TUI**. The script *kernel* (Browse / Start / Pause / Stop, JS Load) and WalkTo are in-tree; **honest bot scripts are not** — the 0.1.5 TS shim is next. See [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
+The host, API, navigation, guardian, panel and TUI are in-tree. Browse / Start / Pause / Stop and JS/TS loading share the Rust host kernel. The catalog compatibility surface is partial: implemented banking, food, loadout and traversal helpers run through Rust; unsupported operations fail explicitly. See [CHANGELOG.md](CHANGELOG.md) and the [reusable live harness](docs/harness.md).
 
 | | |
 |--|--|
@@ -15,7 +15,7 @@ This tag is the public surface for the **host + API + nav execute + guardian + T
 
 A Rust bot host over the 274 client. One OS thread per `Client` on a 20 ms loop, shared unpacked type tables, a login FIFO, AES-256-GCM vaulted profiles, and an agent API (snapshot → query → interact → settle). **`panel-play`** is the first-class operator window (ImGui over a panel-owned winit + wgpu loop): profile picker, status, WalkTo picker, game blit, click-through capture, MultiBox rail/grid, `--live` harness. **`tui-play`** is the same `Play` session with raster Off (ratatui; VPS-cheap). **`host-play`** is the headless CLI over the same kernel. A host-scoped **random-event guardian** Talk-to + continues the five dialog randoms (toggle default on).
 
-The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (magic `274V`, version byte **8**), Dijkstra router, and pollable `Traveller::follow` (loc, NPC, boat, glider, web, tele, EssenceSession) driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; Load’d JS is isolate + stub prelude. The only compiled card in-tree is the WalkTo *name* reservation — WalkTo itself is host nav, not a farming script.
+The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (magic `274V`, version byte **8**), Dijkstra router, and pollable `Traveller::follow` (loc, NPC, boat, glider, web, tele, EssenceSession) driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; loaded JS runs in an isolate with the host compatibility prelude. The only compiled card in-tree is the WalkTo *name* reservation — WalkTo itself is host nav, not a farming script.
 
 ## What it is not
 
@@ -81,7 +81,7 @@ The panel only starts the **focused** vault profile; switching the combo starts 
 
 **panel-play does not auto-create `test`/`test`**: an empty first-run vault stays empty until you type a username/password and Save. **host-play** accepts `--vault-pass` (same as `BOT_VAULT_PASS`) and upserts named users (`--user test` defaults to `test`/`test`). The panel has no `--vault-pass` flag — passphrase is `BOT_VAULT_PASS` or the in-window prompt. Empty passphrase is rejected. `--debug` or `BOT_DEBUG=1` prints slot logs. `--mainland` / `BOT_MAINLAND=1` (host-play) after scene 2 sends the courtyard tele + `setvar tutorial 1000`. On a local engine the panel **TutSkip** button is omitted until `getvar tutorial` says the tutorial is still open; press is `setvar tutorial 1000` and caches `tutorial_skipped`.
 
-**Scripts:** panel **Browse / Start / Pause / Stop** are live. Compiled cards tick on the **PLAYER_INFO** edge. Idle slots have no V8. **Load** a `.ts`/`.js` to add a picker card tagged JS. WalkTo on the main chrome is host nav, not a script card (compiled names like WalkTo are reserved). Persist: `~/.274bot/js-scripts.json`. There are no honest skilling/farming ports in this tag.
+**Scripts:** panel **Browse / Start / Pause / Stop** are live. Compiled cards tick on the **PLAYER_INFO** edge. Idle slots have no V8. **Load** a `.ts`/`.js` to add a picker card tagged JS. WalkTo on the main chrome is host nav, not a script card (compiled names like WalkTo are reserved). Persist: `~/.274bot/js-scripts.json`. Catalog scripts come from your configured `$RS2B0T` checkout; this repository does not copy their source. The live fixtures exercise supported paths, including Thiever restocking, without claiming compatibility with every catalog script.
 
 **Windows:** `panel-play` is an OS window. It does **not** open the client’s `Present` applet. The Game pane blits the client frame (GPU texture or CpuPix3D), **never below 765×503**. Watch **1 fps**, capture **50 fps**. The real 765×503 applet is `vendor/fr-client-rust` `client-play --window` (bothost), for fidelity.
 
@@ -93,7 +93,7 @@ Bake the collision + transport pack, then WalkTo / `Traveller::follow` over it:
 cargo run -p nav --bin nav-pack
 ```
 
-Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **8**). Rebake after this tag — v7 files are `BadVersion`. Pass `[MAPS_DIR] [DOORS_DIR] [CONFIG_JAG]` if the Server tree is not at the bake defaults. `find` is fail-closed on live `WorldState` and keeps wilderness and any-tile teleports **off** unless `FindOptions` opts in. Live twins include `script_nav_routes` (headed corpus) and `nav_door` (Catherby door-troll gold fixture), plus gate / cart / spirit / wildy / toll / essence / Elkoy / Zanaris tests under `crates/e2e/tests`. Example: `LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1`.
+Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **8**). **Rebake existing v8 packs after updating:** corrected door edges now land on an adjacent standable tile and do not jump blocked scenery. Loading an old v8 pack does not apply this correction; v7 files remain `BadVersion`. Pass `[MAPS_DIR] [DOORS_DIR] [CONFIG_JAG]` if the Server tree is not at the bake defaults. `find` is fail-closed on live `WorldState` and keeps wilderness and any-tile teleports **off** unless `FindOptions` opts in. Live twins include `script_nav_routes` (headed corpus) and `nav_door` (Catherby door-troll gold fixture), plus gate / cart / spirit / wildy / toll / essence / Elkoy / Zanaris tests under `crates/e2e/tests`. Example: `LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1`.
 
 ## Live tests
 

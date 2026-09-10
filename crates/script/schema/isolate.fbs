@@ -200,7 +200,7 @@ table Snapshot {
 }
 
 // One shim interact request, tagged by `op`:
-// "open-booth" | "open-stand" | "walk" | "walk-to" | "deposit" | "withdraw" | "close"
+// "open-booth" | "open-stand" | "walk" | "walk-near" | "walk-to" | "deposit" | "withdraw" | "close"
 // | "held" | "npc" | "loc" | "obj" | "player" | "use-on" | "use-widget-on"
 // | "continue" | "answer" | "answer-count" | "if-button" | "close-modal" | "side-tab"
 // | "wear" | "set-run" | "set-retaliate" | "set-note-mode" | "set-camera-yaw".
@@ -215,7 +215,7 @@ table Interact {
   stand_op: int;
   choose: string;
   action: string;
-  index: int;
+  index: int; // NPC index, or the radius for walk-near.
   component_id: int;
 }
 

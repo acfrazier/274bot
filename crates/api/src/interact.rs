@@ -394,6 +394,9 @@ pub enum WireCommand<'a> {
     Walk {
         tile: WorldTile,
     },
+    DoorStep {
+        tile: WorldTile,
+    },
     SideTab {
         tab: i32,
     },
@@ -1050,6 +1053,29 @@ impl<'a> Interactions<'a> {
         )
     }
 
+    /// Queue only an adjacent cardinal step after a door Open. This bypasses
+    /// stale client collision, never server collision. General navigation uses
+    /// `walk`; callers must have just opened the door on this crossing.
+    pub fn pending_door_step<'t>(&mut self, tile: WorldTile) -> SendResult<'t> {
+        let snapshot = self.snapshot;
+        if let Some(reason) = self.precondition(snapshot, false) {
+            return refuse(snapshot, reason);
+        }
+        if tile.level != snapshot.scene().level {
+            return refuse(snapshot, SendReason::LevelMismatch);
+        }
+        if outside_scene(snapshot.scene(), tile) {
+            return refuse(snapshot, SendReason::OffScene);
+        }
+        let Some((x, z, level)) = snapshot.tile() else {
+            return refuse(snapshot, SendReason::Unreachable);
+        };
+        if level != tile.level || x.abs_diff(tile.x) + z.abs_diff(tile.z) != 1 {
+            return refuse(snapshot, SendReason::Unreachable);
+        }
+        self.dispatch(WireCommand::DoorStep { tile }, snapshot.tick() as u64)
+    }
+
     pub fn click_side_tab<'t>(&mut self, tab: i32) -> SendResult<'t> {
         let snapshot = self.snapshot;
         if !snapshot.attached() {
@@ -1280,6 +1306,14 @@ impl<'a> Interactions<'a> {
             }
             WireCommand::Count { value } => answer_count(&mut *self.driver, *value),
             WireCommand::Walk { tile } => walk(&mut *self.driver, tile.x, tile.z),
+            WireCommand::DoorStep { tile } => {
+                crate::prot::WalkStep {
+                    x: tile.x,
+                    z: tile.z,
+                }
+                .write(self.driver.out());
+                true
+            }
             WireCommand::SideTab { tab } => self.driver.click_side_tab(*tab),
             WireCommand::Login { username, password } => {
                 login(&mut *self.driver, username, password, false)

@@ -183,3 +183,20 @@ impl Send {
         }
     }
 }
+
+/// One cardinal movement step. The server validates collision when it processes
+/// the request; unlike client BFS this can be queued behind a pending door Open.
+pub struct WalkStep {
+    pub x: i32,
+    pub z: i32,
+}
+
+impl WalkStep {
+    pub fn write(self, out: &mut dyn Out) {
+        out.p1_enc(ClientProt::MOVE_GAMECLICK.id);
+        out.p1(5); // one waypoint: control byte, absolute x and z
+        out.p1(0);
+        out.p2(self.x);
+        out.p2(self.z);
+    }
+}

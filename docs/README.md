@@ -1,6 +1,6 @@
 # 274bot docs
 
-Committed product docs (alpha `0.1.2`): [`api/`](api/README.md).
+Product docs: [`api/`](api/README.md) and the [reusable live harness](harness.md).
 
 Start here: [README.md](../README.md), [CONTRIBUTING.md](../CONTRIBUTING.md),
 [CHANGELOG.md](../CHANGELOG.md), [NOTICE.md](../NOTICE.md). Coding-agent

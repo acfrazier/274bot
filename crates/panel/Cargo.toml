@@ -26,3 +26,9 @@ pollster = "0.4"
 [[bin]]
 name = "panel-play"
 path = "src/main.rs"
+
+[features]
+memory-profile = ["host-play/memory-profile"]
+
+# CPU diagnostic: use System directly, report allocator metrics unavailable.
+memory-profile-no-alloc = ["memory-profile", "host-play/memory-profile-no-alloc"]

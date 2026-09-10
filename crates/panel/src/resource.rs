@@ -46,14 +46,15 @@ pub fn traffic_from_samples(
     traffic_from_delta(sum.wrapping_sub(sum0), dt_secs, n_slots)
 }
 
-/// macos: `format_rss(bytes) + " peak"`; other: `format_rss(bytes)`.
+/// macos/windows: `format_rss(bytes) + " peak"` (sample_process first field is
+/// lifetime peak WS / ru_maxrss); other: `format_rss(bytes)`.
 pub fn format_rss_caption(bytes: u64) -> String {
     let base = format_rss(bytes);
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
         format!("{base} peak")
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         base
     }
@@ -105,8 +106,9 @@ pub fn format_rss(bytes: u64) -> String {
     }
 }
 
-/// Sampler lives in `host-play` (Darwin bytes, Linux `ru_maxrss` * 1024);
-/// re-exported so `app.rs` keeps `use crate::resource::sample_process`.
+/// Sampler lives in `host-play` (Darwin/Linux getrusage peak; Windows
+/// PeakWorkingSetSize); re-exported so `app.rs` keeps
+/// `use crate::resource::sample_process`.
 pub use host_play::sample_process;
 
 #[cfg(test)]
@@ -175,11 +177,11 @@ mod tests {
     }
 
     #[test]
-    fn rss_caption_mentions_peak_on_macos() {
+    fn rss_caption_mentions_peak_on_macos_and_windows() {
         let s = format_rss_caption(1024);
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         assert!(s.contains("peak"), "{s}");
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         assert!(!s.contains("peak"), "{s}");
     }
 }

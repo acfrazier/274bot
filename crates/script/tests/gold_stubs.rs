@@ -329,3 +329,81 @@ export default class T extends LoopingBot {
     assert_eq!(row["name"], "Rune chainbody");
     iso.join();
 }
+
+#[test]
+fn thiever_resolves_food_from_host_loadout_and_queues_eat() {
+    let src = r#"
+import { scriptFood } from '../../api/loadout/loadoutPlan.js';
+import { foodHealAmount, shouldEatFood } from '../../api/combat/food.js';
+import { Inventory } from '../../api/inventory/Inventory.js';
+export default class T extends LoopingBot {
+    loop() {
+        const food = scriptFood(this.settings, '');
+        globalThis.__food = [food, foodHealAmount(food)];
+        if (shouldEatFood(food, {hp: 30, maxHp: 50, foodCount: 1})) Inventory.items()[0].interact('Eat');
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.post_loadouts(&[script::Loadout {
+        name: "Food".into(),
+        worn: vec![],
+        carry: vec!["Coins".into(), "Lobster".into()],
+    }]);
+    iso.probe("globalThis.__rs2b0t_host.snapshot = {inv: [{name:'Lobster',count:1}]}; true")
+        .unwrap();
+    iso.on_game_tick(1);
+    assert_eq!(
+        iso.probe("__food").unwrap(),
+        serde_json::json!(["Lobster", 12])
+    );
+    assert!(iso.drain_interacts().iter().any(|r| matches!(r,script::shim::InteractReq::Held{name,action} if name=="Lobster" && action=="Eat")));
+    iso.join();
+}
+
+#[test]
+fn bank_access_already_adjacent_does_not_rearm_navigation() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() { await Bank.openNearestAccess({name:'Bank booth',op:'Use-quickly'}); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.probe("globalThis.__rs2b0t_host.snapshot={here:{x:10,z:10,level:0},nearest_booth:{x:11,z:10,level:0},bank_open:false,bank_loaded:false};true").unwrap();
+    iso.on_game_tick(1);
+    iso.probe("true").unwrap();
+    let requests = iso.drain_interacts();
+    assert_eq!(requests.len(), 1);
+    assert!(matches!(
+        requests[0],
+        script::shim::InteractReq::OpenBooth { .. }
+    ));
+    iso.join();
+}
+
+#[test]
+fn withdraw_x_waits_for_inventory_publication() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() { globalThis.__withdrawResult = await Bank.withdrawX('Lobster', 19); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.probe("globalThis.__rs2b0t_host.snapshot={bank:[{name:'Lobster',count:2000,ops:['Withdraw X']}],inv_size:28,inv:[{name:'Lobster',count:3}]};true").unwrap();
+    for tick in 1..=3 {
+        iso.on_game_tick(tick);
+        iso.probe("true").unwrap();
+    }
+    assert_eq!(
+        iso.probe("typeof globalThis.__withdrawResult").unwrap(),
+        "undefined",
+        "a sent count is not a completed withdrawal"
+    );
+    iso.probe("globalThis.__rs2b0t_host.snapshot.inv=[{name:'Lobster',count:22}];true")
+        .unwrap();
+    iso.on_game_tick(4);
+    assert_eq!(iso.probe("globalThis.__withdrawResult").unwrap(), true);
+    iso.join();
+}

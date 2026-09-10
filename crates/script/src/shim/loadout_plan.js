@@ -2,10 +2,10 @@ import { notImpl } from '../../shim/_kernel.js';
 import { selectedLoadout } from './loadoutSetting.js';
 
 export function foodOf(loadout, fallback) {
-    if (loadout && Array.isArray(loadout.carry) && loadout.carry.length > 0) {
+    if (loadout && Array.isArray(loadout.carry) && loadout.carry.some(entry => !entry || typeof entry.item !== 'string')) {
         throw notImpl('foodOf');
     }
-    return fallback == null ? '' : String(fallback);
+    return globalThis.rustyscript.functions.__rs2b0t_food_of(loadout, fallback == null ? '' : String(fallback));
 }
 
 export function gearOf(_loadout) {

@@ -38,7 +38,7 @@ fn pack_path() -> PathBuf {
     match std::env::var("NAV_PACK") {
         Ok(p) => PathBuf::from(p),
         Err(_) => {
-            let home = std::env::var("HOME").expect("HOME set");
+            let home = client::operator_home().expect("operator home (HOME or USERPROFILE) set");
             PathBuf::from(format!("{home}/.274bot/274bot.navpack"))
         }
     }

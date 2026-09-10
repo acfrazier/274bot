@@ -58,7 +58,7 @@ fn gates_loc(maps_dir: &Path) -> PathBuf {
 }
 
 fn default_out() -> PathBuf {
-    match env::var("HOME") {
+    match client::operator_home() {
         Ok(home) => PathBuf::from(format!("{home}/.274bot/274bot.navpack")),
         Err(_) => PathBuf::from(".274bot/274bot.navpack"),
     }

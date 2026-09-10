@@ -50,3 +50,9 @@ pub use slot::{RunState, SlotScript};
 
 #[cfg(feature = "load")]
 pub use load::{transpile_ts, LoadIsolate};
+
+#[cfg(feature = "load")]
+mod bank_withdraw;
+
+#[cfg(feature = "memory-profile")]
+pub mod memory_profile;
