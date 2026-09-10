@@ -11,6 +11,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-10 00:37 UTC
+
+- CF1 reviewer t_f7d038ac COMPLETE APPROVE, actualGrok4.5/xai
+  session20260909_202924_5405e7 ended1789000509.6409879. Root read full report:
+  all82members/raw/ledger corroborated; waited surplus fully charged and CPU
+  component sampling delta explained. Reviewf08e73df; CF2 budget admissible.
+- Root issued ONLY CF2 remaining114 feasibility after fresh source/native/parent
+  checks and97.5%idle/zeroSteal/no swap/conflicts,970919936Bavailable. Root auth
+  1df23854e84d11decbdda2332b91623f4ed427b201dfdcd11b1d7513bf3c0a4a, parent3796341a.
+  Native session6547 ACTIVE. Prior8children+114 remains122, cumulative1800wall/
+  1500CPU unchanged. No CA or performance acceptance. Keep Concord free of
+  owner live/profiling/builds until completion, then archive/audit and review.
+- Owner runtime6f2b410 verified and native-qualified. Private fresh typed admission
+  still pending; do not launch concurrently with CF2.
+
 ## Latest boundary — 2026-09-10 00:35 UTC
 
 - Fresh Concord runtime verification through native-qualified6f2b410 controller
