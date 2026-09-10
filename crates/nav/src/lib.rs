@@ -9,6 +9,7 @@ pub mod camera;
 pub mod collision;
 pub mod essence;
 pub mod grid;
+pub mod manifest;
 pub mod pack;
 pub mod paint;
 pub mod router;

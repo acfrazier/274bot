@@ -1,6 +1,9 @@
 # World source audit before step 5
 
-This is preparation for navigation/content qualification. Step 4 remains open.
+This was the pre-bake preparation for navigation/content qualification. The
+completed selected-cache audit and fresh revision-bound bakes are recorded in
+`03-world-capabilities.md`; step-4/live qualification remains independently
+owned by root.
 `audit_world_sources.py` reads the two pinned content trees and emits
 `evidence/world-capabilities/source-audit.json`; it changes no fixture state.
 
@@ -29,7 +32,7 @@ the selected archive at `engine/data/pack/client/config`. A 289 bake must use
 its own pinned content tree, not only change the output filename. Preserve the
 v8 packed collision representation and shared route ownership.
 
-Remaining proof: bake and inspect both worlds; reject resource mismatches;
-exercise doors, region movement, bank return and guardian hold/resume/reset;
-then qualify the frozen cards with the selected content. No such proof is
-claimed by this source audit.
+Fresh 274 and 289 bakes, selected-cache inspection and wrong-revision rejection
+are now complete. Remaining proof is live: exercise doors, region movement,
+bank return and guardian hold/resume/reset, then qualify the frozen cards with
+the selected content. No live proof is claimed by this source audit.

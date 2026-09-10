@@ -1,0 +1,10 @@
+derive_transports(/Users/acfrazier/experiments/lostcity-289/content): 2181 edges (1277 doors, 552 ladders, 288 stairs, 25 agility shortcuts, 8 boats, 14 gliders, 8 spirit trees, 9 npc hops); 47 teleports (7 spells, 40 jewellery); 126 skipped rows
+derive_transports: skipped 1: destination handed to another script
+derive_transports: skipped 34: destination is behind a dialog
+derive_transports: skipped 2: destination is randomised
+derive_transports: skipped 1: destination outside the grid box
+derive_transports: skipped 31: no measured tick cost for this loc name
+derive_transports: skipped 7: no rule for this placement (script reports it unhandled)
+derive_transports: skipped 50: player-relative destination with a horizontal shift
+nav-pack: bound revision 289 cache c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09 nav 131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924 flags 67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a
+nav-pack: baked 534 mapsquares into a 1792x9088 collision grid, 1210899 walkable tiles, 2181 transport edges, 68 bank stands -> 73441977 bytes -> .superpowers/world-capabilities/289/274bot.navpack; 260571161 flag bytes -> .superpowers/world-capabilities/289/274bot.navflags

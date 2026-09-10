@@ -2954,6 +2954,9 @@ version = "0.1.0"
 dependencies = [
  "api",
  "client",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

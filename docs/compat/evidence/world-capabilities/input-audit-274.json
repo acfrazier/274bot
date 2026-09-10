@@ -1,0 +1,3641 @@
+{
+  "bank": {
+    "baked_stands": [
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2585,
+          3418,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2585,
+          3419,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2585,
+          3421,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2585,
+          3422,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2614,
+          3091,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2614,
+          3092,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2614,
+          3094,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2615,
+          3331,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2618,
+          3331,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2619,
+          3331,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2656,
+          3283,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2656,
+          3286,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2721,
+          3494,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2722,
+          3494,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2724,
+          3494,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2727,
+          3494,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2728,
+          3494,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2729,
+          3494,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2807,
+          3442,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2809,
+          3442,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2810,
+          3442,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2811,
+          3442,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2945,
+          3367,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2946,
+          3367,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2947,
+          3367,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2948,
+          3367,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2949,
+          3367,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3011,
+          3354,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3012,
+          3354,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3013,
+          3354,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3014,
+          3354,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3015,
+          3354,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3091,
+          3242,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3091,
+          3243,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3091,
+          3245,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3095,
+          3489,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3095,
+          3491,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3096,
+          3493,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3098,
+          3493,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3186,
+          3436,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3186,
+          3438,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3186,
+          3440,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3186,
+          3442,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3186,
+          3444,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3186,
+          3446,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3252,
+          3419,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3253,
+          3419,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3254,
+          3419,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3256,
+          3419,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3268,
+          3164,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3268,
+          3166,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3268,
+          3167,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3268,
+          3168,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3268,
+          3169,
+          0
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2441,
+          3487,
+          1
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2441,
+          3488,
+          1
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2441,
+          3489,
+          1
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2444,
+          3424,
+          1
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2444,
+          3425,
+          1
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2447,
+          3424,
+          1
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2447,
+          3427,
+          1
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2448,
+          3481,
+          1
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2449,
+          3481,
+          1
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          2450,
+          3481,
+          1
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3513,
+          3479,
+          1
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3513,
+          3480,
+          1
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3513,
+          3481,
+          1
+        ]
+      },
+      {
+        "access": "Booth { op: 2 }",
+        "name": "Bank booth",
+        "tile": [
+          3513,
+          3482,
+          1
+        ]
+      }
+    ],
+    "capacity": 240,
+    "inventory": {
+      "button_text": "",
+      "button_type": 0,
+      "children": null,
+      "height": 30,
+      "id": 5382,
+      "iop": [
+        "Withdraw 1",
+        "Withdraw 5",
+        "Withdraw 10",
+        "Withdraw All",
+        "Withdraw X"
+      ],
+      "layer_id": 5292,
+      "text": "",
+      "type": 2,
+      "width": 8
+    },
+    "root": {
+      "button_text": "",
+      "button_type": 0,
+      "children": [
+        5293,
+        5294,
+        5295,
+        5296,
+        5297,
+        5298,
+        5299,
+        5300,
+        5301,
+        5302,
+        5303,
+        5304,
+        5305,
+        5306,
+        5307,
+        5308,
+        5309,
+        5310,
+        5311,
+        5312,
+        5313,
+        5314,
+        5315,
+        5316,
+        5317,
+        5318,
+        5319,
+        5320,
+        5321,
+        5322,
+        5323,
+        5324,
+        5325,
+        5326,
+        5327,
+        5328,
+        5329,
+        5330,
+        5331,
+        5332,
+        5333,
+        5334,
+        5335,
+        5336,
+        5337,
+        5338,
+        5339,
+        5340,
+        5341,
+        5342,
+        5343,
+        5344,
+        5345,
+        5346,
+        5347,
+        5348,
+        5349,
+        5350,
+        5351,
+        5352,
+        5353,
+        5354,
+        5355,
+        5356,
+        5357,
+        5358,
+        5359,
+        5360,
+        5361,
+        5362,
+        5363,
+        5364,
+        5365,
+        5366,
+        5367,
+        5368,
+        5369,
+        5370,
+        5371,
+        5372,
+        5373,
+        5374,
+        5375,
+        5376,
+        5377,
+        5378,
+        5379,
+        5380,
+        5381,
+        5383,
+        5384,
+        5385,
+        5386,
+        5387,
+        5388,
+        5389,
+        5390,
+        5391,
+        8130,
+        8131,
+        8132,
+        8133
+      ],
+      "height": 334,
+      "id": 5292,
+      "iop": [
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "layer_id": 5292,
+      "text": "",
+      "type": 0,
+      "width": 512
+    }
+  },
+  "cache_counts": {
+    "interfaces": 10984,
+    "locs": 4671,
+    "npcs": 1359,
+    "objects": 3894,
+    "spotanims": 301
+  },
+  "cache_dir": "/Users/acfrazier/experiments/Server/engine/data/pack/client",
+  "cache_manifest": {
+    "archives": {
+      "config": "d26317cabdb6dd6eaa0bd983362fa9820f8ed063e73b7be145df30fb8fc1a914",
+      "interface": "3968805e8984826a60a9b9b90bd3fbbaa923c44947ba6e1b93daf4ff0af23903",
+      "media": "237206fe02bbd7b53906c5b0a7a05bfa99e4380f297223f3135c21b005e44de5",
+      "sounds": "6cb9addcc14ffbf5d76dfd76691f390dd83fa06a766ee879a56c700594c8c573",
+      "textures": "b00c3643cfd9b872c80fa0812672a86e93e5b2402b7386fa59381a3015ab7c9e",
+      "title": "b7a47dead79c241beb9c4ffbb4cb289bb3099eaf088f51e364cde40f3aa70b55",
+      "versionlist": "2faf336eeb0462edc50d2cdbccbdac7a4a2cda1e43087cd9a6ba2dd00aea78dd",
+      "wordenc": "915c569e2d22a89eaf66c9b3f133c5d0ce25dd257fbef0222a8cc19492e65101"
+    },
+    "revision": 274
+  },
+  "content": {
+    "food": [
+      {
+        "cache_ids": [
+          385,
+          386
+        ],
+        "heal": 20,
+        "name": "Shark"
+      },
+      {
+        "cache_ids": [
+          379,
+          380
+        ],
+        "heal": 12,
+        "name": "Lobster"
+      },
+      {
+        "cache_ids": [
+          373,
+          374
+        ],
+        "heal": 14,
+        "name": "Swordfish"
+      },
+      {
+        "cache_ids": [
+          361,
+          362
+        ],
+        "heal": 10,
+        "name": "Tuna"
+      },
+      {
+        "cache_ids": [
+          329,
+          330
+        ],
+        "heal": 9,
+        "name": "Salmon"
+      },
+      {
+        "cache_ids": [
+          333,
+          334
+        ],
+        "heal": 7,
+        "name": "Trout"
+      },
+      {
+        "cache_ids": [
+          351,
+          352
+        ],
+        "heal": 8,
+        "name": "Pike"
+      },
+      {
+        "cache_ids": [
+          365,
+          366
+        ],
+        "heal": 13,
+        "name": "Bass"
+      },
+      {
+        "cache_ids": [
+          347,
+          348
+        ],
+        "heal": 5,
+        "name": "Herring"
+      },
+      {
+        "cache_ids": [
+          325,
+          326
+        ],
+        "heal": 4,
+        "name": "Sardine"
+      },
+      {
+        "cache_ids": [
+          319,
+          320
+        ],
+        "heal": 1,
+        "name": "Anchovies"
+      },
+      {
+        "cache_ids": [
+          315,
+          316
+        ],
+        "heal": 3,
+        "name": "Shrimps"
+      },
+      {
+        "cache_ids": [
+          2142,
+          2143
+        ],
+        "heal": 3,
+        "name": "Cooked meat"
+      },
+      {
+        "cache_ids": [
+          2140,
+          2141
+        ],
+        "heal": 3,
+        "name": "Cooked chicken"
+      },
+      {
+        "cache_ids": [
+          2309,
+          2310
+        ],
+        "heal": 5,
+        "name": "Bread"
+      },
+      {
+        "cache_ids": [
+          2003,
+          2004
+        ],
+        "heal": 11,
+        "name": "Stew"
+      },
+      {
+        "cache_ids": [
+          1891,
+          1892
+        ],
+        "heal": 4,
+        "name": "Cake"
+      },
+      {
+        "cache_ids": [
+          1897,
+          1898
+        ],
+        "heal": 5,
+        "name": "Chocolate cake"
+      },
+      {
+        "cache_ids": [
+          2289,
+          2290
+        ],
+        "heal": 7,
+        "name": "Plain pizza"
+      },
+      {
+        "cache_ids": [
+          2293,
+          2294
+        ],
+        "heal": 8,
+        "name": "Meat pizza"
+      },
+      {
+        "cache_ids": [
+          2297,
+          2298
+        ],
+        "heal": 9,
+        "name": "Anchovy pizza"
+      },
+      {
+        "cache_ids": [
+          2301,
+          2302
+        ],
+        "heal": 11,
+        "name": "Pineapple pizza"
+      },
+      {
+        "cache_ids": [
+          2325,
+          2326
+        ],
+        "heal": 6,
+        "name": "Redberry pie"
+      },
+      {
+        "cache_ids": [
+          2327,
+          2328
+        ],
+        "heal": 6,
+        "name": "Meat pie"
+      },
+      {
+        "cache_ids": [
+          2323,
+          2324
+        ],
+        "heal": 7,
+        "name": "Apple pie"
+      }
+    ],
+    "maze_door_loc": {
+      "blockwalk": true,
+      "id": 3628,
+      "length": 1,
+      "name": "Wall",
+      "ops": [
+        "Open"
+      ],
+      "width": 1
+    },
+    "selected_objects": [
+      {
+        "cost": 1,
+        "id": 3062,
+        "inventory_ops": [
+          "Open",
+          null,
+          null,
+          null,
+          null
+        ],
+        "name": "Strange box",
+        "ops": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "cost": 1,
+        "id": 2528,
+        "inventory_ops": [
+          "Rub",
+          null,
+          null,
+          null,
+          null
+        ],
+        "name": "Lamp",
+        "ops": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "cost": 50000,
+        "id": 1113,
+        "inventory_ops": [
+          null,
+          "Wear",
+          null,
+          null,
+          null
+        ],
+        "name": "Rune chainbody",
+        "ops": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      }
+    ],
+    "stunned_thieving_spotanim": {
+      "anim": 1054,
+      "id": 245,
+      "model": 3070
+    }
+  },
+  "content_dir": "/Users/acfrazier/experiments/Server/content",
+  "controls": {
+    "children": [
+      {
+        "button_text": "",
+        "button_type": 0,
+        "children": null,
+        "height": 11,
+        "id": 148,
+        "iop": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "layer_id": 147,
+        "text": "Energy left:",
+        "type": 4,
+        "width": 58
+      },
+      {
+        "button_text": "",
+        "button_type": 0,
+        "children": null,
+        "height": 14,
+        "id": 149,
+        "iop": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "layer_id": 147,
+        "text": "%1%",
+        "type": 4,
+        "width": 28
+      },
+      {
+        "button_text": "Select",
+        "button_type": 5,
+        "children": null,
+        "height": 36,
+        "id": 150,
+        "iop": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "layer_id": 147,
+        "text": "",
+        "type": 5,
+        "width": 36
+      },
+      {
+        "button_text": "Select",
+        "button_type": 5,
+        "children": null,
+        "height": 36,
+        "id": 151,
+        "iop": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "layer_id": 147,
+        "text": "",
+        "type": 5,
+        "width": 36
+      },
+      {
+        "button_text": "Select",
+        "button_type": 5,
+        "children": null,
+        "height": 36,
+        "id": 152,
+        "iop": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "layer_id": 147,
+        "text": "",
+        "type": 5,
+        "width": 36
+      },
+      {
+        "button_text": "Select",
+        "button_type": 5,
+        "children": null,
+        "height": 36,
+        "id": 153,
+        "iop": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "layer_id": 147,
+        "text": "",
+        "type": 5,
+        "width": 36
+      },
+      {
+        "button_text": "",
+        "button_type": 0,
+        "children": null,
+        "height": 14,
+        "id": 154,
+        "iop": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "layer_id": 147,
+        "text": "Player controls",
+        "type": 4,
+        "width": 101
+      },
+      {
+        "button_text": "",
+        "button_type": 0,
+        "children": null,
+        "height": 14,
+        "id": 155,
+        "iop": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "layer_id": 147,
+        "text": "Auto retaliate",
+        "type": 4,
+        "width": 79
+      },
+      {
+        "button_text": "",
+        "button_type": 0,
+        "children": null,
+        "height": 14,
+        "id": 156,
+        "iop": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "layer_id": 147,
+        "text": "Off",
+        "type": 4,
+        "width": 20
+      },
+      {
+        "button_text": "",
+        "button_type": 0,
+        "children": null,
+        "height": 14,
+        "id": 157,
+        "iop": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "layer_id": 147,
+        "text": "On",
+        "type": 4,
+        "width": 15
+      },
+      {
+        "button_text": "",
+        "button_type": 0,
+        "children": null,
+        "height": 14,
+        "id": 158,
+        "iop": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "layer_id": 147,
+        "text": "Move speed",
+        "type": 4,
+        "width": 68
+      },
+      {
+        "button_text": "",
+        "button_type": 0,
+        "children": null,
+        "height": 14,
+        "id": 159,
+        "iop": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "layer_id": 147,
+        "text": "Run",
+        "type": 4,
+        "width": 21
+      },
+      {
+        "button_text": "",
+        "button_type": 0,
+        "children": null,
+        "height": 14,
+        "id": 160,
+        "iop": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "layer_id": 147,
+        "text": "Walk",
+        "type": 4,
+        "width": 25
+      },
+      {
+        "button_text": "",
+        "button_type": 0,
+        "children": null,
+        "height": 14,
+        "id": 174,
+        "iop": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "layer_id": 147,
+        "text": "Emote animations",
+        "type": 4,
+        "width": 99
+      },
+      {
+        "button_text": "",
+        "button_type": 0,
+        "children": null,
+        "height": 11,
+        "id": 183,
+        "iop": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "layer_id": 147,
+        "text": "Weight carried:",
+        "type": 4,
+        "width": 76
+      },
+      {
+        "button_text": "",
+        "button_type": 0,
+        "children": null,
+        "height": 14,
+        "id": 184,
+        "iop": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "layer_id": 147,
+        "text": "%1kg",
+        "type": 4,
+        "width": 30
+      },
+      {
+        "button_text": "",
+        "button_type": 0,
+        "children": [
+          161,
+          162,
+          163,
+          164,
+          165,
+          166,
+          167,
+          168,
+          169,
+          170,
+          171,
+          172,
+          173,
+          175,
+          176,
+          177,
+          178,
+          179,
+          180,
+          181,
+          182,
+          185,
+          186,
+          187,
+          666,
+          667,
+          6503,
+          6506,
+          6518,
+          6519,
+          6522,
+          6532,
+          6533,
+          6540,
+          6541
+        ],
+        "height": 91,
+        "id": 665,
+        "iop": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "layer_id": 147,
+        "text": "",
+        "type": 0,
+        "width": 168
+      }
+    ],
+    "root": {
+      "button_text": "",
+      "button_type": 0,
+      "children": [
+        148,
+        149,
+        150,
+        151,
+        152,
+        153,
+        154,
+        155,
+        156,
+        157,
+        158,
+        159,
+        160,
+        174,
+        183,
+        184,
+        665
+      ],
+      "height": 334,
+      "id": 147,
+      "iop": [
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "layer_id": 147,
+      "text": "",
+      "type": 0,
+      "width": 512
+    },
+    "snapshot_indices": {
+      "retaliate_off": 151,
+      "retaliate_on": 150,
+      "run_off": 152,
+      "run_on": 153
+    }
+  },
+  "guardian": {
+    "box": {
+      "root": {
+        "button_text": "",
+        "button_type": 0,
+        "children": [
+          6555,
+          6557,
+          6559,
+          6560,
+          6561,
+          6562,
+          6563,
+          6564,
+          6565,
+          6566,
+          6567
+        ],
+        "height": 334,
+        "id": 6554,
+        "iop": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "layer_id": 6554,
+        "text": "",
+        "type": 0,
+        "width": 512
+      },
+      "selected": [
+        {
+          "button_text": "",
+          "button_type": 0,
+          "children": null,
+          "height": 32,
+          "id": 6555,
+          "iop": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "layer_id": 6554,
+          "text": "",
+          "type": 6,
+          "width": 32
+        },
+        {
+          "button_text": "",
+          "button_type": 0,
+          "children": null,
+          "height": 32,
+          "id": 6557,
+          "iop": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "layer_id": 6554,
+          "text": "",
+          "type": 6,
+          "width": 32
+        },
+        {
+          "button_text": "",
+          "button_type": 0,
+          "children": null,
+          "height": 32,
+          "id": 6559,
+          "iop": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "layer_id": 6554,
+          "text": "",
+          "type": 6,
+          "width": 32
+        },
+        {
+          "button_text": "",
+          "button_type": 0,
+          "children": null,
+          "height": 17,
+          "id": 6561,
+          "iop": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "layer_id": 6554,
+          "text": "Which shape is blue?",
+          "type": 4,
+          "width": 308
+        },
+        {
+          "button_text": "Ok",
+          "button_type": 1,
+          "children": null,
+          "height": 36,
+          "id": 6562,
+          "iop": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "layer_id": 6554,
+          "text": "",
+          "type": 5,
+          "width": 72
+        },
+        {
+          "button_text": "Ok",
+          "button_type": 1,
+          "children": null,
+          "height": 36,
+          "id": 6563,
+          "iop": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "layer_id": 6554,
+          "text": "",
+          "type": 5,
+          "width": 72
+        },
+        {
+          "button_text": "Ok",
+          "button_type": 1,
+          "children": null,
+          "height": 36,
+          "id": 6564,
+          "iop": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "layer_id": 6554,
+          "text": "",
+          "type": 5,
+          "width": 72
+        }
+      ]
+    },
+    "lamp": {
+      "root": {
+        "button_text": "",
+        "button_type": 0,
+        "children": [
+          2809,
+          2810,
+          2811,
+          2812,
+          2813,
+          2814,
+          2815,
+          2816,
+          2817,
+          2818,
+          2819,
+          2820,
+          2821,
+          2822,
+          2823,
+          2824,
+          2825,
+          2826,
+          2827,
+          2828,
+          2829,
+          2830,
+          2831,
+          2832,
+          2833,
+          2834,
+          2835,
+          2836,
+          2837,
+          2838,
+          2839,
+          2840,
+          2841,
+          2842,
+          2843,
+          2844,
+          2845,
+          2846,
+          2847,
+          2848,
+          2849,
+          2850
+        ],
+        "height": 334,
+        "id": 2808,
+        "iop": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "layer_id": 2808,
+        "text": "",
+        "type": 0,
+        "width": 512
+      },
+      "selected": [
+        {
+          "button_text": "Advance Attack",
+          "button_type": 1,
+          "children": null,
+          "height": 25,
+          "id": 2812,
+          "iop": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "layer_id": 2808,
+          "text": "",
+          "type": 5,
+          "width": 25
+        },
+        {
+          "button_text": "Ok",
+          "button_type": 1,
+          "children": null,
+          "height": 14,
+          "id": 2831,
+          "iop": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "layer_id": 2808,
+          "text": "Confirm",
+          "type": 4,
+          "width": 44
+        }
+      ]
+    },
+    "loc_name_inputs": [
+      {
+        "id": 2019,
+        "name": "Whirlpool",
+        "ops": []
+      },
+      {
+        "id": 2118,
+        "name": "Whirlpool",
+        "ops": []
+      }
+    ],
+    "mime": {
+      "root": {
+        "button_text": "",
+        "button_type": 0,
+        "children": [
+          6544,
+          6545,
+          6546,
+          6547,
+          6548,
+          6549,
+          6550,
+          6551,
+          6552,
+          6553
+        ],
+        "height": 334,
+        "id": 6543,
+        "iop": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "layer_id": 6543,
+        "text": "",
+        "type": 0,
+        "width": 512
+      },
+      "selected": [
+        {
+          "button_text": "Ok",
+          "button_type": 1,
+          "children": null,
+          "height": 17,
+          "id": 6546,
+          "iop": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "layer_id": 6543,
+          "text": "Cry",
+          "type": 4,
+          "width": 26
+        },
+        {
+          "button_text": "Ok",
+          "button_type": 1,
+          "children": null,
+          "height": 17,
+          "id": 6547,
+          "iop": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "layer_id": 6543,
+          "text": "Think",
+          "type": 4,
+          "width": 38
+        },
+        {
+          "button_text": "Ok",
+          "button_type": 1,
+          "children": null,
+          "height": 17,
+          "id": 6548,
+          "iop": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "layer_id": 6543,
+          "text": "Laugh",
+          "type": 4,
+          "width": 40
+        },
+        {
+          "button_text": "Ok",
+          "button_type": 1,
+          "children": null,
+          "height": 17,
+          "id": 6549,
+          "iop": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "layer_id": 6543,
+          "text": "Dance",
+          "type": 4,
+          "width": 43
+        },
+        {
+          "button_text": "Ok",
+          "button_type": 1,
+          "children": null,
+          "height": 17,
+          "id": 6550,
+          "iop": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "layer_id": 6543,
+          "text": "Climb Rope",
+          "type": 4,
+          "width": 75
+        },
+        {
+          "button_text": "Ok",
+          "button_type": 1,
+          "children": null,
+          "height": 17,
+          "id": 6551,
+          "iop": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "layer_id": 6543,
+          "text": "Lean on air",
+          "type": 4,
+          "width": 79
+        },
+        {
+          "button_text": "Ok",
+          "button_type": 1,
+          "children": null,
+          "height": 17,
+          "id": 6552,
+          "iop": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "layer_id": 6543,
+          "text": "Glass Wall",
+          "type": 4,
+          "width": 69
+        },
+        {
+          "button_text": "Ok",
+          "button_type": 1,
+          "children": null,
+          "height": 17,
+          "id": 6553,
+          "iop": [
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "layer_id": 6543,
+          "text": "Glass Box",
+          "type": 4,
+          "width": 66
+        }
+      ]
+    },
+    "npc_name_inputs": [
+      {
+        "id": 34,
+        "name": "Watchman",
+        "ops": [
+          null,
+          "Attack",
+          "Pickpocket"
+        ]
+      },
+      {
+        "id": 73,
+        "name": "Zombie",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 74,
+        "name": "Zombie",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 75,
+        "name": "Zombie",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 76,
+        "name": "Zombie",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 391,
+        "name": "River troll",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 392,
+        "name": "River troll",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 393,
+        "name": "River troll",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 394,
+        "name": "River troll",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 395,
+        "name": "River troll",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 396,
+        "name": "River troll",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 407,
+        "name": "Strange plant",
+        "ops": [
+          "Pick"
+        ]
+      },
+      {
+        "id": 408,
+        "name": "Strange plant",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 409,
+        "name": "Genie",
+        "ops": [
+          "Talk-to"
+        ]
+      },
+      {
+        "id": 410,
+        "name": "Mysterious Old Man",
+        "ops": [
+          "Talk-to"
+        ]
+      },
+      {
+        "id": 411,
+        "name": "Swarm",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 413,
+        "name": "Rock Golem",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 414,
+        "name": "Rock Golem",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 415,
+        "name": "Rock Golem",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 416,
+        "name": "Rock Golem",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 417,
+        "name": "Rock Golem",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 418,
+        "name": "Rock Golem",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 419,
+        "name": "Zombie",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 420,
+        "name": "Zombie",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 421,
+        "name": "Zombie",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 422,
+        "name": "Zombie",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 423,
+        "name": "Zombie",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 424,
+        "name": "Zombie",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 425,
+        "name": "Shade",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 426,
+        "name": "Shade",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 427,
+        "name": "Shade",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 428,
+        "name": "Shade",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 429,
+        "name": "Shade",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 430,
+        "name": "Shade",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 431,
+        "name": "Watchman",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 432,
+        "name": "Watchman",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 433,
+        "name": "Watchman",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 434,
+        "name": "Watchman",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 435,
+        "name": "Watchman",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 436,
+        "name": "Watchman",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 438,
+        "name": "Tree spirit",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 439,
+        "name": "Tree spirit",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 440,
+        "name": "Tree spirit",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 441,
+        "name": "Tree spirit",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 442,
+        "name": "Tree spirit",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 443,
+        "name": "Tree spirit",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 655,
+        "name": "Tree spirit",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 751,
+        "name": "Zombie",
+        "ops": [
+          null,
+          "Attack"
+        ]
+      },
+      {
+        "id": 956,
+        "name": "Drunken Dwarf",
+        "ops": [
+          "Talk-to"
+        ]
+      }
+    ]
+  },
+  "nav_manifest": {
+    "cache_id": "4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c",
+    "flags_sha256": "92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb",
+    "nav_sha256": "05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4",
+    "revision": 274
+  },
+  "navigation": {
+    "edge_kinds": {
+      "AgilityShortcut": 25,
+      "Boat": 8,
+      "Door": 1247,
+      "Glider": 14,
+      "Ladder": 550,
+      "Npc": 9,
+      "SpiritTree": 8,
+      "Stairs": 282
+    },
+    "format_magic": "274V",
+    "format_version": 8,
+    "height": 9088,
+    "ordinary_edges": 2143,
+    "origin": [
+      1856,
+      1280,
+      0
+    ],
+    "teleports": [
+      {
+        "item_req": [
+          [
+            554,
+            1
+          ],
+          [
+            556,
+            3
+          ],
+          [
+            563,
+            1
+          ]
+        ],
+        "loc_id": 0,
+        "option": 0,
+        "quest_req": [],
+        "skill_req": [
+          [
+            6,
+            25
+          ]
+        ],
+        "ticks": 3,
+        "to": [
+          3213,
+          3424,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            557,
+            1
+          ],
+          [
+            556,
+            3
+          ],
+          [
+            563,
+            1
+          ]
+        ],
+        "loc_id": 0,
+        "option": 0,
+        "quest_req": [],
+        "skill_req": [
+          [
+            6,
+            31
+          ]
+        ],
+        "ticks": 3,
+        "to": [
+          3221,
+          3218,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            555,
+            1
+          ],
+          [
+            556,
+            3
+          ],
+          [
+            563,
+            1
+          ]
+        ],
+        "loc_id": 0,
+        "option": 0,
+        "quest_req": [],
+        "skill_req": [
+          [
+            6,
+            37
+          ]
+        ],
+        "ticks": 3,
+        "to": [
+          2965,
+          3378,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            556,
+            5
+          ],
+          [
+            563,
+            1
+          ]
+        ],
+        "loc_id": 0,
+        "option": 0,
+        "quest_req": [],
+        "skill_req": [
+          [
+            6,
+            45
+          ]
+        ],
+        "ticks": 3,
+        "to": [
+          2757,
+          3478,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            555,
+            2
+          ],
+          [
+            563,
+            2
+          ]
+        ],
+        "loc_id": 0,
+        "option": 0,
+        "quest_req": [],
+        "skill_req": [
+          [
+            6,
+            51
+          ]
+        ],
+        "ticks": 3,
+        "to": [
+          2661,
+          3301,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            557,
+            2
+          ],
+          [
+            563,
+            2
+          ]
+        ],
+        "loc_id": 0,
+        "option": 0,
+        "quest_req": [],
+        "skill_req": [
+          [
+            6,
+            58
+          ]
+        ],
+        "ticks": 3,
+        "to": [
+          2933,
+          4713,
+          2
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            554,
+            2
+          ],
+          [
+            563,
+            2
+          ]
+        ],
+        "loc_id": 0,
+        "option": 0,
+        "quest_req": [],
+        "skill_req": [
+          [
+            6,
+            61
+          ]
+        ],
+        "ticks": 3,
+        "to": [
+          2890,
+          3679,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            2552,
+            1
+          ]
+        ],
+        "loc_id": 2552,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          3315,
+          3235,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            2554,
+            1
+          ]
+        ],
+        "loc_id": 2554,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          3315,
+          3235,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            2556,
+            1
+          ]
+        ],
+        "loc_id": 2556,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          3315,
+          3235,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            2558,
+            1
+          ]
+        ],
+        "loc_id": 2558,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          3315,
+          3235,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            2560,
+            1
+          ]
+        ],
+        "loc_id": 2560,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          3315,
+          3235,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            2562,
+            1
+          ]
+        ],
+        "loc_id": 2562,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          3315,
+          3235,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            2564,
+            1
+          ]
+        ],
+        "loc_id": 2564,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          3315,
+          3235,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            2566,
+            1
+          ]
+        ],
+        "loc_id": 2566,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          3315,
+          3235,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            3853,
+            1
+          ]
+        ],
+        "loc_id": 3853,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          2207,
+          4940,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            3855,
+            1
+          ]
+        ],
+        "loc_id": 3855,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          2207,
+          4940,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            3857,
+            1
+          ]
+        ],
+        "loc_id": 3857,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          2207,
+          4940,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            3859,
+            1
+          ]
+        ],
+        "loc_id": 3859,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          2207,
+          4940,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            3861,
+            1
+          ]
+        ],
+        "loc_id": 3861,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          2207,
+          4940,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            3863,
+            1
+          ]
+        ],
+        "loc_id": 3863,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          2207,
+          4940,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            3865,
+            1
+          ]
+        ],
+        "loc_id": 3865,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          2207,
+          4940,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            3867,
+            1
+          ]
+        ],
+        "loc_id": 3867,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          2207,
+          4940,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            1712,
+            1
+          ]
+        ],
+        "loc_id": 1712,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          3087,
+          3496,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            1712,
+            1
+          ]
+        ],
+        "loc_id": 1712,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          2918,
+          3176,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            1712,
+            1
+          ]
+        ],
+        "loc_id": 1712,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          3105,
+          3251,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            1712,
+            1
+          ]
+        ],
+        "loc_id": 1712,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          3293,
+          3163,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            1710,
+            1
+          ]
+        ],
+        "loc_id": 1710,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          3087,
+          3496,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            1710,
+            1
+          ]
+        ],
+        "loc_id": 1710,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          2918,
+          3176,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            1710,
+            1
+          ]
+        ],
+        "loc_id": 1710,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          3105,
+          3251,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            1710,
+            1
+          ]
+        ],
+        "loc_id": 1710,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          3293,
+          3163,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            1708,
+            1
+          ]
+        ],
+        "loc_id": 1708,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          3087,
+          3496,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            1708,
+            1
+          ]
+        ],
+        "loc_id": 1708,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          2918,
+          3176,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            1708,
+            1
+          ]
+        ],
+        "loc_id": 1708,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          3105,
+          3251,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            1708,
+            1
+          ]
+        ],
+        "loc_id": 1708,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          3293,
+          3163,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            1706,
+            1
+          ]
+        ],
+        "loc_id": 1706,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          3087,
+          3496,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            1706,
+            1
+          ]
+        ],
+        "loc_id": 1706,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          2918,
+          3176,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            1706,
+            1
+          ]
+        ],
+        "loc_id": 1706,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          3105,
+          3251,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      },
+      {
+        "item_req": [
+          [
+            1706,
+            1
+          ]
+        ],
+        "loc_id": 1706,
+        "option": 4,
+        "quest_req": [],
+        "skill_req": [],
+        "ticks": 2,
+        "to": [
+          3293,
+          3163,
+          0
+        ],
+        "varp_req": [],
+        "worn_req": []
+      }
+    ],
+    "width": 1792
+  },
+  "revision": 274,
+  "selected_interfaces": {
+    "shop": {
+      "button_text": "",
+      "button_type": 0,
+      "children": [
+        3825,
+        3826,
+        3827,
+        3828,
+        3829,
+        3830,
+        3831,
+        3832,
+        3833,
+        3834,
+        3835,
+        3836,
+        3837,
+        3838,
+        3839,
+        3840,
+        3841,
+        3842,
+        3843,
+        3844,
+        3845,
+        3846,
+        3847,
+        3848,
+        3849,
+        3850,
+        3851,
+        3852,
+        3853,
+        3854,
+        3855,
+        3856,
+        3857,
+        3858,
+        3859,
+        3860,
+        3861,
+        3862,
+        3863,
+        3864,
+        3865,
+        3866,
+        3867,
+        3868,
+        3869,
+        3870,
+        3871,
+        3872,
+        3873,
+        3874,
+        3875,
+        3876,
+        3877,
+        3878,
+        3879,
+        3880,
+        3881,
+        3882,
+        3883,
+        3884,
+        3885,
+        3886,
+        3887,
+        3888,
+        3889,
+        3890,
+        3891,
+        3892,
+        3893,
+        3894,
+        3895,
+        3896,
+        3897,
+        3898,
+        3899,
+        3900,
+        3901,
+        3902,
+        3903,
+        3904,
+        3905,
+        3906,
+        3907,
+        3908,
+        3909,
+        3910,
+        3911,
+        3912,
+        3913,
+        3914,
+        3915,
+        3916
+      ],
+      "height": 334,
+      "id": 3824,
+      "iop": [
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "layer_id": 3824,
+      "text": "",
+      "type": 0,
+      "width": 512
+    },
+    "shop_inventory": {
+      "button_text": "",
+      "button_type": 0,
+      "children": null,
+      "height": 5,
+      "id": 3900,
+      "iop": [
+        "Value",
+        "Buy 1",
+        "Buy 5",
+        "Buy 10",
+        null
+      ],
+      "layer_id": 3824,
+      "text": "",
+      "type": 2,
+      "width": 8
+    },
+    "trade_confirm": {
+      "button_text": "",
+      "button_type": 0,
+      "children": [
+        3444,
+        3445,
+        3446,
+        3447,
+        3448,
+        3449,
+        3450,
+        3451,
+        3452,
+        3453,
+        3454,
+        3455,
+        3456,
+        3457,
+        3458,
+        3459,
+        3460,
+        3461,
+        3462,
+        3463,
+        3464,
+        3465,
+        3466,
+        3467,
+        3468,
+        3469,
+        3470,
+        3471,
+        3472,
+        3473,
+        3474,
+        3475,
+        3476,
+        3477,
+        3478,
+        3479,
+        3480,
+        3481,
+        3482,
+        3483,
+        3484,
+        3485,
+        3486,
+        3487,
+        3488,
+        3489,
+        3490,
+        3491,
+        3492,
+        3493,
+        3494,
+        3495,
+        3496,
+        3497,
+        3498,
+        3499,
+        3500,
+        3501,
+        3502,
+        3503,
+        3504,
+        3505,
+        3506,
+        3507,
+        3508,
+        3509,
+        3510,
+        3511,
+        3512,
+        3513,
+        3514,
+        3515,
+        3516,
+        3517,
+        3518,
+        3519,
+        3520,
+        3521,
+        3522,
+        3523,
+        3524,
+        3525,
+        3526,
+        3527,
+        3528,
+        3529,
+        3530,
+        3531,
+        3532,
+        3533,
+        3534,
+        3535,
+        3536,
+        3537,
+        3538,
+        3539,
+        3540,
+        3541,
+        3542,
+        3543,
+        3544,
+        3545,
+        3546,
+        3547,
+        3548,
+        3549,
+        3550,
+        3551,
+        3552,
+        3553,
+        3554,
+        3555,
+        3556,
+        3557,
+        3558
+      ],
+      "height": 334,
+      "id": 3443,
+      "iop": [
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "layer_id": 3443,
+      "text": "",
+      "type": 0,
+      "width": 512
+    },
+    "trade_main": {
+      "button_text": "",
+      "button_type": 0,
+      "children": [
+        3324,
+        3325,
+        3326,
+        3327,
+        3328,
+        3329,
+        3330,
+        3331,
+        3332,
+        3333,
+        3334,
+        3335,
+        3336,
+        3337,
+        3338,
+        3339,
+        3340,
+        3341,
+        3342,
+        3343,
+        3344,
+        3345,
+        3346,
+        3347,
+        3348,
+        3349,
+        3350,
+        3351,
+        3352,
+        3353,
+        3354,
+        3355,
+        3356,
+        3357,
+        3358,
+        3359,
+        3360,
+        3361,
+        3362,
+        3363,
+        3364,
+        3365,
+        3366,
+        3367,
+        3368,
+        3369,
+        3370,
+        3371,
+        3372,
+        3373,
+        3374,
+        3375,
+        3376,
+        3377,
+        3378,
+        3379,
+        3380,
+        3381,
+        3382,
+        3383,
+        3384,
+        3385,
+        3386,
+        3387,
+        3388,
+        3389,
+        3390,
+        3391,
+        3392,
+        3393,
+        3394,
+        3395,
+        3396,
+        3397,
+        3398,
+        3399,
+        3400,
+        3401,
+        3402,
+        3403,
+        3404,
+        3405,
+        3406,
+        3407,
+        3408,
+        3409,
+        3410,
+        3411,
+        3412,
+        3413,
+        3414,
+        3417,
+        3418,
+        3419,
+        3420,
+        3421,
+        3422,
+        3423,
+        3427,
+        3430,
+        3431,
+        3433,
+        3434,
+        3435,
+        3436,
+        3437,
+        3438,
+        3439,
+        3441,
+        3442
+      ],
+      "height": 334,
+      "id": 3323,
+      "iop": [
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "layer_id": 3323,
+      "text": "",
+      "type": 0,
+      "width": 512
+    },
+    "trade_main_inventory": {
+      "button_text": "",
+      "button_type": 0,
+      "children": null,
+      "height": 7,
+      "id": 3415,
+      "iop": [
+        "Remove 1",
+        "Remove 5",
+        "Remove 10",
+        "Remove All",
+        "Remove X"
+      ],
+      "layer_id": 3323,
+      "text": "",
+      "type": 2,
+      "width": 4
+    },
+    "trade_other_inventory": {
+      "button_text": "",
+      "button_type": 0,
+      "children": null,
+      "height": 7,
+      "id": 3416,
+      "iop": [
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "layer_id": 3323,
+      "text": "",
+      "type": 2,
+      "width": 4
+    },
+    "trade_other_player": {
+      "button_text": "",
+      "button_type": 0,
+      "children": null,
+      "height": 14,
+      "id": 3417,
+      "iop": [
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "layer_id": 3323,
+      "text": "Trading With:",
+      "type": 4,
+      "width": 84
+    },
+    "trade_side_inventory": {
+      "button_text": "",
+      "button_type": 0,
+      "children": null,
+      "height": 7,
+      "id": 3322,
+      "iop": [
+        "Offer 1",
+        "Offer 5",
+        "Offer 10",
+        "Offer All",
+        "Offer X"
+      ],
+      "layer_id": 3321,
+      "text": "",
+      "type": 2,
+      "width": 4
+    }
+  }
+}

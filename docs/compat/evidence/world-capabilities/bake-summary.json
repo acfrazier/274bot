@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "scope": "offline source/cache/navigation preparation only; no gameplay acceptance",
+  "source_base": "b9cacc6e",
+  "fixtures": [
+    {
+      "revision": 274,
+      "content": {
+        "path": "/Users/acfrazier/experiments/Server/content",
+        "commit": "000c19997e07206131bcb3c884265840efce416d"
+      },
+      "cache": "/Users/acfrazier/experiments/Server/engine/data/pack/client",
+      "config": "/Users/acfrazier/experiments/Server/engine/data/pack/config",
+      "cache_id": "4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c",
+      "bake_command": "target/debug/nav-pack --revision 274 --content /Users/acfrazier/experiments/Server/content --cache /Users/acfrazier/experiments/Server/engine/data/pack/client --cache-manifest .superpowers/world-capabilities/274/cache-manifest.json --out .superpowers/world-capabilities/274/274bot.navpack",
+      "audit_command": "target/debug/nav-input-audit 274 /Users/acfrazier/experiments/Server/engine/data/pack/client .superpowers/world-capabilities/274/cache-manifest.json .superpowers/world-capabilities/274/274bot.navpack /Users/acfrazier/experiments/Server/content",
+      "mapsquares": 483,
+      "collision": {
+        "width": 1792,
+        "height": 9088,
+        "walkable_tiles": 1152462
+      },
+      "transport_edges": 2143,
+      "teleports": {
+        "spells": 7,
+        "jewellery": 32
+      },
+      "bank_stands": 68,
+      "navpack": {
+        "bytes": 73438581,
+        "sha256": "05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4"
+      },
+      "navflags": {
+        "bytes": 260571161,
+        "sha256": "92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb"
+      },
+      "input_audit_sha256": "4b4d785f61d021788a8d6eed15f8e0598a71575c9a8f86071d40f5d23e59d1f1"
+    },
+    {
+      "revision": 289,
+      "content": {
+        "path": "/Users/acfrazier/experiments/lostcity-289/content",
+        "commit": "92649430fcbc83538d8c4367ecb96cee1a67a944"
+      },
+      "cache": "/Users/acfrazier/experiments/lostcity-289/engine/data/pack/client",
+      "config": "/Users/acfrazier/experiments/lostcity-289/engine/data/pack/client/config",
+      "cache_id": "c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09",
+      "bake_command": "target/debug/nav-pack --revision 289 --content /Users/acfrazier/experiments/lostcity-289/content --cache /Users/acfrazier/experiments/lostcity-289/engine/data/pack/client --cache-manifest .superpowers/world-capabilities/289/cache-manifest.json --out .superpowers/world-capabilities/289/274bot.navpack",
+      "audit_command": "target/debug/nav-input-audit 289 /Users/acfrazier/experiments/lostcity-289/engine/data/pack/client .superpowers/world-capabilities/289/cache-manifest.json .superpowers/world-capabilities/289/274bot.navpack /Users/acfrazier/experiments/lostcity-289/content",
+      "mapsquares": 534,
+      "collision": {
+        "width": 1792,
+        "height": 9088,
+        "walkable_tiles": 1210899
+      },
+      "transport_edges": 2181,
+      "teleports": {
+        "spells": 7,
+        "jewellery": 40
+      },
+      "bank_stands": 68,
+      "navpack": {
+        "bytes": 73441977,
+        "sha256": "131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924"
+      },
+      "navflags": {
+        "bytes": 260571161,
+        "sha256": "67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a"
+      },
+      "input_audit_sha256": "76a2676074f40c93ff38d31de909c626d6e06186167d7f96a4be48b31bf0fd7f"
+    }
+  ],
+  "mismatch_negative": {
+    "command": "target/debug/nav-pack --revision 289 --content /Users/acfrazier/experiments/lostcity-289/content --cache /Users/acfrazier/experiments/lostcity-289/engine/data/pack/client --cache-manifest .superpowers/world-capabilities/274/cache-manifest.json --out .superpowers/world-capabilities/mismatch.navpack",
+    "exit_code": 1,
+    "stderr": "nav-pack: cache manifest revision 274 does not match selected revision 289",
+    "sentinel_sha256_before": "2b7847b7b705781d7cf21a05e9c1bb37cbf078aea103bc3edcc6aca52ab65453",
+    "sentinel_sha256_after": "2b7847b7b705781d7cf21a05e9c1bb37cbf078aea103bc3edcc6aca52ab65453",
+    "artifact_overwritten": false
+  }
+}
