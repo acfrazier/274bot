@@ -1,7 +1,7 @@
-# Proposed account admission clarification — awaiting operator decision
+# Account admission clarification — approved 2026-09-10
 
 This proposal follows independent Grok4.6 review t_d6f23813 of the exact frozen
-runtime and controller6f2b410. It is not an accepted amendment or live release.
+runtime and controller6f2b410. The operator approved this clarification; it is not itself a live release.
 
 Replace only the account/population timing requirement in
 `direct-per-bot-owner-capture-plan.md` section5 item3 with:
@@ -29,4 +29,4 @@ Alternative: retain a literal preexisting named-account requirement. The current
 frozen diagnostic cannot satisfy it; owner live remains held pending a separately
 approved selection design. No such design or runtime change is proposed here.
 
-Decision pending. No private receipt or live launch has been issued.
+Operator approved: preserve fixture behavior. Plan section5.3 now records this decision. No private receipt or live launch has yet been issued.

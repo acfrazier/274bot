@@ -321,12 +321,22 @@ never subtract a guessed constant from the old N1/N16 RSS or CPU.
    Bind the same cache snapshot version `2faf336eeb0462ed`, all cache file hashes,
    catalog and nav flags/pack hashes in those receipts. Nav pack SHA is
    `2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30`.
-   Reuse the controller's N1 account-selection/seed contract, with account
-   identity bound privately by root; do not copy passwords/names into the owner
-   ledger or substitute the operator's highmem vault. Root must bind actual
-   existing disposable account/population, settings and server binary/config
-   identity at release; old PID726 is NOT a live identity. No cache rebuild,
-   account reset, server restart, installation or permission change is authorized.
+   Operator clarification approved 2026-09-10: preserve the existing N1
+   account-selection and seed contract. The diagnostic mints one disposable
+   account after frontend start and creates its throwaway vault. Before launch,
+   root privately binds the exact fixture recipe, settings, N=1 active workload,
+   source/binary, cache and live server identities. Prelaunch account/population
+   counts admit that one-slot fixture; they do not claim a named save already
+   exists, is logged in, or has qualified. After launch, establish the actual
+   account from qualification slots[].name and client/workload observations,
+   including ingame && scene_state==2, before accepting capture. Do not predict
+   names, reuse a prior run's name, equate the recipe hash with account identity,
+   or invent a hash-to-name join. Keep names/passwords out of the owner ledger;
+   do not substitute the operator's highmem vault. Preserve all workload, frame,
+   lifecycle, resource, cleanup and single-attempt requirements. Server/config/
+   cache identities remain freshly observed; old PID726 is NOT a live identity.
+   No cache rebuild, account reset, server restart, installation or permission
+   change is authorized.
 4. Root fresh preflight: no conflicting owned test/build/profiler/frontend,
    server healthy and separately measured, no swap/OOM, MemAvailable >=768 MiB,
    output filesystem free >=256 MiB. Runtime guard polls every 0.5s: stop owned

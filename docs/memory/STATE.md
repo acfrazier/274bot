@@ -11,6 +11,18 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-10 00:52 UTC
+
+- Operator APPROVED account timing clarification: preserve fixture behavior,
+  bind exact recipe/setup prelaunch and establish actual account after launch
+  using qualification evidence. Plan5.3 amended; no mint/seed/argv/vault or
+  controller changes. Do not label prelaunch counts as logged-in account proof.
+- Grok4.6 account review completed20260909_204150_defd77/xai at1789001440.40908;
+  root read entire report and recorded approved option1. Actual live still
+  requires fresh typed root receipts/server/cache/preflight, then qualification.
+- CF2 remains failed/parked. Its independent failure report is written, actual
+  reviewer run still active until final completion. No navigation rerun or CA.
+
 ## Latest boundary — 2026-09-10 00:49 UTC
 
 - CF2 failure evidence review t_7ef3743e actually active reviewer session
