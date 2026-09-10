@@ -238,3 +238,15 @@ retains external fixtures and live qualification. Combined step-4 integration
 review `t_0ec632f9` is queued behind the snapshot review, with the frozen contract
 in brief 15. Banking source gaps for the next capability task are recorded in
 `banking-capability-audit.md`; ledger statuses remain unqualified.
+
+## Snapshot review correction
+
+Actual Grok 4.5 run 1107 requested one correction: response-15 retains the
+client collision map but reset host SceneView stayed unavailable when scene gen
+did not move. Sol corrective run 1109/session `20260910_151510_195ea5` is now
+implementing the focused rehydration fix and unchanged-scene-gen regression.
+Its actual model/provider is verified. Earlier 15b706f6 source is not accepted.
+The same card will return to reviewer; integration review t_0ec632f9 is held by
+root until the corrected immutable candidate is named. No user input is needed.
+Frozen binary b9cacc6e is retained as a pre-correction artifact and will not be
+used for acceptance. No controlled live cell has run yet.
