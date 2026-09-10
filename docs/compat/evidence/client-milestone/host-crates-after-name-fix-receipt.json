@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "api",
+    "-p",
+    "host",
+    "-p",
+    "host-play",
+    "--features",
+    "host-play/memory-profile"
+  ],
+  "started_at": "2026-09-10T13:58:00.255088+00:00",
+  "live": false,
+  "exit_code": 0,
+  "finished_at": "2026-09-10T13:58:29.578002+00:00"
+}
