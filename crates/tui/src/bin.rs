@@ -171,6 +171,47 @@ fn temp_live_vault(entries: &[(String, String)], vault_pass: &str) -> PathBuf {
 /// hop is sent once per server tick, not every 20 ms frame.
 type NavStepLatch = HashMap<String, (u64, (i32, i32, i32))>;
 
+fn reset_frontend_slot_session(
+    name: &str,
+    travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    tick_latch: &Arc<Mutex<NavStepLatch>>,
+) -> bool {
+    tick_latch.lock().unwrap().remove(name);
+    travellers.lock().unwrap().remove(name).is_some()
+}
+
+fn reset_frontend_slot_lifetime(
+    name: &str,
+    gens: &Arc<Mutex<HashMap<String, client::client::ClientGens>>>,
+    snapshots: &Arc<Mutex<HashMap<String, api::snapshot::GameSnapshot>>>,
+    travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    tick_latch: &Arc<Mutex<NavStepLatch>>,
+) -> bool {
+    gens.lock().unwrap().remove(name);
+    snapshots.lock().unwrap().remove(name);
+    reset_frontend_slot_session(name, travellers, tick_latch)
+}
+
+fn publish_frontend_slot(
+    name: &str,
+    client: &client::client::Client,
+    gens: &Arc<Mutex<HashMap<String, client::client::ClientGens>>>,
+    snapshots: &Arc<Mutex<HashMap<String, api::snapshot::GameSnapshot>>>,
+    travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    tick_latch: &Arc<Mutex<NavStepLatch>>,
+) -> bool {
+    let mut gens_guard = gens.lock().unwrap();
+    let last = gens_guard.entry(name.to_string()).or_default();
+    let mut snapshot_guard = snapshots.lock().unwrap();
+    let snapshot = snapshot_guard.entry(name.to_string()).or_default();
+    let publication = host_play::Host::publish_frontend_snapshot(last, snapshot, client);
+    drop(snapshot_guard);
+    if publication.session_boundary {
+        reset_frontend_slot_session(name, travellers, tick_latch);
+    }
+    publication.session_boundary
+}
+
 /// Panel-parity walk-arm tick: BankBudget session first, then route follow.
 fn step_walk_arm_follow<D: api::interact::Driver>(
     driver: &mut D,
@@ -290,6 +331,9 @@ pub struct TuiSession {
     last_focused: Option<String>,
     /// Per-username snapshots, rebuilt by the per-frame hook.
     snapshots: Arc<Mutex<HashMap<String, api::snapshot::GameSnapshot>>>,
+    /// Host publication cursor per slot. PLAYER_INFO's tick edge is tracked
+    /// separately from the snapshot's family generations.
+    frontend_gens: Arc<Mutex<HashMap<String, client::client::ClientGens>>>,
     /// Per-username walk arms; the focused arm's route paints the map and
     /// the per-frame hook steps it via `Traveller::follow`.
     travellers: Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
@@ -368,6 +412,7 @@ impl TuiSession {
             server_profile: None,
             last_focused: None,
             snapshots: Arc::new(Mutex::new(HashMap::new())),
+            frontend_gens: Arc::new(Mutex::new(HashMap::new())),
             travellers: Arc::new(Mutex::new(HashMap::new())),
             tick_latch: Arc::new(Mutex::new(HashMap::new())),
             walk_clear: Arc::new(AtomicBool::new(false)),
@@ -471,6 +516,7 @@ impl TuiSession {
     /// focused profile only; `m` spawns the rest.
     fn start_play(&mut self, vault: Vault) -> Result<(), String> {
         let snapshots = Arc::clone(&self.snapshots);
+        let frontend_gens = Arc::clone(&self.frontend_gens);
         let travellers = Arc::clone(&self.travellers);
         let tick_latch = Arc::clone(&self.tick_latch);
         let walk_clear = Arc::clone(&self.walk_clear);
@@ -480,12 +526,18 @@ impl TuiSession {
         let script_start_handle = Arc::clone(&self.script_start_handle);
         let options = self.options.clone();
         let per_frame = move |c: &mut client::client::Client, name: &str, hold: bool| {
-            // Publish the slot's snapshot (chat ring / modal, inv /
-            // stats / locs) for the UI thread; the rebuild is
-            // incremental, so a quiet frame publishes nothing new.
-            let mut all = snapshots.lock().unwrap();
-            let snap = all.entry(name.to_string()).or_default();
-            snap.rebuild(c);
+            // Clear facts and externally armed work at the actual session
+            // boundary before scenario/local-player/Guardian early returns.
+            if publish_frontend_slot(
+                name,
+                c,
+                &frontend_gens,
+                &snapshots,
+                &travellers,
+                &tick_latch,
+            ) {
+                walk_clear.store(true, Ordering::Relaxed);
+            }
 
             // The shared `--live script_*` runner: tick the driven
             // slot and its companions before the local-player gate
@@ -523,6 +575,10 @@ impl TuiSession {
                 latch.insert(name.to_string(), (c.gens.player, here));
             }
             let finished = {
+                let snapshots = snapshots.lock().unwrap();
+                let Some(snap) = snapshots.get(name) else {
+                    return;
+                };
                 let mut arm = arm.lock().unwrap();
                 let world = nav_world.lock().unwrap().clone();
                 step_walk_arm_follow(c, snap, &mut arm, world.as_deref(), here)
@@ -570,6 +626,15 @@ impl TuiSession {
             .store(profile.settings.lamp_auto, Ordering::Relaxed);
         *arm.lamp_skill.lock().unwrap() = profile.settings.lamp_skill.clone();
         if let Some(play) = self.play.as_mut() {
+            if reset_frontend_slot_lifetime(
+                name,
+                &self.frontend_gens,
+                &self.snapshots,
+                &self.travellers,
+                &self.tick_latch,
+            ) {
+                self.walk_clear.store(true, Ordering::Relaxed);
+            }
             match play.try_spawn_slot(profile, None, None, Some(arm)) {
                 Ok(()) => true,
                 Err(error) => {
@@ -1451,6 +1516,163 @@ mod tests {
             lowmem: true,
             mainland: false,
         }
+    }
+
+    fn response_15_reconnect(c: &mut client::client::Client) {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        c.config.port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut header = [0; 2];
+            stream.read_exact(&mut header).unwrap();
+            assert_eq!(header[0], 14);
+            stream.write_all(&[0; 17]).unwrap();
+            stream.read_exact(&mut header).unwrap();
+            assert_eq!(header[0], 18);
+            let mut login = vec![0; header[1] as usize];
+            stream.read_exact(&mut login).unwrap();
+            stream.write_all(&[15]).unwrap();
+        });
+        c.login("snapshot", "test", true).unwrap();
+        server.join().unwrap();
+    }
+
+    fn frontend_fixture() -> (
+        Arc<Mutex<HashMap<String, client::client::ClientGens>>>,
+        Arc<Mutex<HashMap<String, api::snapshot::GameSnapshot>>>,
+        Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+        Arc<Mutex<NavStepLatch>>,
+    ) {
+        (
+            Arc::new(Mutex::new(HashMap::new())),
+            Arc::new(Mutex::new(HashMap::new())),
+            Arc::new(Mutex::new(HashMap::new())),
+            Arc::new(Mutex::new(HashMap::new())),
+        )
+    }
+
+    #[test]
+    fn frontend_logout_clears_facts_armed_work_and_tick_latch() {
+        let (gens, snapshots, travellers, latch) = frontend_fixture();
+        let mut c = bank_fetch_fixtures::bank_client();
+        assert!(!publish_frontend_slot(
+            "alice",
+            &c,
+            &gens,
+            &snapshots,
+            &travellers,
+            &latch
+        ));
+        travellers
+            .lock()
+            .unwrap()
+            .insert("alice".into(), Arc::new(Mutex::new(WalkArm::default())));
+        latch
+            .lock()
+            .unwrap()
+            .insert("alice".into(), (c.gens.player, (3205, 3205, 0)));
+
+        c.logout();
+        assert!(publish_frontend_slot(
+            "alice",
+            &c,
+            &gens,
+            &snapshots,
+            &travellers,
+            &latch
+        ));
+        let snapshots = snapshots.lock().unwrap();
+        assert!(!snapshots["alice"].ingame());
+        assert!(snapshots["alice"].local_player().is_none());
+        drop(snapshots);
+        assert!(!travellers.lock().unwrap().contains_key("alice"));
+        assert!(!latch.lock().unwrap().contains_key("alice"));
+    }
+
+    #[test]
+    fn frontend_response_15_replacement_waits_for_post_grant_player_packet() {
+        let (gens, snapshots, travellers, latch) = frontend_fixture();
+        let mut c = bank_fetch_fixtures::bank_client();
+        publish_frontend_slot("alice", &c, &gens, &snapshots, &travellers, &latch);
+        travellers
+            .lock()
+            .unwrap()
+            .insert("alice".into(), Arc::new(Mutex::new(WalkArm::default())));
+
+        response_15_reconnect(&mut c);
+        assert!(publish_frontend_slot(
+            "alice",
+            &c,
+            &gens,
+            &snapshots,
+            &travellers,
+            &latch
+        ));
+        assert!(snapshots.lock().unwrap()["alice"].local_player().is_none());
+        assert!(!travellers.lock().unwrap().contains_key("alice"));
+
+        let mut player = client::io::Packet::new(vec![0xe0, 0x50, 0xc0, 0]);
+        c.psize = 4;
+        c.handle_packet(client::io::ServerProt::PLAYER_INFO, &mut player);
+        assert!(!publish_frontend_slot(
+            "alice",
+            &c,
+            &gens,
+            &snapshots,
+            &travellers,
+            &latch
+        ));
+        assert!(snapshots.lock().unwrap()["alice"].local_player().is_some());
+    }
+
+    #[test]
+    fn same_name_lifetime_resets_but_scene_change_and_guardian_hold_preserve_work() {
+        let (gens, snapshots, travellers, latch) = frontend_fixture();
+        let mut c = bank_fetch_fixtures::bank_client();
+        publish_frontend_slot("alice", &c, &gens, &snapshots, &travellers, &latch);
+        travellers
+            .lock()
+            .unwrap()
+            .insert("alice".into(), Arc::new(Mutex::new(WalkArm::default())));
+        latch
+            .lock()
+            .unwrap()
+            .insert("alice".into(), (c.gens.player, (3205, 3205, 0)));
+
+        c.scene_state = 1;
+        c.bump_gens(client::io::ServerProt::REBUILD_NORMAL);
+        assert!(!publish_frontend_slot(
+            "alice",
+            &c,
+            &gens,
+            &snapshots,
+            &travellers,
+            &latch
+        ));
+        assert!(!WalkArm::may_follow(true));
+        assert!(travellers.lock().unwrap().contains_key("alice"));
+        assert!(latch.lock().unwrap().contains_key("alice"));
+
+        assert!(reset_frontend_slot_lifetime(
+            "alice",
+            &gens,
+            &snapshots,
+            &travellers,
+            &latch
+        ));
+        assert!(!gens.lock().unwrap().contains_key("alice"));
+        assert!(!snapshots.lock().unwrap().contains_key("alice"));
+        assert!(!travellers.lock().unwrap().contains_key("alice"));
+        assert!(!latch.lock().unwrap().contains_key("alice"));
+
+        let fresh = bank_fetch_fixtures::bank_client();
+        publish_frontend_slot("alice", &fresh, &gens, &snapshots, &travellers, &latch);
+        assert!(!travellers.lock().unwrap().contains_key("alice"));
     }
 
     fn checked_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf) {

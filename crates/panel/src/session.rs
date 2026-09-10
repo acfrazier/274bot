@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use api::snapshot::{GameSnapshot, WorldTile};
-use client::client::Client;
+use client::client::{Client, ClientGens};
 use client::render::nav_debug::{
     NavDebugCell, NavDebugColors, NavDebugHull, NavDebugPaint, FACE_E, FACE_N, FACE_S, FACE_W,
 };
@@ -733,6 +733,9 @@ pub struct Session {
     /// yet (no player decoded) is absent and routing fails closed on the
     /// empty state.
     pub nav_states: Arc<Mutex<HashMap<String, (GameSnapshot, WorldState)>>>,
+    /// Host publication cursor per slot. PLAYER_INFO's tick edge is tracked
+    /// separately from the snapshot's family generations.
+    frontend_gens: Arc<Mutex<HashMap<String, ClientGens>>>,
     /// The tile the user last picked for WalkTo; `None` until armed. Read
     /// by [`Session::walk_status_text`] so the status row stays honest even
     /// when no route could be found.
@@ -908,6 +911,57 @@ fn nav_snapshot_for_follow<'a>(
     states.get(name).map(|(snap, _)| snap)
 }
 
+fn reset_frontend_slot_session(
+    name: &str,
+    travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    tick_latch: &Arc<Mutex<HashMap<String, (u64, Tile)>>>,
+) -> bool {
+    tick_latch.lock().unwrap().remove(name);
+    travellers.lock().unwrap().remove(name).is_some()
+}
+
+/// A slot spawn/removal is the ownership boundary for username reuse. Client
+/// session generations are per-client, so they cannot distinguish a fresh slot
+/// from the previous client that happened to use the same name.
+fn reset_frontend_slot_lifetime(
+    name: &str,
+    gens: &Arc<Mutex<HashMap<String, ClientGens>>>,
+    states: &Arc<Mutex<HashMap<String, (GameSnapshot, WorldState)>>>,
+    travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    tick_latch: &Arc<Mutex<HashMap<String, (u64, Tile)>>>,
+) -> bool {
+    gens.lock().unwrap().remove(name);
+    states.lock().unwrap().remove(name);
+    reset_frontend_slot_session(name, travellers, tick_latch)
+}
+
+/// Publish facts at the same session watermark as the production host and
+/// cancel externally armed work before any local-player/Guardian early return.
+fn publish_frontend_slot(
+    name: &str,
+    client: &Client,
+    gens: &Arc<Mutex<HashMap<String, ClientGens>>>,
+    states: &Arc<Mutex<HashMap<String, (GameSnapshot, WorldState)>>>,
+    travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    tick_latch: &Arc<Mutex<HashMap<String, (u64, Tile)>>>,
+) -> bool {
+    let mut gens_guard = gens.lock().unwrap();
+    let last = gens_guard.entry(name.to_string()).or_default();
+    let mut state_guard = states.lock().unwrap();
+    let slot = state_guard
+        .entry(name.to_string())
+        .or_insert_with(|| (GameSnapshot::new(), WorldState::empty()));
+    let publication = host::Host::publish_frontend_snapshot(last, &mut slot.0, client);
+    if publication.changed {
+        slot.1 = WorldState::from_snapshot(&slot.0);
+    }
+    drop(state_guard);
+    if publication.session_boundary {
+        reset_frontend_slot_session(name, travellers, tick_latch);
+    }
+    publication.session_boundary
+}
+
 impl Session {
     /// Empty session: no vault, no slots, default `PlayOptions` (same engine
     /// defaults as the host-play CLI). Unlock via [`Session::unlock`].
@@ -948,6 +1002,7 @@ impl Session {
             travellers: Arc::new(Mutex::new(HashMap::new())),
             script_nav_paint: Arc::new(Mutex::new(None)),
             nav_states: Arc::new(Mutex::new(HashMap::new())),
+            frontend_gens: Arc::new(Mutex::new(HashMap::new())),
             walk_dest: None,
             walk_clear: Arc::new(AtomicBool::new(false)),
             tick_latch: Arc::new(Mutex::new(HashMap::new())),
@@ -1774,6 +1829,7 @@ impl Session {
         let travellers = Arc::clone(&self.travellers);
         let script_nav_paint = Arc::clone(&self.script_nav_paint);
         let nav_states = Arc::clone(&self.nav_states);
+        let frontend_gens = Arc::clone(&self.frontend_gens);
         let tick_latch = Arc::clone(&self.tick_latch);
         let walk_clear = Arc::clone(&self.walk_clear);
         let scenario = Arc::clone(&self.scenario);
@@ -1787,6 +1843,17 @@ impl Session {
         let options = self.options.clone();
         let scatter_template = self.template.clone();
         let per_frame = move |c: &mut client::client::Client, name: &str, hold: bool| {
+            let session_boundary = publish_frontend_slot(
+                name,
+                c,
+                &frontend_gens,
+                &nav_states,
+                &travellers,
+                &tick_latch,
+            );
+            if session_boundary && focus.lock().unwrap().focused.as_deref() == Some(name) {
+                walk_clear.store(true, Ordering::Relaxed);
+            }
             // Flat model: every slot is a full Client; draw gates the
             // slot's renderer per the wall policy (focused always,
             // members when only-render-selected is off).
@@ -1955,21 +2022,6 @@ impl Session {
                 z: c.map_build_base_z + rz,
                 level: c.minusedlevel,
             };
-            // Publish the slot's gating facts (inv/equipment/stats/
-            // varps/quests) for the UI thread's WalkTo routing: a
-            // toll/cart edge is only usable when the search can prove
-            // the player pays it. The snapshot rebuild is incremental
-            // — views copy only when a family's gen moved, so a quiet
-            // frame publishes nothing new.
-            {
-                let mut states = nav_states.lock().unwrap();
-                let slot = states
-                    .entry(name.to_string())
-                    .or_insert_with(|| (GameSnapshot::new(), WorldState::empty()));
-                if slot.0.rebuild(c) {
-                    slot.1 = WorldState::from_snapshot(&slot.0);
-                }
-            }
             // Guardian hold freezes WalkArm follow; the armed route
             // stays latched and resumes when hold lifts.
             if !WalkArm::may_follow(hold) {
@@ -2631,6 +2683,15 @@ impl Session {
         let Some(profile) = self.vault.as_ref().and_then(|v| v.get(username)).cloned() else {
             return;
         };
+        if reset_frontend_slot_lifetime(
+            username,
+            &self.frontend_gens,
+            &self.nav_states,
+            &self.travellers,
+            &self.tick_latch,
+        ) {
+            self.walk_dest = None;
+        }
         let input = SlotInput::new();
         // Raster/mem come from the vault profile (the same source as
         // `bot_client_config`); a focus change never re-roles a live slot.
@@ -3117,6 +3178,15 @@ impl Session {
         }
         if let Some(play) = &mut self.play {
             play.stop_slot(name);
+        }
+        if reset_frontend_slot_lifetime(
+            name,
+            &self.frontend_gens,
+            &self.nav_states,
+            &self.travellers,
+            &self.tick_latch,
+        ) {
+            self.walk_dest = None;
         }
         // Flat model: each member owns its own framebuffer; stop means drop.
         self.slots.remove(name);
@@ -3627,10 +3697,11 @@ mod tests {
     use super::{
         arm_login_all, combo_index, debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats,
         is_local_engine, live_or_walk_paint, maybe_send_click, nav_snapshot_for_follow,
-        null_raster_live_entries_for_target, parse_getvar_line, publish_nav_debug, script_active,
-        script_pause_enabled, script_status_text, script_stop_enabled, seed_on_first_world,
-        stream_capture, stress_live_entries_for_target, temp_live_vault_from, walkto_tele_cmd,
-        Session, SlotIo, WalkArm,
+        null_raster_live_entries_for_target, parse_getvar_line, publish_frontend_slot,
+        publish_nav_debug, reset_frontend_slot_lifetime, script_active, script_pause_enabled,
+        script_status_text, script_stop_enabled, seed_on_first_world, stream_capture,
+        stress_live_entries_for_target, temp_live_vault_from, walkto_tele_cmd, Session, SlotIo,
+        WalkArm,
     };
     use crate::focus::draw_for_slot;
     use api::snapshot::{GameSnapshot, WorldTile};
@@ -4118,6 +4189,189 @@ mod tests {
         c.map_build_base_x = 3200;
         c.map_build_base_z = 3200;
         c
+    }
+
+    fn response_15_reconnect(c: &mut Client) {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        c.config.port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut header = [0; 2];
+            stream.read_exact(&mut header).unwrap();
+            assert_eq!(header[0], 14);
+            stream.write_all(&[0; 17]).unwrap();
+            stream.read_exact(&mut header).unwrap();
+            assert_eq!(header[0], 18);
+            let mut login = vec![0; header[1] as usize];
+            stream.read_exact(&mut login).unwrap();
+            stream.write_all(&[15]).unwrap();
+        });
+        c.login("snapshot", "test", true).unwrap();
+        server.join().unwrap();
+    }
+
+    fn frontend_fixture() -> (
+        Arc<Mutex<std::collections::HashMap<String, client::client::ClientGens>>>,
+        Arc<Mutex<std::collections::HashMap<String, (GameSnapshot, WorldState)>>>,
+        Arc<Mutex<std::collections::HashMap<String, Arc<Mutex<WalkArm>>>>>,
+        Arc<Mutex<std::collections::HashMap<String, (u64, Tile)>>>,
+    ) {
+        (
+            Arc::new(Mutex::new(std::collections::HashMap::new())),
+            Arc::new(Mutex::new(std::collections::HashMap::new())),
+            Arc::new(Mutex::new(std::collections::HashMap::new())),
+            Arc::new(Mutex::new(std::collections::HashMap::new())),
+        )
+    }
+
+    #[test]
+    fn frontend_logout_clears_facts_armed_work_and_tick_latch() {
+        let (gens, states, travellers, latch) = frontend_fixture();
+        let mut c = paint_client();
+        c.ingame = true;
+        c.scene_state = 2;
+        c.local_player = Some(client::client::ClientPlayer::at(5, 6));
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        assert!(!publish_frontend_slot(
+            "alice",
+            &c,
+            &gens,
+            &states,
+            &travellers,
+            &latch
+        ));
+        travellers
+            .lock()
+            .unwrap()
+            .insert("alice".into(), Arc::new(Mutex::new(WalkArm::default())));
+        latch.lock().unwrap().insert(
+            "alice".into(),
+            (
+                c.gens.player,
+                Tile {
+                    x: 3205,
+                    z: 3206,
+                    level: 0,
+                },
+            ),
+        );
+
+        c.logout();
+        assert!(publish_frontend_slot(
+            "alice",
+            &c,
+            &gens,
+            &states,
+            &travellers,
+            &latch
+        ));
+        let states = states.lock().unwrap();
+        assert!(!states["alice"].0.ingame());
+        assert!(states["alice"].0.local_player().is_none());
+        drop(states);
+        assert!(!travellers.lock().unwrap().contains_key("alice"));
+        assert!(!latch.lock().unwrap().contains_key("alice"));
+    }
+
+    #[test]
+    fn frontend_response_15_replacement_waits_for_post_grant_player_packet() {
+        let (gens, states, travellers, latch) = frontend_fixture();
+        let mut c = paint_client();
+        c.ingame = true;
+        c.scene_state = 2;
+        c.local_player = Some(client::client::ClientPlayer::at(5, 6));
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        publish_frontend_slot("alice", &c, &gens, &states, &travellers, &latch);
+        travellers
+            .lock()
+            .unwrap()
+            .insert("alice".into(), Arc::new(Mutex::new(WalkArm::default())));
+
+        response_15_reconnect(&mut c);
+        assert!(publish_frontend_slot(
+            "alice",
+            &c,
+            &gens,
+            &states,
+            &travellers,
+            &latch
+        ));
+        assert!(states.lock().unwrap()["alice"].0.local_player().is_none());
+        assert!(!travellers.lock().unwrap().contains_key("alice"));
+
+        let mut player = client::io::Packet::new(vec![0xe0, 0x50, 0xc0, 0]);
+        c.psize = 4;
+        c.handle_packet(ServerProt::PLAYER_INFO, &mut player);
+        assert!(!publish_frontend_slot(
+            "alice",
+            &c,
+            &gens,
+            &states,
+            &travellers,
+            &latch
+        ));
+        assert!(states.lock().unwrap()["alice"].0.local_player().is_some());
+    }
+
+    #[test]
+    fn same_name_lifetime_resets_but_scene_change_and_guardian_hold_preserve_work() {
+        let (gens, states, travellers, latch) = frontend_fixture();
+        let mut c = paint_client();
+        c.ingame = true;
+        c.scene_state = 2;
+        c.local_player = Some(client::client::ClientPlayer::at(5, 6));
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        publish_frontend_slot("alice", &c, &gens, &states, &travellers, &latch);
+        travellers
+            .lock()
+            .unwrap()
+            .insert("alice".into(), Arc::new(Mutex::new(WalkArm::default())));
+        latch.lock().unwrap().insert(
+            "alice".into(),
+            (
+                c.gens.player,
+                Tile {
+                    x: 1,
+                    z: 1,
+                    level: 0,
+                },
+            ),
+        );
+
+        c.scene_state = 1;
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        assert!(!publish_frontend_slot(
+            "alice",
+            &c,
+            &gens,
+            &states,
+            &travellers,
+            &latch
+        ));
+        assert!(!WalkArm::may_follow(true));
+        assert!(travellers.lock().unwrap().contains_key("alice"));
+        assert!(latch.lock().unwrap().contains_key("alice"));
+
+        assert!(reset_frontend_slot_lifetime(
+            "alice",
+            &gens,
+            &states,
+            &travellers,
+            &latch
+        ));
+        assert!(!gens.lock().unwrap().contains_key("alice"));
+        assert!(!states.lock().unwrap().contains_key("alice"));
+        assert!(!travellers.lock().unwrap().contains_key("alice"));
+        assert!(!latch.lock().unwrap().contains_key("alice"));
+
+        let fresh = paint_client();
+        publish_frontend_slot("alice", &fresh, &gens, &states, &travellers, &latch);
+        assert!(!travellers.lock().unwrap().contains_key("alice"));
     }
 
     /// A 64×64 level-0 world at (3200, 3200) with a face wall and a
