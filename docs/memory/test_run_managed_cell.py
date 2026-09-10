@@ -414,6 +414,9 @@ class ManagedCellTests(unittest.TestCase):
             'server_start_identity': server_start,
             'server_executable_basename': 'python3',
         }
+        selector = spec['capture_contract'].get('server_executable_identity')
+        if selector is not None:
+            context['server_executable_identity'] = selector
         common = {
             'mode': 'direct-owner-v1', 'n': 1, 'workload': 'active',
             'frontend': 'tui', 'admitted': True,
@@ -482,6 +485,8 @@ class ManagedCellTests(unittest.TestCase):
             },
             'receipt_bindings': receipt_bindings,
         }
+        if selector is not None:
+            release['spec_binding']['server_executable_identity'] = selector
         release_path = pathlib.Path(contract['release_contract'])
         release_path.write_text(json.dumps(release, sort_keys=True))
 
@@ -628,6 +633,251 @@ class ManagedCellTests(unittest.TestCase):
                 rmc.parse_diagnostic_argv(argv_mismatch['diagnostic_argv']),
                 _test_launcher=True,
             )
+
+    def test_direct_contract_server_executable_identity_is_an_exact_optional_enum(self):
+        spec = self._direct_spec()
+        self.assertNotIn('server_executable_identity', rmc.validate_spec(spec)['capture_contract'])
+        for selector in ('proc-exe', 'sudo-readlink-v1'):
+            with self.subTest(selector=selector):
+                selected = copy.deepcopy(spec)
+                selected['capture_contract']['server_executable_identity'] = selector
+                self.assertEqual(
+                    rmc.validate_spec(selected)['capture_contract']['server_executable_identity'],
+                    selector,
+                )
+        selected = copy.deepcopy(spec)
+        selected['capture_contract']['server_executable_identity'] = 'unknown'
+        with self.assertRaisesRegex(rmc.CellError, 'server executable identity'):
+            rmc.validate_spec(selected)
+
+    def test_default_proc_executable_identity_behavior_is_unchanged(self):
+        with mock.patch.object(rmc.os, 'readlink', return_value='/opt/acme/bin/server') as readlink:
+            self.assertEqual(rmc.linux_executable_basename(42), 'server')
+        readlink.assert_called_once_with('/proc/42/exe')
+        with mock.patch.object(rmc.os, 'readlink', side_effect=PermissionError(13, 'denied')):
+            with self.assertRaisesRegex(
+                    rmc.CellError, '^direct owner server executable identity unavailable$'):
+                rmc.linux_executable_basename(42)
+
+    def test_sudo_readlink_uses_only_the_fixed_argv_and_bounded_process_options(self):
+        calls = []
+        children = []
+
+        def factory(argv, **kwargs):
+            calls.append((argv, kwargs))
+            child = subprocess.Popen(
+                [sys.executable, '-c', "import os; os.write(1, b'/opt/acme/bin/server')"],
+                **kwargs,
+            )
+            children.append(child)
+            return child
+
+        basename, evidence = rmc.sudo_readlink_executable_basename(42, popen_factory=factory)
+        self.assertEqual(basename, 'server')
+        self.assertEqual(evidence['exit_class'], 'zero')
+        self.assertEqual(evidence['stdout_bytes'], len(b'/opt/acme/bin/server'))
+        self.assertEqual(calls[0][0], [
+            '/usr/bin/sudo', '-n', '--', '/usr/bin/readlink', '-n', '/proc/42/exe',
+        ])
+        options = calls[0][1]
+        self.assertIs(options['stdin'], subprocess.DEVNULL)
+        self.assertIs(options['stdout'], subprocess.PIPE)
+        self.assertIs(options['stderr'], subprocess.PIPE)
+        self.assertIs(options['shell'], False)
+        self.assertIs(options['close_fds'], True)
+        self.assertIs(options['start_new_session'], True)
+        self.assertNotIn('text', options)
+        self.assertTrue(all(child.poll() is not None for child in children))
+
+    def test_sudo_readlink_rejects_non_exact_positive_integer_pids_before_spawn(self):
+        factory = mock.Mock()
+        for pid in (True, False, '42', 42.0, 0, -1, None):
+            with self.subTest(pid=pid), self.assertRaisesRegex(
+                    rmc.CellError, '^direct owner server executable identity unavailable$'):
+                rmc.sudo_readlink_executable_basename(pid, popen_factory=factory)
+        factory.assert_not_called()
+
+    def test_sudo_readlink_rejects_every_malformed_output_class(self):
+        malformed = (
+            b'', b'relative/server', b'/', b'/opt/../server', b'/opt/./server',
+            b'/opt//server', b'/opt/server\x00', b'/opt/server\n', b'/opt/server\r',
+            b'/opt/server name', b'/opt/server\tname', b'/opt/server (deleted)',
+            b'/usr/bin/python3 --module server', b'\xff', b'/' + b'a' * 4096,
+        )
+        for output in malformed:
+            with self.subTest(output=output), self.assertRaisesRegex(
+                    rmc.CellError, '^direct owner server executable identity unavailable$'):
+                rmc.parse_sudo_readlink_output(output)
+        self.assertEqual(rmc.parse_sudo_readlink_output(b'/opt/acme/bin/server'), 'server')
+
+    def test_sudo_readlink_nonzero_timeout_and_stream_overflow_are_reaped(self):
+        cases = (
+            ('nonzero', "import os,sys; os.write(2,b'sudo: a password is required'); sys.exit(1)"),
+            ('timeout', 'import time; time.sleep(30)'),
+            ('stdout_overflow', "import os,time; os.write(1,b'x'*8192); time.sleep(30)"),
+            ('stderr_overflow', "import os,time; os.write(2,b'x'*8192); time.sleep(30)"),
+        )
+        for label, code in cases:
+            children = []
+
+            def factory(_argv, **kwargs):
+                child = subprocess.Popen([sys.executable, '-c', code], **kwargs)
+                children.append(child)
+                return child
+
+            started = time.monotonic()
+            with self.subTest(label=label), self.assertRaisesRegex(
+                    rmc.CellError, '^direct owner server executable identity unavailable$'):
+                rmc.sudo_readlink_executable_basename(42, popen_factory=factory)
+            self.assertLess(time.monotonic() - started, 3.0)
+            self.assertEqual(len(children), 1)
+            self.assertIsNotNone(children[0].poll())
+
+    def test_sudo_readlink_brackets_each_path_with_start_and_boot_identity(self):
+        sample = mock.Mock(side_effect=[
+            {'start_identity': 'linux_proc_start_ticks:595', 'state': 'S'},
+            {'start_identity': 'linux_proc_start_ticks:595', 'state': 'S'},
+        ])
+        boot_identity = mock.Mock(side_effect=['boot', 'boot'])
+        reader = mock.Mock(return_value=('server', {
+            'selector': 'sudo-readlink-v1', 'wall_s': 0.01, 'exit_class': 'zero',
+            'stdout_bytes': 16, 'stderr_bytes': 0,
+        }))
+        basename, evidence = rmc.bracketed_sudo_readlink_executable_basename(
+            42,
+            expected_start_identity='linux_proc_start_ticks:595',
+            expected_boot_id='boot',
+            sample=sample,
+            boot_identity=boot_identity,
+            reader=reader,
+        )
+        self.assertEqual(basename, 'server')
+        self.assertEqual(evidence['identity_before']['boot_id'], 'boot')
+        self.assertEqual(evidence['identity_after']['start_identity'],
+                         'linux_proc_start_ticks:595')
+        self.assertEqual(evidence['helper']['exit_class'], 'zero')
+        self.assertEqual(sample.call_count, 2)
+        self.assertEqual(boot_identity.call_count, 2)
+        reader.assert_called_once_with(42)
+
+    def test_sudo_readlink_discards_path_on_any_start_or_boot_bracket_mismatch(self):
+        valid = {'pid': 42, 'start_identity': 'start:42', 'state': 'S'}
+        changed = {'pid': 42, 'start_identity': 'reused', 'state': 'S'}
+        wrong_pid = {'pid': 43, 'start_identity': 'start:42', 'state': 'S'}
+        for label, samples, boots in (
+            ('before_start', [changed], ['boot']),
+            ('before_pid', [wrong_pid], ['boot']),
+            ('before_boot', [valid], ['other']),
+            ('after_start', [valid, changed], ['boot', 'boot']),
+            ('after_pid', [valid, wrong_pid], ['boot', 'boot']),
+            ('after_boot', [valid, valid], ['boot', 'other']),
+        ):
+            reader = mock.Mock(return_value=('server', {'exit_class': 'zero'}))
+            with self.subTest(label=label), self.assertRaisesRegex(
+                    rmc.CellError, '^direct owner server executable identity unavailable$'):
+                rmc.bracketed_sudo_readlink_executable_basename(
+                    42,
+                    expected_start_identity='start:42',
+                    expected_boot_id='boot',
+                    sample=mock.Mock(side_effect=samples),
+                    boot_identity=mock.Mock(side_effect=boots),
+                    reader=reader,
+                )
+            if label.startswith('before'):
+                reader.assert_not_called()
+            else:
+                reader.assert_called_once_with(42)
+
+    def test_sudo_selector_is_root_bound_and_used_twice_before_launch(self):
+        spec = self._direct_spec()
+        spec['capture_contract']['server_executable_identity'] = 'sudo-readlink-v1'
+        self.fx.manifest_obj['candidate']['source_lineage'] = spec['capture_contract']['source_lineage']
+        self.fx.manifest.write_text(json.dumps(self.fx.manifest_obj))
+        fixtures = self._direct_preflight_fixtures(spec)
+        self.assertEqual(fixtures['context']['server_executable_identity'],
+                         'sudo-readlink-v1')
+        self.assertEqual(fixtures['release']['spec_binding']['server_executable_identity'],
+                         'sudo-readlink-v1')
+        snapshot = fixtures['snapshot']
+        sudo_reader = mock.Mock(side_effect=[
+            ('python3', {'selector': 'sudo-readlink-v1', 'wall_s': 0.01,
+                         'exit_class': 'zero', 'stdout_bytes': 16, 'stderr_bytes': 0}),
+            ('python3', {'selector': 'sudo-readlink-v1', 'wall_s': 0.02,
+                         'exit_class': 'zero', 'stdout_bytes': 16, 'stderr_bytes': 0}),
+        ])
+        probe = mock.Mock(return_value={
+            'host': '127.0.0.1', 'port': 43594, 'succeeded': True,
+            'observed_start_unix_s': 199.0, 'observed_end_unix_s': 199.1,
+        })
+        with mock.patch.object(rmc.bp, 'verify_direct_owner_build',
+                               return_value=fixtures['provenance']), \
+                mock.patch.object(rmc.pa, 'process_sampler',
+                                  return_value=fixtures['sample']), \
+                mock.patch.object(rmc.subprocess, 'Popen') as popen:
+            accepted = rmc.preflight(
+                spec, rmc.parse_diagnostic_argv(spec['diagnostic_argv']),
+                direct_snapshot=mock.Mock(side_effect=[snapshot(), snapshot()]),
+                disk_usage=lambda _path: mock.Mock(free=268435456),
+                sleep=lambda _seconds: None, platform_name='linux', machine='x86_64',
+                wall_time=lambda: fixtures['now'], server_probe=probe,
+                boot_identity=lambda: 'boot', sudo_executable_reader=sudo_reader,
+            )
+        self.assertEqual(sudo_reader.call_count, 2)
+        self.assertEqual(probe.call_count, 1)
+        popen.assert_not_called()
+        ancillary = accepted['direct_preflight']['server_executable_identity']
+        self.assertEqual(ancillary['selector'], 'sudo-readlink-v1')
+        self.assertEqual([read['helper']['wall_s'] for read in ancillary['reads']],
+                         [0.01, 0.02])
+        self.assertNotIn('sudo', accepted['ambient_identities'])
+
+        switched = copy.deepcopy(spec)
+        switched['capture_contract']['server_executable_identity'] = 'proc-exe'
+        with mock.patch.object(rmc.bp, 'verify_direct_owner_build',
+                               return_value=fixtures['provenance']), \
+                mock.patch.object(rmc.pa, 'process_sampler',
+                                  return_value=fixtures['sample']), \
+                mock.patch.object(rmc.subprocess, 'Popen') as switched_popen, \
+                self.assertRaisesRegex(rmc.CellError, 'context identity mismatch'):
+            rmc.preflight(
+                switched, rmc.parse_diagnostic_argv(switched['diagnostic_argv']),
+                direct_snapshot=mock.Mock(side_effect=[snapshot(), snapshot()]),
+                disk_usage=lambda _path: mock.Mock(free=268435456),
+                sleep=lambda _seconds: None, platform_name='linux', machine='x86_64',
+                wall_time=lambda: fixtures['now'], server_probe=probe,
+                executable_basename=lambda _pid: 'python3',
+            )
+        switched_popen.assert_not_called()
+
+    def test_explicit_proc_selector_keeps_two_injected_reads_and_no_sudo_helper(self):
+        spec = self._direct_spec()
+        spec['capture_contract']['server_executable_identity'] = 'proc-exe'
+        self.fx.manifest_obj['candidate']['source_lineage'] = spec['capture_contract']['source_lineage']
+        self.fx.manifest.write_text(json.dumps(self.fx.manifest_obj))
+        fixtures = self._direct_preflight_fixtures(spec)
+        executable = mock.Mock(return_value='python3')
+        sudo_reader = mock.Mock()
+        with mock.patch.object(rmc.bp, 'verify_direct_owner_build',
+                               return_value=fixtures['provenance']), \
+                mock.patch.object(rmc.pa, 'process_sampler',
+                                  return_value=fixtures['sample']):
+            accepted = rmc.preflight(
+                spec, rmc.parse_diagnostic_argv(spec['diagnostic_argv']),
+                direct_snapshot=mock.Mock(side_effect=[fixtures['snapshot'](),
+                                                       fixtures['snapshot']()]),
+                disk_usage=lambda _path: mock.Mock(free=268435456),
+                sleep=lambda _seconds: None, platform_name='linux', machine='x86_64',
+                wall_time=lambda: fixtures['now'],
+                server_probe=lambda: {
+                    'host': '127.0.0.1', 'port': 43594, 'succeeded': True,
+                    'observed_start_unix_s': 199.0, 'observed_end_unix_s': 199.1,
+                },
+                executable_basename=executable,
+                sudo_executable_reader=sudo_reader,
+            )
+        self.assertEqual(executable.call_count, 2)
+        sudo_reader.assert_not_called()
+        self.assertNotIn('server_executable_identity', accepted['direct_preflight'])
 
     def test_owned_output_scanner_deduplicates_hardlinks_and_rejects_symlinks(self):
         root = self.fx.root / 'owned'

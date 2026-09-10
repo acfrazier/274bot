@@ -15,6 +15,7 @@ import os
 import pathlib
 import platform
 import re
+import selectors
 import signal
 import shutil
 import socket
@@ -22,7 +23,7 @@ import stat
 import subprocess
 import sys
 import time
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, NoReturn, Optional, Sequence
 
 _ROOT = pathlib.Path(__file__).resolve().parent
 if str(_ROOT) not in sys.path:
@@ -56,6 +57,10 @@ DIRECT_PREFLIGHT_DISK_FREE_BYTES = 268435456
 DIRECT_SERVER_PORT = 43594
 DIRECT_ADMISSION_KINDS = ('conflict', 'account', 'population', 'cache', 'server_health')
 DIRECT_CONFLICT_CLASSES = ('build', 'test', 'profiler', 'tui-panel-frontend')
+DIRECT_SERVER_EXECUTABLE_IDENTITIES = ('proc-exe', 'sudo-readlink-v1')
+DIRECT_IDENTITY_HELPER_TIMEOUT_S = 2.0
+DIRECT_IDENTITY_STDOUT_LIMIT = 4096
+DIRECT_IDENTITY_STDERR_LIMIT = 4096
 
 
 class CellError(RuntimeError):
@@ -200,6 +205,11 @@ def _validate_direct_contract(spec: Mapping[str, Any], contract: Any) -> None:
         'frontend_wall_limit_s', 'outer_wall_limit_s', 'source_lineage',
         'release_contract', 'admission_receipts',
     }
+    selector = contract.get('server_executable_identity')
+    if selector is not None:
+        expected_keys.add('server_executable_identity')
+        if selector not in DIRECT_SERVER_EXECUTABLE_IDENTITIES:
+            raise CellError('direct owner server executable identity selector is invalid')
     if set(contract) != expected_keys:
         unknown = sorted(set(contract) - expected_keys)
         missing = sorted(expected_keys - set(contract))
@@ -687,9 +697,207 @@ def linux_executable_basename(pid: int) -> str:
     return _basename(value, 'server')
 
 
+def _identity_unavailable(cause: Optional[BaseException] = None) -> NoReturn:
+    error = CellError('direct owner server executable identity unavailable')
+    if cause is None:
+        raise error
+    raise error from cause
+
+
+def parse_sudo_readlink_output(raw: bytes) -> str:
+    if not isinstance(raw, bytes) or not raw or len(raw) > DIRECT_IDENTITY_STDOUT_LIMIT:
+        _identity_unavailable()
+    try:
+        value = raw.decode('utf-8', errors='strict')
+    except UnicodeDecodeError as exc:
+        _identity_unavailable(exc)
+    if (not value.startswith('/') or value == '/' or value.endswith(' (deleted)')
+            or '\x00' in value or '\\' in value or '//' in value
+            or any(char.isspace() for char in value)):
+        _identity_unavailable()
+    components = value.split('/')[1:]
+    if not components or any(component in ('', '.', '..') for component in components):
+        _identity_unavailable()
+    return _basename(components[-1], 'server')
+
+
+def _signal_identity_helper_group(proc: subprocess.Popen, sig: int) -> None:
+    if os.name == 'posix':
+        try:
+            os.killpg(proc.pid, sig)
+            return
+        except ProcessLookupError:
+            return
+        except OSError:
+            pass
+    try:
+        if sig == signal.SIGTERM:
+            proc.terminate()
+        else:
+            proc.kill()
+    except (OSError, ProcessLookupError):
+        pass
+
+
+def _reap_identity_helper(proc: subprocess.Popen, *, terminate_group: bool) -> None:
+    if terminate_group:
+        _signal_identity_helper_group(proc, signal.SIGTERM)
+    if proc.poll() is None:
+        try:
+            proc.wait(timeout=0.2)
+        except subprocess.TimeoutExpired:
+            pass
+    if terminate_group:
+        _signal_identity_helper_group(proc, signal.SIGKILL)
+    if proc.poll() is None:
+        try:
+            proc.wait(timeout=0.5)
+        except subprocess.TimeoutExpired:
+            pass
+    else:
+        try:
+            proc.wait(timeout=0)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def sudo_readlink_executable_basename(
+    pid: int, *, popen_factory=None, monotonic=time.monotonic,
+) -> tuple[str, Dict[str, Any]]:
+    """Run only the fixed sudo/readlink adapter with streaming-bounded pipes."""
+    if type(pid) is not int or isinstance(pid, bool) or pid <= 0:
+        _identity_unavailable()
+    argv = [
+        '/usr/bin/sudo', '-n', '--', '/usr/bin/readlink', '-n', f'/proc/{pid}/exe',
+    ]
+    factory = subprocess.Popen if popen_factory is None else popen_factory
+    started = monotonic()
+    proc = None
+    stdout = bytearray()
+    stderr = bytearray()
+    completed = False
+    try:
+        proc = factory(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+            close_fds=True,
+            start_new_session=True,
+        )
+        if proc.stdout is None or proc.stderr is None:
+            _identity_unavailable()
+        deadline = started + DIRECT_IDENTITY_HELPER_TIMEOUT_S
+        with selectors.DefaultSelector() as selector:
+            streams = ((proc.stdout, stdout, DIRECT_IDENTITY_STDOUT_LIMIT),
+                       (proc.stderr, stderr, DIRECT_IDENTITY_STDERR_LIMIT))
+            for pipe, target, limit in streams:
+                os.set_blocking(pipe.fileno(), False)
+                selector.register(pipe, selectors.EVENT_READ, (target, limit))
+            while selector.get_map() or proc.poll() is None:
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    _identity_unavailable()
+                if not selector.get_map():
+                    time.sleep(min(0.01, remaining))
+                    continue
+                for key, _events in selector.select(timeout=remaining):
+                    target, limit = key.data
+                    try:
+                        chunk = os.read(key.fd, min(4096, limit - len(target) + 1))
+                    except BlockingIOError:
+                        continue
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    available = limit - len(target)
+                    target.extend(chunk[:available])
+                    if len(chunk) > available:
+                        _identity_unavailable()
+        returncode = proc.wait(timeout=max(0.0, deadline - monotonic()))
+        if returncode != 0:
+            _identity_unavailable()
+        basename = parse_sudo_readlink_output(bytes(stdout))
+        result = basename, {
+            'selector': 'sudo-readlink-v1',
+            'wall_s': monotonic() - started,
+            'exit_class': 'zero',
+            'stdout_bytes': len(stdout),
+            'stderr_bytes': len(stderr),
+        }
+        completed = True
+        return result
+    except CellError:
+        raise
+    except (OSError, ValueError, TypeError, subprocess.SubprocessError) as exc:
+        _identity_unavailable(exc)
+    finally:
+        if proc is not None:
+            _reap_identity_helper(proc, terminate_group=not completed)
+            for pipe in (proc.stdout, proc.stderr):
+                if pipe is not None:
+                    try:
+                        pipe.close()
+                    except OSError:
+                        pass
+
+
+def linux_boot_identity() -> str:
+    value = ''
+    try:
+        value = pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+    except OSError as exc:
+        _identity_unavailable(exc)
+    if not value or any(char.isspace() for char in value):
+        _identity_unavailable()
+    return value
+
+
+def bracketed_sudo_readlink_executable_basename(
+    pid: int, *, expected_start_identity: str, expected_boot_id: str,
+    sample, boot_identity=linux_boot_identity, reader=sudo_readlink_executable_basename,
+    sample_timeout: float = SAMPLE_TIMEOUT_S,
+) -> tuple[str, Dict[str, Any]]:
+    """Discard the helper result unless PID/start/boot match on both sides."""
+    if (type(pid) is not int or isinstance(pid, bool) or pid <= 0
+            or not isinstance(expected_start_identity, str) or not expected_start_identity
+            or not isinstance(expected_boot_id, str) or not expected_boot_id):
+        _identity_unavailable()
+
+    def identity_sample() -> Dict[str, str | int]:
+        value = None
+        boot = ''
+        try:
+            value = sample(pid, timeout=sample_timeout)
+            boot = boot_identity()
+        except (sr.SampleError, OSError, ValueError, TypeError, KeyError) as exc:
+            _identity_unavailable(exc)
+        reported_pid = value.get('pid', pid) if isinstance(value, dict) else None
+        if (not isinstance(value, dict) or type(reported_pid) is not int
+                or reported_pid != pid
+                or value.get('start_identity') != expected_start_identity
+                or boot != expected_boot_id):
+            _identity_unavailable()
+        return {
+            'pid': pid,
+            'start_identity': expected_start_identity,
+            'boot_id': expected_boot_id,
+        }
+
+    before = identity_sample()
+    basename, helper = reader(pid)
+    after = identity_sample()
+    return _basename(basename, 'server'), {
+        'identity_before': before,
+        'identity_after': after,
+        'helper': helper,
+    }
+
+
 def _direct_spec_binding(spec: Mapping[str, Any]) -> Dict[str, str]:
     contract = spec['capture_contract']
-    return {
+    binding = {
         'result_path': str(_canonical(contract['owned_output_paths'][0])),
         'cell_dir': str(_canonical(contract['cell_dir'])),
         'run_dir': str(_canonical(contract['run_dir'])),
@@ -702,6 +910,9 @@ def _direct_spec_binding(spec: Mapping[str, Any]) -> Dict[str, str]:
         'cache_dir': str(pathlib.Path(spec['cache_dir']).resolve(strict=True)),
         'unpack_root': str(pathlib.Path(spec['unpack_root']).resolve(strict=True)),
     }
+    if 'server_executable_identity' in contract:
+        binding['server_executable_identity'] = contract['server_executable_identity']
+    return binding
 
 
 def _direct_context(spec: Mapping[str, Any], provenance: Mapping[str, Any],
@@ -724,6 +935,9 @@ def _direct_context(spec: Mapping[str, Any], provenance: Mapping[str, Any],
         'server_start_identity': server_sample.get('start_identity'),
         'server_executable_basename': _basename(server_executable, 'server'),
     }
+    selector = spec['capture_contract'].get('server_executable_identity')
+    if selector is not None:
+        context['server_executable_identity'] = selector
     _hex(context['host_commit'], 'host commit', (40, 64))
     _hex(context['client_commit'], 'client commit', (40, 64))
     for key in (
@@ -776,15 +990,18 @@ def validate_direct_admissions(
     boot_id = before.get('cgroup', {}).get('boot_id')
     if not isinstance(boot_id, str) or not boot_id or release['boot_id'] != boot_id:
         raise CellError('direct owner root release boot identity mismatch')
-    release_context = _exact_object(
-        release['context'], {
+    release_context_keys = {
             'fixture_binding_sha256', 'host_commit', 'client_commit',
             'host_sources_sha256', 'client_sources_sha256',
             'build_manifest_sha256', 'binary_sha256', 'nav_pack_sha256',
             'nav_flags_sha256', 'catalog_sha256', 'cache_content_identity_sha256',
             'cache_snapshot_version', 'server_pid', 'server_start_identity',
             'server_executable_basename',
-        }, 'release context',
+    }
+    if 'server_executable_identity' in contract:
+        release_context_keys.add('server_executable_identity')
+    release_context = _exact_object(
+        release['context'], release_context_keys, 'release context',
     )
     expected_context = _direct_context(
         spec, provenance, cache_snapshot, server_sample, server_executable,
@@ -792,12 +1009,15 @@ def validate_direct_admissions(
     )
     if release_context != expected_context:
         raise CellError('direct owner root release context identity mismatch')
-    spec_binding = _exact_object(
-        release['spec_binding'], {
+    spec_binding_keys = {
             'result_path', 'cell_dir', 'run_dir', 'frontend_handoff_path',
             'build_manifest_path', 'binary_path', 'nav_pack_path', 'nav_flags_path',
             'catalog_path', 'cache_dir', 'unpack_root',
-        }, 'release spec binding',
+    }
+    if 'server_executable_identity' in contract:
+        spec_binding_keys.add('server_executable_identity')
+    spec_binding = _exact_object(
+        release['spec_binding'], spec_binding_keys, 'release spec binding',
     )
     if spec_binding != _direct_spec_binding(spec):
         raise CellError('direct owner root release spec/file binding mismatch')
@@ -969,6 +1189,8 @@ def preflight(
     wall_time=time.time,
     server_probe=probe_direct_server,
     executable_basename=linux_executable_basename,
+    boot_identity=linux_boot_identity,
+    sudo_executable_reader=sudo_readlink_executable_basename,
 ) -> Dict[str, Any]:
     """Verify build fixtures and live server identity. Never signals the server."""
     def validate_direct_snapshot(value, label):
@@ -1041,6 +1263,24 @@ def preflight(
         if before['swap_total_bytes'] - before['swap_free_bytes'] != 0:
             raise CellError('direct owner preflight has active swap use')
         contract = spec['capture_contract']
+        executable_selector = contract.get('server_executable_identity', 'proc-exe')
+        executable_ancillary = []
+
+        def read_server_executable():
+            if executable_selector != 'sudo-readlink-v1':
+                return executable_basename(int(spec['game_server_pid']))
+            basename, evidence = bracketed_sudo_readlink_executable_basename(
+                spec['game_server_pid'],
+                expected_start_identity=server_sample['start_identity'],
+                expected_boot_id=before['cgroup']['boot_id'],
+                sample=sample,
+                boot_identity=boot_identity,
+                reader=sudo_executable_reader,
+                sample_timeout=sample_timeout,
+            )
+            executable_ancillary.append(evidence)
+            return basename
+
         free = disk_usage(_canonical(contract['cell_dir'])).free
         if free < DIRECT_PREFLIGHT_DISK_FREE_BYTES:
             raise CellError('direct owner preflight output filesystem below 256 MiB free')
@@ -1049,7 +1289,7 @@ def preflight(
         except (OSError, ValueError, TypeError, KeyError) as exc:
             raise CellError('direct owner current cache identity is unavailable') from exc
         current_probe = server_probe()
-        server_executable = executable_basename(int(spec['game_server_pid']))
+        server_executable = read_server_executable()
         admission = validate_direct_admissions(
             spec, provenance, before, server_sample, direct_cache_snapshot,
             now=wall_time(), server_probe=current_probe,
@@ -1067,7 +1307,7 @@ def preflight(
             raise CellError('server identity changed during direct owner preflight')
         if server_after.get('state') == 'Z' or not isinstance(server_after.get('state'), str):
             raise CellError('direct owner server is zombie or process state unavailable')
-        if (_basename(executable_basename(int(spec['game_server_pid'])), 'server')
+        if (_basename(read_server_executable(), 'server')
                 != server_executable):
             raise CellError('server executable identity changed during direct owner preflight')
         try:
@@ -1086,6 +1326,11 @@ def preflight(
             'release_observation_window': admission['release_observation_window'],
             'server_probe': current_probe, 'server_after': server_after,
         }
+        if executable_selector == 'sudo-readlink-v1':
+            direct_preflight['server_executable_identity'] = {
+                'selector': executable_selector,
+                'reads': executable_ancillary,
+            }
     return {
         "provenance": provenance,
         "server_sample": server_sample,

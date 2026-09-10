@@ -1,0 +1,40 @@
+..........usage: python3 -m unittest [-h] [--n {1,16}] --host-checkout HOST_CHECKOUT
+                           --binary BINARY --build-manifest BUILD_MANIFEST
+                           --build-role {reference,candidate} --server-root
+                           SERVER_ROOT --rs2b0t RS2B0T --cache-dir CACHE_DIR
+                           --unpack-root UNPACK_ROOT --nav-pack NAV_PACK
+                           --nav-flags NAV_FLAGS --catalog CATALOG
+                           --host-conditions HOST_CONDITIONS --server-identity
+                           SERVER_IDENTITY --server-pid SERVER_PID
+                           --server-start-identity SERVER_START_IDENTITY
+                           --ssh-parent-pid SSH_PARENT_PID
+                           [--expected-host-commit EXPECTED_HOST_COMMIT]
+                           [--expected-client-commit EXPECTED_CLIENT_COMMIT]
+                           --output OUTPUT
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture]
+                           [--conflict-receipt CONFLICT_RECEIPT]
+                           [--account-admission ACCOUNT_ADMISSION]
+                           [--population-admission POPULATION_ADMISSION]
+                           [--cache-admission CACHE_ADMISSION]
+                           [--server-health-receipt SERVER_HEALTH_RECEIPT]
+                           [--release-contract RELEASE_CONTRACT]
+                           [--preflight-only]
+python3 -m unittest: error: argument --n: invalid choice: 2 (choose from 1, 16)
+.............................F.................s.........ps: process id too large: 2000000001
+...................
+======================================================================
+FAIL: test_default_collector_stops_after_pad_before_generated_stop_and_c (docs.memory.test_run_managed_cell.ManagedCellTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/diagnostics/direct-owner-managed-extension/server-executable-adapter-implementation/baseline-source/docs/memory/test_run_managed_cell.py", line 1454, in test_default_collector_stops_after_pad_before_generated_stop_and_c
+    self.assertLess(stop_requests[0]['monotonic_s'], events['Stop'])
+AssertionError: 6.354816958 not less than 0.655063416
+
+----------------------------------------------------------------------
+Ran 86 tests in 38.481s
+
+FAILED (failures=1, skipped=1)
+{"attempts": 0, "launched": false, "performance_acceptance": false, "spec": {"id": "future", "launcher_argv": ["never"]}, "status": "preflight_only"}
+
+exit_code=1

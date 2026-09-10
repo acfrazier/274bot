@@ -44,6 +44,7 @@ class CurrentTuiCalibrationControls(unittest.TestCase):
             })
             contract = spec["capture_contract"]
             self.assertEqual(contract["mode"], "direct-owner-v1")
+            self.assertNotIn("server_executable_identity", contract)
             self.assertEqual((spec["warmup_s"], spec["observe_s"], spec["teardown_grace_s"]), (30, 120, 60))
             self.assertEqual((spec["sampler_interval_s"], spec["max_wall_s"]), (0.5, 365))
             self.assertEqual(spec["memory_guard"]["limit_bytes"], 268435456)
@@ -65,6 +66,34 @@ class CurrentTuiCalibrationControls(unittest.TestCase):
             self.assertEqual((ordinary["warmup_s"], ordinary["observe_s"], ordinary["teardown_grace_s"]), (120, 600, 60))
             self.assertEqual(ordinary["max_wall_s"], 960)
             self.assertEqual(ordinary["memory_guard"]["limit_bytes"], 128 * 1024 * 1024)
+
+    def test_server_executable_identity_selector_is_explicit_and_direct_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            args = self._direct_args(root)
+            for selector in ("proc-exe", "sudo-readlink-v1"):
+                with self.subTest(selector=selector):
+                    args.server_executable_identity = selector
+                    spec = runner.build_spec(args, {})
+                    self.assertEqual(
+                        spec["capture_contract"]["server_executable_identity"], selector
+                    )
+
+            args.direct_owner_capture = False
+            with self.assertRaisesRegex(runner.CalibrationError, "direct owner"):
+                runner.build_spec(args, {})
+
+            args.direct_owner_capture = True
+            args.server_executable_identity = "unknown"
+            with self.assertRaisesRegex(runner.CalibrationError, "identity selector"):
+                runner.build_spec(args, {})
+
+    def test_server_executable_identity_cli_is_an_exact_enum(self):
+        action = runner.parser()._option_string_actions["--server-executable-identity"]
+        self.assertIsNone(action.default)
+        self.assertEqual(action.choices, ("proc-exe", "sudo-readlink-v1"))
+        with self.assertRaises(SystemExit):
+            runner.parser().parse_args(["--server-executable-identity", "unknown"])
 
     def test_owner_environment_is_scrubbed_and_only_direct_mode_reemits(self):
         polluted = {"BOT_MEMORY_OWNER_CAPTURE": "1", "PATH": "/usr/bin"}

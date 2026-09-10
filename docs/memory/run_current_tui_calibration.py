@@ -50,6 +50,7 @@ DIRECT_FRONTEND_RSS_BYTES = 512 * 1024 * 1024
 DIRECT_OUTPUT_BYTES = 64 * 1024 * 1024
 DIRECT_FRONTEND_WALL_S = 360
 DIRECT_OUTER_WALL_S = 365
+SERVER_EXECUTABLE_IDENTITIES = ("proc-exe", "sudo-readlink-v1")
 
 
 class CalibrationError(RuntimeError):
@@ -60,6 +61,17 @@ def requested_n(args: argparse.Namespace) -> int:
     value = getattr(args, "n", 16)
     if type(value) is not int or value not in SUPPORTED_N:
         raise CalibrationError(f"n must be an exact integer in {SUPPORTED_N}; got {value!r}")
+    return value
+
+
+def requested_server_executable_identity(args: argparse.Namespace) -> Optional[str]:
+    value = getattr(args, "server_executable_identity", None)
+    if value is None:
+        return None
+    if value not in SERVER_EXECUTABLE_IDENTITIES:
+        raise CalibrationError("server executable identity selector is invalid")
+    if getattr(args, "direct_owner_capture", False) is not True:
+        raise CalibrationError("server executable identity selector requires direct owner capture")
     return value
 
 
@@ -244,6 +256,7 @@ def build_spec(args: argparse.Namespace, source: Mapping[str, Any]) -> Dict[str,
         raise CalibrationError("output basename must produce a safe cell id")
     heaptrack_output = getattr(args, "heaptrack_output", None)
     direct = getattr(args, 'direct_owner_capture', False) is True
+    server_executable_identity = requested_server_executable_identity(args)
     if direct and (requested_n(args) != 1 or heaptrack_output is not None):
         raise CalibrationError('direct owner capture requires N1 and excludes Heaptrack')
     release_contract = getattr(args, 'release_contract', None)
@@ -320,10 +333,13 @@ def build_spec(args: argparse.Namespace, source: Mapping[str, Any]) -> Dict[str,
             'release_contract': str(release_contract_path),
             'admission_receipts': admissions,
         }
+        if server_executable_identity is not None:
+            spec['capture_contract']['server_executable_identity'] = server_executable_identity
     return spec
 
 
 def validate_inputs(args: argparse.Namespace) -> Dict[str, Any]:
+    requested_server_executable_identity(args)
     direct = getattr(args, 'direct_owner_capture', False) is True
     expected_host = DIRECT_DIAGNOSTIC_HOST if direct else args.expected_host_commit
     expected_client = DIRECT_DIAGNOSTIC_CLIENT if direct else args.expected_client_commit
@@ -498,6 +514,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--heaptrack-output", type=pathlib.Path,
                    help="unique direct Heaptrack output directory for N1")
     p.add_argument("--direct-owner-capture", action="store_true")
+    p.add_argument("--server-executable-identity", choices=SERVER_EXECUTABLE_IDENTITIES)
     p.add_argument("--conflict-receipt", type=pathlib.Path)
     p.add_argument("--account-admission", type=pathlib.Path)
     p.add_argument("--population-admission", type=pathlib.Path)

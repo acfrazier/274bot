@@ -1,0 +1,31 @@
+.usage: python3 -m unittest [-h] [--n {1,16}] --host-checkout HOST_CHECKOUT
+                           --binary BINARY --build-manifest BUILD_MANIFEST
+                           --build-role {reference,candidate} --server-root
+                           SERVER_ROOT --rs2b0t RS2B0T --cache-dir CACHE_DIR
+                           --unpack-root UNPACK_ROOT --nav-pack NAV_PACK
+                           --nav-flags NAV_FLAGS --catalog CATALOG
+                           --host-conditions HOST_CONDITIONS --server-identity
+                           SERVER_IDENTITY --server-pid SERVER_PID
+                           --server-start-identity SERVER_START_IDENTITY
+                           --ssh-parent-pid SSH_PARENT_PID
+                           [--expected-host-commit EXPECTED_HOST_COMMIT]
+                           [--expected-client-commit EXPECTED_CLIENT_COMMIT]
+                           --output OUTPUT
+                           [--heaptrack-output HEAPTRACK_OUTPUT]
+                           [--direct-owner-capture]
+                           [--server-executable-identity {proc-exe,sudo-readlink-v1}]
+                           [--conflict-receipt CONFLICT_RECEIPT]
+                           [--account-admission ACCOUNT_ADMISSION]
+                           [--population-admission POPULATION_ADMISSION]
+                           [--cache-admission CACHE_ADMISSION]
+                           [--server-health-receipt SERVER_HEALTH_RECEIPT]
+                           [--release-contract RELEASE_CONTRACT]
+                           [--preflight-only]
+python3 -m unittest: error: argument --server-executable-identity: invalid choice: 'unknown' (choose from 'proc-exe', 'sudo-readlink-v1')
+...........
+----------------------------------------------------------------------
+Ran 12 tests in 2.173s
+
+OK
+
+exit_code=0
