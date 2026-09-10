@@ -19,7 +19,7 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const SUPPORT_MATRIX: &str = include_str!("../../../docs/compat/support-matrix.json");
-const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|thiever|alcher|bank_fletcher";
+const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|thiever|alcher|alcher_custom|alcher_ordered|alcher_large_batch|bank_fletcher";
 const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 
@@ -30,6 +30,9 @@ enum CoreCase {
     ChickenKiller,
     Thiever,
     Alcher,
+    AlcherCustom,
+    AlcherOrdered,
+    AlcherLargeBatch,
     BankFletcher,
 }
 
@@ -40,6 +43,9 @@ impl CoreCase {
             "chicken_killer" => Ok(Self::ChickenKiller),
             "thiever" => Ok(Self::Thiever),
             "alcher" => Ok(Self::Alcher),
+            "alcher_custom" => Ok(Self::AlcherCustom),
+            "alcher_ordered" => Ok(Self::AlcherOrdered),
+            "alcher_large_batch" => Ok(Self::AlcherLargeBatch),
             "bank_fletcher" => Ok(Self::BankFletcher),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
@@ -53,6 +59,9 @@ impl CoreCase {
             Self::ChickenKiller => "chicken_killer",
             Self::Thiever => "thiever",
             Self::Alcher => "alcher",
+            Self::AlcherCustom => "alcher_custom",
+            Self::AlcherOrdered => "alcher_ordered",
+            Self::AlcherLargeBatch => "alcher_large_batch",
             Self::BankFletcher => "bank_fletcher",
         }
     }
@@ -63,6 +72,7 @@ impl CoreCase {
             Self::ChickenKiller => "ChickenKiller",
             Self::Thiever => "Thiever",
             Self::Alcher => "Alcher",
+            Self::AlcherCustom | Self::AlcherOrdered | Self::AlcherLargeBatch => "Alcher",
             Self::BankFletcher => "BankFletcher",
         }
     }
@@ -312,7 +322,10 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
                 && baseline.level("thieving") >= 50
                 && baseline.level("hitpoints") >= 50
         }
-        CoreCase::Alcher => {
+        CoreCase::Alcher
+        | CoreCase::AlcherCustom
+        | CoreCase::AlcherOrdered
+        | CoreCase::AlcherLargeBatch => {
             near(baseline.tile, (3185, 3440, 0), 6) && baseline.level("magic") >= 55
         }
         CoreCase::BankFletcher => {
@@ -329,7 +342,10 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         CoreCase::BoneBurier => "Lumbridge mainland and five Bones",
         CoreCase::ChickenKiller => "Lumbridge chicken pen",
         CoreCase::Thiever => "Ardougne guard stand, ten Lobsters, and prepared stats",
-        CoreCase::Alcher => "Varrock West bank and Magic 55",
+        CoreCase::Alcher
+        | CoreCase::AlcherCustom
+        | CoreCase::AlcherOrdered
+        | CoreCase::AlcherLargeBatch => "Varrock West bank and Magic 55",
         CoreCase::BankFletcher => {
             "Varrock West bank, Knife, twenty-seven Willow logs, and Fletching 35"
         }
@@ -350,6 +366,7 @@ struct CoreWitness {
     saw_bury_chat: bool,
     post_start_observations: u64,
     bone_bank_cycle: BoneBankCycle,
+    ordered_first_exhausted: bool,
 }
 
 /// Ordered observations: seed depletion alone must never qualify this card.
@@ -407,6 +424,7 @@ impl CoreWitness {
             saw_bury_chat: false,
             post_start_observations: 0,
             bone_bank_cycle: BoneBankCycle::default(),
+            ordered_first_exhausted: false,
         }
     }
 
@@ -438,6 +456,10 @@ impl CoreWitness {
             let peak = self.max_xp.entry(name.clone()).or_insert(*xp);
             *peak = (*peak).max(*xp);
         }
+        self.ordered_first_exhausted |= self.max_items.get("Rune platebody").copied().unwrap_or(0)
+            > 0
+            && observation.item("Rune platebody") == 0
+            && observation.item("Rune chainbody") > 0;
         self.latest = observation.clone();
         self.post_start_observations += 1;
     }
@@ -477,11 +499,27 @@ impl CoreWitness {
                     && self.saw_bury_chat
             }
             CoreCase::Thiever => self.xp_gained("thieving") && self.item_increased("Coins"),
-            CoreCase::Alcher => {
+            CoreCase::Alcher
+            | CoreCase::AlcherCustom
+            | CoreCase::AlcherOrdered
+            | CoreCase::AlcherLargeBatch => {
                 self.xp_gained("magic")
-                    && self.acquired_then_consumed("Rune chainbody")
                     && self.acquired_then_consumed("Nature rune")
                     && self.item_increased("Coins")
+                    && match self.case {
+                        CoreCase::AlcherOrdered => {
+                            self.peak_item("Rune platebody") >= 1
+                                && self.peak_item("Rune chainbody") >= 1
+                                && self.ordered_first_exhausted
+                                && self.acquired_then_consumed("Rune chainbody")
+                        }
+                        CoreCase::AlcherLargeBatch => {
+                            self.peak_item("Rune chainbody") >= 1000
+                                && self.peak_item("Nature rune") >= 1000
+                                && self.acquired_then_consumed("Rune chainbody")
+                        }
+                        _ => self.acquired_then_consumed("Rune chainbody"),
+                    }
             }
             CoreCase::BankFletcher => {
                 self.xp_gained("fletching")
@@ -504,6 +542,7 @@ impl CoreWitness {
             "saw_bury_chat": self.saw_bury_chat,
             "post_start_observations": self.post_start_observations,
             "bone_bank_cycle": self.bone_bank_cycle,
+            "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
 }
@@ -1244,6 +1283,104 @@ mod tests {
         );
         let changed = witness(CoreCase::Alcher, &baseline, [&stocked, &after]);
         assert!(changed.qualify().is_ok());
+    }
+
+    #[test]
+    fn alcher_option_witnesses_reject_seeded_only_and_require_order_and_large_stack() {
+        let baseline = observation(
+            &[
+                ("Rune platebody", 0),
+                ("Rune chainbody", 0),
+                ("Nature rune", 0),
+                ("Coins", 0),
+            ],
+            &[("magic", 10_000)],
+            &[],
+        );
+        let seeded = observation(
+            &[
+                ("Rune platebody", 1),
+                ("Rune chainbody", 1),
+                ("Nature rune", 2),
+                ("Coins", 0),
+            ],
+            &[("magic", 10_000)],
+            &[],
+        );
+        assert!(witness(CoreCase::AlcherOrdered, &seeded, [&seeded])
+            .qualify()
+            .is_err());
+
+        let first = observation(
+            &[
+                ("Rune platebody", 1),
+                ("Rune chainbody", 0),
+                ("Nature rune", 2),
+                ("Coins", 0),
+            ],
+            &[("magic", 10_000)],
+            &[],
+        );
+        let second = observation(
+            &[
+                ("Rune platebody", 0),
+                ("Rune chainbody", 1),
+                ("Nature rune", 1),
+                ("Coins", 1_000),
+            ],
+            &[("magic", 10_033)],
+            &[],
+        );
+        let ordered_after = observation(
+            &[
+                ("Rune platebody", 0),
+                ("Rune chainbody", 0),
+                ("Nature rune", 0),
+                ("Coins", 2_000),
+            ],
+            &[("magic", 10_066)],
+            &[],
+        );
+        assert!(witness(
+            CoreCase::AlcherOrdered,
+            &baseline,
+            [&first, &second, &ordered_after]
+        )
+        .qualify()
+        .is_ok());
+        assert!(witness(
+            CoreCase::AlcherLargeBatch,
+            &baseline,
+            [&second, &ordered_after]
+        )
+        .qualify()
+        .is_err());
+
+        let large = observation(
+            &[
+                ("Rune chainbody", 1000),
+                ("Nature rune", 1000),
+                ("Coins", 0),
+            ],
+            &[("magic", 10_000)],
+            &[],
+        );
+        let large_after = observation(
+            &[
+                ("Rune chainbody", 999),
+                ("Nature rune", 999),
+                ("Coins", 1_000),
+            ],
+            &[("magic", 10_033)],
+            &[],
+        );
+        assert!(witness(
+            CoreCase::AlcherLargeBatch,
+            &baseline,
+            [&large, &large_after]
+        )
+        .qualify()
+        .is_ok());
     }
 
     #[test]
