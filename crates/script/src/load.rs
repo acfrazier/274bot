@@ -1756,6 +1756,37 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         } else if !had {
             set(&mut scope, obj, "bank_loaded", falsy)?;
         }
+        if snap.has_bank_generation() {
+            let bank_generation = num(&mut scope, snap.bank_generation() as f64);
+            set(&mut scope, obj, "bank_generation", bank_generation)?;
+        } else if !had {
+            let bank_generation = num(&mut scope, 0.0);
+            set(&mut scope, obj, "bank_generation", bank_generation)?;
+        }
+        if snap.has_count_dialog_open() {
+            let count_dialog_open = v8::Boolean::new(&mut scope, snap.count_dialog_open());
+            set(
+                &mut scope,
+                obj,
+                "count_dialog_open",
+                count_dialog_open.into(),
+            )?;
+        } else if !had {
+            set(&mut scope, obj, "count_dialog_open", falsy)?;
+        }
+        if snap.has_withdraw_x_result_seq() {
+            let seq = num(&mut scope, snap.withdraw_x_result_seq() as f64);
+            set(&mut scope, obj, "withdraw_x_result_seq", seq)?;
+        } else if !had {
+            let seq = num(&mut scope, 0.0);
+            set(&mut scope, obj, "withdraw_x_result_seq", seq)?;
+        }
+        if snap.has_withdraw_x_result() {
+            let result = v8::Boolean::new(&mut scope, snap.withdraw_x_result());
+            set(&mut scope, obj, "withdraw_x_result", result.into())?;
+        } else if !had {
+            set(&mut scope, obj, "withdraw_x_result", falsy)?;
+        }
         if snap.has_bank_note_on() {
             let bank_note_on = num(&mut scope, snap.bank_note_on() as f64);
             set(&mut scope, obj, "bank_note_on", bank_note_on)?;
@@ -2218,6 +2249,8 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         set(scope, o, "z", z)?;
         let level = num(scope, nb.level() as f64);
         set(scope, o, "level", level)?;
+        let id = num(scope, nb.id() as f64);
+        set(scope, o, "id", id)?;
         let name = js_string(scope, nb.name())?;
         set(scope, o, "name", name)?;
         let op = js_string(scope, nb.op())?;

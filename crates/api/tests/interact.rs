@@ -1698,6 +1698,58 @@ fn open_nearest_booth_clicks_use_quickly_on_the_same_plane() {
         "nearest Use-quickly on the same plane, never Bank / Talk-to"
     );
 
+    let mut exact = Recorder {
+        base: (3200, 3200),
+        ..Recorder::default()
+    };
+    {
+        let mut ix = Interactions::new(&snap, &mut exact);
+        assert!(matches!(
+            ix.open_booth_at(
+                WorldTile {
+                    x: 3206,
+                    z: 3205,
+                    level: 0,
+                },
+                near_id
+            ),
+            SendResult::Sent { .. }
+        ));
+        assert!(matches!(
+            ix.open_booth_at(
+                WorldTile {
+                    x: 3206,
+                    z: 3205,
+                    level: 0,
+                },
+                near_id + 1
+            ),
+            SendResult::Refused {
+                reason: SendReason::StaleTarget,
+                ..
+            }
+        ));
+        assert!(matches!(
+            ix.open_booth_at(
+                WorldTile {
+                    x: 3205,
+                    z: 3206,
+                    level: 0,
+                },
+                near_id
+            ),
+            SendResult::Refused {
+                reason: SendReason::StaleTarget,
+                ..
+            }
+        ));
+    }
+    assert_eq!(
+        exact.menus,
+        vec![(0, MiniMenuAction::OP_LOC2, near_tc, 6, 5)],
+        "the explicit snapshot identity never retargets to another loc"
+    );
+
     let mut s = scene();
     s.client.local_player = Some(ClientPlayer::at(5, 5));
     let snap = rebuild(&mut s.client);

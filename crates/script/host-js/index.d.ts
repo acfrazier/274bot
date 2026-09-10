@@ -66,6 +66,7 @@ export interface NearestBooth {
   x: number;
   z: number;
   level: number;
+  id: number;
   name: string;
   op: string;
 }
@@ -154,6 +155,10 @@ export interface Snapshot {
   bank_side: ItemRow[];
   bank_open: boolean;
   bank_loaded: boolean;
+  bank_generation: number;
+  count_dialog_open: boolean;
+  withdraw_x_result_seq: number;
+  withdraw_x_result: boolean;
   bank_note_on: number;
   bank_note_off: number;
   /** 2 = 3D ready. */
@@ -218,12 +223,13 @@ export interface HostHandle {
 
 /** One interact queued on the host handle; dispatched through the slot Driver. */
 export type InteractReq =
-  | { op: 'open-booth'; x?: number; z?: number; level?: number}
+  | { op: 'open-booth'; x: number; z: number; level: number; id: number}
   | { op: 'open-stand'; x: number; z: number; level: number; kind: string; name?: string | null; stand_op?: number | null; choose?: string | null}
   | { op: 'walk'; x: number; z: number; level: number; allow_teleports?: boolean}
   | { op: 'walk-to'; x: number; z: number; level: number}
   | { op: 'deposit'; name: string}
   | { op: 'withdraw'; name: string; action: string}
+  | { op: 'withdraw-x'; name: string; count: number; bank_generation: number}
   | { op: 'held'; name: string; action: string}
   | { op: 'close'}
   | { op: 'npc'; name: string; action: string; index?: number | null}

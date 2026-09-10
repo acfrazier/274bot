@@ -9,6 +9,7 @@ const queue = (req) => {
     h.interact = h.interact || [];
     h.interact.push(req);
 };
+let withdrawXPending = false;
 
 // Pick the withdraw op for a requested amount (rs2b0t `withdrawOp`).
 // The posted bank rows carry no op labels; the shim maps the requested
@@ -146,17 +147,46 @@ export const Bank = new Proxy(
             if (!row || !xOp) {
                 throw notImpl('Bank.withdrawX');
             }
-            const before = Inventory.count(row.name);
-            const target = before + Math.min(Number(count) || 0, row.count);
+            const amount = Number(count);
+            if (
+                !Bank.ready() ||
+                !Number.isSafeInteger(amount) ||
+                amount <= 0 ||
+                amount > 2147483647 ||
+                snap().count_dialog_open ||
+                withdrawXPending
+            ) {
+                return Promise.resolve(false);
+            }
+            const generation = Bank.snapshotGeneration();
+            const resultSeq = Number(snap().withdraw_x_result_seq) || 0;
             return (async () => {
-                queue({ op: 'withdraw', name: row.name, action: String(xOp) });
-                await Execution.delayTicks(1);
-                queue({ op: 'answer-count', value: Number(count) || 0 });
-                // A queued answer is not inventory publication. Do not let the
-                // host withdrawal sequencer issue its fallback against old rows.
-                return Execution.delayUntil(() =>
-                    Inventory.count(row.name) >= target ||
-                    (Inventory.count(row.name) > before && Inventory.isFull()), 4000);
+                withdrawXPending = true;
+                try {
+                    queue({
+                        op: 'withdraw-x',
+                        name: row.name,
+                        count: amount,
+                        bank_generation: generation,
+                    });
+                    // The host owns both monotonic deadlines and posts exactly
+                    // one completion token after observing inventory settlement.
+                    await Execution.delayUntil(
+                        () =>
+                            (Number(snap().withdraw_x_result_seq) || 0) !== resultSeq ||
+                            !Bank.isOpen() ||
+                            Bank.snapshotGeneration() !== generation,
+                        0,
+                    );
+                    return (
+                        Bank.isOpen() &&
+                        Bank.snapshotGeneration() === generation &&
+                        (Number(snap().withdraw_x_result_seq) || 0) !== resultSeq &&
+                        snap().withdraw_x_result === true
+                    );
+                } finally {
+                    withdrawXPending = false;
+                }
             })();
         },
         async withdrawXById(id, count, _landsAsId) {
@@ -166,14 +196,33 @@ export const Bank = new Proxy(
             }
             return Bank.withdrawX(row.name, count);
         },
-        // Thin names onto the host's nearest Use-quickly loc (same plane).
+        // Preserve the exact Rust-selected snapshot row through dispatch;
+        // the host refuses if that identity is stale instead of retargeting.
         // Extra rs2b0t args (stand / boothName / op / log) are ignored.
         async openBooth() {
             if (Bank.isOpen()) {
-                return Execution.delayUntil(() => snap().bank_loaded === true, 5000);
+                return Bank.waitReady(5000);
             }
-            queue({ op: 'open-booth' });
-            return Execution.delayUntil(() => snap().bank_loaded === true, 5000);
+            const row = snap().nearest_booth;
+            if (
+                !row ||
+                !Number.isInteger(row.x) ||
+                !Number.isInteger(row.z) ||
+                !Number.isInteger(row.level) ||
+                !Number.isInteger(row.id) ||
+                row.id < 0
+            ) {
+                return false;
+            }
+            const generation = Bank.snapshotGeneration();
+            queue({
+                op: 'open-booth',
+                x: row.x,
+                z: row.z,
+                level: row.level,
+                id: row.id,
+            });
+            return Bank.waitSnapshotAfter(generation, 5000);
         },
         async openNearest() {
             return Bank.openBooth();
@@ -183,13 +232,19 @@ export const Bank = new Proxy(
             return Execution.delayUntil(() => Bank.ready(), ms);
         },
         snapshotReady() {
-            throw notImpl('Bank.snapshotReady');
+            return Bank.ready();
         },
         snapshotGeneration() {
-            throw notImpl('Bank.snapshotGeneration');
+            const generation = snap().bank_generation;
+            return Number.isFinite(generation) && generation >= 0 ? generation : 0;
         },
-        async waitSnapshotAfter(_generation, _timeoutMs) {
-            throw notImpl('Bank.waitSnapshotAfter');
+        async waitSnapshotAfter(generation, timeoutMs) {
+            const baseline = Number.isFinite(Number(generation)) ? Number(generation) : 0;
+            const ms = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 5000;
+            return Execution.delayUntil(
+                () => Bank.snapshotReady() && Bank.snapshotGeneration() > baseline,
+                ms,
+            );
         },
         countById(id) {
             const rs = snap().bank || [];

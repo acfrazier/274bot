@@ -12,7 +12,7 @@ use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::config::{LocType, NpcType, ObjType};
 use client::dash3d::{ClientObj, ClientPlayer, CollisionFlag};
 use client::datastruct::LinkList;
-use client::io::ServerProt;
+use client::io::{Packet, ServerProt};
 use std::sync::Arc;
 
 fn cfg() -> ClientConfig {
@@ -3188,6 +3188,90 @@ fn inventory_size_and_bank_component_id_derive_from_the_ifaces() {
     assert!(snap.rebuild_family(&c, Family::Bank));
     assert_eq!(snap.bank_component_id(), -1, "no bank: -1, not component 0");
     assert!(snap.bank().is_empty());
+}
+
+#[test]
+fn bank_loaded_requires_current_component_full_after_last_close_and_transmission() {
+    let mut c = client_with_npc();
+    set_iface(
+        &mut c,
+        600,
+        IfType {
+            id: 600,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![601]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        &mut c,
+        601,
+        IfType {
+            id: 601,
+            layer_id: 600,
+            r#type: ComponentType::TYPE_INV,
+            iop: [Some("Withdraw 1".into()), None, None, None, None],
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        &mut c,
+        601,
+        IfTypeMut {
+            link_obj_type: Some(vec![0]),
+            link_obj_number: Some(vec![0]),
+            ..Default::default()
+        },
+    );
+
+    let mut full = Packet::new(vec![2, 89, 1, 0, 0, 0]);
+    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut full);
+    let mut open = Packet::new(vec![2, 88]);
+    c.handle_packet(ServerProt::IF_OPENMAIN, &mut open);
+
+    let mut snap = GameSnapshot::new();
+    assert!(snap.rebuild_family(&c, Family::Bank));
+    assert_eq!(snap.bank_component_id(), 601);
+    assert_eq!(snap.bank_session_generation(), 1);
+    assert!(snap.bank_loaded(), "the pre-open full is still current");
+
+    let mut close = Packet::new(vec![]);
+    c.handle_packet(ServerProt::IF_CLOSE, &mut close);
+    assert!(snap.rebuild_family(&c, Family::Bank));
+    assert_eq!(snap.bank_component_id(), -1);
+    assert_eq!(snap.bank_session_generation(), 2);
+    assert!(!snap.bank_loaded());
+
+    let mut reopen = Packet::new(vec![2, 88]);
+    c.handle_packet(ServerProt::IF_OPENMAIN, &mut reopen);
+    assert!(snap.rebuild_family(&c, Family::Bank));
+    assert_eq!(snap.bank_session_generation(), 3);
+    assert!(!snap.bank_loaded(), "the pre-close full is stale");
+
+    let mut refresh = Packet::new(vec![2, 89, 1, 0, 0, 0]);
+    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut refresh);
+    assert!(snap.rebuild_family(&c, Family::Bank));
+    assert!(snap.bank_loaded());
+
+    let mut stop = Packet::new(vec![2, 89]);
+    c.handle_packet(ServerProt::UPDATE_INV_STOP_TRANSMIT, &mut stop);
+    assert!(snap.rebuild_family(&c, Family::Bank));
+    assert!(!snap.bank_loaded(), "stop-transmit is never ready");
+
+    let mut close_and_reopen = Packet::new(vec![]);
+    c.handle_packet(ServerProt::IF_CLOSE, &mut close_and_reopen);
+    let mut same_drain_full = Packet::new(vec![2, 89, 1, 0, 0, 0]);
+    c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut same_drain_full);
+    let mut same_drain_reopen = Packet::new(vec![2, 88]);
+    c.handle_packet(ServerProt::IF_OPENMAIN, &mut same_drain_reopen);
+    assert!(snap.rebuild_family(&c, Family::Bank));
+    assert_eq!(
+        snap.bank_session_generation(),
+        5,
+        "close plus reopen remain visible when the final component is unchanged"
+    );
+    assert!(snap.bank_loaded(), "the same-drain full followed the close");
 }
 
 /// `ReadContext` reads every §3.2 accessor from a rebuilt snapshot without

@@ -91,6 +91,7 @@ table NearestBooth {
   level: int;
   name: string;
   op: string;
+  id: int;
 }
 
 // A packed bank stand the shim walks to / opens.
@@ -197,10 +198,14 @@ table Snapshot {
   trade_decline_id: int;
   shop_open: bool;
   shop_stock: [Row];
+  bank_generation: ulong;
+  count_dialog_open: bool;
+  withdraw_x_result_seq: ulong;
+  withdraw_x_result: bool;
 }
 
 // One shim interact request, tagged by `op`:
-// "open-booth" | "open-stand" | "walk" | "walk-near" | "walk-to" | "deposit" | "withdraw" | "close"
+// "open-booth" | "open-stand" | "walk" | "walk-near" | "walk-to" | "deposit" | "withdraw" | "withdraw-x" | "close"
 // | "held" | "npc" | "loc" | "obj" | "player" | "use-on" | "use-widget-on"
 // | "continue" | "answer" | "answer-count" | "if-button" | "close-modal" | "side-tab"
 // | "wear" | "set-run" | "set-retaliate" | "set-note-mode" | "set-camera-yaw".
@@ -217,6 +222,7 @@ table Interact {
   action: string;
   index: int; // NPC index, or the radius for walk-near.
   component_id: int;
+  bank_generation: ulong;
 }
 
 // The tick's shim interact queue, forwarded to the host.
