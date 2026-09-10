@@ -1,0 +1,26 @@
+   Compiling client v0.1.0 (C:\Users\Austen\274bot-campaign\multirevision-20260910\candidates\source-93e12ccf-2be16970\vendor\fr-client-rust\crates\client)
+   Compiling vault v0.1.0 (C:\Users\Austen\274bot-campaign\multirevision-20260910\candidates\source-93e12ccf-2be16970\crates\vault)
+   Compiling panel v0.1.0 (C:\Users\Austen\274bot-campaign\multirevision-20260910\candidates\source-93e12ccf-2be16970\crates\panel)
+   Compiling api v0.1.0 (C:\Users\Austen\274bot-campaign\multirevision-20260910\candidates\source-93e12ccf-2be16970\crates\api)
+   Compiling nav v0.1.0 (C:\Users\Austen\274bot-campaign\multirevision-20260910\candidates\source-93e12ccf-2be16970\crates\nav)
+   Compiling script v0.1.0 (C:\Users\Austen\274bot-campaign\multirevision-20260910\candidates\source-93e12ccf-2be16970\crates\script)
+   Compiling host v0.1.0 (C:\Users\Austen\274bot-campaign\multirevision-20260910\candidates\source-93e12ccf-2be16970\crates\host)
+   Compiling host-play v0.1.0 (C:\Users\Austen\274bot-campaign\multirevision-20260910\candidates\source-93e12ccf-2be16970\crates\host-play)
+warning: function `rss_bytes_from_ru_maxrss` is never used
+  --> crates\host-play\src\rss.rs:10:8
+   |
+10 | pub fn rss_bytes_from_ru_maxrss(raw: i64) -> u64 {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling scenario v0.1.0 (C:\Users\Austen\274bot-campaign\multirevision-20260910\candidates\source-93e12ccf-2be16970\crates\scenario)
+warning: `host-play` (lib) generated 1 warning
+   Compiling tui v0.1.0 (C:\Users\Austen\274bot-campaign\multirevision-20260910\candidates\source-93e12ccf-2be16970\crates\tui)
+warning: linker stdout: LINK : warning LNK4098: defaultlib 'libcmt.lib' conflicts with use of other libs; use /NODEFAULTLIB:library
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `tui` (bin "tui-play") generated 1 warning
+warning: `panel` (bin "panel-play") generated 1 warning (1 duplicate)
+    Finished `release` profile [optimized] target(s) in 1m 16s
