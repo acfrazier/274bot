@@ -1,9 +1,9 @@
 # Step 3: immutable server profiles
 
-Implementation is in progress on `codex/rs2b0t-multirevision` and
-`codex/bothost-274-289`. Client and host backend same-card Grok 4.5 reviews are
-approved. Frontend implementation/review, native macOS frontend checks and the
-Grok 4.6 integration gate remain open. Step 3 is not accepted yet. The architecture review is
+Implementation is complete on `codex/rs2b0t-multirevision` and
+`codex/bothost-274-289`. Client, host backend and frontend same-card Grok 4.5
+reviews are approved. Native macOS frontend checks and the Grok 4.6 integration
+gate remain open. Step 3 is not accepted yet. The architecture review is
 `reviews/session-profile-design-grok46.md` (card `t_bfd3339c`, actual Grok 4.6).
 
 ## Host behavior
@@ -73,8 +73,7 @@ represent game content or a live session.
   shared navigation/scatter with flags validation.
 - The affected API/host/host-play gate with `host-play/memory-profile` passed
   450 tests with zero failures and seven ignored live tests on client product
-  `c8e61557`. The initial 448-test receipt is retained. Frontend checks will
-  complete the integrated host gate.
+  `c8e61557`. The initial 448-test receipt is retained. Frontend checks are recorded below.
 - The full client workspace on product `c8e61557` passed 1,001 tests with zero
   failures and two ignored GPU tests. Both explicit GPU tests then passed on
   the same product with `SKIP_GPU` absent.
@@ -99,8 +98,18 @@ Run the reusable asset diagnostic with `cargo run --locked -p host-play --exampl
 
 Raw logs: `evidence/session-profile/host/`. Client-specific tests and lifecycle
 proof belong to the client report `docs/revision-289/session-profile-client.md`.
-Frontend construction and presentation checks will be recorded in
-`01-session-profile-frontends.md` and this report's final acceptance update.
+Frontend construction checks are in `01-session-profile-frontends.md`: 384 panel
+and 89 TUI tests pass with memory-profile; host-play passes 131 tests with seven
+live tests ignored. Final launch binaries built with all three memory-profile
+features. Nine actual binary negatives reject unsupported revisions, conflicts,
+wrong cache pairing and unqualified 289 operation without creating vaults.
+
+Frontend review accepted `7aaa8c39`; root follow-up `a02c9dd5` routes the remaining
+fixture-button presentation helper through the bound target. Existing local and
+public button tests passed. This follow-up and the catalog identity helper are
+included in the fresh integration review. The final source candidate is
+`a02c9dd5`; current binary hashes and build command are in
+`evidence/session-profile/frontends/integrated-binaries.json`.
 
 ## Remaining gates
 
@@ -111,8 +120,11 @@ catalog/gameplay row is accepted by this step. The client and host backend same-
 `t_1b93f768` and `t_30007871`; completed actual-model receipts in `reviews/`).
 The host pins the reviewed client candidate `2be1697060e4d2b8b709ad4d5e54d12513b38333`
 locally; its product commit is `c8e61557`. Root owns the gitlink and integration.
-Frontend implementation/review, integrated Grok 4.6 review, final coherent checks,
-and native macOS frontend validation remain pending.
+The frontend same-card Grok 4.5 review is approved (card `t_879d9607`, actual
+session `20260910_123250_73d488`). Integrated Grok 4.6 review and native macOS
+frontend validation remain pending. Captured catalog identity also prevents
+pre-bind Browse/warmup from retaining a different root or edited source. Custom
+file cards remain present when binding refuses a catalog mismatch.
 
 The operator requested macOS step-3 validation first. Linux and Windows need
 separate 289 engines configured before later platform checks; neither platform

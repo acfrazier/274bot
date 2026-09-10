@@ -1,0 +1,28 @@
+{
+  "source_head": "7aaa8c390533fa0cd994cca7201ea739865ef94d",
+  "client_head": "2be1697060e4d2b8b709ad4d5e54d12513b38333",
+  "command": "CARGO_TARGET_DIR=/Users/acfrazier/experiments/274bot/target cargo build --locked -p host-play -p panel -p tui --features host-play/memory-profile,panel/memory-profile,tui/memory-profile",
+  "exit_code": 0,
+  "recorded_at": 1789057972.333384,
+  "artifacts": [
+    {
+      "name": "panel-play",
+      "bytes": 184035208,
+      "sha256": "263ad4cf1aca635ee38548415df29c16fdd9194753e79a0d3ec24485235683f8",
+      "path_at_capture": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/profile-native/bin/panel-play"
+    },
+    {
+      "name": "tui-play",
+      "bytes": 175155496,
+      "sha256": "bfe750bcd35eaed1d24dacba3523d9abf9ba10164cd0359cad2b1eedcd6b6e90",
+      "path_at_capture": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/profile-native/bin/tui-play"
+    },
+    {
+      "name": "host-play",
+      "bytes": 81579128,
+      "sha256": "3c46f412de55f22d8b0996b8d7058d70da01c698c72f081a7bb7ddb42b0e10cd",
+      "path_at_capture": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/profile-native/bin/host-play"
+    }
+  ],
+  "retention_note": "Historical build receipt. These paths were subsequently replaced by the a02c9dd5 binaries; the recorded hashes describe the executables used for cli-negatives.json."
+}
