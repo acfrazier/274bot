@@ -1,35 +1,45 @@
 # Agent rules — 274bot host
 
-Read this file once. Do **not** search the disk for another `AGENTS.md`.
+Read applicable instructions once. Do not search unrelated worktrees or archives for alternative instructions.
 
 **What this is:** Rust bot host for the 274 client. GitHub: `acfrazier/274bot` (public). Client is a **submodule** at `vendor/fr-client-rust` (`acfrazier/FR-client-bothost` `r274-bh-modular`). Attribution: `NOTICE.md`. Specs/plans: gitignored `docs/superpowers/` **in this checkout** (not Fairy-Ring, not GitHub).
 
-**Resume:** read `docs/superpowers/STATE.md` once. Then stop. Do not crawl `docs/superpowers/`. Do not paste STATE into a flash brief — name one spec/plan for this task.
+**Resume:** read the state and current plan named by the active task. For the memory campaign, that state is `docs/memory/STATE.md` in its campaign checkout. Otherwise, when no current state is named, locate the primary checkout with `dirname "$(git rev-parse --path-format=absolute --git-common-dir)"` and read its local `docs/superpowers/STATE.md` pointer if present. A fresh public checkout may have no local campaign pointer; follow the task brief in that case. Do not search other worktrees or archives for instructions. Treat dated reports as evidence snapshots, not current next actions. Give implementers the relevant task brief and plan section, not the entire state/history. Execution and review handoffs: `docs/execution.md` in the active checkout.
 
 **Client fork:** Patch `FR-client-bothost` `r274-bh-modular` (instrumentation, skip-paint, wgpu). `r274-modular` is the same refactor without bot-host hooks; `r274-bothost` is the pre-modular fork — do not push there. **Do not** push `Fairy-Ring/FR-client-rust`. Do not add a bot action API inside `client`. Wiring `client` compiles the **lib**; `cargo test` here does not run FR integration tests. Do not put 274bot crates in the client repo.
 
 **Layout:** crates under `crates/{host,vault,api,host-play,panel,nav,script,scenario,e2e,tui}` (`panel` is the native UI; `tui` is `tui-play`).
 
-**Scope (v0.1.2 alpha):** the **wall**, **nav execute** (pack `274V` v7),
-**random-event guardian**, and **headless TUI** (`tui-play`) are landed.
-Still no dummy tick-end opcode. GPU 3D (wgpu) lives in the client
-submodule (headed default; `BOT_CPU=1` is CpuPix3D; last-FBO freeze
-while `scene_state==1`). Compiled script *kernel* and WalkTo are
-in-tree; do not start honest script ports unless the human says so.
-**Next session is v0.1.5** (TS shim + listed scripts, guardian solver
-stubs). Do not invent a tick-end opcode or put 274bot crates in the
-client repo.
+**Scope:** the selected memory-efficiency harvest is complete and published. Resume the JavaScript API compatibility and multi-revision client work only under its current task/plan; do not restart the superseded memory campaign. Compatibility maps the JavaScript surface onto Rust host APIs; do not recreate the foreign JavaScript runtime or its policy/routers. Missing host capabilities must be identified explicitly and implemented in Rust only within authorized scope. Preserve current behavior during preservation work, including existing incomplete features and errors unless their completion is explicitly scoped. No invented tick-end opcode.
 
-**SDD models (operator):** task implementer `deepseek-v4-flash` (live smoke that must read screenshots: `deepseek-v4-flash-vision-exp`), per-task reviewer `grok-4.5`, **whole-branch review: grok-4.6**. Do not skip the final grok pass. Repo hygiene (remotes, force-push, submodules) is **orch inline**, not subagent-driven.
+**Rendering:** GPU 3D lives in the client submodule; `BOT_CPU=1` selects CpuPix3D. Preserve the last-FBO freeze while `scene_state==1`.
+
+**SDD workflow (operator, confirmed 2026-09-07):** use the existing Hermes `274bot` board and these configured profiles:
+
+| Role / profile | Model | Provider |
+| --- | --- | --- |
+| `implementer` | `grok-composer-2.5-fast` | `xai-oauth` |
+| `luna` (bounded implementation/tooling) | `gpt-5.6-luna` | `openai-codex` |
+| `sol` (demanding implementation; high reasoning) | `gpt-5.6-sol` | `openai-codex` |
+| `grok46` (architecture/fidelity review; high reasoning) | `grok-4.6` | `xai-oauth` |
+| `reviewer` (per-task review) | `grok-4.5` | `xai-oauth` |
+| `branchreviewer` (required whole-branch review) | `grok-4.6` | `xai-oauth` |
+| `orch` (when using Hermes) | `gpt-6-astra` | `openai-codex` |
+
+The current Codex session may orchestrate directly. DeepSeek Flash / Flash Vision assignments in older snapshots are superseded by this operator-confirmed workflow. Screenshot proofs require a tool/model that actually reads the captures; the orchestrator may perform them directly.
+
+Dispatch by **profile name**, using profile defaults without task model/provider overrides. Verify the configured defaults before first dispatch and the actual model used by each review. Implementation hands the same card to profile `reviewer` with `kanban_request_review`, then stops; do not use a model name as the assignee or create a duplicate routine review card. Corrective reviews for wrong-model runs and the separate final `branchreviewer` card are required where applicable. Poll actual runs through review completion; an assignee label or task creation is not proof that a worker ran. Details: `docs/execution.md` in the active campaign checkout.
+
+Do not skip the final Grok pass. Repo hygiene (remotes, force-push, submodules) is **orch inline**, not subagent-driven.
 
 **Git (this is the only copy of the rule — plans must not restate it):**
-- **Flash / SDD implementer / spawned subagent:** forbidden on `main`. Run `git branch --show-current`. If it is `main`, **stop** and tell the orch. Commit only on the orch-named branch or a worktree (`isolation: worktree`). Never merge, never push remotes, never `checkout main`.
+- **SDD implementer / spawned subagent:** forbidden on `main`. Run `git branch --show-current`. If it is `main`, **stop** and tell the orch. Commit only on the orch-named branch or a worktree (`isolation: worktree`). Never merge, never push remotes, never `checkout main`.
 - **Orch / grok with the human on this checkout:** `main` only when the human said **inline**. Campaign SDD still uses a branch; orch merges.
 - **origin:** GitHub `main` is this checkout’s commit history. Tag `0.1.0` is the squash that first went public; from `0.1.1` publishes are ordinary pushes + annotated tags. Do not squash-publish. Do not `git pull` the `0.1.0` squash onto local `main`. Force-push only when the human said **inline**.
 Copied “commit on main” in a plan or a stale session snapshot is not consent.
 
-**Do:** TDD as the task brief. One task only. `cargo test -p <crate>`. Write the report file the orch named.
+**Verification:** follow the task’s regression requirements and run affected crate tests with required features. Run client integration tests separately when affected. Delegated implementers stay within their named task and write the requested report; the orchestrator may complete all authorized cross-crate work.
 
-**Do not:** invent a tick-end opcode; deep-copy the world every read; skip the brief; wander into scripts; hunt for a longer AGENTS.md.
+**Memory:** do not deep-copy the world on every read. Preserve ownership boundaries and verify savings with measurements.
 
 **Live:** automated harnesses in `crates/e2e` and `crates/host-play` (`LIVE=1 cargo test -p e2e -- --ignored`; same for `-p host-play`). FAIL + exit 1. Wait `ingame && scene_state==2`. Not Playwright. Verbose only if `BOT_DEBUG=1`. Do not skip the live task.
