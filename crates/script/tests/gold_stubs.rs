@@ -391,7 +391,7 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
-    iso.probe("globalThis.__rs2b0t_host.snapshot={bank:[{name:'Lobster',count:2000,ops:['Withdraw X']}],bank_open:true,bank_loaded:true,bank_generation:1,count_dialog_open:false,inv_size:28,inv:[{name:'Lobster',count:3}]};true").unwrap();
+    iso.probe("globalThis.__rs2b0t_host.snapshot={bank:[{id:377,name:'Lobster',count:2000,ops:['Withdraw X']}],bank_open:true,bank_loaded:true,bank_generation:1,count_dialog_open:false,inv_size:28,inv:[{name:'Lobster',count:3}]};true").unwrap();
     iso.on_game_tick(1);
     iso.probe("true").unwrap();
     iso.probe("globalThis.__rs2b0t_host.snapshot.count_dialog_open=true;true")

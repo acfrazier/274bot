@@ -223,6 +223,8 @@ table Interact {
   index: int; // NPC index, or the radius for walk-near.
   component_id: int;
   bank_generation: ulong;
+  bank_item_id: int;
+  lands_as_id: int;
 }
 
 // The tick's shim interact queue, forwarded to the host.

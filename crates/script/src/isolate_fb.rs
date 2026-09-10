@@ -199,7 +199,7 @@ const VT_VARP_INDEX: VOffsetT = 4;
 const VT_VARP_VALUE: VOffsetT = 6;
 
 // Interact: { op, x, z, level, kind, name, stand_op, choose, action,
-//             index, component_id, bank_generation }
+//             index, component_id, bank_generation, bank_item_id, lands_as_id }
 const VT_IN_OP: VOffsetT = 4;
 const VT_IN_X: VOffsetT = 6;
 const VT_IN_Z: VOffsetT = 8;
@@ -212,6 +212,8 @@ const VT_IN_ACTION: VOffsetT = 20;
 const VT_IN_INDEX: VOffsetT = 22;
 const VT_IN_COMPONENT_ID: VOffsetT = 24;
 const VT_IN_BANK_GENERATION: VOffsetT = 26;
+const VT_IN_BANK_ITEM_ID: VOffsetT = 28;
+const VT_IN_LANDS_AS_ID: VOffsetT = 30;
 
 // InteractBatch: { reqs: [Interact] }
 const VT_REQS: VOffsetT = 4;
@@ -3019,6 +3021,12 @@ impl InteractReader<'_> {
     pub fn bank_generation(&self) -> Option<u64> {
         unsafe { self.tab.get::<u64>(VT_IN_BANK_GENERATION, None) }
     }
+    pub fn bank_item_id(&self) -> Option<i32> {
+        unsafe { self.tab.get::<i32>(VT_IN_BANK_ITEM_ID, None) }
+    }
+    pub fn lands_as_id(&self) -> Option<i32> {
+        unsafe { self.tab.get::<i32>(VT_IN_LANDS_AS_ID, None) }
+    }
 }
 
 impl Verifiable for InteractReader<'_> {
@@ -3036,6 +3044,8 @@ impl Verifiable for InteractReader<'_> {
             .visit_field::<i32>("index", VT_IN_INDEX, false)?
             .visit_field::<i32>("component_id", VT_IN_COMPONENT_ID, false)?
             .visit_field::<u64>("bank_generation", VT_IN_BANK_GENERATION, false)?
+            .visit_field::<i32>("bank_item_id", VT_IN_BANK_ITEM_ID, false)?
+            .visit_field::<i32>("lands_as_id", VT_IN_LANDS_AS_ID, false)?
             .finish();
         Ok(())
     }
@@ -3204,6 +3214,8 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 id: row
                     .index()
                     .ok_or_else(|| "open-booth has no id".to_string())?,
+                name: row.name().map(str::to_string),
+                action: row.action().map(str::to_string),
             }),
             "open-stand" => out.push(crate::shim::InteractReq::OpenStand {
                 x: row.x(),
@@ -3254,6 +3266,16 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                     .ok_or_else(|| "withdraw-x has no name".to_string())?
                     .to_string(),
                 count: row.x(),
+                bank_item_id: row
+                    .bank_item_id()
+                    .ok_or_else(|| "withdraw-x has no bank_item_id".to_string())?,
+                lands_as_id: row
+                    .lands_as_id()
+                    .ok_or_else(|| "withdraw-x has no lands_as_id".to_string())?,
+                action: row
+                    .action()
+                    .ok_or_else(|| "withdraw-x has no action".to_string())?
+                    .to_string(),
                 bank_generation: row
                     .bank_generation()
                     .ok_or_else(|| "withdraw-x has no bank_generation".to_string())?,
@@ -3413,7 +3435,9 @@ fn interact_off<'b>(
         _ => None,
     };
     let name_off = match req {
-        InteractReq::OpenStand { name, .. } => name.as_deref().map(|n| b.create_string(n)),
+        InteractReq::OpenBooth { name, .. } | InteractReq::OpenStand { name, .. } => {
+            name.as_deref().map(|n| b.create_string(n))
+        }
         InteractReq::Deposit { name }
         | InteractReq::Withdraw { name, .. }
         | InteractReq::WithdrawX { name, .. }
@@ -3433,9 +3457,12 @@ fn interact_off<'b>(
         _ => None,
     };
     let action_off = match req {
-        InteractReq::Withdraw { action, .. } | InteractReq::Held { action, .. } => {
-            Some(b.create_string(action))
+        InteractReq::OpenBooth { action, .. } => {
+            action.as_deref().map(|action| b.create_string(action))
         }
+        InteractReq::Withdraw { action, .. }
+        | InteractReq::WithdrawX { action, .. }
+        | InteractReq::Held { action, .. } => Some(b.create_string(action)),
         InteractReq::Npc { action, .. }
         | InteractReq::Loc { action, .. }
         | InteractReq::Obj { action, .. }
@@ -3456,11 +3483,19 @@ fn interact_off<'b>(
     let tab = b.start_table();
     b.push_slot_always(VT_IN_OP, op_off);
     match req {
-        InteractReq::OpenBooth { x, z, level, id } => {
+        InteractReq::OpenBooth {
+            x, z, level, id, ..
+        } => {
             b.push_slot_always(VT_IN_X, *x);
             b.push_slot_always(VT_IN_Z, *z);
             b.push_slot_always(VT_IN_LEVEL, *level);
             b.push_slot_always(VT_IN_INDEX, *id);
+            if let Some(off) = name_off {
+                b.push_slot_always(VT_IN_NAME, off);
+            }
+            if let Some(off) = action_off {
+                b.push_slot_always(VT_IN_ACTION, off);
+            }
         }
         InteractReq::OpenStand {
             x,
@@ -3515,11 +3550,16 @@ fn interact_off<'b>(
         }
         InteractReq::WithdrawX {
             count,
+            bank_item_id,
+            lands_as_id,
             bank_generation,
             ..
         } => {
             b.push_slot_always(VT_IN_NAME, name_off.unwrap());
             b.push_slot_always(VT_IN_X, *count);
+            b.push_slot_always(VT_IN_BANK_ITEM_ID, *bank_item_id);
+            b.push_slot_always(VT_IN_LANDS_AS_ID, *lands_as_id);
+            b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
             b.push_slot_always(VT_IN_BANK_GENERATION, *bank_generation);
         }
         InteractReq::Held { .. } => {
