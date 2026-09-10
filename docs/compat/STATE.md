@@ -12,7 +12,7 @@ The operator clarified during step 4 that script loading and starting must not
 be restricted by revision. Users decide whether a script suits their selected
 revision and this platform. Host/client operation boundaries must refuse
 unsupported operations. Catalog qualification is evidence, not a loading or
-starting allowlist. Root is removing the earlier script/catalog binding gates;
+starting allowlist. Root has removed the earlier script/catalog binding gates;
 server, cache and navigation identities remain immutable per process.
 
 ## Current milestone
@@ -149,22 +149,14 @@ Root's narrow live harness `2f1d9709` passed same-card Grok 4.5 source review
 on `t_079d478d` (run 1101, session `20260910_135359_681e61`). Live proof has not
 run. Ordinary 289 slots/guardians remain gated for step 5.
 
-Snapshot/reset card `t_0be9adbf` is still implementing. Root reclaimed its
-initial Sol run after finding an ambiguous equal-family-delta tick heuristic;
-brief 13 now requires a real successful PLAYER_INFO observation from a small
-generic client seam, plus a shared host publication helper for the harness.
-Existing family counters/framing and ownership must survive. This is an
-implementation correction, not a failed live test. Root owns the client gitlink
-and harness adaptation after that helper is ready. Final integrated source
-checks/review and local 274/289 actions remain required.
-
-The client seam also includes a successful-session generation for response-15
-reconnects that return with `ingame` still true. The usage limit interrupted
-Sol run 1104 before completion. After the operator asked to continue, root
-resumed the same card with its WIP preserved. The new Sol session is
-`20260910_141557_9e3d29`, verified `gpt-5.6-sol` / `openai-codex`. Focused
-client counter/login/reconnect tests now pass; host publication and queue
-changes are still being completed and have not passed source review.
+Snapshot/reset card `t_0be9adbf` is in actual Grok 4.5 review of host
+`15b706f67b3cef58f61fe874a512a7de3149b9fc` and client
+`6cb5a0b17aeef74da6b57b205e916681daee4f76`. Root completed the preserved WIP
+inline, including the grant watermark, explicit invalidation accounting, actual
+PLAYER_INFO observation, shared publication/harness and isolate dispatch epochs.
+Reviewer session `20260910_150509_d75b62` is verified as Grok 4.5 / xai-oauth.
+Focused tests and strict Clippy pass; source review and step-4 live proof remain
+pending. No temporary failure or startup-only result is accepted as gameplay.
 
 Operator platform clarification: validate step 3 on macOS first. Linux and
 Windows do not have a 289 engine configured; prepare those isolated engines
@@ -221,3 +213,20 @@ live harness share the same boundary. See `02b-host-snapshot-reset.md` for exact
 scope, failures retained and focused passing checks. Same-card `t_0be9adbf`
 Grok 4.5 review is next, followed by the coherent Grok 4.6 integration review and
 controlled local 274/289 live proof. No step-4 live acceptance is claimed yet.
+
+## Revision-agnostic script loading
+
+The script/catalog gate removal is implemented. `ServerProfile` retains only a
+default catalog path; binding does not read/hash/freeze scripts. Panel revision
+selection before binding and explicit catalog imports in either frontend do not
+reject already loaded sources. Script start paths do not check revision or a
+catalog hash. Loader syntax/import checks and runtime unsupported-operation
+refusals retain their own roles. Server/cache/nav identity checks remain.
+
+Focused existing checks passed: host profile 10, panel catalog 9 plus one
+binding/source-edit regression, TUI catalog library 4, and strict all-target
+Clippy for host-play/panel/TUI. The first TUI binary filter matched no tests;
+the corrected library invocation ran the four tests. Logs are in
+`evidence/script-loading-policy/`. This mechanical policy removal will be
+included in the next coherent integration review; it does not qualify live
+289 bot operations by itself.

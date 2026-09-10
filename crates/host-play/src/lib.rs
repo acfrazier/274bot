@@ -3154,7 +3154,6 @@ pub struct Play {
 #[derive(Clone)]
 pub struct ScriptStartHandle {
     scripts: ScriptWall,
-    profile: Option<Arc<ServerProfile>>,
 }
 
 impl ScriptStartHandle {
@@ -3169,10 +3168,6 @@ impl ScriptStartHandle {
         settings_bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
     ) -> Result<(), String> {
-        if let Some(profile) = &self.profile {
-            profile.require_bot_operation()?;
-            profile.validate_catalog()?;
-        }
         if debug_enabled() {
             eprintln!("[script {name}] start load");
         }
@@ -3375,7 +3370,6 @@ impl Play {
     /// the picker id has no ported script yet, or `Err` when the slot
     /// already runs one. The slot thread gates it on `is_up`.
     pub fn script_start(&self, name: &str, id: script::CompiledId) -> Result<(), String> {
-        self.connection.require_bot_operation()?;
         if !self.slot_active(name) {
             return Err(format!("no slot: {name}"));
         }
@@ -3399,10 +3393,6 @@ impl Play {
         settings_bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
     ) -> Result<(), String> {
-        self.connection.require_bot_operation()?;
-        if let Some(profile) = self.connection.profile() {
-            profile.validate_catalog()?;
-        }
         if !self.slot_active(name) {
             return Err(format!("no slot: {name}"));
         }
@@ -3426,7 +3416,6 @@ impl Play {
     pub fn script_start_handle(&self) -> ScriptStartHandle {
         ScriptStartHandle {
             scripts: Arc::clone(&self.scripts),
-            profile: self.connection.profile().cloned(),
         }
     }
 

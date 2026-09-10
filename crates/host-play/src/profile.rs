@@ -1,7 +1,7 @@
 //! Resolve launch inputs once, before shared assets, vault mutation or sockets.
 //!
-//! The host profile owns world/catalog/vault identity. The client receives only
-//! its immutable connection and resource binding. Legacy `PlayOptions` remains
+//! The host profile owns world/vault identity and default script paths.
+//! The client receives only its immutable connection and resource binding. Legacy `PlayOptions` remains
 //! available for old callers; the frontends use this checked path.
 
 use std::collections::BTreeMap;
@@ -469,24 +469,6 @@ pub enum NavAvailability {
     Bound,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CatalogIdentity {
-    pub root: PathBuf,
-    pub sha256: String,
-}
-
-impl CatalogIdentity {
-    /// Capture the selected catalog before a frontend reads or transpiles it.
-    /// Comparing this value with the bound profile also detects source edits
-    /// made at the same path while the panel is still locked.
-    pub fn capture(root: &Path) -> Result<Self, String> {
-        Ok(Self {
-            root: root.to_path_buf(),
-            sha256: catalog_hash(root)?,
-        })
-    }
-}
-
 /// Frozen session inputs. Getters expose no mutable connection/resource fields.
 #[derive(Debug)]
 pub struct ServerProfile {
@@ -500,7 +482,7 @@ pub struct ServerProfile {
     nav: NavAvailability,
     content_dir: PathBuf,
     vault_path: PathBuf,
-    catalog: Option<CatalogIdentity>,
+    catalog_root: Option<PathBuf>,
 }
 
 impl ProfileSelection {
@@ -626,11 +608,6 @@ impl ProfileSelection {
             expected_crc: Some(crcs),
             content_id: cache_id,
         })?);
-        let catalog = self
-            .catalog_root
-            .as_ref()
-            .map(|root| CatalogIdentity::capture(root))
-            .transpose()?;
         Ok(Arc::new(ServerProfile {
             selection: self.selection,
             client: binding,
@@ -642,7 +619,7 @@ impl ProfileSelection {
             nav,
             content_dir: self.content_dir.clone(),
             vault_path: self.vault_path.clone(),
-            catalog,
+            catalog_root: self.catalog_root.clone(),
         }))
     }
 
@@ -722,8 +699,9 @@ impl ServerProfile {
     pub fn vault_path(&self) -> &Path {
         &self.vault_path
     }
-    pub fn catalog(&self) -> Option<&CatalogIdentity> {
-        self.catalog.as_ref()
+    /// Suggested source directory only; scripts are not revision-bound resources.
+    pub fn catalog_root(&self) -> Option<&Path> {
+        self.catalog_root.as_deref()
     }
     pub fn label(&self) -> String {
         format!(
@@ -763,15 +741,6 @@ impl ServerProfile {
         }
         Ok(())
     }
-
-    pub fn validate_catalog(&self) -> Result<(), String> {
-        if let Some(catalog) = &self.catalog {
-            if catalog_hash(&catalog.root)? != catalog.sha256 {
-                return Err("catalog changed after profile binding; restart required".into());
-            }
-        }
-        Ok(())
-    }
 }
 
 fn require_bot_operation(revision: ClientRevision) -> Result<(), String> {
@@ -790,43 +759,4 @@ pub fn nav_manifest_path(pack: &Path) -> PathBuf {
 fn hash_file(path: &Path) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("resource {}: {e}", path.display()))?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
-}
-
-fn catalog_hash(root: &Path) -> Result<String, String> {
-    let src = root.join("src/bot");
-    fn visit(path: &Path, paths: &mut Vec<PathBuf>) -> Result<(), String> {
-        for entry in
-            std::fs::read_dir(path).map_err(|e| format!("catalog {}: {e}", path.display()))?
-        {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let kind = entry.file_type().map_err(|e| e.to_string())?;
-            if kind.is_symlink() {
-                return Err(format!(
-                    "catalog identity cannot follow symlink {}",
-                    entry.path().display()
-                ));
-            }
-            if kind.is_dir() {
-                visit(&entry.path(), paths)?;
-            } else if kind.is_file() {
-                paths.push(entry.path());
-            }
-        }
-        Ok(())
-    }
-    let mut paths = Vec::new();
-    visit(&src, &mut paths)?;
-    paths.sort();
-    let mut digest = Sha256::new();
-    for path in paths {
-        digest.update(
-            path.strip_prefix(root)
-                .map_err(|e| e.to_string())?
-                .to_string_lossy()
-                .as_bytes(),
-        );
-        digest.update([0]);
-        digest.update(hash_file(&path)?.as_bytes());
-    }
-    Ok(format!("{:x}", digest.finalize()))
 }
