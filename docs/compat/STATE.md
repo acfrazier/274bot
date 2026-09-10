@@ -41,3 +41,17 @@ The raw merge required boxed appearance assignments in the 289 actor decoder.
 A combined production-NPC-hint / held-minimap GPU test now reproduces the
 expected overlay invalidation defect before the correction (exit 101). Keep
 that failure receipt; it is an offline GPU regression, not a live world run.
+
+The reconciled working candidate has passing fmt and strict all-target client
+Clippy checks. The full locked client workspace suite passed 990 tests with
+zero failures and two ignored GPU tests. Root independently ran both ignored
+GPU tests: two passed, zero failed (root-explicit-gpu-receipt.json and log in
+the client's docs/revision-289/evidence/bothost-integration/). Source is awaiting
+the implementation commit and required reviews; these results do not yet close
+step 2. Fresh Linux/Windows execution and host live proof remain outstanding.
+
+Read-only step-3 preparation is captured in
+docs/compat/briefs/05-session-profile-preparation.md. The shared constructor's
+HTTP default, ambient login RSA/transport settings, unpack root, and nav loading
+all need binding alongside revision. No session-profile implementation has been
+started while client acceptance is pending.
