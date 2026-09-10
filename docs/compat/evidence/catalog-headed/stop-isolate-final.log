@@ -1,0 +1,9 @@
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/script)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.35s
+     Running tests/load_isolate.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/debug/deps/load_isolate-bcff1c1e27bf7f7e)
+
+running 1 test
+test isolate_script_runner_stop_stops_the_isolate ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 153 filtered out; finished in 0.70s
+

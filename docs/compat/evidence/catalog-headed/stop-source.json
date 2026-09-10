@@ -1,0 +1,10 @@
+{
+  "host_base": "b4d44e4702c325c033dd0b442c69b5033f7448db",
+  "client": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "modified": {
+    "crates/script/src/load.rs": "a9616d8ca45a52c5c418c8215e36429529dc7daaad4d0d2053e5238970cfdf4d",
+    "crates/script/src/slot.rs": "6a1e509f627754652834dc48223731da342337f8da1b49ce0bcdcb38866563ea",
+    "crates/script/tests/load_isolate.rs": "8ed2bd7b3235ff295a41c545508edf81957e918c3527a51b5c0d2f951bdbf010",
+    "crates/host-play/src/lib.rs": "1ccaae3adcc538cd2bd0463206ae28137b1f6af38dc4cfcee6620368b6e61483"
+  }
+}

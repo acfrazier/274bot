@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-10 22:16 UTC. The full implementation plan remains authorized:
+Updated 2026-09-10 22:30 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -60,9 +60,10 @@ Catalog and frontend acceptance remain separate.
 - Matching/fill t_41b2f50e committed 06077fe9, 23a30524 and fa23cc60, but
   incorrectly completed without review. Root reclaimed premature dependent run
   1137 and restored a real corrective gate t_d68ee0fc. Actual reviewer run 1140,
-  session 20260910_180938_b537c4, uses Grok 4.5 / xai-oauth and reviews frozen
-  76d61beb/client 56d8027, including root's count-dialog correction.
-- t_90b60f12 waits for that corrective review: Rust nearest-bank routing,
+  session 20260910_180938_b537c4, approved frozen 76d61beb/client 56d8027
+  with Grok 4.5 / xai-oauth, including root's count-dialog correction. The
+  actual run completed at 22:17 UTC; source approval restores the gate.
+- t_90b60f12 resumed as actual Sol run 1141 after that corrective review: Rust nearest-bank routing,
   honest withdrawal results and bounded observed deposit helpers (brief 31).
   BankFletcher exposed duplicate-row amplification and a slot packet panic.
 - t_14db340e catalog harness completed with actual Grok 4.5 review 1133.
@@ -90,8 +91,11 @@ Strength announcement and repeated combat/loot/bury cycles. Thiever f2b04198
 showed 27 steals/810 coins without script errors, banking disabled and no food
 consumption. Alcher failed after a successful noted withdrawal because the
 host left the count prompt open; root correction 76d61beb passed 65 API tests
-and strict Clippy, with source review pending. Its ScriptRunner.stop then
-produced repeated interrupted-slow-tick logs; root is tracing that separately.
+and strict Clippy, and passed source review 1140. Its ScriptRunner.stop then
+produced repeated interrupted-slow-tick logs. Root now propagates terminal
+isolate state into slot Stop cleanup before host continuations; focused
+stopped-slot/restart and no-slow-tick regressions plus strict script/host-play
+Clippy passed on a separate source export. Integration review remains pending.
 BankFletcher made the initial products, then its slot panicked; the original
 process exit 0 is preserved with an explicit failed qualification. No complete
 catalog/options acceptance from these basic diagnostics.
