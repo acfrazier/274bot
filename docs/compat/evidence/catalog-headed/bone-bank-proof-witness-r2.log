@@ -1,0 +1,22 @@
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/bone-bank-proof/source-700cb59e-working/crates/api)
+   Compiling vault v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/bone-bank-proof/source-700cb59e-working/crates/vault)
+   Compiling nav v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/bone-bank-proof/source-700cb59e-working/crates/nav)
+   Compiling host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/bone-bank-proof/source-700cb59e-working/crates/host)
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/bone-bank-proof/source-700cb59e-working/crates/script)
+   Compiling scenario v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/bone-bank-proof/source-700cb59e-working/crates/scenario)
+   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/bone-bank-proof/source-700cb59e-working/crates/host-play)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.70s
+     Running tests/catalog_boundary_live.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/debug/deps/catalog_boundary_live-6b0e26ab7a496e62)
+
+running 8 tests
+test tests::start_baseline_rejects_a_seeded_outcome_without_case_preparation ... ok
+test tests::thiever_requires_post_start_xp_and_coin_progress ... ok
+test tests::bank_fletcher_requires_logs_consumed_product_created_and_xp ... ok
+test tests::alcher_requires_acquired_fuel_then_consumption_xp_and_coins ... ok
+test tests::chicken_killer_requires_combat_xp_and_a_post_start_loot_bury_cycle ... ok
+test tests::bone_burier_rejects_first_burial_and_requires_observed_bank_cycle ... ok
+test tests::source_identity_rejects_bytes_that_do_not_match_the_frozen_ledger ... ok
+test tests::checked_in_frozen_core_sources_match_both_catalog_ledgers ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.04s
+

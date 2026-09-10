@@ -17,6 +17,12 @@ pub enum Proof {
     /// obj named `name` — the consume-side arm (a BoneBurier run has
     /// buried the difference from the seeded count).
     ItemAtMost { name: &'static str, count: i32 },
+    /// A fresh, open bank contains at least `count` of the named item.
+    BankItem { name: &'static str, count: i32 },
+    /// A fresh, open bank contains at most `count` of the named item.
+    BankItemAtMost { name: &'static str, count: i32 },
+    /// The bank modal is closed after a preceding observed bank step.
+    BankClosed,
     /// `arrived(x, z, level)`: standing on the tile (or adjacent to it
     /// when the dest is solid).
     Arrived { x: i32, z: i32, level: i32 },
@@ -78,6 +84,9 @@ impl Proof {
         match self {
             Proof::Item { name, count } => format!("has_item({name})>={count}"),
             Proof::ItemAtMost { name, count } => format!("has_item({name})<={count}"),
+            Proof::BankItem { name, count } => format!("fresh_bank_item({name})>={count}"),
+            Proof::BankItemAtMost { name, count } => format!("fresh_bank_item({name})<={count}"),
+            Proof::BankClosed => "bank_closed".to_string(),
             Proof::Arrived { x, z, level } => format!("arrived({x},{z},{level})"),
             Proof::ArrivedNear {
                 x,
@@ -146,6 +155,35 @@ impl Proof {
                     .map(|(_, n)| *n)
                     .sum();
                 got <= *count
+            }
+            Proof::BankItem { name, count } | Proof::BankItemAtMost { name, count } => {
+                if !snap.ingame()
+                    || snap.scene_state() != 2
+                    || snap.bank_component_id() < 0
+                    || !snap.bank_loaded()
+                {
+                    return false;
+                }
+                let Some(names) = names else {
+                    return false;
+                };
+                let got: i32 = snap
+                    .bank()
+                    .iter()
+                    .filter(|row| names.name(row.def.id) == Some(*name))
+                    .map(|row| row.count)
+                    .sum();
+                if matches!(self, Proof::BankItem { .. }) {
+                    got >= *count
+                } else {
+                    got <= *count
+                }
+            }
+            Proof::BankClosed => {
+                snap.ingame()
+                    && snap.scene_state() == 2
+                    && snap.bank_component_id() < 0
+                    && !snap.bank_loaded()
             }
             Proof::Arrived { x, z, level } => snap.tile().is_some_and(|(tx, tz, tl)| {
                 arrived(
@@ -353,6 +391,18 @@ mod tests {
             name: "Bones".into(),
             ..Default::default()
         }])
+    }
+
+    #[test]
+    fn closed_empty_bank_cannot_prove_stock_was_withdrawn() {
+        let s = snap(&mut seeded());
+        assert!(s.bank().is_empty());
+        assert!(Proof::BankClosed.check(&s, Some(&names())));
+        assert!(!Proof::BankItemAtMost {
+            name: "Bones",
+            count: 0
+        }
+        .check(&s, Some(&names())));
     }
 
     #[test]

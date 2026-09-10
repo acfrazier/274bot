@@ -56,7 +56,7 @@ Both catalogs use `src/bot/scripts/index.ts`, SHA-256 `b614aedb3d5adfdfbac3760f0
 
 The harness builds Play with zero accounts, installs the start handle, then spawns one minted local account. It fires the staged production source exactly once when the scenario reaches `StartScript`. That boundary captures a fresh published snapshot and requires attached/in-game scene 2, the minted local player, and case preparation:
 
-- BoneBurier: Lumbridge and five Bones; then Bones decrease, Prayer XP increases, and post-start bury chat appears.
+- BoneBurier: five carried Bones and 28 banked before Start; first-batch burial/depletion, fresh bank open and stock transfer, bank close and another inventory/Prayer burial delta.
 - ChickenKiller: Lumbridge chicken pen; then Strength XP increases, Bones are acquired and later consumed, Prayer XP increases, and post-start bury chat appears.
 - Thiever: Ardougne guard stand, ten Lobsters, Thieving/Hitpoints 50; then Thieving XP and Coins increase.
 - Alcher: Varrock West bank and Magic 55; then Rune chainbody and Nature rune stocks are acquired and consumed, Magic XP increases, and Coins increase.
@@ -66,29 +66,77 @@ Every comparison uses retained snapshots observed after Start. Seeded state cann
 
 ## Execution matrix
 
-`NOT RUN` is deliberate: this task was scoped not to launch a live client. Root should run each cell against its intended local server/nav pack. Revision 289 currently fails closed at the unavailable bot-operation gate and is not reported supported until that gate is legitimately available and these cells pass.
+`NOT RUN` is deliberate: this task was scoped not to launch a live client. Root should run each cell against its intended local server/nav pack. Revision 289 operations were enabled at 87084cbc after the scoped host/world proofs. Each catalog cell still requires its own observed functional result.
 
 | Catalog | Revision | Scenario | Required outcome | Status |
 |---|---:|---|---|---|
-| `100adccc037d9f6898080e1cad58fcfc43364775` | 274 | bone_burier | bones + Prayer delta | NOT RUN |
+| `100adccc037d9f6898080e1cad58fcfc43364775` | 274 | bone_burier | deplete + bank restock + second burial | NOT RUN |
 | same | 274 | chicken_killer | combat + loot/bury delta | NOT RUN |
 | same | 274 | thiever | theft XP + inventory delta | NOT RUN |
 | same | 274 | alcher | Magic + fodder/rune + Coins delta | NOT RUN |
 | same | 274 | bank_fletcher | Fletching + logs/product delta | NOT RUN |
-| same | 289 | bone_burier | bones + Prayer delta | NOT RUN; unavailable operation must fail |
-| same | 289 | chicken_killer | combat + loot/bury delta | NOT RUN; unavailable operation must fail |
-| same | 289 | thiever | theft XP + inventory delta | NOT RUN; unavailable operation must fail |
-| same | 289 | alcher | Magic + fodder/rune + Coins delta | NOT RUN; unavailable operation must fail |
-| same | 289 | bank_fletcher | Fletching + logs/product delta | NOT RUN; unavailable operation must fail |
-| `8e7d965be2071d6ec65c3265e12af797082d720a` | 274 | bone_burier | bones + Prayer delta | NOT RUN |
+| same | 289 | bone_burier | deplete + bank restock + second burial | NOT RUN |
+| same | 289 | chicken_killer | combat + loot/bury delta | NOT RUN |
+| same | 289 | thiever | theft XP + inventory delta | NOT RUN |
+| same | 289 | alcher | Magic + fodder/rune + Coins delta | NOT RUN |
+| same | 289 | bank_fletcher | Fletching + logs/product delta | NOT RUN |
+| `8e7d965be2071d6ec65c3265e12af797082d720a` | 274 | bone_burier | deplete + bank restock + second burial | NOT RUN |
 | same | 274 | chicken_killer | combat + loot/bury delta | NOT RUN |
 | same | 274 | thiever | theft XP + inventory delta | NOT RUN |
 | same | 274 | alcher | Magic + fodder/rune + Coins delta | NOT RUN |
 | same | 274 | bank_fletcher | Fletching + logs/product delta | NOT RUN |
-| same | 289 | bone_burier | bones + Prayer delta | NOT RUN; unavailable operation must fail |
-| same | 289 | chicken_killer | combat + loot/bury delta | NOT RUN; unavailable operation must fail |
-| same | 289 | thiever | theft XP + inventory delta | NOT RUN; unavailable operation must fail |
-| same | 289 | alcher | Magic + fodder/rune + Coins delta | NOT RUN; unavailable operation must fail |
-| same | 289 | bank_fletcher | Fletching + logs/product delta | NOT RUN; unavailable operation must fail |
+| same | 289 | bone_burier | deplete + bank restock + second burial | NOT RUN |
+| same | 289 | chicken_killer | combat + loot/bury delta | NOT RUN |
+| same | 289 | thiever | theft XP + inventory delta | NOT RUN |
+| same | 289 | alcher | Magic + fodder/rune + Coins delta | NOT RUN |
+| same | 289 | bank_fletcher | Fletching + logs/product delta | NOT RUN |
 
 Stdout emits structured `identity`, `baseline-after-preparation`, `start`, and `pass` JSON records followed by one `PASS` line. Preserve full per-cell output under `docs/compat/evidence/catalog-harness/live/`. The implementation checks in `docs/compat/evidence/catalog-harness/verification.json` are not live compatibility evidence.
+
+
+## Headed BoneBurier finding and corrected proof (21:43 UTC)
+
+The operator requested headed runs. Root launched the actual panel through its
+small catalog_watch entry, which uses the existing IsolatedEnv store scope
+and production run_panel. Frozen host e7915812/client 56d8027, catalog 100adccc,
+Mac local 289; exact binary/source hashes and commands are under
+`evidence/catalog-headed/`.
+
+The process ran from 21:24:16 to 21:27:55 UTC and exited 0. Its original
+scenario printed PASS after one burial. The actual window subsequently showed
+five bones buried, Prayer XP +22, inventory zero, Trips 0 and repeated
+`could not open a bank` at (3220,3220,0). Root captured and read
+`r289-bone-burier-100adccc-e7915812.png`. This is a failed complete BoneBurier
+loop, preserved with its original log/exit result. It qualifies no ledger row.
+
+Frozen Banking.ts includes a nearest-bank travel fallback. The host shim only
+tries a scene booth, and Bank.withdraw queues without returning the boolean
+its caller checks. Brief 31 addresses those planned capabilities in Rust.
+The user asked root to explain the source evidence before changing scope;
+nearest-bank behavior remains in the plan.
+
+Root strengthened the shared scenario: seed five carried and 28 banked Bones
+before the relog/Start, observe first-batch XP and depletion, fresh open bank
+stock, 28 withdrawn with bank stock zero, bank close, and additional burial XP.
+The independent catalog witness also requires the ordered fresh bank transfer
+and post-withdrawal inventory/Prayer change. Existing 180-second deadline and
+watch bounds remain. Scenario tests: 79 pass. Independent catalog tests: eight
+pass, including rejection of first-burial-only, depleted-only, stale-bank,
+missing-transfer, no-consumption and no-new-XP observations. Exact source
+manifest/checks and the corrected field-access compile failure are retained.
+The corrected live loop has not run yet.
+
+
+The first headed ChickenKiller diagnostic used the same e7915812 binary from
+21:42:09 to 21:45:48 UTC. The first capture shows a style announcement error;
+the second shows three kills, three burials and 15 feathers. Root read both
+captures. The core loop continued, but the original XP-only PASS is not an
+error-free result. `Game.combatStyleResolution` returned mode/label while
+`describeCombatStyle` required requested. Root adds the requested/effective
+fields for the existing exact-match path and validates the two actual loaded
+API calls together. This mapping defect predates the optimization merge:
+the exact mismatched source exists at 217f150f's parent; source receipt is
+`combat-style-prior-source.json`. It was introduced in 0ca3742f on September 3.
+This correction does not claim completion of all weapon/style fallback options.
+The source-contract check passes after correcting its initial empty-snapshot
+fixture. A fresh headed run is next.

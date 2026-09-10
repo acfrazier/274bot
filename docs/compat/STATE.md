@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-10 21:12 UTC. The full implementation plan remains authorized:
+Updated 2026-09-10 21:49 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -51,38 +51,43 @@ cleared. Both final door and lamp Guardian cells passed at frozen 43a57c36/clien
 recorded in 03-world-capabilities.md. Both fixed-transfer bank-return cells
 also passed at frozen 469a50ba/client 56d8027, using the independently reviewed
 freshness path while named access/Withdraw-X corrections continue. All eight
-scoped world cells now pass. Root has prepared ordinary 289 operation-gate
-removal in profile.rs and the existing spawn test; focused validation and
-combined integration review precede real catalog runs.
+scoped world cells now pass. Ordinary 289 operations are enabled at 87084cbc after those selected host/world
+proofs; ten profile tests and focused strict Clippy passed on an exact export.
+Catalog and frontend acceptance remain separate.
 
 ## Active and queued implementation
 
-- `t_e52e0a03`, Sol: first banking family (brief 18). Fresh full-container and
-  modal observations, Bank readiness, named booth options, host-owned bounded
-  Withdraw-X, posted inventory settlement. Preserve 3000 ms dialog / 4000 ms
-  settlement deadlines, Pause freeze, Stop/session abort. Candidate 8a60eef7/client 56d8027 needs correction after Grok 4.5 run 1131
-  and root findings (named open, rejected/noted/zero Withdraw-X). Actual Sol
-  corrective run 1132 is active; 04-capabilities-banking.md records evidence.
-  Worker owns API, script and host-play source; root audited the exact gitlink.
-  Require actual same-card Grok 4.5 approval and composed script-to-host-result
-  tests before accepting. No bank live proof yet.
-- `t_41b2f50e`, Sol, queued after banking: common-loot matching and withdrawLoad
-  (brief 22), Rust matching and fresh observed bank settlement, thin mappings.
-- `t_14db340e`, Sol: controlled real-library catalog harness (brief 23), new
-  test/report only. Actual run 1129/session `20260910_163525_589385` verified.
-  Root owns live runs after review and required capability/world qualification.
-- `t_9f1baf44`, Grok 4.6: remaining combat/casting/shop/trade/production design
-  completed in 04-combat-production-design.md (brief 24), verified run 1125.
-- `t_887b29b5`, Sol run 1130/session `20260910_164126_9a71eb`: panel/TUI session snapshots and
-  external armed-route cleanup (brief 25). Root found direct snapshot rebuild
-  bypasses and retained external WalkArms/tick latches. Fix logout/reconnect and
-  same-name slot recreation while retaining Guardian/ordinary-scene behavior.
-  Banking owns host-play/src/lib.rs; serialize any needed callback seam first.
+- t_41b2f50e, actual Sol 1136/session 20260910_171631_57d159: common-loot
+  matching, withdrawLoad, and the known bank Pause/hold/session outcome fix.
+  First-bank corrections 75514ee3 passed actual Grok 4.5 run 1134, but root
+  found an outer JS timer conflicting with the frozen Rust deadline.
+- t_90b60f12 follows that review: planned Rust nearest-bank routing and honest
+  Bank.withdraw results, exposed by the headed BoneBurier run. Brief 31.
+- t_14db340e catalog harness completed with actual Grok 4.5 review 1133.
+  Root is strengthening the BoneBurier proof after the headed observation;
+  its original first-burial PASS is insufficient. 05a-catalog-live-harness.md.
+- t_887b29b5 frontend session source 5eeff8f0/c9521d2f completed actual Grok
+  4.5 review 1135; six targeted lifecycle tests and host tests pass.
+- t_dde220ef Grok 4.6 integration review waits for matching/fill and bank
+  routing; it also covers root profile/harness and frontend/world changes.
+- Loadout t_3737503d waits for integration review, then targeted spell facts
+  t_63138b8b, PeriodicBank t_51452e47 and DeathRecovery t_0c5ce97f follow.
+  Design reports are guidance, not implemented/live acceptance.
 
-Provisioning/recovery design is complete in
-`04-provisioning-recovery-design.md`, actual Grok 4.6 run 1118. Loadout
-quantities/slots, common loot, PeriodicBank and DeathRecovery are scoped by real
-in-scope callers. Design is guidance, not implemented or live acceptance.
+## Current headed work
+
+The operator requested native windowed catalog runs. First BoneBurier on
+local Mac 289 buried its five seed bones and then failed to open a bank. The
+run, screenshot and misleading original first-burial PASS are preserved;
+no full-loop acceptance. Both the missing travel fallback and withdrawal
+result are confirmed source gaps. Root will keep planned API semantics and
+explain evidence before treating conditional concerns as scope changes.
+The revised fixture adds bank stock only before Start and requires actual
+restocking plus another burial. ChickenKiller completed three visible kill/loot/bury cycles on frozen
+e7915812/client 56d8027, with a caught style-description shape error. Root
+verified that bug predates the optimization merge, corrected its return shape,
+and passed a focused actual-module contract check. Fresh headed rerun remains;
+no acceptance is inferred from the old XP-only predicate. Other cells remain.
 
 ## Platforms and fixtures
 
@@ -102,7 +107,7 @@ not current authority. Verify process identity before stopping an owned process.
 
 ## Remaining finish line
 
-Complete world/Guardian/bank-return qualification, required capability families,
+Complete the required capability families,
 every supported card and option branch, both frontends and lifecycle controls,
 N=2 isolation, qualified N=32 Thiever on both revisions, actual native CPU/GPU
 preservation, and final whole-branch Grok 4.6 review. Then integrate the reviewed

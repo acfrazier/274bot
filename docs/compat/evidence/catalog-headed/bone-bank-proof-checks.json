@@ -1,0 +1,19 @@
+{
+  "checks": [
+    {
+      "name": "scenario",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "scenario",
+        "--lib"
+      ],
+      "source": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/bone-bank-proof/source-700cb59e-working",
+      "started_at": "2026-09-10T21:40:21.459023+00:00",
+      "elapsed_seconds": 7.772,
+      "exit_code": 101
+    }
+  ],
+  "source_files_verified_after_checks": 581
+}

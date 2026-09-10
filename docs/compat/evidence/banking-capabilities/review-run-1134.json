@@ -1,0 +1,67 @@
+{
+  "id": 1134,
+  "task_id": "t_e52e0a03",
+  "profile": "reviewer",
+  "step_key": null,
+  "status": "done",
+  "claim_lock": null,
+  "claim_expires": null,
+  "worker_pid": null,
+  "max_runtime_seconds": null,
+  "last_heartbeat_at": 1789074932,
+  "started_at": 1789074871,
+  "ended_at": 1789074978,
+  "outcome": "completed",
+  "summary": "Reviewed and approved commit 75514ee3 (client gitlink still 56d8027). Round-2 execution re-check confirms named stand/name/op open, unsupported-option refusals, OpenStand fail-closed name/op, rejected Withdraw-X posting false, count<=0 no-op, landsAsId noted settlement, Pause freeze / Stop-reconnect abort, and 3000/4000 ms monotonic bounds. Focused isolate/API/host-play/gold/host_js tests re-run green. Live acceptance, evidence docs, and external gitlink remain root-owned; child common-loot work can proceed.",
+  "metadata": {
+    "review_outcome": "approved",
+    "review_round": 2,
+    "lens": "execution",
+    "commit": "75514ee38874f4b394ce1748d354ae936f6b86b9",
+    "client_gitlink": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "prior_round1_gaps_resolved": [
+      "Banking.open forwards stand/boothName/boothOp and names unsupported options",
+      "Bank.openBooth walks near stand and queues exact named loc/op",
+      "OpenStand booth honors name and operation slot without wrong-name/op fallback",
+      "Withdraw-X posts explicit rejection results with bounded outer wait",
+      "count<=0 success no-op restored",
+      "landsAsId noted output settlement through composed host path"
+    ],
+    "reviewer_checks": [
+      "cargo test -p script --test load_isolate isolate_bank (15 ok)",
+      "cargo test -p host-play --lib withdraw_x (3 ok: compose ordinary+noted, expired dialog, same-generation rejection)",
+      "cargo test -p host-play --lib dispatch_open_stand_booth_honors_name_and_operation_slot",
+      "cargo test -p script --lib pending_withdraw_x_pause_freezes_while_stop_and_reconnect_abort",
+      "cargo test -p script --lib bank_loaded_uses_packet_freshness_and_allows_empty_full",
+      "cargo test -p api --test interact open_nearest_booth (2 ok, includes open_named_booth_at exact/refuse paths)",
+      "cargo test -p api --test snapshot bank_loaded_requires_current_component_full_after_last_close_and_transmission",
+      "cargo test -p script --test gold_stubs withdraw_x_waits_for_inventory_publication",
+      "cargo test -p script --test host_js (dts fresh + required interfaces)"
+    ],
+    "source_spot_checks": [
+      "crates/script/src/shim/banking.js open options",
+      "crates/script/src/shim/bank.js openBooth/withdrawXRow",
+      "crates/host-play/src/lib.rs OpenBooth/OpenStand + WithdrawX reject/arm/settlement",
+      "crates/api/src/interact.rs open_named_booth_at",
+      "crates/script/src/slot.rs 3000/4000 freeze/resume/abort"
+    ],
+    "limits": [
+      "No live run; root owns live acceptance",
+      "world_boundary_live requires --features memory-profile",
+      "STAFF_RUNES remains existing casting catalog gap",
+      "External client repo/gitlink integration remains root-owned",
+      "Evidence docs under docs/compat/evidence/banking-capabilities/ are root-owned"
+    ],
+    "child_unlocked": "t_41b2f50e",
+    "worker_session_id": "20260910_171431_af8915"
+  },
+  "error": null,
+  "session": {
+    "id": "20260910_171431_af8915",
+    "model": "grok-4.5",
+    "profile_name": "reviewer",
+    "started_at": 1789074872.2369752,
+    "ended_at": 1789074978.6213791,
+    "billing_provider": "xai-oauth"
+  }
+}
