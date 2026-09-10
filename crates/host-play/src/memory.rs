@@ -448,8 +448,10 @@ impl Run {
         let mut vault = Vault::create(&path, &pass).map_err(|e| e.to_string())?;
 
         for (i, name) in names.iter().enumerate() {
-            let mut settings = ProfileSettings::default();
-            settings.auto_login = true;
+            let settings = ProfileSettings {
+                auto_login: true,
+                ..ProfileSettings::default()
+            };
             vault
                 .upsert(Profile {
                     username: name.clone(),

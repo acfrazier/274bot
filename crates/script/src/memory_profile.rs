@@ -58,6 +58,35 @@ impl Drop for SnapshotLease {
         self.counters.capacity.fetch_sub(self.capacity, Relaxed);
     }
 }
+pub struct HeapLifetime(pub Arc<Counters>);
+impl Drop for HeapLifetime {
+    fn drop(&mut self) {
+        self.0.heap_used.store(0, Relaxed);
+        self.0.heap_total.store(0, Relaxed);
+        self.0.heap_live.store(0, Relaxed);
+    }
+}
+
+static REGISTRY: std::sync::OnceLock<std::sync::Mutex<Vec<std::sync::Weak<Counters>>>> =
+    std::sync::OnceLock::new();
+pub fn registered() -> Arc<Counters> {
+    let counters = Arc::new(Counters::default());
+    let mut rows = REGISTRY.get_or_init(Default::default).lock().unwrap();
+    rows.retain(|r| r.strong_count() > 0);
+    rows.push(Arc::downgrade(&counters));
+    counters
+}
+/// Includes detached isolate threads until their real resources are released.
+/// Weak registration never keeps an isolate or its counters alive.
+pub fn snapshots() -> Vec<serde_json::Value> {
+    let mut rows = REGISTRY.get_or_init(Default::default).lock().unwrap();
+    rows.retain(|r| r.strong_count() > 0);
+    rows.iter()
+        .filter_map(|r| r.upgrade())
+        .map(|r| r.snapshot())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,33 +133,4 @@ mod tests {
         assert_eq!(c.bytes.load(Relaxed), 0);
         assert_eq!(c.capacity.load(Relaxed), 0);
     }
-}
-
-pub struct HeapLifetime(pub Arc<Counters>);
-impl Drop for HeapLifetime {
-    fn drop(&mut self) {
-        self.0.heap_used.store(0, Relaxed);
-        self.0.heap_total.store(0, Relaxed);
-        self.0.heap_live.store(0, Relaxed);
-    }
-}
-
-static REGISTRY: std::sync::OnceLock<std::sync::Mutex<Vec<std::sync::Weak<Counters>>>> =
-    std::sync::OnceLock::new();
-pub fn registered() -> Arc<Counters> {
-    let counters = Arc::new(Counters::default());
-    let mut rows = REGISTRY.get_or_init(Default::default).lock().unwrap();
-    rows.retain(|r| r.strong_count() > 0);
-    rows.push(Arc::downgrade(&counters));
-    counters
-}
-/// Includes detached isolate threads until their real resources are released.
-/// Weak registration never keeps an isolate or its counters alive.
-pub fn snapshots() -> Vec<serde_json::Value> {
-    let mut rows = REGISTRY.get_or_init(Default::default).lock().unwrap();
-    rows.retain(|r| r.strong_count() > 0);
-    rows.iter()
-        .filter_map(|r| r.upgrade())
-        .map(|r| r.snapshot())
-        .collect()
 }
