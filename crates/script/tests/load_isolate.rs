@@ -992,6 +992,15 @@ export default class T extends LoopingBot {
         );
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
+    iso.drain_logs();
+    assert!(iso.stopped());
+    iso.on_game_tick(2);
+    std::thread::sleep(std::time::Duration::from_millis(650));
+    iso.on_game_tick(3);
+    assert!(
+        iso.drain_logs().is_empty(),
+        "a stopped isolate has no slow ticks"
+    );
     iso.join();
 }
 

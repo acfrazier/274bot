@@ -974,6 +974,8 @@ mod isolate {
             tick: u64,
             generation: u64,
         },
+        /// ScriptRunner.stop ended this isolate lifetime.
+        Stopped,
     }
 
     /// One JS bot running in its own rustyscript/V8 isolate. Spawned only
@@ -988,6 +990,7 @@ mod isolate {
         #[cfg(feature = "memory-profile")]
         dispatched: std::sync::atomic::AtomicU64,
         work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+        stopped: std::sync::atomic::AtomicBool,
         tx: Sender<IsolateCmd>,
         rx: Mutex<Receiver<ThreadMsg>>,
         logs: Mutex<Vec<String>>,
@@ -1059,6 +1062,7 @@ mod isolate {
                 #[cfg(feature = "memory-profile")]
                 dispatched: std::sync::atomic::AtomicU64::new(0),
                 work_generation,
+                stopped: std::sync::atomic::AtomicBool::new(false),
                 tx,
                 rx: Mutex::new(msg_rx),
                 logs: Mutex::new(Vec::new()),
@@ -1113,10 +1117,13 @@ mod isolate {
         /// [`SLOW_TICK`] is interrupted and logged, and its stale ticks are
         /// skipped.
         pub fn on_game_tick(&self, snap_tick: u64) {
+            self.pump_logs();
+            if self.stopped.load(std::sync::atomic::Ordering::Acquire) {
+                return;
+            }
             #[cfg(feature = "memory-profile")]
             self.dispatched
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            self.pump_logs();
             let generation = self
                 .work_generation
                 .load(std::sync::atomic::Ordering::Acquire);
@@ -1219,6 +1226,11 @@ mod isolate {
             std::mem::take(&mut *self.logs.lock().unwrap())
         }
 
+        /// Cached terminal state, refreshed by the regular log drain.
+        pub fn stopped(&self) -> bool {
+            self.stopped.load(std::sync::atomic::Ordering::Acquire)
+        }
+
         /// Drain the interact requests the tick's shim queued
         /// (`__rs2b0t_host.interact`), forwarded by the tick thread in
         /// tick order. The host dispatches them through the slot Driver;
@@ -1288,6 +1300,12 @@ mod isolate {
             for msg in msgs {
                 match msg {
                     ThreadMsg::Log(line) => self.logs.lock().unwrap().push(line),
+                    ThreadMsg::Stopped => {
+                        self.stopped
+                            .store(true, std::sync::atomic::Ordering::Release);
+                        *self.in_flight.lock().unwrap() = None;
+                        self.interacts.lock().unwrap().clear();
+                    }
                     ThreadMsg::Interact { bytes, generation } => {
                         let mut interacts = self.interacts.lock().unwrap();
                         if generation
@@ -2797,8 +2815,8 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     // handle. The isolate treats it like `IsolateCmd::Stop`
                     // — fold the completed tick, log the stop, and break the
                     // loop so the Runtime is dropped and the host's join
-                    // returns. A later task may also surface the stop to the
-                    // slot, but Stop is never parked on Execution wiring.
+                    // returns. The terminal message lets the slot perform
+                    // the same cleanup as an operator Stop.
                     let stopped = runtime
                         .eval::<bool>(
                             "!!(globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.stopRequested)",
@@ -2812,6 +2830,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         let _ = out.send(ThreadMsg::Log(format!(
                             "script requested stop on tick {n}; isolate stopping"
                         )));
+                        let _ = out.send(ThreadMsg::Stopped);
                         break;
                     }
                     if elapsed > SLOW_TICK {

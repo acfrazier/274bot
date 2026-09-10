@@ -628,9 +628,12 @@ impl SlotScript {
     /// [`Self::last_error`]. Copies are kept for [`Self::take_pending_logs`].
     #[cfg(feature = "load")]
     pub fn drain_logs(&mut self) -> Vec<String> {
-        let logs = match &self.load {
-            Some(isolate) => isolate.drain_logs(),
-            None => Vec::new(),
+        let (logs, stopped) = match &self.load {
+            Some(isolate) => {
+                let logs = isolate.drain_logs();
+                (logs, isolate.stopped())
+            }
+            None => (Vec::new(), false),
         };
         if let Some(err) = logs
             .iter()
@@ -640,6 +643,9 @@ impl SlotScript {
             self.last_error = Some(err.clone());
         }
         self.pending_logs.extend(logs.iter().cloned());
+        if stopped {
+            self.stop();
+        }
         logs
     }
 
@@ -707,6 +713,66 @@ mod tests {
             "noop"
         }
         fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {}
+    }
+
+    #[cfg(feature = "load")]
+    #[test]
+    fn script_requested_stop_cleans_slot_work_and_allows_fresh_restart() {
+        let source = r#"
+import { ScriptRunner } from '../../runtime/ScriptRunner.js';
+export default class T extends LoopingBot {
+    loop() {
+        (globalThis.__rs2b0t_host.interact ||= []).push({op: 'set-camera-yaw', yaw: 123});
+        ScriptRunner.stop('finished');
+    }
+}
+"#;
+        let mut slot = SlotScript::new();
+        slot.start_load_with_loadouts(source.into(), LoadShape::CompatClass, vec![], &[])
+            .unwrap();
+        let input = crate::isolate_fb::tests::empty_input(1);
+        slot.encode_snapshot_delta(&input, false);
+        slot.store_last_world_id(Some(123));
+        slot.set_pending_withdraw_x(Some(PendingWithdrawX::waiting_dialog(2, 7, 0, 7, 3)));
+        let epoch = slot.work_epoch();
+        slot.load.as_ref().unwrap().on_game_tick(1);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut logs = Vec::new();
+        while slot.state() == RunState::Running && Instant::now() < deadline {
+            logs.extend(slot.drain_logs());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(slot.state(), RunState::Idle, "{logs:?}");
+        assert!(logs
+            .iter()
+            .any(|line| line.contains("script requested stop")));
+        assert!(!slot.has_instance());
+        assert!(slot.pending_withdraw_x().is_none());
+        assert_ne!(slot.work_epoch(), epoch);
+        assert!(!slot.has_snapshot_fingerprint());
+        assert_eq!(slot.last_world_id(), None);
+        assert!(slot.drain_interacts().is_empty());
+        assert!(slot.last_error().unwrap().contains("script requested stop"));
+        assert_eq!(slot.take_pending_logs(), logs);
+        slot.on_is_up(true);
+        assert_eq!(
+            slot.state(),
+            RunState::Idle,
+            "login cannot restart a stopped card"
+        );
+        slot.start_load_with_loadouts(
+            "export default class T extends LoopingBot { loop() { this.n = (this.n || 0) + 1; } }"
+                .into(),
+            LoadShape::CompatClass,
+            vec![],
+            &[],
+        )
+        .unwrap();
+        slot.load.as_ref().unwrap().on_game_tick(2);
+        assert_eq!(slot.probe("__rs_bot.n").unwrap(), 1);
+        assert_eq!(slot.state(), RunState::Running);
+        assert!(slot.last_error().is_none());
+        slot.stop();
     }
 
     #[cfg(feature = "load")]

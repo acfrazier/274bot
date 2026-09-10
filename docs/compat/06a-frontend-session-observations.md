@@ -32,3 +32,22 @@ Current-base checks:
 ## Shared-checkout limit
 
 The first `cargo test -p panel -p tui` attempt on `659347e1` stopped while concurrent banking edits left `InteractReq::WithdrawX` and `InteractReq::OpenBooth` patterns temporarily incomplete. After that work advanced, a broad `cargo test -p panel frontend_ -- --nocapture` ran this task's two matching tests successfully but also selected the unrelated `app::tests::frontend_parser_prepares_real_clients_for_both_fixture_manifests`, which failed with `OnDemand identity mismatch for occupied endpoint`. A workspace-wide format check likewise reported only concurrent formatting diffs in banking-owned `crates/host-play/src/lib.rs` and `crates/script/src/isolate_fb.rs`; the scoped package format check passed. This task did not edit those files or work around the ownership boundary. No LIVE or external fixture actions were run.
+
+## Script-requested Stop correction (2026-09-10 22:30 UTC)
+
+Headed Alcher requested Stop after its failed withdrawal. The isolate exited,
+but the slot stayed Running and each later host tick armed work on the closed
+channel, producing repeated interrupted-slow-tick logs. Root added an ordered
+terminal message, stopped-isolate dispatch guard, and normal slot Stop cleanup
+while retaining the stop/error logs. Host observation folds terminal state before
+advancing a pending bank continuation. Stop cancels queued same-tick requests
+consistent with the operator Stop contract. A fresh Start receives a fresh isolate.
+
+An exact b4d44e47/client 56d8027 export with the four named modified files in
+`evidence/catalog-headed/stop-source.json` passed the composed slot cleanup /
+restart regression and isolate no-slow-tick regression. Focused strict script and
+host-play library Clippy passed. Raw `stop-*-export.log` files are authoritative;
+the initial test fixture failed because its synthetic interaction queue was not
+initialized, then was corrected. Earlier non-export logs are diagnostic only.
+The integrated Grok 4.6 review brief now explicitly includes this lifecycle fix.
+No corrected headed Alcher result is claimed by these source checks.

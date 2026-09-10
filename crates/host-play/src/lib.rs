@@ -763,6 +763,8 @@ fn script_observe(
     let mut slot_work_epoch = None;
     if let Some(slot) = script_slot(scripts, name) {
         let mut slot = slot.lock().unwrap();
+        // Reap a script-requested Stop before advancing host continuations.
+        emit_script_debug_logs(&mut slot, name);
         slot.on_is_up(up);
         slot_work_epoch = Some(slot.work_epoch());
         if let Some(pending) = slot.pending_withdraw_x() {

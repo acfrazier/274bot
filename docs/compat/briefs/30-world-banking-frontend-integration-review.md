@@ -55,6 +55,12 @@ Review the combined committed candidate after both parents, including:
   the original headed ChickenKiller recovered and completed three cycles, but
   the caught mismatch requires a clean rerun. Broader style fallback remains
   subsequent combat capability work.
+- Include root's script-requested Stop correction: terminal isolate message,
+  no further tick dispatch, slot Idle/cleanup and retained diagnostics. The
+  host folds terminal state before pending bank continuations. Check the
+  stopped-slot/restart and no-slow-tick regressions in catalog-headed/stop-*
+  evidence. This was exposed by Alcher's failure and was outside the earlier
+  banking source approval; review it explicitly with the integrated lifecycle.
 
 Check 02-host-boundary.md, 03-world-capabilities.md, 04-capabilities-banking.md,
 05a-catalog-live-harness.md and 06a-frontend-session-observations.md plus relevant
