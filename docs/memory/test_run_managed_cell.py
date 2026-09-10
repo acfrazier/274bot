@@ -375,6 +375,10 @@ class ManagedCellTests(unittest.TestCase):
         return spec
 
     def _direct_preflight_fixtures(self, spec, *, now=200.0):
+        not_before = now - 100.0
+        not_after = now - 90.0
+        issued = now - 80.0
+        expires = now + 100.0
         manifest = json.loads(self.fx.manifest.read_text())
         provenance = {
             'status': 'verified',
@@ -413,7 +417,8 @@ class ManagedCellTests(unittest.TestCase):
         common = {
             'mode': 'direct-owner-v1', 'n': 1, 'workload': 'active',
             'frontend': 'tui', 'admitted': True,
-            'observed_start_unix_s': 101.0, 'observed_end_unix_s': 102.0,
+            'observed_start_unix_s': not_before + 1.0,
+            'observed_end_unix_s': not_before + 2.0,
             'boot_id': 'boot', 'context': context,
         }
         evidence = {
@@ -456,9 +461,12 @@ class ManagedCellTests(unittest.TestCase):
         release = {
             'schema': 'direct-owner-root-release-v1',
             'mode': 'direct-owner-v1', 'n': 1, 'workload': 'active', 'frontend': 'tui',
-            'issued_unix_s': 120.0,
-            'observation_window': {'not_before_unix_s': 100.0, 'not_after_unix_s': 110.0},
-            'expires_unix_s': 300.0,
+            'issued_unix_s': issued,
+            'observation_window': {
+                'not_before_unix_s': not_before,
+                'not_after_unix_s': not_after,
+            },
+            'expires_unix_s': expires,
             'boot_id': 'boot', 'context': context,
             'spec_binding': {
                 'result_path': contract['owned_output_paths'][0],
@@ -497,6 +505,86 @@ class ManagedCellTests(unittest.TestCase):
             'provenance': provenance, 'cache': cache, 'context': context,
             'release': release, 'release_path': release_path,
             'sample': sample, 'snapshot': snapshot, 'now': now,
+        }
+
+    def _direct_lifecycle_fixture(self, launcher, *, now):
+        result_path = self.fx.root / 'direct.json'
+        spec_path = result_path.with_suffix(result_path.suffix + '.spec.json')
+        cell_id = 'direct'
+        cell_dir = result_path.with_suffix(result_path.suffix + '.cells') / cell_id
+        run_dir = cell_dir / 'frontend-run'
+        handoff = cell_dir / 'frontend-handoff.json'
+        cache, unpack = _make_cache_tree(self.fx.root / 'private-lifecycle-cache')
+        spec = self.fx.base_spec(cell_id=cell_id)
+        spec.update(
+            n=1, warmup_s=30, observe_s=120, teardown_grace_s=60,
+            sampler_interval_s=.5, max_wall_s=365, process_backend='system',
+            requested_backend='none', heaptrack=None,
+            cache_dir=str(cache), unpack_root=str(unpack),
+        )
+        spec['diagnostic_argv'] = [
+            '--binary', str(self.fx.binary), '--build-manifest', str(self.fx.manifest),
+            '--build-role', 'candidate', '--no-diagnostics', '--sustain', '--warmup', '30',
+            '--observe', '120', '--direct-owner-capture', '--run-dir', str(run_dir),
+            '--frontend-handoff', str(handoff), 'tui', '1', 'active',
+        ]
+        spec['launcher_argv'] = [str(launcher)] + spec['diagnostic_argv']
+        spec['capture_contract'] = {
+            'mode': 'direct-owner-v1', 'cell_dir': str(cell_dir.resolve()),
+            'run_dir': str(run_dir.resolve()),
+            'frontend_handoff_path': str(handoff.resolve()),
+            'owned_output_paths': [
+                str(result_path.resolve()), str(spec_path.resolve()),
+                str(cell_dir.resolve()), str(run_dir.resolve()),
+            ],
+            'warmup_s': 30, 'observe_s': 120, 'teardown_grace_s': 60,
+            'guard_interval_s': 0.5, 'handoff_deadline_s': 5,
+            'mem_available_floor_bytes': 268435456,
+            'frontend_rss_limit_bytes': 536870912,
+            'owned_output_limit_bytes': 67108864,
+            'frontend_wall_limit_s': 360, 'outer_wall_limit_s': 365,
+            'source_lineage': {'fixture': True},
+            'release_contract': str(self.fx.root / 'private-root-release.json'),
+            'admission_receipts': {
+                name: str(self.fx.root / ('private-' + name + '.json'))
+                for name in ('conflict', 'account', 'population', 'cache', 'server_health')
+            },
+        }
+        spec_path.write_text(json.dumps(spec))
+        fixtures = self._direct_preflight_fixtures(spec, now=now)
+        admission_bindings = {
+            'release_contract': {
+                'path': str(fixtures['release_path'].resolve()),
+                'sha256': _sha(fixtures['release_path']),
+            },
+            **{
+                'receipt_' + kind: {
+                    'path': str(pathlib.Path(path).resolve()),
+                    'sha256': _sha(pathlib.Path(path)),
+                }
+                for kind, path in spec['capture_contract']['admission_receipts'].items()
+            },
+        }
+        fake_pf = {
+            'binary': str(self.fx.binary.resolve()),
+            'manifest': str(self.fx.manifest.resolve()),
+            'provenance': fixtures['provenance'],
+            'server_pid': self.fx.game_server.pid,
+            'server_sample': sr.sample_process(self.fx.game_server.pid, timeout=2),
+            'ambient_identities': {'ambient_helper': {
+                'pid': self.fx.helper.pid,
+                'sample': sr.sample_process(self.fx.helper.pid, timeout=2),
+            }},
+            'direct_cache_snapshot': fixtures['cache'],
+            'direct_preflight': {
+                'admission_bindings': admission_bindings,
+                'release_expires_unix_s': fixtures['release']['expires_unix_s'],
+            },
+        }
+        return {
+            'spec': spec, 'spec_path': spec_path, 'result_path': result_path,
+            'cell_dir': cell_dir, 'run_dir': run_dir, 'handoff': handoff,
+            'fixtures': fixtures, 'fake_pf': fake_pf,
         }
 
     def test_direct_contract_and_argv_paths_are_exact_and_mode_only(self):
@@ -1969,6 +2057,53 @@ class ManagedCellTests(unittest.TestCase):
         self.assertTrue(result.get("orphan_risk"))
         self.assertTrue(_alive(helper_pid))
 
+    def test_direct_lifecycle_fixture_binds_live_identities_and_release(self):
+        now = 1_000.0
+        lifecycle = self._direct_lifecycle_fixture(self.fx.fixture_launcher, now=now)
+        spec = rmc.validate_spec(json.loads(lifecycle['spec_path'].read_text()))
+        fake_pf = lifecycle['fake_pf']
+        bindings = fake_pf['direct_preflight']['admission_bindings']
+
+        self.assertEqual(spec, lifecycle['spec'])
+        self.assertEqual(
+            fake_pf['server_sample']['start_identity'],
+            sr.sample_process(self.fx.game_server.pid, timeout=2)['start_identity'],
+        )
+        self.assertEqual(
+            fake_pf['ambient_identities']['ambient_helper']['sample']['start_identity'],
+            sr.sample_process(self.fx.helper.pid, timeout=2)['start_identity'],
+        )
+        self.assertEqual(
+            fake_pf['direct_cache_snapshot'],
+            cp.capture(spec['cache_dir'], spec['unpack_root']),
+        )
+        self.assertEqual(
+            set(bindings),
+            {'release_contract', 'receipt_conflict', 'receipt_account',
+             'receipt_population', 'receipt_cache', 'receipt_server_health'},
+        )
+        release = json.loads(pathlib.Path(spec['capture_contract']['release_contract']).read_text())
+        expiry = fake_pf['direct_preflight']['release_expires_unix_s']
+        self.assertEqual(release['expires_unix_s'], expiry)
+        self.assertGreater(expiry, now)
+        bp.recheck_files(bindings)
+        validated = rmc.validate_direct_admissions(
+            spec,
+            fake_pf['provenance'],
+            {'cgroup': {'boot_id': 'boot'}},
+            fake_pf['server_sample'],
+            fake_pf['direct_cache_snapshot'],
+            now=now,
+            server_probe={
+                'host': '127.0.0.1', 'port': 43594, 'succeeded': True,
+                'observed_start_unix_s': release['issued_unix_s'],
+                'observed_end_unix_s': now,
+            },
+            server_executable='python3',
+        )
+        self.assertEqual(validated['bindings'], bindings)
+        self.assertEqual(validated['release_expires_unix_s'], expiry)
+
     @unittest.skipUnless(sys.platform.startswith('linux'), 'direct lifecycle qualification is Linux-only')
     def test_linux_direct_lifecycle_keeps_collector_through_stop_c_and_exit(self):
         launcher = self.fx.root / 'direct_launcher.py'
@@ -2034,68 +2169,13 @@ class ManagedCellTests(unittest.TestCase):
             mark('launcher-exit')
         '''))
         launcher.chmod(0o755)
-        result_path = self.fx.root / 'direct.json'
-        spec_path = result_path.with_suffix(result_path.suffix + '.spec.json')
-        cell_id = 'direct'
-        cell_dir = result_path.with_suffix(result_path.suffix + '.cells') / cell_id
-        run_dir = cell_dir / 'frontend-run'
-        handoff = cell_dir / 'frontend-handoff.json'
-        cache, unpack = _make_cache_tree(self.fx.root / 'private-lifecycle-cache')
-        spec = self.fx.base_spec(cell_id=cell_id)
-        spec.update(n=1, warmup_s=30, observe_s=120, teardown_grace_s=60,
-                    sampler_interval_s=.5, max_wall_s=365, process_backend='system',
-                    requested_backend='none', heaptrack=None,
-                    cache_dir=str(cache), unpack_root=str(unpack))
-        spec['diagnostic_argv'] = [
-            '--binary', str(self.fx.binary), '--build-manifest', str(self.fx.manifest),
-            '--build-role', 'candidate', '--no-diagnostics', '--sustain', '--warmup', '30',
-            '--observe', '120', '--direct-owner-capture', '--run-dir', str(run_dir),
-            '--frontend-handoff', str(handoff), 'tui', '1', 'active']
-        spec['launcher_argv'] = [str(launcher)] + spec['diagnostic_argv']
-        spec['capture_contract'] = {
-            'mode': 'direct-owner-v1', 'cell_dir': str(cell_dir.resolve()),
-            'run_dir': str(run_dir.resolve()), 'frontend_handoff_path': str(handoff.resolve()),
-            'owned_output_paths': [str(result_path.resolve()), str(spec_path.resolve()),
-                                   str(cell_dir.resolve()), str(run_dir.resolve())],
-            'warmup_s': 30, 'observe_s': 120, 'teardown_grace_s': 60, 'guard_interval_s': 0.5,
-            'handoff_deadline_s': 5, 'mem_available_floor_bytes': 268435456,
-            'frontend_rss_limit_bytes': 536870912, 'owned_output_limit_bytes': 67108864,
-            'frontend_wall_limit_s': 360, 'outer_wall_limit_s': 365,
-            'source_lineage': {'fixture': True},
-            'release_contract': str(self.fx.root / 'private-root-release.json'),
-            'admission_receipts': {
-                name: str(self.fx.root / ('private-' + name + '.json'))
-                for name in ('conflict', 'account', 'population', 'cache', 'server_health')}}
-        spec_path.write_text(json.dumps(spec))
-        fixtures = self._direct_preflight_fixtures(spec)
-        fake_pf = {
-            'binary': str(self.fx.binary.resolve()),
-            'manifest': str(self.fx.manifest.resolve()),
-            'provenance': fixtures['provenance'],
-            'server_pid': self.fx.game_server.pid,
-            'server_sample': fixtures['sample'](self.fx.game_server.pid, timeout=2),
-            'ambient_identities': {'ambient_helper': {
-                'pid': self.fx.helper.pid,
-                'sample': fixtures['sample'](self.fx.helper.pid, timeout=2),
-            }},
-            'direct_cache_snapshot': fixtures['cache'],
-            'direct_preflight': {
-                'admission_bindings': {
-                    'release_contract': {
-                        'path': str(fixtures['release_path'].resolve()),
-                        'sha256': _sha(fixtures['release_path']),
-                    },
-                    **{
-                        'receipt_' + kind: {
-                            'path': str(pathlib.Path(path).resolve()),
-                            'sha256': _sha(pathlib.Path(path)),
-                        }
-                        for kind, path in spec['capture_contract']['admission_receipts'].items()
-                    },
-                },
-                'release_expires_unix_s': time.time() + 60.0,
-            },
-        }
+        lifecycle = self._direct_lifecycle_fixture(launcher, now=time.time())
+        result_path = lifecycle['result_path']
+        spec_path = lifecycle['spec_path']
+        cell_dir = lifecycle['cell_dir']
+        run_dir = lifecycle['run_dir']
+        handoff = lifecycle['handoff']
+        fake_pf = lifecycle['fake_pf']
         stop_requests = []
         real_request = rmc._request_collector_stop
 

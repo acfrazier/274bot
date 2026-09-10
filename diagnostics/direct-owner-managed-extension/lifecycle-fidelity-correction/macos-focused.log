@@ -1,0 +1,11 @@
+test_direct_lifecycle_fixture_binds_live_identities_and_release (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_direct_contract_and_argv_paths_are_exact_and_mode_only (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_direct_preflight_rejects_the_root_reproduced_semantic_gap (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_direct_receipt_and_release_schema_mutations_fail_closed (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_direct_preflight_boundaries_counter_drift_and_receipt_mutation (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+test_direct_binding_toctou_after_preflight_stops_before_popen (docs.memory.test_run_managed_cell.ManagedCellTests) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.624s
+
+OK

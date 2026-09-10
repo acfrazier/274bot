@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "branch": "codex/memory-diagnostics",
+  "baseline_commit": "37be3a175ed128cb925172821a3ed24bbcc0a9e4",
+  "source": {
+    "path": "docs/memory/test_run_managed_cell.py",
+    "sha256": "aa0151e2a9c1950e951577dd4b49ddeec5d7a4686e8357419a9c18cef9b270e8"
+  },
+  "red": {
+    "test": "test_direct_lifecycle_fixture_binds_live_identities_and_release",
+    "result": "failed",
+    "reason": "AttributeError: ManagedCellTests had no _direct_lifecycle_fixture",
+    "log": "red-portable-shared-fixture.log",
+    "sha256": "c0fc2b6e0763706f159402359e6d0d79166190123a9a1eeaa29b9a8322a7779c"
+  },
+  "verification": {
+    "py_compile": {
+      "result": "pass",
+      "log": "macos-syntax.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "focused_portable": {
+      "result": "pass",
+      "tests": 6,
+      "log": "macos-focused.log",
+      "sha256": "4e3f1df81538cc783b6bd0542e9e1e4b7318bcdc0c3b6162fe1d0c4fb17cc7f2"
+    },
+    "linux_lifecycle_on_macos": {
+      "result": "skipped",
+      "tests": 1,
+      "log": "macos-linux-only-skip.log",
+      "sha256": "e09df43a5bf3953aa6ca10d9f8fa19f08774df9a6e1456a934549a2e87e28fcf"
+    },
+    "current_full_macos": {
+      "result": "fail",
+      "tests": 56,
+      "failures": 13,
+      "skipped": 1,
+      "log": "macos-full.log",
+      "sha256": "74d930261d21b22f09a32d0b1d4bd636bbd12351138225eb9bd04c29a39b24b8"
+    },
+    "baseline_37be3a1_full_macos": {
+      "result": "fail",
+      "tests": 55,
+      "failures": 12,
+      "skipped": 1,
+      "shared_failures_with_current": 12,
+      "log": "baseline-37be3a1-full.log",
+      "sha256": "b99a307037708788742c81847058d3f57af1877fa9c26e70b43d182fb0731bd2"
+    },
+    "current_only_full_failure_baseline_rerun": {
+      "test": "test_complete_cache_proof_pre_and_post",
+      "current_result": "fail",
+      "baseline_result": "fail",
+      "current_log": "current-cache-proof-rerun.log",
+      "current_sha256": "5165837ce15e61dd60ddacbc9e07c0c4471867fff1e0101ca0e73ce27e2a9371",
+      "baseline_log": "baseline-37be3a1-cache-proof-rerun.log",
+      "baseline_sha256": "2e0bb8872b5f41c8ec7d9a96ad33cc006642afa20c886b2b3e56014b3ec183f6"
+    }
+  },
+  "native_linux_lifecycle_executed": false,
+  "live_actions_executed": false
+}

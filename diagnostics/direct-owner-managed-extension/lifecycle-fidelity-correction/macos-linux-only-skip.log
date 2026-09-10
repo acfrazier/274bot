@@ -1,0 +1,6 @@
+test_linux_direct_lifecycle_keeps_collector_through_stop_c_and_exit (docs.memory.test_run_managed_cell.ManagedCellTests) ... skipped 'direct lifecycle qualification is Linux-only'
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+OK (skipped=1)

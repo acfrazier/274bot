@@ -1,0 +1,14 @@
+test_direct_lifecycle_fixture_binds_live_identities_and_release (docs.memory.test_run_managed_cell.ManagedCellTests) ... ERROR
+
+======================================================================
+ERROR: test_direct_lifecycle_fixture_binds_live_identities_and_release (docs.memory.test_run_managed_cell.ManagedCellTests)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/test_run_managed_cell.py", line 1974, in test_direct_lifecycle_fixture_binds_live_identities_and_release
+    lifecycle = self._direct_lifecycle_fixture(self.fx.fixture_launcher, now=now)
+AttributeError: 'ManagedCellTests' object has no attribute '_direct_lifecycle_fixture'
+
+----------------------------------------------------------------------
+Ran 1 test in 0.016s
+
+FAILED (errors=1)
