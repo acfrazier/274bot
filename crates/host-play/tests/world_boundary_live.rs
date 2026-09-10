@@ -14,6 +14,7 @@ use client::client::Client;
 use host::{Guardian, Pump};
 use host_play::{ProfileOptions, SharedClientTemplate};
 use scenario::{RunnerStatus, ScenarioRunner};
+use serde_json::json;
 use vault::ProfileSettings;
 
 const MAINLAND: (i32, i32, i32) = (3220, 3212, 0);
@@ -60,8 +61,14 @@ fn selected() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>) {
         "selected template.world() is required"
     );
     println!(
-        "{{\"phase\":\"identity\",\"revision\":{},\"profile\":{:?},\"cache_id\":{:?},\"nav_pack\":{:?}}}",
-        profile.revision().as_i32(), profile.label(), profile.cache_id(), profile.nav_pack()
+        "{}",
+        json!({
+            "phase": "identity",
+            "revision": profile.revision().as_i32(),
+            "profile": profile.label(),
+            "cache_id": profile.cache_id(),
+            "nav_pack": profile.nav_pack(),
+        })
     );
     (profile, template)
 }
@@ -83,7 +90,7 @@ fn wait_for(
     while Instant::now() < deadline {
         pump_once(client, snapshot, pump);
         if ready(snapshot) {
-            println!("{{\"phase\":{:?},\"state\":{:?}}}", phase, snapshot.tile());
+            println!("{}", json!({"phase": phase, "tile": snapshot.tile()}));
             return;
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -158,11 +165,17 @@ fn prepare_mainland(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut
     );
 }
 
-fn door_id(snapshot: &GameSnapshot) -> Option<i32> {
+fn door(snapshot: &GameSnapshot) -> Option<(api::snapshot::WorldTile, i32)> {
     snapshot
         .locs()
         .iter()
-        .find_map(|loc| ((loc.tile.x, loc.tile.z, loc.tile.level) == DOOR).then_some(loc.id))
+        .filter(|loc| {
+            loc.tile.level == DOOR.2
+                && (loc.tile.x - DOOR.0).abs().max((loc.tile.z - DOOR.1).abs()) <= 3
+                && (loc.id == DOOR_CLOSED || loc.id == DOOR_OPEN)
+        })
+        .min_by_key(|loc| (loc.tile.x - DOOR.0).abs().max((loc.tile.z - DOOR.1).abs()))
+        .map(|loc| (loc.tile, loc.id))
 }
 
 fn prepare_door(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut Pump) {
@@ -177,27 +190,27 @@ fn prepare_door(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut Pum
         "door-outside",
         |s| s.tile() == Some((2813, 3436, 0)),
     );
-    let before = door_id(snapshot);
-    if before == Some(DOOR_OPEN) {
-        assert!(interact::op_loc(client, DOOR.0, DOOR.1, DOOR_OPEN));
+    let before = door(snapshot);
+    if before.is_some_and(|(_, id)| id == DOOR_OPEN) {
+        let (tile, _) = before.expect("open door identity");
+        assert!(interact::op_loc(client, tile.x, tile.z, DOOR_OPEN));
         wait_for(
             client,
             snapshot,
             pump,
             Duration::from_secs(30),
             "door-close",
-            |s| door_id(s) == Some(DOOR_CLOSED),
+            |s| door(s).is_some_and(|(_, id)| id == DOOR_CLOSED),
         );
     }
     assert_eq!(
-        door_id(snapshot),
+        door(snapshot).map(|(_, id)| id),
         Some(DOOR_CLOSED),
         "door was not closed before baseline"
     );
     println!(
-        "{{\"phase\":\"door-baseline\",\"door_id\":{:?},\"tile\":{:?}}}",
-        door_id(snapshot),
-        snapshot.tile()
+        "{}",
+        json!({"phase": "door-baseline", "door": door(snapshot), "tile": snapshot.tile()})
     );
 }
 
@@ -243,15 +256,15 @@ fn run_nav(
         Duration::from_secs(180)
     };
     let deadline = Instant::now() + outer;
-    let mut before_door = door_id(&snapshot);
+    let mut before_door = door(&snapshot);
     let mut opened = false;
     let mut arrival = false;
     loop {
         pump_once(&mut client, &mut snapshot, &mut pump);
         if case == "nav_door" {
-            let id = door_id(&snapshot);
-            opened |= id == Some(DOOR_OPEN);
-            before_door = before_door.or(id);
+            let live_door = door(&snapshot);
+            opened |= live_door.is_some_and(|(_, id)| id == DOOR_OPEN);
+            before_door = before_door.or(live_door);
             arrival |= snapshot
                 .tile()
                 .is_some_and(|t| t.0 == 2817 && t.1 >= 3443 && t.2 == 0);
@@ -262,11 +275,14 @@ fn run_nav(
                 if case == "nav_door" {
                     assert!(opened, "route did not cause observed door opening");
                     assert!(arrival, "inside arrival was not observed");
-                    println!("PASS: nav_door: before_door={before_door:?} after_door={:?} traveller_runner={:?}", door_id(&snapshot), runner.evidence());
+                    println!(
+                        "PASS: nav_door: {}",
+                        json!({"before_door": before_door, "after_door": door(&snapshot), "traveller_runner": runner.evidence()})
+                    );
                 } else {
                     println!(
-                        "PASS: nav_full: engine_speed_ms=None evidence={:?}",
-                        runner.evidence()
+                        "PASS: nav_full: {}",
+                        json!({"engine_speed_ms": null, "evidence": runner.evidence()})
                     );
                 }
                 break;
@@ -368,8 +384,17 @@ fn run_guardian(template: Arc<SharedClientTemplate>, profile: Arc<host_play::Ser
                 }
             }
         }
-        if walk_sent && snapshot.tile() == walk_target {
-            println!("PASS: guardian_lamp: inventory_before={inventory_before:?} xp_before={xp_before} interface={saw_interface} hold={saw_hold} consumed={saw_consumed} xp_gain={saw_xp_gain} resumed_from={resumed_from:?} walk_to={walk_target:?}");
+        if walk_sent
+            && snapshot.tile() == walk_target
+            && saw_hold
+            && saw_interface
+            && saw_consumed
+            && saw_xp_gain
+        {
+            println!(
+                "PASS: guardian_lamp: {}",
+                json!({"inventory_before": inventory_before, "xp_before": xp_before, "interface": saw_interface, "hold": saw_hold, "consumed": saw_consumed, "xp_gain": saw_xp_gain, "resumed_from": resumed_from, "walk_to": walk_target})
+            );
             if client.ingame {
                 client.logout();
             }
@@ -386,15 +411,21 @@ fn world_boundary_live() {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return;
     }
-    let case = required("WORLD_CASE");
-    assert!(matches!(
-        case.as_str(),
-        "nav_full" | "nav_door" | "guardian_lamp"
-    ));
-    let (profile, template) = selected();
-    match case.as_str() {
-        "nav_full" | "nav_door" => run_nav(&case, template, profile),
-        "guardian_lamp" => run_guardian(template, profile),
-        _ => unreachable!(),
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let case = required("WORLD_CASE");
+        assert!(matches!(
+            case.as_str(),
+            "nav_full" | "nav_door" | "guardian_lamp"
+        ));
+        let (profile, template) = selected();
+        match case.as_str() {
+            "nav_full" | "nav_door" => run_nav(&case, template, profile),
+            "guardian_lamp" => run_guardian(template, profile),
+            _ => unreachable!(),
+        }
+    }));
+    if let Err(error) = result {
+        eprintln!("FAIL: world_boundary_live: {error:?}");
+        std::process::exit(1);
     }
 }

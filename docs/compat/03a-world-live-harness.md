@@ -14,15 +14,18 @@ mainland `seed_at(3220,3212,0)`, observed logout, and observed relogin.
 clears only the scenario fixture's `engine_speed_ms` to `None`, records that
 setting, and retains the scenario's 360-second deadline with a 400-second
 process bound. `nav_door` reuses the production Catherby outside/inside
-Traveller route and door identity, but removes the two-bot closer companion;
-it prepares at the outside stand, closes and observes the door before the
-baseline, then requires observed route-caused opening and inside arrival. The
+Traveller route and resolves the live door leaf within the source fixture's
+three-tile search radius (including open leaf `(2816,3439,0)`), but removes the
+two-bot closer companion; it prepares at the outside stand, closes and observes
+the door before the baseline, then requires observed route-caused opening and inside arrival. The
 180-second outer bound and runner scene/send settlement behavior are retained.
 
 `guardian_lamp` gives a real lamp after mainland relog, records inventory and
 strength XP, drives the actual `host::random::Guardian` with default host
 claim, and requires an observed hold, lamp skill interface (`2808`), lamp
 consumption, strength XP gain, lifted hold, and a post-resolution host walk.
+The ignored entrypoint catches proof failures and emits `FAIL:` before exiting
+with status 1; phase and proof receipts are JSON.
 Existing guardian hold/claim/resume/reset behavior is covered by the source
 unit-test evidence recorded in the harness evidence log. No live acceptance
 claim is made here: root runs and records the 274 and 289 cells.
