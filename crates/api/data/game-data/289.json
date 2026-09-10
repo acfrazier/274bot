@@ -38,6 +38,16 @@
         "sha256": "ab9cd809d28d6ebc91a0a576deb0ade2d8b691e695b675ff0b3bfcf7d0643164"
       },
       {
+        "path": "src/cache/config/ScriptVarType.ts",
+        "bytes": 5604,
+        "sha256": "1fcc6c359e278a63a7324ce3d7f34c07e20d4c7653c686071ed904133127de92"
+      },
+      {
+        "path": "src/io/BZip2.ts",
+        "bytes": 131,
+        "sha256": "bac68744b37e5e294632e66bac895a5210492ec35fa509d9b5c5315c99791024"
+      },
+      {
         "path": "src/io/Jagfile.ts",
         "bytes": 12247,
         "sha256": "b205bc9a9bbe397947eaae95720701d8ff3b4731898d337a32d057855575ab2e"
@@ -48,6 +58,21 @@
         "sha256": "b862157bfbf03c102528cc8ddee7d75d463739da4b41649b1f44ff2e0e9fdc5c"
       },
       {
+        "path": "src/datastruct/DoublyLinkable.ts",
+        "bytes": 478,
+        "sha256": "9121c435479ba9725344b21bd512ba138bcd9e3716b85e9278ba9d4044da98b0"
+      },
+      {
+        "path": "src/datastruct/LinkList.ts",
+        "bytes": 2875,
+        "sha256": "47e610bccf51967b37d81dc43cc8905cbaeb9be99d6606f0b9ea5bb3ac1cf15f"
+      },
+      {
+        "path": "src/datastruct/Linkable.ts",
+        "bytes": 382,
+        "sha256": "bf05a915b98cb453cb2f567bcd20dcb5d5491f8b1cb56969a487c8c4739ef9d7"
+      },
+      {
         "path": "src/util/Environment.ts",
         "bytes": 172,
         "sha256": "07ec8993db7235dc460812a6413d9bf7e16a2bc4d3ec5331b887417cee6c952e"
@@ -56,6 +81,16 @@
         "path": "src/util/Logger.ts",
         "bytes": 1762,
         "sha256": "12f0db23d43e2b58ae3f06d6d383b1b54af780b71a25fe71dd4350d8349d98cb"
+      },
+      {
+        "path": "src/util/TryParse.ts",
+        "bytes": 1072,
+        "sha256": "59cbcc2cbdddc9596a594f33a6aeec7686c780637657c5daff59bcf6cbfc7a99"
+      },
+      {
+        "path": "src/util/WorldConfig.ts",
+        "bytes": 11621,
+        "sha256": "c82a54df01588a2814f70751ae58744bde5fc1f5a2cc713e05ea939123e48a83"
       }
     ],
     "cache_identity": {

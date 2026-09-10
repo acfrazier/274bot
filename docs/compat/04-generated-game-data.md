@@ -4,11 +4,11 @@ This report records the bounded extraction owned by brief 44. The generator read
 
 ## Outputs
 
-- `crates/api/data/game-data/274.json`: 3,894 ObjType records, 1,223,803 bytes.
-- `crates/api/data/game-data/289.json`: 4,089 ObjType records, 1,286,298 bytes.
+- `crates/api/data/game-data/274.json`: 3,894 ObjType records, 1,224,991 bytes.
+- `crates/api/data/game-data/289.json`: 4,089 ObjType records, 1,287,486 bytes.
 - `crates/api/data/game-data/manifest.json`: schema and output hashes.
 
-Each asset has schema version 2, the selected revision, pinned engine/content commit IDs, SHA-256/byte identity for both packed inputs and the decoder's imported source files, plus the selected cache/nav identity. The item rows retain `alias`, `id`, display `name`, `cost`, `stackable`, `members`, certificate links/templates, and all three server wear-position fields. Model, sprite, and render data are excluded. Certificate normalization is performed by the server's `ObjType.parse`/`toCertificate` decoder before serialization.
+Each asset has schema version 2, the selected revision, pinned engine/content commit IDs, SHA-256/byte identity for both packed inputs and the decoder's complete local import closure, plus the selected cache/nav identity. This closure includes the BZip2 wrapper and local data-structure/config/util modules used while loading ObjType; the third-party BZip2 wasm package is bound by the pinned engine commit. The item rows retain `alias`, `id`, display `name`, `cost`, `stackable`, `members`, certificate links/templates, and all three server wear-position fields. Model, sprite, and render data are excluded. Certificate normalization is performed by the server's `ObjType.parse`/`toCertificate` decoder before serialization.
 
 The assets preserve every decoded ID and debug alias. In the selected inputs every decoded record has a unique alias; same display names remain separate rows. Unknown content is not synthesized.
 

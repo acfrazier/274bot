@@ -8,7 +8,14 @@ const expected: Record<number, { engine: string; content: string; engineRoot: st
     274: { engine: '4c95f87efe00b068cadbd229d94736626907bd1a', content: '000c19997e07206131bcb3c884265840efce416d', engineRoot: process.env.GAME_DATA_274_ENGINE || '/Users/acfrazier/experiments/Server/engine', contentRoot: process.env.GAME_DATA_274_CONTENT || '/Users/acfrazier/experiments/Server/content', cache: { cache_id: '4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c', nav_sha256: '05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4', flags_sha256: '92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb' } },
     289: { engine: 'cc359656b4acd216ca452495874b6beba9a0ac75', content: '92649430fcbc83538d8c4367ecb96cee1a67a944', engineRoot: process.env.GAME_DATA_289_ENGINE || '/Users/acfrazier/experiments/lostcity-289/engine', contentRoot: process.env.GAME_DATA_289_CONTENT || '/Users/acfrazier/experiments/lostcity-289/content', cache: { cache_id: 'c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09', nav_sha256: '131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924', flags_sha256: '67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a' } }
 };
-const decoderSources = ['src/cache/config/ObjType.ts', 'src/cache/config/ConfigType.ts', 'src/cache/config/ParamHelper.ts', 'src/cache/config/ParamType.ts', 'src/io/Jagfile.ts', 'src/io/Packet.ts', 'src/util/Environment.ts', 'src/util/Logger.ts'];
+// Keep this in lockstep with generate.ts: all local modules in ObjType's load graph.
+// The third-party BZip2 wasm package is bound by the pinned engine commit.
+const decoderSources = [
+    'src/cache/config/ObjType.ts', 'src/cache/config/ConfigType.ts', 'src/cache/config/ParamHelper.ts', 'src/cache/config/ParamType.ts', 'src/cache/config/ScriptVarType.ts',
+    'src/io/BZip2.ts', 'src/io/Jagfile.ts', 'src/io/Packet.ts',
+    'src/datastruct/DoublyLinkable.ts', 'src/datastruct/LinkList.ts', 'src/datastruct/Linkable.ts',
+    'src/util/Environment.ts', 'src/util/Logger.ts', 'src/util/TryParse.ts', 'src/util/WorldConfig.ts'
+];
 function digest(file: string) { const data = fs.readFileSync(file); return { bytes: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex') }; }
 function commit(dir: string) { return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); }
 function assertEqual(actual: unknown, expectedValue: unknown, label: string) { if (actual !== expectedValue) throw new Error(`${label}: expected ${expectedValue}, got ${actual}`); }
