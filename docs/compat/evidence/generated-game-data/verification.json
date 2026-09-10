@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "generator": "tools/game-data/generate.ts",
+  "verification": "tools/game-data/verify.ts",
+  "determinism": {
+    "second_generation": true,
+    "byte_for_byte": true,
+    "checked_outputs": [
+      "crates/api/data/game-data/274.json",
+      "crates/api/data/game-data/289.json"
+    ]
+  },
+  "revisions": [
+    {
+      "revision": 274,
+      "records": 3894,
+      "aliases": 3894,
+      "custom_count": 25,
+      "same_name_dragonhide": [
+        ["dragonhide_black", 1747],
+        ["cert_dragonhide_black", 1748],
+        ["dragonhide_red", 1749],
+        ["cert_dragonhide_red", 1750],
+        ["dragonhide_blue", 1751],
+        ["cert_dragonhide_blue", 1752],
+        ["dragonhide_green", 1753],
+        ["cert_dragonhide_green", 1754]
+      ],
+      "rune_platebody": [1127, "Rune platebody"],
+      "rune_chainbody": [1113, "Rune chainbody"]
+    },
+    {
+      "revision": 289,
+      "records": 4089,
+      "aliases": 4089,
+      "custom_count": 25,
+      "same_name_dragonhide": [
+        ["dragonhide_black", 1747],
+        ["cert_dragonhide_black", 1748],
+        ["dragonhide_red", 1749],
+        ["cert_dragonhide_red", 1750],
+        ["dragonhide_blue", 1751],
+        ["cert_dragonhide_blue", 1752],
+        ["dragonhide_green", 1753],
+        ["cert_dragonhide_green", 1754]
+      ],
+      "rune_platebody": [1127, "Rune platebody"],
+      "rune_chainbody": [1113, "Rune chainbody"]
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "generator": "tools/game-data/generate.ts",
+  "revisions": [
+    {
+      "revision": 274,
+      "output": "crates/api/data/game-data/274.json",
+      "records": 3894,
+      "bytes": 1222127,
+      "sha256": "c2eb69a4bc6cc988bc95c1622425adaf65cc959f9c16ef0f2192e693b60335f7",
+      "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
+      "content_commit": "000c19997e07206131bcb3c884265840efce416d",
+      "inputs": [
+        {
+          "path": "data/pack/server/obj.dat",
+          "bytes": 170075,
+          "sha256": "5e2778f4ff8d64282dc89a92f44c323ff1fe064af5883b090d196a52dab43471"
+        },
+        {
+          "path": "data/pack/client/config",
+          "bytes": 180928,
+          "sha256": "d26317cabdb6dd6eaa0bd983362fa9820f8ed063e73b7be145df30fb8fc1a914"
+        }
+      ]
+    },
+    {
+      "revision": 289,
+      "output": "crates/api/data/game-data/289.json",
+      "records": 4089,
+      "bytes": 1284622,
+      "sha256": "07812f7b5075b73cd89713540c63238c74500f42d139bac42cc5798fe71ba106",
+      "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
+      "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
+      "inputs": [
+        {
+          "path": "data/pack/server/obj.dat",
+          "bytes": 178468,
+          "sha256": "e3a388ecb8c4eeeca10596d32ca204fe5775a8937c72741534fccfdef256a243"
+        },
+        {
+          "path": "data/pack/client/config",
+          "bytes": 201091,
+          "sha256": "3eeb1085547fb3af66db55ec4368357dbbad5178b7747f8b7cb0339fdd04a4ce"
+        }
+      ]
+    }
+  ]
+}
