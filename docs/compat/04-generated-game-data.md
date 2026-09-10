@@ -4,11 +4,11 @@ This report records the bounded extraction owned by brief 44. The generator read
 
 ## Outputs
 
-- `crates/api/data/game-data/274.json`: 3,894 ObjType records, 1,222,127 bytes.
-- `crates/api/data/game-data/289.json`: 4,089 ObjType records, 1,284,622 bytes.
+- `crates/api/data/game-data/274.json`: 3,894 ObjType records, 1,223,803 bytes.
+- `crates/api/data/game-data/289.json`: 4,089 ObjType records, 1,286,298 bytes.
 - `crates/api/data/game-data/manifest.json`: schema and output hashes.
 
-Each asset has schema version 1, the selected revision, engine/content commit IDs, and SHA-256/byte identity for `data/pack/server/obj.dat` and `data/pack/client/config`. The item rows retain `alias`, `id`, display `name`, `cost`, `stackable`, `members`, certificate links/templates, and all three server wear-position fields. Model, sprite, and render data are excluded. Certificate normalization is performed by the server's `ObjType.parse`/`toCertificate` decoder before serialization.
+Each asset has schema version 2, the selected revision, pinned engine/content commit IDs, SHA-256/byte identity for both packed inputs and the decoder's imported source files, plus the selected cache/nav identity. The item rows retain `alias`, `id`, display `name`, `cost`, `stackable`, `members`, certificate links/templates, and all three server wear-position fields. Model, sprite, and render data are excluded. Certificate normalization is performed by the server's `ObjType.parse`/`toCertificate` decoder before serialization.
 
 The assets preserve every decoded ID and debug alias. In the selected inputs every decoded record has a unique alias; same display names remain separate rows. Unknown content is not synthesized.
 
@@ -28,13 +28,13 @@ The assets preserve every decoded ID and debug alias. In the selected inputs eve
 - decoder: `src/cache/config/ObjType.ts`
 - packed inputs: `data/pack/server/obj.dat`, `data/pack/client/config`
 
-The generated JSON records the input hashes; no machine-absolute path or wall-clock timestamp is serialized.
+The generated JSON records input/source hashes and cache identity; no machine-absolute path or wall-clock timestamp is serialized. Generation refuses a non-pinned engine/content checkout or dirty decoder/pack inputs. Unrelated dirty files do not affect this gate.
 
 ## Reproduce
 
 From the 274bot checkout, with the pinned server engine's installed dependencies:
 
-`/Users/acfrazier/experiments/Server/engine/node_modules/.bin/tsx tools/game-data/generate.ts`
+`GAME_DATA_274_ENGINE=/path/to/engine GAME_DATA_274_CONTENT=/path/to/content GAME_DATA_289_ENGINE=/path/to/engine GAME_DATA_289_CONTENT=/path/to/content /path/to/tsx tools/game-data/generate.ts`
 
 The generator has the two approved checkout roots as explicit read-only inputs. It writes only the three asset files listed above. For schema/fact verification:
 
@@ -42,7 +42,7 @@ The generator has the two approved checkout roots as explicit read-only inputs. 
 
 ## Verification evidence
 
-A second complete generation was run and both output hashes were byte-for-byte unchanged. The verifier checks schema/revision, provenance and input hashes, unique IDs/aliases, both Rune platebody and Rune chainbody facts, and distinct same-name `Dragonhide` rows. It observed 3,894/4,089 records and 25 dragonhide-or-platebody custom rows for 274/289 respectively. The detailed machine-readable result is in `evidence/generated-game-data/verification.json`.
+A second complete generation was run and both output hashes were byte-for-byte unchanged. The verifier rehashes live packed and decoder-source inputs, checks both pinned commits and the relevant-file dirty gate, verifies output hashes against the manifest, checks cache identity, unique IDs/aliases, Rune platebody cost > chainbody cost (65,000 > 50,000), and distinct same-name `Dragonhide` rows. It observed 3,894/4,089 records for 274/289. The detailed machine-readable result is in `evidence/generated-game-data/verification.json`.
 
 Representative source/cache facts include Rune platebody (1127), Rune chainbody (1113), and the distinct `dragonhide_black`/`red`/`blue`/`green` IDs (1747/1749/1751/1753), plus their certificate IDs. These are observations from the selected packs, not hand-maintained constants.
 

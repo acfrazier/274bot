@@ -1,51 +1,41 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "generator": "tools/game-data/generate.ts",
   "verification": "tools/game-data/verify.ts",
-  "determinism": {
-    "second_generation": true,
-    "byte_for_byte": true,
-    "checked_outputs": [
-      "crates/api/data/game-data/274.json",
-      "crates/api/data/game-data/289.json"
-    ]
-  },
   "revisions": [
     {
       "revision": 274,
       "records": 3894,
-      "aliases": 3894,
-      "custom_count": 25,
-      "same_name_dragonhide": [
-        ["dragonhide_black", 1747],
-        ["cert_dragonhide_black", 1748],
-        ["dragonhide_red", 1749],
-        ["cert_dragonhide_red", 1750],
-        ["dragonhide_blue", 1751],
-        ["cert_dragonhide_blue", 1752],
-        ["dragonhide_green", 1753],
-        ["cert_dragonhide_green", 1754]
+      "output_sha256": "bddc09f433b32a52d24b03f30444140825956c71ae84131b7f8a17d89cdf4a3c",
+      "input_hashes": true,
+      "source_pins": true,
+      "dirty_gate": true,
+      "cost_order": [
+        65000,
+        50000
       ],
-      "rune_platebody": [1127, "Rune platebody"],
-      "rune_chainbody": [1113, "Rune chainbody"]
+      "cache_identity": {
+        "cache_id": "4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c",
+        "nav_sha256": "05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4",
+        "flags_sha256": "92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb"
+      }
     },
     {
       "revision": 289,
       "records": 4089,
-      "aliases": 4089,
-      "custom_count": 25,
-      "same_name_dragonhide": [
-        ["dragonhide_black", 1747],
-        ["cert_dragonhide_black", 1748],
-        ["dragonhide_red", 1749],
-        ["cert_dragonhide_red", 1750],
-        ["dragonhide_blue", 1751],
-        ["cert_dragonhide_blue", 1752],
-        ["dragonhide_green", 1753],
-        ["cert_dragonhide_green", 1754]
+      "output_sha256": "19e20aa6aa13e49d11556dcf760141429d10038d645b1702e0e9d888d4e25a5f",
+      "input_hashes": true,
+      "source_pins": true,
+      "dirty_gate": true,
+      "cost_order": [
+        65000,
+        50000
       ],
-      "rune_platebody": [1127, "Rune platebody"],
-      "rune_chainbody": [1113, "Rune chainbody"]
+      "cache_identity": {
+        "cache_id": "c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09",
+        "nav_sha256": "131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924",
+        "flags_sha256": "67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a"
+      }
     }
   ]
 }
