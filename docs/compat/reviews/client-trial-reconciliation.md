@@ -57,11 +57,33 @@ The seven affected client suites passed 127 tests, zero failures/ignores, after
 the correction. Formatting and strict all-target Clippy pass. The final full
 client suite passed 992 tests with zero failures and two ignored GPU tests;
 both explicit GPU tests then passed on the same committed product. The reviewed
-artifact candidate will be `58120f28ee5208553ca07f41cb364f2cf98ea280`, whose last
-commit adds only report/evidence. Corrective Grok 4.5 / Grok 4.6 review remains
-to be recorded.
+artifact candidate is `58120f28ee5208553ca07f41cb364f2cf98ea280`, whose last
+commit adds only report/evidence.
 The frozen trial reports and manifest remain evidence of the earlier candidate;
 use their named commits when resolving a file changed by the correction.
+
+## Corrective review closure
+
+Same-card corrective review `t_706ce8a5`, run 1084, completed with approval
+under actual Grok 4.5 / xai-oauth, session `20260910_103233_3506ce`.
+Fresh whole-client follow-up `t_4bed943f`, run 1085, then completed with approval
+under actual Grok 4.6 / xai-oauth, session `20260910_103533_55a2fa`.
+Both reviewed candidate `58120f28` / product `d14755da`; neither edited product
+code, and both verified the meaningful red/green evidence. Completed run/model
+receipts are `client-corrections-grok45.json` and
+`client-corrected-whole-grok46.json`. The final report is
+`client-grok46-corrected.md`.
+
+Root closes both confirmed defects for this client source/regression milestone.
+The final host dependency check also passed 441 tests, zero failures, seven
+live tests ignored against the corrected client. The corrective manifest names
+host `80552d3c`, so its reconciliation hash resolves to that frozen version of
+this document; this closure section was added after the review completed.
+
+Review scope lists distinguish unqualified work from approved behavior. The
+plan remains authoritative: full 377, mixed fleets, tutorial/audio parity and
+public live qualification are outside this campaign, rather than new gates
+introduced by a review's list of unapproved areas.
 
 No live or platform gate was satisfied by these offline corrections. Host
 profile binding and the remaining campaign work are still pending.

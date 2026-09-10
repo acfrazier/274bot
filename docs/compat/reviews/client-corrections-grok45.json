@@ -1,0 +1,66 @@
+{
+  "task_id": "t_706ce8a5",
+  "run": {
+    "id": 1084,
+    "profile": "reviewer",
+    "step_key": null,
+    "status": "done",
+    "outcome": "completed",
+    "summary": "Reviewed and approved corrective product d14755d on candidate 58120f2. P1: login clears stale inbound frame_end before the 8-byte seed g8; game set_frame_end preserved; socket regression covers 274/289 cold/reconnect/adopt with red panic at packet.rs:102 pre-fix. P2: report mute/reasons gated to 289, restoring published 274 idle stubs with ordered 289 CLOSE_MODAL+SEND_SNAPSHOT frames; red/green receipts and 127/992/2 + explicit GPU 2/0 + clippy/fmt evidence checked (no routine suite rerun).",
+    "error": null,
+    "metadata": {
+      "review_outcome": "approved",
+      "review_lens": "artifact",
+      "review_round": 1,
+      "product": "d14755da758c64d971c1103b2d7703f6fd8379fb",
+      "candidate": "58120f28ee5208553ca07f41cb364f2cf98ea280",
+      "base_frozen": "8b1a80918f87089e4eb339f1d0e216c1b163348d",
+      "published_base": "9b41e6e06b9fd42dc2247fc813a303c3fcb92941",
+      "changed_files": [
+        "crates/client/src/client/client.rs",
+        "crates/client/tests/lost_con.rs",
+        "crates/client/tests/revision_289_outbound.rs"
+      ],
+      "reviewer_checks": [
+        "diff 8b1a809..d14755d product-only three files; HEAD product blobs == d14755d",
+        "58120f2 docs/evidence only",
+        "login clear_frame_end only on response==0 seed path before g8",
+        "read_packet still set_frame_end after payload",
+        "adopt_from transfers r#in; login clears before seed",
+        "lost_con test matrix 2 revs x 3 paths with real RUNENERGY 1-byte frame",
+        "g8 uses assert_can_read; red log panics packet.rs:102",
+        "9b41 client_button has no 601-613 handlers",
+        "8b1a809 unguarded report arms; d14755d is_289 guards",
+        "report test 274 idle + 289 mute + 601..=612 ordered 93/94 frames",
+        "login-bound-red and report-controls-red json base 8b1a809 exit 101",
+        "summary.json SHAs match red/workspace logs",
+        "recount focused 127/0/0 workspace 992/0/2 gpu 2/0/0",
+        "workspace.json and explicit-gpu.json name d14755d",
+        "00-login-test-compile separate helper compile error",
+        "no product edits by reviewer",
+        "no routine suite rerun"
+      ],
+      "blocking_findings": [],
+      "suites_rerun": false,
+      "product_code_edited_by_reviewer": false,
+      "child_released": "t_4bed943f",
+      "remaining_gates": [
+        "whole-client Grok 4.6 corrected follow-up t_4bed943f",
+        "host 289 profile binding",
+        "live/native/platform",
+        "final campaign gates"
+      ],
+      "worker_session_id": "20260910_103233_3506ce"
+    },
+    "worker_pid": null,
+    "started_at": 1789050752,
+    "ended_at": 1789050925
+  },
+  "actual_session": {
+    "id": "20260910_103233_3506ce",
+    "model": "grok-4.5",
+    "billing_provider": "xai-oauth",
+    "started_at": 1789050754.193761,
+    "ended_at": 1789050926.155634
+  }
+}
