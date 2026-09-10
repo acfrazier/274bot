@@ -69,6 +69,9 @@ pub trait Driver {
     fn loc_typecode(&self, scene_x: i32, scene_z: i32) -> Option<i32>;
     /// The outbound packet sink (ISAAC-encrypted writes only).
     fn out(&mut self) -> &mut dyn Out;
+    /// Dismiss the local amount prompt after a successful count submission,
+    /// matching the client's keyboard path. Recorders may have no local UI.
+    fn count_dialog_submitted(&mut self) {}
     /// Queue a login handshake. Returns true iff the driver accepted it.
     fn login(&mut self, username: &str, password: &str, reconnect: bool) -> bool;
     /// Switch the active side tab locally, the client's
@@ -166,6 +169,11 @@ impl Driver for Client {
         &mut self.out
     }
 
+    fn count_dialog_submitted(&mut self) {
+        self.dialog_input_open = false;
+        self.redraw_chat = true;
+    }
+
     fn login(&mut self, username: &str, password: &str, reconnect: bool) -> bool {
         Client::login(self, username, password, reconnect).is_ok()
     }
@@ -249,7 +257,11 @@ pub fn close_modal<D: Driver + ?Sized>(driver: &mut D) -> bool {
 /// Answer a count dialog with `amount` (`RESUME_P_COUNTDIALOG`).
 pub fn answer_count<D: Driver + ?Sized>(driver: &mut D, amount: i32) -> bool {
     let revision = driver.revision();
-    Send::count_dialog(amount).write_for_revision(revision, driver.out())
+    if !Send::count_dialog(amount).write_for_revision(revision, driver.out()) {
+        return false;
+    }
+    driver.count_dialog_submitted();
+    true
 }
 
 /// Queue a `CLIENT_CHEAT` (`::` command) through the ISAAC sink.

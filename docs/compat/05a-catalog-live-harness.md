@@ -139,4 +139,47 @@ the exact mismatched source exists at 217f150f's parent; source receipt is
 `combat-style-prior-source.json`. It was introduced in 0ca3742f on September 3.
 This correction does not claim completion of all weapon/style fallback options.
 The source-contract check passes after correcting its initial empty-snapshot
-fixture. A fresh headed run is next.
+fixture.
+
+## Further headed diagnostics, 22:08 UTC
+
+Frozen host f2b04198/client 56d8027, binary SHA-256
+e2682db627adf012cdd89a1ff834d15190dec9e8a98a3b052ee574bd24fcfccd,
+continued the local Mac 289 / catalog 100adccc diagnostics. These are native
+panel observations, not the independent headless witness matrix above.
+
+- Corrected ChickenKiller ran 21:51:47–21:55:25, exit 0. Root read captures
+  showing the Strength announcement, then four kills/three burials and the
+  next bone acquired. Its original XP predicate passed. The earlier style
+  error was absent from the visible log. Full script debug logging was not
+  enabled for this cell; broader options remain unqualified.
+- Thiever ran 21:57:06–22:00:45, exit 0, full script debug logging with no
+  runtime error. Post-Start proof recorded theft XP and 30 Coins; the final
+  read capture shows 27 steals and 810 Coins, HP 58%, ten carried Lobsters,
+  banking disabled. It proves no eating or bank-return behavior. Earlier
+  window captures stayed at the seed view while the window was covered.
+  A process sample showed the UI thread running, and System Events raising
+  the window was followed by the current final render. Root's initial
+  freeze diagnosis was premature; no confirmed frontend deadlock from this.
+- Alcher ran 22:01:10–22:03:27, exit 1. It equipped the fire staff and
+  withdrew 27 noted chainbodies, then reported no Nature runes despite 200
+  visible in the bank. The amount prompt remained open. Source inspection
+  confirmed that the direct count writer sent the packet but omitted the
+  client's local prompt dismissal. Root's real Client regression reproduced
+  it; the correction matches keyboard submission and retains refusal state.
+  All 65 API interaction tests pass and strict API Clippy passes. An initial
+  test rerun exposed a test-only generic 274 publication helper on 289; the
+  corrected test rebuilds fresh local snapshots without synthetic packets.
+  Alcher also logged repeated interrupted slow ticks after ScriptRunner.stop;
+  that separate lifecycle issue is still open. No corrected LIVE run yet.
+
+The banking worker amended the concurrent f2b04198 commit to bf8452ec while
+adding two generated withdrawLoad declarations. Root verified that those are
+the entire difference, preserved the original frozen source/binary identities,
+and required subsequent corrections to use new commits. Source review of
+matching/fill is not yet accepted: its implementer completed the card without
+review. A corrective review gate now precedes dependent banking work.
+
+The operator also requested tracing a reproducible startup beachball. Root
+will sample a fresh native startup and record time to window/slot readiness;
+the covered-window observation above is not evidence of its cause.
