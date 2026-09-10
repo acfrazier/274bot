@@ -1,0 +1,15 @@
+{
+  "archive": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/platform-preparation/server-289-fixture-v2.tar.gz",
+  "sha256": "6524c4835aa825dc3994d7ae1a6536c1141836367eacaeccd5a3d61a5a373171",
+  "bytes": 33406709,
+  "file_count": 1213,
+  "added_file": {
+    "path": "data/raw/wordenc",
+    "bytes": 13554,
+    "sha256": "e9e63a19605a185b59aacc51b41e20544fae19872be760c83ae385ef829722d8"
+  },
+  "previous_manifest_sha256": "4486070fa7f6232505148116dada2fc0b3b39877ae48df7c2e7492042fdbbbbc",
+  "current_manifest_sha256": "7cea872135aa1af6e26512b9270b7718bb363a4991ffeb8e97630b0544577e0b",
+  "supersedes_archive_sha256": "d8361199f7f3af851c175e030b1e787cb62137de1ce62b6701bcde07cd75f2e8",
+  "reason": "Include data/raw/wordenc required by WordEnc.load during World.start"
+}

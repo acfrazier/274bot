@@ -1,5 +1,39 @@
 # Step 4B: snapshot publication and session reset
 
+## Orchestrator correction at 18:05 UTC (read before resuming)
+
+The WIP Pump::drain inference that equal deltas across all family counters mean
+a lifecycle invalidation is not sound. Different packet sequences can produce
+the same deltas: REBUILD plus an inventory/scene packet may invent a tick, while
+ordinary packets changing every family equally may suppress a real tick.
+Remove that heuristic. Add the smallest generic client observation that records
+actual successful PLAYER_INFO publication for both revisions, separately from
+all-family invalidation. ClientGens can carry a dedicated counter with a
+separate R289Publication flag excluded from ALL; a read-only Client counter is
+also acceptable if it avoids unnecessary API churn. Preserve existing family
+counter behavior, packet framing and failed-apply/reset semantics. No new opcode,
+no inferred boolean from family-delta patterns, no bot policy inside client.
+
+Root authorizes this necessary generic seam in
+`vendor/fr-client-rust/crates/client/src/client/client.rs` plus focused client
+tests. First verify the client branch is `codex/bothost-274-289`; its accepted
+base is `2be16970`. Commit the client source/tests on that branch, report the
+commit, and leave the host gitlink to root. Root owns any remotes/integration.
+Host changes and this client seam remain one coherent same-card source review.
+Run focused client integration tests separately, including actual PLAYER_INFO,
+REBUILD+another-family updates in one drain, and a failed frame/reset. Host
+regressions must use these real observations, not synthesized all-equal deltas.
+
+Also provide a small public way for the narrow harness to use the same actual
+host snapshot publication/reset path. The current harness calls bare
+GameSnapshot::rebuild, which would republish retained actor/inventory tables
+after logout even if SlotLoop alone invokes reset_session. Do not make the
+harness manually clear its snapshot just to satisfy its assertion. A shared
+publication helper that SlotLoop and the harness both call is appropriate;
+root will adapt only the harness after the final helper signature is reported.
+Preserve generation gating/no-clone ownership and keep production 289 policy
+gates. Resume the existing WIP rather than rewriting unrelated work.
+
 Use `sol` profile defaults, then same-card `reviewer`. Read applicable
 AGENTS/execution once, plan architecture and step 4, and
 `docs/compat/02-host-boundary-design.md`. Host branch is
@@ -44,3 +78,8 @@ CARGO_TARGET_DIR=/Users/acfrazier/experiments/274bot/target. Retain failures and
 final focused logs under `docs/compat/evidence/host-boundary/snapshot/`; write
 `docs/compat/02b-host-snapshot-reset.md`. Commit scoped files, request same-card
 review from `reviewer`, then stop. Root owns STATE, remotes and client gitlinks.
+
+Reviewer isolation: never stash, reset, restore, checkout, alter the index, or
+otherwise move another worker's files in this shared checkout. Use git show
+for the named commit, existing receipts, or a separate temporary source export
+if a clean source test is needed. Root owns shared worktree/Git hygiene.
