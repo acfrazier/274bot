@@ -259,3 +259,20 @@ forbidding its own scoped commit; root clarified the wording. The integration
 brief now names this exact corrected candidate, and remains gated by the parent
 review dependency (the attempt to explicitly block a todo card was refused by
 the CLI). No other worker source entered the correction commit.
+
+The corrective same-card Grok 4.5 review completed on run 1111 (session
+`20260910_152111_481ade`, actual `grok-4.5` / `xai-oauth`), approving the scene
+rehydration fix; the exact working-tree-to-commit mapping is recorded in
+`evidence/host-boundary/snapshot/review.json`. Combined integration review
+`t_0ec632f9` is now running on actual Grok 4.6 run 1112/session
+`20260910_152311_01b7b6`, against frozen host `fede3c0d` and client `6cb5a0b`.
+The old snapshot candidate is superseded. Root exported 481 exact committed
+source files, verified their hashes after compilation and built a separate
+controlled harness binary (SHA `3ce3ec1d1570e7cab2f0999490630457ea6a8c16760abaaa54fc2136cb8b6444`).
+This excludes concurrent world-source WIP. See the frozen source/build/binary
+receipts under `evidence/host-boundary/live/`. No controlled live cell yet.
+
+Banking design review `t_36e521e1` is independently running with verified actual
+Grok 4.6 session `20260910_152011_364a2f`; it owns a design report only, while
+`t_13a850d5` owns the world/nav source preparation. Neither run can claim live
+acceptance or add script compatibility gates.
