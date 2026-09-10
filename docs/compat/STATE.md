@@ -82,10 +82,16 @@ the shared constructor's HTTP default and ambient login/transport/unpack
 settings must be bound before actual spawn and reconnect. Architecture card
 `t_bfd3339c` approved the concrete design with binding constraints under actual
 Grok 4.6. Its completed review is in `reviews/session-profile-design-grok46.md`.
-Client card `t_1b93f768` and frontend card `t_879d9607` are implementing their
-bounded briefs under the configured Sol profile. Root owns the host backend;
-current implementation and checks are recorded in `01-session-profile.md`.
-Step-3 integration and native macOS review gates remain open. Do not expose 289 bot operation using current direct
+Client card `t_1b93f768` and root host backend card `t_30007871` have completed
+actual Grok 4.5 reviews with approval. The reviewed client candidate is
+`2be1697060e4d2b8b709ad4d5e54d12513b38333` (product `c8e61557`), pinned locally
+for step-3 integration. Full client workspace: 1,001 passed, no failures, two
+ignored GPU tests; both explicit GPU tests passed separately. Affected host
+backend: 450 passed, no failures, seven live tests ignored.
+Frontend card `t_879d9607` is still implementing under the configured Sol profile.
+Current implementation, asset checks and review receipts are recorded in
+`01-session-profile.md`. Step-3 integration, native macOS frontend validation
+and the Grok 4.6 milestone review remain open. Do not expose 289 bot operation using current direct
 274 host writers or fall back to 274 navigation.
 
 Operator platform clarification: validate step 3 on macOS first. Linux and

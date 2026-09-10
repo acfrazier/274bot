@@ -1,9 +1,9 @@
 # Step 3: immutable server profiles
 
 Implementation is in progress on `codex/rs2b0t-multirevision` and
-`codex/bothost-274-289`. This report records the host backend first; client,
-frontend, native macOS and independent review gates remain open. Step 3 is not
-accepted yet. The architecture review is
+`codex/bothost-274-289`. Client and host backend same-card Grok 4.5 reviews are
+approved. Frontend implementation/review, native macOS frontend checks and the
+Grok 4.6 integration gate remain open. Step 3 is not accepted yet. The architecture review is
 `reviews/session-profile-design-grok46.md` (card `t_bfd3339c`, actual Grok 4.6).
 
 ## Host behavior
@@ -71,10 +71,13 @@ represent game content or a live session.
   bad RSA, changed resources/catalog, both real revision constructors and shared
   Arcs, 289 refusal before slot/queue mutation, public cheat refusal, and selected
   shared navigation/scatter with flags validation.
-- The initial affected API/host/host-play gate with `host-play/memory-profile`
-  passed 448 tests with zero failures and seven ignored live tests. The final
-  focused test additions and path anchoring passed separately. A coherent final
-  gate will follow client/frontend integration.
+- The affected API/host/host-play gate with `host-play/memory-profile` passed
+  450 tests with zero failures and seven ignored live tests on client product
+  `c8e61557`. The initial 448-test receipt is retained. Frontend checks will
+  complete the integrated host gate.
+- The full client workspace on product `c8e61557` passed 1,001 tests with zero
+  failures and two ignored GPU tests. Both explicit GPU tests then passed on
+  the same product with `SKIP_GPU` absent.
 - Strict Clippy passed for the three affected host crates with `--no-deps`.
   The earlier dependency-inclusive attempt identified an in-progress client
   constructor argument-count lint, handed back to the client implementer.
@@ -104,9 +107,12 @@ Frontend construction and presentation checks will be recorded in
 Revision 289 construction is available for protocol qualification. Production
 slot/script operation returns `host-boundary-not-qualified` before mutations
 until step 4 qualifies the host action/snapshot boundary. No 289 navigation or
-catalog/gameplay row is accepted by this step. The client and frontend same-card
-Grok 4.5 reviews, host review, integrated Grok 4.6 review, coherent checks, and
-native macOS frontend validation remain pending.
+catalog/gameplay row is accepted by this step. The client and host backend same-card Grok 4.5 reviews are approved (cards
+`t_1b93f768` and `t_30007871`; completed actual-model receipts in `reviews/`).
+The host pins the reviewed client candidate `2be1697060e4d2b8b709ad4d5e54d12513b38333`
+locally; its product commit is `c8e61557`. Root owns the gitlink and integration.
+Frontend implementation/review, integrated Grok 4.6 review, final coherent checks,
+and native macOS frontend validation remain pending.
 
 The operator requested macOS step-3 validation first. Linux and Windows need
 separate 289 engines configured before later platform checks; neither platform
