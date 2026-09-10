@@ -11,6 +11,22 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-10 00:19 UTC
+
+- Native evidence t_518edea2 completed limited APPROVE atf13d682. Root read report
+  and probe scripts: exact59 member hashes corroborated, but4admissions still
+  rely on rootflag and12comparison behaviors on qualifier assertion existence;
+  complete effective Git/source/binary readback remains insufficiently independent.
+  CF1 withheld. Closed card cannot be reopened by supported review command;
+  corrective t_5159d6b4 covers ONLY remaining direct raw/source/hash checks.
+- Corrective reviewer actually running session20260909_201855_e53149,
+  Grok4.5/xai. Preserve original scoped approval and all probe errors/results.
+  Solt_6c6930b1 remains actually active on lifecycle fixture fidelity correction.
+- Existing prepare_singleton_f1.py already supports coordinate mode; exactbytes
+  SHA6ecf631c staged to newConcordroot alongside original59TSV SHA49e348ea.
+  No preparation helper invocation, root-CF1 authorization or probe yet. Fresh
+  source/native/preflight checks and root release follow sufficient review.
+
 ## Latest boundary — 2026-09-10 00:16 UTC
 
 - Grok4.6 escalation COMPLETE, report35d613c. Root read full report: cache is the
