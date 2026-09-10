@@ -1,0 +1,160 @@
+[
+  {
+    "label": "host",
+    "argv": [
+      "/home/acfrazier/274bot-campaign/selective-9527cc636187/build-only/host-libraries/host-532a774a83950e1c",
+      "--test-threads=1"
+    ],
+    "cwd": "/home/acfrazier/274bot-campaign/selective-9527cc636187/source",
+    "started_utc": "2026-09-10T02:58:32.683589+00:00",
+    "pid": 132022,
+    "exit_code": 0,
+    "elapsed_s": 8.58421234600246,
+    "log_sha256": "82623c51a7e695d2f4588ed0136d133e832729a1c8651039e071ed3edaff6595"
+  },
+  {
+    "label": "host_play",
+    "argv": [
+      "/home/acfrazier/274bot-campaign/selective-9527cc636187/build-only/host-libraries/host_play-0f5b2f921ddc53a0",
+      "--test-threads=1"
+    ],
+    "cwd": "/home/acfrazier/274bot-campaign/selective-9527cc636187/source",
+    "started_utc": "2026-09-10T02:58:41.268360+00:00",
+    "pid": 132154,
+    "exit_code": 0,
+    "elapsed_s": 12.918158800006495,
+    "log_sha256": "0cfc5b8474939407901dac5d39a5b965d802f307e20cbc436034ba5e0ceab947"
+  },
+  {
+    "label": "tui",
+    "argv": [
+      "/home/acfrazier/274bot-campaign/selective-9527cc636187/build-only/frontend-libraries/tui-6442c38b3ddabb7c",
+      "--test-threads=1"
+    ],
+    "cwd": "/home/acfrazier/274bot-campaign/selective-9527cc636187/source",
+    "started_utc": "2026-09-10T02:58:54.187065+00:00",
+    "pid": 132339,
+    "exit_code": 0,
+    "elapsed_s": 2.210950345994206,
+    "log_sha256": "c3f272e3af95b62872bf18f3ce23a543dd87e342adca0856cb7d2dd774a16e9c"
+  },
+  {
+    "label": "panel",
+    "argv": [
+      "/home/acfrazier/274bot-campaign/selective-9527cc636187/build-only/frontend-libraries/panel-4c496aec9165c161",
+      "game_view::tests",
+      "--test-threads=1"
+    ],
+    "cwd": "/home/acfrazier/274bot-campaign/selective-9527cc636187/source",
+    "started_utc": "2026-09-10T02:58:56.398577+00:00",
+    "pid": 132429,
+    "exit_code": 0,
+    "elapsed_s": 6.07248374199844,
+    "log_sha256": "f8c581546af1450b5ac5ee7d1acfdda1ad67d1adceb679f20fff49ea8787c29c"
+  },
+  {
+    "label": "client",
+    "argv": [
+      "/home/acfrazier/274bot-campaign/selective-9527cc636187/build-only/client-home/client-9feeab272b47acc4",
+      "bot_target::",
+      "--test-threads=1"
+    ],
+    "cwd": "/home/acfrazier/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust",
+    "started_utc": "2026-09-10T02:59:02.471620+00:00",
+    "pid": 132518,
+    "exit_code": 0,
+    "elapsed_s": 0.01139862799027469,
+    "log_sha256": "8af8e6adde3c0fe2343264f08f0590d1a96e887e79f5cffb84f6aacbbdbfb0f1"
+  },
+  {
+    "label": "iface_model",
+    "argv": [
+      "/home/acfrazier/274bot-campaign/selective-9527cc636187/build-only/client-affected/iface_model-56324085ce9a4496",
+      "--test-threads=1"
+    ],
+    "cwd": "/home/acfrazier/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust",
+    "started_utc": "2026-09-10T02:59:02.483598+00:00",
+    "pid": 132524,
+    "exit_code": 0,
+    "elapsed_s": 1.8666411029989831,
+    "log_sha256": "e4e34e80d0459e07d315cd4bba7ea477fdcfa6a606ae912f3a5de77e3a44c99f"
+  },
+  {
+    "label": "inject",
+    "argv": [
+      "/home/acfrazier/274bot-campaign/selective-9527cc636187/build-only/client-affected/inject-1ba0500845fe5613",
+      "--test-threads=1"
+    ],
+    "cwd": "/home/acfrazier/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust",
+    "started_utc": "2026-09-10T02:59:04.350775+00:00",
+    "pid": 132551,
+    "exit_code": 0,
+    "elapsed_s": 0.7679030730068916,
+    "log_sha256": "fb8aa20f805b7dc61da9f13a846bfd3006aa2c746582a4703ad329c50c63e704"
+  },
+  {
+    "label": "login",
+    "argv": [
+      "/home/acfrazier/274bot-campaign/selective-9527cc636187/build-only/client-affected/login-f87da85619a41d91",
+      "--test-threads=1"
+    ],
+    "cwd": "/home/acfrazier/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust",
+    "started_utc": "2026-09-10T02:59:05.119212+00:00",
+    "pid": 132559,
+    "exit_code": 0,
+    "elapsed_s": 0.8286852150049526,
+    "log_sha256": "d1b498151542f05adaaa35c3b7c4d624c4ad43cadca4d2410ee6ed45da805bdc"
+  },
+  {
+    "label": "seq_delay",
+    "argv": [
+      "/home/acfrazier/274bot-campaign/selective-9527cc636187/build-only/client-affected/seq_delay-e25dd97688c681c3",
+      "--test-threads=1"
+    ],
+    "cwd": "/home/acfrazier/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust",
+    "started_utc": "2026-09-10T02:59:05.948622+00:00",
+    "pid": 132599,
+    "exit_code": 0,
+    "elapsed_s": 0.007847934000892565,
+    "log_sha256": "e4b41ce87be442a687e312d9f080a14c069c1a4ebf2c318661d3a86517795fbb"
+  },
+  {
+    "label": "zone",
+    "argv": [
+      "/home/acfrazier/274bot-campaign/selective-9527cc636187/build-only/client-affected/zone-668a3fe983438154",
+      "--test-threads=1"
+    ],
+    "cwd": "/home/acfrazier/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust",
+    "started_utc": "2026-09-10T02:59:05.997787+00:00",
+    "pid": 132601,
+    "exit_code": 0,
+    "elapsed_s": 2.895274480993976,
+    "log_sha256": "1ad6c7a421df87f3296fa716c126d9ebd03bfe0becd92f08a05e1558feb56878"
+  },
+  {
+    "label": "player_info",
+    "argv": [
+      "/home/acfrazier/274bot-campaign/selective-9527cc636187/build-only/client-affected/player_info-40ace5416075e76b",
+      "--test-threads=1"
+    ],
+    "cwd": "/home/acfrazier/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust",
+    "started_utc": "2026-09-10T02:59:08.893689+00:00",
+    "pid": 132679,
+    "exit_code": 0,
+    "elapsed_s": 0.19091727300838102,
+    "log_sha256": "b6e27190bfd30f4ead744b0d386b4443465df75841c532592a22510cc63410cf"
+  },
+  {
+    "label": "gpu_texture",
+    "argv": [
+      "/home/acfrazier/274bot-campaign/selective-9527cc636187/build-only/client-affected/gpu_texture-534e42018d90f5ab",
+      "--test-threads=1"
+    ],
+    "cwd": "/home/acfrazier/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust",
+    "started_utc": "2026-09-10T02:59:09.085242+00:00",
+    "pid": 132684,
+    "exit_code": 101,
+    "elapsed_s": 1.2679054970067227,
+    "log_sha256": "05d5fdd8e133d1b407e3116a2a306aa4a67a00d2e98275362546d61894d32920"
+  }
+]

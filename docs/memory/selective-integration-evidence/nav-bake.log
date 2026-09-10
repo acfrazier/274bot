@@ -1,0 +1,14 @@
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client)
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/api)
+   Compiling nav v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/nav)
+    Finished `release` profile [optimized] target(s) in 7.27s
+     Running `/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/target/release/nav-pack`
+derive_transports(/Users/acfrazier/experiments/Server/content): 2143 edges (1247 doors, 550 ladders, 282 stairs, 25 agility shortcuts, 8 boats, 14 gliders, 8 spirit trees, 9 npc hops); 39 teleports (7 spells, 32 jewellery); 92 skipped rows
+derive_transports: skipped 1: destination handed to another script
+derive_transports: skipped 34: destination is behind a dialog
+derive_transports: skipped 2: destination is randomised
+derive_transports: skipped 1: destination outside the grid box
+derive_transports: skipped 1: no measured tick cost for this loc name
+derive_transports: skipped 7: no rule for this placement (script reports it unhandled)
+derive_transports: skipped 46: player-relative destination with a horizontal shift
+nav-pack: baked 483 mapsquares into a 1792x9088 collision grid, 1152462 walkable tiles, 2143 transport edges, 68 bank stands -> 73438581 bytes -> /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/selective-integration-evidence/274bot.navpack; 260571161 flag bytes -> /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/selective-integration-evidence/274bot.navflags

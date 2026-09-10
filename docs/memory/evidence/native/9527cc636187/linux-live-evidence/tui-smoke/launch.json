@@ -1,0 +1,11 @@
+{
+  "pid": 132727,
+  "exit_code": null,
+  "timed_out": false,
+  "performance_acceptance": false,
+  "binary_sha256": "c9a78dee88384a7ef30375f8fb60f84a1107551f8b922695688e553ccd3be089",
+  "host_sha": "9527cc636187fdfaaca29c3e4af14819dd40dbe9",
+  "client_sha": "daccb4ba3ff5f8d1fce5b3b9487a1f0576ad50ac",
+  "terminal": "PTY 120x40",
+  "started_utc": "2026-09-10T02:59:36.087558+00:00"
+}

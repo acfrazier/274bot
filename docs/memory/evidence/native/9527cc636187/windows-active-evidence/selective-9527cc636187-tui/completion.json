@@ -1,0 +1,9 @@
+{
+  "timed_out": false,
+  "exit_code": 0,
+  "performance_acceptance": false,
+  "input_writes": 60,
+  "input_probe_error": null,
+  "elapsed_s": 225.02586870000232,
+  "ended_utc": "2026-09-10T02:59:32.177214+00:00"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "20260909_231710_a0b9ef",
+  "model": "grok-4.6",
+  "profile_name": "branchreviewer",
+  "billing_provider": "xai-oauth",
+  "started_at": 1789010231.096884,
+  "ended_at": 1789010448.569886,
+  "end_reason": "cli_close",
+  "api_call_count": 22
+}

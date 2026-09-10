@@ -1,0 +1,27 @@
+
+running 10 tests
+test composite_lands_the_scene_in_the_full_frame ... ok
+test gpu_gouraud_face_shades_like_the_colour_table ... ok
+test gpu_lowmem_texture_samples_the_full_128px_layer ... ok
+test gpu_render_clamps_out_of_range_tex_id ... ok
+test gpu_render_samples_multi_texture_model ... ok
+test gpu_textured_shade_scales_texel_brightness ... FAILED
+test gpu_vertex_stays_pod ... ok
+test textured_model_mesh_carries_tex_id_and_uv ... ok
+test textured_type3_face_carries_tex_id_and_uv ... ok
+test wall_face_crossing_the_near_plane_still_emits ... ok
+
+failures:
+
+---- gpu_textured_shade_scales_texel_brightness stdout ----
+
+thread 'gpu_textured_shade_scales_texel_brightness' (132701) panicked at crates/client/tests/gpu_texture.rs:485:9:
+shade 16 must scale the red texel to ~223, got 255
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    gpu_textured_shade_scales_texel_brightness
+
+test result: FAILED. 9 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.24s
+

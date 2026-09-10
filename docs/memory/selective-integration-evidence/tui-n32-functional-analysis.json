@@ -1,0 +1,815 @@
+{
+  "source": "docs/memory/diagnostics/20260910T024517Z_tui_n32_active",
+  "n": 32,
+  "food22": 32,
+  "closed22": 32,
+  "return_resumed": 32,
+  "errors": 0,
+  "stun_seen": 32,
+  "slots": {
+    "live12ad4_0": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 179.048452583,
+        "bank_open": true,
+        "steals": 12
+      },
+      "closed22": {
+        "elapsed_s": 180.0751625,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 12
+      },
+      "return_resumed": {
+        "elapsed_s": 197.509508125,
+        "steals": 13,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3306, 0)",
+        "position": [
+          2656,
+          3306,
+          0
+        ]
+      },
+      "max_steals": 33,
+      "stun_seen": true
+    },
+    "live12ad4_1": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 182.124579625,
+        "bank_open": true,
+        "steals": 7
+      },
+      "closed22": {
+        "elapsed_s": 183.155463208,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 7
+      },
+      "return_resumed": {
+        "elapsed_s": 200.602064542,
+        "steals": 8,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3307, 0)",
+        "position": [
+          2656,
+          3307,
+          0
+        ]
+      },
+      "max_steals": 31,
+      "stun_seen": true
+    },
+    "live12ad4_2": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 238.836187042,
+        "bank_open": false,
+        "steals": 7
+      },
+      "closed22": {
+        "elapsed_s": 238.836187042,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 7
+      },
+      "return_resumed": {
+        "elapsed_s": 284.35911375,
+        "steals": 8,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+        "position": [
+          2656,
+          3307,
+          0
+        ]
+      },
+      "max_steals": 24,
+      "stun_seen": true
+    },
+    "live12ad4_3": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 169.83319725,
+        "bank_open": true,
+        "steals": 3
+      },
+      "closed22": {
+        "elapsed_s": 170.86730925,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 3
+      },
+      "return_resumed": {
+        "elapsed_s": 198.541932375,
+        "steals": 4,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3308, 0)",
+        "position": [
+          2658,
+          3307,
+          0
+        ]
+      },
+      "max_steals": 30,
+      "stun_seen": true
+    },
+    "live12ad4_4": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 177.009336458,
+        "bank_open": true,
+        "steals": 10
+      },
+      "closed22": {
+        "elapsed_s": 178.030055833,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 10
+      },
+      "return_resumed": {
+        "elapsed_s": 195.455410625,
+        "steals": 11,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3306, 0)",
+        "position": [
+          2657,
+          3306,
+          0
+        ]
+      },
+      "max_steals": 33,
+      "stun_seen": true
+    },
+    "live12ad4_5": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 204.734432708,
+        "bank_open": false,
+        "steals": 9
+      },
+      "closed22": {
+        "elapsed_s": 204.734432708,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 9
+      },
+      "return_resumed": {
+        "elapsed_s": 222.244204833,
+        "steals": 10,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2659, 3305, 0)",
+        "position": [
+          2660,
+          3304,
+          0
+        ]
+      },
+      "max_steals": 30,
+      "stun_seen": true
+    },
+    "live12ad4_6": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 188.265321542,
+        "bank_open": false,
+        "steals": 9
+      },
+      "closed22": {
+        "elapsed_s": 188.265321542,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 9
+      },
+      "return_resumed": {
+        "elapsed_s": 205.7613545,
+        "steals": 10,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2659, 3305, 0)",
+        "position": [
+          2658,
+          3305,
+          0
+        ]
+      },
+      "max_steals": 32,
+      "stun_seen": true
+    },
+    "live12ad4_7": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 181.099669958,
+        "bank_open": false,
+        "steals": 7
+      },
+      "closed22": {
+        "elapsed_s": 181.099669958,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 7
+      },
+      "return_resumed": {
+        "elapsed_s": 199.568590958,
+        "steals": 8,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+        "position": [
+          2656,
+          3307,
+          0
+        ]
+      },
+      "max_steals": 30,
+      "stun_seen": true
+    },
+    "live12ad4_8": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 192.350206125,
+        "bank_open": true,
+        "steals": 8
+      },
+      "closed22": {
+        "elapsed_s": 193.354716292,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 8
+      },
+      "return_resumed": {
+        "elapsed_s": 238.836187042,
+        "steals": 9,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+        "position": [
+          2656,
+          3307,
+          0
+        ]
+      },
+      "max_steals": 33,
+      "stun_seen": true
+    },
+    "live12ad4_9": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 187.243301792,
+        "bank_open": true,
+        "steals": 15
+      },
+      "closed22": {
+        "elapsed_s": 188.265321542,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 15
+      },
+      "return_resumed": {
+        "elapsed_s": 205.7613545,
+        "steals": 16,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2658, 3305, 0)",
+        "position": [
+          2659,
+          3304,
+          0
+        ]
+      },
+      "max_steals": 47,
+      "stun_seen": true
+    },
+    "live12ad4_10": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 319.546106667,
+        "bank_open": false,
+        "steals": 13
+      },
+      "closed22": {
+        "elapsed_s": 319.546106667,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 13
+      },
+      "return_resumed": {
+        "elapsed_s": 354.603820333,
+        "steals": 14,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2662, 3304, 0)",
+        "position": [
+          2661,
+          3304,
+          0
+        ]
+      },
+      "max_steals": 17,
+      "stun_seen": true
+    },
+    "live12ad4_11": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 245.063286542,
+        "bank_open": true,
+        "steals": 8
+      },
+      "closed22": {
+        "elapsed_s": 246.102123375,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 8
+      },
+      "return_resumed": {
+        "elapsed_s": 273.00266675,
+        "steals": 9,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+        "position": [
+          2656,
+          3307,
+          0
+        ]
+      },
+      "max_steals": 29,
+      "stun_seen": true
+    },
+    "live12ad4_12": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 203.701289167,
+        "bank_open": true,
+        "steals": 17
+      },
+      "closed22": {
+        "elapsed_s": 204.734432708,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 17
+      },
+      "return_resumed": {
+        "elapsed_s": 221.203081667,
+        "steals": 18,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2658, 3305, 0)",
+        "position": [
+          2660,
+          3304,
+          0
+        ]
+      },
+      "max_steals": 34,
+      "stun_seen": true
+    },
+    "live12ad4_13": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 201.629217792,
+        "bank_open": false,
+        "steals": 18
+      },
+      "closed22": {
+        "elapsed_s": 201.629217792,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 18
+      },
+      "return_resumed": {
+        "elapsed_s": 233.657058875,
+        "steals": 19,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2664, 3304, 0)",
+        "position": [
+          2663,
+          3305,
+          0
+        ]
+      },
+      "max_steals": 38,
+      "stun_seen": true
+    },
+    "live12ad4_14": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 188.265321542,
+        "bank_open": false,
+        "steals": 9
+      },
+      "closed22": {
+        "elapsed_s": 188.265321542,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 9
+      },
+      "return_resumed": {
+        "elapsed_s": 223.284784542,
+        "steals": 10,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+        "position": [
+          2656,
+          3307,
+          0
+        ]
+      },
+      "max_steals": 43,
+      "stun_seen": true
+    },
+    "live12ad4_15": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 209.891030458,
+        "bank_open": false,
+        "steals": 17
+      },
+      "closed22": {
+        "elapsed_s": 209.891030458,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 17
+      },
+      "return_resumed": {
+        "elapsed_s": 237.800486292,
+        "steals": 18,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+        "position": [
+          2656,
+          3307,
+          0
+        ]
+      },
+      "max_steals": 41,
+      "stun_seen": true
+    },
+    "live12ad4_16": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 222.244204833,
+        "bank_open": true,
+        "steals": 19
+      },
+      "closed22": {
+        "elapsed_s": 223.284784542,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 19
+      },
+      "return_resumed": {
+        "elapsed_s": 250.215226625,
+        "steals": 20,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+        "position": [
+          2656,
+          3307,
+          0
+        ]
+      },
+      "max_steals": 40,
+      "stun_seen": true
+    },
+    "live12ad4_17": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 197.509508125,
+        "bank_open": true,
+        "steals": 7
+      },
+      "closed22": {
+        "elapsed_s": 198.541932375,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 7
+      },
+      "return_resumed": {
+        "elapsed_s": 216.0965645,
+        "steals": 8,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3307, 0)",
+        "position": [
+          2657,
+          3306,
+          0
+        ]
+      },
+      "max_steals": 29,
+      "stun_seen": true
+    },
+    "live12ad4_18": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 214.025051625,
+        "bank_open": true,
+        "steals": 20
+      },
+      "closed22": {
+        "elapsed_s": 215.061854667,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 20
+      },
+      "return_resumed": {
+        "elapsed_s": 232.625121583,
+        "steals": 21,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+        "position": [
+          2656,
+          3307,
+          0
+        ]
+      },
+      "max_steals": 33,
+      "stun_seen": true
+    },
+    "live12ad4_19": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 299.875455375,
+        "bank_open": true,
+        "steals": 4
+      },
+      "closed22": {
+        "elapsed_s": 300.90696,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 4
+      },
+      "return_resumed": {
+        "elapsed_s": 318.514428167,
+        "steals": 5,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3306, 0)",
+        "position": [
+          2657,
+          3306,
+          0
+        ]
+      },
+      "max_steals": 14,
+      "stun_seen": true
+    },
+    "live12ad4_20": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 159.517098125,
+        "bank_open": true,
+        "steals": 1
+      },
+      "closed22": {
+        "elapsed_s": 160.558527125,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 1
+      },
+      "return_resumed": {
+        "elapsed_s": 195.455410625,
+        "steals": 2,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+        "position": [
+          2656,
+          3307,
+          0
+        ]
+      },
+      "max_steals": 28,
+      "stun_seen": true
+    },
+    "live12ad4_21": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 187.243301792,
+        "bank_open": false,
+        "steals": 9
+      },
+      "closed22": {
+        "elapsed_s": 187.243301792,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 9
+      },
+      "return_resumed": {
+        "elapsed_s": 204.734432708,
+        "steals": 10,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2659, 3305, 0)",
+        "position": [
+          2659,
+          3304,
+          0
+        ]
+      },
+      "max_steals": 31,
+      "stun_seen": true
+    },
+    "live12ad4_22": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 169.83319725,
+        "bank_open": false,
+        "steals": 7
+      },
+      "closed22": {
+        "elapsed_s": 169.83319725,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 7
+      },
+      "return_resumed": {
+        "elapsed_s": 187.243301792,
+        "steals": 8,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2660, 3305, 0)",
+        "position": [
+          2660,
+          3304,
+          0
+        ]
+      },
+      "max_steals": 37,
+      "stun_seen": true
+    },
+    "live12ad4_23": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 209.891030458,
+        "bank_open": false,
+        "steals": 12
+      },
+      "closed22": {
+        "elapsed_s": 209.891030458,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 12
+      },
+      "return_resumed": {
+        "elapsed_s": 228.465829833,
+        "steals": 13,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+        "position": [
+          2656,
+          3307,
+          0
+        ]
+      },
+      "max_steals": 35,
+      "stun_seen": true
+    },
+    "live12ad4_24": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 170.86730925,
+        "bank_open": false,
+        "steals": 3
+      },
+      "closed22": {
+        "elapsed_s": 170.86730925,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 3
+      },
+      "return_resumed": {
+        "elapsed_s": 188.265321542,
+        "steals": 4,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2660, 3305, 0)",
+        "position": [
+          2660,
+          3304,
+          0
+        ]
+      },
+      "max_steals": 36,
+      "stun_seen": true
+    },
+    "live12ad4_25": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 192.350206125,
+        "bank_open": false,
+        "steals": 17
+      },
+      "closed22": {
+        "elapsed_s": 192.350206125,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 17
+      },
+      "return_resumed": {
+        "elapsed_s": 209.891030458,
+        "steals": 18,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3307, 0)",
+        "position": [
+          2659,
+          3304,
+          0
+        ]
+      },
+      "max_steals": 32,
+      "stun_seen": true
+    },
+    "live12ad4_26": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 171.885029958,
+        "bank_open": true,
+        "steals": 3
+      },
+      "closed22": {
+        "elapsed_s": 172.899671708,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 3
+      },
+      "return_resumed": {
+        "elapsed_s": 217.127671417,
+        "steals": 4,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+        "position": [
+          2657,
+          3308,
+          0
+        ]
+      },
+      "max_steals": 25,
+      "stun_seen": true
+    },
+    "live12ad4_27": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 223.284784542,
+        "bank_open": false,
+        "steals": 19
+      },
+      "closed22": {
+        "elapsed_s": 223.284784542,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 19
+      },
+      "return_resumed": {
+        "elapsed_s": 241.95789575,
+        "steals": 20,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+        "position": [
+          2656,
+          3307,
+          0
+        ]
+      },
+      "max_steals": 46,
+      "stun_seen": true
+    },
+    "live12ad4_28": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 197.509508125,
+        "bank_open": true,
+        "steals": 13
+      },
+      "closed22": {
+        "elapsed_s": 198.541932375,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 13
+      },
+      "return_resumed": {
+        "elapsed_s": 216.0965645,
+        "steals": 14,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3307, 0)",
+        "position": [
+          2657,
+          3306,
+          0
+        ]
+      },
+      "max_steals": 55,
+      "stun_seen": true
+    },
+    "live12ad4_29": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 241.95789575,
+        "bank_open": false,
+        "steals": 7
+      },
+      "closed22": {
+        "elapsed_s": 241.95789575,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 7
+      },
+      "return_resumed": {
+        "elapsed_s": 277.146663583,
+        "steals": 8,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+        "position": [
+          2656,
+          3307,
+          0
+        ]
+      },
+      "max_steals": 17,
+      "stun_seen": true
+    },
+    "live12ad4_30": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 197.509508125,
+        "bank_open": true,
+        "steals": 15
+      },
+      "closed22": {
+        "elapsed_s": 198.541932375,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 15
+      },
+      "return_resumed": {
+        "elapsed_s": 216.0965645,
+        "steals": 16,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2657, 3307, 0)",
+        "position": [
+          2657,
+          3306,
+          0
+        ]
+      },
+      "max_steals": 57,
+      "stun_seen": true
+    },
+    "live12ad4_31": {
+      "errors": [],
+      "food22": {
+        "elapsed_s": 238.836187042,
+        "bank_open": false,
+        "steals": 10
+      },
+      "closed22": {
+        "elapsed_s": 238.836187042,
+        "title": "ThievingBot \u2014 closing the bank",
+        "steals": 10
+      },
+      "return_resumed": {
+        "elapsed_s": 274.040874917,
+        "steals": 11,
+        "title": "ThievingBot \u2014 Pickpocket Guard at (2656, 3308, 0)",
+        "position": [
+          2656,
+          3307,
+          0
+        ]
+      },
+      "max_steals": 25,
+      "stun_seen": true
+    }
+  },
+  "limits": [
+    "diagnostic run; concurrent builds and later one idle panel occurred; no performance acceptance",
+    "spot animation does not establish Traveller stun recovery events"
+  ]
+}

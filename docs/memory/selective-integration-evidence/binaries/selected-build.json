@@ -1,0 +1,14 @@
+{
+  "tui-play": {
+    "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/selective-integration-evidence/binaries/tui-play-selected-system",
+    "sha256": "debf72cf91b61cf8609da13eb65113f861fd38e17504d21bde6d1f7773df91a5"
+  },
+  "panel-play": {
+    "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/selective-integration-evidence/binaries/panel-play-selected-system",
+    "sha256": "c2f32149e85dfa7acd1952fee4075052e3bb8d5c195697ad1650868df5ed575a"
+  },
+  "host": "9527cc636187fdfaaca29c3e4af14819dd40dbe9",
+  "client": "daccb4ba3ff5f8d1fce5b3b9487a1f0576ad50ac",
+  "features": "memory-profile-no-alloc",
+  "build_log": "selected-release-build.log"
+}

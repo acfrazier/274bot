@@ -1,0 +1,22 @@
+{
+  "host_sha": "9527cc636187fdfaaca29c3e4af14819dd40dbe9",
+  "client_sha": "daccb4ba3ff5f8d1fce5b3b9487a1f0576ad50ac",
+  "output": "C:/Users/Austen/274bot-campaign/selective-9527cc636187/panel-server-recheck",
+  "env": {
+    "CARGO_BUILD_JOBS": "4",
+    "CARGO_TARGET_DIR": "C:/Users/Austen/274bot-campaign/target-native",
+    "CARGO_TERM_COLOR": "never",
+    "CARGO_NET_RETRY": "1",
+    "ENGINE_DIR": "C:/Users/BotTest/274bot-server-4c95f87"
+  },
+  "stages": [
+    {
+      "label": "panel-library-server-up",
+      "argv": [
+        "C:/Users/Austen/274bot-campaign/target-native/release/deps/panel-46c8fbf4db5f31d8.exe",
+        "--test-threads=1"
+      ],
+      "cwd": "C:/Users/Austen/274bot-campaign/selective-9527cc636187/source"
+    }
+  ]
+}

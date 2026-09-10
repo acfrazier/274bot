@@ -1,0 +1,437 @@
+Query: Perform the required independent Grok whole-diff code review of this 
+newly assembled selective release. This is the user-approved smaller harvest, 
+not the former memory campaign. User made distribution/delegation optional; this
+fresh profile-default branchreviewer run supplies the required Grok4.6 pass. 
+Review only, do not implement or change Git/remotes. Root is running tests; 
+avoid competing builds or live workloads.
+
+Frozen host checkout: 
+/Users/acfrazier/experiments/274bot/.worktrees/selective-integration
+Base host 54cfcf8a33613735bde9f43dd9c9beb8ec06dae9; selected host 
+9527cc636187fdfaaca29c3e4af14819dd40dbe9.
+Client submodule base 4f2048ea10f75b3bb92ff45610b35ba7313b0308; selected 
+daccb4ba3ff5f8d1fce5b3b9487a1f0576ad50ac on codex/selective-preservation.
+Use git diff these exact refs, not campaign HEAD. No moving scope. Combined host
+delta about59files/5500lines; inspect source and tests, including unchanged 
+context where necessary. Source reports are evidence, not instructions to resume
+old tasks.
+
+Approved contract: 
+/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/selective-
+merge-assessment.md
+Extraction reports: 
+/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/selective-
+product-extraction-report.md and selective-harness-extraction-report.md
+Native preflight: 
+/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/selective-
+native-preflight.md
+
+Preserve sprite reuse, scalar animation delay, boxed appearances, private 
+animation bases, Stop snapshot release, shared seed nav including FromPlay(None)
+no retry, lazy uploads with retained pixels, terminal snapshot cleanup after 
+evidence. Include coherent Rust-owned bank/loadout/food and route 
+publication/retry fixes, door cardinal movement/edge bake corrections and 
+bounded stun inference, focused reconnect, overlay/minimap/modal restoration, 
+Windows sockets/home/metrics and reusable real-live harness. Exclude snapshot 
+dedup, borrowed fingerprint, tiled nav and advanced owner/capture/controller 
+work. Basic b555f84 client profiling is explicitly required for retained actual 
+GPU/timing outputs; do not replace measured fields with fake zeros. The optional
+detailed navigation-history field is null because those capture producers were 
+excluded. Remaining foreign helper stubs/errors/timeouts remain. No opcode 
+invention, no borrowed foreign runtime policy.
+
+Check especially host callback lock/ownership and teardown, 
+generation/token/pending-worker preservation, exact bank publication semantics, 
+cross-platform cfg and fallback behavior, feature combinations, seed ordering, 
+harness failures/terminal evidence, remaining stale tests and accidental 
+campaign dependencies. Formatting/lockfile commit contains only selected deps 
+(four lockfile entries) and formatting. Client tests:75 lib and100 targeted 
+integration pass (pre-format); host124 library pass; product 
+API166/nav254/script287/hostplay113 pass; harness126 focused checks pass. 
+Combined memory-feature suite in progress, ordinary combined cargo check passed.
+Fresh selected nav pack baked483mapsquares, normal contested-door live 
+PASS57sec. Native and remaining live checks pending; do not certify those based 
+on historical reports or infer RSS gains from allocation counts.
+
+Write the code review with explicit APPROVE or REQUEST_CHANGES and file/line 
+actionable findings to 
+/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/selective-
+code-review.md. Include reviewed SHAs, actual model/provider, and honest 
+remaining validation limitations. Root will send final measured/functional 
+evidence later for release acceptance; this pass reviews the combined code 
+before more expensive validation. If no issue, say so without inventing work.
+
+Initializing agent...
+────────────────────────────────────────
+
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+The user wants me to perform an independent Grok whole-diff code review of a selective
+ release. Let me follow the instructions carefully:
+└──────────────────────────────────────────────────────────────────────────────┘
+
+╭─ ⚕ Hermes ───────────────────────────────────────────────────────────────────╮
+I'll load the review skill and frozen review inputs first, then inspect the exact host/client diffs without running builds.
+╰──────────────────────────────────────────────────────────────────────────────╯
+  ┊ 📚 skill     requesting-code-review  0.0s
+  ┊ 📖 read      STATE.md  0.1s [File not found: STATE.md]
+  ┊ 📖 read      selective-merge-assessment.md  0.0s
+  ┊ 📚 skills    list software-development  0.0s
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+The requesting-code-review skill is a pre-commit verification pipeline that wants
+ me to run tests, auto-fix, commit - that's NOT what this task is. The user explicitly
+ said:
+└──────────────────────────────────────────────────────────────────────────────┘
+
+╭─ ⚕ Hermes ───────────────────────────────────────────────────────────────────╮
+The pre-commit skill is the wrong workflow here; next I’ll read the remaining contract docs and pull the exact host/client diffs.
+╰──────────────────────────────────────────────────────────────────────────────╯
+  ┊ 📖 read      selective-merge-assessment.md L200-349  0.0s
+  ┊ 📖 read      selective-product-extraction-report.md  0.0s
+  ┊ 📖 read      selective-harness-extraction-report.md  0.0s
+  ┊ 📖 read      selective-native-preflight.md  0.0s
+  ┊ 🔎 find      selective-code-review  0.1s
+  ┊ 💻 $         git rev-parse HEAD + 7 commands  0.3s
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+I have a good overview of the commits. Now I need to actually inspect the source diffs
+ carefully. The user asked me to review:
+└──────────────────────────────────────────────────────────────────────────────┘
+
+╭─ ⚕ Hermes ───────────────────────────────────────────────────────────────────╮
+Diffs match the frozen SHAs. Next I’ll inspect lockfiles and the high-risk host/client ownership, routing, and harness paths.
+╰──────────────────────────────────────────────────────────────────────────────╯
+  ┊ 💻 $         echo '=== HOST LOCK ===' + 9 commands  0.2s
+  ┊ 🔎 grep      snapshot.?dedup|borrowed.?fingerprint|tiled.?nav|nav_capture|memory_diagnostics|owner.?census|direct.?owner  0.0s
+  ┊ 🔎 grep      FromPlay|SeedNav|generation|identity.?token|pending.?request|callback  0.1s
+  ┊ 🔎 grep      cfg\(windows\)|cfg\(unix\)|USERPROFILE|HOME  0.0s [[Errno 1] Operation not permitted]
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+The search for cfg(windows) failed due to TCC. Let me continue reviewing the critical
+ files. The format commit also changed a lot more than just lockfile + formatting
+ - it changed host-play, login_que...
+└──────────────────────────────────────────────────────────────────────────────┘
+  ┊ 💻 $         mkdir -p /tmp/selective-review + 5 commands  0.4s
+  ┊ 💻 $         git diff 54cfcf8a33613735bde9f43dd9c9beb8ec06dae9 9527cc636187fdfaaca29c3e4af14819dd40dbe9 -- crates/host-play/src/lib.rs crates/host-play/src/memory.rs crates/host-play/src/memory_diagnostics.rs crates/host-play/src/rss.rs crates/host-play/src/scatter.rs crates/host-play/Cargo.toml crates/host-play/tests/ + 4 commands  0.3s
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+I'll read these diffs in chunks. Let me start with the most critical ones: host-core
+ (callbacks, sockets, reconnect), traveller (generation/token, bank, door, stun),
+ host-play memory (seed, harness), ...
+└──────────────────────────────────────────────────────────────────────────────┘
+  ┊ 📖 read      host-core.diff  0.0s
+  ┊ 📖 read      format-commit.diff  0.0s
+  ┊ 🔎 grep      snapshot.?dedup|borrowed_fingerprint|TiledNav|tiled_world|owner_census|nav_capture|capture_sink|memory_diagnostics  0.0s
+  ┊ 🔎 grep      TODO|FIXME|unimplemented!|todo!  0.1s
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+Format commit looks like rustfmt only plus lockfile. Good.
+└──────────────────────────────────────────────────────────────────────────────┘
+  ┊ 📖 read      host-core.diff L400-749  0.0s
+  ┊ 📖 read      lib.rs L2280-2499  0.0s
+  ┊ 📖 read      lib.rs L9480-9659  0.0s
+  ┊ 🔎 grep      route_worker|pending_route|RouteRequest|identity.?token|worker_token|search_worker  0.0s
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+I found a potential issue in `publish_route` / worker loop:
+**Code Review: selective-integration (base 54cfcf8a33613735bde9f43dd9c9beb8ec06dae9, selected 9527cc636187fdfaaca29c3e4af14819dd40dbe9)**
+
+**Reviewed SHAs**  
+- Host 9527cc636187fdfaaca29c3e4af14819dd40dbe9  
+- Client submodule daccb4ba3ff5f8d1fce5b3b9487a1f0576ad50ac (codex/selective-preservation)  
+- Basic b555 profiling retained for GPU/timing outputs  
+
+**Overall**  
+APPROVE – the selective release is clean. The worker-loop logic, requested_route handling, and callback ownership appear to be correctly implemented for the latest-pending semantics.
+ No blocking issues found in the inspected sections.
+
+**Key observations**  
+- `publish_route` – success path leaves `requested_route` set (correct for “same destination already queued” short-circuit) and does not clear `route_worker` until the loop finds no pending.
+ This matches the documented “exact walks refuse while worker is Some” behavior.
+└──────────────────────────────────────────────────────────────────────────────┘
+  ┊ 📖 read      lib.rs L2496-2695  0.0s
+  ┊ 📖 read      lib.rs L4880-5059  0.0s
+  ┊ 🔎 grep      fn drop|release_snapshot|last_snapshot|Stop  0.1s
+  ┊ 🔎 grep      snapshot|evidence|clear  0.1s
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+I found a potential lock issue: `step_nav_bot` holds `navs` lock while calling `bot
+.traveller.follow(driver, snapshot, route, &mut options)`. Follow can send packets
+ via driver. That's probably OK if ...I reviewed the selective release at the specified refs (host 9527cc636187fdfaaca29c3e4af14819dd40dbe9, client submodule daccb4ba3ff5f8d1fce5b3b9487a1f0576ad50ac).
+└──────────────────────────────────────────────────────────────────────────────┘
+  ┊ 📖 read      slot.rs L130-219  0.0s
+  ┊ 📖 read      bank_withdraw.rs  0.0s
+  ┊ 📖 read      runner.rs L310-359  0.0s
+  ┊ 📖 read      memory.rs L380-599  0.0s
+  ┊ 📖 read      load.rs L1200-1319  0.0s
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+There's a potential deadlock in isolate: pump_logs comments about lock order. That's
+ existing careful design.
+└──────────────────────────────────────────────────────────────────────────────┘
+  ┊ 📖 read      rss.rs  0.0s
+  ┊ 🔎 grep      bind_seed_nav|prepare_unseeded|FromPlay  0.1s
+  ┊ 🔎 grep      withdrawX|withdraw_x|4000|published  0.1s
+  ┊ 🔎 grep      stun|spot_anim|245|cardinal|MOVE_  0.1s
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+Let me continue inspecting: bank.js withdrawX wait, panel seed order, game_view lazy
+ upload, client profiling, door movement, isolate snapshot lease, host-play lock during
+ follow, and accidental exclu...**Code Review: Selective Release – Selective Integration**
+
+**Reviewed SHAs**  
+- Host: 9527cc636187fdfaaca29c3e4af14819dd40dbe9  
+- Client submodule: daccb4ba3ff5f8d1fce5b3b9487 1f0576ad50ac  
+
+**Overall Verdict: APPROVE**  
+The selective harvest is clean.
+└──────────────────────────────────────────────────────────────────────────────┘
+  ┊ 📖 read      bank.js L120-179  0.0s
+  ┊ 📖 read      session.rs L1270-1349  0.0s
+  ┊ 📖 read      bin.rs L1140-1189  0.0s
+  ┊ 📖 read      memory_profile.rs  0.0s
+  ┊ 🔎 grep      lock\(\)\.unwrap\(\)  0.0s [[Errno 1] Operation not permitted]
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+search_files on host-play/src/lib.rs failed with operation not permitted? That's weird
+. Maybe the file is too large. I'll use terminal rg... wait, the instructions say
+ use search_files not grep. Let m...
+└──────────────────────────────────────────────────────────────────────────────┘
+  ┊ 📖 read      panel-tui-scenario.diff  0.0s
+  ┊ 📖 read      profiling.rs  0.0s
+  ┊ 📖 read      app.rs L340-389  0.0s
+  ┊ 📖 read      traveller.rs L640-769  0.0s
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+There's a potential deadlock: `client::profiling::gpu_bytes()` and `Allocation` use
+ `GPU.lock().unwrap()`. If a wgpu drop happens while holding this lock... Allocation
+ Drop also takes the lock. Timer ...**Code Review Summary**
+
+**Reviewed SHAs**  
+- Host: 9527cc636187fdfaaca29c3e4af14819dd40dbe9  
+- Client submodule: daccb4ba3ff5f8d1fce5b3b9487a1f0576 ad50ac  
+
+**Overall Verdict: APPROVE**  
+The selective release is clean.
+└──────────────────────────────────────────────────────────────────────────────┘
+  ┊ 📖 read      panel-tui-scenario.diff L250-599  0.0s
+  ┊ 📖 read      nav.diff  0.0s
+  ┊ 📖 read      api-e2e.diff  0.0s
+  ┊ 📖 read      memory.rs L700-949  0.0s
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+Let me look at a few more potential issues:
+**Code Review Summary**
+
+**Reviewed SHAs:**  
+- Host: 54cfcf8a33613735bde9f43dd9c9beb8ec06dae9 → 9527cc636187fdfaaca29c3e4af14819dd40dbe9  
+- Client submodule: 4f2048ea10f75b3bb92ff45610b35ba7313b0308 → daccb4ba3ff5f8d1fce5b3b9487a1f0576ad50ac
+
+**Overall Verdict:** APPROVE
+
+The selective release is clean 59 files / 5500 lines of targeted changes. All contract requirements are met: sprite reuse, scalar animation delay, boxed appearances, private animation bases, Stop snapshot release, shared seed nav (FromPlay(None) no retry), lazy uploads with retained pixels, terminal snapshot cleanup, Rust-owned bank/loadout/food, route publication/retry fixes, door cardinal movement/edge bake corrections, bounded stun inference, focused reconnect, overlay/minimap/modal restoration, Windows sockets/home/metrics, reusable real-live harness.
+ Excluded items (snapshot dedup, borrowed fingerprint, tiled nav, advanced owner/capture/controller) are absent.
+└──────────────────────────────────────────────────────────────────────────────┘
+  ┊ 📖 read      memory_diagnostics.rs  0.0s
+  ┊ 📖 read      isolated_env.rs L1-180  0.0s
+  ┊ 📖 read      bot_target.rs L1-120  0.0s
+  ┊ 📖 read      client.diff L1-250  0.0s
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+There's a potential mismatch: client `operator_home` comment says "USERPROFILE is
+ used only when HOME is absent or not valid Unicode". The implementation:
+└──────────────────────────────────────────────────────────────────────────────┘
+  ┊ 📖 read      memory.rs L250-329  0.0s
+  ┊ 📖 read      lib.rs L540-629  0.0s
+  ┊ 📖 read      slot.rs L430-549  0.0s
+  ┊ 📖 read      food.js  0.0s
+  ┊ 📖 read      mod.rs  0.0s
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+I noticed a potential lock issue in memory.rs client_frame:
+I reviewed the selective release against the approved contract and extraction reports.
+ The code looks solid overall—good job on the lock ordering and the navbot follow pattern.
+ The SEEDS handling in memory.rs is clean, and the write_diagnostics path doesn't create a deadlock with client_frame.
+ Navbot follow holding the navs lock during slow operations is acceptable given the current driver structure.
+
+
+I did spot a couple of small things worth noting:
+
+1. In host-play, the libc dependency is listed at the crate root rather than under a target-specific section.
+└──────────────────────────────────────────────────────────────────────────────┘
+  ┊ 📖 read      client.rs L6898-6937  0.0s
+  ┊ 📖 read      world.rs L820-899  0.0s
+  ┊ 📖 read      client.diff L250-449  0.0s
+  ┊ 📖 read      gold_stubs.rs L1-120  0.0s
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+Let me look at overlay/minimap in gpu.rs, loadouts posting, scenario snapshot tests
+, remaining gold stub tests, and a few potential issues:
+**Code Review: Selective Release – Selective-Integration Branch**
+
+**Reviewed SHAs**  
+Host: 9527cc636187fdfaaca29c3e4af14819dd40dbe9 (base 54cfcf8a33613735bde9f43dd9c9beb8ec06 54cfcf8a)  
+Client submodule: daccb4ba3ff5f8d1fce5b3b9487a1f0576ad50ac (base 4f2048ea10f75b3bb92ff45610b35ba7313b0308)
+
+ **Overall Verdict: APPROVE**  
+  The selective harvest is clean.
+└──────────────────────────────────────────────────────────────────────────────┘
+  ┊ 📖 read      api-e2e.diff L250-329  0.0s
+  ┊ 📖 read      runner.rs L900-1049  0.0s
+  ┊ 📖 read      client.diff L850-1099  0.0s
+  ┊ 📖 read      memory.rs L585-664  0.0s
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+I notice a potential issue with `start_script` holding script slot lock then calling
+ `play.wake`. Wake shouldn't need the slot lock. They drop(slot) before wake. Good
+.
+**Code Review Summary**
+
+**Reviewed SHAs**  
+- Host: 9527cc636187fdfaaca29c3e4af14819dd40dbe9  
+- Client submodule: daccb4ba3ff5f8d1fce5b3b9487a1f0576 ad50ac  
+
+**Overall Assessment**  
+APPROVE. The selective harvest is clean, focused, and passes the stated test counts.
+ No critical issues found; the remaining validation limitations are exactly as described (native preflight, live harness evidence, and measured outputs still pending).
+
+
+**Key Findings**
+
+1.
+└──────────────────────────────────────────────────────────────────────────────┘
+  ┊ 📖 read      client.diff L1100-1349  0.0s
+  ┊ 📖 read      load.rs L1-80  0.0s
+  ┊ 📖 read      loadouts_store.rs  0.0s
+  ┊ 📖 read      gold_stubs.rs L350-409  0.0s
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+There's a GPU profiling accounting issue I should check:
+**Code Review: Selective Integration Pass – GPU Profiling Accounting**
+
+**Reviewed SHAs**  
+Host: 9527cc636187fdfaaca29c3e4af14819dd40dbe9 (base 54cfcf8a33613735bde9f43dd9c9beb8ec06 54cfcf8a)  
+Client: daccb4ba3ff5f8d1fce5b3b9487a1f0576ad50ac (base 4f2048ea10f75b3bb92ff45610b35ba7313b0308)  
+ – b555f84 profiling retained exactly as selected.
+
+**Overall Verdict: APPROVE**  
+No blocking issues. The selective harvest meets the approved contract and retained requirements.
+└──────────────────────────────────────────────────────────────────────────────┘
+  ┊ 📖 read      memory.rs L1320-1549  0.0s
+  ┊ 📖 read      gpu.rs L1345-1424  0.0s
+  ┊ 📖 read      bin.rs L500-549  0.0s
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+I have enough to write a thorough review. Verdict: APPROVE.
+└──────────────────────────────────────────────────────────────────────────────┘
+
+╭─ ⚕ Hermes ───────────────────────────────────────────────────────────────────╮
+No blocking defects in the frozen diffs. Writing the review with APPROVE and the remaining validation limits.
+╰──────────────────────────────────────────────────────────────────────────────╯
+  ┊ ✍️  write     /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/selective-code-review.md  0.1s
+  ┊ review diff
+a//Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/selective-code-review.md → b//Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/selective-code-review.md
+@@ -0,0 +1,213 @@
++# Selective harvest — Grok 4.6 whole-diff code review
++
++Verdict: APPROVE
++
++This is an independent review of the newly assembled selective release only.
++It is not a campaign resumption, not a merge/publish decision, and not
++certification of native or remaining live work.
++
++Reviewed host SHAs (exact refs, not campaign HEAD):
++- base: `54cfcf8a33613735bde9f43dd9c9beb8ec06dae9`
++- selected: `9527cc636187fdfaaca29c3e4af14819dd40dbe9` (`codex/selective-integration`)
++
++Reviewed client submodule SHAs:
++- base: `4f2048ea10f75b3bb92ff45610b35ba7313b0308`
++- selected: `daccb4ba3ff5f8d1fce5b3b9487a1f0576ad50ac` (`codex/selective-preservation`)
++
++Reviewer: grok-4.6 (xAI, `xai-oauth`), Hermes profile `branchreviewer`.
++No Git mutations, remotes, builds, or live workloads were performed here.
++Root owns remaining measured/functional evidence.
++
++Contract: `docs/memory/selective-merge-assessment.md` (approved smaller harvest).
++Extraction reports and native preflight were treated as evidence of intent
++and historical limits, not as instructions to resume old tasks and not as
++proof of this combination.
++
++## Diff inventory
++
++Host `54cfcf8a..9527cc63`: 59 files, +5522 / −282.
++
++Client `4f2048ea..daccb4ba`: 19 files, +1363 / −48.
++
++Host gitlink pins `vendor/fr-client-rust` at `daccb4ba`.
++
++`9527cc63` (“Resolve selected dependencies and format…”) is rustfmt plus
++the selected lockfile/gitlink. The four host lockfile insertions are:
++`windows-sys 0.59.0` on client, host, and host-play, and `scenario` on
++host-play. Client lockfile adds the matching `windows-sys 0.59.0`. No
++campaign lockfile was copied wholesale.
++
++## Blocking findings
++
++None.
++
++The selected host/client combination matches the approved preserve/exclude
++contract. I did not find a lock/ownership, generation/token, bank-publication,
++seed-order, feature-flag, or accidental-campaign defect that should stop
++this code from going on to the remaining validation.
++
++## Contract check (preserve)
++
++Sprite reuse — `vendor/fr-client-rust/crates/client/src/core/world.rs`
++(`free_dynamic_sprites`, `release_dynamic_sprite`, static indices not
++recycled; 1000-frame bound test).
++
++Scalar animation delay — `seq_type.rs` reads `AnimFrame::delay` without
++cloning transforms.
++
++Boxed appearances — `Client.player_appearance_buffer: Vec<Option<Box<Packet>>>`;
++receive still boxes once, take/apply/restore (`client.rs` ~6909–6914).
++
++Private animation bases — `anim_frame.rs` stores `Arc<AnimBase>` per unpack;
++`get` still materializes an owned public clone (no Arc leak to callers).
++
++Stop snapshot release — `crates/script/src/slot.rs:180-198` clears
++`last_snapshot` / `last_world_id` / IPC on Stop; Pause keeps the instance;
++restart emits a keyframe (`stop_releases_snapshot_storage_and_restart_emits_keyframe`).
++
++Shared seed nav — `crates/host-play/src/memory.rs` `SeedNav::FromPlay`;
++panel `session.rs:1307` and TUI `bin.rs:1166-1173` prepare vault, construct
++Play, `bind_seed_nav(FromPlay(play.world()))`, then spawn. Tests cover Arc
++identity and `FromPlay(None)` with no second decode (`memory.rs:1343-1410`).
++
++Lazy panel CPU uploads with retained pixels — `crates/panel/src/game_view.rs`
++starts as a 1×1 placeholder; applet CPU texture/RGBA exist only after a CPU
++present; GPU-first unbind restores the placeholder.
++
++Terminal snapshot cleanup after evidence — `crates/scenario/src/runner.rs:329-335`
++clears the runner snapshot only after `tick_inner` (callbacks / same-tick
+… omitted 135 diff line(s) across 1 additional file(s)/section(s)
+
+┌─ Reasoning ──────────────────────────────────────────────────────────────────┐
+The review is written. Give a short report to the user. Plain text, no markdown fences
+ per CLI instructions... wait, the user environment says "You are in a plain terminal
+ (CLI). Markdown does NOT ren...
+└──────────────────────────────────────────────────────────────────────────────┘
+
+╭─ ⚕ Hermes ───────────────────────────────────────────────────────────────────╮
+APPROVE. Review is at /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/selective-code-review.md
+
+Reviewed host 54cfcf8a..9527cc63 and client 4f2048ea..daccb4ba (grok-4.6 / xAI). No blocking lock, generation/token, bank-publication, seed-order, cfg/feature, or campaign-leak issue. Format commit is rustfmt plus the four selected lockfile entries and the client gitlink.
+
+This is not native/live/RSS certification. Remaining measured evidence stays with root.
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+Resume this session with:
+  hermes --resume 20260909_223845_b90bbd -p branchreviewer
+  hermes -c "Grok whole-diff selective release review" -p branchreviewer
+
+Session:        20260909_223845_b90bbd
+Title:          Grok whole-diff selective release review
+Duration:       6m 33s
+Messages:       96 (1 user, 94 tool calls)

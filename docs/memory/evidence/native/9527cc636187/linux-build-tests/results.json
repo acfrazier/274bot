@@ -1,0 +1,21 @@
+[
+  {
+    "label": "host-lib",
+    "argv": [
+      "/home/acfrazier/274bot-campaign/nav-toolchain-1.98.0-01/1.98.0-x86_64-unknown-linux-gnu/bin/cargo",
+      "test",
+      "--locked",
+      "-p",
+      "host",
+      "--lib",
+      "--",
+      "--test-threads=1"
+    ],
+    "cwd": "/home/acfrazier/274bot-campaign/selective-9527cc636187/source",
+    "started_utc": "2026-09-10T02:41:09.570142+00:00",
+    "pid": 131222,
+    "exit_code": 101,
+    "elapsed_s": 46.11768677800137,
+    "log_sha256": "9876f366d4cff5baad8f25ab6193a06588aa0baf6560598b6793c051cbafbc94"
+  }
+]

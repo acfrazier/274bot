@@ -1,0 +1,933 @@
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/host/src/login_queue.rs:283:
+         assert!(matches!(q.request_permit(2, now), Permit::Wait(_)));
+         assert!(matches!(q.request_permit(1, now), Permit::Wait(_)));
+         assert_eq!(q.queued_uids(), vec![1, 2]);
+-        assert_eq!(q.request_permit(1, now + Duration::from_secs(1)), Permit::Grant);
+-        assert_eq!(q.request_permit(2, now + Duration::from_secs(2)), Permit::Grant);
++        assert_eq!(
++            q.request_permit(1, now + Duration::from_secs(1)),
++            Permit::Grant
++        );
++        assert_eq!(
++            q.request_permit(2, now + Duration::from_secs(2)),
++            Permit::Grant
++        );
+     }
+ 
+     #[test]
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/host/src/login_queue.rs:298:
+         assert!(matches!(q.request_permit(1, now), Permit::Wait(_)));
+         q.set_preferred(Some(3));
+         assert_eq!(q.queued_uids(), vec![3, 1]);
+-        assert!(matches!(q.request_permit(3, now + Duration::from_secs(1)), Permit::Wait(_)));
++        assert!(matches!(
++            q.request_permit(3, now + Duration::from_secs(1)),
++            Permit::Wait(_)
++        ));
+         q.leave(3);
+         q.leave(1);
+         q.set_preferred(None);
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/host/src/slot_io.rs:35:
+ /// Unix: `poll(2)`. Windows: `WSAPoll` on pointer-width `SOCKET` values —
+ /// never truncates to 32-bit fds and never busy-spins.
+ #[allow(unsafe_code)]
+-pub(crate) fn wait_readable(
+-    handles: &[WaitHandle],
+-    timeout: Duration,
+-) -> [bool; MAX_WAIT_HANDLES] {
++pub(crate) fn wait_readable(handles: &[WaitHandle], timeout: Duration) -> [bool; MAX_WAIT_HANDLES] {
+     debug_assert!(
+         handles.len() <= MAX_WAIT_HANDLES,
+         "wait_readable supports at most {MAX_WAIT_HANDLES} handles"
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/host-play/src/lib.rs:3126:
+     /// `set_draw` on the next tick).
+     pub fn focus(&mut self, name: &str) {
+         self.focused = Some(name.to_string());
+-        let uid = self.arms.get(name).map(|arm| arm.uid.load(Ordering::Relaxed));
++        let uid = self
++            .arms
++            .get(name)
++            .map(|arm| arm.uid.load(Ordering::Relaxed));
+         self.queue.lock().unwrap().set_preferred(uid);
+         self.wake(name);
+     }
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/host-play/src/lib.rs:3318:
+     }
+ 
+     #[cfg(feature = "memory-profile")]
+-    pub fn memory_script_metrics(&self, name:&str) -> Option<serde_json::Value> {
+-        script_slot(&self.scripts,name).and_then(|slot|slot.lock().unwrap().memory_metrics())
++    pub fn memory_script_metrics(&self, name: &str) -> Option<serde_json::Value> {
++        script_slot(&self.scripts, name).and_then(|slot| slot.lock().unwrap().memory_metrics())
+     }
+ 
+     #[cfg(feature = "memory-profile")]
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/host-play/src/lib.rs:3326:
+-    pub fn memory_script_progress(&self, name:&str) -> serde_json::Value {
+-        script_slot(&self.scripts,name).map(|slot|slot.lock().unwrap().memory_progress()).unwrap_or(serde_json::Value::Null)
++    pub fn memory_script_progress(&self, name: &str) -> serde_json::Value {
++        script_slot(&self.scripts, name)
++            .map(|slot| slot.lock().unwrap().memory_progress())
++            .unwrap_or(serde_json::Value::Null)
+     }
+ 
+     /// `name`'s script `last_error`; `None` when the slot has none.
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/host-play/src/lib.rs:4787:
+         assert_eq!(play.focused(), None, "no slot is focused before focus()");
+         play.arms.insert("b".into(), SlotArm::new(11, false));
+         play.arms.insert("c".into(), SlotArm::new(12, false));
+-        *play.queue.lock().unwrap() = LoginQueue::new(Duration::from_secs(1), 30, Duration::from_secs(60));
++        *play.queue.lock().unwrap() =
++            LoginQueue::new(Duration::from_secs(1), 30, Duration::from_secs(60));
+         play.focus("b");
+         assert_eq!(play.focused().as_deref(), Some("b"));
+         let now = Instant::now();
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/host-play/src/lib.rs:4797:
+             assert_eq!(q.request_permit(11, now), Permit::Grant);
+             assert!(matches!(q.request_permit(12, now), Permit::Wait(_)));
+             assert!(matches!(q.request_permit(11, now), Permit::Wait(_)));
+-            assert_eq!(q.queued_uids(), vec![11, 12], "focused reconnect has priority");
++            assert_eq!(
++                q.queued_uids(),
++                vec![11, 12],
++                "focused reconnect has priority"
++            );
+         }
+         play.focus("c");
+         assert_eq!(play.login_queue_uids(), vec![12, 11]);
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/host-play/src/rss.rs:132:
+     {
+         // First field = PeakWorkingSetSize (lifetime peak WS).
+         // Either sampler fail → full (0, 0.0) sentinel (panel joint check).
+-        let peak = windows_memory_counters()
+-            .and_then(|(_, peak)| nonzero_resident(peak));
++        let peak = windows_memory_counters().and_then(|(_, peak)| nonzero_resident(peak));
+         let cpu = windows_cpu_seconds_total();
+         combine_windows_sample(peak, cpu)
+     }
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/scenario/src/lib.rs:1892:
+ /// unchanged catalog script must eat, restock, and return using host APIs.
+ pub fn thiever_sustained_scenario() -> Scenario {
+     let mut scenario = thiever_scenario();
+-    let step = scenario.steps.iter_mut().find(|s| s.name == "seed stats, food, and tele to the guard stand").expect("Thiever seed");
+-    step.kind = StepKind::Perform { send: Box::new(|c, _| {
+-        cheat(c, "advancestat thieving 50");
+-        cheat(c, "advancestat hitpoints 50");
+-        cheat(c, "give lobster 4");
+-        cheat(c, "givebank lobster 2000");
+-        cheat(c, &tele_args(ARDOUGNE_GUARD.level, ARDOUGNE_GUARD.x, ARDOUGNE_GUARD.z));
+-        true
+-    }) };
++    let step = scenario
++        .steps
++        .iter_mut()
++        .find(|s| s.name == "seed stats, food, and tele to the guard stand")
++        .expect("Thiever seed");
++    step.kind = StepKind::Perform {
++        send: Box::new(|c, _| {
++            cheat(c, "advancestat thieving 50");
++            cheat(c, "advancestat hitpoints 50");
++            cheat(c, "give lobster 4");
++            cheat(c, "givebank lobster 2000");
++            cheat(
++                c,
++                &tele_args(ARDOUGNE_GUARD.level, ARDOUGNE_GUARD.x, ARDOUGNE_GUARD.z),
++            );
++            true
++        }),
++    };
+     scenario
+ }
+ 
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/scenario/src/runner.rs:948:
+         runner.phase = Phase::Running;
+         runner.step_sent = true;
+         runner.route = Some(Route {
+-            dest: WorldTile { x: 3221, z: 3220, level: 0 },
++            dest: WorldTile {
++                x: 3221,
++                z: 3220,
++                level: 0,
++            },
+             legs: vec![nav::router::Leg::Walk {
+                 tiles: vec![
+-                    WorldTile { x: 3220, z: 3220, level: 0 },
+-                    WorldTile { x: 3221, z: 3220, level: 0 },
++                    WorldTile {
++                        x: 3220,
++                        z: 3220,
++                        level: 0,
++                    },
++                    WorldTile {
++                        x: 3221,
++                        z: 3220,
++                        level: 0,
++                    },
+                 ],
+             }],
+             ticks: 1.0,
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/scenario/src/runner.rs:969:
+         assert_eq!(*shots.lock().unwrap(), vec![Some((3220, 3220, 0)); 2]);
+         let evidence = runner.evidence().unwrap();
+         assert_eq!(evidence.tile, Some([3220, 3220, 0]));
+-        assert!(evidence.message.as_ref().unwrap().contains("not seen within 1 ticks"));
++        assert!(evidence
++            .message
++            .as_ref()
++            .unwrap()
++            .contains("not seen within 1 ticks"));
+     }
+ 
+     #[test]
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/script/src/isolated_env.rs:322:
+     #[test]
+     fn operator_home_never_queries_profile_for_explicit_home() {
+         assert_eq!(
+-            super::operator_home_from(Ok("/explicit".into()), || panic!("unexpected USERPROFILE read")).unwrap(),
++            super::operator_home_from(Ok("/explicit".into()), || panic!(
++                "unexpected USERPROFILE read"
++            ))
++            .unwrap(),
+             "/explicit"
+         );
+         #[cfg(not(windows))]
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/script/src/isolated_env.rs:329:
+-        assert!(super::operator_home_from(Err(std::env::VarError::NotPresent), || panic!("Unix queried USERPROFILE")).is_err());
++        assert!(
++            super::operator_home_from(Err(std::env::VarError::NotPresent), || panic!(
++                "Unix queried USERPROFILE"
++            ))
++            .is_err()
++        );
+     }
+-
+ }
+ 
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/script/src/load.rs:1019:
+             let thread_counters = counters.clone();
+             let handle = std::thread::Builder::new()
+                 .name("js-isolate".into())
+-                .spawn(move || isolate_main(js, shape, siblings, rx, msg_tx, setup_tx, #[cfg(feature = "memory-profile")] thread_counters))
++                .spawn(move || {
++                    isolate_main(
++                        js,
++                        shape,
++                        siblings,
++                        rx,
++                        msg_tx,
++                        setup_tx,
++                        #[cfg(feature = "memory-profile")]
++                        thread_counters,
++                    )
++                })
+                 .map_err(|e| format!("isolate thread: {e}"))?;
+             let terminate = match setup_rx.recv_timeout(Duration::from_secs(10)) {
+                 Ok(Ok(handle)) => handle,
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/script/src/load.rs:1056:
+         pub fn post_snapshot(&self, bytes: Vec<u8>) {
+             let message = SnapshotMessage {
+                 #[cfg(feature = "memory-profile")]
+-                _lease: crate::memory_profile::SnapshotLease::new(self.counters.clone(), bytes.len(), bytes.capacity()),
++                _lease: crate::memory_profile::SnapshotLease::new(
++                    self.counters.clone(),
++                    bytes.len(),
++                    bytes.capacity(),
++                ),
+                 bytes,
+             };
+             let _ = self.tx.send(IsolateCmd::Snapshot(message));
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/script/src/load.rs:1114:
+         }
+ 
+         #[cfg(feature = "memory-profile")]
+-        pub fn memory_metrics(&self) -> serde_json::Value { self.counters.snapshot() }
++        pub fn memory_metrics(&self) -> serde_json::Value {
++            self.counters.snapshot()
++        }
+         #[cfg(feature = "memory-profile")]
+-        pub fn memory_metrics_handle(&self) -> std::sync::Arc<crate::memory_profile::Counters> { self.counters.clone() }
++        pub fn memory_metrics_handle(&self) -> std::sync::Arc<crate::memory_profile::Counters> {
++            self.counters.clone()
++        }
+ 
+         /// Read cached counters only; do not pump messages or probe JS.
+         #[cfg(feature = "memory-profile")]
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/script/src/load.rs:1312:
+         cmds: Receiver<IsolateCmd>,
+         out: Sender<ThreadMsg>,
+         setup: Sender<Result<v8::IsolateHandle, String>>,
+-        #[cfg(feature = "memory-profile")] counters: std::sync::Arc<crate::memory_profile::Counters>,
++        #[cfg(feature = "memory-profile")] counters: std::sync::Arc<
++            crate::memory_profile::Counters,
++        >,
+     ) {
+         #[cfg(feature = "memory-profile")]
+         let _heap_lifetime = crate::memory_profile::HeapLifetime(counters.clone());
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/script/src/load.rs:1328:
+             }
+         };
+         #[cfg(feature = "memory-profile")]
+-        counters.heap_live.store(1,std::sync::atomic::Ordering::Relaxed);
++        counters
++            .heap_live
++            .store(1, std::sync::atomic::Ordering::Relaxed);
+         if let Err(e) = wire_runtime(&mut runtime, &source, shape, &siblings) {
+             let _ = setup.send(Err(e));
+             return;
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/script/src/load.rs:1335:
+         }
+         let terminate = runtime.deno_runtime().v8_isolate().thread_safe_handle();
+         let _ = setup.send(Ok(terminate));
+-        tick_loop(runtime, cmds, out, #[cfg(feature = "memory-profile")] counters);
++        tick_loop(
++            runtime,
++            cmds,
++            out,
++            #[cfg(feature = "memory-profile")]
++            counters,
++        );
+     }
+ 
+     /// Monotonic clock backing the prelude's `performance.now()` shim
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/script/src/load.rs:2408:
+     /// are queued is stashed for the next iteration instead of being
+     /// dropped (a `while let Ok(IsolateCmd::Tick(..))` pattern would
+     /// swallow it).
+-    fn tick_loop(mut runtime: Runtime, cmds: Receiver<IsolateCmd>, out: Sender<ThreadMsg>,
+-        #[cfg(feature = "memory-profile")] counters: std::sync::Arc<crate::memory_profile::Counters>) {
++    fn tick_loop(
++        mut runtime: Runtime,
++        cmds: Receiver<IsolateCmd>,
++        out: Sender<ThreadMsg>,
++        #[cfg(feature = "memory-profile")] counters: std::sync::Arc<
++            crate::memory_profile::Counters,
++        >,
++    ) {
+         #[cfg(feature = "memory-profile")]
+         let mut last_heap_sample = None::<Instant>;
+         let mut paused = false;
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/script/src/load.rs:2426:
+             if last_heap_sample.is_none_or(|t| t.elapsed() >= Duration::from_secs(1)) {
+                 use std::sync::atomic::Ordering::Relaxed;
+                 let heap = runtime.deno_runtime().v8_isolate().get_heap_statistics();
+-                counters.heap_used.store(heap.used_heap_size() as u64,Relaxed);
+-                counters.heap_total.store(heap.total_heap_size() as u64,Relaxed);
+-                counters.heap_updated_ms.store(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64,Relaxed);
+-                counters.heap_samples.fetch_add(1,Relaxed);
++                counters
++                    .heap_used
++                    .store(heap.used_heap_size() as u64, Relaxed);
++                counters
++                    .heap_total
++                    .store(heap.total_heap_size() as u64, Relaxed);
++                counters.heap_updated_ms.store(
++                    std::time::SystemTime::now()
++                        .duration_since(std::time::UNIX_EPOCH)
++                        .unwrap_or_default()
++                        .as_millis() as u64,
++                    Relaxed,
++                );
++                counters.heap_samples.fetch_add(1, Relaxed);
+                 last_heap_sample = Some(Instant::now());
+             }
+             let cmd = match pending.take() {
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/script/src/slot.rs:379:
+     }
+ 
+     #[cfg(all(feature = "memory-profile", feature = "load"))]
+-    pub fn memory_metrics(&self) -> Option<serde_json::Value> { self.load.as_ref().map(|i|i.memory_metrics()) }
++    pub fn memory_metrics(&self) -> Option<serde_json::Value> {
++        self.load.as_ref().map(|i| i.memory_metrics())
++    }
+ 
+     #[cfg(all(feature = "memory-profile", feature = "load"))]
+     pub fn memory_progress(&self) -> serde_json::Value {
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/script/src/slot.rs:386:
+-        let mut value = self.load.as_ref().map(|i|i.memory_progress()).unwrap_or(serde_json::json!({}));
++        let mut value = self
++            .load
++            .as_ref()
++            .map(|i| i.memory_progress())
++            .unwrap_or(serde_json::json!({}));
+         if let Some(fp) = &self.last_snapshot {
+-            let rows = |rs: &[crate::isolate_fb::ItemRowFp]| rs.iter().take(32).map(|r|serde_json::json!({"name":r.name,"count":r.count,"ops":r.ops})).collect::<Vec<_>>();
++            let rows = |rs: &[crate::isolate_fb::ItemRowFp]| {
++                rs.iter()
++                    .take(32)
++                    .map(|r| serde_json::json!({"name":r.name,"count":r.count,"ops":r.ops}))
++                    .collect::<Vec<_>>()
++            };
+             value["inventory"] = serde_json::json!(rows(&fp.inv));
+             value["bank"] = serde_json::json!(rows(&fp.bank));
+             value["bank_open"] = serde_json::json!(fp.bank_open);
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/tui/src/bin.rs:532:
+     /// `auto_login` is on.
+     fn spawn(&mut self, name: &str) -> bool {
+         #[cfg(test)]
+-        if self.suppress_slot_spawn { return false; }
++        if self.suppress_slot_spawn {
++            return false;
++        }
+         let Some(mut profile) = self.vault.as_ref().and_then(|v| v.get(name)).cloned() else {
+             return false;
+         };
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/tui/src/bin.rs:1282:
+             return Ok(code);
+         }
+         {
+-        let _profile_frame = client::profiling::UI_FRAME.start();
+-        terminal
+-            .draw(|frame| {
+-                let _profile_draw = client::profiling::UI_DRAW.start();
+-                app.draw(frame);
+-                app.draw_loadouts_overlay(frame, &mut session.loadouts);
+-                app.draw_params_overlay(frame, &mut session.script_settings, &session.loadouts);
+-            })
+-            .map_err(|e| e.to_string())?;
++            let _profile_frame = client::profiling::UI_FRAME.start();
++            terminal
++                .draw(|frame| {
++                    let _profile_draw = client::profiling::UI_DRAW.start();
++                    app.draw(frame);
++                    app.draw_loadouts_overlay(frame, &mut session.loadouts);
++                    app.draw_params_overlay(frame, &mut session.script_settings, &session.loadouts);
++                })
++                .map_err(|e| e.to_string())?;
+         }
+         if event::poll(Duration::from_millis(50)).map_err(|e| e.to_string())? {
+             match event::read().map_err(|e| e.to_string())? {
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/bot_target.rs:230:
+             );
+             assert!(operator_home_from(missing.clone(), || missing.clone()).is_err());
+             assert_eq!(
+-                operator_home_from(Err(VarError::NotUnicode("x".into())), || Ok("/p".into())).unwrap(),
++                operator_home_from(Err(VarError::NotUnicode("x".into())), || Ok("/p".into()))
++                    .unwrap(),
+                 "/p"
+             );
+         }
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/bot_target.rs:247:
+     #[test]
+     fn operator_home_never_queries_profile_for_explicit_home() {
+         assert_eq!(
+-            super::operator_home_from(Ok("/explicit".into()), || panic!("unexpected USERPROFILE read")).unwrap(),
++            super::operator_home_from(Ok("/explicit".into()), || panic!(
++                "unexpected USERPROFILE read"
++            ))
++            .unwrap(),
+             "/explicit"
+         );
+         #[cfg(not(windows))]
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/bot_target.rs:254:
+-        assert!(super::operator_home_from(Err(std::env::VarError::NotPresent), || panic!("Unix queried USERPROFILE")).is_err());
++        assert!(
++            super::operator_home_from(Err(std::env::VarError::NotPresent), || panic!(
++                "Unix queried USERPROFILE"
++            ))
++            .is_err()
++        );
+     }
+-
+ }
+ 
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/core/world.rs:873:
+             }
+         }
+ 
+-        let index = if dynamic { self.free_dynamic_sprites.pop() } else { None }.unwrap_or_else(|| {
++        let index = if dynamic {
++            self.free_dynamic_sprites.pop()
++        } else {
++            None
++        }
++        .unwrap_or_else(|| {
+             let index = self.sprites.len();
+             self.sprites.push(None);
+             index
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/core/world.rs:1023:
+     /// Called only by render teardown after a dynamic sprite's frame ends.
+     /// Static scenery indices are never recycled.
+     pub(crate) fn release_dynamic_sprite(&mut self, index: usize) {
+-        if self.sprites.get(index).is_some_and(|slot|slot.is_some()) {
++        if self.sprites.get(index).is_some_and(|slot| slot.is_some()) {
+             self.del_sprite(index);
+             self.free_dynamic_sprites.push(index);
+         }
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/core/world.rs:1183:
+     use super::*;
+     #[test]
+     fn dynamic_sprite_slots_stay_bounded_across_frames() {
+-        let mut world = World::new(vec![vec![vec![0;5];5]],4,1,4);
++        let mut world = World::new(vec![vec![vec![0; 5]; 5]], 4, 1, 4);
+         let mut render = crate::render::world::RenderWorld::new();
+-        let static_index = world.set_sprite(64,64,0,0,0,0,1,1,1,0,0,false,0,0,0,0).unwrap();
++        let static_index = world
++            .set_sprite(64, 64, 0, 0, 0, 0, 1, 1, 1, 0, 0, false, 0, 0, 0, 0)
++            .unwrap();
+         for _ in 0..1000 {
+-            let index = world.set_sprite(192,192,0,0,1,1,1,1,2,0,0,true,0,0,0,0).unwrap();
+-            render.set_sprite_model(&world,index,None);
+-            assert_eq!(world.last_sprite_index(),Some(index));
++            let index = world
++                .set_sprite(192, 192, 0, 0, 1, 1, 1, 1, 2, 0, 0, true, 0, 0, 0, 0)
++                .unwrap();
++            render.set_sprite_model(&world, index, None);
++            assert_eq!(world.last_sprite_index(), Some(index));
+             render.remove_sprites(&mut world);
+             assert!(world.sprites[static_index].is_some());
+-            assert_eq!(world.square(0,1,1).unwrap().sprite_count,0);
++            assert_eq!(world.square(0, 1, 1).unwrap().sprite_count, 0);
+         }
+-        assert_eq!(world.sprites.len(),2,"one static and one reusable dynamic slot");
++        assert_eq!(
++            world.sprites.len(),
++            2,
++            "one static and one reusable dynamic slot"
++        );
+         // Repeated teardown cannot enqueue the same free index twice.
+         render.remove_sprites(&mut world);
+-        assert_eq!(world.free_dynamic_sprites.len(),1);
++        assert_eq!(world.free_dynamic_sprites.len(), 1);
+         world.reset_map();
+         assert!(world.free_dynamic_sprites.is_empty());
+-        assert_eq!(world.last_sprite_index(),None);
+-        assert_eq!(world.set_sprite(64,64,0,0,0,0,1,1,3,0,0,true,0,0,0,0),Some(0));
+-        let independent = World::new(vec![vec![vec![0;5];5]],4,1,4);
++        assert_eq!(world.last_sprite_index(), None);
++        assert_eq!(
++            world.set_sprite(64, 64, 0, 0, 0, 0, 1, 1, 3, 0, 0, true, 0, 0, 0, 0),
++            Some(0)
++        );
++        let independent = World::new(vec![vec![vec![0; 5]; 5]], 4, 1, 4);
+         assert!(independent.sprites.is_empty());
+         assert!(independent.free_dynamic_sprites.is_empty());
+     }
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/lib.rs:18:
+ pub mod wordfilter;
+ pub use bot_target::{
+     bot_target, cache_dir, cache_dir_for, content_dir, engine_dir, game_port_for,
+-    jag_fetch_port_for, operator_home, set_bot_target, unpack_dir,
+-    uses_secure_transport, world_host, world_host_for, BotTarget,
++    jag_fetch_port_for, operator_home, set_bot_target, unpack_dir, uses_secure_transport,
++    world_host, world_host_for, BotTarget,
+ };
+ pub use login_rsa::{
+     active_pair, JAVA_LOGIN_RSAE, JAVA_LOGIN_RSAN, PROD_LOGIN_RSAE, PROD_LOGIN_RSAN,
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/profiling.rs:2:
+ //! descriptor payload sizes, not driver VRAM: exclude padding, pipelines,
+ //! bind groups, host UI resources, pending submissions and externally retained
+ //! views after their backend is dropped. Enable before constructing clients.
+-use std::sync::{Mutex, atomic::{AtomicBool, AtomicU64, Ordering::Relaxed}};
++use std::sync::{
++    atomic::{AtomicBool, AtomicU64, Ordering::Relaxed},
++    Mutex,
++};
+ use std::time::Instant;
+-static ENABLED:AtomicBool=AtomicBool::new(false);
+-pub fn enable() { ENABLED.store(true,Relaxed); }
+-#[derive(Clone,Copy,Default,Debug)]
+-pub struct GpuBytes { pub buffers:u64, pub textures:u64, pub peak:u64 }
+-static GPU:Mutex<GpuBytes>=Mutex::new(GpuBytes{buffers:0,textures:0,peak:0});
+-pub fn gpu_bytes()->GpuBytes { *GPU.lock().unwrap() }
+-pub struct Allocation { buffers:u64,textures:u64 }
++static ENABLED: AtomicBool = AtomicBool::new(false);
++pub fn enable() {
++    ENABLED.store(true, Relaxed);
++}
++#[derive(Clone, Copy, Default, Debug)]
++pub struct GpuBytes {
++    pub buffers: u64,
++    pub textures: u64,
++    pub peak: u64,
++}
++static GPU: Mutex<GpuBytes> = Mutex::new(GpuBytes {
++    buffers: 0,
++    textures: 0,
++    peak: 0,
++});
++pub fn gpu_bytes() -> GpuBytes {
++    *GPU.lock().unwrap()
++}
++pub struct Allocation {
++    buffers: u64,
++    textures: u64,
++}
+ impl Allocation {
+-    pub fn new(buffers:u64,textures:u64)->Self {
+-        let (buffers,textures)=if ENABLED.load(Relaxed){(buffers,textures)}else{(0,0)};
+-        if buffers+textures>0 { let mut g=GPU.lock().unwrap();g.buffers+=buffers;g.textures+=textures;g.peak=g.peak.max(g.buffers+g.textures); }
+-        Self{buffers,textures}
++    pub fn new(buffers: u64, textures: u64) -> Self {
++        let (buffers, textures) = if ENABLED.load(Relaxed) {
++            (buffers, textures)
++        } else {
++            (0, 0)
++        };
++        if buffers + textures > 0 {
++            let mut g = GPU.lock().unwrap();
++            g.buffers += buffers;
++            g.textures += textures;
++            g.peak = g.peak.max(g.buffers + g.textures);
++        }
++        Self { buffers, textures }
+     }
+ }
+ impl Drop for Allocation {
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/profiling.rs:22:
+-    fn drop(&mut self) { if self.buffers+self.textures>0 { let mut g=GPU.lock().unwrap();g.buffers-=self.buffers;g.textures-=self.textures; } }
++    fn drop(&mut self) {
++        if self.buffers + self.textures > 0 {
++            let mut g = GPU.lock().unwrap();
++            g.buffers -= self.buffers;
++            g.textures -= self.textures;
++        }
++    }
+ }
+ /// Count every mip and array layer; current formats have 4-byte texels
+ /// (including Depth32Float). Unknown format sizes fail visibly in profiling.
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/profiling.rs:26:
+-pub fn texture_bytes(t:&wgpu::Texture)->u64 {
+-    if !ENABLED.load(Relaxed) { return 0; }
+-    let bytes=t.format().block_copy_size(None).expect("profile: texture format size");
+-    let (bw,bh)=t.format().block_dimensions();
+-    (0..t.mip_level_count()).map(|m| {
+-        let w=(t.width()>>m).max(1).div_ceil(bw) as u64;
+-        let h=(t.height()>>m).max(1).div_ceil(bh) as u64;
+-        let layers=if t.dimension()==wgpu::TextureDimension::D3 {(t.depth_or_array_layers()>>m).max(1)}else{t.depth_or_array_layers()};
+-        w*h*layers as u64*bytes as u64*t.sample_count() as u64
+-    }).sum()
++pub fn texture_bytes(t: &wgpu::Texture) -> u64 {
++    if !ENABLED.load(Relaxed) {
++        return 0;
++    }
++    let bytes = t
++        .format()
++        .block_copy_size(None)
++        .expect("profile: texture format size");
++    let (bw, bh) = t.format().block_dimensions();
++    (0..t.mip_level_count())
++        .map(|m| {
++            let w = (t.width() >> m).max(1).div_ceil(bw) as u64;
++            let h = (t.height() >> m).max(1).div_ceil(bh) as u64;
++            let layers = if t.dimension() == wgpu::TextureDimension::D3 {
++                (t.depth_or_array_layers() >> m).max(1)
++            } else {
++                t.depth_or_array_layers()
++            };
++            w * h * layers as u64 * bytes as u64 * t.sample_count() as u64
++        })
++        .sum()
+ }
+-pub struct DurationCounter { count:AtomicU64,total:AtomicU64,max:AtomicU64 }
++pub struct DurationCounter {
++    count: AtomicU64,
++    total: AtomicU64,
++    max: AtomicU64,
++}
+ impl DurationCounter {
+-    pub const fn new()->Self { Self{count:AtomicU64::new(0),total:AtomicU64::new(0),max:AtomicU64::new(0)} }
+-    pub fn start(&'static self)->Timer { Timer{counter:self,start:ENABLED.load(Relaxed).then(Instant::now)} }
++    pub const fn new() -> Self {
++        Self {
++            count: AtomicU64::new(0),
++            total: AtomicU64::new(0),
++            max: AtomicU64::new(0),
++        }
++    }
++    pub fn start(&'static self) -> Timer {
++        Timer {
++            counter: self,
++            start: ENABLED.load(Relaxed).then(Instant::now),
++        }
++    }
+     /// Cumulative (count,total nanoseconds,max nanoseconds); consumers can
+     /// difference count/total between samples without resetting hot counters.
+-    pub fn read(&self)->(u64,u64,u64) { (self.count.load(Relaxed),self.total.load(Relaxed),self.max.load(Relaxed)) }
++    pub fn read(&self) -> (u64, u64, u64) {
++        (
++            self.count.load(Relaxed),
++            self.total.load(Relaxed),
++            self.max.load(Relaxed),
++        )
++    }
+ }
+-pub struct Timer { counter:&'static DurationCounter,start:Option<Instant> }
+-impl Drop for Timer { fn drop(&mut self) { if let Some(start)=self.start {let ns=start.elapsed().as_nanos().min(u64::MAX as u128) as u64;self.counter.total.fetch_add(ns,Relaxed);self.counter.max.fetch_max(ns,Relaxed);self.counter.count.fetch_add(1,Relaxed);} } }
+-pub static CLIENT_TICK:DurationCounter=DurationCounter::new();
+-pub static UI_DRAW:DurationCounter=DurationCounter::new();
+-pub static UI_FRAME:DurationCounter=DurationCounter::new();
+-#[cfg(test)] mod tests {
++pub struct Timer {
++    counter: &'static DurationCounter,
++    start: Option<Instant>,
++}
++impl Drop for Timer {
++    fn drop(&mut self) {
++        if let Some(start) = self.start {
++            let ns = start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
++            self.counter.total.fetch_add(ns, Relaxed);
++            self.counter.max.fetch_max(ns, Relaxed);
++            self.counter.count.fetch_add(1, Relaxed);
++        }
++    }
++}
++pub static CLIENT_TICK: DurationCounter = DurationCounter::new();
++pub static UI_DRAW: DurationCounter = DurationCounter::new();
++pub static UI_FRAME: DurationCounter = DurationCounter::new();
++#[cfg(test)]
++mod tests {
+     use super::*;
+-    #[test] fn allocation_replacement_and_drop_release_only_their_bytes() {
+-        enable();let before=gpu_bytes();
+-        let old=Allocation::new(16,32);let new=Allocation::new(64,128);
+-        let during=gpu_bytes();assert_eq!(during.buffers-before.buffers,80);assert_eq!(during.textures-before.textures,160);
+-        drop(old);let after=gpu_bytes();assert_eq!(after.buffers-before.buffers,64);assert_eq!(after.textures-before.textures,128);
+-        drop(new);assert_eq!(gpu_bytes().buffers,before.buffers);assert_eq!(gpu_bytes().textures,before.textures);
++    #[test]
++    fn allocation_replacement_and_drop_release_only_their_bytes() {
++        enable();
++        let before = gpu_bytes();
++        let old = Allocation::new(16, 32);
++        let new = Allocation::new(64, 128);
++        let during = gpu_bytes();
++        assert_eq!(during.buffers - before.buffers, 80);
++        assert_eq!(during.textures - before.textures, 160);
++        drop(old);
++        let after = gpu_bytes();
++        assert_eq!(after.buffers - before.buffers, 64);
++        assert_eq!(after.textures - before.textures, 128);
++        drop(new);
++        assert_eq!(gpu_bytes().buffers, before.buffers);
++        assert_eq!(gpu_bytes().textures, before.textures);
+     }
+ }
+ 
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/render/backend/gpu.rs:866:
+         let chrome_bytes_per_row = (FRAME_W * 4).div_ceil(256) * 256;
+         let minimap_bytes_per_row = (MINIMAP_W * 4).div_ceil(256) * 256;
+ 
+-        let textures = [&scene_texture, &depth_texture, &frame_texture_a, &frame_texture_b,
+-            &present_texture, &chrome_texture, &minimap_texture].into_iter().map(crate::profiling::texture_bytes).sum();
+-        let buffers = brightness_buf.size()+chrome_vertex_buf.size()+minimap_vertex_buf.size();
++        let textures = [
++            &scene_texture,
++            &depth_texture,
++            &frame_texture_a,
++            &frame_texture_b,
++            &present_texture,
++            &chrome_texture,
++            &minimap_texture,
++        ]
++        .into_iter()
++        .map(crate::profiling::texture_bytes)
++        .sum();
++        let buffers = brightness_buf.size() + chrome_vertex_buf.size() + minimap_vertex_buf.size();
+         Ok(GpuBackend {
+-            _gpu_storage: crate::profiling::Allocation::new(buffers,textures),
+-            vertex_storage: crate::profiling::Allocation::new(vertex_buf.size(),0),
++            _gpu_storage: crate::profiling::Allocation::new(buffers, textures),
++            vertex_storage: crate::profiling::Allocation::new(vertex_buf.size(), 0),
+             context,
+             scene_texture,
+             scene_view,
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/render/backend/gpu.rs:994:
+         }
+         let bytes = vertices.len() * std::mem::size_of::<GpuVertex>();
+         if bytes > self.vertex_buf_capacity {
+-            let storage = crate::profiling::Allocation::new(bytes as u64,0);
++            let storage = crate::profiling::Allocation::new(bytes as u64, 0);
+             self.vertex_buf_capacity = bytes;
+             self.vertex_buf = self.context.device.create_buffer(&wgpu::BufferDescriptor {
+                 label: Some("r274 scene vertices"),
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/render/backend/gpu.rs:1753:
+     #[test]
+     fn viewport_overlay_moves_and_clears_without_chrome_redraw() {
+         use crate::render::backend::{FrameOutput, RenderBackend};
+-        let mut backend = super::GpuBackend::try_new().expect("GPU required for overlay regression");
++        let mut backend =
++            super::GpuBackend::try_new().expect("GPU required for overlay regression");
+         let mut r = crate::render::Renderer::new(false);
+         backend.last_kind = FrameKind::Game;
+         // A newly allocated GPU texture is zero-initialized. Hold it as
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/render/backend/gpu.rs:1765:
+         let first = (4 * FRAME_W + 4) as usize;
+         r.draw_area.pixels[first] = 0xff0000;
+         backend.overlay_coverage[0] = 255;
+-        let FrameOutput::Texture(frame) = backend.finish(&mut r) else { panic!("GPU frame"); };
++        let FrameOutput::Texture(frame) = backend.finish(&mut r) else {
++            panic!("GPU frame");
++        };
+         assert_eq!(frame.read_back()[first], 0xff0000);
+         let uploads = backend.chrome_upload_count();
+         let minimap_pixel = (4 * FRAME_W + 550) as usize;
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/render/backend/gpu.rs:1772:
+         assert_eq!(frame.read_back()[minimap_pixel], 0x0000ff);
+         backend.minimap_live = false; // loading retains the last minimap
+-        // Same live/frozen scene texture, new overlay pixels, no UI redraw.
++                                      // Same live/frozen scene texture, new overlay pixels, no UI redraw.
+         r.draw_area.pixels[first] = 0;
+         r.draw_area.pixels[first + 1] = 0x00ff00;
+         backend.overlay_coverage[0] = 0;
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/render/backend/gpu.rs:1778:
+         backend.overlay_coverage[1] = 255;
+-        let FrameOutput::Texture(frame) = backend.finish(&mut r) else { panic!("GPU frame"); };
++        let FrameOutput::Texture(frame) = backend.finish(&mut r) else {
++            panic!("GPU frame");
++        };
+         let pixels = frame.read_back();
+-        assert_eq!(pixels[minimap_pixel], 0x0000ff, "freeze overlay upload must retain minimap");
++        assert_eq!(
++            pixels[minimap_pixel], 0x0000ff,
++            "freeze overlay upload must retain minimap"
++        );
+         assert_eq!(pixels[first], 0, "old overlay must disappear");
+         assert_eq!(pixels[first + 1], 0x00ff00, "new overlay must appear");
+         assert_eq!(backend.chrome_upload_count(), uploads + 1);
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/render/backend/gpu.rs:1785:
+         // Coverage-only removal must clear even when RGB storage is retained.
+         backend.overlay_coverage[1] = 0;
+-        let FrameOutput::Texture(frame) = backend.finish(&mut r) else { panic!("GPU frame"); };
++        let FrameOutput::Texture(frame) = backend.finish(&mut r) else {
++            panic!("GPU frame");
++        };
+         assert_eq!(frame.read_back()[first + 1], 0);
+         let uploads = backend.chrome_upload_count();
+         r.draw_area.pixels[first + 1] = 0xff00ff; // invisible RGB is immaterial
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/render/backend/gpu.rs:1791:
+         backend.finish(&mut r);
+-        assert_eq!(backend.chrome_upload_count(), uploads, "unchanged visible overlay stays lazy");
++        assert_eq!(
++            backend.chrome_upload_count(),
++            uploads,
++            "unchanged visible overlay stays lazy"
++        );
+     }
+ 
+     /// Empty mesh leaves `scene_ready` false (synthetic main-modal fixture).
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/render/backend/gpu.rs:1809:
+         let FrameOutput::Texture(frame) = backend.finish(&mut r) else {
+             panic!("GPU frame");
+         };
+-        assert_eq!(frame.read_back()[first], 0, "sealed empty window starts black");
++        assert_eq!(
++            frame.read_back()[first],
++            0,
++            "sealed empty window starts black"
++        );
+         let uploads = backend.chrome_upload_count();
+         // Full-path main-modal: coverage is marked but scene_ready stays false.
+         r.draw_area.pixels[first] = 0x0033_6699;
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/render/backend/gpu_atlas.rs:157:
+         });
+         let view = texture.create_view(&Default::default());
+         GpuAtlas {
+-            storage: crate::profiling::Allocation::new(0,crate::profiling::texture_bytes(&texture)),
++            storage: crate::profiling::Allocation::new(
++                0,
++                crate::profiling::texture_bytes(&texture),
++            ),
+             texture,
+             view,
+             size,
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/render/backend/gpu_atlas.rs:272:
+             },
+         );
+         queue.submit([encoder.finish()]);
+-        let storage = crate::profiling::Allocation::new(0,crate::profiling::texture_bytes(&new_texture));
++        let storage =
++            crate::profiling::Allocation::new(0, crate::profiling::texture_bytes(&new_texture));
+         self.texture = new_texture;
+         self.storage = storage;
+         self.view = self.texture.create_view(&Default::default());
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/render/backend/gpu_atlas.rs:711:
+             &chrome_bind_group_layout,
+         );
+         let mut assets = GpuAssets {
+-            _model_storage: crate::profiling::Allocation::new(0,crate::profiling::texture_bytes(&model_atlas)),
++            _model_storage: crate::profiling::Allocation::new(
++                0,
++                crate::profiling::texture_bytes(&model_atlas),
++            ),
+             device: device.clone(),
+             queue: queue.clone(),
+             model_atlas,
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/render/backend/mod.rs:54:
+             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+             mapped_at_creation: false,
+         });
+-        let _readback_storage = crate::profiling::Allocation::new(buffer.size(),0);
++        let _readback_storage = crate::profiling::Allocation::new(buffer.size(), 0);
+         let mut encoder = self
+             .device
+             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/src/render/world.rs:480:
+             .collect();
+         for index in dynamic {
+             world.release_dynamic_sprite(index);
+-            if let Some(stamp) = self.sprite_stamps.get_mut(index) { *stamp = i32::MIN; }
++            if let Some(stamp) = self.sprite_stamps.get_mut(index) {
++                *stamp = i32::MIN;
++            }
+             if let Some(slot) = self.sprite_models.get_mut(index) {
+                 *slot = None;
+             }
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/tests/gpu_memory_profile.rs:3:
+ #[test]
+ fn atlas_payload_growth_and_drop_are_counted_once() {
+     client::profiling::enable();
+-    let instance=wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+-    let adapter=pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default())).expect("GPU required for memory instrumentation proof");
+-    let (device,queue)=pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+-    let before=client::profiling::gpu_bytes();
+-    let mut atlas=GpuAtlas::new(&device,"profile test",(16,16),64,0);
+-    assert_eq!(client::profiling::gpu_bytes().textures-before.textures,16*16*4);
+-    assert!(atlas.alloc(&device,&queue,16,32).is_some());
+-    assert_eq!(client::profiling::gpu_bytes().textures-before.textures,16*32*4);
++    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
++    let adapter =
++        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
++            .expect("GPU required for memory instrumentation proof");
++    let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
++    let before = client::profiling::gpu_bytes();
++    let mut atlas = GpuAtlas::new(&device, "profile test", (16, 16), 64, 0);
++    assert_eq!(
++        client::profiling::gpu_bytes().textures - before.textures,
++        16 * 16 * 4
++    );
++    assert!(atlas.alloc(&device, &queue, 16, 32).is_some());
++    assert_eq!(
++        client::profiling::gpu_bytes().textures - before.textures,
++        16 * 32 * 4
++    );
+     drop(atlas);
+-    assert_eq!(client::profiling::gpu_bytes().textures,before.textures);
+-    assert_eq!(client::profiling::gpu_bytes().buffers,before.buffers);
++    assert_eq!(client::profiling::gpu_bytes().textures, before.textures);
++    assert_eq!(client::profiling::gpu_bytes().buffers, before.buffers);
+ }
+ 
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/tests/player_info.rs:92:
+             let shift = nbits - 8;
+             out.push(((acc >> shift) & 0xff) as u8);
+             nbits -= 8;
+-            acc &= if nbits == 0 {
+-                0
+-            } else {
+-                (1u64 << nbits) - 1
+-            };
++            acc &= if nbits == 0 { 0 } else { (1u64 << nbits) - 1 };
+         }
+     }
+     if nbits > 0 {
+Diff in /Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client/tests/player_info.rs:185:
+     // Distinct boxed slots must not alias: mutating one packet body must not
+     // change the other slot's stored bytes.
+     let len5 = c.player_appearance_buffer[5].as_ref().unwrap().length();
+-    c.player_appearance_buffer[5]
+-        .as_mut()
+-        .unwrap()
+-        .data_mut()[18] = 0xAB; // fifth colour byte after 12 zero parts
++    c.player_appearance_buffer[5].as_mut().unwrap().data_mut()[18] = 0xAB; // fifth colour byte after 12 zero parts
+     assert_ne!(
+         c.player_appearance_buffer[7].as_ref().unwrap().data()[18],
+         0xAB,

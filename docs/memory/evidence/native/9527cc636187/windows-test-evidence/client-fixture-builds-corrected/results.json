@@ -1,0 +1,119 @@
+[
+  {
+    "label": "client-affected-fixture",
+    "argv": [
+      "C:/Users/Austen/.cargo/bin/cargo.exe",
+      "test",
+      "--no-fail-fast",
+      "--locked",
+      "--release",
+      "-p",
+      "client",
+      "--test",
+      "seq_delay",
+      "--test",
+      "player_info",
+      "--test",
+      "login",
+      "--test",
+      "inject",
+      "--test",
+      "zone",
+      "--",
+      "--test-threads=1"
+    ],
+    "cwd": "C:/Users/Austen/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust",
+    "started_utc": "2026-09-10T02:53:25.434592+00:00",
+    "pid": 6152,
+    "exit_code": 0,
+    "elapsed_s": 3.3713400999986334,
+    "log_sha256": "c68152878f65647d4428ed1d490ecb1282362e6d5a02bddc36cc46e12d69a892"
+  },
+  {
+    "label": "client-gpu-texture",
+    "argv": [
+      "C:/Users/Austen/.cargo/bin/cargo.exe",
+      "test",
+      "--locked",
+      "--release",
+      "-p",
+      "client",
+      "--test",
+      "gpu_texture",
+      "--",
+      "--test-threads=1"
+    ],
+    "cwd": "C:/Users/Austen/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust",
+    "started_utc": "2026-09-10T02:53:28.814091+00:00",
+    "pid": 12668,
+    "exit_code": 101,
+    "elapsed_s": 2.5232969999924535,
+    "log_sha256": "602f4940c880c0ac3acb870d1b775e38b6799d0f7abf35677e3f240133ba89e7"
+  },
+  {
+    "label": "ordinary-frontends",
+    "argv": [
+      "C:/Users/Austen/.cargo/bin/cargo.exe",
+      "build",
+      "--locked",
+      "--release",
+      "-p",
+      "tui",
+      "-p",
+      "panel",
+      "--bins"
+    ],
+    "cwd": "C:/Users/Austen/274bot-campaign/selective-9527cc636187/source",
+    "started_utc": "2026-09-10T02:53:31.348172+00:00",
+    "pid": 10072,
+    "exit_code": 0,
+    "elapsed_s": 10.006776199996239,
+    "log_sha256": "f0deae746eb0349dc6c3066db55252208fc5f73bd39e135ac9919c40129d2b22",
+    "artifacts": [
+      {
+        "path": "C:\\Users\\Austen\\274bot-campaign\\selective-9527cc636187\\client-fixture-builds-corrected\\ordinary-frontends\\tui-play.exe",
+        "bytes": 71715328,
+        "sha256": "d43803a145389f9301bb47d2b383cf88e3b571f1d86c6360b6e4a18148db6bc1"
+      },
+      {
+        "path": "C:\\Users\\Austen\\274bot-campaign\\selective-9527cc636187\\client-fixture-builds-corrected\\ordinary-frontends\\panel-play.exe",
+        "bytes": 75595776,
+        "sha256": "5419deb79ae4172e115449d114550c5ff864541ee596129771fca423232520ef"
+      }
+    ]
+  },
+  {
+    "label": "harness-frontends",
+    "argv": [
+      "C:/Users/Austen/.cargo/bin/cargo.exe",
+      "build",
+      "--locked",
+      "--release",
+      "-p",
+      "tui",
+      "-p",
+      "panel",
+      "--bins",
+      "--features",
+      "memory-profile-no-alloc"
+    ],
+    "cwd": "C:/Users/Austen/274bot-campaign/selective-9527cc636187/source",
+    "started_utc": "2026-09-10T02:53:41.509740+00:00",
+    "pid": 6240,
+    "exit_code": 0,
+    "elapsed_s": 19.72014950000448,
+    "log_sha256": "309b76a2d10bc84764ebff388ab4ae052dbe96113bd6d21a3b4917e90338ed6a",
+    "artifacts": [
+      {
+        "path": "C:\\Users\\Austen\\274bot-campaign\\selective-9527cc636187\\client-fixture-builds-corrected\\harness-frontends\\tui-play.exe",
+        "bytes": 71966720,
+        "sha256": "faee3822006650d3ed8bb976a79d3acaaa5c6c1656a0d656404f86646142f21a"
+      },
+      {
+        "path": "C:\\Users\\Austen\\274bot-campaign\\selective-9527cc636187\\client-fixture-builds-corrected\\harness-frontends\\panel-play.exe",
+        "bytes": 75849216,
+        "sha256": "58591a306af89d588307ae4d555a12c507b488a52ff3e435eafc04bd006d2cd8"
+      }
+    ]
+  }
+]

@@ -1,0 +1,664 @@
+[
+  {
+    "label": "host-libraries",
+    "argv": [
+      "/home/builder/.cargo/bin/cargo",
+      "test",
+      "--locked",
+      "--release",
+      "--no-run",
+      "--message-format=json",
+      "-p",
+      "host",
+      "-p",
+      "host-play",
+      "--lib",
+      "--features",
+      "memory-profile-no-alloc"
+    ],
+    "cwd": "/home/builder/274bot-campaign/selective-9527cc636187/source",
+    "started_utc": "2026-09-10T02:48:48.742368+00:00",
+    "pid": 202819,
+    "exit_code": 0,
+    "elapsed_s": 46.969618541003,
+    "log_sha256": "6db4597cf7c36b2d523c0769c7c0e5ff3effb9f54a6520448cf1c0a9d178bd95",
+    "cargo_artifacts": [
+      {
+        "target": {
+          "kind": [
+            "lib"
+          ],
+          "crate_types": [
+            "lib"
+          ],
+          "name": "host",
+          "src_path": "/home/builder/274bot-campaign/selective-9527cc636187/source/crates/host/src/lib.rs",
+          "edition": "2021",
+          "doc": true,
+          "doctest": true,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": true
+        },
+        "executable": "/home/builder/274bot-campaign/target/release/deps/host-532a774a83950e1c"
+      },
+      {
+        "target": {
+          "kind": [
+            "lib"
+          ],
+          "crate_types": [
+            "lib"
+          ],
+          "name": "host_play",
+          "src_path": "/home/builder/274bot-campaign/selective-9527cc636187/source/crates/host-play/src/lib.rs",
+          "edition": "2021",
+          "doc": true,
+          "doctest": true,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": true
+        },
+        "executable": "/home/builder/274bot-campaign/target/release/deps/host_play-0f5b2f921ddc53a0"
+      }
+    ],
+    "artifacts": [
+      {
+        "path": "/home/builder/274bot-campaign/selective-9527cc636187/build-only/host-libraries/host-532a774a83950e1c",
+        "bytes": 12407656,
+        "sha256": "9ae0ed61150793a66012aaba1135d8ccc3c93b47e167b10c99d56e611715d8ce"
+      },
+      {
+        "path": "/home/builder/274bot-campaign/selective-9527cc636187/build-only/host-libraries/host_play-0f5b2f921ddc53a0",
+        "bytes": 95275312,
+        "sha256": "b9773ab7776cde371c26d5ae33b020af8eb16a48a0b2cdfb7cc4a3f2b522168a"
+      }
+    ]
+  },
+  {
+    "label": "frontend-libraries",
+    "argv": [
+      "/home/builder/.cargo/bin/cargo",
+      "test",
+      "--locked",
+      "--release",
+      "--no-run",
+      "--message-format=json",
+      "-p",
+      "tui",
+      "-p",
+      "panel",
+      "--lib",
+      "--features",
+      "memory-profile-no-alloc"
+    ],
+    "cwd": "/home/builder/274bot-campaign/selective-9527cc636187/source",
+    "started_utc": "2026-09-10T02:49:35.819523+00:00",
+    "pid": 203344,
+    "exit_code": 0,
+    "elapsed_s": 209.75218053500066,
+    "log_sha256": "b5e6b0ed452a64a23f854f357e7de80272ba684de48f9f589bfeafa41b8a1629",
+    "cargo_artifacts": [
+      {
+        "target": {
+          "kind": [
+            "lib"
+          ],
+          "crate_types": [
+            "lib"
+          ],
+          "name": "tui",
+          "src_path": "/home/builder/274bot-campaign/selective-9527cc636187/source/crates/tui/src/lib.rs",
+          "edition": "2021",
+          "doc": true,
+          "doctest": true,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": true
+        },
+        "executable": "/home/builder/274bot-campaign/target/release/deps/tui-6442c38b3ddabb7c"
+      },
+      {
+        "target": {
+          "kind": [
+            "lib"
+          ],
+          "crate_types": [
+            "lib"
+          ],
+          "name": "panel",
+          "src_path": "/home/builder/274bot-campaign/selective-9527cc636187/source/crates/panel/src/lib.rs",
+          "edition": "2021",
+          "doc": true,
+          "doctest": true,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": true
+        },
+        "executable": "/home/builder/274bot-campaign/target/release/deps/panel-4c496aec9165c161"
+      }
+    ],
+    "artifacts": [
+      {
+        "path": "/home/builder/274bot-campaign/selective-9527cc636187/build-only/frontend-libraries/tui-6442c38b3ddabb7c",
+        "bytes": 95948752,
+        "sha256": "8af5abc1c461c477204f18f9e5b8b049f166bd7b95b93f9c38cbaed62778f56c"
+      },
+      {
+        "path": "/home/builder/274bot-campaign/selective-9527cc636187/build-only/frontend-libraries/panel-4c496aec9165c161",
+        "bytes": 99592096,
+        "sha256": "e3967a0e71adf8f081a53b59571ff31668384df1301f63dd4521bf088c4bb914"
+      }
+    ]
+  },
+  {
+    "label": "client-home",
+    "argv": [
+      "/home/builder/.cargo/bin/cargo",
+      "test",
+      "--locked",
+      "--release",
+      "--no-run",
+      "--message-format=json",
+      "-p",
+      "client",
+      "--lib"
+    ],
+    "cwd": "/home/builder/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust",
+    "started_utc": "2026-09-10T02:53:05.748812+00:00",
+    "pid": 207065,
+    "exit_code": 0,
+    "elapsed_s": 45.741626451999764,
+    "log_sha256": "caba58bd867317ac2593bccd0229206db3b6e0c490372679d2784f7d2faf99d8",
+    "cargo_artifacts": [
+      {
+        "target": {
+          "kind": [
+            "lib"
+          ],
+          "crate_types": [
+            "lib"
+          ],
+          "name": "client",
+          "src_path": "/home/builder/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust/crates/client/src/lib.rs",
+          "edition": "2021",
+          "doc": true,
+          "doctest": true,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": true
+        },
+        "executable": "/home/builder/274bot-campaign/target/release/deps/client-9feeab272b47acc4"
+      }
+    ],
+    "artifacts": [
+      {
+        "path": "/home/builder/274bot-campaign/selective-9527cc636187/build-only/client-home/client-9feeab272b47acc4",
+        "bytes": 11444168,
+        "sha256": "dfb8e017bd0d3eb50cb1e3cb9d4a843a307dc8d5b56ae04d11c6fb5e7d664e9a"
+      }
+    ]
+  },
+  {
+    "label": "client-affected",
+    "argv": [
+      "/home/builder/.cargo/bin/cargo",
+      "test",
+      "--locked",
+      "--release",
+      "--no-run",
+      "--message-format=json",
+      "-p",
+      "client",
+      "--test",
+      "seq_delay",
+      "--test",
+      "player_info",
+      "--test",
+      "login",
+      "--test",
+      "inject",
+      "--test",
+      "zone",
+      "--test",
+      "iface_model",
+      "--test",
+      "gpu_texture"
+    ],
+    "cwd": "/home/builder/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust",
+    "started_utc": "2026-09-10T02:53:51.502322+00:00",
+    "pid": 207730,
+    "exit_code": 0,
+    "elapsed_s": 12.095079094000539,
+    "log_sha256": "be5147337509aa95aa8bb22e2381c20c9b78c90d73b5bfd6db59d70a9c0bc55a",
+    "cargo_artifacts": [
+      {
+        "target": {
+          "kind": [
+            "test"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "iface_model",
+          "src_path": "/home/builder/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust/crates/client/tests/iface_model.rs",
+          "edition": "2021",
+          "doc": false,
+          "doctest": false,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": true
+        },
+        "executable": "/home/builder/274bot-campaign/target/release/deps/iface_model-56324085ce9a4496"
+      },
+      {
+        "target": {
+          "kind": [
+            "test"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "inject",
+          "src_path": "/home/builder/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust/crates/client/tests/inject.rs",
+          "edition": "2021",
+          "doc": false,
+          "doctest": false,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": true
+        },
+        "executable": "/home/builder/274bot-campaign/target/release/deps/inject-1ba0500845fe5613"
+      },
+      {
+        "target": {
+          "kind": [
+            "test"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "login",
+          "src_path": "/home/builder/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust/crates/client/tests/login.rs",
+          "edition": "2021",
+          "doc": false,
+          "doctest": false,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": true
+        },
+        "executable": "/home/builder/274bot-campaign/target/release/deps/login-f87da85619a41d91"
+      },
+      {
+        "target": {
+          "kind": [
+            "bin"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "unpack-cache",
+          "src_path": "/home/builder/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust/crates/client/src/bin/unpack-cache.rs",
+          "edition": "2021",
+          "doc": true,
+          "doctest": false,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": false
+        },
+        "executable": "/home/builder/274bot-campaign/target/release/unpack-cache"
+      },
+      {
+        "target": {
+          "kind": [
+            "test"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "seq_delay",
+          "src_path": "/home/builder/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust/crates/client/tests/seq_delay.rs",
+          "edition": "2021",
+          "doc": false,
+          "doctest": false,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": true
+        },
+        "executable": "/home/builder/274bot-campaign/target/release/deps/seq_delay-e25dd97688c681c3"
+      },
+      {
+        "target": {
+          "kind": [
+            "test"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "zone",
+          "src_path": "/home/builder/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust/crates/client/tests/zone.rs",
+          "edition": "2021",
+          "doc": false,
+          "doctest": false,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": true
+        },
+        "executable": "/home/builder/274bot-campaign/target/release/deps/zone-668a3fe983438154"
+      },
+      {
+        "target": {
+          "kind": [
+            "test"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "gpu_texture",
+          "src_path": "/home/builder/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust/crates/client/tests/gpu_texture.rs",
+          "edition": "2021",
+          "doc": false,
+          "doctest": false,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": true
+        },
+        "executable": "/home/builder/274bot-campaign/target/release/deps/gpu_texture-534e42018d90f5ab"
+      },
+      {
+        "target": {
+          "kind": [
+            "test"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "player_info",
+          "src_path": "/home/builder/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust/crates/client/tests/player_info.rs",
+          "edition": "2021",
+          "doc": false,
+          "doctest": false,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": true
+        },
+        "executable": "/home/builder/274bot-campaign/target/release/deps/player_info-40ace5416075e76b"
+      }
+    ],
+    "artifacts": [
+      {
+        "path": "/home/builder/274bot-campaign/selective-9527cc636187/build-only/client-affected/iface_model-56324085ce9a4496",
+        "bytes": 10491856,
+        "sha256": "b4bf4eb3c52f371248ecc48cfdcdc34060718beaf8e525880fc42a406cddc666"
+      },
+      {
+        "path": "/home/builder/274bot-campaign/selective-9527cc636187/build-only/client-affected/inject-1ba0500845fe5613",
+        "bytes": 1894648,
+        "sha256": "011193ff0a626b981972deda17f619ad2485f248bc5cf25ec45ea7c00dba68a8"
+      },
+      {
+        "path": "/home/builder/274bot-campaign/selective-9527cc636187/build-only/client-affected/login-f87da85619a41d91",
+        "bytes": 10634144,
+        "sha256": "47640060e2cb04c837f49a4fc28160287919f573f334b2d3b88f4af8c9d2aeb4"
+      },
+      {
+        "path": "/home/builder/274bot-campaign/selective-9527cc636187/build-only/client-affected/unpack-cache",
+        "bytes": 1165672,
+        "sha256": "209273d3fd8ae3b775583519be8bc97da1595eea0afad34b8c51f232f1199d15"
+      },
+      {
+        "path": "/home/builder/274bot-campaign/selective-9527cc636187/build-only/client-affected/seq_delay-e25dd97688c681c3",
+        "bytes": 1656808,
+        "sha256": "87ef6af9f96972de6ad6a8f77608114208214e5be8fd4147ff8dc822d1bee884"
+      },
+      {
+        "path": "/home/builder/274bot-campaign/selective-9527cc636187/build-only/client-affected/zone-668a3fe983438154",
+        "bytes": 11240440,
+        "sha256": "af5141134c78ea3a60399fa1f603a618989a09907ee313dbe7575487c154898a"
+      },
+      {
+        "path": "/home/builder/274bot-campaign/selective-9527cc636187/build-only/client-affected/gpu_texture-534e42018d90f5ab",
+        "bytes": 10481568,
+        "sha256": "55bd4123dfe0c64dbaae78a4b0a11622541c7fe8361a54332fbff29f2da2a4c4"
+      },
+      {
+        "path": "/home/builder/274bot-campaign/selective-9527cc636187/build-only/client-affected/player_info-40ace5416075e76b",
+        "bytes": 2854776,
+        "sha256": "ed9e6b8f29c4ca12096475ff9d6a0f99f7b22003e34294d7ad27c0ffb41426eb"
+      }
+    ]
+  },
+  {
+    "label": "ordinary-frontends",
+    "argv": [
+      "/home/builder/.cargo/bin/cargo",
+      "build",
+      "--locked",
+      "--release",
+      "--message-format=json",
+      "-p",
+      "tui",
+      "-p",
+      "panel",
+      "--bins"
+    ],
+    "cwd": "/home/builder/274bot-campaign/selective-9527cc636187/source",
+    "started_utc": "2026-09-10T02:54:03.629974+00:00",
+    "pid": 207943,
+    "exit_code": 0,
+    "elapsed_s": 18.184628771999996,
+    "log_sha256": "cff22f8e3849a3d5a1401942f7d9a49415ca542e311650399e84fff48f3c7cfc",
+    "cargo_artifacts": [
+      {
+        "target": {
+          "kind": [
+            "bin"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "tui-play",
+          "src_path": "/home/builder/274bot-campaign/selective-9527cc636187/source/crates/tui/src/main.rs",
+          "edition": "2021",
+          "doc": true,
+          "doctest": false,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": false
+        },
+        "executable": "/home/builder/274bot-campaign/target/release/tui-play"
+      },
+      {
+        "target": {
+          "kind": [
+            "bin"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "panel-play",
+          "src_path": "/home/builder/274bot-campaign/selective-9527cc636187/source/crates/panel/src/main.rs",
+          "edition": "2021",
+          "doc": true,
+          "doctest": false,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": false
+        },
+        "executable": "/home/builder/274bot-campaign/target/release/panel-play"
+      }
+    ],
+    "artifacts": [
+      {
+        "path": "/home/builder/274bot-campaign/selective-9527cc636187/build-only/ordinary-frontends/tui-play",
+        "bytes": 94922920,
+        "sha256": "b291db09dcb4e3e1b6748c426822ecdc27699c0f52c05b3bb6bcc79e77caaabb"
+      },
+      {
+        "path": "/home/builder/274bot-campaign/selective-9527cc636187/build-only/ordinary-frontends/panel-play",
+        "bytes": 102406376,
+        "sha256": "1b1c424439673b38a6ed1119dbe4ff1ce203d67ccca9c5636a4ecb0897827edf"
+      }
+    ]
+  },
+  {
+    "label": "harness-frontends",
+    "argv": [
+      "/home/builder/.cargo/bin/cargo",
+      "build",
+      "--locked",
+      "--release",
+      "--message-format=json",
+      "-p",
+      "tui",
+      "-p",
+      "panel",
+      "--bins",
+      "--features",
+      "memory-profile-no-alloc"
+    ],
+    "cwd": "/home/builder/274bot-campaign/selective-9527cc636187/source",
+    "started_utc": "2026-09-10T02:54:21.988071+00:00",
+    "pid": 208163,
+    "exit_code": 0,
+    "elapsed_s": 9.165665013999387,
+    "log_sha256": "45ac8c4f3903c56d10511d6edcd82c03426b6eb7f585bf2c17a413d3b8ef5e69",
+    "cargo_artifacts": [
+      {
+        "target": {
+          "kind": [
+            "bin"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "tui-play",
+          "src_path": "/home/builder/274bot-campaign/selective-9527cc636187/source/crates/tui/src/main.rs",
+          "edition": "2021",
+          "doc": true,
+          "doctest": false,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": false
+        },
+        "executable": "/home/builder/274bot-campaign/target/release/tui-play"
+      },
+      {
+        "target": {
+          "kind": [
+            "bin"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "panel-play",
+          "src_path": "/home/builder/274bot-campaign/selective-9527cc636187/source/crates/panel/src/main.rs",
+          "edition": "2021",
+          "doc": true,
+          "doctest": false,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "3",
+          "debuginfo": 0,
+          "debug_assertions": false,
+          "overflow_checks": false,
+          "test": false
+        },
+        "executable": "/home/builder/274bot-campaign/target/release/panel-play"
+      }
+    ],
+    "artifacts": [
+      {
+        "path": "/home/builder/274bot-campaign/selective-9527cc636187/build-only/harness-frontends/tui-play",
+        "bytes": 95169504,
+        "sha256": "c9a78dee88384a7ef30375f8fb60f84a1107551f8b922695688e553ccd3be089"
+      },
+      {
+        "path": "/home/builder/274bot-campaign/selective-9527cc636187/build-only/harness-frontends/panel-play",
+        "bytes": 102655968,
+        "sha256": "9b41e6f70aabab8e37baf5de0e3062f10c1e2ac892f731b847a71ce512f430b6"
+      }
+    ]
+  }
+]

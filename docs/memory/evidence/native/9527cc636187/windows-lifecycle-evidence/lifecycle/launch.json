@@ -1,0 +1,12 @@
+{
+  "pid": 7204,
+  "sessionId": 1,
+  "startUtc": "2026-09-10T03:05:20.5223102Z",
+  "binary": "C:\\ProgramData\\274bot-Test\\selective-9527cc636187\\harness\\tui-play.exe",
+  "host_sha": "9527cc636187fdfaaca29c3e4af14819dd40dbe9",
+  "client_sha": "daccb4ba3ff5f8d1fce5b3b9487a1f0576ad50ac",
+  "binary_sha256": "faee3822006650d3ed8bb976a79d3acaaa5c6c1656a0d656404f86646142f21a",
+  "frontend": "tui",
+  "terminal": "ConPTY 120x40",
+  "performance_acceptance": false
+}

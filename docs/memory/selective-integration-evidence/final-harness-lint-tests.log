@@ -1,0 +1,50 @@
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/script)
+   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/host-play)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.38s
+     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/target/debug/deps/host_play-315c9a2a0e71e7f9)
+
+running 32 tests
+test memory::tests::bind_seed_nav_from_play_none_keeps_missing_pack ... ok
+test memory::tests::bind_seed_nav_from_play_preserves_arc_identity ... ok
+test memory::tests::config_from_env_accepts_n16 ... ok
+test memory::tests::config_from_env_defaults_idle_and_durations ... ok
+test memory::tests::config_from_env_none_without_bot_memory_n ... ok
+test memory::tests::config_from_env_rejects_invalid_n ... ok
+test memory::tests::config_from_env_rejects_invalid_workload ... ok
+test memory::tests::config_from_env_rejects_zero_durations ... ok
+test memory::tests::parse_n_accepts_1_16_32_128 ... ok
+test memory::tests::parse_n_rejects_invalid ... ok
+test memory::tests::parse_render_policy_defaults_rotating_all ... ok
+test memory::tests::parse_render_policy_explicit_modes ... ok
+test memory::tests::parse_render_policy_legacy_single_renderer ... ok
+test memory::tests::parse_render_policy_rejects_conflict_and_unknown ... ok
+test memory::tests::prepare_active_errors_without_rs2b0t ... ok
+test memory::tests::prepare_background_policy_pins_focus ... ok
+test memory::tests::prepare_idle_mints_n_names_vault_under_temp_no_card ... ok
+test memory::tests::prepare_idle_n32_mints_thirty_two_unique_names ... ok
+test memory::tests::prepare_legacy_single_renderer_keeps_flag ... ok
+test memory::tests::prepare_lifecycle_errors_without_rs2b0t ... ok
+test memory::tests::prepare_reads_focused_one_policy_and_pins_focus ... ok
+test memory::tests::prepare_seeded_idle_runs_seed_without_catalog ... ok
+test memory::tests::prepare_tui_rejects_panel_render_policy ... ok
+test memory::tests::prepare_with_seed_nav_from_play_matches_bind ... ok
+test memory::tests::process_cpu_time_is_available_and_monotonic ... ok
+test memory::tests::require_live_benchmark_errors_without_live_env ... ok
+test memory::tests::sample_json_has_sibling_metric_fields_not_one_sum ... ok
+test memory::tests::sample_json_nulls_missing_components_not_zero ... ok
+test memory::tests::seed_runners_share_world_but_keep_independent_state ... ok
+test memory::tests::seeded_idle_preserves_setup_and_ends_before_script_start ... ok
+test memory_diagnostics::tests::logs_remain_bounded_and_keep_latest_utf8_messages ... ok
+test rss::tests::current_memory_resident_is_some_and_independent_of_peak ... ok
+
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 114 filtered out; finished in 8.54s
+
+     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/target/debug/deps/script-9ccd26c0e3c1ef66)
+
+running 3 tests
+test memory_profile::tests::runtime_teardown_clears_heap_gauges ... ok
+test memory_profile::tests::snapshot_lifetime_counts_capacity_and_releases_on_channel_drop ... ok
+test memory_profile::tests::thread_ownership_survives_handle_release_without_registry_retention ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 40 filtered out; finished in 0.00s
+

@@ -1,0 +1,15 @@
+[
+  {
+    "label": "panel-library-server-up",
+    "argv": [
+      "C:/Users/Austen/274bot-campaign/target-native/release/deps/panel-46c8fbf4db5f31d8.exe",
+      "--test-threads=1"
+    ],
+    "cwd": "C:/Users/Austen/274bot-campaign/selective-9527cc636187/source",
+    "started_utc": "2026-09-10T02:51:19.273229+00:00",
+    "pid": 15832,
+    "exit_code": 0,
+    "elapsed_s": 136.5316787000047,
+    "log_sha256": "28ab273e9ef9cc41ef2ed1dd47d917eabae7f1bb4dd320a21c9039b01129dee0"
+  }
+]

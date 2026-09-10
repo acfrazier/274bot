@@ -1,0 +1,20 @@
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client)
+   Compiling vault v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/vault)
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/api)
+   Compiling nav v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/nav)
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/script)
+   Compiling host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/host)
+   Compiling scenario v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/scenario)
+   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/host-play)
+   Compiling e2e v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/e2e)
+    Finished `release` profile [optimized] target(s) in 7.78s
+     Running tests/nav_door.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/target/release/deps/nav_door-8d419790f8ae42f5)
+
+running 1 test
+test nav_door ... 274bot: loaded snapshot (4556 models, 336 anim records)
+PASS: nav_door: 2 slot(s) ingame with scene 2
+PASS: nav_door {"scenario":"nav_door","outcome":"PASS","predicate":"arrived(2817,3443,0)","ticks":88,"elapsed_ms":57122,"tile":[2817,3443,0],"stat":{"runenergy":100},"chat":[{"text":"set tutorial: to 1000"},{"text":"Welcome to RuneScape."}],"scene":2}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 57.34s
+

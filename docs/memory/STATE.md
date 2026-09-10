@@ -1,15 +1,54 @@
 # Memory campaign — current execution state
 
-Updated 2026-09-07. Branch `codex/memory-diagnostics`; active checkout
+Updated 2026-09-10. Branch `codex/memory-diagnostics`; active checkout
 `/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f`.
 
-Approved plan: [performance-finish-plan.md](performance-finish-plan.md), initially
-approved at `530b83e`. Workflow: [../execution.md](../execution.md).
+Current approved plan: [selective-merge-assessment.md](selective-merge-assessment.md).
+The operator approved this smaller harvest on September 9 and explicitly made
+delegation optional; the final Grok 4.6 review remains required. The former
+[performance-finish-plan.md](performance-finish-plan.md) is historical scope,
+not the current completion gate. Workflow: [../execution.md](../execution.md).
 For a readable explanation of the campaign, start with [the overview](overview.md).
 
 Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
+
+## Current boundary — selective release acceptance
+
+- The approved selective harvest is assembled on `codex/selective-integration`,
+  host `c5159d38534281af66f5267e56fc5f0995d09071`, client
+  `9b41e6e06b9fd42dc2247fc813a303c3fcb92941`. Dense navigation remains;
+  experimental snapshot/fingerprint/tiled storage and advanced capture do not ship.
+- Product documentation is updated. Source mappings and extraction reports:
+  `selective-product-extraction-report.md`, `selective-harness-extraction-report.md`.
+  Basic client profiling `b555f84` is retained as a required harness dependency.
+- macOS combined affected tests: 1410 passed. Selected client75 library +100
+  integration and host124 passed. Final Clippy (host/client and harness feature)
+  and formatting pass; mechanical lint changes received affected regression runs.
+- Native Windows and Linux builds/tests and N1 smokes complete. Linux builds used
+  the existing Hyper-V VM; executable hashes were verified and run on Concord.
+  Windows Stop/restart and cleanup complete. Existing GPU shade failure and
+  historical CRC timing limit remain. See `selective-native-validation.md`.
+- Fresh selected pack and contested-door both login orders passed. Retained
+  macOS sustained N32 proves exact22 food/closed/return/increased steals for all32.
+  Native panel images were actually read; macOS GPU/CPU/GPU switching exercised.
+  See `selective-macos-validation.md` for exact coverage and remaining limits.
+- One N1 pair qualified (29.29MiB lower selected mean RSS, different productivity).
+  Main N32 passed; selected N32 qualification was interrupted by a strongly
+  evidenced Maze teleport. No32 performance/recovery claim and no favorable retry.
+  See `selective-comparison-results.md` and `selective-comparison-diagnosis.md`.
+- Grok4.6 whole-code review approved `9527cc63`/`daccb4ba`. Closing acceptance
+  review completed as OPERATOR_TRADEOFF, session20260909_231710_a0b9ef, actual
+  Grok4.6/xai-oauth. No code change requested. Operator asked to accept shipping
+  without the paired N32 performance result; response pending. See
+  `selective-final-review.md`. No publication or squash merge yet. Root owns
+  those after this explicit acceptance; merge description is prepared.
+- Old campaign admission and measurement work is parked. Do not resume it or
+  launch another matrix as a prerequisite for this approved selective harvest.
+
+Historical boundaries below retain their original evidence and instructions for
+provenance only; they are superseded by this approved selective operation.
 
 ## Latest boundary — 2026-09-10 01:11 UTC
 

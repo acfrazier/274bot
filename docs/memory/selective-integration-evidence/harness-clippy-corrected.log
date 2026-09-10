@@ -1,0 +1,6 @@
+    Checking script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/script)
+   Compiling panel v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/panel)
+    Checking host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/host-play)
+    Checking tui v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/tui)
+    Checking e2e v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/e2e)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.64s

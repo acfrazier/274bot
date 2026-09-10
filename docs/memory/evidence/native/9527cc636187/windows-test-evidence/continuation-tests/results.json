@@ -1,0 +1,97 @@
+[
+  {
+    "label": "tui-library",
+    "argv": [
+      "C:/Users/Austen/.cargo/bin/cargo.exe",
+      "test",
+      "--locked",
+      "--release",
+      "-p",
+      "tui",
+      "--lib",
+      "--features",
+      "memory-profile-no-alloc",
+      "--",
+      "--test-threads=1"
+    ],
+    "cwd": "C:/Users/Austen/274bot-campaign/selective-9527cc636187/source",
+    "started_utc": "2026-09-10T02:49:21.246976+00:00",
+    "pid": 3760,
+    "exit_code": 0,
+    "elapsed_s": 32.39365239998733,
+    "log_sha256": "4536dcd0c6f4a58b8d5bf5624c07e8f5e163b3f3f6a657754cc8b4ef74189a2a"
+  },
+  {
+    "label": "panel-lazy-uploads",
+    "argv": [
+      "C:/Users/Austen/.cargo/bin/cargo.exe",
+      "test",
+      "--locked",
+      "--release",
+      "-p",
+      "panel",
+      "--lib",
+      "game_view::tests",
+      "--",
+      "--test-threads=1"
+    ],
+    "cwd": "C:/Users/Austen/274bot-campaign/selective-9527cc636187/source",
+    "started_utc": "2026-09-10T02:49:53.648864+00:00",
+    "pid": 8344,
+    "exit_code": 0,
+    "elapsed_s": 39.81288630000199,
+    "log_sha256": "dbeb1f6a242449b26445fa7929964b103f7a18634d80060298850df5cefcc8c1"
+  },
+  {
+    "label": "client-home",
+    "argv": [
+      "C:/Users/Austen/.cargo/bin/cargo.exe",
+      "test",
+      "--locked",
+      "--release",
+      "-p",
+      "client",
+      "--lib",
+      "bot_target::",
+      "--",
+      "--test-threads=1"
+    ],
+    "cwd": "C:/Users/Austen/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust",
+    "started_utc": "2026-09-10T02:50:33.468345+00:00",
+    "pid": 16008,
+    "exit_code": 0,
+    "elapsed_s": 12.626474100004998,
+    "log_sha256": "8582acb2ef4a40021aa7ce74bc584b013059008831a07d57cdaa2af9675e6c25"
+  },
+  {
+    "label": "client-affected-integration",
+    "argv": [
+      "C:/Users/Austen/.cargo/bin/cargo.exe",
+      "test",
+      "--locked",
+      "--release",
+      "-p",
+      "client",
+      "--test",
+      "seq_delay",
+      "--test",
+      "player_info",
+      "--test",
+      "login",
+      "--test",
+      "inject",
+      "--test",
+      "zone",
+      "--test",
+      "iface_model",
+      "--",
+      "--test-threads=1"
+    ],
+    "cwd": "C:/Users/Austen/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust",
+    "started_utc": "2026-09-10T02:50:46.100430+00:00",
+    "pid": 3584,
+    "exit_code": 101,
+    "elapsed_s": 15.650255899992771,
+    "log_sha256": "e2dcba9df416df635bc402e390c0749e848a2547e5e6b0720a32e097b357aba4"
+  }
+]

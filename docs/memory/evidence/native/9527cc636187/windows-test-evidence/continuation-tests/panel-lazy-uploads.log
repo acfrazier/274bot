@@ -1,0 +1,40 @@
+   Compiling client v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\vendor\fr-client-rust\crates\client)
+   Compiling panel v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\crates\panel)
+   Compiling api v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\crates\api)
+   Compiling nav v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\crates\nav)
+   Compiling script v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\crates\script)
+   Compiling host v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\crates\host)
+   Compiling host-play v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\crates\host-play)
+warning: function `rss_bytes_from_ru_maxrss` is never used
+  --> crates\host-play\src\rss.rs:10:8
+   |
+10 | pub fn rss_bytes_from_ru_maxrss(raw: i64) -> u64 {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling scenario v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\crates\scenario)
+warning: `host-play` (lib) generated 1 warning
+warning: linker stdout: LINK : warning LNK4098: defaultlib 'libcmt.lib' conflicts with use of other libs; use /NODEFAULTLIB:library
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `panel` (lib test) generated 1 warning
+    Finished `release` profile [optimized] target(s) in 36.19s
+     Running unittests src\lib.rs (C:/Users/Austen/274bot-campaign/target-native\release\deps\panel-25af0522c063a742.exe)
+
+running 11 tests
+test game_view::tests::cpu_pixels_survive_gpu_bind_and_unbind ... ok
+test game_view::tests::dispose_unregisters_without_re_registering_the_panel_texture ... ok
+test game_view::tests::expand_rgba_splits_0x00rrggbb ... ok
+test game_view::tests::expand_rgba_writes_alpha_for_every_pixel ... ok
+test game_view::tests::frame_pixels_of_wrong_shape_pixmap_is_empty ... ok
+test game_view::tests::frame_pixels_packs_a_full_applet_pixmap ... ok
+test game_view::tests::frame_pixels_reads_a_texture_frame_back ... ok
+test game_view::tests::gpu_first_unbind_restores_empty_placeholder_pixels ... ok
+test game_view::tests::initialized_placeholder_matches_empty_pixels ... ok
+test game_view::tests::stable_texture_present_bind_is_noop_after_first ... ok
+test game_view::tests::texture_frame_binds_the_client_view_directly ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 362 filtered out; finished in 3.43s
+

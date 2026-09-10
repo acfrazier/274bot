@@ -1,0 +1,335 @@
+{
+  "compare-baseline-n1": {
+    "exit_code": 0,
+    "source": "compare-baseline-n1",
+    "host": "54cfcf8a33613735bde9f43dd9c9beb8ec06dae9",
+    "client": "4f2048ea10f75b3bb92ff45610b35ba7313b0308",
+    "qualified": true,
+    "phases": {
+      "spawned": 0.061130666,
+      "ready": 2.860098458,
+      "observation_start": 24.038557625,
+      "observation_end": 84.231147375,
+      "stopped": 84.296625666
+    },
+    "observation_s": 60.192576,
+    "cpu_cores": 0.029986998175101635,
+    "rss_mean_mib": 289.8762807377049,
+    "rss_start_mib": 282.65625,
+    "rss_end_mib": 293.71875,
+    "rss_samples": 61,
+    "actors": [
+      {
+        "name": "live135640_0",
+        "xp": 234,
+        "observes": 2534,
+        "player_updates": 100,
+        "end_state": "Running"
+      }
+    ],
+    "totals": {
+      "xp": 234,
+      "observes": 2534,
+      "player_updates": 100
+    }
+  },
+  "compare-baseline-n32": {
+    "exit_code": 0,
+    "source": "compare-baseline-n32",
+    "host": "54cfcf8a33613735bde9f43dd9c9beb8ec06dae9",
+    "client": "4f2048ea10f75b3bb92ff45610b35ba7313b0308",
+    "qualified": true,
+    "phases": {
+      "spawned": 0.224909417,
+      "ready": 67.912142917,
+      "observation_start": 155.652599583,
+      "observation_end": 215.885208,
+      "stopped": 216.639806833
+    },
+    "observation_s": 60.23302275,
+    "cpu_cores": 2.633579220185049,
+    "rss_mean_mib": 3267.716733870968,
+    "rss_start_mib": 3263.125,
+    "rss_end_mib": 3274.609375,
+    "rss_samples": 62,
+    "actors": [
+      {
+        "name": "live139e1_0",
+        "xp": 187,
+        "observes": 2686,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_1",
+        "xp": 281,
+        "observes": 2692,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_10",
+        "xp": 140,
+        "observes": 2690,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_11",
+        "xp": 328,
+        "observes": 2696,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_12",
+        "xp": 328,
+        "observes": 2695,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_13",
+        "xp": 281,
+        "observes": 2697,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_14",
+        "xp": 234,
+        "observes": 2688,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_15",
+        "xp": 234,
+        "observes": 2692,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_16",
+        "xp": 93,
+        "observes": 2698,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_17",
+        "xp": 234,
+        "observes": 2698,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_18",
+        "xp": 421,
+        "observes": 2694,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_19",
+        "xp": 234,
+        "observes": 2703,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_2",
+        "xp": 421,
+        "observes": 2684,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_20",
+        "xp": 281,
+        "observes": 2700,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_21",
+        "xp": 187,
+        "observes": 2699,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_22",
+        "xp": 187,
+        "observes": 2698,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_23",
+        "xp": 281,
+        "observes": 2699,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_24",
+        "xp": 422,
+        "observes": 2691,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_25",
+        "xp": 327,
+        "observes": 2694,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_26",
+        "xp": 93,
+        "observes": 2695,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_27",
+        "xp": 374,
+        "observes": 2689,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_28",
+        "xp": 561,
+        "observes": 2696,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_29",
+        "xp": 187,
+        "observes": 2697,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_3",
+        "xp": 374,
+        "observes": 2693,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_30",
+        "xp": 515,
+        "observes": 2693,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_31",
+        "xp": 187,
+        "observes": 2697,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_4",
+        "xp": 141,
+        "observes": 2691,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_5",
+        "xp": 93,
+        "observes": 2696,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_6",
+        "xp": 187,
+        "observes": 2694,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_7",
+        "xp": 562,
+        "observes": 2697,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_8",
+        "xp": 188,
+        "observes": 2694,
+        "player_updates": 100,
+        "end_state": "Running"
+      },
+      {
+        "name": "live139e1_9",
+        "xp": 327,
+        "observes": 2689,
+        "player_updates": 100,
+        "end_state": "Running"
+      }
+    ],
+    "totals": {
+      "xp": 8890,
+      "observes": 86215,
+      "player_updates": 3200
+    }
+  },
+  "compare-selected-n1": {
+    "exit_code": 0,
+    "source": "compare-selected-n1",
+    "host": "9527cc636187fdfaaca29c3e4af14819dd40dbe9",
+    "client": "daccb4ba3ff5f8d1fce5b3b9487a1f0576ad50ac",
+    "qualified": true,
+    "phases": {
+      "spawned": 0.058966334,
+      "ready": 3.354694084,
+      "observation_start": 23.71816425,
+      "observation_end": 83.860897125,
+      "stopped": 83.903449334
+    },
+    "observation_s": 60.142660625000005,
+    "cpu_cores": 0.02100033118823576,
+    "rss_mean_mib": 260.5889616935484,
+    "rss_start_mib": 257.640625,
+    "rss_end_mib": 262.515625,
+    "rss_samples": 62,
+    "actors": [
+      {
+        "name": "live137da0_0",
+        "xp": 141,
+        "observes": 2541,
+        "player_updates": 100,
+        "end_state": "Running"
+      }
+    ],
+    "totals": {
+      "xp": 141,
+      "observes": 2541,
+      "player_updates": 100
+    }
+  },
+  "compare-selected-n32": {
+    "exit_code": 1,
+    "source": "compare-selected-n32",
+    "host": "9527cc636187fdfaaca29c3e4af14819dd40dbe9",
+    "client": "daccb4ba3ff5f8d1fce5b3b9487a1f0576ad50ac",
+    "qualified": false,
+    "phases": {
+      "spawned": 0.216827334,
+      "ready": 64.764494959,
+      "failure": 152.299864625,
+      "stopped": 153.126810084
+    },
+    "failure": "actor readiness lost before observation; no observation interval, no accepted comparison"
+  }
+}

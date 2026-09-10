@@ -1,0 +1,219 @@
+{
+  "windows_tui": {
+    "completion": {
+      "timed_out": false,
+      "exit_code": 0,
+      "performance_acceptance": false,
+      "input_writes": 60,
+      "input_probe_error": null,
+      "elapsed_s": 225.02586870000232,
+      "ended_utc": "2026-09-10T02:59:32.177214+00:00"
+    },
+    "observation_samples": 115,
+    "ready_active_all": true,
+    "qualification": [
+      {
+        "phase": "observe-start",
+        "elapsed_s": 43.6452575,
+        "state": "Running",
+        "error": null,
+        "client": {
+          "ingame": true,
+          "scene_state": 2,
+          "x": 2657,
+          "z": 3311,
+          "level": 0
+        },
+        "steals": 3,
+        "food": 4
+      },
+      {
+        "phase": "observe-end",
+        "elapsed_s": 163.6606405,
+        "state": "Running",
+        "error": null,
+        "client": {
+          "ingame": true,
+          "scene_state": 2,
+          "x": 2665,
+          "z": 3300,
+          "level": 0
+        },
+        "steals": 9,
+        "food": 22
+      }
+    ],
+    "diagnostic_failures": [],
+    "slot_errors": [],
+    "bank_restock": null,
+    "bank_closed": null,
+    "first_later_steal": null,
+    "final_sample": {
+      "phase": "teardown",
+      "active": 0,
+      "v8_live_isolates": 0,
+      "v8_used_bytes": 0,
+      "snapshot_inflight_bytes": 0,
+      "snapshot_inflight_capacity": 0
+    },
+    "gpu_tracking_nonzero": false,
+    "first_closed_inventory22": {
+      "elapsed_s": 136.6790204,
+      "steals": 9,
+      "food": 22
+    },
+    "pickpocket_request_after_return_walk": {
+      "elapsed_s": 153.4104099,
+      "steals": 9
+    },
+    "later_successful_steal": null
+  },
+  "windows_panel": {
+    "completion": {
+      "timed_out": false,
+      "exit_code": 0,
+      "performance_acceptance": false,
+      "capture_exit": 0,
+      "elapsed_s": 226.1876493000018,
+      "ended_utc": "2026-09-10T03:04:26.351104+00:00"
+    },
+    "observation_samples": 118,
+    "ready_active_all": true,
+    "qualification": [
+      {
+        "phase": "observe-start",
+        "elapsed_s": 43.2590181,
+        "state": "Running",
+        "error": null,
+        "client": {
+          "ingame": true,
+          "scene_state": 2,
+          "x": 2657,
+          "z": 3306,
+          "level": 0
+        },
+        "steals": 3,
+        "food": 4
+      },
+      {
+        "phase": "observe-end",
+        "elapsed_s": 163.2593935,
+        "state": "Running",
+        "error": null,
+        "client": {
+          "ingame": true,
+          "scene_state": 2,
+          "x": 2655,
+          "z": 3308,
+          "level": 0
+        },
+        "steals": 10,
+        "food": 22
+      }
+    ],
+    "diagnostic_failures": [],
+    "slot_errors": [],
+    "bank_restock": null,
+    "bank_closed": null,
+    "first_later_steal": null,
+    "final_sample": {
+      "phase": "teardown",
+      "active": 0,
+      "v8_live_isolates": 0,
+      "v8_used_bytes": 0,
+      "snapshot_inflight_bytes": 0,
+      "snapshot_inflight_capacity": 0
+    },
+    "gpu_tracking_nonzero": true,
+    "first_closed_inventory22": {
+      "elapsed_s": 132.1074188,
+      "steals": 9,
+      "food": 22
+    },
+    "pickpocket_request_after_return_walk": {
+      "elapsed_s": 148.3103935,
+      "steals": 9
+    },
+    "later_successful_steal": {
+      "elapsed_s": 150.3498064,
+      "steals": 10
+    }
+  },
+  "linux_tui": {
+    "completion": {
+      "pid": 132727,
+      "exit_code": 0,
+      "timed_out": false,
+      "performance_acceptance": false,
+      "input_writes": 60,
+      "input_probe_error": null,
+      "elapsed_s": 240.73314786299306
+    },
+    "observation_samples": 117,
+    "ready_active_all": true,
+    "qualification": [
+      {
+        "phase": "observe-start",
+        "elapsed_s": 60.149067153,
+        "state": "Running",
+        "error": null,
+        "client": {
+          "ingame": true,
+          "scene_state": 2,
+          "x": 2658,
+          "z": 3311,
+          "level": 0
+        },
+        "steals": 5,
+        "food": 4
+      },
+      {
+        "phase": "observe-end",
+        "elapsed_s": 180.185481764,
+        "state": "Running",
+        "error": null,
+        "client": {
+          "ingame": true,
+          "scene_state": 2,
+          "x": 2661,
+          "z": 3312,
+          "level": 0
+        },
+        "steals": 9,
+        "food": 22
+      }
+    ],
+    "diagnostic_failures": [],
+    "slot_errors": [],
+    "bank_restock": {
+      "elapsed_s": 147.020463748,
+      "food": 22,
+      "steals": 9
+    },
+    "bank_closed": {
+      "elapsed_s": 148.046987057,
+      "food": 22,
+      "steals": 9
+    },
+    "first_later_steal": null,
+    "final_sample": {
+      "phase": "teardown",
+      "active": 0,
+      "v8_live_isolates": 0,
+      "v8_used_bytes": 0,
+      "snapshot_inflight_bytes": 0,
+      "snapshot_inflight_capacity": 0
+    },
+    "gpu_tracking_nonzero": false,
+    "first_closed_inventory22": {
+      "elapsed_s": 148.046987057,
+      "steals": 9,
+      "food": 22
+    },
+    "pickpocket_request_after_return_walk": {
+      "elapsed_s": 163.493137097,
+      "steals": 9
+    },
+    "later_successful_steal": null
+  }
+}

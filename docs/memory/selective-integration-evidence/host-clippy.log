@@ -1,0 +1,76 @@
+    Checking client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client)
+    Checking vault v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/vault)
+   Compiling panel v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/panel)
+error: doc list item without indentation
+   --> vendor/fr-client-rust/crates/client/src/render/backend/gpu.rs:537:9
+    |
+537 |     /// resolving from, then copies into [`Self::present_texture`].
+    |         ^
+    |
+    = help: if this is supposed to be its own paragraph, add a blank line
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#doc_lazy_continuation
+    = note: `-D clippy::doc-lazy-continuation` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::doc_lazy_continuation)]`
+help: indent this line
+    |
+537 |     ///   resolving from, then copies into [`Self::present_texture`].
+    |         ++
+
+error: manual `Range::contains` implementation
+    --> vendor/fr-client-rust/crates/client/src/render/backend/gpu.rs:1709:20
+     |
+1709 |                   && y >= MINIMAP_Y
+     |  ____________________^
+1710 | |                 && y < MINIMAP_Y + MINIMAP_H
+     | |____________________________________________^ help: use: `(MINIMAP_Y..MINIMAP_Y + MINIMAP_H).contains(&y)`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#manual_range_contains
+     = note: `-D clippy::manual-range-contains` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(clippy::manual_range_contains)]`
+
+error: manual `Range::contains` implementation
+    --> vendor/fr-client-rust/crates/client/src/render/backend/gpu.rs:1707:20
+     |
+1707 |                   && x >= MINIMAP_X
+     |  ____________________^
+1708 | |                 && x < MINIMAP_X + MINIMAP_W
+     | |____________________________________________^ help: use: `(MINIMAP_X..MINIMAP_X + MINIMAP_W).contains(&x)`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#manual_range_contains
+
+error: you should consider adding a `Default` implementation for `DurationCounter`
+  --> vendor/fr-client-rust/crates/client/src/profiling.rs:87:5
+   |
+87 | /     pub const fn new() -> Self {
+88 | |         Self {
+89 | |             count: AtomicU64::new(0),
+90 | |             total: AtomicU64::new(0),
+...  |
+93 | |     }
+   | |_____^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#new_without_default
+   = note: `-D clippy::new-without-default` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::new_without_default)]`
+help: try adding this
+   |
+86 + impl Default for DurationCounter {
+87 +     fn default() -> Self {
+88 +         Self::new()
+89 +     }
+90 + }
+   |
+
+error: could not compile `client` (lib) due to 4 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: very complex type used. Consider factoring parts into `type` definitions
+   --> vendor/fr-client-rust/crates/client/src/dash3d/anim_frame.rs:291:17
+    |
+291 |         frames: &[(u16, u8, &[(u8, i32, i32, i32)])],
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#type_complexity
+    = note: `-D clippy::type-complexity` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::type_complexity)]`
+
+error: could not compile `client` (lib test) due to 5 previous errors

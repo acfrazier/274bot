@@ -1,0 +1,12 @@
+
+running 7 tests
+test anim_init_does_not_drop_unpacked_frames ... ok
+test empty_snapshot_file_is_an_error ... ok
+test loads_fake_snapshot_into_stores ... ok
+test missing_snapshot_dir_is_an_error ... ok
+test model_init_does_not_drop_unpacked_meta ... ok
+test real_cache_round_trip ... ok
+test unpack_grows_the_frame_table_to_fit_the_frame_id ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.76s
+

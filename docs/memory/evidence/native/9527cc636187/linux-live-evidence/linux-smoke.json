@@ -1,0 +1,11 @@
+{
+  "host_sha": "9527cc636187fdfaaca29c3e4af14819dd40dbe9",
+  "client_sha": "daccb4ba3ff5f8d1fce5b3b9487a1f0576ad50ac",
+  "binary": "/home/acfrazier/274bot-campaign/selective-9527cc636187/build-only/harness-frontends/tui-play",
+  "binary_sha256": "c9a78dee88384a7ef30375f8fb60f84a1107551f8b922695688e553ccd3be089",
+  "output": "/home/acfrazier/274bot-campaign/selective-9527cc636187/tui-smoke",
+  "engine": "/home/acfrazier/274bot-campaign/server-4c95f87",
+  "rs2b0t": "/home/acfrazier/274bot-campaign/workspace-b4b686f/rs2b0t",
+  "nav_pack": "/home/acfrazier/274bot-campaign/selective-9527cc636187/274bot.navpack",
+  "nav_flags": "/home/acfrazier/274bot-campaign/selective-9527cc636187/274bot.navflags"
+}

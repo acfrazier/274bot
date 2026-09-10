@@ -1,0 +1,47 @@
+    Checking script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/script)
+   Compiling panel v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/panel)
+    Checking host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/host-play)
+error: items after a test module
+   --> crates/script/src/memory_profile.rs:62:1
+    |
+ 62 | mod tests {
+    | ^^^^^^^^^
+...
+109 | pub struct HeapLifetime(pub Arc<Counters>);
+    | ^^^^^^^^^^^^^^^^^^^^^^^
+110 | impl Drop for HeapLifetime {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+118 | static REGISTRY: std::sync::OnceLock<std::sync::Mutex<Vec<std::sync::Weak<Counters>>>> =
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+119 |     std::sync::OnceLock::new();
+120 | pub fn registered() -> Arc<Counters> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+129 | pub fn snapshots() -> Vec<serde_json::Value> {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#items_after_test_module
+    = note: `-D clippy::items-after-test-module` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::items_after_test_module)]`
+    = help: move the items to before the test module was defined
+
+error: could not compile `script` (lib test) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: field assignment outside of initializer for an instance created with Default::default()
+   --> crates/host-play/src/memory.rs:452:13
+    |
+452 |             settings.auto_login = true;
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+note: consider initializing the variable with `vault::ProfileSettings { auto_login: true, ..Default::default() }` and removing relevant reassignments
+   --> crates/host-play/src/memory.rs:451:13
+    |
+451 |             let mut settings = ProfileSettings::default();
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#field_reassign_with_default
+    = note: `-D clippy::field-reassign-with-default` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::field_reassign_with_default)]`
+
+error: could not compile `host-play` (lib) due to 1 previous error
+error: could not compile `host-play` (lib test) due to 1 previous error

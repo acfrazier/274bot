@@ -1,0 +1,32 @@
+[
+  {
+    "label": "client-affected-fixture",
+    "argv": [
+      "C:/Users/Austen/.cargo/bin/cargo.exe",
+      "--no-fail-fast",
+      "test",
+      "--locked",
+      "--release",
+      "-p",
+      "client",
+      "--test",
+      "seq_delay",
+      "--test",
+      "player_info",
+      "--test",
+      "login",
+      "--test",
+      "inject",
+      "--test",
+      "zone",
+      "--",
+      "--test-threads=1"
+    ],
+    "cwd": "C:/Users/Austen/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust",
+    "started_utc": "2026-09-10T02:53:01.281517+00:00",
+    "pid": 8388,
+    "exit_code": 1,
+    "elapsed_s": 0.03646869999647606,
+    "log_sha256": "00cda842c598db12dcae596f882bcb6351500b87d7135cd2b6762de87d47a7ab"
+  }
+]

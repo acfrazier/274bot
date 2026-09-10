@@ -1,0 +1,142 @@
+{
+  "host_sha": "9527cc636187fdfaaca29c3e4af14819dd40dbe9",
+  "client_sha": "daccb4ba3ff5f8d1fce5b3b9487a1f0576ad50ac",
+  "output": "/home/builder/274bot-campaign/selective-9527cc636187/build-only",
+  "env": {
+    "CARGO_BUILD_JOBS": "2",
+    "CARGO_TARGET_DIR": "/home/builder/274bot-campaign/target",
+    "CARGO_TERM_COLOR": "never",
+    "CARGO_NET_RETRY": "1",
+    "RUSTC": "/home/builder/.rustup/toolchains/1.98.0-x86_64-unknown-linux-gnu/bin/rustc",
+    "RUSTDOC": "/home/builder/.rustup/toolchains/1.98.0-x86_64-unknown-linux-gnu/bin/rustdoc"
+  },
+  "stages": [
+    {
+      "label": "host-libraries",
+      "argv": [
+        "/home/builder/.cargo/bin/cargo",
+        "test",
+        "--locked",
+        "--release",
+        "--no-run",
+        "--message-format=json",
+        "-p",
+        "host",
+        "-p",
+        "host-play",
+        "--lib",
+        "--features",
+        "memory-profile-no-alloc"
+      ],
+      "cwd": "/home/builder/274bot-campaign/selective-9527cc636187/source",
+      "stop_on_failure": true,
+      "cargo_artifacts": true
+    },
+    {
+      "label": "frontend-libraries",
+      "argv": [
+        "/home/builder/.cargo/bin/cargo",
+        "test",
+        "--locked",
+        "--release",
+        "--no-run",
+        "--message-format=json",
+        "-p",
+        "tui",
+        "-p",
+        "panel",
+        "--lib",
+        "--features",
+        "memory-profile-no-alloc"
+      ],
+      "cwd": "/home/builder/274bot-campaign/selective-9527cc636187/source",
+      "stop_on_failure": true,
+      "cargo_artifacts": true
+    },
+    {
+      "label": "client-home",
+      "argv": [
+        "/home/builder/.cargo/bin/cargo",
+        "test",
+        "--locked",
+        "--release",
+        "--no-run",
+        "--message-format=json",
+        "-p",
+        "client",
+        "--lib"
+      ],
+      "cwd": "/home/builder/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust",
+      "stop_on_failure": true,
+      "cargo_artifacts": true
+    },
+    {
+      "label": "client-affected",
+      "argv": [
+        "/home/builder/.cargo/bin/cargo",
+        "test",
+        "--locked",
+        "--release",
+        "--no-run",
+        "--message-format=json",
+        "-p",
+        "client",
+        "--test",
+        "seq_delay",
+        "--test",
+        "player_info",
+        "--test",
+        "login",
+        "--test",
+        "inject",
+        "--test",
+        "zone",
+        "--test",
+        "iface_model",
+        "--test",
+        "gpu_texture"
+      ],
+      "cwd": "/home/builder/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust",
+      "stop_on_failure": true,
+      "cargo_artifacts": true
+    },
+    {
+      "label": "ordinary-frontends",
+      "argv": [
+        "/home/builder/.cargo/bin/cargo",
+        "build",
+        "--locked",
+        "--release",
+        "--message-format=json",
+        "-p",
+        "tui",
+        "-p",
+        "panel",
+        "--bins"
+      ],
+      "cwd": "/home/builder/274bot-campaign/selective-9527cc636187/source",
+      "stop_on_failure": true,
+      "cargo_artifacts": true
+    },
+    {
+      "label": "harness-frontends",
+      "argv": [
+        "/home/builder/.cargo/bin/cargo",
+        "build",
+        "--locked",
+        "--release",
+        "--message-format=json",
+        "-p",
+        "tui",
+        "-p",
+        "panel",
+        "--bins",
+        "--features",
+        "memory-profile-no-alloc"
+      ],
+      "cwd": "/home/builder/274bot-campaign/selective-9527cc636187/source",
+      "stop_on_failure": true,
+      "cargo_artifacts": true
+    }
+  ]
+}

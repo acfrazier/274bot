@@ -1,0 +1,43 @@
+{
+  "host": "c5159d38534281af66f5267e56fc5f0995d09071",
+  "client": "9b41e6e06b9fd42dc2247fc813a303c3fcb92941",
+  "unix_s": 1789010427.985782,
+  "checks": [
+    {
+      "argv": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--manifest-path",
+        "vendor/fr-client-rust/Cargo.toml",
+        "--",
+        "--check"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ]
+}

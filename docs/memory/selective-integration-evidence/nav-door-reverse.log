@@ -1,0 +1,9 @@
+
+running 1 test
+test nav_door ... 274bot: loaded snapshot (4556 models, 336 anim records)
+PASS: nav_door: 2 slot(s) ingame with scene 2
+PASS: nav_door {"scenario":"nav_door","outcome":"PASS","predicate":"arrived(2817,3443,0)","ticks":91,"elapsed_ms":55121,"tile":[2817,3443,0],"stat":{"runenergy":100},"chat":[{"text":"set tutorial: to 1000"},{"text":"Welcome to RuneScape."}],"scene":2}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 55.32s
+

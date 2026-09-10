@@ -1,0 +1,15 @@
+{
+  "source": "/Users/acfrazier/experiments/Server/engine/data/players/main/live13d71_27.sav",
+  "sha256": "825ee544d1441e114d56033091369dc34a76d7bc63f4d66f440a380ef81dd5bc",
+  "mtime_utc": "2026-09-10T03:10:56.022236+00:00",
+  "magic": "0x2004",
+  "version": 7,
+  "tile": [
+    2891,
+    4597,
+    0
+  ],
+  "crc_valid": true,
+  "interpretation_source": "Server/engine/src/engine/entity/PlayerLoading.ts:69 and Player.ts:194",
+  "capture_note": "Read after failed driver process exited; this is later saved state, not a timestamped scene transition."
+}

@@ -1,0 +1,20 @@
+   Compiling script v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\crates\script)
+   Compiling panel v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\crates\panel)
+   Compiling host-play v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\crates\host-play)
+warning: function `rss_bytes_from_ru_maxrss` is never used
+  --> crates\host-play\src\rss.rs:10:8
+   |
+10 | pub fn rss_bytes_from_ru_maxrss(raw: i64) -> u64 {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling tui v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\crates\tui)
+warning: `host-play` (lib) generated 1 warning
+warning: linker stdout: LINK : warning LNK4098: defaultlib 'libcmt.lib' conflicts with use of other libs; use /NODEFAULTLIB:library
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `tui` (bin "tui-play") generated 1 warning
+warning: `panel` (bin "panel-play") generated 1 warning (1 duplicate)
+    Finished `release` profile [optimized] target(s) in 19.64s

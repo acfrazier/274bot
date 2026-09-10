@@ -1,0 +1,68 @@
+{
+  "completion": {
+    "timed_out": false,
+    "exit_code": 0,
+    "performance_acceptance": false,
+    "elapsed_s": 243.4983371999988,
+    "ended_utc": "2026-09-10T03:09:24.012682+00:00"
+  },
+  "observation_start_s": 33.3023211,
+  "sample_transitions": [
+    {
+      "elapsed_s": 34.0099038,
+      "active": 1,
+      "snapshot_inflight_bytes": 0,
+      "snapshot_inflight_capacity": 0,
+      "v8_live_isolates": 1,
+      "v8_used_bytes": 4082912,
+      "snapshot_sum_isolate_peak_capacity": 282136
+    },
+    {
+      "elapsed_s": 93.6419925,
+      "active": 0,
+      "snapshot_inflight_bytes": 0,
+      "snapshot_inflight_capacity": 0,
+      "v8_live_isolates": 0,
+      "v8_used_bytes": 0,
+      "snapshot_sum_isolate_peak_capacity": 0
+    },
+    {
+      "elapsed_s": 154.4095335,
+      "active": 1,
+      "snapshot_inflight_bytes": 0,
+      "snapshot_inflight_capacity": 0,
+      "v8_live_isolates": 1,
+      "v8_used_bytes": 2747408,
+      "snapshot_sum_isolate_peak_capacity": 284552
+    }
+  ],
+  "state_transitions": [
+    {
+      "elapsed_s": 0.0795274,
+      "state": "Idle"
+    },
+    {
+      "elapsed_s": 11.4051271,
+      "state": "Running"
+    },
+    {
+      "elapsed_s": 93.6423722,
+      "state": "Idle"
+    },
+    {
+      "elapsed_s": 153.3848219,
+      "state": "Running"
+    },
+    {
+      "elapsed_s": 184.215644,
+      "state": "Idle"
+    }
+  ],
+  "stop_samples_clear": true,
+  "restart_script_ticks": [
+    2,
+    50
+  ],
+  "diagnostic_failures": [],
+  "slot_errors": []
+}

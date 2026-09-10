@@ -1,0 +1,29 @@
+{
+  "host_sha": "9527cc636187fdfaaca29c3e4af14819dd40dbe9",
+  "client_sha": "daccb4ba3ff5f8d1fce5b3b9487a1f0576ad50ac",
+  "created_utc": "2026-09-10T02:38:42.493819+00:00",
+  "files": {
+    "host.tar": {
+      "bytes": 6174720,
+      "sha256": "02386e6d9f395f9f8d36181a969714eec58612fec8f5a15767bc7a316a9a2237"
+    },
+    "client.tar": {
+      "bytes": 3276800,
+      "sha256": "366342b8f9597b90c58cddf3ea9e3f29dc64f85a49473f41a6d149c34ea7bf1c"
+    },
+    "274bot.navpack": {
+      "bytes": 73438581,
+      "sha256": "c9dca67bcdc8d0c8a598fb316279851658c1113e56bbb8dd5d81356cdf773f17"
+    },
+    "274bot.navflags": {
+      "bytes": 260571161,
+      "sha256": "92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb"
+    },
+    "run-stages.py": {
+      "bytes": 2388,
+      "sha256": "2fe8f304f80466c4303b5bfa613699ad30541a9ba2c9431dacd8b52ee205057f"
+    }
+  },
+  "archive_sha256": "4c2c5848519ec099a2e077052177d8c2cb1b467d8f66dc06c8df7440cd617735",
+  "archive_bytes": 5365858
+}

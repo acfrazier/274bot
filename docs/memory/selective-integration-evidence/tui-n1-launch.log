@@ -1,0 +1,17 @@
+usage: run_diagnostic.py [-h] [--nav-captures] [--single-renderer]
+                         [--focused-one] [--focused-background]
+                         [--cpu-fallback] [--headless] [--tui-input-probes]
+                         [--debug] [--no-diagnostics] [--failure-capture]
+                         [--binary BINARY] [--build-manifest BUILD_MANIFEST]
+                         [--build-role {reference,candidate}] [--sustain]
+                         [--stack-logging | --stack-logging-lite]
+                         [--scheduling-profile] [--render-profile]
+                         [--gpu-completion-profile] [--responsiveness-profile]
+                         [--responsiveness-fine] [--observe OBSERVE]
+                         [--warmup WARMUP]
+                         [--heaptrack-output HEAPTRACK_OUTPUT]
+                         [--direct-owner-capture] [--run-dir RUN_DIR]
+                         [--frontend-handoff FRONTEND_HANDOFF]
+                         {panel,tui} {1,16,32,128}
+                         {idle,seeded-idle,active,lifecycle}
+run_diagnostic.py: error: unrecognized arguments: --out /Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/selective-integration-evidence/tui-n1-functional

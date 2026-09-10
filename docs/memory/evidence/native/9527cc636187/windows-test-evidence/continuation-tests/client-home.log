@@ -1,0 +1,13 @@
+   Compiling client v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\vendor\fr-client-rust\crates\client)
+    Finished `release` profile [optimized] target(s) in 12.34s
+     Running unittests src\lib.rs (C:/Users/Austen/274bot-campaign/target-native\release\deps\client-a544e75a00387120.exe)
+
+running 5 tests
+test bot_target::tests::content_sits_next_to_engine ... ok
+test bot_target::tests::operator_home_never_queries_profile_for_explicit_home ... ok
+test bot_target::tests::operator_home_prefers_explicit_home_including_empty ... ok
+test bot_target::tests::prod_and_live_alias_are_the_public_world ... ok
+test bot_target::tests::prod_cache_dir_is_home_unpack_not_engine_pack ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 70 filtered out; finished in 0.00s
+

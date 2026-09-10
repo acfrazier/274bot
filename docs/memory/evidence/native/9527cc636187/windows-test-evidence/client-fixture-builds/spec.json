@@ -1,0 +1,99 @@
+{
+  "host_sha": "9527cc636187fdfaaca29c3e4af14819dd40dbe9",
+  "client_sha": "daccb4ba3ff5f8d1fce5b3b9487a1f0576ad50ac",
+  "output": "C:/Users/Austen/274bot-campaign/selective-9527cc636187/client-fixture-builds",
+  "env": {
+    "CARGO_BUILD_JOBS": "4",
+    "CARGO_TARGET_DIR": "C:/Users/Austen/274bot-campaign/target-native",
+    "CARGO_TERM_COLOR": "never",
+    "CARGO_NET_RETRY": "1",
+    "ENGINE_DIR": "C:/Users/BotTest/274bot-server-4c95f87"
+  },
+  "stages": [
+    {
+      "label": "client-affected-fixture",
+      "argv": [
+        "C:/Users/Austen/.cargo/bin/cargo.exe",
+        "--no-fail-fast",
+        "test",
+        "--locked",
+        "--release",
+        "-p",
+        "client",
+        "--test",
+        "seq_delay",
+        "--test",
+        "player_info",
+        "--test",
+        "login",
+        "--test",
+        "inject",
+        "--test",
+        "zone",
+        "--",
+        "--test-threads=1"
+      ],
+      "cwd": "C:/Users/Austen/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust",
+      "stop_on_failure": true
+    },
+    {
+      "label": "client-gpu-texture",
+      "argv": [
+        "C:/Users/Austen/.cargo/bin/cargo.exe",
+        "test",
+        "--locked",
+        "--release",
+        "-p",
+        "client",
+        "--test",
+        "gpu_texture",
+        "--",
+        "--test-threads=1"
+      ],
+      "cwd": "C:/Users/Austen/274bot-campaign/selective-9527cc636187/source/vendor/fr-client-rust",
+      "stop_on_failure": false
+    },
+    {
+      "label": "ordinary-frontends",
+      "argv": [
+        "C:/Users/Austen/.cargo/bin/cargo.exe",
+        "build",
+        "--locked",
+        "--release",
+        "-p",
+        "tui",
+        "-p",
+        "panel",
+        "--bins"
+      ],
+      "cwd": "C:/Users/Austen/274bot-campaign/selective-9527cc636187/source",
+      "stop_on_failure": true,
+      "artifacts": [
+        "C:/Users/Austen/274bot-campaign/target-native/release/tui-play.exe",
+        "C:/Users/Austen/274bot-campaign/target-native/release/panel-play.exe"
+      ]
+    },
+    {
+      "label": "harness-frontends",
+      "argv": [
+        "C:/Users/Austen/.cargo/bin/cargo.exe",
+        "build",
+        "--locked",
+        "--release",
+        "-p",
+        "tui",
+        "-p",
+        "panel",
+        "--bins",
+        "--features",
+        "memory-profile-no-alloc"
+      ],
+      "cwd": "C:/Users/Austen/274bot-campaign/selective-9527cc636187/source",
+      "stop_on_failure": true,
+      "artifacts": [
+        "C:/Users/Austen/274bot-campaign/target-native/release/tui-play.exe",
+        "C:/Users/Austen/274bot-campaign/target-native/release/panel-play.exe"
+      ]
+    }
+  ]
+}

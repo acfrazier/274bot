@@ -1,0 +1,25 @@
+{
+  "action": "intentional task-owned fixture cleanup after validation via Stop-ScheduledTask",
+  "utc": "2026-09-10T03:15:38.807585+00:00",
+  "verifiedBefore": {
+    "pid": 14340,
+    "path": "C:/ProgramData/274bot-Test/tools/node-v24.19.0-win-x64/node.exe",
+    "sessionId": 1,
+    "startUtc": "2026-09-10T02:50:08.2690405Z"
+  },
+  "processAbsent": true,
+  "openProcessError": 87,
+  "remainingOwnedTcpRows": [],
+  "launch": {
+    "pid": 14340,
+    "sessionId": 1,
+    "startUtc": "2026-09-10T02:50:08.2690405Z",
+    "serverDirectory": "C:\\Users\\BotTest\\274bot-server-4c95f87",
+    "node": "C:\\ProgramData\\274bot-Test\\tools\\node-v24.19.0-win-x64\\node.exe",
+    "nodeSha256": "3602F2BB1A10F2CBAB4C36886218A33C1AB3DB87290E73B033C46C77147D0237",
+    "purpose": "selected native functional smoke"
+  },
+  "stdout": "9/9/2026 10:50:35 PM\t INFO\t Starting world\n9/9/2026 10:50:35 PM\t DEBUG\t Loading game map\n9/9/2026 10:50:35 PM\t DEBUG\t 7322/16383 static NPCs added\n9/9/2026 10:50:35 PM\t INFO\t World ready: Visit http://localhost/rs2.cgi\n",
+  "stderr": "",
+  "cleanupNote": "Stop-Process returned NullReferenceException, process identity rechecked; Stop-ScheduledTask removed owned process but command was slow to return. Independent process and netstat checks recorded here."
+}

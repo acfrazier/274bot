@@ -1,0 +1,15 @@
+
+running 10 tests
+test already_logged_in_leaves_title_ready_to_retry ... ok
+test cold_login_clears_entity_tables ... ok
+test cold_login_opcode_16_success ... ok
+test cold_login_response_2_resets_tab_chat_and_rebuilds_frame ... ok
+test failed_login_can_be_retried_on_the_same_client ... ok
+test login_code_6_is_error ... ok
+test lowmem_login_writes_info_byte_one ... ok
+test reconnect_response_15_keeps_game_and_local_player ... ok
+test reconnect_uses_opcode_18 ... ok
+test to_userhash_matches_client_ts ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.82s
+

@@ -1,0 +1,8 @@
+error: unexpected argument '--no-fail-fast' found
+
+  tip: 'test --no-fail-fast' exists
+
+Usage: cargo [+toolchain] [OPTIONS] [COMMAND]
+       cargo [+toolchain] [OPTIONS] -Zscript <MANIFEST_RS> [ARGS]...
+
+For more information, try '--help'.

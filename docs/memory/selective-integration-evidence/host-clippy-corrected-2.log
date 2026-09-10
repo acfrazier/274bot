@@ -1,0 +1,22 @@
+    Checking api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/api)
+   Compiling panel v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/panel)
+    Checking client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client)
+    Checking script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/script)
+    Checking nav v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/nav)
+    Checking host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/host)
+error: items after a test module
+   --> crates/api/src/content.rs:219:1
+    |
+219 | mod tests {
+    | ^^^^^^^^^
+...
+268 | pub const FOOD_HEALS: &[(&str, i32)] = &[
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#items_after_test_module
+    = note: `-D clippy::items-after-test-module` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::items_after_test_module)]`
+    = help: move the items to before the test module was defined
+
+error: could not compile `api` (lib test) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...

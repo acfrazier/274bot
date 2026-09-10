@@ -1,0 +1,9 @@
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-baseline/vendor/fr-client-rust/crates/client)
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-baseline/crates/api)
+   Compiling nav v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-baseline/crates/nav)
+   Compiling host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-baseline/crates/host)
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-baseline/crates/script)
+   Compiling scenario v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-baseline/crates/scenario)
+   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-baseline/crates/host-play)
+   Compiling tui v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-baseline/crates/tui)
+    Finished `release` profile [optimized] target(s) in 7.68s

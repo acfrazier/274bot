@@ -1,0 +1,22 @@
+﻿{
+    "schema":  "native-panel-window-capture-v1",
+    "label":  "observation-start",
+    "pid":  8924,
+    "startUtc":  "2026-09-10T03:00:40.1846625Z",
+    "sessionId":  1,
+    "binary":  "C:\\ProgramData\\274bot-Test\\selective-9527cc636187\\harness\\panel-play.exe",
+    "binarySha256":  "58591a306af89d588307ae4d555a12c507b488a52ff3e435eafc04bd006d2cd8",
+    "windowHandle":  984024,
+    "rect":  [
+                 228,
+                 228,
+                 2326,
+                 1154
+             ],
+    "captureStartedUtc":  "2026-09-10T03:01:26.5720372Z",
+    "captureEndedUtc":  "2026-09-10T03:01:26.6374166Z",
+    "png":  "C:\\Users\\BotTest\\274bot-runs\\visual-proof-selective-9527cc636187-panel\\observation-start.png",
+    "pngSha256":  "c945307c03809e6d106e859881da9ba2a989a9cee1aec5e14a20e5ba0740e6a6",
+    "sceneState":  "not inferred from capture",
+    "performanceAcceptance":  false
+}

@@ -1,0 +1,50 @@
+
+running 45 tests
+test change_loc_available_remaps_shape_11_to_10 ... ok
+test change_loc_unchecked_wall_straight_with_anim_sets_wall ... ok
+test check_model_none_is_ready ... ok
+test client_obj_roundtrips_in_link_list ... ok
+test client_proj_bind_seq_resolves_zero_delays_via_animframe_fallback ... ok
+test client_proj_move_by_uses_bound_seq_delays ... ok
+test client_proj_set_target_places_startpos_along_delta ... ok
+test full_follows_clears_8x8_ground_obj_and_expires_locs ... ok
+test get_wall_mut_none_on_empty_tile ... ok
+test loc_add_change_applies_on_do_queue ... ok
+test loc_add_change_out_of_range_shape_does_not_panic ... ok
+test loc_add_change_waits_when_model_not_ready ... ok
+test loc_anim_door_packet_overrides_non_door_placement ... ok
+test loc_anim_ground_decor_model ... ok
+test loc_anim_missing_wall_is_noop ... ok
+test loc_anim_out_of_range_shape_does_not_panic ... ok
+test loc_anim_replaces_wall_model1 ... ok
+test loc_anim_scene_remaps_shape_11_to_10 ... ok
+test loc_anim_wall_decor_uses_tile_xz ... ok
+test loc_anim_wall_door_animates_both_models ... ok
+test loc_change_defaults_end_time_minus_one ... ok
+test loc_del_removes_wall ... ok
+test loc_del_wall_decor_uses_tile_xz_not_swapped ... ok
+test logout_clears_zone_lists ... ok
+test map_anim_pushes_and_add_map_anim_places_dynamic ... ok
+test map_projanim_negative_target_retargets_to_local_player ... ok
+test map_projanim_out_of_range_dest_is_dropped ... ok
+test map_projanim_pushes_and_add_projectiles_places_dynamic ... ok
+test map_spot_anim_start_cycle_is_cycle_plus_delay ... ok
+test obj_add_headless_still_sets_world ... ok
+test obj_add_sets_ground_object ... ok
+test obj_count_rewrites_matching_stack ... ok
+test obj_del_clears_empty_cell ... ok
+test obj_reveal_adds_for_other_pid ... ok
+test obj_reveal_skips_self_slot ... ok
+test p_locmerge_consumes_and_noops_without_model ... ok
+test p_locmerge_no_player_stops_before_apply ... ok
+test rebuild_normal_negative_dx_shifts_descending ... ok
+test rebuild_normal_shifts_ground_obj_by_base_delta ... ok
+test rebuild_normal_zero_delta_preserves_ground_obj ... ok
+test rotate_x_axis_90_swaps_y_and_z ... ok
+test scene_model_proj_min_y_defaults_1000 ... ok
+test update_pid_sets_self_slot_and_members ... ok
+test world_dynamic_count_starts_zero ... ok
+test world_update_num_increments_when_draw_then_zeros_headless ... ok
+
+test result: ok. 45 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.88s
+

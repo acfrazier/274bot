@@ -1,0 +1,5 @@
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/script)
+   Compiling panel v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/panel)
+   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/host-play)
+   Compiling tui v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/tui)
+    Finished `release` profile [optimized] target(s) in 5.48s

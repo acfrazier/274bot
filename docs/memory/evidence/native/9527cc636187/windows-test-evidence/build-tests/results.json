@@ -1,0 +1,66 @@
+[
+  {
+    "label": "host-lib",
+    "argv": [
+      "C:/Users/Austen/.cargo/bin/cargo.exe",
+      "test",
+      "--locked",
+      "--release",
+      "-p",
+      "host",
+      "--lib",
+      "--",
+      "--test-threads=1"
+    ],
+    "cwd": "C:/Users/Austen/274bot-campaign/selective-9527cc636187/source",
+    "started_utc": "2026-09-10T02:41:09.355324+00:00",
+    "pid": 8352,
+    "exit_code": 0,
+    "elapsed_s": 32.029108200003975,
+    "log_sha256": "5bf33819e17be9b0848f2ff7b07fe8115af5ce7058396ecdd91a9f51874a9b58"
+  },
+  {
+    "label": "hostplay-harness-lib",
+    "argv": [
+      "C:/Users/Austen/.cargo/bin/cargo.exe",
+      "test",
+      "--locked",
+      "--release",
+      "-p",
+      "host-play",
+      "--lib",
+      "--features",
+      "memory-profile-no-alloc",
+      "--",
+      "--test-threads=1"
+    ],
+    "cwd": "C:/Users/Austen/274bot-campaign/selective-9527cc636187/source",
+    "started_utc": "2026-09-10T02:41:41.391311+00:00",
+    "pid": 15844,
+    "exit_code": 0,
+    "elapsed_s": 102.38081620000594,
+    "log_sha256": "9d7ed498864e6f30229b60e7cbce19d7a474316685dab21255db92b6b6024335"
+  },
+  {
+    "label": "tui-panel-lib",
+    "argv": [
+      "C:/Users/Austen/.cargo/bin/cargo.exe",
+      "test",
+      "--locked",
+      "--release",
+      "-p",
+      "tui",
+      "-p",
+      "panel",
+      "--lib",
+      "--",
+      "--test-threads=1"
+    ],
+    "cwd": "C:/Users/Austen/274bot-campaign/selective-9527cc636187/source",
+    "started_utc": "2026-09-10T02:43:23.782301+00:00",
+    "pid": 5888,
+    "exit_code": 4294967295,
+    "elapsed_s": 324.4218603000045,
+    "log_sha256": "5cc26226b0305a3e7d2edaf1f93f69611cad27955c032bba35a6440f740216cb"
+  }
+]

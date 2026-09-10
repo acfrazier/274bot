@@ -1,0 +1,82 @@
+{
+  "label": "selected",
+  "host_commit": "9527cc636187fdfaaca29c3e4af14819dd40dbe9",
+  "client_commit": "daccb4ba3ff5f8d1fce5b3b9487a1f0576ad50ac",
+  "host_status": "?? crates/tui/tests/",
+  "driver_sha256": "ea742d2b2f65c14ef74b5f684997bdb2fbdb3e39605459dfb467934e7313dfe3",
+  "installed_driver_sha256": "ea742d2b2f65c14ef74b5f684997bdb2fbdb3e39605459dfb467934e7313dfe3",
+  "executable": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/selective-integration-evidence/binaries/selective-compare-selected",
+  "executable_sha256": "9b46ca19d740691808a9a6de709367a3f2123b24dce402ed0e2d8a07b4492a43",
+  "cargo_artifact": {
+    "reason": "compiler-artifact",
+    "package_id": "path+file:///Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/tui#0.1.0",
+    "manifest_path": "/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/tui/Cargo.toml",
+    "target": {
+      "kind": [
+        "test"
+      ],
+      "crate_types": [
+        "bin"
+      ],
+      "name": "selective_compare",
+      "src_path": "/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/tui/tests/selective_compare.rs",
+      "edition": "2021",
+      "doc": false,
+      "doctest": false,
+      "test": true
+    },
+    "profile": {
+      "opt_level": "3",
+      "debuginfo": 0,
+      "debug_assertions": false,
+      "overflow_checks": false,
+      "test": true
+    },
+    "features": [],
+    "filenames": [
+      "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/target/release/deps/selective_compare-141f1b353976ce34"
+    ],
+    "executable": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/target/release/deps/selective_compare-141f1b353976ce34",
+    "fresh": false
+  },
+  "build_argv": [
+    "cargo",
+    "test",
+    "--release",
+    "-p",
+    "tui",
+    "--test",
+    "selective_compare",
+    "--no-run",
+    "--message-format=json"
+  ],
+  "build_env": {
+    "CARGO_TARGET_DIR": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/target"
+  },
+  "run_argv": [
+    "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/selective-integration-evidence/binaries/selective-compare-selected",
+    "--ignored",
+    "--exact",
+    "common_session",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "run_env_required": {
+    "LIVE": "1",
+    "BOT_TARGET": "local",
+    "COMPARE_N": "1 or 32",
+    "COMPARE_WORKLOAD": "thiever (idle only if explicitly needed)",
+    "COMPARE_RUN_DIR": "absolute fresh disposable directory",
+    "HOME": "COMPARE_RUN_DIR/home",
+    "COMPARE_CACHE": "same absolute existing client cache",
+    "NAV_PACK": "same absolute pack",
+    "RS2B0T": "same absolute pinned catalog"
+  },
+  "run_env_unset": [
+    "BUDGET_S",
+    "BOT_MEMORY_N",
+    "BOT_MEMORY_WORKLOAD",
+    "BOT_MEMORY_OUTPUT"
+  ],
+  "live_run_performed": false
+}

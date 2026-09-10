@@ -1,0 +1,92 @@
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/vendor/fr-client-rust/crates/client)
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/api)
+   Compiling nav v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/nav)
+   Compiling host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/host)
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/script)
+   Compiling scenario v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/scenario)
+   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/selective-integration/crates/host-play)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.33s
+     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/target/debug/deps/host_play-315c9a2a0e71e7f9)
+
+running 30 tests
+test memory::tests::bind_seed_nav_from_play_none_keeps_missing_pack ... ok
+test memory::tests::bind_seed_nav_from_play_preserves_arc_identity ... ok
+test memory::tests::config_from_env_accepts_n16 ... ok
+test memory::tests::config_from_env_defaults_idle_and_durations ... ok
+test memory::tests::config_from_env_none_without_bot_memory_n ... ok
+test memory::tests::config_from_env_rejects_invalid_n ... ok
+test memory::tests::config_from_env_rejects_invalid_workload ... ok
+test memory::tests::config_from_env_rejects_zero_durations ... ok
+test memory::tests::parse_n_accepts_1_16_32_128 ... ok
+test memory::tests::parse_n_rejects_invalid ... ok
+test memory::tests::parse_render_policy_defaults_rotating_all ... ok
+test memory::tests::parse_render_policy_explicit_modes ... ok
+test memory::tests::parse_render_policy_legacy_single_renderer ... ok
+test memory::tests::parse_render_policy_rejects_conflict_and_unknown ... ok
+test memory::tests::prepare_active_errors_without_rs2b0t ... ok
+test memory::tests::prepare_background_policy_pins_focus ... ok
+test memory::tests::prepare_idle_mints_n_names_vault_under_temp_no_card ... ok
+test memory::tests::prepare_idle_n32_mints_thirty_two_unique_names ... ok
+test memory::tests::prepare_legacy_single_renderer_keeps_flag ... ok
+test memory::tests::prepare_lifecycle_errors_without_rs2b0t ... ok
+test memory::tests::prepare_reads_focused_one_policy_and_pins_focus ... ok
+test memory::tests::prepare_seeded_idle_runs_seed_without_catalog ... ok
+test memory::tests::prepare_tui_rejects_panel_render_policy ... ok
+test memory::tests::prepare_with_seed_nav_from_play_matches_bind ... ok
+test memory::tests::process_cpu_time_is_available_and_monotonic ... ok
+test memory::tests::require_live_benchmark_errors_without_live_env ... ok
+test memory::tests::sample_json_has_sibling_metric_fields_not_one_sum ... ok
+test memory::tests::sample_json_nulls_missing_components_not_zero ... ok
+test memory::tests::seed_runners_share_world_but_keep_independent_state ... ok
+test memory::tests::seeded_idle_preserves_setup_and_ends_before_script_start ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 116 filtered out; finished in 8.90s
+
+     Running unittests src/main.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/target/debug/deps/host_play-1e8bf7d590dce180)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/channel_ladder.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/target/debug/deps/channel_ladder-c188b5e8f6730491)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running tests/channel_walk.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/target/debug/deps/channel_walk-30496abd2b235aa3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/login_one.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/target/debug/deps/login_one-1985ee6f3b31767e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/login_two.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/target/debug/deps/login_two-790063a3f719f219)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/null_raster.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/target/debug/deps/null_raster-1b816ce7dd274d4f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/rss_ladder.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/target/debug/deps/rss_ladder-e0283361fc3e9ee3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running tests/wall_login.rs (/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/target/debug/deps/wall_login-1c8473dfa02105d3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+

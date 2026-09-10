@@ -1,0 +1,8 @@
+﻿{
+    "pid":  9720,
+    "path":  "C:\\Users\\Austen\\274bot-campaign\\target-native\\release\\deps\\panel-46c8fbf4db5f31d8.exe",
+    "startUtc":  "2026-09-10T02:45:25.5899895Z",
+    "stoppedUtc":  "2026-09-10T02:48:48.1257035Z",
+    "reason":  "bounded stalled flat_model panel fixture; parent authorized diagnosis",
+    "cpuSeconds":  3.1875
+}

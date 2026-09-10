@@ -1,0 +1,6 @@
+{
+  "aborted_pid": 77844,
+  "reason": "Standalone CLI executable has no app bundle identifier; native UI tool cannot select it. Reusing byte-identical binary in disposable app bundle for visual check.",
+  "original_run": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/diagnostics/20260910T025046Z_panel_n1_seeded-idle",
+  "app": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/docs/memory/selective-integration-evidence/274bot Selective.app"
+}

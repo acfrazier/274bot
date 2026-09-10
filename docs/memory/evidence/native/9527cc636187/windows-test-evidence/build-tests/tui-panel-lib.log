@@ -1,0 +1,286 @@
+   Compiling swc_common v9.2.0
+   Compiling naga v29.0.4
+   Compiling wgpu-types v29.0.4
+   Compiling deno_permissions v0.72.0
+   Compiling swc_ecma_ast v9.0.0
+   Compiling swc_ecma_loader v9.0.0
+   Compiling deno_web v0.244.0
+   Compiling wgpu-naga-bridge v29.0.4
+   Compiling wgpu-hal v29.0.4
+   Compiling swc_ecma_lexer v12.0.0
+   Compiling swc_ecma_parser v12.0.0
+   Compiling wgpu-core-deps-windows-linux-android v29.0.4
+   Compiling swc_ecma_visit v9.0.0
+   Compiling swc_ecma_utils v13.1.0
+   Compiling wgpu-core v29.0.4
+   Compiling swc_ecma_transforms_base v13.0.0
+   Compiling wgpu v29.0.4
+   Compiling swc_ecma_transforms_react v15.0.0
+   Compiling client v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\vendor\fr-client-rust\crates\client)
+   Compiling swc_ecma_transforms_classes v13.0.0
+   Compiling api v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\crates\api)
+   Compiling swc_ecma_transforms_proposal v13.0.0
+   Compiling swc_ecma_transforms_typescript v15.0.0
+   Compiling dprint-swc-ext v0.24.0
+   Compiling swc_ecma_codegen v11.0.0
+   Compiling deno_crypto v0.227.0
+   Compiling deno_url v0.213.0
+   Compiling deno_ast v0.49.0
+   Compiling vault v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\crates\vault)
+   Compiling rustyscript v0.12.3
+   Compiling nav v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\crates\nav)
+   Compiling script v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\crates\script)
+   Compiling dear-imgui-rs v0.15.1
+   Compiling host v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\crates\host)
+   Compiling winit v0.30.13
+   Compiling host-play v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\crates\host-play)
+warning: function `rss_bytes_from_ru_maxrss` is never used
+  --> crates\host-play\src\rss.rs:10:8
+   |
+10 | pub fn rss_bytes_from_ru_maxrss(raw: i64) -> u64 {
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling scenario v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\crates\scenario)
+   Compiling panel v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\crates\panel)
+   Compiling dear-imgui-winit v0.15.1
+   Compiling dear-imgui-wgpu v0.15.1
+warning: `host-play` (lib) generated 1 warning
+   Compiling tui v0.1.0 (C:\Users\Austen\274bot-campaign\selective-9527cc636187\source\crates\tui)
+warning: linker stdout: LINK : warning LNK4098: defaultlib 'libcmt.lib' conflicts with use of other libs; use /NODEFAULTLIB:library
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `tui` (lib test) generated 1 warning
+warning: `panel` (lib test) generated 1 warning (1 duplicate)
+    Finished `release` profile [optimized] target(s) in 2m 01s
+     Running unittests src\lib.rs (C:/Users/Austen/274bot-campaign/target-native\release\deps\panel-46c8fbf4db5f31d8.exe)
+
+running 373 tests
+test app::tests::apply_loadouts_scratch_renames_in_place ... ok
+test app::tests::apply_only_render_selected_warns_before_unchecking ... ok
+test app::tests::apply_ui_scale_scales_padding_for_retina ... ok
+test app::tests::boot_is_deferred_and_maps_live_smoke_and_vault_pass ... ok
+test app::tests::browse_file_card_without_desc_does_not_assert_on_endchild ... ok
+test app::tests::capture_keys_pass_colon_and_tilde_like_client_play ... ok
+test app::tests::chooser_docks_to_panel_never_rail_or_game ... ok
+test app::tests::chooser_edit_hosts_per_profile_login_and_random ... ok
+test app::tests::chooser_locked_vault_shows_unlock_not_empty_copy ... ok
+test app::tests::chooser_reopens_after_a_close ... ok
+test app::tests::chooser_should_open_popup_table ... ok
+test app::tests::config_section_scopes_accent_to_header_not_body ... ok
+test app::tests::debug_captions_fit_the_strip ... ok
+test app::tests::dock_host_redocks_profiles_onto_the_panel_node ... ok
+test app::tests::dockspace_does_not_lock_undock_on_every_node ... ok
+test app::tests::edit_parameters_enabled_for_operator_bag ... ok
+test app::tests::ensure_window_fits_uses_rail_open_falling_edge ... ok
+test app::tests::fit_applet_keeps_aspect_and_does_not_dpi_double ... ok
+test app::tests::game_window_flags_have_no_scrollbar ... ok
+test app::tests::game_window_title_is_the_profile_name ... ok
+test app::tests::global_config_slot_name_then_capture_then_focused_50_then_panel ... ok
+test app::tests::hop_label_px_writes_clamp_to_8_28 ... ok
+test app::tests::live_null_tick_passes_at_scene2_without_freeze ... ok
+test app::tests::live_null_tick_timeout_before_scene2 ... ok
+test app::tests::live_null_tick_waits_until_two_scene2 ... ok
+test app::tests::live_script_tick_holds_a_terminal_shot_fail_until_the_shot_writes ... ok
+test app::tests::live_script_tick_holds_a_terminal_shot_pass_until_the_shot_writes ... ok
+test app::tests::live_script_tick_latches_pass_and_reports_fail ... ok
+test app::tests::live_smoke_tick_deadline_reports_scene2_never_reached ... ok
+test app::tests::live_smoke_tick_latches_scene2_once_and_reports_a_missing_write ... ok
+test app::tests::live_smoke_tick_passes_when_the_shot_is_written ... ok
+test app::tests::live_stress_tick_announces_1_10_50_and_stays_passed ... ok
+test app::tests::live_stress_tick_counts_full_clients_up ... ok
+test app::tests::live_stress_tick_full_name_in_timeout ... ok
+test app::tests::live_stress_tick_timeout_before_50 ... ok
+test app::tests::loadout_combo_lists_store_names ... ok
+test app::tests::log_follow_bottom_sticks_at_end_and_releases_when_scrolled_up ... ok
+test app::tests::manual_shot_label_is_stamped_and_stays_normalized ... ok
+test app::tests::panel_heading_toggle_hides_status_section ... ok
+test app::tests::panel_split_is_a_thin_right_slice ... ok
+test app::tests::panel_subsection_exposes_chrome_color_pickers ... ok
+test app::tests::panel_window_class_allows_config_tabs ... ok
+test app::tests::parameters_and_script_prefs_share_show_parameters_rail ... ok
+test app::tests::parse_live_args_accepts_nav_full ... ok
+test app::tests::parse_live_args_env_and_flag_null_raster ... ok
+test app::tests::parse_live_args_env_and_flag_stress50 ... ok
+test app::tests::parse_live_args_flag_wins_over_env ... ok
+test app::tests::parse_live_args_help_is_usage_exit_0 ... ok
+test app::tests::parse_live_args_none_without_flag_or_env ... ok
+test app::tests::parse_live_args_prod_is_interactive_not_unknown ... ok
+test app::tests::parse_live_args_script_walk_accepted ... ok
+test app::tests::parse_live_args_smoke_flag_maps_to_smoke_mode ... ok
+test app::tests::parse_live_args_unknown_flag_and_missing_name ... ok
+test app::tests::parse_live_args_unknown_name_is_usage_exit_2 ... ok
+test app::tests::parse_live_args_unknown_script_rejected ... ok
+test app::tests::rail_window_class_shows_tab_x ... ok
+test app::tests::random_status_text_kebab_cases_lost_kinds ... ok
+test app::tests::random_status_text_names_kind_hold_and_off ... ok
+test app::tests::runner_config_docks_without_viewports ... ok
+test app::tests::settings_window_drops_slot_and_random_rows ... ok
+test app::tests::single_bot_window_class_hides_tab_bar ... ok
+test app::tests::slot_render_section_no_longer_owns_focused_50 ... ok
+test app::tests::smoke_settled_table ... ok
+test app::tests::smoke_should_fire_table ... ok
+test build_info::tests::baked_short_is_seven_or_unknown ... ok
+test build_info::tests::git_stamp_is_short_or_short_dirty ... ok
+test build_info::tests::line_matches_the_old_dot_format ... ok
+test build_info::tests::tooltip_leads_with_crate_version ... ok
+test chrome::tests::accent_is_amber_not_green ... ok
+test chrome::tests::apply_amber_replaces_imgui_blue_title ... ok
+test chrome::tests::browse_start_stop_are_not_mocks ... ok
+test chrome::tests::config_rows_are_two_by_two_without_parameters_heading ... ok
+test chrome::tests::equal_button_width_stays_inside_panel ... ok
+test chrome::tests::heading_order_defaults_and_merges ... ok
+test chrome::tests::integer_ui_scale_retina_is_2_and_never_below_1 ... ok
+test chrome::tests::login_logout_row_is_two_buttons ... ok
+test chrome::tests::multibox_is_wired_not_a_mock ... ok
+test chrome::tests::multibox_tooltip_matches_the_plan_copy ... ok
+test chrome::tests::script_section_is_wired ... ok
+test chrome::tests::sections_contains_all_section_ids ... ok
+test focus::tests::capture_implies_draw ... ok
+test focus::tests::draw_for_slot_requires_this_slot_to_be_focused ... ok
+test focus::tests::draw_requires_focus_pane_and_renderer ... ok
+test focus::tests::focused_50_raises_only_the_game_pane_slot ... ok
+test focus::tests::focused_slot_draws_even_when_renderer_by_is_off ... ok
+test focus::tests::full_rate_for_pref_raises_drawing_members_only ... ok
+test focus::tests::live_full_rate_raises_every_drawing_slot_including_focused ... ok
+test focus::tests::only_render_selected_off_paints_wall_members ... ok
+test game_view::tests::cpu_pixels_survive_gpu_bind_and_unbind ... ok
+test game_view::tests::dispose_unregisters_without_re_registering_the_panel_texture ... ok
+test game_view::tests::expand_rgba_splits_0x00rrggbb ... ok
+test game_view::tests::expand_rgba_writes_alpha_for_every_pixel ... ok
+test game_view::tests::frame_pixels_of_wrong_shape_pixmap_is_empty ... ok
+test game_view::tests::frame_pixels_packs_a_full_applet_pixmap ... ok
+test game_view::tests::frame_pixels_reads_a_texture_frame_back ... ok
+test game_view::tests::gpu_first_unbind_restores_empty_placeholder_pixels ... ok
+test game_view::tests::initialized_placeholder_matches_empty_pixels ... ok
+test game_view::tests::stable_texture_present_bind_is_noop_after_first ... ok
+test game_view::tests::texture_frame_binds_the_client_view_directly ... ok
+test grid::tests::cells_fit_inside_the_pane_and_keep_aspect ... ok
+test grid::tests::four_cells_in_a_wide_pane_are_two_by_two_row_major ... ok
+test grid::tests::grid_cells_two_side_by_side_keep_aspect ... ok
+test grid::tests::no_members_or_no_room_yields_no_cells ... ok
+test grid::tests::same_sized_slots_share_each_cell_size ... ok
+test grid::tests::single_cell_fills_the_whole_pane ... ok
+test grid::tests::tall_pane_stacks_cells_vertically ... ok
+test grid::tests::three_cells_flow_to_a_second_row ... ok
+test nav_settings::tests::allow_bank_fetch_round_trips_through_serde ... ok
+test nav_settings::tests::defaults_match_rs2b0t_path_paint ... ok
+test nav_settings::tests::effective_without_live_force_is_saved_unchanged ... ok
+test nav_settings::tests::html_hex_roundtrips_from_bytes ... ok
+test nav_settings::tests::live_force_layers_does_not_change_saved_teles_or_colours ... ok
+test nav_settings::tests::parse_html_color_expands_short_and_long_forms ... ok
+test overlay::tests::overlay_does_not_stroke_a_path_polyline ... ok
+test overlay::tests::overlay_draws_queue_card_when_focused_slot_is_queued ... ok
+test overlay::tests::overlay_queue_card_follows_fifo_head_when_focus_already_granted ... ok
+test overlay::tests::overlay_skips_queue_card_when_not_queued ... ok
+test overlay::tests::queue_card_lines_match_rs2b0t_copy ... ok
+test paint::tests::chatbox_rect_maps_the_game_image_to_the_client_chatbox ... ok
+test paint::tests::collapse_click_hides_body_and_shrinks_to_title_height ... ok
+test paint::tests::paint_window_hides_without_a_paint ... ok
+test paint::tests::paint_window_shows_title_and_lines_over_the_chatbox ... ok
+test picker::tests::available_levels_lists_planes_with_content ... ok
+test picker::tests::click_to_tile_maps_canvas_click_through_centre_and_scale ... ok
+test picker::tests::pack_map_collision_only_in_viewport ... ok
+test picker::tests::pack_map_flood_marks_two_components ... ok
+test picker::tests::pack_map_flood_report_line_reports_each_arm ... ok
+test picker::tests::pack_map_flood_report_sizes_from_cached_sets ... ok
+test picker::tests::pack_map_marks_remaining_path_in_view ... ok
+test picker::tests::pack_map_marks_walkable_unreached_puddle ... ok
+test picker::tests::pack_map_paints_the_selected_plane ... ok
+test picker::tests::pan_by_accumulates_sub_tile_remainder_at_fine_and_coarse_zoom ... ok
+test picker::tests::picker_click_selects_a_walkable_tile ... ok
+test picker::tests::picker_map_window_builds_headless ... ok
+test picker::tests::picker_pack_uses_injected_arc_not_a_second_decode ... ok
+test picker::tests::right_align_x_sits_the_cluster_on_the_content_edge ... ok
+test picker::tests::sidecar_file_roundtrips_and_rejects_garbage ... ok
+test picker::tests::sidecar_flags_only_apply_to_the_matching_grid ... ok
+test picker::tests::snap_click_to_nearest_walkable ... ok
+test picker::tests::snap_returns_none_on_level_without_walkables ... ok
+test picker::tests::snap_wall_click_lands_on_nearest_walkable ... ok
+test picker::tests::walkto_footer_adds_teleport_on_local_engine ... ok
+test picker::tests::walkto_window_flags_capture_wheel_on_the_canvas ... ok
+test queue_card::tests::queue_labels_match_rs2b0t ... ok
+test rail::tests::brief_labels_each_state ... ok
+test rail::tests::cap_glyphs_are_the_spec_code_points ... ok
+test rail::tests::cap_title_renders_name_and_brief ... ok
+test rail::tests::idle_is_not_running ... ok
+test rail::tests::next_os_window_size_shrinks_when_the_rail_closes ... ok
+test rail::tests::os_window_grows_by_rail_width_and_keeps_height ... ok
+test rail::tests::rail_constants_match_the_plan ... ok
+test rail::tests::rail_preview_defaults_fold_focused ... ok
+test rail::tests::traffic_light_maps_all_four_states ... ok
+test resource::tests::format_bots_and_rss ... ok
+test resource::tests::rss_caption_mentions_peak_on_macos_and_windows ... ok
+test resource::tests::traffic_measuring_without_slots_or_dt ... ok
+test resource::tests::traffic_rate_after_two_samples ... ok
+test resource::tests::traffic_rebases_when_sum_drops_or_slot_count_changes ... ok
+test resource::tests::traffic_stub_unavailable_is_gone ... ok
+test script_picker::tests::breadcrumbs_are_prefixes ... ok
+test script_picker::tests::browse_picker_uses_window_not_modal ... ok
+test script_picker::tests::card_rect_activated_is_release_on_the_painted_rect ... ok
+test script_picker::tests::card_transpile_label_only_for_the_front_of_the_queue ... ok
+test script_picker::tests::card_wrap_two_then_three_columns ... ok
+test script_picker::tests::category_order_drag_reorder_moves_in_front ... ok
+test script_picker::tests::category_order_merges_saved_and_appends_unknown ... ok
+test script_picker::tests::centered_row_x_centers_two_buttons ... ok
+test script_picker::tests::chip_frame_padding_keeps_descenders ... ok
+test script_picker::tests::chip_wraps_when_the_next_label_would_overflow ... ok
+test script_picker::tests::default_load_browse_dir_uses_process_cwd ... ok
+test script_picker::tests::dialog_rows_file_vs_folder_and_search ... ok
+test script_picker::tests::empty_category_is_uncategorized ... ok
+test script_picker::tests::file_dialog_glyphs_are_fa_pua ... ok
+test script_picker::tests::format_mtime_epoch_is_utc ... ok
+test script_picker::tests::general_and_nav_config_dock_into_panel ... ok
+test script_picker::tests::kind_badge_is_js_for_catalog_cards ... ok
+test script_picker::tests::load_browse_up_navigates_to_parent ... ok
+test script_picker::tests::load_date_column_is_black_on_alt_row_not_when_selected ... ok
+test script_picker::tests::load_window_has_no_free_text_path_field ... ok
+test script_picker::tests::needs_catalog_prompt_when_no_root_and_not_deferred ... ok
+test script_picker::tests::overlay_first_pos_centers_in_game_pane ... ok
+test script_picker::tests::rs2b0t_root_has_index_checks_catalog_file ... ok
+test script_picker::tests::scripts_and_file_dialog_spawn_over_game_not_docked ... ok
+test script_picker::tests::scripts_card_paints_kind_source_accent_title_wrapping_tags ... ok
+test script_picker::tests::scripts_grid_does_not_list_compiled_ids ... ok
+test script_picker::tests::scripts_window_first_size_is_walkto ... ok
+test script_picker::tests::scripts_window_no_horizontal_scroll_or_tab_chevrons ... ok
+test script_picker::tests::search_filters_case_insensitive ... ok
+test script_picker::tests::selected_chip_text_is_black_on_amber ... ok
+test script_picker::tests::sidebar_skips_missing_dirs ... ok
+test script_picker::tests::sort_dialog_rows_name_keeps_dirs_first ... ok
+test script_picker::tests::title_clip_width_reserves_badge ... ok
+test script_picker::tests::ui_frame_pumps_transpile_queue ... ok
+test script_picker::tests::unselected_description_clips_to_three_lines ... ok
+test session::tests::arm_for_profile_respects_auto_login_and_latch ... ok
+test session::tests::arm_login_all_cancels_pending_logout ... ok
+test session::tests::arm_walk_on_falls_back_to_empty_when_slot_has_no_state ... ok
+test session::tests::arm_walk_on_feeds_the_focused_slots_latched_essence_session ... ok
+test session::tests::arm_walk_on_ignores_teles_until_allow_teleports ... ok
+test session::tests::arm_walk_on_no_path_stores_dest_and_sets_error ... ok
+test session::tests::arm_walk_on_routes_and_arms_focused_traveller ... ok
+test session::tests::arm_walk_on_success_bumps_route_gen ... ok
+test session::tests::arm_walk_on_uses_find_with_options ... ok
+test session::tests::arm_walk_on_uses_focused_slot_state_across_a_toll ... ok
+test session::tests::arm_walk_on_without_a_latch_keeps_the_mine_sealed ... ok
+test session::tests::arm_walk_on_without_focus_skips_route_but_stores_dest ... ok
+test session::tests::arm_walk_sets_queued_text ... ok
+test session::tests::begin_edit_profile_loads_fields_and_opens_chooser ... ok
+test session::tests::begin_edit_profile_loads_guardian_settings ... ok
+test session::tests::chooser_vault_remove_keeps_wall_member_and_slot ... ok
+test session::tests::clear_credentials_empties_fields_but_keeps_vault ... ok
+test session::tests::closing_game_pane_leaves_capture_pref_on ... ok
+test session::tests::combo_index_is_none_when_unfocused ... ok
+test session::tests::confirm_picker_walk_uses_player_plane_not_dest_level ... ok
+test session::tests::debug_dest_greenland_tooltip_is_the_script_comment ... ok
+test session::tests::debug_dest_lumbridge_sends_home ... ok
+test session::tests::debug_main_buttons_prod_is_debug_panel_only ... ok
+test session::tests::debug_maxme_is_setstat_99_not_maxme_proc ... ok
+test session::tests::defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards ... ok
+test session::tests::face_only_cell_stays_in_nsew_set_without_collision_block ... ok
+test session::tests::fill_rs2b0t_cards_once_happens_on_first_browse_not_session_new ... ok
+test session::tests::flat_model_spawns_every_member_as_a_client ... error: test failed, to rerun pass `-p panel --lib`
+
+Caused by:
+  process didn't exit successfully: `C:/Users/Austen/274bot-campaign/target-native\release\deps\panel-46c8fbf4db5f31d8.exe --test-threads=1` (exit code: 0xffffffff)
+note: test exited abnormally; to see the full output pass --no-capture to the harness.

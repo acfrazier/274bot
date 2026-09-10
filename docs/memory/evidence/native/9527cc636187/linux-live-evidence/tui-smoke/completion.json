@@ -1,0 +1,9 @@
+{
+  "pid": 132727,
+  "exit_code": 0,
+  "timed_out": false,
+  "performance_acceptance": false,
+  "input_writes": 60,
+  "input_probe_error": null,
+  "elapsed_s": 240.73314786299306
+}
