@@ -4323,13 +4323,10 @@ mod tests {
         let stop = Arc::clone(&arm.stop);
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         let watchdog = thread::spawn(move || {
-            let mut fds = [libc::pollfd {
-                fd: park.fd(),
-                events: libc::POLLIN,
-                revents: 0,
-            }];
-            let rc = unsafe { libc::poll(fds.as_mut_ptr(), 1, 5000) };
-            assert!(rc > 0, "stop_slot's wake must fire the parked poll");
+            assert!(
+                park.wait_readable(Duration::from_secs(5)),
+                "stop_slot's wake must fire the parked wait"
+            );
             park.drain();
             assert!(stop.load(Ordering::Relaxed), "woken because stop was set");
             done_tx.send(()).unwrap();
