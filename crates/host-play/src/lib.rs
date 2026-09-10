@@ -3126,7 +3126,10 @@ impl Play {
     /// `set_draw` on the next tick).
     pub fn focus(&mut self, name: &str) {
         self.focused = Some(name.to_string());
-        let uid = self.arms.get(name).map(|arm| arm.uid.load(Ordering::Relaxed));
+        let uid = self
+            .arms
+            .get(name)
+            .map(|arm| arm.uid.load(Ordering::Relaxed));
         self.queue.lock().unwrap().set_preferred(uid);
         self.wake(name);
     }
@@ -3318,13 +3321,15 @@ impl Play {
     }
 
     #[cfg(feature = "memory-profile")]
-    pub fn memory_script_metrics(&self, name:&str) -> Option<serde_json::Value> {
-        script_slot(&self.scripts,name).and_then(|slot|slot.lock().unwrap().memory_metrics())
+    pub fn memory_script_metrics(&self, name: &str) -> Option<serde_json::Value> {
+        script_slot(&self.scripts, name).and_then(|slot| slot.lock().unwrap().memory_metrics())
     }
 
     #[cfg(feature = "memory-profile")]
-    pub fn memory_script_progress(&self, name:&str) -> serde_json::Value {
-        script_slot(&self.scripts,name).map(|slot|slot.lock().unwrap().memory_progress()).unwrap_or(serde_json::Value::Null)
+    pub fn memory_script_progress(&self, name: &str) -> serde_json::Value {
+        script_slot(&self.scripts, name)
+            .map(|slot| slot.lock().unwrap().memory_progress())
+            .unwrap_or(serde_json::Value::Null)
     }
 
     /// `name`'s script `last_error`; `None` when the slot has none.
@@ -4787,7 +4792,8 @@ mod tests {
         assert_eq!(play.focused(), None, "no slot is focused before focus()");
         play.arms.insert("b".into(), SlotArm::new(11, false));
         play.arms.insert("c".into(), SlotArm::new(12, false));
-        *play.queue.lock().unwrap() = LoginQueue::new(Duration::from_secs(1), 30, Duration::from_secs(60));
+        *play.queue.lock().unwrap() =
+            LoginQueue::new(Duration::from_secs(1), 30, Duration::from_secs(60));
         play.focus("b");
         assert_eq!(play.focused().as_deref(), Some("b"));
         let now = Instant::now();
@@ -4797,7 +4803,11 @@ mod tests {
             assert_eq!(q.request_permit(11, now), Permit::Grant);
             assert!(matches!(q.request_permit(12, now), Permit::Wait(_)));
             assert!(matches!(q.request_permit(11, now), Permit::Wait(_)));
-            assert_eq!(q.queued_uids(), vec![11, 12], "focused reconnect has priority");
+            assert_eq!(
+                q.queued_uids(),
+                vec![11, 12],
+                "focused reconnect has priority"
+            );
         }
         play.focus("c");
         assert_eq!(play.login_queue_uids(), vec![12, 11]);

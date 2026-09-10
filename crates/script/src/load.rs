@@ -1019,7 +1019,18 @@ mod isolate {
             let thread_counters = counters.clone();
             let handle = std::thread::Builder::new()
                 .name("js-isolate".into())
-                .spawn(move || isolate_main(js, shape, siblings, rx, msg_tx, setup_tx, #[cfg(feature = "memory-profile")] thread_counters))
+                .spawn(move || {
+                    isolate_main(
+                        js,
+                        shape,
+                        siblings,
+                        rx,
+                        msg_tx,
+                        setup_tx,
+                        #[cfg(feature = "memory-profile")]
+                        thread_counters,
+                    )
+                })
                 .map_err(|e| format!("isolate thread: {e}"))?;
             let terminate = match setup_rx.recv_timeout(Duration::from_secs(10)) {
                 Ok(Ok(handle)) => handle,
@@ -1056,7 +1067,11 @@ mod isolate {
         pub fn post_snapshot(&self, bytes: Vec<u8>) {
             let message = SnapshotMessage {
                 #[cfg(feature = "memory-profile")]
-                _lease: crate::memory_profile::SnapshotLease::new(self.counters.clone(), bytes.len(), bytes.capacity()),
+                _lease: crate::memory_profile::SnapshotLease::new(
+                    self.counters.clone(),
+                    bytes.len(),
+                    bytes.capacity(),
+                ),
                 bytes,
             };
             let _ = self.tx.send(IsolateCmd::Snapshot(message));
@@ -1114,9 +1129,13 @@ mod isolate {
         }
 
         #[cfg(feature = "memory-profile")]
-        pub fn memory_metrics(&self) -> serde_json::Value { self.counters.snapshot() }
+        pub fn memory_metrics(&self) -> serde_json::Value {
+            self.counters.snapshot()
+        }
         #[cfg(feature = "memory-profile")]
-        pub fn memory_metrics_handle(&self) -> std::sync::Arc<crate::memory_profile::Counters> { self.counters.clone() }
+        pub fn memory_metrics_handle(&self) -> std::sync::Arc<crate::memory_profile::Counters> {
+            self.counters.clone()
+        }
 
         /// Read cached counters only; do not pump messages or probe JS.
         #[cfg(feature = "memory-profile")]
@@ -1312,7 +1331,9 @@ mod isolate {
         cmds: Receiver<IsolateCmd>,
         out: Sender<ThreadMsg>,
         setup: Sender<Result<v8::IsolateHandle, String>>,
-        #[cfg(feature = "memory-profile")] counters: std::sync::Arc<crate::memory_profile::Counters>,
+        #[cfg(feature = "memory-profile")] counters: std::sync::Arc<
+            crate::memory_profile::Counters,
+        >,
     ) {
         #[cfg(feature = "memory-profile")]
         let _heap_lifetime = crate::memory_profile::HeapLifetime(counters.clone());
@@ -1328,14 +1349,22 @@ mod isolate {
             }
         };
         #[cfg(feature = "memory-profile")]
-        counters.heap_live.store(1,std::sync::atomic::Ordering::Relaxed);
+        counters
+            .heap_live
+            .store(1, std::sync::atomic::Ordering::Relaxed);
         if let Err(e) = wire_runtime(&mut runtime, &source, shape, &siblings) {
             let _ = setup.send(Err(e));
             return;
         }
         let terminate = runtime.deno_runtime().v8_isolate().thread_safe_handle();
         let _ = setup.send(Ok(terminate));
-        tick_loop(runtime, cmds, out, #[cfg(feature = "memory-profile")] counters);
+        tick_loop(
+            runtime,
+            cmds,
+            out,
+            #[cfg(feature = "memory-profile")]
+            counters,
+        );
     }
 
     /// Monotonic clock backing the prelude's `performance.now()` shim
@@ -2408,8 +2437,14 @@ globalThis.__rs2b0t_tick_async = async (n) => {
     /// are queued is stashed for the next iteration instead of being
     /// dropped (a `while let Ok(IsolateCmd::Tick(..))` pattern would
     /// swallow it).
-    fn tick_loop(mut runtime: Runtime, cmds: Receiver<IsolateCmd>, out: Sender<ThreadMsg>,
-        #[cfg(feature = "memory-profile")] counters: std::sync::Arc<crate::memory_profile::Counters>) {
+    fn tick_loop(
+        mut runtime: Runtime,
+        cmds: Receiver<IsolateCmd>,
+        out: Sender<ThreadMsg>,
+        #[cfg(feature = "memory-profile")] counters: std::sync::Arc<
+            crate::memory_profile::Counters,
+        >,
+    ) {
         #[cfg(feature = "memory-profile")]
         let mut last_heap_sample = None::<Instant>;
         let mut paused = false;
@@ -2426,10 +2461,20 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             if last_heap_sample.is_none_or(|t| t.elapsed() >= Duration::from_secs(1)) {
                 use std::sync::atomic::Ordering::Relaxed;
                 let heap = runtime.deno_runtime().v8_isolate().get_heap_statistics();
-                counters.heap_used.store(heap.used_heap_size() as u64,Relaxed);
-                counters.heap_total.store(heap.total_heap_size() as u64,Relaxed);
-                counters.heap_updated_ms.store(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64,Relaxed);
-                counters.heap_samples.fetch_add(1,Relaxed);
+                counters
+                    .heap_used
+                    .store(heap.used_heap_size() as u64, Relaxed);
+                counters
+                    .heap_total
+                    .store(heap.total_heap_size() as u64, Relaxed);
+                counters.heap_updated_ms.store(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64,
+                    Relaxed,
+                );
+                counters.heap_samples.fetch_add(1, Relaxed);
                 last_heap_sample = Some(Instant::now());
             }
             let cmd = match pending.take() {

@@ -35,10 +35,7 @@ pub(crate) const MAX_WAIT_HANDLES: usize = 2;
 /// Unix: `poll(2)`. Windows: `WSAPoll` on pointer-width `SOCKET` values —
 /// never truncates to 32-bit fds and never busy-spins.
 #[allow(unsafe_code)]
-pub(crate) fn wait_readable(
-    handles: &[WaitHandle],
-    timeout: Duration,
-) -> [bool; MAX_WAIT_HANDLES] {
+pub(crate) fn wait_readable(handles: &[WaitHandle], timeout: Duration) -> [bool; MAX_WAIT_HANDLES] {
     debug_assert!(
         handles.len() <= MAX_WAIT_HANDLES,
         "wait_readable supports at most {MAX_WAIT_HANDLES} handles"

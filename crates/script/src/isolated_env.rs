@@ -322,11 +322,18 @@ mod tests {
     #[test]
     fn operator_home_never_queries_profile_for_explicit_home() {
         assert_eq!(
-            super::operator_home_from(Ok("/explicit".into()), || panic!("unexpected USERPROFILE read")).unwrap(),
+            super::operator_home_from(Ok("/explicit".into()), || panic!(
+                "unexpected USERPROFILE read"
+            ))
+            .unwrap(),
             "/explicit"
         );
         #[cfg(not(windows))]
-        assert!(super::operator_home_from(Err(std::env::VarError::NotPresent), || panic!("Unix queried USERPROFILE")).is_err());
+        assert!(
+            super::operator_home_from(Err(std::env::VarError::NotPresent), || panic!(
+                "Unix queried USERPROFILE"
+            ))
+            .is_err()
+        );
     }
-
 }

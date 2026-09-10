@@ -948,11 +948,23 @@ mod tests {
         runner.phase = Phase::Running;
         runner.step_sent = true;
         runner.route = Some(Route {
-            dest: WorldTile { x: 3221, z: 3220, level: 0 },
+            dest: WorldTile {
+                x: 3221,
+                z: 3220,
+                level: 0,
+            },
             legs: vec![nav::router::Leg::Walk {
                 tiles: vec![
-                    WorldTile { x: 3220, z: 3220, level: 0 },
-                    WorldTile { x: 3221, z: 3220, level: 0 },
+                    WorldTile {
+                        x: 3220,
+                        z: 3220,
+                        level: 0,
+                    },
+                    WorldTile {
+                        x: 3221,
+                        z: 3220,
+                        level: 0,
+                    },
                 ],
             }],
             ticks: 1.0,
@@ -969,7 +981,11 @@ mod tests {
         assert_eq!(*shots.lock().unwrap(), vec![Some((3220, 3220, 0)); 2]);
         let evidence = runner.evidence().unwrap();
         assert_eq!(evidence.tile, Some([3220, 3220, 0]));
-        assert!(evidence.message.as_ref().unwrap().contains("not seen within 1 ticks"));
+        assert!(evidence
+            .message
+            .as_ref()
+            .unwrap()
+            .contains("not seen within 1 ticks"));
     }
 
     #[test]

@@ -1892,15 +1892,24 @@ fn thiever_scenario() -> Scenario {
 /// unchanged catalog script must eat, restock, and return using host APIs.
 pub fn thiever_sustained_scenario() -> Scenario {
     let mut scenario = thiever_scenario();
-    let step = scenario.steps.iter_mut().find(|s| s.name == "seed stats, food, and tele to the guard stand").expect("Thiever seed");
-    step.kind = StepKind::Perform { send: Box::new(|c, _| {
-        cheat(c, "advancestat thieving 50");
-        cheat(c, "advancestat hitpoints 50");
-        cheat(c, "give lobster 4");
-        cheat(c, "givebank lobster 2000");
-        cheat(c, &tele_args(ARDOUGNE_GUARD.level, ARDOUGNE_GUARD.x, ARDOUGNE_GUARD.z));
-        true
-    }) };
+    let step = scenario
+        .steps
+        .iter_mut()
+        .find(|s| s.name == "seed stats, food, and tele to the guard stand")
+        .expect("Thiever seed");
+    step.kind = StepKind::Perform {
+        send: Box::new(|c, _| {
+            cheat(c, "advancestat thieving 50");
+            cheat(c, "advancestat hitpoints 50");
+            cheat(c, "give lobster 4");
+            cheat(c, "givebank lobster 2000");
+            cheat(
+                c,
+                &tele_args(ARDOUGNE_GUARD.level, ARDOUGNE_GUARD.x, ARDOUGNE_GUARD.z),
+            );
+            true
+        }),
+    };
     scenario
 }
 

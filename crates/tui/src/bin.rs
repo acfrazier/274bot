@@ -532,7 +532,9 @@ impl TuiSession {
     /// `auto_login` is on.
     fn spawn(&mut self, name: &str) -> bool {
         #[cfg(test)]
-        if self.suppress_slot_spawn { return false; }
+        if self.suppress_slot_spawn {
+            return false;
+        }
         let Some(mut profile) = self.vault.as_ref().and_then(|v| v.get(name)).cloned() else {
             return false;
         };
@@ -1282,15 +1284,15 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
             return Ok(code);
         }
         {
-        let _profile_frame = client::profiling::UI_FRAME.start();
-        terminal
-            .draw(|frame| {
-                let _profile_draw = client::profiling::UI_DRAW.start();
-                app.draw(frame);
-                app.draw_loadouts_overlay(frame, &mut session.loadouts);
-                app.draw_params_overlay(frame, &mut session.script_settings, &session.loadouts);
-            })
-            .map_err(|e| e.to_string())?;
+            let _profile_frame = client::profiling::UI_FRAME.start();
+            terminal
+                .draw(|frame| {
+                    let _profile_draw = client::profiling::UI_DRAW.start();
+                    app.draw(frame);
+                    app.draw_loadouts_overlay(frame, &mut session.loadouts);
+                    app.draw_params_overlay(frame, &mut session.script_settings, &session.loadouts);
+                })
+                .map_err(|e| e.to_string())?;
         }
         if event::poll(Duration::from_millis(50)).map_err(|e| e.to_string())? {
             match event::read().map_err(|e| e.to_string())? {

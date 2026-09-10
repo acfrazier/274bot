@@ -132,8 +132,7 @@ pub fn sample_process() -> (u64, f64) {
     {
         // First field = PeakWorkingSetSize (lifetime peak WS).
         // Either sampler fail → full (0, 0.0) sentinel (panel joint check).
-        let peak = windows_memory_counters()
-            .and_then(|(_, peak)| nonzero_resident(peak));
+        let peak = windows_memory_counters().and_then(|(_, peak)| nonzero_resident(peak));
         let cpu = windows_cpu_seconds_total();
         combine_windows_sample(peak, cpu)
     }

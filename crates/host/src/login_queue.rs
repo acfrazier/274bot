@@ -283,8 +283,14 @@ mod tests {
         assert!(matches!(q.request_permit(2, now), Permit::Wait(_)));
         assert!(matches!(q.request_permit(1, now), Permit::Wait(_)));
         assert_eq!(q.queued_uids(), vec![1, 2]);
-        assert_eq!(q.request_permit(1, now + Duration::from_secs(1)), Permit::Grant);
-        assert_eq!(q.request_permit(2, now + Duration::from_secs(2)), Permit::Grant);
+        assert_eq!(
+            q.request_permit(1, now + Duration::from_secs(1)),
+            Permit::Grant
+        );
+        assert_eq!(
+            q.request_permit(2, now + Duration::from_secs(2)),
+            Permit::Grant
+        );
     }
 
     #[test]
@@ -298,7 +304,10 @@ mod tests {
         assert!(matches!(q.request_permit(1, now), Permit::Wait(_)));
         q.set_preferred(Some(3));
         assert_eq!(q.queued_uids(), vec![3, 1]);
-        assert!(matches!(q.request_permit(3, now + Duration::from_secs(1)), Permit::Wait(_)));
+        assert!(matches!(
+            q.request_permit(3, now + Duration::from_secs(1)),
+            Permit::Wait(_)
+        ));
         q.leave(3);
         q.leave(1);
         q.set_preferred(None);
