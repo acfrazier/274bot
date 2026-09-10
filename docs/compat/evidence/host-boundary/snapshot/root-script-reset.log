@@ -1,0 +1,44 @@
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/script)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.78s
+     Running unittests src/lib.rs (target/debug/deps/script-b1ad8a9c29fa4c59)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 41 filtered out; finished in 0.00s
+
+     Running tests/load_isolate.rs (target/debug/deps/load_isolate-bcff1c1e27bf7f7e)
+
+running 1 test
+test session_reset_discards_unread_old_interactions_and_preserves_the_isolate ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 144 filtered out; finished in 0.04s
+
+     Running tests/slot.rs (target/debug/deps/slot-00aa3b726d8c4861)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/script-b1ad8a9c29fa4c59)
+
+running 1 test
+test load::isolate::tests::reset_rejects_a_tick_queued_with_the_previous_session_generation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 40 filtered out; finished in 0.04s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running tests/slot.rs (target/debug/deps/slot-00aa3b726d8c4861)
+
+running 8 tests
+test idle_has_no_script_and_tick_is_noop ... ok
+test operator_pause_survives_login ... ok
+test game_tick_dispatches_only_while_running ... ok
+test not_is_up_skips_tick_keeps_instance_auto_resumes ... ok
+test start_pause_resume_stop ... ok
+test start_while_active_refuses ... ok
+test stop_runs_on_stop_hook ... ok
+test panicking_tick_sets_error_and_drops_instance ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

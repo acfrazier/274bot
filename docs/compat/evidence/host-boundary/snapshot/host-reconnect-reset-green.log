@@ -1,0 +1,9 @@
+   Compiling host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/host)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.60s
+     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/target/debug/deps/host-655e167f6449cf96)
+
+running 1 test
+test tests::successful_reconnect_generation_resets_snapshot_while_ingame_stays_true ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 132 filtered out; finished in 0.03s
+

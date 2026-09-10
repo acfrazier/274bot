@@ -1,0 +1,352 @@
+   Compiling host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/host)
+   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/host-play)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.23s
+     Running unittests src/lib.rs (target/debug/deps/host-5e9a6c1752a82bdf)
+
+running 136 tests
+test auto_run::tests::crossing_threshold_with_run_off_sends_once ... ok
+test auto_run::tests::already_on_never_sends ... ok
+test auto_run::tests::deplete_then_recover_sends_again ... ok
+test auto_run::tests::ready_only_after_ingame_scene_2 ... ok
+test auto_run::tests::below_threshold_with_run_off_never_sends ... ok
+test login_queue::tests::login_backoff_escalates ... ok
+test login_queue::tests::prefer_moves_uid_to_the_front ... ok
+test login_queue::tests::same_uid_fifth_request_waits_remaining_15s_ttl ... ok
+test login_queue::tests::two_uids_enqueue_in_order ... ok
+test login_queue::tests::by_uid_prunes_elapsed_unqueued ... ok
+test random::maze::tests::door_passable_gates_the_approach_side ... ok
+test login_queue::tests::preferred_uid_retains_priority_after_first_login ... ok
+test login_queue::tests::status_is_k_of_n_and_grant_clears ... ok
+test login_queue::tests::focus_changes_do_not_reserve_online_slots_or_bypass_limits ... ok
+test login_queue::tests::not_head_polls_20ms_not_depth_times_spacing ... ok
+test random::tests::flee_candidates_rings_are_farthest_first ... ok
+test login_queue::tests::ip_window_cap_holds_when_spacing_is_small ... ok
+test login_queue::tests::fifty_requests_never_exceed_30_grants_in_any_60s ... ok
+test random::maze::tests::disconnected_tile_returns_no_route ... ok
+test random::maze::tests::observed_tile_solves_its_own_short_route_not_the_sw_corners ... ok
+test random::tests::ground_fishing_gear_not_in_inv_is_lost_gear ... ok
+test random::tests::ground_axe_handle_is_lost_tool ... ok
+test random::tests::drunken_dwarf_facing_self_is_dialog_not_evade ... ok
+test random::tests::ground_harpoon_not_in_inv_takes_within_reach ... ok
+test random::tests::inv_box_beats_ground_fishing_net ... ok
+test random::tests::lost_tool_handle_in_inv_uses_on_ground_head ... ok
+test random::tests::guardian_talks_to_a_sparse_npc_slot ... ok
+test random::tests::mime_answer_maps_seq_to_button_index ... ok
+test random::tests::lamp_auto_off_detects_but_never_rubs ... ok
+test random::tests::mime_answer_unknown_seq_is_none ... ok
+test random::tests::evade_swarm_holds_flees_and_walks_back_after_despawn ... ok
+test random::tests::guardian_talks_to_old_man_then_continues_open_chat ... ok
+test random::tests::hazard_smoking_rock_underfoot_walks_off ... ok
+test random::tests::lost_tool_without_ground_head_sends_no_reattach ... ok
+test random::tests::in_flight_dialog_continues_after_genie_despawns ... ok
+test random::maze::tests::every_maze_spawn_solves_to_the_chamber_door ... ok
+test random::tests::solve_cube_answers_colour_question_by_shape_position ... ok
+test random::tests::solve_cube_answers_shape_question_by_colour_position ... ok
+test random::tests::solve_cube_unknown_question_or_missing_model_is_none ... ok
+test random::tests::maze_walled_off_door_resyncs_then_gives_up_after_three ... ok
+test random::tests::maze_square_is_maze_ours_with_no_npc ... ok
+test random::tests::neighbour_genie_overhead_other_name_is_not_ours ... ok
+test random::tests::maze_square_holds_without_any_send ... ok
+test random::tests::no_knock_source_keeps_host_claim_and_talks ... ok
+test random::tests::not_ours_strange_plant_still_gets_picked ... ok
+test random::tests::tick_skips_act_and_ours_for_inert_lamp ... ok
+test random::tests::maze_spawn_walks_opens_and_advances_door_to_door ... ok
+test random::tests::our_strange_plant_gets_picked ... ok
+test slot::tests::all_family_lifecycle_invalidation_is_not_a_player_info_tick ... ok
+test slot::tests::equal_family_deltas_do_not_hide_actual_player_info ... ok
+test slot::tests::new_family_gens_mark_their_families_dirty ... ok
+test random::tests::out_of_range_dialog_walks_to_npc_before_talk_to ... ok
+test random::tests::maze_touches_the_shrine_and_the_hold_lifts_off_square ... ok
+test slot::tests::npc_only_drain_marks_npc_family_dirty_without_tick ... ok
+test slot::tests::player_info_drain_emits_tick ... ok
+test slot::tests::player_info_publication_since_last_drain_is_the_tick_edge ... ok
+test slot::tests::quiet_frame_emits_no_tick ... ok
+test slot::tests::rebuild_plus_another_family_does_not_invent_player_info ... ok
+test slot::tests::session_baseline_does_not_replay_lifetime_generations ... ok
+test slot::tests::unchanged_gens_after_tick_emit_no_second_tick ... ok
+test slot_io::tests::map_image_to_applet_scales_and_rejects_outside ... ok
+test slot_io::tests::snapshot_is_empty_until_a_pixmap_lands ... ok
+test slot_io::tests::drain_skips_recv_when_disabled_then_applies_when_enabled ... ok
+test random::tests::overhead_greetings_with_local_name_is_dialog_ours ... ok
+test slot_io::tests::snapshot_of_wrong_shape_pixmap_is_empty ... ok
+test slot_io::tests::take_is_empty_until_a_store_lands ... ok
+test random::tests::maze_wrong_door_mesbox_is_continued_then_the_route_advances ... ok
+test random::tests::mime_square_answers_emote_and_holds_until_off_square ... ok
+test slot_io::tests::wake_channel_clones_share_one_wake ... ok
+test slot_io::tests::wait_readable_reports_socket_data_and_close ... ok
+test slot_io::tests::wake_channel_fires_a_polling_parker_and_drains ... ok
+test slot_io::tests::wake_channel_queued_kicks_drain_without_residual ... ok
+test slot_io::tests::store_bumps_generation ... ok
+test random::tests::on_random_knocks_once_per_event_edge ... ok
+test random::tests::strange_box_pending_ticks_send_nothing_then_if_button ... ok
+test random::tests::strange_box_opens_solves_and_holds_until_consumed ... ok
+test slot_io::tests::snapshot_of_texture_frame_is_empty_and_take_hands_it_off ... ok
+test slot_io::tests::store_packs_pixmap_rgb_and_is_765_by_503 ... ok
+test random::tests::toggle_off_detects_but_never_sends ... ok
+test random::tests::talk_to_that_never_opens_chat_clears_on_continue_refuse ... ok
+test random::tests::strange_box_reopens_while_more_boxes_held ... ok
+test random::tests::wrong_talk_bins_npc_slot_and_other_slots_still_talk ... ok
+test random::tests::strange_box_unknown_question_sends_no_click ... ok
+test tests::auto_run_does_not_send_on_the_title ... ok
+test tests::already_running_echo_does_not_send ... ok
+test tests::debug_hitch_is_one_frame_over_50ms_not_every_tick ... ok
+test tests::auto_run_20_0_20_sends_twice ... ok
+test tests::backend_flip_rearms_share_light_without_dropping_overlay ... ok
+test tests::debug_observe_hitch_is_one_missed_frame_not_every_tick ... ok
+test tests::debug_window_delta_is_since_last_summary_not_lifetime ... ok
+test random::tests::swarm_targeting_self_is_evade_ours_untargeted_swarm_is_not ... ok
+test tests::client_frame_applies_click_only_when_input_enabled ... ok
+test tests::client_frame_keeps_loop_counters_slot_local ... ok
+test tests::client_frame_kicks_guardian_after_drain ... ok
+test tests::drain_rebuilds_the_four_new_families ... ok
+test tests::drain_rebuilds_the_iface_derived_families ... ok
+test tests::headless_slot_constructs_no_renderer_and_never_draws ... ok
+test random::tests::lamp_auto_rubs_then_answers_the_skill_button ... ok
+test tests::lamp_auto_live_mirror_reaches_guardian_without_respawn ... ok
+test tests::logout_drain_resets_snapshot_instead_of_republishing_retained_client_state ... ok
+test tests::client_frame_draw_on_paints_this_tick ... ok
+test tests::bot_cpu_env_forces_cpu_even_when_slot_input_prefers_gpu ... ok
+test tests::draw_off_drains_the_frame_mailbox_before_dropping_the_head ... ok
+test tests::capture_draw_copies_every_tick ... ok
+test tests::draw_off_drops_renderer_draw_on_reattaches ... ok
+test tests::client_tick_observe_runs_before_the_frame_paint ... ok
+test tests::client_frame_skips_frame_store_when_draw_off ... ok
+test tests::prefer_cpu_rebuilds_renderer_not_client ... ok
+test tests::raster_this_tick_watch_is_wall_clock_one_fps_capture_is_every_tick ... ok
+test tests::prepare_client_shares_arc_and_clears_error_loading ... ok
+test tests::park_prefers_socket_when_control_and_socket_both_ready ... ok
+test tests::rebuild_invalidation_refreshes_player_view_without_inventing_tick ... ok
+test tests::lowmem_flip_rebuilds_renderer_not_client ... ok
+test slot_io::tests::wait_readable_honors_bounded_timeout ... ok
+test tests::slot_rebuilds_from_drain_dirty_not_post_drain_pump_dirty ... ok
+test tests::quiet_drain_refreshes_scene_ready_scalar_without_grid_rebuild ... ok
+test tests::loading_scene_paints_every_tick_for_tv_static ... ok
+test tests::draw_off_dematerializes_overlay_draw_on_restores_mesh ... ok
+test tests::mainredraw_runs_check_minimap_on_a_paint_tick ... ok
+test tests::successful_reconnect_generation_resets_snapshot_while_ingame_stays_true ... ok
+test tests::unpacked_ifaces_both_visible_still_sends ... ok
+test tests::park_suppresses_socket_when_poll_socket_false ... ok
+test tests::park_no_fds_sleeps_timeout ... ok
+test tests::revision_274_decoder_packets_publish_host_snapshot ... ok
+test tests::revision_289_decoder_packets_publish_host_snapshot ... ok
+test tests::session_change_same_drain_publishes_fresh_packet_families ... ok
+test tests::full_rate_paints_every_tick_after_scene_ready ... ok
+test tests::reconnect_drain_discards_old_packets_and_invalidation_but_keeps_fresh_families ... ok
+test tests::stop_control_wakes_a_parked_slot_and_returns ... ok
+test tests::spurious_kick_does_not_busy_loop_a_parked_slot ... ok
+test tests::busy_observe_keeps_the_slot_on_the_frame_loop ... ok
+test tests::draw_kick_wakes_a_parked_slot_into_the_frame_loop ... ok
+test tests::focused_slot_keeps_the_twenty_ms_cadence ... ok
+test tests::idle_slot_parks_between_packets_and_wakes_on_one ... ok
+test tests::watch_only_paints_first_tick_then_once_per_second ... ok
+test tests::watch_only_sidecar_parks_wakes_once_per_second_and_paints ... ok
+
+test result: ok. 136 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.40s
+
+     Running unittests src/lib.rs (target/debug/deps/host_play-d573b9da06ce9f8f)
+
+running 116 tests
+test audio::tests::should_own_policy_table ... ok
+test rss::tests::darwin_ru_maxrss_is_bytes ... ok
+test rss::tests::combine_windows_sample_joint_sentinel_on_any_failure ... ok
+test rss::tests::sample_process_rss_is_nonzero_on_this_host ... ok
+test rss::tests::current_memory_resident_is_some_and_independent_of_peak ... ok
+test audio::tests::lowmem_never_opens_the_speaker ... ok
+test scatter::tests::lumbridge_tele_args_match_off_island_shape ... ok
+test audio::tests::release_closes_a_stopped_slot ... ok
+test audio::tests::focused_highmem_opens_and_defocus_tears_down ... ok
+test audio::tests::unfocused_music_slot_never_opens ... ok
+test audio::tests::toggle_off_tears_down_live ... ok
+test audio::tests::failed_open_stays_silent_and_can_retry ... ok
+test audio::tests::focus_retarget_replaces_the_speaker ... ok
+test tests::apply_queue_wait_writes_k_of_n_and_grant_clears ... ok
+test tests::arm_walk_on_routes_and_latches_the_focused_arm ... ok
+test tests::approach_candidates_avoid_occupied_target_and_stay_in_radius ... ok
+test tests::arm_walk_on_without_focus_latches_no_arm ... ok
+test rss::tests::lsof_established_counts_unique_sockets_not_fds ... ok
+test tests::default_vault_path_prod_is_not_the_local_file ... ok
+test scatter::tests::walkable_seeds_skip_unreached_holes_and_no_exit_cages ... ok
+test scatter::tests::walkable_seeds_lists_only_level0_walkable_tiles ... ok
+test tests::disconnect_reset_discards_queued_work_and_pauses_session_state ... ok
+test tests::copy_stream_bytes_zeros_without_stream ... ok
+test tests::dispatch_wires_drops_walk_while_hold_but_keeps_chat ... ok
+test tests::dispatch_wires_with_no_modal_stays_quiet ... ok
+test tests::dispatch_script_interact_npc_index_beats_same_name ... ok
+test tests::dispatch_script_interact_sends_npc_pick ... ok
+test tests::dispatch_script_interact_walk_to_is_the_scene_packet ... ok
+test tests::dispatch_script_interact_sends_open_deposit_withdraw ... ok
+test tests::dispatch_script_interact_sends_held_item_bury ... ok
+test tests::bank_fetch_session_deposits_withdraws_wears_then_finds ... ok
+test tests::identical_script_paint_skips_status_clone ... ok
+test tests::after_genie_gone_lamp_auto_off_in_inv_detects_without_hold ... ok
+test tests::knock_reaches_peer_slot_while_other_slot_lock_held ... ok
+test tests::inventory_from_ifaces_maps_1_based_ids_to_0_based ... ok
+test tests::live_vault_passphrase_local_is_bot ... ok
+test tests::handle_claim_keeps_ticks_and_blocks_host_talk ... ok
+test tests::live_vault_passphrase_prod_is_not_bot ... ok
+test tests::login_success_keeps_auto_login_armed_but_disarms_one_shot ... ok
+test tests::dispatch_script_interact_held_first_match_only ... ok
+test tests::failed_radius_search_can_retry_same_destination_with_old_route_retained ... ok
+test tests::mint_live_entries_prod_refuses_username_as_password ... ok
+test tests::mint_live_names_keep_the_12_char_limit_at_scale ... ok
+test tests::mint_live_names_zero_is_empty ... ok
+test tests::hold_freezes_follow_and_keeps_the_armed_route ... ok
+test tests::nav_world_state_for_observe_skips_when_idle_and_nav_unarmed ... ok
+test tests::play_endpoint_for_prod_is_wss_443 ... ok
+test tests::observe_script_inv_reads_only_the_current_snapshot_on_running_ticks ... ok
+test tests::player_world_tile_adds_build_base_to_route_head ... ok
+test tests::player_here_tile_uses_minusedlevel_not_hardcoded_zero ... ok
+test tests::allow_bank_fetch_on_script_walk_arm_drives_deposit_withdraw ... ok
+test tests::allow_bank_fetch_off_stand_walk_follows_stand_sub_route ... ok
+test tests::profile_password_local_is_username ... ok
+test tests::profile_password_prod_is_not_username ... ok
+test tests::route_publication_rejects_stale_results_and_preserves_route_on_failure ... ok
+test tests::mint_live_names_are_unique_and_never_test ... ok
+test tests::prepare_client_from_shared_template ... ok
+test tests::copy_stream_bytes_mirrors_stream_counters ... ok
+test tests::script_observe_compiled_running_skips_isolate_snapshot_encode ... ok
+test tests::script_observe_drains_queued_cheat_onto_driver ... ok
+test tests::script_observe_idle_slot_publishes_nothing_on_tick_edge ... ok
+test tests::ignored_randoms_skips_flee_but_detect_still_publishes ... ok
+test tests::script_observe_passes_inventory_when_running ... ok
+test tests::script_observe_passes_the_tick_snapshot_to_the_ctx ... ok
+test tests::isolate_identical_paint_skips_status_clone_on_two_ticks ... ok
+test tests::script_observe_skips_the_tick_dispatch_while_hold ... ok
+test tests::script_observe_ticks_only_on_player_edge_while_up ... ok
+test tests::obj_names_getter_shares_the_play_table ... ok
+test tests::event_signal_pending_reads_true_during_dialog_hold ... ok
+test tests::script_observe_walk_arms_route_and_pump_steps_follow ... ok
+test tests::script_observe_walk_uses_slot_state_across_a_toll ... ok
+test tests::script_observe_walk_uses_the_latched_essence_session ... ok
+test tests::script_observe_walk_falls_back_to_empty_when_slot_has_no_state ... ok
+test tests::script_snapshot_fb_carries_observed_fields_only ... ok
+test tests::dispatch_script_interact_walk_forwards_allow_teleports ... ok
+test tests::script_observe_walk_queues_off_pump_and_refuses_when_unarmable ... ok
+test tests::script_snapshot_fb_posts_only_changed_tables ... ok
+test tests::script_snapshot_fb_posts_tab0_aggressive_combat_style ... ok
+test tests::script_snapshot_retaliate_enabled_is_varp_172_zero ... ok
+test tests::script_snapshot_loc_behind_wall_posts_reachable_false ... ok
+test tests::script_observe_load_isolate_still_encodes_snapshot_on_tick_edge ... ok
+test tests::script_snapshot_npc_behind_wall_posts_reachable_false ... ok
+test tests::slot_status_is_up_requires_scene_2 ... ok
+test tests::slot_status_walk_defaults_cleared ... ok
+test tests::spawn_config_follows_profile_lowmem ... ok
+test tests::spawn_without_auto_login_does_not_handshake ... ok
+test tests::step_bank_fetch_walk_stand_matches_player_plane ... ok
+test tests::disconnected_slot_rejects_new_wire_and_cheat_work ... ok
+test tests::step_nav_bot_passes_graph_teleports_for_a_multi_dest_jewellery_rub ... ok
+test tests::script_observe_posts_blob_while_held_and_skips_dispatch ... ok
+test tests::focus_selects_the_sampled_slot ... ok
+test tests::run_channels_empty_profiles_starts_no_slots ... ok
+test tests::tick_flags_presses_logout_when_ingame_and_reports_stop ... ok
+test tests::run_with_io_empty_profiles_starts_no_slots ... ok
+test tests::validate_play_host_loopback_ok_with_local_rsa ... ok
+test tests::validate_play_host_non_loopback_err_with_local_rsa ... ok
+test tests::validate_play_host_non_loopback_ok_with_prod_rsa ... ok
+test tests::wait_for_permit_returns_without_reenqueue_when_stop_set ... ok
+test tests::script_observe_walk_without_a_latch_keeps_the_mine_sealed ... ok
+test tests::walk_arm_may_follow_freezes_under_hold ... ok
+test tests::world_host_live_is_rs2b2t_everything_else_is_loopback ... ok
+test tests::prefer_login_mirrors_k_of_n_onto_the_status_row ... ok
+test tests::script_control_is_noop_for_unknown_slot_and_state_defaults_idle ... ok
+test tests::script_start_unknown_slot_errors_without_phantom_entry ... ok
+test tests::stop_slot_sets_stop_and_forgets_name ... ok
+test tests::stop_slot_clears_focus_on_the_stopped_name ... ok
+test tests::script_start_load_spawns_isolate_only_on_start_and_refuses_when_active ... ok
+test tests::stop_slot_wakes_a_parked_thread_before_joining ... ok
+test tests::wait_until_not_ingame_observes_status_flip ... ok
+test tests::script_start_unknown_compiled_id_errors_without_v8 ... ok
+test tests::queue_wire_lands_on_the_named_slots_queue ... ok
+test tests::stop_slot_leaves_profile_uid_when_arm_shared_at_spawn ... ok
+test tests::two_profiles_spawn_two_client_slots ... ok
+test tests::open_vault_creates_missing_parent_dirs ... ok
+test tests::open_vault_wrong_pass_is_not_already_exists ... ok
+test scatter::tests::scatter_tile_for_is_deterministic_in_process ... ok
+
+test result: ok. 116 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.82s
+
+     Running unittests src/main.rs (target/debug/deps/host_play-2caaec89121a4d81)
+
+running 2 tests
+test tests::shared_profile_parser_rejects_invalid_revision_and_port ... ok
+test tests::shared_profile_parser_keeps_explicit_overrides_order_independent ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/channel_ladder.rs (target/debug/deps/channel_ladder-4c9fa74f436b394e)
+
+running 3 tests
+test live_channel_ladder_client_wall ... ignored, requires a local 274 engine and LIVE=1
+test parse_rss_n_default_and_allowed ... ok
+test parse_rss_n_rejects_bad ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/channel_walk.rs (target/debug/deps/channel_walk-a2baf0e79a5187a1)
+
+running 2 tests
+test live_channel_walk_focuses_every_slot ... ignored, requires a local 274 engine and LIVE=1
+test parse_n_defaults_to_fifty ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/login_one.rs (target/debug/deps/login_one-77acd3207c011745)
+
+running 1 test
+test login_one ... ignored, requires a local 274 engine and LIVE=1
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/login_two.rs (target/debug/deps/login_two-72a99ec0a309586d)
+
+running 1 test
+test login_two ... ignored, requires a local 274 engine and LIVE=1
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/null_raster.rs (target/debug/deps/null_raster-dd7a1aefb77d0159)
+
+running 1 test
+test live_draw_off_never_paints ... ignored, requires a local 274 engine and LIVE=1
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/revision_boundary_live.rs (target/debug/deps/revision_boundary_live-1d76bb357802882e)
+
+running 1 test
+test revision_boundary_live ... ignored, requires LIVE=1, BOUNDARY_REVISION and its isolated local engine
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rss_ladder.rs (target/debug/deps/rss_ladder-2a06368794536eb4)
+
+running 3 tests
+test live_rss_ladder_all_null ... ignored, requires a local 274 engine and LIVE=1
+test parse_rss_n_default_and_allowed ... ok
+test parse_rss_n_rejects_bad ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/session_profile.rs (target/debug/deps/session_profile-94866a94ccb2e024)
+
+running 10 tests
+test flags_are_order_independent_and_override_saved_or_environment_revision ... ok
+test public_289_defaults_and_named_profile_override_lower_priority_inputs ... ok
+test invalid_revision_public_pairing_and_conflicts_fail_before_vault_access ... ok
+test cache_and_nav_mismatch_are_rejected_before_creating_resources ... ok
+test catalog_identity_and_cache_revision_are_frozen_at_bind ... ok
+test navigation_and_scatter_use_the_selected_shared_world_and_validate_its_sidecar ... ok
+test invalid_explicit_rsa_fails_without_fallback_and_binding_detects_resource_changes ... ok
+test both_revisions_reach_real_shared_client_constructor_and_keep_the_binding ... ok
+test bound_public_client_refuses_fixture_cheats_after_mutable_config_changes ... ok
+test revision_289_refuses_slots_and_scripts_before_arms_or_queue_mutation ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/wall_login.rs (target/debug/deps/wall_login-9cbf8b75fab56814)
+
+running 1 test
+test wall_login_fifo_logout_all ... ignored, requires a local 274 engine and LIVE=1
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

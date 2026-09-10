@@ -1,0 +1,27 @@
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/vendor/fr-client-rust/crates/client)
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/api)
+   Compiling host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/host)
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/script)
+   Compiling nav v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/nav)
+   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/host-play)
+error[E0433]: cannot find type `SessionWork` in this scope
+    --> crates/host-play/src/lib.rs:5846:13
+     |
+5846 |             SessionWork::new(4, WireCmd::Continue),
+     |             ^^^^^^^^^^^ use of undeclared type `SessionWork`
+
+error[E0433]: cannot find type `SessionWork` in this scope
+    --> crates/host-play/src/lib.rs:5847:13
+     |
+5847 |             SessionWork::new(5, WireCmd::Answer(2)),
+     |             ^^^^^^^^^^^ use of undeclared type `SessionWork`
+
+error[E0425]: cannot find function `take_session_work` in this scope
+    --> crates/host-play/src/lib.rs:5850:23
+     |
+5850 |         let current = take_session_work(&mut queue, 5);
+     |                       ^^^^^^^^^^^^^^^^^ not found in this scope
+
+Some errors have detailed explanations: E0425, E0433.
+For more information about an error, try `rustc --explain E0425`.
+error: could not compile `host-play` (lib test) due to 3 previous errors

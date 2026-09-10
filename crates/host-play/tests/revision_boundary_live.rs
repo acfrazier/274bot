@@ -9,6 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use api::interact::{self, ActionSpec, Interactions, OpTarget, SendResult};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
+use host::Pump;
 use host_play::{ProfileOptions, SharedClientTemplate};
 use serde_json::{json, Value};
 
@@ -32,6 +33,7 @@ fn record(phase: &str, snapshot: &GameSnapshot, detail: Value) {
 fn wait_for(
     client: &mut Client,
     snapshot: &mut GameSnapshot,
+    pump: &mut Pump,
     phase: &str,
     timeout: Duration,
     mut ready: impl FnMut(&GameSnapshot) -> bool,
@@ -40,7 +42,7 @@ fn wait_for(
     loop {
         let start = Instant::now();
         client.mainloop();
-        snapshot.rebuild(client);
+        host::publish_snapshot(snapshot, client, pump.drain_client(client));
         if ready(snapshot) {
             return Ok(());
         }
@@ -68,6 +70,7 @@ fn accepted(result: SendResult<'_>, phase: &str) -> Result<(), String> {
 fn login_scene(
     client: &mut Client,
     snapshot: &mut GameSnapshot,
+    pump: &mut Pump,
     username: &str,
 ) -> Result<(), String> {
     if !interact::login(client, username, "test", false) {
@@ -79,20 +82,26 @@ fn login_scene(
     wait_for(
         client,
         snapshot,
+        pump,
         "login-scene2",
         Duration::from_secs(90),
         |s| s.ingame() && s.attached() && s.scene_state() == 2 && s.tile().is_some(),
     )
 }
 
-fn logout(client: &mut Client, snapshot: &mut GameSnapshot) -> Result<(), String> {
+fn logout(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut Pump) -> Result<(), String> {
     let ifaces = Arc::clone(&client.ifaces);
     if !interact::logout(client, &ifaces) {
         return Err("logout: selected cache has no logout control".into());
     }
-    wait_for(client, snapshot, "logout", Duration::from_secs(30), |s| {
-        !s.ingame() && !s.attached()
-    })?;
+    wait_for(
+        client,
+        snapshot,
+        pump,
+        "logout",
+        Duration::from_secs(30),
+        |s| !s.ingame() && !s.attached(),
+    )?;
     if !snapshot.npcs().is_empty()
         || !snapshot.players().is_empty()
         || snapshot.local_player().is_some()
@@ -138,6 +147,7 @@ fn run() -> Result<(), String> {
         ));
     }
     let mut snapshot = GameSnapshot::new();
+    let mut pump = Pump::new();
     println!(
         "{}",
         json!({
@@ -150,7 +160,7 @@ fn run() -> Result<(), String> {
     );
 
     let result = (|| {
-        login_scene(&mut client, &mut snapshot, &username)?;
+        login_scene(&mut client, &mut snapshot, &mut pump, &username)?;
         record("initial-scene2", &snapshot, json!({}));
 
         // Fixture preparation only. Establish all action baselines after this
@@ -159,12 +169,13 @@ fn run() -> Result<(), String> {
         wait_for(
             &mut client,
             &mut snapshot,
+            &mut pump,
             "mainland-seed",
             Duration::from_secs(30),
             |s| s.ingame() && s.scene_state() == 2 && s.tile() == Some((3220, 3212, 0)),
         )?;
-        logout(&mut client, &mut snapshot)?;
-        login_scene(&mut client, &mut snapshot, &username)?;
+        logout(&mut client, &mut snapshot, &mut pump)?;
+        login_scene(&mut client, &mut snapshot, &mut pump, &username)?;
         if snapshot.tile() != Some((3220, 3212, 0)) {
             return Err("relog did not retain acknowledged mainland seed".into());
         }
@@ -183,6 +194,7 @@ fn run() -> Result<(), String> {
         wait_for(
             &mut client,
             &mut snapshot,
+            &mut pump,
             "walk",
             Duration::from_secs(20),
             |s| {
@@ -220,6 +232,7 @@ fn run() -> Result<(), String> {
         wait_for(
             &mut client,
             &mut snapshot,
+            &mut pump,
             "NPC Talk-to",
             Duration::from_secs(30),
             |s| s.modals().chat != -1 && !s.chat_modal_texts().is_empty(),
@@ -232,6 +245,7 @@ fn run() -> Result<(), String> {
         wait_for(
             &mut client,
             &mut snapshot,
+            &mut pump,
             "close-dialogue",
             Duration::from_secs(10),
             |s| s.modals().chat == -1,
@@ -260,6 +274,7 @@ fn run() -> Result<(), String> {
         wait_for(
             &mut client,
             &mut snapshot,
+            &mut pump,
             "loc Open",
             Duration::from_secs(30),
             |s| {
@@ -299,7 +314,7 @@ fn run() -> Result<(), String> {
                 }).collect::<Vec<_>>(),
             }),
         );
-        logout(&mut client, &mut snapshot)?;
+        logout(&mut client, &mut snapshot, &mut pump)?;
         record(
             "logout-reset-applied",
             &snapshot,

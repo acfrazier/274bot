@@ -1,0 +1,18 @@
+   Compiling host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/host)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.83s
+     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/target/debug/deps/host-655e167f6449cf96)
+
+running 10 tests
+test slot::tests::player_info_drain_emits_tick ... ok
+test slot::tests::new_family_gens_mark_their_families_dirty ... ok
+test slot::tests::all_family_lifecycle_invalidation_is_not_a_player_info_tick ... ok
+test slot::tests::npc_only_drain_marks_npc_family_dirty_without_tick ... ok
+test slot::tests::equal_family_deltas_do_not_hide_actual_player_info ... ok
+test slot::tests::player_info_publication_since_last_drain_is_the_tick_edge ... ok
+test slot::tests::session_baseline_does_not_replay_lifetime_generations ... ok
+test slot::tests::quiet_frame_emits_no_tick ... ok
+test slot::tests::rebuild_plus_another_family_does_not_invent_player_info ... ok
+test slot::tests::unchanged_gens_after_tick_emit_no_second_tick ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 122 filtered out; finished in 0.00s
+

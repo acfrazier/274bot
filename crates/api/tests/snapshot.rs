@@ -244,6 +244,77 @@ fn inv_rebuild_reads_the_type_inv_iface() {
     assert!(!snap.rebuild_family(&c, Family::Inv));
 }
 
+/// Logout invalidates the host read model even though the client deliberately
+/// retains several decoded tables until the next cold login. Resetting must
+/// keep the client-owned generation watermark, so the first packet of the
+/// next session is still the only thing that can republish its family.
+#[test]
+fn session_reset_drops_stale_views_and_keeps_generation_watermark() {
+    let mut c = client_with_npc();
+    c.ingame = true;
+    c.scene_state = 2;
+    c.local_player = Some(ClientPlayer::at(20, 12));
+    match c.iface_id(|f| f.r#type == ComponentType::TYPE_INV) {
+        Some(id) => {
+            let inv = c.iface_mut(id).unwrap();
+            inv.link_obj_type = Some(vec![526]);
+            inv.link_obj_number = Some(vec![3]);
+        }
+        None => {
+            let id = c.push_iface(IfType {
+                r#type: ComponentType::TYPE_INV,
+                ..Default::default()
+            });
+            c.set_iface_mut(
+                id,
+                IfTypeMut {
+                    link_obj_type: Some(vec![526]),
+                    link_obj_number: Some(vec![3]),
+                    ..Default::default()
+                },
+            );
+        }
+    }
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+
+    let mut snap = GameSnapshot::new();
+    assert!(snap.rebuild(&c));
+    assert_eq!(snap.npcs().len(), 1);
+    assert!(snap.local_player().is_some());
+    assert_eq!(snap.inv(), &[(525, 3)]);
+    assert!(snap.ingame());
+
+    c.logout();
+    let reset_gens = c.gens;
+    assert!(c.npc[7].is_some(), "client logout retains actor tables");
+    snap.reset_session(reset_gens);
+
+    assert_eq!(snap.gens().npc, reset_gens.npc);
+    assert_eq!(snap.gens().player, reset_gens.player);
+    assert_eq!(snap.gens().inv, reset_gens.inv);
+    assert!(snap.npcs().is_empty());
+    assert!(snap.local_player().is_none());
+    assert!(snap.players().is_empty());
+    assert!(snap.inv().is_empty());
+    assert!(snap.inventory().is_empty());
+    assert!(snap.bank().is_empty());
+    assert!(snap.chat().is_none());
+    assert_eq!(snap.base(), None);
+    assert_eq!(snap.tile(), None);
+    assert_eq!(snap.self_slot(), -1);
+    assert_eq!(snap.tick(), 0);
+    assert!(!snap.ingame());
+    assert!(!snap.attached());
+
+    // An unrelated interface mutation in the next session must not make the
+    // retained old TYPE_INV slots current again. A fresh inventory packet is
+    // required before iface-derived item tables can publish.
+    c.gens.iface += 1;
+    assert!(!snap.rebuild_family(&c, Family::Inventory));
+    assert!(snap.inventory().is_empty());
+    assert!(snap.bank().is_empty());
+}
+
 /// The legacy `inv()` family and the iface-derived `inventory()` family
 /// agree on obj ids: both decode the stored `obj_id + 1` convention to
 /// real ids.
