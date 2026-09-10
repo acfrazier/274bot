@@ -160,8 +160,8 @@ fn prepare_mainland(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut
         "relogin did not retain mainland seed"
     );
     println!(
-        "{{\"phase\":\"baseline-after-preparation\",\"tile\":{:?}}}",
-        snapshot.tile()
+        "{}",
+        json!({"phase": "baseline-after-preparation", "tile": snapshot.tile()})
     );
 }
 
