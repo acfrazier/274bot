@@ -59,3 +59,19 @@ proportional to edits. Root owns live ordered/custom checks and option ledger.
 Commit only scoped source/report/evidence. Hand this same card to profile
 `reviewer` via kanban_request_review, with exact commits and verification, then
 STOP. Do not complete the card yourself. Review must use actual Grok 4.5.
+
+## Operator data-table expansion (2026-09-10)
+
+The operator explicitly includes the game data tables needed by enabled scripts
+in compatibility work. After reviewed brief 45, use the same immutable serde
+asset loading path for generated consumption and pickpocket facts. Replace
+handwritten FOOD_HEALS and required_thieving values with the selected revision's
+qualified generated values, including loadout food detection, static shim
+publication and the nav audit consumer. Keep curated stands, names/order,
+leashes and selection policy separate; do not copy an entire world per tick.
+Bread and Anchovies currently disagree with server facts (4 and 3 respectively)
+and should follow the verified server values. Dynamic or conditional effects
+must not masquerade as fixed healing. Preserve unsupported-operation behavior
+and current catalog option names/order. Add meaningful selected-revision checks
+for these lookups and fail-closed behavior, alongside the item regressions above.
+Do not implement a general acquisition planner or Quester in this task.
