@@ -327,6 +327,7 @@ impl Host {
     where
         F: FnMut(&mut Client, &str, u32, &RandomStatus) -> bool,
     {
+        let _profile_tick = client::profiling::CLIENT_TICK.start();
         let t_obs = Instant::now();
         let busy = observe(client, username, *run_sends, prev_status);
         let observe_ns = t_obs.elapsed().as_nanos() as u64;
