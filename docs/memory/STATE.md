@@ -11,6 +11,15 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-10 00:35 UTC
+
+- Fresh Concord runtime verification through native-qualified6f2b410 controller
+  PASS at1789000398.1830971, admission-02. Same build manifest2869ec97 and
+  binary392dbecc; both production diagnostic source HEADs/digests clean and
+  actual runtime/nav/catalog/lineage bytes verified. Local result downloaded
+  and inspected in root-runtime-manifest-02. No account/server admission or live.
+- CF1 reviewer t_f7d038ac remains active. No CF2 authorization or native probe.
+
 ## Latest boundary — 2026-09-10 00:33 UTC
 
 - Corrective lifecycle6f2b410 APPROVED actualGrok4.5/xai reviewer1064,

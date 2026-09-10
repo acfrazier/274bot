@@ -1,0 +1,97 @@
+{
+  "scope": "verified build/runtime file and source bindings only; no private-account admission, host-health admission or live launch",
+  "controller_commit": "6f2b41008f16414dc360b626f7283052888ec0fb",
+  "controller_source_files_verified": 69,
+  "verified_at_unix": 1789000398.1830971,
+  "runtime_build": {
+    "status": "verified",
+    "role": "candidate",
+    "manifest_binary_key": "candidate_tui_play",
+    "manifest_path": "/home/acfrazier/274bot-campaign/direct-owner-runtime-392dbecc-20260909/admission-02/build-manifest.json",
+    "manifest_sha256": "2869ec973bac0f9007be5f6e5e5c62c287da39ca26dfc5bfb4537bb6f75b919f",
+    "build_commit": "dcdbeebf36665a1d07156402a5f64c823769e00d",
+    "build_branch": "codex/direct-owner-host-archive",
+    "host_sources_sha256": "b70608d10f203657cbe731c6fd5402d09c96c1053466ce6540a7ab0dacc62564",
+    "client_commit": "b74dfb3c998b10371b263189774b055ecf880380",
+    "client_sources_sha256": "169ba594a834fb5ea81f392ae77909251cc46889efa2324525fff71794a7ea30",
+    "feature_flags": {
+      "requested": "memory-profile-no-alloc,memory-owner-capture",
+      "locked": true,
+      "allocation_counting": false
+    },
+    "allocator_provenance": "std::alloc::System",
+    "allocation_counting": false,
+    "files": {
+      "manifest": {
+        "path": "/home/acfrazier/274bot-campaign/direct-owner-runtime-392dbecc-20260909/admission-02/build-manifest.json",
+        "sha256": "2869ec973bac0f9007be5f6e5e5c62c287da39ca26dfc5bfb4537bb6f75b919f"
+      },
+      "binary": {
+        "path": "/home/acfrazier/274bot-campaign/direct-owner-runtime-392dbecc-20260909/tui-play",
+        "sha256": "392dbecc7a86f2fcd7e3f6b515aedceb3f3de3b1d4e140b95463bf20438c0c95"
+      },
+      "nav_pack": {
+        "path": "/home/acfrazier/.274bot/274bot.navpack",
+        "sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30"
+      },
+      "nav_flags": {
+        "path": "/home/acfrazier/.274bot/274bot.navflags",
+        "sha256": "92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb"
+      },
+      "catalog": {
+        "path": "/home/acfrazier/.274bot/js-scripts.json",
+        "sha256": "85d15097e4e0547b7def6b15edc8a66314c13bcc1cfb5fc5ffbef285f431f78f"
+      },
+      "source_lineage_archive": {
+        "path": "/home/acfrazier/274bot-campaign/direct-owner-runtime-392dbecc-20260909/frozen-direct-owner-source.tar.gz",
+        "sha256": "2c36d254c37c5ed56a55f78728357296d62be602f8653ed9ec041cd37d099d5d"
+      },
+      "source_lineage_source_manifest": {
+        "path": "/home/acfrazier/274bot-campaign/direct-owner-runtime-392dbecc-20260909/frozen-source-manifest.json",
+        "sha256": "ca69e70352c5f6f8d1c9db026959af6ba8fd64886be533a0095c3ca94bb5732e"
+      },
+      "source_lineage_materialization": {
+        "path": "/home/acfrazier/274bot-campaign/direct-owner-runtime-392dbecc-20260909/materialization.json",
+        "sha256": "dae8ce184e610bf63389bac90a27ba4707e394df19c9bd441ec9afcabebbc40d"
+      },
+      "source_lineage_build_result": {
+        "path": "/home/acfrazier/274bot-campaign/direct-owner-runtime-392dbecc-20260909/build-result.json",
+        "sha256": "77a38d72ef65ec8d4ce30e200574d9422549ac5449fa66659576d89eece09d22"
+      }
+    },
+    "performance_acceptance": false,
+    "source_lineage_files": {
+      "archive": {
+        "path": "/home/acfrazier/274bot-campaign/direct-owner-runtime-392dbecc-20260909/frozen-direct-owner-source.tar.gz",
+        "sha256": "2c36d254c37c5ed56a55f78728357296d62be602f8653ed9ec041cd37d099d5d"
+      },
+      "source_manifest": {
+        "path": "/home/acfrazier/274bot-campaign/direct-owner-runtime-392dbecc-20260909/frozen-source-manifest.json",
+        "sha256": "ca69e70352c5f6f8d1c9db026959af6ba8fd64886be533a0095c3ca94bb5732e"
+      },
+      "materialization": {
+        "path": "/home/acfrazier/274bot-campaign/direct-owner-runtime-392dbecc-20260909/materialization.json",
+        "sha256": "dae8ce184e610bf63389bac90a27ba4707e394df19c9bd441ec9afcabebbc40d"
+      },
+      "build_result": {
+        "path": "/home/acfrazier/274bot-campaign/direct-owner-runtime-392dbecc-20260909/build-result.json",
+        "sha256": "77a38d72ef65ec8d4ce30e200574d9422549ac5449fa66659576d89eece09d22"
+      }
+    }
+  },
+  "source_checks": [
+    {
+      "path": "/home/acfrazier/274bot-campaign/direct-owner-runtime-392dbecc-20260909/host",
+      "commit": "dcdbeebf36665a1d07156402a5f64c823769e00d",
+      "clean": true,
+      "source_digest": "b70608d10f203657cbe731c6fd5402d09c96c1053466ce6540a7ab0dacc62564"
+    },
+    {
+      "path": "/home/acfrazier/274bot-campaign/direct-owner-runtime-392dbecc-20260909/host/vendor/fr-client-rust",
+      "commit": "b74dfb3c998b10371b263189774b055ecf880380",
+      "clean": true,
+      "source_digest": "169ba594a834fb5ea81f392ae77909251cc46889efa2324525fff71794a7ea30"
+    }
+  ],
+  "live_released": false
+}
