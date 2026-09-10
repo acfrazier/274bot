@@ -10,6 +10,26 @@ not supersede that state. Update state at task/review boundaries, including
 failed proofs and explicit acceptance decisions. Update the primary checkout's
 local pointer when the campaign checkout moves.
 
+## Proportionate verification
+
+Operator clarification, 2026-09-10: this is a hobby project. Keep code quality
+high and preserve the optimization work, while matching verification effort to
+the change's risk. Small mechanical, documentation and support-tool changes do
+not automatically require new tests, a separate review card or a standalone
+report. Inspect the diff and use a focused syntax check or relevant existing
+test when useful. Add tests for meaningful behavior and failure modes, not tests
+that merely repeat the implementation. Build new proof tooling only when it
+answers a concrete unresolved question.
+
+Protocol, lifecycle, navigation, rendering ownership and memory-sensitive
+changes warrant appropriate regression tests and independent review. Group
+related implementation into coherent tasks and review milestones; do not create
+a new review hop for each helper, formatting fix or mechanical correction.
+The implementation/review handoff below applies to tasks that warrant that
+independent review. Existing task boilerplate does not override this guidance.
+Required final Grok whole-branch review for substantial campaigns and honest
+functional/performance evidence remain in force.
+
 ## Roles and dispatch
 
 Use the existing Hermes `274bot` board and configured profiles: `implementer`,
