@@ -179,86 +179,85 @@ fn run() -> Result<(), String> {
         if snapshot.tile() != Some((3220, 3212, 0)) {
             return Err("relog did not retain acknowledged mainland seed".into());
         }
-
-        // Hans patrols beyond this tile's NPC visibility range. Prepare a
-        // temporary local Hans through the existing engine fixture command,
-        // and observe its new nearby identity before the action baseline.
-        // The engine expires this NPC after 500 cycles; no server patch is
-        // required and creating it is never counted as interaction proof.
-        let before_npcs: Vec<_> = snapshot.npcs().iter().map(|npc| npc.index).collect();
-        record(
-            "npc-fixture-before-seed",
-            &snapshot,
-            json!({"npcs": snapshot.npcs()}),
-        );
-        if !interact::cheat(&mut client, "npcadd hans") {
-            return Err("local fixture npcadd hans refused".into());
-        }
-        let is_prepared_npc = |npc: &api::snapshot::NpcView| {
-            !before_npcs.contains(&npc.index)
-                && npc.name.as_deref() == Some("Hans")
-                && npc.tile.level == 0
-                && npc.tile.x.abs_diff(3220) <= 2
-                && npc.tile.z.abs_diff(3212) <= 2
-                && npc
-                    .actions
-                    .iter()
-                    .flatten()
-                    .any(|action| action.eq_ignore_ascii_case("Talk-to"))
-        };
-        wait_for(
-            &mut client,
-            &mut snapshot,
-            &mut pump,
-            "npc-fixture-seed",
-            Duration::from_secs(30),
-            |s| s.npcs().iter().any(is_prepared_npc),
-        )?;
-        let prepared_npc = snapshot
-            .npcs()
-            .iter()
-            .find(|npc| is_prepared_npc(npc))
-            .ok_or("acknowledged local Hans missing")?
-            .index;
-        record(
-            "npc-fixture-seeded",
-            &snapshot,
-            json!({"npc_index": prepared_npc}),
-        );
         record("baseline-after-preparation", &snapshot, json!({}));
 
-        let before_walk = snapshot.tile().ok_or("missing walk origin")?;
-        let target = WorldTile {
-            x: 3221,
-            z: 3212,
-            level: 0,
-        };
-        accepted(
-            Interactions::new(&snapshot, &mut client).walk(target),
-            "walk",
-        )?;
-        wait_for(
-            &mut client,
-            &mut snapshot,
-            &mut pump,
-            "walk",
-            Duration::from_secs(20),
-            |s| {
-                s.tile() == Some((target.x, target.z, target.level))
-                    && s.tile() != Some(before_walk)
-            },
-        )?;
-        record(
-            "walk-applied",
-            &snapshot,
-            json!({"before": before_walk, "target": target}),
-        );
+        // Walk around the courtyard and castle perimeter. The natural Hans
+        // patrol extends west/north of the initial view. Each leg must land
+        // before the next is sent; finding him never substitutes for movement.
+        let mut observed_npc = None;
+        for (leg, (x, z)) in [
+            (3221, 3212),
+            (3221, 3222),
+            (3219, 3230),
+            (3207, 3233),
+            (3202, 3220),
+            (3202, 3205),
+            (3214, 3205),
+            (3220, 3212),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let before_walk = snapshot.tile().ok_or("missing walk origin")?;
+            let target = WorldTile { x, z, level: 0 };
+            record(
+                "walk-request",
+                &snapshot,
+                json!({"leg": leg, "before": before_walk, "target": target}),
+            );
+            accepted(
+                Interactions::new(&snapshot, &mut client).walk(target),
+                "courtyard walk",
+            )?;
+            wait_for(
+                &mut client,
+                &mut snapshot,
+                &mut pump,
+                "courtyard walk",
+                Duration::from_secs(20),
+                |s| {
+                    s.tile() == Some((target.x, target.z, target.level))
+                        && s.tile() != Some(before_walk)
+                },
+            )?;
+            record(
+                "walk-applied",
+                &snapshot,
+                json!({"leg": leg, "before": before_walk, "target": target}),
+            );
+            record(
+                "courtyard-npc-observation",
+                &snapshot,
+                json!({"npcs": snapshot.npcs().iter().map(|npc| json!({
+                    "index": npc.index, "name": npc.name, "actions": npc.actions,
+                    "tile": npc.tile, "distance": npc.distance,
+                })).collect::<Vec<_>>()}),
+            );
+            if leg >= 2 {
+                observed_npc = snapshot
+                    .npcs()
+                    .iter()
+                    .find(|npc| {
+                        npc.name.as_deref() == Some("Hans")
+                            && npc
+                                .actions
+                                .iter()
+                                .flatten()
+                                .any(|op| op.eq_ignore_ascii_case("Talk-to"))
+                    })
+                    .map(|npc| npc.index);
+                if observed_npc.is_some() {
+                    break;
+                }
+            }
+        }
+        let observed_npc = observed_npc.ok_or("natural Hans absent after courtyard route")?;
 
         let npc = snapshot
             .npcs()
             .iter()
             .find(|npc| {
-                npc.index == prepared_npc
+                npc.index == observed_npc
                     && npc.name.as_deref() == Some("Hans")
                     && npc
                         .actions
@@ -271,6 +270,7 @@ fn run() -> Result<(), String> {
         if snapshot.modals().chat != -1 || !snapshot.chat_modal_texts().is_empty() {
             return Err("NPC baseline already has a dialogue".into());
         }
+        record("npc-request", &snapshot, json!({"npc": npc}));
         accepted(
             Interactions::new(&snapshot, &mut client)
                 .interact(OpTarget::Npc(&npc), ActionSpec::Label("Talk-to".into())),
@@ -313,6 +313,7 @@ fn run() -> Result<(), String> {
             .min_by_key(|loc| loc.distance)
             .cloned()
             .ok_or("fixture missing a nearby closed Door")?;
+        record("loc-request", &snapshot, json!({"loc": loc}));
         accepted(
             Interactions::new(&snapshot, &mut client)
                 .interact(OpTarget::Loc(&loc), ActionSpec::Label("Open".into())),
