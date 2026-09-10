@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-10 21:49 UTC. The full implementation plan remains authorized:
+Updated 2026-09-10 22:16 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -57,12 +57,14 @@ Catalog and frontend acceptance remain separate.
 
 ## Active and queued implementation
 
-- t_41b2f50e, actual Sol 1136/session 20260910_171631_57d159: common-loot
-  matching, withdrawLoad, and the known bank Pause/hold/session outcome fix.
-  First-bank corrections 75514ee3 passed actual Grok 4.5 run 1134, but root
-  found an outer JS timer conflicting with the frozen Rust deadline.
-- t_90b60f12 follows that review: planned Rust nearest-bank routing and honest
-  Bank.withdraw results, exposed by the headed BoneBurier run. Brief 31.
+- Matching/fill t_41b2f50e committed 06077fe9, 23a30524 and fa23cc60, but
+  incorrectly completed without review. Root reclaimed premature dependent run
+  1137 and restored a real corrective gate t_d68ee0fc. Actual reviewer run 1140,
+  session 20260910_180938_b537c4, uses Grok 4.5 / xai-oauth and reviews frozen
+  76d61beb/client 56d8027, including root's count-dialog correction.
+- t_90b60f12 waits for that corrective review: Rust nearest-bank routing,
+  honest withdrawal results and bounded observed deposit helpers (brief 31).
+  BankFletcher exposed duplicate-row amplification and a slot packet panic.
 - t_14db340e catalog harness completed with actual Grok 4.5 review 1133.
   Root is strengthening the BoneBurier proof after the headed observation;
   its original first-burial PASS is insufficient. 05a-catalog-live-harness.md.
@@ -83,11 +85,23 @@ no full-loop acceptance. Both the missing travel fallback and withdrawal
 result are confirmed source gaps. Root will keep planned API semantics and
 explain evidence before treating conditional concerns as scope changes.
 The revised fixture adds bank stock only before Start and requires actual
-restocking plus another burial. ChickenKiller completed three visible kill/loot/bury cycles on frozen
-e7915812/client 56d8027, with a caught style-description shape error. Root
-verified that bug predates the optimization merge, corrected its return shape,
-and passed a focused actual-module contract check. Fresh headed rerun remains;
-no acceptance is inferred from the old XP-only predicate. Other cells remain.
+restocking plus another burial. Corrected ChickenKiller f2b04198 showed the
+Strength announcement and repeated combat/loot/bury cycles. Thiever f2b04198
+showed 27 steals/810 coins without script errors, banking disabled and no food
+consumption. Alcher failed after a successful noted withdrawal because the
+host left the count prompt open; root correction 76d61beb passed 65 API tests
+and strict Clippy, with source review pending. Its ScriptRunner.stop then
+produced repeated interrupted-slow-tick logs; root is tracing that separately.
+BankFletcher made the initial products, then its slot panicked; the original
+process exit 0 is preserved with an explicit failed qualification. No complete
+catalog/options acceptance from these basic diagnostics.
+
+The operator's startup beachball reproduced: the slot starts at +37.47 seconds,
+with the UI thread spending the startup sample hashing navigation resources.
+Profile bind, template load and Play start hash the 73 MB pack and 261 MB flags
+three times. 06b-panel-startup-trace.md records the trace and source path.
+This is a diagnosed startup issue, not a completed startup fix or performance
+comparison. No extra startup validation was disabled.
 
 ## Platforms and fixtures
 

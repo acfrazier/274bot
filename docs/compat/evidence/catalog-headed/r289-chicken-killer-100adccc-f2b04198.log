@@ -1,0 +1,7 @@
+274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+live script_chicken_killer: running step 1/5
+live script_chicken_killer: running step 2/5
+live script_chicken_killer: running step 3/5
+live script_chicken_killer: running step 4/5
+live script_chicken_killer: running step 5/5
+PASS: live script_chicken_killer {"scenario":"chicken_killer","outcome":"PASS","predicate":"stat_xp_gain(2)>=1","ticks":10,"elapsed_ms":14637,"tile":[3233,3296,0],"stat":{"runenergy":100},"chat":[{"text":"Welcome to RuneScape."}],"scene":2}

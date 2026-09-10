@@ -1,0 +1,387 @@
+[host-play] slot livenlx4bh_0: thread up
+274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+[panel] livenlx4bh_0: livenlx4bh_0: slot up
+[host-play] slot livenlx4bh_0: handshake begin reconnect=false
+[host-play] slot livenlx4bh_0: handshake ok
+[host] hitch livenlx4bh_0: frame_us=72029 paints=1 skips=0 ticks=0
+[panel] livenlx4bh_0: livenlx4bh_0: scene 1
+[host] hitch livenlx4bh_0: frame_us=51094 paints=43 skips=0 ticks=1
+[panel] livenlx4bh_0: livenlx4bh_0: mainland hop queued
+[panel] livenlx4bh_0: livenlx4bh_0: ingame
+[panel] livenlx4bh_0: livenlx4bh_0: scene 2
+live script_alcher: running step 1/6
+[host] slot livenlx4bh_0: d_loop_us=11353 d_raster_us=218637 d_observe_us=56020 max_observe_us=2380 d_paints=50 d_skips=0 d_ticks=1 window_ms=0
+[panel] livenlx4bh_0: livenlx4bh_0: scene 1
+[panel] livenlx4bh_0: livenlx4bh_0: ingame
+[panel] livenlx4bh_0: livenlx4bh_0: scene 2
+[host] slot livenlx4bh_0: d_loop_us=11738 d_raster_us=197708 d_observe_us=66607 max_observe_us=4155 d_paints=50 d_skips=0 d_ticks=4 window_ms=1156
+[host] slot livenlx4bh_0: d_loop_us=1863 d_raster_us=233479 d_observe_us=34068 max_observe_us=1339 d_paints=50 d_skips=0 d_ticks=1 window_ms=1160
+live script_alcher: running step 2/6
+[host-play] slot livenlx4bh_0: handshake begin reconnect=true
+[panel] livenlx4bh_0: livenlx4bh_0: scene 0
+[host-play] slot livenlx4bh_0: handshake ok
+[panel] livenlx4bh_0: livenlx4bh_0: scene 1
+[host] hitch livenlx4bh_0: frame_us=51430 paints=39 skips=0 ticks=1
+[panel] livenlx4bh_0: livenlx4bh_0: ingame
+[panel] livenlx4bh_0: livenlx4bh_0: scene 2
+[host] slot livenlx4bh_0: d_loop_us=19312 d_raster_us=185385 d_observe_us=84974 max_observe_us=4603 d_paints=50 d_skips=0 d_ticks=1 window_ms=0
+[host] slot livenlx4bh_0: d_loop_us=1913 d_raster_us=193023 d_observe_us=45927 max_observe_us=5770 d_paints=50 d_skips=0 d_ticks=3 window_ms=1162
+live script_alcher: running step 3/6
+[host] slot livenlx4bh_0: d_loop_us=1961 d_raster_us=183637 d_observe_us=39968 max_observe_us=2350 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160
+live script_alcher: running step 4/6
+[panel] livenlx4bh_0: livenlx4bh_0: scene 1
+[panel] livenlx4bh_0: livenlx4bh_0: ingame
+[panel] livenlx4bh_0: livenlx4bh_0: scene 2
+[host] slot livenlx4bh_0: d_loop_us=11823 d_raster_us=186938 d_observe_us=71375 max_observe_us=9031 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164
+[host] slot livenlx4bh_0: d_loop_us=1609 d_raster_us=179102 d_observe_us=38204 max_observe_us=4515 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155
+live script_alcher: running step 5/6
+[script livenlx4bh_0] start load
+live script_alcher: running step 6/6
+[host] hitch livenlx4bh_0: observe_us=45590 paints=273 skips=0 ticks=11
+[host] slot livenlx4bh_0: d_loop_us=834 d_raster_us=125218 d_observe_us=84787 max_observe_us=45590 d_paints=50 d_skips=0 d_ticks=2 window_ms=1201
+[script livenlx4bh_0] Alcher — High Level Alchemy on 1 item(s), richest first: Rune chainbody
+[script livenlx4bh_0] banking at Bank booth (Bank booth / Use-quickly)
+[script livenlx4bh_0] interact OpenBooth { x: 3186, z: 3440, level: 0, id: 2213, name: Some("Bank booth"), action: Some("Use-quickly") }
+[panel] livenlx4bh_0: script: Alcher — High Level Alchemy on 1 item(s), richest first: Rune chainbody
+[panel] livenlx4bh_0: script: banking at Bank booth (Bank booth / Use-quickly)
+[host] slot livenlx4bh_0: d_loop_us=876 d_raster_us=156521 d_observe_us=43415 max_observe_us=7353 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173
+[script livenlx4bh_0] interact Close
+[shim-close] sent
+[host] slot livenlx4bh_0: d_loop_us=901 d_raster_us=167118 d_observe_us=41127 max_observe_us=6467 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151
+[script livenlx4bh_0] interact Held { name: "Staff of fire", action: "Wield" }
+[shim-held] Staff of fire Wield slot=0 -> sent
+[host] slot livenlx4bh_0: d_loop_us=885 d_raster_us=135174 d_observe_us=52034 max_observe_us=6756 d_paints=50 d_skips=0 d_ticks=2 window_ms=1169
+[script livenlx4bh_0] wore Staff of fire — casts need only Nature runes now
+[script livenlx4bh_0] interact OpenBooth { x: 3186, z: 3440, level: 0, id: 2213, name: Some("Bank booth"), action: Some("Use-quickly") }
+[panel] livenlx4bh_0: script: wore Staff of fire — casts need only Nature runes now
+[host] slot livenlx4bh_0: d_loop_us=1132 d_raster_us=174770 d_observe_us=56349 max_observe_us=9873 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161
+[script livenlx4bh_0] interact SetNoteMode { on: true }
+[shim-note] on=true sent
+[host] slot livenlx4bh_0: d_loop_us=979 d_raster_us=195418 d_observe_us=44464 max_observe_us=6006 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152
+[host] slot livenlx4bh_0: d_loop_us=831 d_raster_us=181731 d_observe_us=44409 max_observe_us=7889 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153
+[script livenlx4bh_0] withdrew 27 Rune chainbody (noted, 30000gp each)
+[script livenlx4bh_0] no Nature runes in the bank — stopping
+[script livenlx4bh_0] script requested stop on tick 32; isolate stopping
+[panel] livenlx4bh_0: script: withdrew 27 Rune chainbody (noted, 30000gp each)
+[panel] livenlx4bh_0: script: no Nature runes in the bank — stopping
+[panel] livenlx4bh_0: script: script requested stop on tick 32; isolate stopping
+[host] slot livenlx4bh_0: d_loop_us=831 d_raster_us=187464 d_observe_us=45178 max_observe_us=7802 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158
+[script livenlx4bh_0] interrupted slow tick 33 (585.059083ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 33 (585.059083ms)
+[script livenlx4bh_0] interrupted slow tick 34 (598.88175ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 34 (598.88175ms)
+[host] slot livenlx4bh_0: d_loop_us=802 d_raster_us=169996 d_observe_us=38054 max_observe_us=4376 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156
+[script livenlx4bh_0] interrupted slow tick 35 (597.403916ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 35 (597.403916ms)
+[script livenlx4bh_0] interrupted slow tick 36 (610.07225ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 36 (610.07225ms)
+[host] slot livenlx4bh_0: d_loop_us=774 d_raster_us=180193 d_observe_us=40566 max_observe_us=5088 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160
+[script livenlx4bh_0] interrupted slow tick 37 (606.388083ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 37 (606.388083ms)
+[script livenlx4bh_0] interrupted slow tick 38 (602.598833ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 38 (602.598833ms)
+[host] slot livenlx4bh_0: d_loop_us=829 d_raster_us=185441 d_observe_us=42084 max_observe_us=4990 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164
+[script livenlx4bh_0] interrupted slow tick 39 (596.735541ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 39 (596.735541ms)
+[host] slot livenlx4bh_0: d_loop_us=817 d_raster_us=183166 d_observe_us=36592 max_observe_us=4802 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154
+[script livenlx4bh_0] interrupted slow tick 40 (604.025959ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 40 (604.025959ms)
+[script livenlx4bh_0] interrupted slow tick 41 (578.032042ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 41 (578.032042ms)
+[host] slot livenlx4bh_0: d_loop_us=853 d_raster_us=177870 d_observe_us=40374 max_observe_us=4996 d_paints=50 d_skips=0 d_ticks=1 window_ms=1161
+[script livenlx4bh_0] interrupted slow tick 42 (607.761583ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 42 (607.761583ms)
+[script livenlx4bh_0] interrupted slow tick 43 (604.853875ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 43 (604.853875ms)
+[host] slot livenlx4bh_0: d_loop_us=861 d_raster_us=186179 d_observe_us=42687 max_observe_us=5142 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153
+[script livenlx4bh_0] interrupted slow tick 44 (592.114542ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 44 (592.114542ms)
+[script livenlx4bh_0] interrupted slow tick 45 (605.565583ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 45 (605.565583ms)
+[host] slot livenlx4bh_0: d_loop_us=844 d_raster_us=187100 d_observe_us=42288 max_observe_us=5412 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149
+[script livenlx4bh_0] interrupted slow tick 46 (593.294792ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 46 (593.294792ms)
+[script livenlx4bh_0] interrupted slow tick 47 (599.817042ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 47 (599.817042ms)
+[host] slot livenlx4bh_0: d_loop_us=909 d_raster_us=190807 d_observe_us=44001 max_observe_us=5611 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157
+[script livenlx4bh_0] interrupted slow tick 48 (601.15775ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 48 (601.15775ms)
+[script livenlx4bh_0] interrupted slow tick 49 (601.066084ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 49 (601.066084ms)
+[host] slot livenlx4bh_0: d_loop_us=868 d_raster_us=192186 d_observe_us=43353 max_observe_us=5289 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157
+[script livenlx4bh_0] interrupted slow tick 50 (596.787875ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 50 (596.787875ms)
+[script livenlx4bh_0] interrupted slow tick 51 (623.250542ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 51 (623.250542ms)
+[host] slot livenlx4bh_0: d_loop_us=877 d_raster_us=187326 d_observe_us=42400 max_observe_us=5050 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148
+[script livenlx4bh_0] interrupted slow tick 52 (575.9195ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 52 (575.9195ms)
+[script livenlx4bh_0] interrupted slow tick 53 (606.903875ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 53 (606.903875ms)
+[host] slot livenlx4bh_0: d_loop_us=860 d_raster_us=185204 d_observe_us=41718 max_observe_us=4949 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154
+[script livenlx4bh_0] interrupted slow tick 54 (593.103917ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 54 (593.103917ms)
+[script livenlx4bh_0] interrupted slow tick 55 (610.544917ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 55 (610.544917ms)
+[host] slot livenlx4bh_0: d_loop_us=818 d_raster_us=173417 d_observe_us=39245 max_observe_us=4942 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151
+[script livenlx4bh_0] interrupted slow tick 56 (584.864833ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 56 (584.864833ms)
+[script livenlx4bh_0] interrupted slow tick 57 (622.609542ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 57 (622.609542ms)
+[host] slot livenlx4bh_0: d_loop_us=829 d_raster_us=184385 d_observe_us=41801 max_observe_us=4921 d_paints=50 d_skips=0 d_ticks=2 window_ms=1145
+[script livenlx4bh_0] interrupted slow tick 58 (596.675667ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 58 (596.675667ms)
+[script livenlx4bh_0] interrupted slow tick 59 (596.020292ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 59 (596.020292ms)
+[host] slot livenlx4bh_0: d_loop_us=834 d_raster_us=176282 d_observe_us=39597 max_observe_us=4597 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148
+[script livenlx4bh_0] interrupted slow tick 60 (601.27225ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 60 (601.27225ms)
+[script livenlx4bh_0] interrupted slow tick 61 (603.402084ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 61 (603.402084ms)
+[host] slot livenlx4bh_0: d_loop_us=824 d_raster_us=182828 d_observe_us=41357 max_observe_us=4911 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158
+[script livenlx4bh_0] interrupted slow tick 62 (586.894959ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 62 (586.894959ms)
+[script livenlx4bh_0] interrupted slow tick 63 (601.238833ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 63 (601.238833ms)
+[host] slot livenlx4bh_0: d_loop_us=828 d_raster_us=180915 d_observe_us=41267 max_observe_us=4780 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166
+[script livenlx4bh_0] interrupted slow tick 64 (608.477416ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 64 (608.477416ms)
+[script livenlx4bh_0] interrupted slow tick 65 (586.508042ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 65 (586.508042ms)
+[host] slot livenlx4bh_0: d_loop_us=858 d_raster_us=184257 d_observe_us=41450 max_observe_us=4898 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170
+[script livenlx4bh_0] interrupted slow tick 66 (605.118625ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 66 (605.118625ms)
+[host] slot livenlx4bh_0: d_loop_us=855 d_raster_us=181846 d_observe_us=38039 max_observe_us=4819 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155
+[script livenlx4bh_0] interrupted slow tick 67 (597.845291ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 67 (597.845291ms)
+[script livenlx4bh_0] interrupted slow tick 68 (600.363708ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 68 (600.363708ms)
+[host] slot livenlx4bh_0: d_loop_us=804 d_raster_us=182803 d_observe_us=41767 max_observe_us=4894 d_paints=50 d_skips=0 d_ticks=1 window_ms=1157
+[script livenlx4bh_0] interrupted slow tick 69 (604.288417ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 69 (604.288417ms)
+[script livenlx4bh_0] interrupted slow tick 70 (595.364458ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 70 (595.364458ms)
+[host] slot livenlx4bh_0: d_loop_us=845 d_raster_us=184641 d_observe_us=42296 max_observe_us=4767 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151
+[script livenlx4bh_0] interrupted slow tick 71 (605.016333ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 71 (605.016333ms)
+[script livenlx4bh_0] interrupted slow tick 72 (604.778541ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 72 (604.778541ms)
+[host] slot livenlx4bh_0: d_loop_us=861 d_raster_us=182708 d_observe_us=41364 max_observe_us=4766 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170
+[script livenlx4bh_0] interrupted slow tick 73 (608.266125ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 73 (608.266125ms)
+[script livenlx4bh_0] interrupted slow tick 74 (591.23675ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 74 (591.23675ms)
+[host] slot livenlx4bh_0: d_loop_us=894 d_raster_us=186489 d_observe_us=41949 max_observe_us=5372 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144
+[script livenlx4bh_0] interrupted slow tick 75 (595.026959ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 75 (595.026959ms)
+[script livenlx4bh_0] interrupted slow tick 76 (591.398125ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 76 (591.398125ms)
+[host] slot livenlx4bh_0: d_loop_us=837 d_raster_us=178715 d_observe_us=36853 max_observe_us=4188 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144
+[script livenlx4bh_0] interrupted slow tick 77 (602.448917ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 77 (602.448917ms)
+[script livenlx4bh_0] interrupted slow tick 78 (602.166333ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 78 (602.166333ms)
+[host] slot livenlx4bh_0: d_loop_us=893 d_raster_us=182182 d_observe_us=39868 max_observe_us=4646 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161
+[script livenlx4bh_0] interrupted slow tick 79 (605.594333ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 79 (605.594333ms)
+[script livenlx4bh_0] interrupted slow tick 80 (601.896291ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 80 (601.896291ms)
+[host] slot livenlx4bh_0: d_loop_us=844 d_raster_us=168523 d_observe_us=36829 max_observe_us=4294 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153
+[script livenlx4bh_0] interrupted slow tick 81 (601.64625ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 81 (601.64625ms)
+[script livenlx4bh_0] interrupted slow tick 82 (609.552083ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 82 (609.552083ms)
+[host] slot livenlx4bh_0: d_loop_us=857 d_raster_us=178084 d_observe_us=39308 max_observe_us=5067 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165
+[script livenlx4bh_0] interrupted slow tick 83 (579.931417ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 83 (579.931417ms)
+[script livenlx4bh_0] interrupted slow tick 84 (610.837834ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 84 (610.837834ms)
+[host] slot livenlx4bh_0: d_loop_us=873 d_raster_us=190564 d_observe_us=43368 max_observe_us=5513 d_paints=50 d_skips=0 d_ticks=2 window_ms=1143
+[script livenlx4bh_0] interrupted slow tick 85 (599.498959ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 85 (599.498959ms)
+[script livenlx4bh_0] interrupted slow tick 86 (592.787125ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 86 (592.787125ms)
+[host] slot livenlx4bh_0: d_loop_us=865 d_raster_us=186052 d_observe_us=42132 max_observe_us=5561 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148
+[script livenlx4bh_0] interrupted slow tick 87 (598.162792ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 87 (598.162792ms)
+[script livenlx4bh_0] interrupted slow tick 88 (604.749084ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 88 (604.749084ms)
+[host] slot livenlx4bh_0: d_loop_us=896 d_raster_us=188406 d_observe_us=42683 max_observe_us=5187 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158
+[script livenlx4bh_0] interrupted slow tick 89 (604.877167ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 89 (604.877167ms)
+[script livenlx4bh_0] interrupted slow tick 90 (598.838166ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 90 (598.838166ms)
+[host] slot livenlx4bh_0: d_loop_us=884 d_raster_us=189391 d_observe_us=42535 max_observe_us=5660 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157
+[script livenlx4bh_0] interrupted slow tick 91 (602.765333ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 91 (602.765333ms)
+[host] slot livenlx4bh_0: d_loop_us=879 d_raster_us=189960 d_observe_us=38692 max_observe_us=5304 d_paints=50 d_skips=0 d_ticks=2 window_ms=1146
+[script livenlx4bh_0] interrupted slow tick 92 (591.519ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 92 (591.519ms)
+[script livenlx4bh_0] interrupted slow tick 93 (599.612625ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 93 (599.612625ms)
+[host] slot livenlx4bh_0: d_loop_us=913 d_raster_us=198601 d_observe_us=45225 max_observe_us=5387 d_paints=50 d_skips=0 d_ticks=1 window_ms=1153
+[script livenlx4bh_0] interrupted slow tick 94 (599.870833ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 94 (599.870833ms)
+[script livenlx4bh_0] interrupted slow tick 95 (614.2235ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 95 (614.2235ms)
+[host] slot livenlx4bh_0: d_loop_us=925 d_raster_us=197289 d_observe_us=45274 max_observe_us=5429 d_paints=50 d_skips=0 d_ticks=2 window_ms=1145
+[script livenlx4bh_0] interrupted slow tick 96 (596.540166ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 96 (596.540166ms)
+[script livenlx4bh_0] interrupted slow tick 97 (584.629583ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 97 (584.629583ms)
+[host] slot livenlx4bh_0: d_loop_us=920 d_raster_us=197037 d_observe_us=44442 max_observe_us=5365 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153
+[script livenlx4bh_0] interrupted slow tick 98 (622.117959ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 98 (622.117959ms)
+[script livenlx4bh_0] interrupted slow tick 99 (581.015167ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 99 (581.015167ms)
+[host] slot livenlx4bh_0: d_loop_us=906 d_raster_us=200999 d_observe_us=45416 max_observe_us=5512 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152
+[script livenlx4bh_0] interrupted slow tick 100 (605.4455ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 100 (605.4455ms)
+[script livenlx4bh_0] interrupted slow tick 101 (604.289542ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 101 (604.289542ms)
+[host] slot livenlx4bh_0: d_loop_us=893 d_raster_us=193165 d_observe_us=44206 max_observe_us=5302 d_paints=50 d_skips=0 d_ticks=2 window_ms=1146
+[script livenlx4bh_0] interrupted slow tick 102 (595.266167ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 102 (595.266167ms)
+[script livenlx4bh_0] interrupted slow tick 103 (606.687875ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 103 (606.687875ms)
+[host] slot livenlx4bh_0: d_loop_us=860 d_raster_us=176361 d_observe_us=39109 max_observe_us=4553 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157
+[script livenlx4bh_0] interrupted slow tick 104 (604.187583ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 104 (604.187583ms)
+[script livenlx4bh_0] interrupted slow tick 105 (594.29775ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 105 (594.29775ms)
+[host] slot livenlx4bh_0: d_loop_us=905 d_raster_us=190876 d_observe_us=41611 max_observe_us=4992 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151
+[script livenlx4bh_0] interrupted slow tick 106 (604.251125ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 106 (604.251125ms)
+[script livenlx4bh_0] interrupted slow tick 107 (597.123833ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 107 (597.123833ms)
+[host] slot livenlx4bh_0: d_loop_us=886 d_raster_us=185565 d_observe_us=41739 max_observe_us=5531 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158
+[script livenlx4bh_0] interrupted slow tick 108 (601.451041ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 108 (601.451041ms)
+[script livenlx4bh_0] interrupted slow tick 109 (583.612542ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 109 (583.612542ms)
+[host] slot livenlx4bh_0: d_loop_us=877 d_raster_us=195491 d_observe_us=44399 max_observe_us=5400 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160
+[script livenlx4bh_0] interrupted slow tick 110 (616.876667ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 110 (616.876667ms)
+[script livenlx4bh_0] interrupted slow tick 111 (590.664666ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 111 (590.664666ms)
+[host] slot livenlx4bh_0: d_loop_us=904 d_raster_us=189884 d_observe_us=43012 max_observe_us=5216 d_paints=50 d_skips=0 d_ticks=2 window_ms=1137
+[script livenlx4bh_0] interrupted slow tick 112 (586.251958ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 112 (586.251958ms)
+[script livenlx4bh_0] interrupted slow tick 113 (621.432084ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 113 (621.432084ms)
+[host] slot livenlx4bh_0: d_loop_us=839 d_raster_us=176476 d_observe_us=40010 max_observe_us=4712 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162
+[script livenlx4bh_0] interrupted slow tick 114 (584.914125ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 114 (584.914125ms)
+[script livenlx4bh_0] interrupted slow tick 115 (621.754875ms)
+[host] slot livenlx4bh_0: d_loop_us=828 d_raster_us=180956 d_observe_us=39340 max_observe_us=4707 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165
+[panel] livenlx4bh_0: script: interrupted slow tick 115 (621.754875ms)
+[script livenlx4bh_0] interrupted slow tick 116 (594.80125ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 116 (594.80125ms)
+[host] slot livenlx4bh_0: d_loop_us=793 d_raster_us=187586 d_observe_us=36894 max_observe_us=4839 d_paints=50 d_skips=0 d_ticks=1 window_ms=1147
+[script livenlx4bh_0] interrupted slow tick 117 (603.293416ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 117 (603.293416ms)
+[script livenlx4bh_0] interrupted slow tick 118 (595.482917ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 118 (595.482917ms)
+[host] slot livenlx4bh_0: d_loop_us=821 d_raster_us=183145 d_observe_us=40923 max_observe_us=4876 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154
+[script livenlx4bh_0] interrupted slow tick 119 (582.571875ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 119 (582.571875ms)
+[script livenlx4bh_0] interrupted slow tick 120 (603.970833ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 120 (603.970833ms)
+[host] slot livenlx4bh_0: d_loop_us=794 d_raster_us=185416 d_observe_us=41164 max_observe_us=4812 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166
+[script livenlx4bh_0] interrupted slow tick 121 (605.692292ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 121 (605.692292ms)
+[script livenlx4bh_0] interrupted slow tick 122 (608.584083ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 122 (608.584083ms)
+[host] slot livenlx4bh_0: d_loop_us=821 d_raster_us=181574 d_observe_us=41509 max_observe_us=4651 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166
+[script livenlx4bh_0] interrupted slow tick 123 (587.096041ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 123 (587.096041ms)
+[script livenlx4bh_0] interrupted slow tick 124 (604.842917ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 124 (604.842917ms)
+[host] slot livenlx4bh_0: d_loop_us=839 d_raster_us=184841 d_observe_us=41377 max_observe_us=4878 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167
+[script livenlx4bh_0] interrupted slow tick 125 (609.4385ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 125 (609.4385ms)
+[script livenlx4bh_0] interrupted slow tick 126 (595.173667ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 126 (595.173667ms)
+[host] slot livenlx4bh_0: d_loop_us=833 d_raster_us=186570 d_observe_us=42086 max_observe_us=4839 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152
+[script livenlx4bh_0] interrupted slow tick 127 (603.306792ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 127 (603.306792ms)
+[script livenlx4bh_0] interrupted slow tick 128 (602.871625ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 128 (602.871625ms)
+[host] slot livenlx4bh_0: d_loop_us=817 d_raster_us=184655 d_observe_us=42382 max_observe_us=4961 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163
+[script livenlx4bh_0] interrupted slow tick 129 (593.850333ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 129 (593.850333ms)
+[script livenlx4bh_0] interrupted slow tick 130 (598.129208ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 130 (598.129208ms)
+[host] slot livenlx4bh_0: d_loop_us=834 d_raster_us=184253 d_observe_us=40868 max_observe_us=4908 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148
+[script livenlx4bh_0] interrupted slow tick 131 (604.72225ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 131 (604.72225ms)
+[script livenlx4bh_0] interrupted slow tick 132 (594.67175ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 132 (594.67175ms)
+[host] slot livenlx4bh_0: d_loop_us=839 d_raster_us=183751 d_observe_us=41895 max_observe_us=4825 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149
+[script livenlx4bh_0] interrupted slow tick 133 (581.434583ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 133 (581.434583ms)
+[script livenlx4bh_0] interrupted slow tick 134 (621.1585ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 134 (621.1585ms)
+[host] slot livenlx4bh_0: d_loop_us=882 d_raster_us=185308 d_observe_us=41357 max_observe_us=5068 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150
+[script livenlx4bh_0] interrupted slow tick 135 (576.758167ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 135 (576.758167ms)
+[script livenlx4bh_0] interrupted slow tick 136 (623.02825ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 136 (623.02825ms)
+[host] slot livenlx4bh_0: d_loop_us=870 d_raster_us=181657 d_observe_us=39761 max_observe_us=4855 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154
+[script livenlx4bh_0] interrupted slow tick 137 (606.163083ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 137 (606.163083ms)
+[script livenlx4bh_0] interrupted slow tick 138 (599.895708ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 138 (599.895708ms)
+[host] slot livenlx4bh_0: d_loop_us=821 d_raster_us=183350 d_observe_us=41768 max_observe_us=4970 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161
+[script livenlx4bh_0] interrupted slow tick 139 (597.313625ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 139 (597.313625ms)
+[script livenlx4bh_0] interrupted slow tick 140 (593.599791ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 140 (593.599791ms)
+[host] slot livenlx4bh_0: d_loop_us=816 d_raster_us=177774 d_observe_us=40598 max_observe_us=4975 d_paints=50 d_skips=0 d_ticks=2 window_ms=1143
+[script livenlx4bh_0] interrupted slow tick 141 (605.660375ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 141 (605.660375ms)
+[script livenlx4bh_0] interrupted slow tick 142 (599.98225ms)
+[host] slot livenlx4bh_0: d_loop_us=827 d_raster_us=183696 d_observe_us=41002 max_observe_us=4860 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165
+[panel] livenlx4bh_0: script: interrupted slow tick 142 (599.98225ms)
+[script livenlx4bh_0] interrupted slow tick 143 (601.369791ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 143 (601.369791ms)
+[host] slot livenlx4bh_0: d_loop_us=829 d_raster_us=177577 d_observe_us=36036 max_observe_us=4257 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155
+[script livenlx4bh_0] interrupted slow tick 144 (580.816334ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 144 (580.816334ms)
+[script livenlx4bh_0] interrupted slow tick 145 (604.574792ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 145 (604.574792ms)
+[host] slot livenlx4bh_0: d_loop_us=862 d_raster_us=171499 d_observe_us=37968 max_observe_us=4385 d_paints=50 d_skips=0 d_ticks=1 window_ms=1163
+[script livenlx4bh_0] interrupted slow tick 146 (606.983708ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 146 (606.983708ms)
+[script livenlx4bh_0] interrupted slow tick 147 (603.300041ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 147 (603.300041ms)
+[host] slot livenlx4bh_0: d_loop_us=807 d_raster_us=186303 d_observe_us=41248 max_observe_us=4720 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162
+[script livenlx4bh_0] interrupted slow tick 148 (604.585875ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 148 (604.585875ms)
+[script livenlx4bh_0] interrupted slow tick 149 (600.863208ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 149 (600.863208ms)
+[host] slot livenlx4bh_0: d_loop_us=806 d_raster_us=181416 d_observe_us=41874 max_observe_us=4905 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158
+[script livenlx4bh_0] interrupted slow tick 150 (602.696417ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 150 (602.696417ms)
+[script livenlx4bh_0] interrupted slow tick 151 (587.035542ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 151 (587.035542ms)
+[host] slot livenlx4bh_0: d_loop_us=824 d_raster_us=183201 d_observe_us=41350 max_observe_us=5108 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170
+[script livenlx4bh_0] interrupted slow tick 152 (609.622958ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 152 (609.622958ms)
+[script livenlx4bh_0] interrupted slow tick 153 (581.432208ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 153 (581.432208ms)
+[host] slot livenlx4bh_0: d_loop_us=846 d_raster_us=180524 d_observe_us=41224 max_observe_us=4652 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164
+[script livenlx4bh_0] interrupted slow tick 154 (597.295375ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 154 (597.295375ms)
+[script livenlx4bh_0] interrupted slow tick 155 (628.657792ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 155 (628.657792ms)
+[host] slot livenlx4bh_0: d_loop_us=855 d_raster_us=186518 d_observe_us=42443 max_observe_us=4908 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159
+[script livenlx4bh_0] interrupted slow tick 156 (582.599708ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 156 (582.599708ms)
+[script livenlx4bh_0] interrupted slow tick 157 (605.372041ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 157 (605.372041ms)
+[host] slot livenlx4bh_0: d_loop_us=900 d_raster_us=182282 d_observe_us=41851 max_observe_us=4718 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166
+[script livenlx4bh_0] interrupted slow tick 158 (585.468333ms)
+[panel] livenlx4bh_0: script: interrupted slow tick 158 (585.468333ms)
+FAIL: live script_alcher {"scenario":"alcher","outcome":"FAIL","predicate":"stat_xp_gain(6)>=1","ticks":155,"elapsed_ms":97551,"message":"step 6 (watch the script alch noted stock): stat_xp_gain(6)>=1 not seen within 150 ticks","tile":[3185,3440,0],"inv":[{"id":1114,"name":"Rune chainbody","count":27}],"stat":{"runenergy":100},"chat":[{"text":"Welcome to RuneScape."}],"scene":2}
+FAIL: step 6 (watch the script alch noted stock): stat_xp_gain(6)>=1 not seen within 150 ticks

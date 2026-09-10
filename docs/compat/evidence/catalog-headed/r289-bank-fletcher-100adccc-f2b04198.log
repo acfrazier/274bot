@@ -1,0 +1,124 @@
+[host-play] slot liveemi4nf_0: thread up
+274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+[panel] liveemi4nf_0: liveemi4nf_0: slot up
+[host-play] slot liveemi4nf_0: handshake begin reconnect=false
+[host-play] slot liveemi4nf_0: handshake ok
+[host] hitch liveemi4nf_0: frame_us=61917 paints=1 skips=0 ticks=0
+[panel] liveemi4nf_0: liveemi4nf_0: scene 1
+[panel] liveemi4nf_0: liveemi4nf_0: mainland hop queued
+[panel] liveemi4nf_0: liveemi4nf_0: ingame
+[panel] liveemi4nf_0: liveemi4nf_0: scene 2
+live script_bank_fletcher: running step 1/6
+[host] slot liveemi4nf_0: d_loop_us=8564 d_raster_us=184515 d_observe_us=43898 max_observe_us=2184 d_paints=50 d_skips=0 d_ticks=1 window_ms=0
+[panel] liveemi4nf_0: liveemi4nf_0: scene 1
+[panel] liveemi4nf_0: liveemi4nf_0: ingame
+[panel] liveemi4nf_0: liveemi4nf_0: scene 2
+[host] slot liveemi4nf_0: d_loop_us=10623 d_raster_us=184417 d_observe_us=67090 max_observe_us=4382 d_paints=50 d_skips=0 d_ticks=3 window_ms=1140
+[host] slot liveemi4nf_0: d_loop_us=1069 d_raster_us=183516 d_observe_us=31521 max_observe_us=814 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153
+live script_bank_fletcher: running step 2/6
+[host-play] slot liveemi4nf_0: handshake begin reconnect=true
+[panel] liveemi4nf_0: liveemi4nf_0: scene 0
+[host-play] slot liveemi4nf_0: handshake ok
+[panel] liveemi4nf_0: liveemi4nf_0: scene 1
+[panel] liveemi4nf_0: liveemi4nf_0: ingame
+[panel] liveemi4nf_0: liveemi4nf_0: scene 2
+[host] slot liveemi4nf_0: d_loop_us=12829 d_raster_us=143269 d_observe_us=64917 max_observe_us=2943 d_paints=50 d_skips=0 d_ticks=1 window_ms=0
+[host] slot liveemi4nf_0: d_loop_us=1363 d_raster_us=156583 d_observe_us=43701 max_observe_us=5385 d_paints=50 d_skips=0 d_ticks=3 window_ms=1155
+live script_bank_fletcher: running step 3/6
+[panel] liveemi4nf_0: liveemi4nf_0: scene 1
+[panel] liveemi4nf_0: liveemi4nf_0: ingame
+[panel] liveemi4nf_0: liveemi4nf_0: scene 2
+[host] slot liveemi4nf_0: d_loop_us=10810 d_raster_us=158900 d_observe_us=66705 max_observe_us=6314 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156
+[host] slot liveemi4nf_0: d_loop_us=872 d_raster_us=175993 d_observe_us=30035 max_observe_us=816 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166
+live script_bank_fletcher: running step 4/6
+[host] slot liveemi4nf_0: d_loop_us=851 d_raster_us=165533 d_observe_us=32600 max_observe_us=3071 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168
+live script_bank_fletcher: running step 5/6
+[script liveemi4nf_0] start load
+live script_bank_fletcher: running step 6/6
+[host] hitch liveemi4nf_0: observe_us=37593 paints=259 skips=0 ticks=11
+[host] hitch liveemi4nf_0: observe_us=16201 paints=283 skips=0 ticks=12
+[host] slot liveemi4nf_0: d_loop_us=884 d_raster_us=133229 d_observe_us=88438 max_observe_us=37593 d_paints=50 d_skips=0 d_ticks=2 window_ms=1180
+[script liveemi4nf_0] BankFletcher fletching 'Willow logs' → Short bow at (3185, 3440, 0) (booth 'Bank booth', r6)
+[script liveemi4nf_0] interact UseOn { name: "Knife", kind: "inv", target_name: Some("Willow logs"), x: 0, z: 0, level: 0, index: None }
+[panel] liveemi4nf_0: script: BankFletcher fletching 'Willow logs' → Short bow at (3185, 3440, 0) (booth 'Bank booth', r6)
+[host] slot liveemi4nf_0: d_loop_us=863 d_raster_us=158119 d_observe_us=48673 max_observe_us=7225 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162
+[script liveemi4nf_0] interact IfButton { component_id: 8871 }
+[script liveemi4nf_0] interact AnswerCount { value: 27 }
+[shim-count] 27 sent
+[host] slot liveemi4nf_0: d_loop_us=885 d_raster_us=156393 d_observe_us=40724 max_observe_us=4157 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163
+[host] slot liveemi4nf_0: d_loop_us=887 d_raster_us=133745 d_observe_us=42872 max_observe_us=6722 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167
+PASS: live script_bank_fletcher {"scenario":"bank_fletcher","outcome":"PASS","predicate":"stat_xp_gain(9)>=1","ticks":17,"elapsed_ms":17741,"tile":[3185,3440,0],"inv":[{"id":946,"name":"Knife","count":1},{"id":60,"name":"Willow shortbow","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1},{"id":1519,"name":"Willow logs","count":1}],"stat":{"runenergy":100},"chat":[{"text":"You carefully cut the wood into a shortbow."},{"text":"Congratulations, you just advanced a fletching level."},{"text":"Welcome to RuneScape."}],"scene":2}
+[host] slot liveemi4nf_0: d_loop_us=829 d_raster_us=130418 d_observe_us=40831 max_observe_us=6623 d_paints=50 d_skips=0 d_ticks=2 window_ms=1183
+[host] slot liveemi4nf_0: d_loop_us=887 d_raster_us=131602 d_observe_us=40897 max_observe_us=6248 d_paints=50 d_skips=0 d_ticks=2 window_ms=1169
+[host] slot liveemi4nf_0: d_loop_us=904 d_raster_us=131931 d_observe_us=38372 max_observe_us=4922 d_paints=50 d_skips=0 d_ticks=2 window_ms=1176
+[host] slot liveemi4nf_0: d_loop_us=864 d_raster_us=130947 d_observe_us=38387 max_observe_us=5997 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165
+[host] slot liveemi4nf_0: d_loop_us=958 d_raster_us=147574 d_observe_us=44107 max_observe_us=6980 d_paints=50 d_skips=0 d_ticks=2 window_ms=1177
+[host] slot liveemi4nf_0: d_loop_us=874 d_raster_us=135465 d_observe_us=39081 max_observe_us=4754 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164
+[host] slot liveemi4nf_0: d_loop_us=995 d_raster_us=146010 d_observe_us=42780 max_observe_us=5709 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156
+[host] slot liveemi4nf_0: d_loop_us=980 d_raster_us=147384 d_observe_us=44479 max_observe_us=6459 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160
+[host] slot liveemi4nf_0: d_loop_us=1041 d_raster_us=152879 d_observe_us=40106 max_observe_us=5059 d_paints=50 d_skips=0 d_ticks=1 window_ms=1151
+[host] slot liveemi4nf_0: d_loop_us=1064 d_raster_us=154211 d_observe_us=46898 max_observe_us=7031 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164
+[host] slot liveemi4nf_0: d_loop_us=928 d_raster_us=143153 d_observe_us=40517 max_observe_us=4991 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166
+[host] slot liveemi4nf_0: d_loop_us=1067 d_raster_us=151568 d_observe_us=45822 max_observe_us=6792 d_paints=50 d_skips=0 d_ticks=2 window_ms=1143
+[host] slot liveemi4nf_0: d_loop_us=1022 d_raster_us=152817 d_observe_us=45091 max_observe_us=6987 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149
+[host] slot liveemi4nf_0: d_loop_us=858 d_raster_us=127808 d_observe_us=36238 max_observe_us=4789 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173
+[host] slot liveemi4nf_0: d_loop_us=876 d_raster_us=125597 d_observe_us=35898 max_observe_us=5712 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161
+[host] slot liveemi4nf_0: d_loop_us=899 d_raster_us=127591 d_observe_us=35979 max_observe_us=5936 d_paints=50 d_skips=0 d_ticks=2 window_ms=1172
+[host] slot liveemi4nf_0: d_loop_us=1012 d_raster_us=148054 d_observe_us=41104 max_observe_us=4937 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155
+[host] slot liveemi4nf_0: d_loop_us=996 d_raster_us=149290 d_observe_us=45012 max_observe_us=7126 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153
+[host] slot liveemi4nf_0: d_loop_us=1055 d_raster_us=149540 d_observe_us=44892 max_observe_us=6611 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166
+[host] slot liveemi4nf_0: d_loop_us=954 d_raster_us=145421 d_observe_us=41821 max_observe_us=5166 d_paints=50 d_skips=0 d_ticks=2 window_ms=1171
+[host] slot liveemi4nf_0: d_loop_us=979 d_raster_us=148555 d_observe_us=44235 max_observe_us=6981 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161
+[host] slot liveemi4nf_0: d_loop_us=992 d_raster_us=149449 d_observe_us=45918 max_observe_us=6646 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158
+[host] slot liveemi4nf_0: d_loop_us=1039 d_raster_us=150933 d_observe_us=43836 max_observe_us=5306 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155
+[host] slot liveemi4nf_0: d_loop_us=977 d_raster_us=143196 d_observe_us=39516 max_observe_us=6776 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158
+[host] slot liveemi4nf_0: d_loop_us=848 d_raster_us=133594 d_observe_us=38616 max_observe_us=4546 d_paints=50 d_skips=0 d_ticks=1 window_ms=1170
+[host] slot liveemi4nf_0: d_loop_us=852 d_raster_us=135352 d_observe_us=40619 max_observe_us=6326 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158
+[host] slot liveemi4nf_0: d_loop_us=870 d_raster_us=135727 d_observe_us=40884 max_observe_us=6179 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165
+[host] slot liveemi4nf_0: d_loop_us=895 d_raster_us=132856 d_observe_us=39084 max_observe_us=4761 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166
+[host] slot liveemi4nf_0: d_loop_us=854 d_raster_us=133189 d_observe_us=41189 max_observe_us=6459 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160
+[host] slot liveemi4nf_0: d_loop_us=848 d_raster_us=133582 d_observe_us=40710 max_observe_us=6394 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155
+[host] slot liveemi4nf_0: d_loop_us=848 d_raster_us=135073 d_observe_us=39883 max_observe_us=4670 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150
+[host] slot liveemi4nf_0: d_loop_us=836 d_raster_us=135634 d_observe_us=38811 max_observe_us=6236 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166
+[host] slot liveemi4nf_0: d_loop_us=877 d_raster_us=135430 d_observe_us=38080 max_observe_us=5980 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162
+[host] slot liveemi4nf_0: d_loop_us=879 d_raster_us=134114 d_observe_us=36617 max_observe_us=4781 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164
+[host] slot liveemi4nf_0: d_loop_us=863 d_raster_us=130405 d_observe_us=37897 max_observe_us=6421 d_paints=50 d_skips=0 d_ticks=2 window_ms=1177
+[host] slot liveemi4nf_0: d_loop_us=877 d_raster_us=132487 d_observe_us=38036 max_observe_us=6390 d_paints=50 d_skips=0 d_ticks=2 window_ms=1184
+[host] slot liveemi4nf_0: d_loop_us=837 d_raster_us=127432 d_observe_us=35369 max_observe_us=4653 d_paints=50 d_skips=0 d_ticks=2 window_ms=1181
+[host] slot liveemi4nf_0: d_loop_us=861 d_raster_us=132673 d_observe_us=37472 max_observe_us=6420 d_paints=50 d_skips=0 d_ticks=2 window_ms=1176
+[host] slot liveemi4nf_0: d_loop_us=910 d_raster_us=135260 d_observe_us=38292 max_observe_us=6658 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166
+[host] slot liveemi4nf_0: d_loop_us=864 d_raster_us=132261 d_observe_us=36022 max_observe_us=4754 d_paints=50 d_skips=0 d_ticks=2 window_ms=1178
+[script liveemi4nf_0] interact OpenBooth { x: 3186, z: 3440, level: 0, id: 2213, name: Some("Bank booth"), action: Some("Use-quickly") }
+[host] slot liveemi4nf_0: d_loop_us=920 d_raster_us=135668 d_observe_us=37687 max_observe_us=6185 d_paints=50 d_skips=0 d_ticks=2 window_ms=1171
+[host] slot liveemi4nf_0: d_loop_us=868 d_raster_us=162352 d_observe_us=39488 max_observe_us=6257 d_paints=50 d_skips=0 d_ticks=2 window_ms=1178
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+[script liveemi4nf_0] interact Deposit { name: "Willow shortbow" }
+
+thread 'liveemi4nf_0' (4049157) panicked at vendor/fr-client-rust/crates/client/src/io/packet.rs:281:18:
+index out of bounds: the len is 5000 but the index is 5000
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
