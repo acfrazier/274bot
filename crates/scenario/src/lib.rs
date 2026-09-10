@@ -386,6 +386,9 @@ pub fn get(name: &str) -> Option<Scenario> {
         "chicken_killer" => Some(chicken_killer_scenario()),
         "thiever" => Some(thiever_scenario()),
         "alcher" => Some(alcher_scenario()),
+        "alcher_custom" => Some(alcher_custom_scenario()),
+        "alcher_ordered" => Some(alcher_ordered_scenario()),
+        "alcher_large_batch" => Some(alcher_large_batch_scenario()),
         "bank_fletcher" => Some(bank_fletcher_scenario()),
         "script_trade" => Some(script_trade_scenario()),
         _ => None,
@@ -410,6 +413,9 @@ pub fn names() -> Vec<&'static str> {
         "chicken_killer",
         "thiever",
         "alcher",
+        "alcher_custom",
+        "alcher_ordered",
+        "alcher_large_batch",
         "bank_fletcher",
         "script_trade",
     ]
@@ -1943,6 +1949,168 @@ const ALCHER_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
     value: ScriptInjectValue::StrList(&["rune_chainbody"]),
 }];
 
+const ALCHER_CUSTOM_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "items",
+        value: ScriptInjectValue::StrList(&["custom"]),
+    },
+    ScriptSettingInject {
+        id: "customItem",
+        value: ScriptInjectValue::Str("rune_chainbody"),
+    },
+    ScriptSettingInject {
+        id: "alchs",
+        value: ScriptInjectValue::Num(1.0),
+    },
+];
+
+const ALCHER_ORDERED_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "items",
+        value: ScriptInjectValue::StrList(&["rune_platebody", "rune_chainbody"]),
+    },
+    ScriptSettingInject {
+        id: "alchs",
+        value: ScriptInjectValue::Num(1.0),
+    },
+];
+
+const ALCHER_LARGE_BATCH_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "items",
+        value: ScriptInjectValue::StrList(&["rune_chainbody"]),
+    },
+    ScriptSettingInject {
+        id: "alchs",
+        value: ScriptInjectValue::Num(1000.0),
+    },
+];
+
+fn alcher_variant_scenario(
+    name: &'static str,
+    inject: &'static [ScriptSettingInject],
+    fodder: &'static str,
+    fodder_count: i32,
+    runes: i32,
+    required_stack: Option<(&'static str, i32)>,
+) -> Scenario {
+    let xp = Proof::StatXpGain { id: 6, min: 1 };
+    let bank = VARROCK_WEST_BANK;
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps: {
+            let mut steps = script_live_seed_steps();
+            steps.push(Step {
+                name: "seed magic 55 and bounded Alcher stock before Start",
+                kind: StepKind::Perform {
+                    send: Box::new(move |c, _| {
+                        cheat(c, "setstat magic 55");
+                        cheat(c, &format!("givebank {fodder} {fodder_count}"));
+                        if name == "alcher_ordered" {
+                            cheat(c, "givebank rune_chainbody 1");
+                        }
+                        cheat(c, &format!("givebank naturerune {runes}"));
+                        cheat(c, "givebank staff_of_fire 1");
+                        cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                        true
+                    }),
+                },
+                wait: Wait {
+                    arm: Proof::ArrivedNear {
+                        x: bank.x,
+                        z: bank.z,
+                        level: bank.level,
+                        radius: 6,
+                    },
+                    budget_ticks: 200,
+                },
+            });
+            steps.push(Step {
+                name: "confirm Magic 55 before Start",
+                kind: StepKind::Perform {
+                    send: Box::new(|_, _| true),
+                },
+                wait: Wait {
+                    arm: Proof::Stat { id: 6, min: 55 },
+                    budget_ticks: 200,
+                },
+            });
+            steps.push(start_catalog_step());
+            if let Some((item, count)) = required_stack {
+                steps.push(Step {
+                    name: "watch selected noted stack",
+                    kind: StepKind::Perform {
+                        send: Box::new(|_, _| true),
+                    },
+                    wait: Wait {
+                        arm: Proof::Item { name: item, count },
+                        budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
+                    },
+                });
+            }
+            steps.push(Step {
+                name: "watch the Alcher option variant cast",
+                kind: StepKind::Perform {
+                    send: Box::new(|_, _| true),
+                },
+                wait: Wait {
+                    arm: xp,
+                    budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
+                },
+            });
+            steps
+        },
+        proof: xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("Alcher"),
+            script_settings_inject: Some(inject),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+fn alcher_custom_scenario() -> Scenario {
+    alcher_variant_scenario(
+        "alcher_custom",
+        ALCHER_CUSTOM_INJECT,
+        "rune_chainbody",
+        2,
+        4,
+        Some(("Rune chainbody", 1)),
+    )
+}
+
+fn alcher_ordered_scenario() -> Scenario {
+    alcher_variant_scenario(
+        "alcher_ordered",
+        ALCHER_ORDERED_INJECT,
+        "rune_platebody",
+        1,
+        4,
+        Some(("Rune platebody", 1)),
+    )
+}
+
+fn alcher_large_batch_scenario() -> Scenario {
+    alcher_variant_scenario(
+        "alcher_large_batch",
+        ALCHER_LARGE_BATCH_INJECT,
+        "rune_chainbody",
+        1000,
+        1000,
+        Some(("Rune chainbody", 1000)),
+    )
+}
+
 /// The `alcher` scenario: live Alcher gold — Varrock West, noted fodder +
 /// natures + fire staff in bank, magic 55+. Proof is magic XP or coin gain
 /// from alchs (magic XP delta here).
@@ -2592,6 +2760,9 @@ mod tests {
                 "chicken_killer",
                 "thiever",
                 "alcher",
+                "alcher_custom",
+                "alcher_ordered",
+                "alcher_large_batch",
                 "bank_fletcher",
                 "script_trade",
             ]
