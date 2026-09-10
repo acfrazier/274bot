@@ -1,0 +1,1322 @@
+   Compiling libc v0.2.189
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.47
+   Compiling bitflags v2.13.1
+   Compiling objc2-encode v4.1.0
+   Compiling cfg-if v1.0.4
+   Compiling objc2 v0.6.4
+   Compiling cfg_aliases v0.2.2
+   Compiling autocfg v1.5.1
+   Compiling libm v0.2.16
+   Compiling zerocopy v0.8.56
+   Compiling version_check v0.9.5
+   Compiling once_cell v1.21.4
+   Compiling core-foundation-sys v0.8.7
+   Compiling log v0.4.33
+   Compiling raw-window-handle v0.6.2
+   Compiling thiserror v2.0.20
+   Compiling naga v29.0.4
+   Compiling unicode-width v0.2.2
+   Compiling parking_lot_core v0.9.12
+   Compiling bit-vec v0.9.1
+   Compiling typenum v1.20.1
+   Compiling generic-array v0.14.7
+   Compiling equivalent v1.0.2
+   Compiling hashbrown v0.17.1
+   Compiling num-traits v0.2.19
+   Compiling foldhash v0.2.0
+   Compiling objc-sys v0.3.5
+   Compiling bit-set v0.9.1
+   Compiling codespan-reporting v0.13.1
+   Compiling smallvec v1.15.2
+   Compiling arrayvec v0.7.8
+   Compiling scopeguard v1.2.0
+   Compiling hashbrown v0.16.1
+   Compiling hexf-parse v0.2.1
+   Compiling rustc-hash v1.1.0
+   Compiling lock_api v0.4.14
+   Compiling wgpu-hal v29.0.4
+   Compiling getrandom v0.4.3
+   Compiling rustix v1.1.4
+   Compiling find-msvc-tools v0.1.11
+   Compiling shlex v2.0.1
+   Compiling pkg-config v0.3.34
+   Compiling objc2 v0.5.2
+   Compiling errno v0.3.14
+   Compiling indexmap v2.14.0
+   Compiling getrandom v0.2.17
+   Compiling cc v1.4.3
+   Compiling syn v3.0.3
+   Compiling syn v2.0.119
+   Compiling profiling v1.0.18
+   Compiling parking_lot v0.12.5
+   Compiling rand_core v0.6.4
+   Compiling core-foundation v0.10.1
+   Compiling security-framework-sys v2.17.0
+   Compiling core-foundation v0.9.4
+   Compiling cpufeatures v0.2.17
+   Compiling wgpu-core v29.0.4
+   Compiling crc32fast v1.5.0
+   Compiling block2 v0.6.2
+   Compiling dispatch2 v0.3.1
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling objc2-core-audio-types v0.3.2
+   Compiling tracing-core v0.1.36
+   Compiling digest v0.10.7
+   Compiling block2 v0.5.1
+   Compiling litrs v1.0.0
+   Compiling httparse v1.10.1
+   Compiling fastrand v2.5.0
+   Compiling thiserror v1.0.69
+   Compiling objc2-core-foundation v0.3.2
+   Compiling dispatch v0.2.0
+   Compiling pin-project-lite v0.2.17
+   Compiling foreign-types-shared v0.3.1
+   Compiling bitflags v1.3.2
+   Compiling native-tls v0.2.18
+   Compiling tracing v0.1.44
+   Compiling core-graphics-types v0.1.3
+   Compiling security-framework v3.7.0
+   Compiling winit v0.30.13
+   Compiling objc2-foundation v0.2.2
+   Compiling wgpu v29.0.4
+   Compiling zune-core v0.5.3
+   Compiling simd-adler32 v0.3.10
+   Compiling tempfile v3.27.0
+   Compiling bytes v1.12.1
+   Compiling pxfm v0.1.30
+   Compiling cpal v0.18.2
+   Compiling document-features v0.2.12
+   Compiling adler2 v2.0.1
+   Compiling itoa v1.0.18
+   Compiling zune-jpeg v0.5.15
+   Compiling miniz_oxide v0.8.9
+   Compiling bzip2-sys v0.1.13+1.0.8
+   Compiling http v1.5.0
+   Compiling num-integer v0.1.47
+   Compiling sha1 v0.10.7
+   Compiling utf-8 v0.7.6
+   Compiling static_assertions v1.1.0
+   Compiling dasp_sample v0.11.0
+   Compiling mach2 v0.6.0
+   Compiling byteorder v1.5.0
+   Compiling cursor-icon v1.2.0
+   Compiling smol_str v0.2.2
+   Compiling dpi v0.1.2
+   Compiling data-encoding v2.11.1
+   Compiling byteorder-lite v0.1.0
+   Compiling num-bigint v0.4.8
+   Compiling flate2 v1.1.9
+   Compiling sha2 v0.10.9
+   Compiling rustysynth v1.3.6
+   Compiling pollster v0.4.0
+   Compiling objc2-foundation v0.3.2
+   Compiling objc2-core-graphics v0.3.2
+   Compiling bytemuck_derive v1.12.0
+   Compiling thiserror-impl v2.0.20
+   Compiling foreign-types-macros v0.2.4
+   Compiling zerocopy-derive v0.8.56
+   Compiling thiserror-impl v1.0.69
+   Compiling bzip2 v0.4.4
+   Compiling moxcms v0.8.1
+   Compiling foreign-types v0.5.0
+   Compiling core-graphics v0.23.2
+   Compiling bytemuck v1.25.2
+   Compiling wgpu-types v29.0.4
+   Compiling objc2-app-kit v0.2.2
+   Compiling objc2-metal v0.3.2
+   Compiling objc2-core-audio v0.3.2
+   Compiling objc2-audio-toolbox v0.3.2
+   Compiling coreaudio-rs v0.14.2
+   Compiling image v0.25.10
+   Compiling half v2.7.1
+   Compiling ppv-lite86 v0.2.21
+   Compiling rand_chacha v0.3.1
+   Compiling rand v0.8.8
+   Compiling objc2-quartz-core v0.3.2
+   Compiling tungstenite v0.24.0
+   Compiling raw-window-metal v1.1.0
+   Compiling softbuffer v0.4.8
+   Compiling wgpu-naga-bridge v29.0.4
+   Compiling wgpu-core-deps-apple v29.0.4
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/vendor/fr-client-rust/crates/client)
+   Compiling client-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/vendor/fr-client-rust/crates/client-play)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.78s
+     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/client-1054f5126f419ab5)
+
+running 78 tests
+test bot_target::tests::operator_home_never_queries_profile_for_explicit_home ... ok
+test bot_target::tests::content_sits_next_to_engine ... ok
+test bot_target::tests::prod_and_live_alias_are_the_public_world ... ok
+test bot_target::tests::operator_home_prefers_explicit_home_including_empty ... ok
+test bot_target::tests::prod_cache_dir_is_home_unpack_not_engine_pack ... ok
+test config::if_type::iface_size_tests::mut_overlay_is_much_smaller_than_the_decode ... ok
+test client::client::try_move_path::try_move_tiles_records_every_step_src_to_dest ... ok
+test client::client::try_move_path::try_move_tiles_records_a_long_bfs_not_nine ... ok
+test client::client::ground_obj_size_tests::empty_ground_obj_grid_is_under_400kb ... ok
+test core::world::size_tests::empty_tile_grid_is_pointer_sized ... ok
+test core::world::size_tests::fill_base_level_does_not_materialize_empty_squares ... ok
+test dash3d::anim_frame::tests::private_arc_shared_within_unpack_not_across_and_get_detaches ... ok
+test dash3d::anim_frame::tests::private_partial_replace_keeps_old_arc_until_final_owner_drops ... ok
+test dash3d::anim_frame::tests::public_get_results_are_independent_nested_and_transforms ... ok
+test dash3d::anim_frame::tests::public_init_high_id_missing_and_struct_construction ... ok
+test dash3d::anim_frame::tests::public_multi_frame_defaults_origin_signed_and_transparency ... ok
+test dash3d::anim_frame::tests::public_partial_republish_preserves_old_result_and_sibling ... ok
+test dash3d::wrapping_cross_tests::overflow_matches_java_int_not_i64 ... ok
+test graphics::pix2d::tests::mark_pixel_is_opaque_and_alpha_is_the_coverage_byte ... ok
+test config::obj_type::tests::get_sprite_resolves_owi_ohi_and_count_variants ... ok
+test io::ondemand::tests::model_use_priority_matches_java ... ok
+test login_rsa::tests::java_defaults_are_the_lost_city_pair ... ok
+test client::client::audio_toggle::set_lowmem_false_loads_sound_and_opens_gates ... ok
+test login_rsa::tests::prod_modulus_is_decimal_and_long ... ok
+test profiling::tests::allocation_replacement_and_drop_release_only_their_bytes ... ok
+test io::client_stream::tests::reader_handle_tracks_the_socket_and_wakes_on_data ... ok
+test config::obj_type::tests::sprite_cache_evicts_at_capacity_100 ... ok
+test render::backend::gpu::tests::freeze_does_not_cls_the_frozen_viewport ... ok
+test render::backend::gpu::tests::freeze_last_scene_only_while_the_game_is_loading ... ok
+test config::obj_type::tests::sprite_cache_hits_same_key_and_unlinks_stale_counts ... ok
+test config::obj_type::tests::sprite_drop_shadow_only_when_outline_zero ... ok
+test login_rsa::tests::openssl_pkcs1_pem_roundtrip_n_e ... ok
+test render::backend::gpu_atlas::tests::downsample_rgba_averages_a_2x2_checker ... ok
+test render::backend::gpu::tests::draw_area_rgba_title_is_fully_opaque ... ok
+test core::world::sprite_reuse_tests::dynamic_sprite_slots_stay_bounded_across_frames ... ok
+test config::if_type::iface_size_tests::mut_template_inv_arrays_are_bounded ... ok
+test render::backend::gpu_atlas::tests::region_cache_evicts_the_lru_entry ... ok
+test render::backend::gpu::tests::draw_area_rgba_uses_coverage_as_scene_window_alpha ... ok
+test render::backend::gpu_atlas::tests::rgba_mip_chain_from_128_has_eight_levels ... ok
+test render::nav_debug::tests::face_only_cell_has_letters_but_no_fill ... ok
+test render::nav_debug::tests::nsew_letters_sit_on_the_right_edges ... ok
+test render::nav_debug::tests::overlay_pixel_writes_source_rgb_and_coverage_alpha ... ok
+test render::nav_debug::tests::reach_fill_colours_only_unreached_standable_cells ... ok
+test render::store::tests::dynamic_sprite_does_not_reresolve_wall ... ok
+test render::store::tests::model_store_shared_across_renderers ... ok
+test render::store::tests::render_worlds_share_one_decode_per_model_id ... ok
+test render::store::tests::tile_mutation_reresolves_lazy_models ... ok
+test render::world::near_plane_tests::a_behind_clips_in_abc_order ... ok
+test render::world::near_plane_tests::all_behind_clips_to_nothing ... ok
+test render::world::near_plane_tests::intersection_lands_on_the_near_plane_with_interpolated_xy ... ok
+test render::world::near_plane_tests::two_behind_clips_to_a_triangle ... ok
+test sound::jagfx::jagfx_size_tests::default_does_not_allocate_wave_scratch ... ok
+test sound::jagfx::jagfx_size_tests::default_tables_are_one_process_arc ... ok
+test sound::output::device::tests::mix_adds_waves_and_clips ... ok
+test sound::output::device::tests::mix_scales_render_by_fade_gain ... ok
+test sound::output::device::tests::stop_hard_zeroes_midi_output ... ok
+test unpack::tests::corrupt_gzip_payload_is_an_error ... ok
+test unpack::tests::decode_rejects_truncated_body ... ok
+test unpack::tests::decode_rejects_truncated_header ... ok
+test unpack::tests::gunzip_rejects_truncated_stream ... ok
+test config::if_type::iface_size_tests::iface_holes_are_pointer_sized ... ok
+test unpack::tests::record_round_trip ... ok
+test unpack::tests::version_hash_is_stable_and_short ... ok
+test unpack::tests::load_snapshot_once_injects_only_the_first_call ... ok
+test render::backend::gpu_atlas::tests::evicted_regions_are_reused_from_the_next_epoch ... ok
+test render::backend::gpu_atlas::tests::model_atlas_texture_reports_eight_mips ... ok
+test render::backend::gpu_atlas::tests::atlas_growth_stops_at_the_cap ... ok
+test render::backend::gpu_atlas::tests::layer_atlas_spills_without_overflow ... ok
+test client::client::zone_post_build::loc_change_post_build_keeps_permanent_and_drops_timed ... ok
+test client::client::try_move_path::run_enabled_reads_varp_173 ... ok
+test client::client::dead_server_watchdog::stale_last_response_fires_lost_con_in_one_game_loop_pass ... ok
+test client::client::dead_server_watchdog::reading_a_full_packet_restamps_the_watchdog ... ok
+test client::client::dead_server_watchdog::watchdog_stays_quiet_until_the_bound_elapses ... ok
+test client::client::dead_server_watchdog::fresh_last_response_does_not_trip_the_watchdog ... ok
+test client::client::try_move_path::run_enabled_reads_visible_run_off_orb ... ok
+test render::backend::gpu::tests::sealed_scene_window_uploads_modal_rgb_without_chrome_redraw ... ok
+test render::backend::gpu::tests::viewport_overlay_moves_and_clears_without_chrome_redraw ... ok
+test render::backend::gpu_atlas::tests::stale_sprite_sources_stop_growing_the_atlas ... ok
+
+test result: ok. 78 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.98s
+
+     Running unittests src/bin/unpack-cache.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/unpack_cache-db2ff02faa832614)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cache_share.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/cache_share-c56ff9ffe6266c38)
+
+running 1 test
+test two_clients_share_type_tables_and_not_ifaces ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running tests/cache_short_circuit.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/cache_short_circuit-75e4d0b560f49b05)
+
+running 2 tests
+test new_maininit_still_reunpacks_fresh_cache ... ok
+test from_shared_maininit_keeps_injected_cache_and_skips_reunpack ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/chat_mode.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/chat_mode-4ca8415eca23f489)
+
+running 4 tests
+test non_strip_clicks_are_ignored ... ok
+test trade_button_cycles_trade_mode ... ok
+test report_abuse_sends_close_modal_and_records_main_modal_id ... ok
+test public_chat_button_cycles_mode_and_sends_chat_setmode ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests/client_build.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/client_build-3773024b99ddf9e4)
+
+running 38 tests
+test check_model_all_missing_model_is_not_ready ... ok
+test check_model_all_none_models_is_ready ... ok
+test check_locations_checks_ground_decor_in_high_mem ... ok
+test check_locations_skips_ground_decor_in_low_mem ... ok
+test check_locations_empty_packet_is_ready ... ok
+test ground_hole_is_one_fat_pointer ... ok
+test check_model_all_requests_through_wired_provider ... ok
+test check_locations_requests_missing_models_in_area ... ok
+test dematerialize_overlay_rearms_share_light ... ok
+test ground_tile_visible_requires_matching_vis_below_level ... ok
+test ground_tile_visible_gates_force_high_detail_in_low_mem ... ok
+test load_locations_empty_is_noop ... ok
+test finish_build_blocks_map_flag_block_tiles ... ok
+test finish_build_sets_quick_ground_after_load_ground ... ok
+test finish_build_push_down_link_below ... ok
+test fade_adjacent_level0_seam ... ok
+test finish_build_hooks_share_light ... ok
+test prefetch_locations_decodes_loc_id_loop ... ok
+test prefetch_locations_empty_packet_is_noop ... ok
+test finish_build_link_below_blocks_lower_level ... ok
+test finish_build_textured_overlay_uses_tex_average ... ok
+test finish_build_clears_wall_occluder_bits ... ok
+test load_locations_low_mem_skips_wrong_vis_below ... ok
+test finish_build_clears_flat_floor_occluder_bits ... ok
+test finish_build_magenta_overlay_floor ... ok
+test load_locations_low_mem_skips_force_high_detail ... ok
+test load_locations_places_at_offset_tiles ... ok
+test load_locations_ground_decor_blocks_when_active ... ok
+test lowmem_does_not_unload_process_wide_models ... ok
+test scene_model_ids_protects_placed_loc_models ... ok
+test load_locations_skips_out_of_area_tiles ... ok
+test ground_stamp_materializes_the_mesh_a_headed_build_writes ... ok
+test load_locations_wall_blocks_collision_without_model ... ok
+test scene_model_ids_protects_push_down_linked_walls ... ok
+test set_draw_true_enables_overlay_mesh_for_later_set_ground ... ok
+test load_tex_averages_fills_from_textures_jag ... ok
+test unheaded_build_keeps_stamp_but_no_mesh_until_materialize ... ok
+test finish_build_clamps_hue_and_lig_off ... ok
+
+test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.48s
+
+     Running tests/client_skeleton.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/client_skeleton-053735359038a8ac)
+
+running 4 tests
+test login_error_carries_code_and_messages ... ok
+test config_has_no_rsa_fields ... ok
+test new_client_starts_logged_out ... ok
+test run_drives_mainloop_and_hook_until_stopped ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/client_stream.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/client_stream-ccc58154811a162d)
+
+running 2 tests
+test tcp_read_write_roundtrip ... ok
+test payload_byte_counters ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/collision.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/collision-f01c78d8f1c8afaf)
+
+running 13 tests
+test client_npc_route_readable ... ok
+test block_ground_sets_flag ... ok
+test add_loc_blocks_walk_scenery ... ok
+test add_wall_blocks_east_neighbour ... ok
+test reset_flags_bounds_and_open ... ok
+test del_loc_restores_open ... ok
+test test_loc_approaches_from_open_side ... ok
+test test_wall_matches_ts_shape_tests ... ok
+test unblock_ground_clears_flag ... ok
+test spot_recolour_guard_matches_ts ... ok
+test walk_route_avoids_blocked_tile ... ok
+test scenery_blocked_tile_not_arrived_at ... ok
+test client_player_at_and_route_arrays ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests/config_types.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/config_types-031ac8f863b4fed8)
+
+running 8 tests
+test missing_config_jag_sets_error_loading ... ok
+test unpack_obj_from_engine_config_jag ... ok
+test iftype_unpack_keeps_inv_background_names ... ok
+test cache_holds_all_unpacked_tables ... ok
+test cache_obj_by_id_matches_unpacked_table ... ok
+test get_sprite_resolves_engine_pack_obj ... ok
+test client_owns_an_empty_cache_until_unpacked ... ok
+test client_new_unpacks_config_from_cache_dir ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests/datastruct.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/datastruct-8622e3c0dba9772b)
+
+running 16 tests
+test arena_unlink_on_unlinked_node_is_noop ... ok
+test arena_unlink_splices_and_is_idempotent ... ok
+test link_list_clear_drops_all_and_is_reusable ... ok
+test link_list_for_each_empty_is_noop ... ok
+test link_list_for_each_leaves_mutable_cursor_untouched ... ok
+test link_list_for_each_walks_in_order ... ok
+test link_list_head_empty_and_cursor_exhaustion ... ok
+test link_list_head_next_iterates ... ok
+test link_list_move_last_to_front ... ok
+test hash_table_put_find_and_repin ... ok
+test link_list_push_front_reverses_order ... ok
+test link_list_push_pop_front ... ok
+test link_list_tail_and_prev ... ok
+test link_list_unlink_last_during_iterate ... ok
+test lru_cache_clear_resets_capacity ... ok
+test lru_cache_evicts_least_recently_used ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/do_action.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/do_action-a5c2954231198d0c)
+
+running 13 tests
+test do_action_op_held_writes_p2_obj_slot_com ... ok
+test tgt_button_arms_spell_target_mode ... ok
+test op_npc2_writes_opnpc2 ... ok
+test try_move_type_1_writes_minimapclick_size_plus_14 ... ok
+test try_move_out_of_area_destination_returns_false ... ok
+test try_move_writes_move_gameclick ... ok
+test walk_menu_arms_mouse_picking ... ok
+test do_action_op_loc_encodes_loc_id_not_shape ... ok
+test do_action_useheld_start_returns_with_use_mode_armed ... ok
+test do_action_inv_button1_encodes ... ok
+test do_action_pause_button_latches_please_wait ... ok
+test do_action_obj_examine_adds_chat ... ok
+test try_move_flushes_move_gameclick_to_socket ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+     Running tests/draw.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/draw-46a9e2c09a4af91f)
+
+running 2 tests
+test headless_new_starts_with_draw_off ... ok
+test set_draw_true_allows_game_draw_without_present ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+     Running tests/entity_move.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/entity_move-9ca01e2f19caf482)
+
+running 3 tests
+test move_npcs_steps_tracked_npc ... ok
+test route_move_advances_x_toward_queued_tile ... ok
+test game_loop_walk_moves_local_player_and_orbit_camera ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests/fade.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/fade-b0c02cc0d7a0b02a)
+
+running 9 tests
+test fade_out_ramps_down_not_up ... ok
+test fade_out_then_swap_lands_on_target_and_holds ... ok
+test finish_fade_jumps_to_ladder_volumes ... ok
+test set_target_vol_jumps_when_not_fading ... ok
+test set_target_vol_retargets_mid_ramp ... ok
+test step_ms_accumulates_to_ticks ... ok
+test finish_fade_jumps_to_target ... ok
+test stop_hard_is_silence ... ok
+test stop_hard_then_finish_fade_recovers ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/from_shared.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/from_shared-7d5fbbed6d537155)
+
+running 6 tests
+test from_shared_reuses_one_arc_without_unpack ... ok
+test slot_write_cows_only_the_written_overlay_slot ... ok
+test mut_overlay_template_is_arc_until_first_write ... ok
+test mut_overlay_is_small_and_decode_stays_ptr_eq_after_writes ... ok
+test adopt_without_live_stream_returns_none ... ok
+test adopt_reconnects_opcode_18_without_tcp_drop ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.82s
+
+     Running tests/game_shell.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/game_shell-bfd32d8d563f5560)
+
+running 3 tests
+test deltime_default_is_20 ... ok
+test run_increments_loop_not_server_tick ... ok
+test set_framerate_1_is_error_screen_only ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/gens.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/gens-27b78f348907fc2b)
+
+running 12 tests
+test npc_info_bumps_npc_gen_only ... ok
+test applied_packets_bump_their_family ... ok
+test map_flag_packets_bump_map_flag_gen ... ok
+test logout_bumps_all_gens ... ok
+test camera_packets_bump_camera_gen ... ok
+test t1_unknown_opcode_bumps_all_gens ... ok
+test rebuild_bumps_all_gens ... ok
+test logout_method_bumps_all_gens ... ok
+test gens_defaults_to_zero ... ok
+test iface_packets_bump_iface_gen ... ok
+test world_packets_bump_world_gen ... ok
+test packet_to_family_mapping_is_exact ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.23s
+
+     Running tests/gpu_backend.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/gpu_backend-2cd6f03c8f702df0)
+
+running 10 tests
+test minimap_texture_is_172x156 ... ok
+test chrome_upload_skipped_when_only_minimap_moved ... ok
+test chrome_upload_runs_when_redraw_chat_set ... ok
+test draw_area_upload_carries_known_chrome_pixels ... ok
+test finish_returns_stable_present_texture_identity ... ok
+test freeze_keeps_last_minimap_after_punched_chrome ... ok
+test finish_does_not_clobber_the_last_presented_frame ... ok
+test gpu_backend_selected_when_adapter_available ... ok
+test chrome_composites_from_the_cpu_draw_area ... ok
+test composite_produces_one_full_frame_texture ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.80s
+
+     Running tests/gpu_depth.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/gpu_depth-05147f1329ac4281)
+
+running 3 tests
+test same_tile_west_wall_occludes_booth ... ok
+test sharelight_wall_run_cpu_vs_gpu ... ok
+test flush_booth_occluded_by_wall ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.51s
+
+     Running tests/gpu_inject.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/gpu_inject-fb81db770314efb6)
+
+running 1 test
+test injected_device_wins_over_self_init_and_later_injections ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/gpu_memory_profile.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/gpu_memory_profile-5308d5dee8fcf501)
+
+running 1 test
+test atlas_payload_growth_and_drop_are_counted_once ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/gpu_mesh.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/gpu_mesh-9656bd6867d11795)
+
+running 10 tests
+test loc_model_at_resolves_grounded_scenery_loc ... ok
+test hsl_to_rgb_matches_colour_table ... ok
+test set_nav_debug_paint_roundtrips_on_client ... ok
+test highmem_textured_quick_ground_samples_the_atlas ... ok
+test scene_mesh_builds_ground_and_wall_triangles ... ok
+test lowmem_textured_ground_face_shades_with_the_texture_average ... ok
+test lowmem_textured_quick_ground_shades_with_the_texture_average ... ok
+test gpu_loc_pick_is_per_face_not_aabb ... ok
+test textured_face_with_out_of_range_tex_id_still_emits ... ok
+test nav_debug_paint_does_not_enable_aabb_loc_pick ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.62s
+
+     Running tests/gpu_pipelines.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/gpu_pipelines-6dd2b51389e3af55)
+
+running 1 test
+test two_backends_share_one_shader_module_build ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/gpu_texture.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/gpu_texture-3382ed32987b543e)
+
+running 10 tests
+test gpu_vertex_stays_pod ... ok
+test textured_type3_face_carries_tex_id_and_uv ... ok
+test wall_face_crossing_the_near_plane_still_emits ... ok
+test textured_model_mesh_carries_tex_id_and_uv ... ok
+test gpu_render_clamps_out_of_range_tex_id ... ok
+test gpu_lowmem_texture_samples_the_full_128px_layer ... ok
+test gpu_gouraud_face_shades_like_the_colour_table ... ok
+test gpu_render_samples_multi_texture_model ... ok
+test composite_lands_the_scene_in_the_full_frame ... ok
+test gpu_textured_shade_scales_texel_brightness ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.14s
+
+     Running tests/graphics.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/graphics-ba82031f1216116b)
+
+running 38 tests
+test colour_constants_match_274 ... ok
+test java_random_known_sequence ... ok
+test java_random_next_int_bound ... ok
+test pix2d_fill_circle_opaque ... ok
+test pix2d_cls_clears_all ... ok
+test pix2d_fill_rect_honours_clipping ... ok
+test pix2d_fill_rect_trans_mixes_channels ... ok
+test pix2d_draw_rect_outlines_only ... ok
+test pix2d_hline_vline ... ok
+test pix32_plot_and_quick_plot ... ok
+test pix32_rotate_plot_sprite_identity ... ok
+test pix32_trans_plot_sprite_blends ... ok
+test pix32_trim_and_flip ... ok
+test pix32_scanline_plot_sprite_mask ... ok
+test pix3d_div_tables ... ok
+test pix32_depack_zero_palette_becomes_one ... ok
+test pix3d_sin_cos_tables_match_formula ... ok
+test pix8_flips ... ok
+test pix8_halve_size ... ok
+test pix8_scale_plot_sprite ... ok
+test pix8_trim_restores_original_size ... ok
+test pixfont_anti_macro_plot_trans_blends ... ok
+test pixfont_centre_and_right_string ... ok
+test pixfont_draw_string_plots_mask ... ok
+test pixfont_draw_string_tag_colour ... ok
+test pixfont_update_state_tags ... ok
+test pixmap_fill_rect ... ok
+test pix8_depack_and_plot_sprite ... ok
+test pix3d_draw_default_state ... ok
+test pix3d_flat_triangle_fills_pixmap ... ok
+test pix3d_flat_triangle_off_screen_writes_are_noops ... ok
+test pix3d_set_clipping_sets_origin_and_scanline_len ... ok
+test pixfont_depack_from_jag ... ok
+test pix3d_texture_pool_unpack_and_average ... ok
+test pix3d_gouraud_triangle_off_screen_writes_are_noops ... ok
+test pix3d_gouraud_triangle_constant_shade ... ok
+test pix3d_raster_marks_gpu_overlay_coverage ... ok
+test pix3d_colour_table_structure ... ok
+
+test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/headless.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/headless-5a8b86efc36c275f)
+
+running 1 test
+test headless_client_core_runs_sim_without_renderer ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/hud.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/hud-6f409a6f93b38214)
+
+running 86 tests
+test animate_interface_advances_model_frame ... ok
+test chat_enter_clears_input_and_echoes_without_player_name ... ok
+test close_modal_clears_resumed_pause_button ... ok
+test click_combat_tab_sets_active_icon_0 ... ok
+test add_chat_bumps_chat_seq_per_message ... ok
+test do_scrollbar_up_arrow_decreases_pos ... ok
+test chat_input_appends_prints_and_backspaces ... ok
+test add_chat_shifts_and_redraws ... ok
+test chat_input_public_sends_message_public ... ok
+test chat_input_command_sends_client_cheat ... ok
+test draw_chat_dialog_overlay_draws_header_and_input ... ok
+test draw_chat_modal_clears_stale_chat_lines ... ok
+test draw_chat_empty_history_does_not_panic ... ok
+test draw_scrollbar_fills_track ... ok
+test active_text_uses_text2 ... ok
+test draw_chat_social_overlay_draws_header_and_input ... ok
+test draw_chat_renders_type0_line_and_input ... ok
+test draw_icons_blinks_flashing_tab ... ok
+test draw_chat_uses_chat_modal_instead_of_lines ... ok
+test draw_chat_plots_cr2_crown_for_private ... ok
+test get_if_var_missing_scripts_is_none ... ok
+test get_if_var_out_of_range_script_id_is_none ... ok
+test get_if_var_pushvar ... ok
+test draw_graphic_writes_pixels ... ok
+test get_if_var_stat_effective ... ok
+test hidden_layer_draws_when_hovered ... ok
+test hover_walk_steps_scrollable_layer_scrollbar ... ok
+test draw_icons_flash_sends_tut_clickside_and_clears ... ok
+test icon_state_defaults ... ok
+test hovered_rect_uses_colour_over ... ok
+test if_anim_reset_zeros_nested_layer_child ... ok
+test if_close_also_clears_main_modal ... ok
+test draw_chat_plots_cr1_crown ... ok
+test draw_interface_substitutes_percent1 ... ok
+test draw_interface_inv_text_writes_obj_name ... ok
+test draw_interface_text_writes_pixels ... ok
+test draw_side_text_component_writes_pixels ... ok
+test if_close_clears_side_and_chat_modals ... ok
+test if_openmain_sets_main_and_closes_side_chat ... ok
+test if_openchat_sets_chat_and_closes_side ... ok
+test if_openmain_side_sets_both ... ok
+test if_openoverlay_g2b_negative_clears ... ok
+test game_draw_redraws_side_and_chat_when_modal_anims ... ok
+test if_openoverlay_g2b_positive_sets ... ok
+test game_draw_chat_scrollbar_up_arrow_steps_scroll_pos ... ok
+test iftype_unpack_keeps_inv_background_names ... ok
+test if_openside_sets_side_modal_id ... ok
+test if_openside_clears_main_modal ... ok
+test if_seticon_65535_clears_slot ... ok
+test if_seticon_out_of_range_icon_is_ignored ... ok
+test if_seticon_writes_side_icon_slot ... ok
+test if_showicon_sets_active_icon ... ok
+test inv_number_formats_k_and_m ... ok
+test main_modal_click_sends_if_button ... ok
+test message_game_duelreq_is_type_8 ... ok
+test obj_drag_quick_release_fires_last_entry_same_slot_drop_does_not ... ok
+test message_game_plain_is_type_0 ... ok
+test message_game_tradereq_is_type_4 ... ok
+test nice_number_groups_and_colours ... ok
+test mouse_loop_skips_walk_when_main_modal_open ... ok
+test obj_drag_release_sends_inv_buttond ... ok
+test side_click_layer_recurse_with_scrolled_child ... ok
+test side_click_ok_button_writes_if_button ... ok
+test swap_slots_exchanges_type_and_count ... ok
+test side_click_close_button_sends_close_modal ... ok
+test iftype_keeps_graphic_name ... ok
+test side_click_requires_left_button_in_panel ... ok
+test prepare_game_depacks_mod_icons ... ok
+test resumed_pause_button_text_is_please_wait ... ok
+test side_click_select_sets_var_when_different ... ok
+test side_click_toggle_without_script_keeps_var ... ok
+test side_click_skips_non_button_first_child ... ok
+test side_click_uses_side_modal_when_open ... ok
+test side_click_toggle_applies_varp_clientcode ... ok
+test side_click_toggle_flips_var_and_redraws ... ok
+test side_click_real_logout_text_sends_if_button ... ok
+test tut_flash_bounces_active_icon_when_same ... ok
+test tut_open_sets_tut_com_id ... ok
+test update_if_pointer_sets_over_chat_and_redraws_chat ... ok
+test type_inv_hover_sets_hovered_slot_on_empty_slot ... ok
+test update_if_pointer_resets_over_side_when_pointer_leaves ... ok
+test sideicons_load_from_media ... ok
+test update_if_pointer_sets_over_main ... ok
+test update_if_pointer_sets_over_side_and_redraws ... ok
+test draw_reboot_timer_overlay_draws_system_update ... ok
+test draw_private_messages_plots_cr1_crown ... ok
+
+test result: ok. 86 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.15s
+
+     Running tests/iface_model.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/iface_model-1862464ccd22e007)
+
+running 9 tests
+test npc_get_head_queues_every_missing_head_id ... ok
+test obj_get_model_unlit_none_without_model ... ok
+test npc_get_head_none_without_head_ids ... ok
+test draw_interface_type_model_missing_does_not_panic ... ok
+test travel_modals_are_full_scene_layers ... ok
+test gpu_main_modal_rect_is_opaque_over_the_scene ... ok
+test gpu_ship_journey_stays_over_a_frozen_scene ... ok
+test gpu_ship_journey_paints_the_title_over_the_scene ... ok
+test gpu_draw_does_not_crash_on_mysterious_cube_modal ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.89s
+
+     Running tests/ingame.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/ingame-c50713fcee98bc23)
+
+running 18 tests
+test follow_camera_chases_while_the_scene_is_loading ... ok
+test roof_check2_high_cam_is_3 ... ok
+test minimap_build_buffer_writes_pixels ... ok
+test roof_check2_under_roof_and_low_cam_is_minusedlevel ... ok
+test follow_camera_pitch_clamp_lifts_link_below_neighbors ... ok
+test roof_check_ray_hits_remove_roof_between_cam_and_player ... ok
+test roof_check_returns_3_outdoors ... ok
+test roof_check_returns_minusedlevel_when_player_tile_has_remove_roof ... ok
+test minimap_draw_without_media_does_not_panic ... ok
+test follow_camera_moves_eye_above_local_player ... ok
+test game_draw_headless_does_not_panic ... ok
+test get_av_h_link_below_reads_level_above ... ok
+test production_init_wires_textures_and_pool ... ok
+test game_draw_main_writes_viewport_pixels ... ok
+test game_draw_renders_scene_without_manual_pix3d_init ... ok
+test minimap_is_under_chrome_not_a_black_square_on_top ... ok
+test first_headed_paint_builds_minimap_from_unheaded_stamps ... ok
+test pix3d_low_mem_follows_config ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+
+     Running tests/inject.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/inject-ab6dfccf7d3fb986)
+
+running 7 tests
+test empty_snapshot_file_is_an_error ... ok
+test loads_fake_snapshot_into_stores ... ok
+test anim_init_does_not_drop_unpacked_frames ... ok
+test missing_snapshot_dir_is_an_error ... ok
+test model_init_does_not_drop_unpacked_meta ... ok
+test real_cache_round_trip ... ok
+test unpack_grows_the_frame_table_to_fit_the_frame_id ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.65s
+
+     Running tests/input.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/input-6a34527b9905bb13)
+
+running 16 tests
+test key_codes_arrows_enter_backspace_space ... ok
+test key_codes_letters_and_digits ... ok
+test enter_lookup_from_cr_and_named ... ok
+test key_codes_tab_and_debug_punctuation ... ok
+test defaults_match_java_fields ... ok
+test key_held_guards_ch_range ... ok
+test key_down_sets_held_and_queues ... ok
+test key_queue_wraps_at_128 ... ok
+test key_up_clears_held_without_queueing ... ok
+test left_down_sets_click ... ok
+test latch_click_clears_pending_button ... ok
+test mouse_move_updates_position_only ... ok
+test mouse_up_releases_button ... ok
+test right_down_uses_java_button_2 ... ok
+test chat_accepts_colon_then_tilde_in_cheat ... ok
+test title_tab_moves_between_username_and_password ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/isaac.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/isaac-9a2d09c5fab6661c)
+
+running 1 test
+test isaac_seed_1_2_3_4_first_eight ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/jagfile.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/jagfile-691266ef1ae7d6e4)
+
+running 2 tests
+test gen_hash_matches_java ... ok
+test reads_unpacked_jag_from_engine_pack ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/leftover.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/leftover-6924b54fc6b24147)
+
+running 50 tests
+test colour_table_slot_is_per_thread ... ok
+test clientcode_1_rebuilds_colour_table ... ok
+test cold_login_reset_empty_table_leaves_parts_minus_one ... ok
+test cam_moveto_rate2_over_100_jumps_camera ... ok
+test cam_reset_clears_cinema ... ok
+test cinema_camera_eases_toward_move_target ... ok
+test cam_lookat_rate2_under_100_does_not_aim ... ok
+test cam_lookat_rate2_over_100_aims_immediately ... ok
+test cam_shake_marks_axis_and_fields ... ok
+test cold_login_reset_revalidates_design ... ok
+test design_accept_encodes_idk_savedesign ... ok
+test cross_tick_clears_after_400 ... ok
+test cc_logout_still_returns_true ... ok
+test design_colour_cycle_wraps_hair_table ... ok
+test clientcode_options_panel_fields ... ok
+test design_kit_cycle_wraps_and_respects_gender ... ok
+test design_preview_sets_rotation_and_caches_temp_model ... ok
+test dialog_digits_capped_at_10 ... ok
+test design_switch_male_female_toggles ... ok
+test game_loop_holds_reboot_timer_at_one ... ok
+test game_loop_ticks_reboot_timer_down ... ok
+test dialog_keys_append_digits_and_backspace ... ok
+test dispatch_cam_reset_resets_ptype ... ok
+test dialog_enter_sends_resume_p_countdialog ... ok
+test design_switch_buttons_swap_graphic_names ... ok
+test dialog_letters_are_ignored ... ok
+test game_loop_ticks_shake_cycles_and_runs_cinema ... ok
+test game_loop_without_cinema_skips_cinema_camera ... ok
+test hint_arrow_type_10_reads_player ... ok
+test hint_arrow_type_1_reads_npc ... ok
+test hint_arrow_type_2_to_6_reads_tile ... ok
+test minimap_toggle_reads_state ... ok
+test pm_options_shift_below_reboot_line ... ok
+test reboot_timer_scales_by_30 ... ok
+test p_countdialog_opens_amount ... ok
+test runweight_reaches_stats_tab_script ... ok
+test set_multiway_reads_zone ... ok
+test shake_yaw_wraps_11_bit ... ok
+test shake_pitch_clamps_to_128_and_383 ... ok
+test shake_jitter_follows_seeded_random ... ok
+test shake_zero_jitter_leaves_eye_unchanged ... ok
+test update_runweight_other_tab_does_not_redraw ... ok
+test update_runweight_sets_value_and_redraws_stats_tab ... ok
+test walk_consume_sets_cross_mode_1 ... ok
+test scene_loading_splash_keeps_last_frame ... ok
+test add_players_keeps_minimap_flag_when_not_arrived ... ok
+test cross_plot_mode1_into_area_game ... ok
+test cross_plot_mode2_uses_second_half ... ok
+test add_players_clears_minimap_flag_on_arrival ... ok
+test prepare_game_loads_cross_sprites ... ok
+
+test result: ok. 50 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.02s
+
+     Running tests/login.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/login-0aeb4bb4de47a570)
+
+running 10 tests
+test to_userhash_matches_client_ts ... ok
+test lowmem_login_writes_info_byte_one ... ok
+test cold_login_clears_entity_tables ... ok
+test failed_login_can_be_retried_on_the_same_client ... ok
+test login_code_6_is_error ... ok
+test already_logged_in_leaves_title_ready_to_retry ... ok
+test cold_login_opcode_16_success ... ok
+test reconnect_uses_opcode_18 ... ok
+test reconnect_response_15_keeps_game_and_local_player ... ok
+test cold_login_response_2_resets_tab_chat_and_rebuilds_frame ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+     Running tests/login_rsa.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/login_rsa-94416732bde6a4e6)
+
+running 2 tests
+test java_and_prod_pairs_are_distinct_decimal ... ok
+test garbage_login_rsan_falls_back_to_java_defaults ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/login_uid.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/login_uid-fd4607390edea9db)
+
+running 3 tests
+test login_uid_is_present_in_login_wrapper_bytes ... ok
+test concurrent_clients_get_distinct_login_uids ... ok
+test two_clients_get_distinct_login_uids ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+     Running tests/logout.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/logout-bc2e0c9f68a1ef72)
+
+running 7 tests
+test cc_logout_arms_logout_timer ... ok
+test cc_logout_hook_ignores_non_ok_buttons ... ok
+test cc_add_friend_opens_social_input_without_if_button ... ok
+test cc_add_ignore_opens_social_input_without_friend_server ... ok
+test logout_then_title_draw_reallocates_regions ... ok
+test logout_restores_title_frame ... ok
+test title_draw_drops_game_areas_so_relogin_rebuilds ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+     Running tests/lost_con.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/lost_con-828647998ec7d282)
+
+running 4 tests
+test lost_con_with_pending_logout_logs_out_without_reconnecting ... ok
+test silence_watchdog_calls_lost_con_after_wall_clock_silence ... ok
+test lost_con_uses_reconnect_login ... ok
+test silence_watchdog_reconnects_with_response_15 ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.62s
+
+     Running tests/maininit.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/maininit-dc83c644ccd2a2fa)
+
+running 14 tests
+test get_jag_file_crc_hit_skips_http ... ok
+test get_jag_file_http_persists ... ok
+test maininit_with_progress_notifies_callback_at_each_progress_point ... ok
+test maininit_is_oneshot_and_sets_progress_100_on_crc_hit ... ok
+test maininit_clears_error_loading_from_new_unpack ... ok
+test maininit_retries_jag_get_after_crc_mismatch ... ok
+test maininit_empty_cache_fetches_all_eight_jags_over_http ... ok
+test draw_progress_headless_sets_fields_without_touching_pixels ... ok
+test draw_progress_headed_paints_stage_text_once_title_jag_exists ... ok
+test draw_progress_headed_paints_red_bar ... ok
+test draw_progress_headed_paints_torch_columns ... ok
+test crc_unreachable_sets_error_loading_in_bounded_time ... ok
+test crc_retry_countdown_reports_java_messages ... ok
+test crc_retry_pumps_present_target ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s
+
+     Running tests/midi.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/midi-6329e5bc50a39961)
+
+running 14 tests
+test null_midi_swallows_play ... ok
+test rusty::new_does_not_load_soundfont ... ok
+test jagfx_fixture_matches_ts_reference ... ok
+test jagfx_init_and_generate_from_engine_sounds ... ok
+test rusty::no_font_stays_silent ... ok
+test clientcode3_volume_ladder ... ok
+test save_and_stop_midi_feed_the_backend ... ok
+test logout_stops_midi_and_resets_song_state ... ok
+test client_new_unpacks_sounds_jag ... ok
+test clientcode3_mute_stops_and_unmute_requests_next_song ... ok
+test game_loop_drains_synth_sound_queue ... ok
+test synth_sound_queue_pushes_pcm_not_drops ... ok
+test rusty::scape_main_render_stays_below_i16_rail ... ok
+test synth_sound_queue_drains_through_jagfx ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+     Running tests/minimenu.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/minimenu-126643b44b48039a)
+
+running 27 tests
+test build_minimenu_starts_with_cancel ... ok
+test empty_ok_button_still_fires_if_button ... ok
+test add_npc_options_and_add_player_options_callable_directly ... ok
+test add_world_options_loc_examine_from_pick ... ok
+test build_minimenu_sorts_1000_plus_below_actions ... ok
+test inv_slot_adds_drop_and_examine ... ok
+test add_world_options_skips_duplicate_typecodes ... ok
+test chat_region_adds_report_abuse_for_staff ... ok
+test add_world_options_npc_ops_from_pick ... ok
+test add_world_options_player_ops_from_pick ... ok
+test inv_slot_use_and_target_replace_ops ... ok
+test inv_slot_obj_iop_and_component_iop_options ... ok
+test build_minimenu_returns_while_obj_drag_active ... ok
+test add_world_options_walk_when_idle ... ok
+test add_world_options_obj_take_and_examine_from_pick ... ok
+test left_click_add_friend_last_entry_opens_menu ... ok
+test left_click_fires_last_entry_walk ... ok
+test non_inv_buttons_push_button_actions ... ok
+test left_click_on_open_menu_row_fires_option_and_closes ... ok
+test open_menu_clamps_viewport_menu_inside_512x334 ... ok
+test open_menu_in_chat_sets_area_2 ... ok
+test chat_line_adds_friend_and_ignore_for_friend ... ok
+test open_menu_in_side_sets_area_1 ... ok
+test open_menu_in_viewport_sets_area_0_and_geometry ... ok
+test paused_and_targeting_suppress_continue_and_target_buttons ... ok
+test right_click_viewport_opens_menu ... ok
+test social_component_ok_override_pushes_remove_and_message ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+     Running tests/model.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/model-523924995c4aac26)
+
+running 11 tests
+test mouse_check_defaults_false_and_picked_count_starts_zero ... ok
+test world_render_with_aabb_mouse_check_picks_without_triangle_test ... ok
+test world_render_with_mouse_check_picks_the_face_in_front_of_camera ... ok
+test obj_render_vertex_on_camera_plane_does_not_panic ... ok
+test world_render_priority_model_draws_via_merge_buckets ... ok
+test world_render_miss_leaves_pick_unchanged ... ok
+test world_render_skips_models_with_missing_points ... ok
+test world_render_off_screen_model_is_skipped ... ok
+test world_render_skips_faces_with_missing_colours ... ok
+test world_render_wide_winding_cross_does_not_overflow ... ok
+test depth_bucket_overflow_does_not_spill_into_next_row ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/music.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/music-8f1c37ed386e5bf4)
+
+running 13 tests
+test fade_out_reaches_floor_then_signals_swap ... ok
+test set_target_vol_jumps_when_not_fading ... ok
+test jingle_plays_immediately_even_while_song_plays ... ok
+test first_song_plays_immediately ... ok
+test failed_zone_swap_consumes_pending_but_keeps_fade_at_floor ... ok
+test successful_swap_restores_gain ... ok
+test failed_immediate_play_keeps_state ... ok
+test music_delay_zero_does_not_requeue_when_midi_inactive ... ok
+test zone_song_change_holds_pending_until_swap ... ok
+test zone_song_plays_immediately_after_backend_eof ... ok
+test music_delay_counts_down_and_requests_next_song ... ok
+test music_tick_swaps_pending_after_fade_out ... ok
+test stop_midi_drops_pending ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+     Running tests/ondemand.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/ondemand-3e8d4da27d2556de)
+
+running 16 tests
+test different_files_both_queue ... ok
+test request_increments_remaining ... ok
+test duplicate_request_is_deduplicated ... ok
+test bar_urgent_models_are_in_use_bit_only ... ok
+test two_handles_share_one_worker_on_the_same_port ... ok
+test hub_ingame_is_or_of_live_handles ... ok
+test provider_model_request_completes_without_ondemand_request ... ok
+test worker_downloads_and_gunzips_from_ondemand_socket ... ok
+test prefetch_cache_hit_posts_extra_model_for_unpack ... ok
+test sibling_does_not_complete_a_file_it_did_not_request ... ok
+test prefetched_archive0_model_posts_to_completed ... ok
+test worker_reopens_socket_immediately_after_drop_socket ... ok
+test drop_socket_on_one_handle_does_not_kill_the_hub ... ok
+test unpack_models_from_cache_makes_a_random_event_model_loadable ... ok
+test two_handles_dedupe_the_same_request_on_the_wire ... ok
+test request_all_models_requests_every_model ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 30.04s
+
+     Running tests/overlays.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/overlays-41082474166c3604)
+
+running 6 tests
+test get_overlay_pos_projects_in_front_of_camera ... ok
+test get_overlay_pos_out_of_range_is_neg1 ... ok
+test prepare_game_depacks_headicons ... ok
+test entity_overlays_collects_chat_bubble ... ok
+test entity_overlays_plots_prayer_headicon ... ok
+test add_players_stamps_model_min_y_on_live_player ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.70s
+
+     Running tests/packet.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/packet-aabc31d625d601a6)
+
+running 6 tests
+test crc32_matches_client_ts ... ok
+test p1_p2_p4_big_endian_layout ... ok
+test p1_enc_xors_isaac ... ok
+test g_roundtrip_signed_and_smart ... ok
+test pjstr_newline_terminated ... ok
+test rsaenc_java_key_hi_1337 ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/player_info.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/player_info-824bb906a3acf65b)
+
+running 2 tests
+test player_info_cached_appearance_reapplied_after_remove_reentry ... ok
+test player_info_appearance_lands_on_local_player ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/present_pack.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/present_pack-a5db5d715b911f58)
+
+running 2 tests
+test pack_low24 ... ok
+test present_target_enum_dispatch ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/prot.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/prot-49a3dc752b9c1545)
+
+running 2 tests
+test server_opcodes_and_size_table ... ok
+test client_opcodes_and_lengths ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rebuild.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/rebuild-e8e2fb0d1da48be2)
+
+running 12 tests
+test rebuild_normal_sets_base ... ok
+test rebuild_normal_same_zone_scene_2_is_ignored ... ok
+test rebuild_normal_paints_loading_splash_when_draw ... ok
+test load_ground_opcode_zero_uses_perlin_terrain ... ok
+test rebuild_normal_shifts_local_player ... ok
+test load_ground_opcode_one_sets_explicit_height ... ok
+test load_ground_writes_client_mapl_flags ... ok
+test check_scene_ready_sets_state_2_and_map_build_complete ... ok
+test game_loop_builds_scene_headless_with_draw_off ... ok
+test world_groundh_matches_client_after_load_ground ... ok
+test lowmem_level_change_rebuilds_from_parked_map_bytes ... ok
+test tcp_in_rebuild_normal_over_socket ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+     Running tests/render_backend.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/render_backend-c7e1eb05572ead9d)
+
+running 5 tests
+test stage_panic_reinstalls_backend ... ok
+test texture_backend_surfaces_owned_texture ... ok
+test renderer_backend_selection ... ok
+test cpu_backend_returns_owned_pixmap_frame ... ok
+test gpu_init_failure_falls_back_to_cpu ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+     Running tests/render_media.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/render_media-0476f84e2653397e)
+
+running 2 tests
+test renderers_share_one_media_arc ... ok
+test renderers_that_drew_share_the_depacked_media_arc ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+     Running tests/run_loop.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/run_loop-dca730c1a488f0ef)
+
+running 1 test
+test run_stops_when_state_negative ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/seq_delay.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/seq_delay-892893770429aa7f)
+
+running 1 test
+test delay_lookup_preserves_fallbacks_and_publication_without_allocating ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/server_packets.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/server_packets-915092c8715936a9)
+
+running 19 tests
+test logout_resets_ptype ... ok
+test logout_clears_the_tutorial_overlay ... ok
+test reset_anims_clears_primary_anims ... ok
+test npc_info_empty_list_is_ok ... ok
+test midi_song_65535_is_no_song ... ok
+test logout_clears_ingame ... ok
+test update_stat_sets_xp_and_levels ... ok
+test unset_map_flag_clears_flag ... ok
+test enclosed_loc_add_change_does_not_panic ... ok
+test midi_jingle_sets_song_and_delay ... ok
+test truncated_player_info_is_t2_not_panic ... ok
+test midi_song_sets_next ... ok
+test update_runenergy_sets_energy ... ok
+test player_info_teleports_local_player ... ok
+test varp_large_writes_var ... ok
+test varp_small_writes_var ... ok
+test varp_small_value_is_signed ... ok
+test varp_sync_copies_served_vars ... ok
+test unknown_ptype_logs_out ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+     Running tests/social.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/social-a00d1e9ba90b05b6)
+
+running 23 tests
+test player_chat_mask_skips_payload_when_disabled ... ok
+test player_chat_mask_unpacks_and_adds_chat ... ok
+test del_friend_removes_and_encodes ... ok
+test apply_clientcode_8_sets_split_private_chat ... ok
+test to_sentence_case_after_punct ... ok
+test public_send_stamps_local_bubble_and_hides_when_off ... ok
+test client_component_fills_friend_name ... ok
+test add_friend_encodes_p8 ... ok
+test do_action_message_private_opens_social_input ... ok
+test message_game_trade_skips_ignored ... ok
+test message_public_packs_hello ... ok
+test client_component_update_range_writes_world_text ... ok
+test public_send_without_name_skips_bubble ... ok
+test do_action_ignorelist_del_calls_del_ignore ... ok
+test social_enter_add_friend_encodes ... ok
+test game_loop_runs_timeout_chat ... ok
+test message_private_unpacks_and_adds_chat ... ok
+test timeout_chat_expires_tracked_player_and_npc ... ok
+test timeout_chat_expires_local_bubble_on_the_150th_tick ... ok
+test update_friendlist_adds_and_login_chat ... ok
+test update_friendlist_existing_world_0_to_10_chats_login ... ok
+test social_enter_pm_sends_message_private ... ok
+test update_ignorelist_fills_userhashes ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+     Running tests/title.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/title-a5f87a90f240f43e)
+
+running 8 tests
+test title_loads_engine_soundfont ... ok
+test from_jpeg_decodes_title_dat ... ok
+test title_requests_scape_main ... ok
+test title_draw_writes_pixels ... ok
+test prepare_title_does_not_request_scape_main ... ok
+test title_background_fills_left_strip ... ok
+test title_flames_tick_mutates_left_strip ... ok
+test gpu_title_flames_tick_left_strip ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running tests/unpack_cache.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/unpack_cache-a9d3c9339a281dee)
+
+running 3 tests
+test maze_wall_texture_ids_in_range_and_loaded ... ok
+test unpacks_versioned_snapshot ... ok
+test cpu_renders_maze_wall_and_textured_door ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.13s
+
+     Running tests/walk.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/walk-ba87869ba69027b2)
+
+running 6 tests
+test minimap_loop_outside_rect_is_ignored ... ok
+test mouse_loop_viewport_click_arms_picking ... ok
+test minimap_loop_type1_in_rect ... ok
+test walk_here_uses_picking_not_tiles_as_params ... ok
+test mouse_loop_chrome_click_does_not_walk ... ok
+test game_loop_consumes_ground_pick_into_move_gameclick ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running tests/wordfilter.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/wordfilter-b8fd2c0c21e2714f)
+
+running 2 tests
+test filter_without_unpack_is_identity ... ok
+test unpack_wordenc_and_whitelist_cook ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/wordpack.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/wordpack-435b240119ad2a9d)
+
+running 4 tests
+test wordpack_bytes_match_ts_oracle ... ok
+test wordpack_roundtrip_hello ... ok
+test wordpack_exact_80_roundtrip ... ok
+test wordpack_truncates_to_80 ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/world.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/world-402a814830f6d5fc)
+
+running 26 tests
+test overlay_edge_ground_keeps_dirt_and_grass_face_colours ... ok
+test share_light_does_not_delete_adjacent_south_walls ... ok
+test render_2d_ground_plain_quick_fills_4x4 ... ok
+test share_light_empty_world_is_noop ... ok
+test share_light_lights_ground_decor ... ok
+test share_light_lights_scenery_sprites ... ok
+test share_light_lights_wall_models_and_consumes_normals ... ok
+test render_all_renders_scenery_sprites ... ok
+test render_all_writes_pixels_and_picks_ground_tile ... ok
+test render_all_non_flat_diagonal_quick_ground_uses_own_corners ... ok
+test update_mouse_picking_sets_click_and_clears_ground ... ok
+test core_world_has_typecodes_without_renderer ... ok
+test near_camera_facing_south_wall_still_covers ... ok
+test south_wall_not_swallowed_by_its_own_occluder ... ok
+test camera_facing_box_survives_full_vis_window ... ok
+test reset_vis_calc_marks_near_tiles_visible ... ok
+test render_all_lights_pending_sharelight_scene_sprites ... ok
+test render_all_lights_animated_sharelight_loc_frames ... ok
+test eight_tile_south_occluder_does_not_eat_outside_walls ... ok
+test painted_house_wall_covers_from_outside_after_share_light ... ok
+test fountain_facing_side_survives_dense_neighbours ... ok
+test varrock_fountain_facing_side_covers ... ok
+test south_wall_covers_when_camera_is_southeast ... ok
+test interior_scenery_does_not_eat_south_wall_from_outside ... ok
+test south_facing_wall_covers_pixels_from_outside ... ok
+test camera_facing_box_faces_draw_as_2x2_scenery ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.62s
+
+     Running tests/zone.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/zone-f7ece113d8efd23e)
+
+running 45 tests
+test client_obj_roundtrips_in_link_list ... ok
+test client_proj_set_target_places_startpos_along_delta ... ok
+test check_model_none_is_ready ... ok
+test client_proj_move_by_uses_bound_seq_delays ... ok
+test change_loc_available_remaps_shape_11_to_10 ... ok
+test client_proj_bind_seq_resolves_zero_delays_via_animframe_fallback ... ok
+test get_wall_mut_none_on_empty_tile ... ok
+test change_loc_unchecked_wall_straight_with_anim_sets_wall ... ok
+test loc_change_defaults_end_time_minus_one ... ok
+test loc_anim_out_of_range_shape_does_not_panic ... ok
+test loc_anim_missing_wall_is_noop ... ok
+test loc_anim_wall_door_animates_both_models ... ok
+test loc_del_removes_wall ... ok
+test map_spot_anim_start_cycle_is_cycle_plus_delay ... ok
+test loc_add_change_waits_when_model_not_ready ... ok
+test loc_add_change_out_of_range_shape_does_not_panic ... ok
+test loc_del_wall_decor_uses_tile_xz_not_swapped ... ok
+test logout_clears_zone_lists ... ok
+test loc_add_change_applies_on_do_queue ... ok
+test loc_anim_replaces_wall_model1 ... ok
+test loc_anim_ground_decor_model ... ok
+test loc_anim_scene_remaps_shape_11_to_10 ... ok
+test loc_anim_wall_decor_uses_tile_xz ... ok
+test full_follows_clears_8x8_ground_obj_and_expires_locs ... ok
+test loc_anim_door_packet_overrides_non_door_placement ... ok
+test rotate_x_axis_90_swaps_y_and_z ... ok
+test map_projanim_out_of_range_dest_is_dropped ... ok
+test scene_model_proj_min_y_defaults_1000 ... ok
+test world_dynamic_count_starts_zero ... ok
+test obj_add_headless_still_sets_world ... ok
+test obj_add_sets_ground_object ... ok
+test obj_count_rewrites_matching_stack ... ok
+test obj_del_clears_empty_cell ... ok
+test obj_reveal_adds_for_other_pid ... ok
+test obj_reveal_skips_self_slot ... ok
+test p_locmerge_consumes_and_noops_without_model ... ok
+test rebuild_normal_zero_delta_preserves_ground_obj ... ok
+test world_update_num_increments_when_draw_then_zeros_headless ... ok
+test p_locmerge_no_player_stops_before_apply ... ok
+test rebuild_normal_shifts_ground_obj_by_base_delta ... ok
+test update_pid_sets_self_slot_and_members ... ok
+test rebuild_normal_negative_dx_shifts_descending ... ok
+test map_anim_pushes_and_add_map_anim_places_dynamic ... ok
+test map_projanim_negative_target_retargets_to_local_player ... ok
+test map_projanim_pushes_and_add_projectiles_places_dynamic ... ok
+
+test result: ok. 45 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.77s
+
+     Running unittests src/main.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/client/debug/deps/client_play-85d99eb1f15d3efe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests client
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
