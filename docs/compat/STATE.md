@@ -17,19 +17,30 @@ server, cache and navigation identities remain immutable per process.
 
 ## Current milestone
 
-Steps 1–3 are accepted on macOS within their stated scope. Step 3 binds the
-immutable profile through host, panel and TUI, with completed actual Grok 4.5
-task reviews and Grok 4.6 integration approval. Native panel selection/binding
-and local 274 scene-2 login passed; the real macOS TUI PTY also reached scene 2
-and exited 0. Both final 274/289 asset constructors initialized successfully.
-Host product: `41d896b3007e476c76a9c01352b64d5afd5ed901`; current client pin:
-`2be1697060e4d2b8b709ad4d5e54d12513b38333` (product `c8e61557`).
+Steps 1–4 are accepted on macOS within their stated scope. Step 4 source passed
+actual Grok 4.5 task review and Grok 4.6 integration review. Controlled local
+274 and 289 both passed on identical frozen host `4f43800a` / client `6cb5a0b1`:
+courtyard walking, natural Hans dialogue, exterior door change and actual IF
+logout/reset. Read `02-host-boundary.md`; all failed attempts remain recorded.
 
-The complete campaign is not accepted: step-4 host action/snapshot qualification,
-289 navigation, catalog options, frontend/fleet and Linux/Windows checks remain.
-Production 289 bot operations still refuse before mutations. Historical platform
-failures have not been freshly reproduced. No workers remain active for step 3.
-Read `01-session-profile.md` and its native evidence receipt for acceptance.
+Step 5 world source is reviewed at `80720784` (actual Grok 4.5 run 1116).
+Both fresh packs and cache/nav manifests were produced and negative mismatch
+checks passed. `03-world-capabilities.md` records the source/cache audit.
+Navigation, bank return and guardian live proof remain open. The temporary
+289 ordinary-operation qualification gate remains pending these world checks.
+
+The first banking family is in progress on card `t_e52e0a03` (Sol run 1113),
+covering fresh packet-backed bank state, Withdraw-X and named access. Client
+and host WIP belong to that worker. Root retains the gitlink and live harness.
+Local 289 fixture addition `t_b237feb4` uses Luna and same-card review; root
+alone restarts its owned engine after review. Provisioning/recovery design
+`t_23695d9d` uses Grok 4.6 and is source-only.
+
+Script loading/starting stays revision agnostic as clarified above. All 180
+catalog/revision proof rows and remaining steps 5–9 still require completion.
+Windows, Hyper-V Linux and Concord isolated 289 fixture setup/build preflight
+passed, but no platform gameplay/frontend acceptance is claimed. Concord is
+TUI only. No main integration, push, release tag or package publication occurred.
 
 ## Accepted step-2 snapshot
 
@@ -146,8 +157,8 @@ legality must follow named packets, since ids 51/224 have valid R289 meanings.
 Outbound card `t_b22abf57` is accepted at `e946c2f9` after actual Grok 4.5 review
 (run 1102, session `20260910_135900_8cf8e7`), including 173 passing API tests.
 Root's narrow live harness `2f1d9709` passed same-card Grok 4.5 source review
-on `t_079d478d` (run 1101, session `20260910_135359_681e61`). Live proof has not
-run. Ordinary 289 slots/guardians remain gated for step 5.
+on `t_079d478d` (run 1101, session `20260910_135359_681e61`). The accepted step-4 live proof is recorded above. Ordinary 289 slots/guardians
+remain gated pending step-5 world checks.
 
 Snapshot/reset card `t_0be9adbf` is in actual Grok 4.5 review of host
 `15b706f67b3cef58f61fe874a512a7de3149b9fc` and client

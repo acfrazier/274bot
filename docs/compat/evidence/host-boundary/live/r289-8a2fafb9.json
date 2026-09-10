@@ -1,0 +1,22 @@
+{
+  "command": [
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/host-boundary-live/revision-boundary-8a2fafb9",
+    "--ignored",
+    "--nocapture"
+  ],
+  "environment": {
+    "LIVE": "1",
+    "BOUNDARY_REVISION": "289",
+    "BOUNDARY_ENGINE_DIR": "/Users/acfrazier/experiments/lostcity-289/engine"
+  },
+  "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision",
+  "started_at": "2026-09-10T19:50:27.811896+00:00",
+  "finished_at": "2026-09-10T19:51:33.882344+00:00",
+  "elapsed_seconds": 66.07,
+  "exit_code": 1,
+  "binary_sha256": "31d380f42de6f4bfaed85d7862734e98df0c3ff02f9cb59ad4ed511c0aa94ed3",
+  "host_commit": "8a2fafb9f3fadccce7e1f22bf02fee668e769bb3",
+  "client_commit": "6cb5a0b17aeef74da6b57b205e916681daee4f76",
+  "log_sha256": "929e3e14c34933eef4ea9733c92891c14b16345d4171c054d88844c587532234",
+  "fixture_preparation_is_not_action_proof": true
+}

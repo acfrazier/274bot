@@ -1,0 +1,15 @@
+{
+  "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/host-boundary-live/revision-boundary-490f7438",
+  "sha256": "e5188c76eeba6511f77fb7866f4e85057f85c51e15aa284f93453bb36adcfedf",
+  "bytes": 47656328,
+  "host": "490f7438d6cf8f0465b23408a2ceeb1ad02b4a7e",
+  "client": "6cb5a0b17aeef74da6b57b205e916681daee4f76",
+  "source": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/host-boundary-live/source-490f7438-6cb5a0b",
+  "verified_source_files": 481,
+  "cargo_build_finished": [
+    {
+      "reason": "build-finished",
+      "success": true
+    }
+  ]
+}

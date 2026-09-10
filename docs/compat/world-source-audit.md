@@ -26,7 +26,8 @@ needed. The current selected-cache fingerprints remain the pairing authority.
 The existing v8 navigation format already carries collision, transports and
 bank stands. `host-play::NavManifest` binds a pack and optional flags to the
 revision and cache hash while allowing the existing unmanifested 274 path.
-The bake CLI does not yet emit that manifest or accept a revision selection.
+The reviewed step-5 change in `03-world-capabilities.md` now makes the bake CLI
+emit that shared manifest and accept an explicit revision selection.
 Its 274 default config path is `engine/data/pack/config`; the 289 fixture has
 the selected archive at `engine/data/pack/client/config`. A 289 bake must use
 its own pinned content tree, not only change the output filename. Preserve the
