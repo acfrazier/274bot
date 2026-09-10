@@ -333,7 +333,7 @@ fn run_guardian(template: Arc<SharedClientTemplate>, profile: Arc<host_play::Ser
     let mut pump = Pump::new();
     prepare_mainland(&mut client, &mut snapshot, &mut pump, &name);
     assert!(
-        interact::cheat(&mut client, "give lamp"),
+        interact::cheat(&mut client, "give macro_genilamp"),
         "local give command refused"
     );
     wait_for(
