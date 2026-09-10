@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-10 22:30 UTC. The full implementation plan remains authorized:
+Updated 2026-09-10 22:53 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -71,8 +71,9 @@ Catalog and frontend acceptance remain separate.
   its original first-burial PASS is insufficient. 05a-catalog-live-harness.md.
 - t_887b29b5 frontend session source 5eeff8f0/c9521d2f completed actual Grok
   4.5 review 1135; six targeted lifecycle tests and host tests pass.
-- t_dde220ef Grok 4.6 integration review waits for matching/fill and bank
-  routing; it also covers root profile/harness and frontend/world changes.
+- t_dde220ef Grok 4.6 integration review waits for bank routing, reviewed
+  Alcher option fixtures t_a384fe64 and panel startup t_779f58e5. It also
+  covers root profile/harness, script Stop and frontend/world changes.
 - Loadout t_3737503d waits for integration review, then targeted spell facts
   t_63138b8b, PeriodicBank t_51452e47 and DeathRecovery t_0c5ce97f follow.
   Design reports are guidance, not implemented/live acceptance.
@@ -104,8 +105,11 @@ The operator's startup beachball reproduced: the slot starts at +37.47 seconds,
 with the UI thread spending the startup sample hashing navigation resources.
 Profile bind, template load and Play start hash the 73 MB pack and 261 MB flags
 three times. 06b-panel-startup-trace.md records the trace and source path.
-This is a diagnosed startup issue, not a completed startup fix or performance
-comparison. No extra startup validation was disabled.
+Actual Grok 4.6 run 1142/session 20260910_183241_b9252e completed the
+06c-panel-startup-design.md review. Implementation t_779f58e5 waits for bank
+source review to release the shared file. Brief 42 preserves all validation
+with a consuming checked handoff and UI-owned session/slot setup. No startup
+fix or performance claim yet; no validation has been disabled.
 
 ## Platforms and fixtures
 
@@ -148,3 +152,34 @@ PeriodicBank (`t_51452e47`, brief 28), then DeathRecovery (`t_0c5ce97f`, brief 2
 They use Sol defaults and same-card Grok 4.5 review. These are scoped tasks,
 not source or live acceptance. Autocast/special/teleport, hostile facts, shop,
 make menus and fire remain subsequent capability work from the existing design.
+
+## Current catalog evidence and prepared follow-ons
+
+Native Alcher at 1947741f/client 56d8027/catalog 100adccc completed 30 casts
+over 27+3 withdrawals, banked 900000 coins, and stopped cleanly on 274/289.
+Post-stop logs were clean for 59.79/56.68 seconds. Native 274 Thiever also
+completed its 180-second observation without script errors; the read capture
+shows three steals/90 coins with banking off, not eating/restocking proof.
+
+Independent core cells use frozen c933f37c/client 56d8027, which adds the
+client display-name comparison to the 1947741f harness. The initial 289
+1947741f cell failed before Start on underscore versus space. Corrected
+Alcher and ChickenKiller core cells pass for catalog 100adccc on both
+revisions; Thiever core passes likewise. Later-catalog 289 Alcher, ChickenKiller
+and Thiever pass; later-catalog 274 work continues. See 05-catalog-proof.md,
+core-results.json and newer raw receipts in evidence/catalog-harness/live/.
+Rows remain PARTIAL until required options and integrated review complete.
+
+Alcher option fixtures t_a384fe64 use Luna defaults; actual Grok 4.5 review
+requested an ordered negative proof, corrected at 41d7a1e3 and back in review.
+No option LIVE acceptance yet. Serialized capability tasks after recovery are
+recorded in evidence/combat-production-design/implementation-queue.json: briefs
+34-40 for autocast, hostile/duel facts, special, teleport, shop, make panels
+and fire. These are scoped pending implementation, not accepted capabilities.
+
+Root packaged exact c933f37c/client 56d8027 plus both catalogs/nav identities
+for platform smoke. Linux and Windows fixture/process identities were checked
+again. The Hyper-V builder verified all 4807 archive files and is compiling the
+headless catalog harness and TUI using its existing cache. Windows transfer
+completed and extraction/verification is running. No remote gameplay result
+is claimed; Concord remains TUI-only and sequential revisions.

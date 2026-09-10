@@ -1,7 +1,8 @@
 # Integrated world, first banking and frontend session review
 
 Use configured `grok46` defaults after first-banking, matching/fill, BoneBurier bank routing and frontend-session
-same-card reviews complete. This is a bounded integration review before loadout/provisioning
+same-card reviews complete, including Alcher option fixtures t_a384fe64 and
+panel startup t_779f58e5. This is a bounded integration review before loadout/provisioning
 acceptance; the final whole-campaign branchreviewer pass remains.
 Read applicable instructions and docs/execution.md once. Campaign branch:
 codex/rs2b0t-multirevision. Root owns repo hygiene and live acceptance.
@@ -79,3 +80,10 @@ paths/lines. Record the exact host and client hashes you reviewed, actual model,
 commands and scope limits in reviews/world-banking-frontend-integration-grok46.md.
 Return approved or requested changes with the required fixes. No source edits,
 new agents, LIVE, external fixture actions, merge, remotes or release work.
+
+Include the reviewed Alcher fixture variants (brief 41), c933f37c actor display-name
+correction and new independent core receipts. Root has recorded PARTIAL rows
+with actual proof references; no first-XP or seeded-result substitution. Also
+include brief 42's panel preparation/validation ownership and consuming checked
+handoff. Verify final validation still occurs off the event thread immediately
+before UI-side Play assembly, and stale completions cannot create sessions.

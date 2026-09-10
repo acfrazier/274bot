@@ -66,7 +66,10 @@ Every comparison uses retained snapshots observed after Start. Seeded state cann
 
 ## Execution matrix
 
-`NOT RUN` is deliberate: this task was scoped not to launch a live client. Root should run each cell against its intended local server/nav pack. Revision 289 operations were enabled at 87084cbc after the scoped host/world proofs. Each catalog cell still requires its own observed functional result.
+The table below is the harness-delivery snapshot at 78c8cf21; `NOT RUN` was
+deliberate because that implementation task did not launch a live client.
+Current execution results and remaining option limits are in
+[05-catalog-proof.md](05-catalog-proof.md) and the support ledger. Root should run each cell against its intended local server/nav pack. Revision 289 operations were enabled at 87084cbc after the scoped host/world proofs. Each catalog cell still requires its own observed functional result.
 
 | Catalog | Revision | Scenario | Required outcome | Status |
 |---|---:|---|---|---|

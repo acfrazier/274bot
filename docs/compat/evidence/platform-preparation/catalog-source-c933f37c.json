@@ -1,0 +1,8 @@
+{
+  "archive": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/platform-preparation/catalog-source-c933f37c.tar.gz",
+  "archive_sha256": "2b848e33b3e7325bfcad3f43c7693f000d2958bb4b8d7a3b55bb1c766baa81fa",
+  "archive_bytes": 57179042,
+  "files": 4807,
+  "host_commit": "c933f37c5bec108d752e28aa850c46bccd405d3b",
+  "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4"
+}
