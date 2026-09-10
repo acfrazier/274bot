@@ -378,6 +378,22 @@ impl SlotScript {
         }
     }
 
+    #[cfg(all(feature = "memory-profile", feature = "load"))]
+    pub fn memory_metrics(&self) -> Option<serde_json::Value> { self.load.as_ref().map(|i|i.memory_metrics()) }
+
+    #[cfg(all(feature = "memory-profile", feature = "load"))]
+    pub fn memory_progress(&self) -> serde_json::Value {
+        let mut value = self.load.as_ref().map(|i|i.memory_progress()).unwrap_or(serde_json::json!({}));
+        if let Some(fp) = &self.last_snapshot {
+            let rows = |rs: &[crate::isolate_fb::ItemRowFp]| rs.iter().take(32).map(|r|serde_json::json!({"name":r.name,"count":r.count,"ops":r.ops})).collect::<Vec<_>>();
+            value["inventory"] = serde_json::json!(rows(&fp.inv));
+            value["bank"] = serde_json::json!(rows(&fp.bank));
+            value["bank_open"] = serde_json::json!(fp.bank_open);
+            value["bank_loaded"] = serde_json::json!(fp.bank_loaded);
+        }
+        value
+    }
+
     pub fn last_error(&self) -> Option<&str> {
         self.last_error.as_deref()
     }

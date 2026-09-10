@@ -590,6 +590,8 @@ fn script_slot_or_insert(wall: &ScriptWall, name: &str) -> ScriptSlot {
 /// `BOT_DEBUG=1`. Tick errors also become [`SlotScript::last_error`].
 fn emit_script_debug_logs(slot: &mut SlotScript, name: &str) {
     let logs = slot.drain_logs();
+    #[cfg(feature = "memory-profile")]
+    memory_diagnostics::logs(name, &logs);
     if !debug_enabled() {
         return;
     }
@@ -824,6 +826,8 @@ fn dispatch_script_interact(
 ) -> bool {
     use api::interact::{ActionSpec, OpTarget, SendResult};
     use script::shim::InteractReq;
+    #[cfg(feature = "memory-profile")]
+    memory_diagnostics::requests(name, &reqs);
     let mut wrote = false;
     let camera_yaws: Vec<i32> = reqs
         .iter()
@@ -1249,6 +1253,8 @@ fn dispatch_script_interact(
     for yaw in camera_yaws {
         wrote |= driver.set_orbit_camera_yaw(yaw);
     }
+    #[cfg(feature = "memory-profile")]
+    memory_diagnostics::sent(name, wrote);
     wrote
 }
 
@@ -3311,6 +3317,16 @@ impl Play {
             .unwrap_or(script::RunState::Idle)
     }
 
+    #[cfg(feature = "memory-profile")]
+    pub fn memory_script_metrics(&self, name:&str) -> Option<serde_json::Value> {
+        script_slot(&self.scripts,name).and_then(|slot|slot.lock().unwrap().memory_metrics())
+    }
+
+    #[cfg(feature = "memory-profile")]
+    pub fn memory_script_progress(&self, name:&str) -> serde_json::Value {
+        script_slot(&self.scripts,name).map(|slot|slot.lock().unwrap().memory_progress()).unwrap_or(serde_json::Value::Null)
+    }
+
     /// `name`'s script `last_error`; `None` when the slot has none.
     pub fn script_last_error(&self, name: &str) -> Option<String> {
         script_slot(&self.scripts, name)
@@ -3743,6 +3759,8 @@ fn spawn_slot_thread(
                             let name = &obs_name;
                             // Panel/TUI WalkArm + scenario follow gate on the
                             // same hold as step_nav_bot (prev-frame status).
+                            #[cfg(feature = "memory-profile")]
+                            memory::client_frame(c, name, status.hold);
                             slot_frame(c, name, status.hold);
                             if !mainland_sent && mainland && c.ingame && c.scene_state == 2 {
                                 api::interact::mainland_hop(c);
@@ -9555,3 +9573,8 @@ impl NavBot {
         self.allow_teleports = allow_teleports;
     }
 }
+#[cfg(feature = "memory-profile")]
+pub mod memory;
+
+#[cfg(feature = "memory-profile")]
+mod memory_diagnostics;

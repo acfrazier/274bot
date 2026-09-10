@@ -9,6 +9,7 @@ api = { path = "../api" }
 client = { workspace = true }
 host = { path = "../host" }
 nav = { path = "../nav" }
+scenario = { path = "../scenario", optional = true }
 script = { path = "../script", features = ["load"] }
 serde_json = "=1.0.140"
 libc = "0.2"
@@ -21,3 +22,10 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Threading",
     "Win32_System_ProcessStatus",
 ] }
+[features]
+# Opt-in memory benchmark harness. No effect unless BOT_MEMORY_N is set.
+# Frontend binaries install CountingAllocator (T3).
+memory-profile = ["script/memory-profile", "dep:scenario"]
+
+# CPU diagnostic: use System directly, report allocator metrics unavailable.
+memory-profile-no-alloc = ["memory-profile"]
