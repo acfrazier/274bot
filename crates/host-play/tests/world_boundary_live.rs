@@ -1,20 +1,28 @@
 //! Controlled step-5 world/guardian cells.
 //!
-//! This deliberately uses `SharedClientTemplate::prepare_client` rather than
-//! the production slot launcher: it binds the selected local profile and
-//! template while preserving the revision-289 operation gate. Root runs one
-//! explicit cell per process with LIVE=1.
+//! This is intentionally an ignored, source-only harness.  It binds one
+//! selected local revision, prepares a disposable account on the mainland,
+//! and then drives the existing ScenarioRunner/Traveller or Guardian.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use api::interact;
+use api::interact::{self, Interactions, SendResult};
 use api::snapshot::GameSnapshot;
+use client::client::Client;
 use host::{Guardian, Pump};
 use host_play::{ProfileOptions, SharedClientTemplate};
 use scenario::{RunnerStatus, ScenarioRunner};
 use vault::ProfileSettings;
+
+const MAINLAND: (i32, i32, i32) = (3220, 3212, 0);
+const DOOR: (i32, i32, i32) = (2816, 3438, 0);
+const DOOR_CLOSED: i32 = 1530;
+const DOOR_OPEN: i32 = 1531;
+const LAMP_OBJ: i32 = 2528;
+const LAMP_IF_ROOT: i32 = 2808;
+const STRENGTH: i32 = 2;
 
 fn required(name: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| panic!("{name} is required"))
@@ -24,21 +32,15 @@ fn selected() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>) {
     let revision = required("WORLD_REVISION");
     assert!(matches!(revision.as_str(), "274" | "289"));
     let nav_pack = PathBuf::from(required("WORLD_NAV_PACK"));
+    let port = if revision == "289" { 44594 } else { 43594 };
+    let http_port = if revision == "289" { 1080 } else { 80 };
     let options = ProfileOptions {
         profile: Some(format!("local-{revision}")),
         revision: Some(revision),
         host: Some("127.0.0.1".into()),
         asset_host: Some("127.0.0.1".into()),
-        port: Some(if std::env::var("WORLD_REVISION").as_deref() == Ok("289") {
-            44594
-        } else {
-            43594
-        }),
-        http_port: Some(if std::env::var("WORLD_REVISION").as_deref() == Ok("289") {
-            1080
-        } else {
-            80
-        }),
+        port: Some(port),
+        http_port: Some(http_port),
         nav_pack: Some(nav_pack),
         nav_flags: std::env::var_os("WORLD_NAV_FLAGS").map(PathBuf::from),
         engine_dir: std::env::var_os("WORLD_ENGINE_DIR").map(PathBuf::from),
@@ -49,6 +51,8 @@ fn selected() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>) {
         .expect("profile resolve")
         .bind()
         .expect("profile bind");
+    assert_eq!(profile.client().target(), client::BotTarget::Local);
+    assert_eq!(profile.client().game_host(), "127.0.0.1");
     let template =
         SharedClientTemplate::load(Arc::clone(&profile)).expect("selected template/world load");
     assert!(
@@ -56,13 +60,145 @@ fn selected() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>) {
         "selected template.world() is required"
     );
     println!(
-        "{{\"revision\":{},\"profile\":{:?},\"cache_id\":{:?},\"nav_pack\":{:?}}}",
-        profile.revision().as_i32(),
-        profile.label(),
-        profile.cache_id(),
-        profile.nav_pack()
+        "{{\"phase\":\"identity\",\"revision\":{},\"profile\":{:?},\"cache_id\":{:?},\"nav_pack\":{:?}}}",
+        profile.revision().as_i32(), profile.label(), profile.cache_id(), profile.nav_pack()
     );
     (profile, template)
+}
+
+fn pump_once(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut Pump) {
+    client.mainloop();
+    host::publish_snapshot(snapshot, client, pump.drain_client(client));
+}
+
+fn wait_for(
+    client: &mut Client,
+    snapshot: &mut GameSnapshot,
+    pump: &mut Pump,
+    timeout: Duration,
+    phase: &str,
+    ready: impl Fn(&GameSnapshot) -> bool,
+) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        pump_once(client, snapshot, pump);
+        if ready(snapshot) {
+            println!("{{\"phase\":{:?},\"state\":{:?}}}", phase, snapshot.tile());
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    panic!(
+        "{phase}: readiness predicate failed; tile={:?}",
+        snapshot.tile()
+    );
+}
+
+fn logout_and_relogin(
+    client: &mut Client,
+    snapshot: &mut GameSnapshot,
+    pump: &mut Pump,
+    name: &str,
+) {
+    let ifaces = Arc::clone(&client.ifaces);
+    assert!(
+        interact::logout(client, &ifaces),
+        "selected cache has no logout control"
+    );
+    wait_for(
+        client,
+        snapshot,
+        pump,
+        Duration::from_secs(30),
+        "logout",
+        |s| !s.ingame(),
+    );
+    assert!(interact::login(client, name, name, false), "relogin failed");
+    wait_for(
+        client,
+        snapshot,
+        pump,
+        Duration::from_secs(90),
+        "relogin",
+        |s| s.ingame() && s.attached() && s.scene_state() == 2 && s.tile().is_some(),
+    );
+}
+
+fn prepare_mainland(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut Pump, name: &str) {
+    client.draw = false;
+    client.maininit();
+    assert!(!client.error_loading, "asset initialization failed");
+    assert!(interact::login(client, name, name, false), "login failed");
+    wait_for(
+        client,
+        snapshot,
+        pump,
+        Duration::from_secs(90),
+        "initial-scene2",
+        |s| s.ingame() && s.attached() && s.scene_state() == 2,
+    );
+    interact::seed_at(client, MAINLAND.2, MAINLAND.0, MAINLAND.1);
+    wait_for(
+        client,
+        snapshot,
+        pump,
+        Duration::from_secs(30),
+        "mainland-seed",
+        |s| s.ingame() && s.scene_state() == 2 && s.tile() == Some(MAINLAND),
+    );
+    logout_and_relogin(client, snapshot, pump, name);
+    assert_eq!(
+        snapshot.tile(),
+        Some(MAINLAND),
+        "relogin did not retain mainland seed"
+    );
+    println!(
+        "{{\"phase\":\"baseline-after-preparation\",\"tile\":{:?}}}",
+        snapshot.tile()
+    );
+}
+
+fn door_id(snapshot: &GameSnapshot) -> Option<i32> {
+    snapshot
+        .locs()
+        .iter()
+        .find_map(|loc| ((loc.tile.x, loc.tile.z, loc.tile.level) == DOOR).then_some(loc.id))
+}
+
+fn prepare_door(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut Pump) {
+    // Reuse the production nav_door tele fixture, but do not use its closer
+    // companion. This puts the single account at the outside stand.
+    assert!(interact::cheat(client, "tele 0,43,53,61,44"));
+    wait_for(
+        client,
+        snapshot,
+        pump,
+        Duration::from_secs(30),
+        "door-outside",
+        |s| s.tile() == Some((2813, 3436, 0)),
+    );
+    let before = door_id(snapshot);
+    if before == Some(DOOR_OPEN) {
+        assert!(interact::op_loc(client, DOOR.0, DOOR.1, DOOR_OPEN));
+        wait_for(
+            client,
+            snapshot,
+            pump,
+            Duration::from_secs(30),
+            "door-close",
+            |s| door_id(s) == Some(DOOR_CLOSED),
+        );
+    }
+    assert_eq!(
+        door_id(snapshot),
+        Some(DOOR_CLOSED),
+        "door was not closed before baseline"
+    );
+    println!(
+        "{{\"phase\":\"door-baseline\",\"door_id\":{:?},\"tile\":{:?}}}",
+        door_id(snapshot),
+        snapshot.tile()
+    );
 }
 
 fn run_nav(
@@ -70,129 +206,178 @@ fn run_nav(
     template: Arc<SharedClientTemplate>,
     profile: Arc<host_play::ServerProfile>,
 ) {
-    let scenario = scenario::get(case).expect("registered navigation scenario");
-    let n = scenario.seed.profiles.len();
-    let names: Vec<String> = (0..n)
-        .map(|i| format!("w{}{}", profile.revision().as_i32(), i))
-        .collect();
-    let mut runner = ScenarioRunner::with_world(scenario, template.world());
-    runner.set_live_names(&names);
-    runner.set_scene_settle(Duration::ZERO);
-    runner.set_shot_sink(Box::new(|_, _| {}));
-    let mut clients = Vec::new();
-    let mut snapshots = Vec::new();
-    let mut pumps = Vec::new();
-    let mut guardians = Vec::new();
-    let settings = ProfileSettings::default();
-    for (i, name) in names.iter().enumerate() {
-        let mut c = template
-            .prepare_client(274000000 + i as i32, true)
-            .expect("prepare selected client");
-        c.draw = false;
-        c.maininit();
-        assert!(
-            interact::login(&mut c, name, name, false),
-            "login failed: {} {}",
-            c.login_mes1,
-            c.login_mes2
-        );
-        clients.push(c);
-        snapshots.push(GameSnapshot::new());
-        pumps.push(Pump::new());
-        guardians.push(Guardian::new());
+    let revision = profile.revision().as_i32();
+    let serial = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let name = format!("w{}{}", revision, serial % 100_000_000);
+    let mut client = template
+        .prepare_client((serial % 1_000_000_000) as i32, true)
+        .expect("prepare selected client");
+    let mut snapshot = GameSnapshot::new();
+    let mut pump = Pump::new();
+    prepare_mainland(&mut client, &mut snapshot, &mut pump, &name);
+
+    let mut scenario = scenario::get(case).expect("registered navigation scenario");
+    scenario.settings.require_mainland_base = true;
+    if case == "nav_door" {
+        scenario.seed.profiles.truncate(1);
+        scenario.companions.clear();
+        scenario.settings.full_rate = false;
+        prepare_door(&mut client, &mut snapshot, &mut pump);
+        // The first production step is only the outside tele; preparation
+        // above already established that fixture, so proof starts at Follow.
+        scenario.steps.remove(0);
+    } else {
+        scenario.settings.nav.engine_speed_ms = None;
+        println!("{{\"phase\":\"nav_full-fixture\",\"engine_speed_ms\":null}}");
     }
-    let deadline = Instant::now() + runner.deadline().max(Duration::from_secs(180));
+    let mut runner = ScenarioRunner::with_world(scenario, template.world());
+    runner.set_live_names(std::slice::from_ref(&name));
+    runner.set_shot_sink(Box::new(|_, _| {}));
+
+    let outer = if case == "nav_full" {
+        Duration::from_secs(400)
+    } else {
+        Duration::from_secs(180)
+    };
+    let deadline = Instant::now() + outer;
+    let mut before_door = door_id(&snapshot);
+    let mut opened = false;
+    let mut arrival = false;
     loop {
-        for i in 0..clients.len() {
-            clients[i].mainloop();
-            let drained = pumps[i].drain_client(&clients[i]);
-            host::publish_snapshot(&mut snapshots[i], &clients[i], drained);
-            let now_ms = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64;
-            let _ = guardians[i].tick(&mut clients[i], &snapshots[i], &settings, now_ms, None);
-            if i == 0 {
-                runner.tick(&mut clients[i]);
-            }
+        pump_once(&mut client, &mut snapshot, &mut pump);
+        if case == "nav_door" {
+            let id = door_id(&snapshot);
+            opened |= id == Some(DOOR_OPEN);
+            before_door = before_door.or(id);
+            arrival |= snapshot
+                .tile()
+                .is_some_and(|t| t.0 == 2817 && t.1 >= 3443 && t.2 == 0);
         }
+        runner.tick(&mut client);
         match runner.status() {
             RunnerStatus::Passed => {
-                println!("PASS: {case}: {:?}", runner.evidence());
+                if case == "nav_door" {
+                    assert!(opened, "route did not cause observed door opening");
+                    assert!(arrival, "inside arrival was not observed");
+                    println!("PASS: nav_door: before_door={before_door:?} after_door={:?} traveller_runner={:?}", door_id(&snapshot), runner.evidence());
+                } else {
+                    println!(
+                        "PASS: nav_full: engine_speed_ms=None evidence={:?}",
+                        runner.evidence()
+                    );
+                }
                 break;
             }
             RunnerStatus::Failed(msg) => panic!("{case}: {msg}; evidence={:?}", runner.evidence()),
             _ => assert!(
                 Instant::now() < deadline,
-                "{case}: runner timeout; evidence={:?}",
+                "{case}: outer timeout; evidence={:?}",
                 runner.evidence()
             ),
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    for c in &mut clients {
-        if c.ingame {
-            c.logout();
-        }
+    if client.ingame {
+        client.logout();
     }
 }
 
+fn has_lamp(snapshot: &GameSnapshot) -> bool {
+    snapshot
+        .inv()
+        .iter()
+        .any(|(id, count)| *id == LAMP_OBJ && *count > 0)
+}
+
+fn strength_xp(snapshot: &GameSnapshot) -> Option<i32> {
+    snapshot
+        .stats()
+        .iter()
+        .find(|s| s.index == STRENGTH)
+        .map(|s| s.xp)
+}
+
 fn run_guardian(template: Arc<SharedClientTemplate>, profile: Arc<host_play::ServerProfile>) {
-    let name = format!("g{}", profile.revision().as_i32());
+    let serial = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let name = format!("g{}{}", profile.revision().as_i32(), serial % 100_000_000);
     let mut client = template
-        .prepare_client(289000001, true)
+        .prepare_client((serial % 1_000_000_000) as i32, true)
         .expect("prepare selected client");
-    client.draw = false;
-    client.maininit();
-    assert!(interact::login(&mut client, &name, &name, false));
-    let settings = ProfileSettings {
-        random_events: true,
-        lamp_auto: true,
-        lamp_skill: "strength".into(),
-        ..ProfileSettings::default()
-    };
     let mut snapshot = GameSnapshot::new();
     let mut pump = Pump::new();
-    let mut guardian = Guardian::new();
+    prepare_mainland(&mut client, &mut snapshot, &mut pump, &name);
     assert!(
         interact::cheat(&mut client, "give lamp"),
         "local give command refused"
     );
+    wait_for(
+        &mut client,
+        &mut snapshot,
+        &mut pump,
+        Duration::from_secs(30),
+        "lamp-inventory",
+        has_lamp,
+    );
+    let inventory_before = snapshot.inv().to_vec();
+    let xp_before = strength_xp(&snapshot).expect("strength XP baseline");
+    let settings = ProfileSettings {
+        random_events: true,
+        lamp_auto: true,
+        lamp_skill: "strength".into(),
+        ..Default::default()
+    };
+    let mut guardian = Guardian::new();
     let end = Instant::now() + Duration::from_secs(30);
-    let mut saw_lamp = false;
     let mut saw_hold = false;
-    let mut saw_resolution = false;
+    let mut saw_interface = false;
+    let mut saw_consumed = false;
+    let mut saw_xp_gain = false;
+    let mut resumed_from = None;
+    let mut walk_sent = false;
+    let mut walk_target = None;
     while Instant::now() < end {
-        client.mainloop();
-        let drained = pump.drain_client(&client);
-        host::publish_snapshot(&mut snapshot, &client, drained);
-        saw_lamp |= snapshot.inventory().iter().any(|item| {
-            item.def
-                .name
-                .as_deref()
-                .is_some_and(|name| name.eq_ignore_ascii_case("lamp"))
-        });
+        pump_once(&mut client, &mut snapshot, &mut pump);
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_millis() as u64;
         let status = guardian.tick(&mut client, &snapshot, &settings, now_ms, None);
         saw_hold |= status.hold && status.ours;
-        saw_resolution |= saw_hold
-            && !status.hold
-            && !snapshot.inventory().iter().any(|item| {
-                item.def
-                    .name
-                    .as_deref()
-                    .is_some_and(|name| name.eq_ignore_ascii_case("lamp"))
-            });
-        if saw_lamp && saw_hold && saw_resolution {
-            println!("PASS: guardian_lamp: hold/resolution observed");
+        saw_interface |= snapshot.modals().main == LAMP_IF_ROOT;
+        saw_consumed |= !has_lamp(&snapshot);
+        saw_xp_gain |= strength_xp(&snapshot).is_some_and(|xp| xp > xp_before);
+        if saw_consumed && !status.hold && saw_xp_gain && !walk_sent {
+            resumed_from = snapshot.tile();
+            let from = resumed_from.expect("post-resolution tile");
+            let target = (from.0 + 1, from.1, from.2);
+            walk_target = Some(target);
+            match Interactions::new(&snapshot, &mut client).walk(api::snapshot::WorldTile {
+                x: target.0,
+                z: target.1,
+                level: target.2,
+            }) {
+                SendResult::Sent { .. } => walk_sent = true,
+                SendResult::Refused { reason, .. } => {
+                    panic!("post-resolution walk refused: {reason:?}")
+                }
+            }
+        }
+        if walk_sent && snapshot.tile() == walk_target {
+            println!("PASS: guardian_lamp: inventory_before={inventory_before:?} xp_before={xp_before} interface={saw_interface} hold={saw_hold} consumed={saw_consumed} xp_gain={saw_xp_gain} resumed_from={resumed_from:?} walk_to={walk_target:?}");
+            if client.ingame {
+                client.logout();
+            }
             return;
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    panic!("guardian_lamp: expected inventory lamp, host hold, and consumption (lamp={saw_lamp}, hold={saw_hold}, resolved={saw_resolution})");
+    panic!("guardian_lamp incomplete: inventory_before={inventory_before:?} xp_before={xp_before} hold={saw_hold} interface={saw_interface} consumed={saw_consumed} xp_gain={saw_xp_gain} walk_sent={walk_sent}");
 }
 
 #[test]
