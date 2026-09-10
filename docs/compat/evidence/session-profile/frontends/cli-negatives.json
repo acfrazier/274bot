@@ -1,0 +1,159 @@
+{
+  "source_head": "7aaa8c390533fa0cd994cca7201ea739865ef94d",
+  "read_only_preconnect_checks": true,
+  "cases": [
+    {
+      "binary": "host-play",
+      "case": "unsupported",
+      "arguments": [
+        "--revision",
+        "377",
+        "--vault",
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/profile-native/host-play-unsupported-must-not-exist.vault"
+      ],
+      "exit_code": 1,
+      "elapsed_seconds": 0.006585836410522461,
+      "expected_error_fragment": "unsupported revision",
+      "vault_created": false,
+      "passed": true,
+      "log": "docs/compat/evidence/session-profile/frontends/cli-host-play-unsupported.log"
+    },
+    {
+      "binary": "tui-play",
+      "case": "unsupported",
+      "arguments": [
+        "--revision",
+        "377",
+        "--vault",
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/profile-native/tui-play-unsupported-must-not-exist.vault"
+      ],
+      "exit_code": 2,
+      "elapsed_seconds": 0.007812023162841797,
+      "expected_error_fragment": "unsupported revision",
+      "vault_created": false,
+      "passed": true,
+      "log": "docs/compat/evidence/session-profile/frontends/cli-tui-play-unsupported.log"
+    },
+    {
+      "binary": "panel-play",
+      "case": "unsupported",
+      "arguments": [
+        "--revision",
+        "377",
+        "--vault",
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/profile-native/panel-play-unsupported-must-not-exist.vault"
+      ],
+      "exit_code": 2,
+      "elapsed_seconds": 0.00921487808227539,
+      "expected_error_fragment": "unsupported revision",
+      "vault_created": false,
+      "passed": true,
+      "log": "docs/compat/evidence/session-profile/frontends/cli-panel-play-unsupported.log"
+    },
+    {
+      "binary": "host-play",
+      "case": "conflict",
+      "arguments": [
+        "--profile",
+        "local-274",
+        "--revision",
+        "289",
+        "--vault",
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/profile-native/host-play-conflict-must-not-exist.vault"
+      ],
+      "exit_code": 1,
+      "elapsed_seconds": 0.004231929779052734,
+      "expected_error_fragment": "conflict",
+      "vault_created": false,
+      "passed": true,
+      "log": "docs/compat/evidence/session-profile/frontends/cli-host-play-conflict.log"
+    },
+    {
+      "binary": "host-play",
+      "case": "unqualified-289",
+      "arguments": [
+        "--revision",
+        "289",
+        "--vault",
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/profile-native/host-play-unqualified-289-must-not-exist.vault"
+      ],
+      "exit_code": 1,
+      "elapsed_seconds": 0.4816160202026367,
+      "expected_error_fragment": "host-boundary-not-qualified",
+      "vault_created": false,
+      "passed": true,
+      "log": "docs/compat/evidence/session-profile/frontends/cli-host-play-unqualified-289.log"
+    },
+    {
+      "binary": "host-play",
+      "case": "wrong-cache",
+      "arguments": [
+        "--revision",
+        "289",
+        "--cache",
+        "/Users/acfrazier/experiments/Server/engine/data/pack/client",
+        "--vault",
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/profile-native/host-play-wrong-cache-must-not-exist.vault"
+      ],
+      "exit_code": 1,
+      "elapsed_seconds": 0.0363919734954834,
+      "expected_error_fragment": "cache/profile mismatch",
+      "vault_created": false,
+      "passed": true,
+      "log": "docs/compat/evidence/session-profile/frontends/cli-host-play-wrong-cache.log"
+    },
+    {
+      "binary": "tui-play",
+      "case": "conflict",
+      "arguments": [
+        "--profile",
+        "local-274",
+        "--revision",
+        "289",
+        "--vault",
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/profile-native/tui-play-conflict-must-not-exist.vault"
+      ],
+      "exit_code": 1,
+      "elapsed_seconds": 0.006158113479614258,
+      "expected_error_fragment": "conflict",
+      "vault_created": false,
+      "passed": true,
+      "log": "docs/compat/evidence/session-profile/frontends/cli-tui-play-conflict.log"
+    },
+    {
+      "binary": "tui-play",
+      "case": "unqualified-289",
+      "arguments": [
+        "--revision",
+        "289",
+        "--vault",
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/profile-native/tui-play-unqualified-289-must-not-exist.vault"
+      ],
+      "exit_code": 1,
+      "elapsed_seconds": 0.4247889518737793,
+      "expected_error_fragment": "host-boundary-not-qualified",
+      "vault_created": false,
+      "passed": true,
+      "log": "docs/compat/evidence/session-profile/frontends/cli-tui-play-unqualified-289.log"
+    },
+    {
+      "binary": "tui-play",
+      "case": "wrong-cache",
+      "arguments": [
+        "--revision",
+        "289",
+        "--cache",
+        "/Users/acfrazier/experiments/Server/engine/data/pack/client",
+        "--vault",
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/profile-native/tui-play-wrong-cache-must-not-exist.vault"
+      ],
+      "exit_code": 1,
+      "elapsed_seconds": 0.03356504440307617,
+      "expected_error_fragment": "cache/profile mismatch",
+      "vault_created": false,
+      "passed": true,
+      "log": "docs/compat/evidence/session-profile/frontends/cli-tui-play-wrong-cache.log"
+    }
+  ],
+  "passed": true
+}
