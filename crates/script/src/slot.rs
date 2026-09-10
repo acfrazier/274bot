@@ -128,6 +128,64 @@ impl PendingWithdrawX {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingBankOpKind {
+    Deposit,
+    Withdraw,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PendingBankOp {
+    pub kind: PendingBankOpKind,
+    pub item_id: i32,
+    pub before_count: i32,
+    pub before_inventory_count: i32,
+    pub bank_generation: u64,
+    deadline: Option<Instant>,
+    remaining: Duration,
+}
+
+impl PendingBankOp {
+    pub fn new(
+        kind: PendingBankOpKind,
+        item_id: i32,
+        before_count: i32,
+        before_inventory_count: i32,
+        bank_generation: u64,
+    ) -> Self {
+        let remaining = Duration::from_millis(match kind {
+            PendingBankOpKind::Deposit => 2000,
+            PendingBankOpKind::Withdraw => 4000,
+        });
+        Self {
+            kind,
+            item_id,
+            before_count,
+            before_inventory_count,
+            bank_generation,
+            deadline: Some(Instant::now() + remaining),
+            remaining,
+        }
+    }
+
+    pub fn expired(self) -> bool {
+        self.deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+    }
+
+    fn freeze(&mut self) {
+        if let Some(deadline) = self.deadline.take() {
+            self.remaining = deadline.saturating_duration_since(Instant::now());
+        }
+    }
+
+    fn resume(&mut self) {
+        if self.deadline.is_none() {
+            self.deadline = Some(Instant::now() + self.remaining);
+        }
+    }
+}
+
 /// Per-uid runner. Compiled XOR Load (a JS isolate) — never both.
 pub struct SlotScript {
     pub want_run: bool,
@@ -159,6 +217,9 @@ pub struct SlotScript {
     withdraw_x_result: bool,
     withdraw_load_result_seq: u64,
     withdraw_load_result: bool,
+    pending_bank_op: Option<PendingBankOp>,
+    bank_op_result_seq: u64,
+    bank_op_result: bool,
     work_epoch: u64,
 }
 
@@ -190,6 +251,9 @@ impl SlotScript {
             withdraw_x_result: false,
             withdraw_load_result_seq: 0,
             withdraw_load_result: false,
+            pending_bank_op: None,
+            bank_op_result_seq: 0,
+            bank_op_result: false,
             work_epoch: 0,
         }
     }
@@ -220,6 +284,9 @@ impl SlotScript {
                 self.withdraw_x_result = false;
                 self.withdraw_load_result_seq = 0;
                 self.withdraw_load_result = false;
+                self.pending_bank_op = None;
+                self.bank_op_result_seq = 0;
+                self.bank_op_result = false;
                 self.state = RunState::Running;
                 Ok(())
             }
@@ -268,6 +335,9 @@ impl SlotScript {
                 self.withdraw_x_result = false;
                 self.withdraw_load_result_seq = 0;
                 self.withdraw_load_result = false;
+                self.pending_bank_op = None;
+                self.bank_op_result_seq = 0;
+                self.bank_op_result = false;
                 // Fresh isolate: the first posted snapshot is a keyframe.
                 self.last_snapshot = None;
                 self.last_world_id = None;
@@ -282,6 +352,9 @@ impl SlotScript {
     pub fn pause(&mut self) {
         self.want_run = false;
         if let Some(pending) = &mut self.pending_withdraw_x {
+            pending.freeze();
+        }
+        if let Some(pending) = &mut self.pending_bank_op {
             pending.freeze();
         }
         if self.has_instance() && self.state == RunState::Running {
@@ -299,6 +372,9 @@ impl SlotScript {
     pub fn resume(&mut self) {
         self.want_run = true;
         if let Some(pending) = &mut self.pending_withdraw_x {
+            pending.resume();
+        }
+        if let Some(pending) = &mut self.pending_bank_op {
             pending.resume();
         }
         if self.has_instance() && self.state == RunState::Paused {
@@ -328,6 +404,7 @@ impl SlotScript {
         }
         self.want_run = false;
         self.pending_withdraw_x = None;
+        self.pending_bank_op = None;
         self.work_epoch = self.work_epoch.wrapping_add(1);
         self.state = RunState::Idle;
     }
@@ -340,6 +417,9 @@ impl SlotScript {
         if !up {
             if self.pending_withdraw_x.is_some() {
                 self.complete_current_withdrawal(false);
+            }
+            if self.pending_bank_op.is_some() {
+                self.complete_bank_op(false);
             }
             self.work_epoch = self.work_epoch.wrapping_add(1);
         }
@@ -399,6 +479,36 @@ impl SlotScript {
     /// Last host-owned withdrawLoad result posted to this isolate.
     pub fn withdraw_load_result(&self) -> (u64, bool) {
         (self.withdraw_load_result_seq, self.withdraw_load_result)
+    }
+
+    pub fn pending_bank_op(&self) -> Option<PendingBankOp> {
+        self.pending_bank_op
+    }
+
+    pub fn set_pending_bank_op(&mut self, pending: Option<PendingBankOp>) {
+        self.pending_bank_op = pending;
+    }
+
+    pub fn freeze_pending_bank_op(&mut self) {
+        if let Some(pending) = &mut self.pending_bank_op {
+            pending.freeze();
+        }
+    }
+
+    pub fn resume_pending_bank_op(&mut self) {
+        if let Some(pending) = &mut self.pending_bank_op {
+            pending.resume();
+        }
+    }
+
+    pub fn bank_op_result(&self) -> (u64, bool) {
+        (self.bank_op_result_seq, self.bank_op_result)
+    }
+
+    pub fn complete_bank_op(&mut self, result: bool) {
+        self.pending_bank_op = None;
+        self.bank_op_result_seq = self.bank_op_result_seq.wrapping_add(1);
+        self.bank_op_result = result;
     }
 
     /// Lifecycle stamp used to reject work that raced a stop/reconnect.
@@ -962,5 +1072,50 @@ export default class T extends LoopingBot {
         let mut expired = PendingWithdrawX::waiting_dialog(2, 7, 0, 7, 3);
         expired.deadline = Some(Instant::now() - Duration::from_millis(1));
         assert!(expired.expired(), "expiry uses monotonic wall time");
+    }
+
+    #[test]
+    fn pending_bank_op_pause_freezes_while_stop_and_reconnect_abort() {
+        let mut slot = SlotScript::new();
+        slot.start_compiled(Box::new(Noop)).unwrap();
+        slot.set_pending_bank_op(Some(PendingBankOp::new(
+            PendingBankOpKind::Deposit,
+            1,
+            3,
+            0,
+            7,
+        )));
+        assert_eq!(
+            slot.pending_bank_op().unwrap().remaining,
+            Duration::from_millis(2000)
+        );
+
+        slot.pause();
+        assert!(
+            slot.pending_bank_op().unwrap().deadline.is_none(),
+            "Pause freezes the ordinary bank deadline"
+        );
+        slot.resume();
+        assert!(slot.pending_bank_op().unwrap().deadline.is_some());
+
+        slot.stop();
+        assert!(slot.pending_bank_op().is_none(), "Stop drops old-slot work");
+
+        slot.start_compiled(Box::new(Noop)).unwrap();
+        slot.set_pending_bank_op(Some(PendingBankOp::new(
+            PendingBankOpKind::Withdraw,
+            1,
+            20,
+            0,
+            7,
+        )));
+        assert_eq!(
+            slot.pending_bank_op().unwrap().remaining,
+            Duration::from_millis(4000)
+        );
+        let before = slot.bank_op_result();
+        slot.reset_session_work();
+        assert!(slot.pending_bank_op().is_none());
+        assert_eq!(slot.bank_op_result(), (before.0.wrapping_add(1), false));
     }
 }

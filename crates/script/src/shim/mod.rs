@@ -632,6 +632,9 @@ pub enum InteractReq {
         #[serde(default)]
         allow_teleports: bool,
     },
+    /// Select the nearest packed booth stand in Rust and route within one tile.
+    #[serde(rename = "walk-nearest-bank")]
+    WalkNearestBank,
     /// Scene `try_move` packet (`Interactions::walk`). Catalog
     /// `Traversal.walkTo` — not Traveller.
     #[serde(rename = "walk-to")]

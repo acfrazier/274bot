@@ -78,7 +78,7 @@ export const Banking = new Proxy(
         },
 
         async bankNearest({ deposit = false, commonJunk = false } = {}) {
-            if (!(await Banking.open())) {
+            if (!(await Bank.openNearestWorld())) {
                 return false;
             }
             if (deposit) {

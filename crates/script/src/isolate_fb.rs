@@ -150,6 +150,8 @@ const VT_SNAP_WITHDRAW_X_RESULT_SEQ: VOffsetT = 122;
 const VT_SNAP_WITHDRAW_X_RESULT: VOffsetT = 124;
 const VT_SNAP_WITHDRAW_LOAD_RESULT_SEQ: VOffsetT = 126;
 const VT_SNAP_WITHDRAW_LOAD_RESULT: VOffsetT = 128;
+const VT_SNAP_BANK_OP_RESULT_SEQ: VOffsetT = 130;
+const VT_SNAP_BANK_OP_RESULT: VOffsetT = 132;
 
 // SideTabIface: { index, id }
 const VT_STI_INDEX: VOffsetT = 4;
@@ -397,6 +399,8 @@ pub struct SnapshotInput<'a> {
     pub npcs: &'a [SceneEntityInput<'a>],
     pub withdraw_load_result_seq: u64,
     pub withdraw_load_result: bool,
+    pub bank_op_result_seq: u64,
+    pub bank_op_result: bool,
     pub locs: &'a [SceneEntityInput<'a>],
     pub players: &'a [SceneEntityInput<'a>],
     pub ground: &'a [SceneEntityInput<'a>],
@@ -884,6 +888,8 @@ impl Verifiable for SnapshotReader<'_> {
                 false,
             )?
             .visit_field::<bool>("withdraw_load_result", VT_SNAP_WITHDRAW_LOAD_RESULT, false)?
+            .visit_field::<u64>("bank_op_result_seq", VT_SNAP_BANK_OP_RESULT_SEQ, false)?
+            .visit_field::<bool>("bank_op_result", VT_SNAP_BANK_OP_RESULT, false)?
             .finish();
         Ok(())
     }
@@ -1030,6 +1036,22 @@ impl SnapshotReader<'_> {
     }
     pub fn withdraw_load_result(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_WITHDRAW_LOAD_RESULT, None) }.unwrap_or(false)
+    }
+    pub fn has_bank_op_result_seq(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<u64>(VT_SNAP_BANK_OP_RESULT_SEQ, None)
+                .is_some()
+        }
+    }
+    pub fn bank_op_result_seq(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_BANK_OP_RESULT_SEQ, None) }.unwrap_or(0)
+    }
+    pub fn has_bank_op_result(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_BANK_OP_RESULT, None).is_some() }
+    }
+    pub fn bank_op_result(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_BANK_OP_RESULT, None) }.unwrap_or(false)
     }
     pub fn has_bank_note_on(&self) -> bool {
         unsafe { self.tab.get::<i32>(VT_SNAP_BANK_NOTE_ON, None).is_some() }
@@ -1500,6 +1522,8 @@ pub struct SnapshotFingerprint {
     pub npcs: Vec<SceneEntityFp>,
     pub withdraw_load_result_seq: u64,
     pub withdraw_load_result: bool,
+    pub bank_op_result_seq: u64,
+    pub bank_op_result: bool,
     pub locs: Vec<SceneEntityFp>,
     pub players: Vec<SceneEntityFp>,
     pub ground: Vec<SceneEntityFp>,
@@ -1620,6 +1644,8 @@ impl SnapshotFingerprint {
             withdraw_x_result: input.withdraw_x_result,
             withdraw_load_result_seq: input.withdraw_load_result_seq,
             withdraw_load_result: input.withdraw_load_result,
+            bank_op_result_seq: input.bank_op_result_seq,
+            bank_op_result: input.bank_op_result,
             hold: input.hold,
             ours: input.ours,
             npcs: input.npcs.iter().map(entity_fp).collect(),
@@ -1732,6 +1758,8 @@ pub struct DeltaMask {
     pub withdraw_x_result: bool,
     pub withdraw_load_result_seq: bool,
     pub withdraw_load_result: bool,
+    pub bank_op_result_seq: bool,
+    pub bank_op_result: bool,
     pub hold: bool,
     pub ours: bool,
     pub npcs: bool,
@@ -1800,6 +1828,8 @@ impl DeltaMask {
             withdraw_x_result: true,
             withdraw_load_result_seq: true,
             withdraw_load_result: true,
+            bank_op_result_seq: true,
+            bank_op_result: true,
             hold: true,
             ours: true,
             npcs: true,
@@ -1876,6 +1906,8 @@ impl DeltaMask {
             withdraw_load_result_seq: next.withdraw_load_result_seq
                 != last.withdraw_load_result_seq,
             withdraw_load_result: next.withdraw_load_result != last.withdraw_load_result,
+            bank_op_result_seq: next.bank_op_result_seq != last.bank_op_result_seq,
+            bank_op_result: next.bank_op_result != last.bank_op_result,
             // SEC-004: re-post hold every tick so JS cannot clear
             // `__rs2b0t_host.hold` in onPaint and unfreeze loop().
             hold: true,
@@ -2321,6 +2353,12 @@ fn encode_snapshot_masked_into(
     }
     if mask.withdraw_load_result {
         b.push_slot_always(VT_SNAP_WITHDRAW_LOAD_RESULT, input.withdraw_load_result);
+    }
+    if mask.bank_op_result_seq {
+        b.push_slot_always(VT_SNAP_BANK_OP_RESULT_SEQ, input.bank_op_result_seq);
+    }
+    if mask.bank_op_result {
+        b.push_slot_always(VT_SNAP_BANK_OP_RESULT, input.bank_op_result);
     }
     if mask.hold {
         b.push_slot_always(VT_SNAP_HOLD, input.hold);
@@ -3289,6 +3327,7 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 radius: row.index().unwrap_or(0),
                 allow_teleports: row.action().is_some_and(|a| a == "tele" || a == "on"),
             }),
+            "walk-nearest-bank" => out.push(crate::shim::InteractReq::WalkNearestBank),
             "walk-to" => out.push(crate::shim::InteractReq::WalkTo {
                 x: row.x(),
                 z: row.z(),
@@ -3463,6 +3502,7 @@ fn interact_off<'b>(
         InteractReq::OpenStand { .. } => "open-stand",
         InteractReq::Walk { .. } => "walk",
         InteractReq::WalkNear { .. } => "walk-near",
+        InteractReq::WalkNearestBank => "walk-nearest-bank",
         InteractReq::WalkTo { .. } => "walk-to",
         InteractReq::Deposit { .. } => "deposit",
         InteractReq::Withdraw { .. } => "withdraw",
@@ -3594,6 +3634,7 @@ fn interact_off<'b>(
                 b.push_slot_always(VT_IN_ACTION, off);
             }
         }
+        InteractReq::WalkNearestBank => {}
         InteractReq::Walk { x, z, level, .. } | InteractReq::WalkTo { x, z, level } => {
             b.push_slot_always(VT_IN_X, *x);
             b.push_slot_always(VT_IN_Z, *z);
@@ -3749,6 +3790,8 @@ pub(crate) mod tests {
             withdraw_x_result: false,
             withdraw_load_result_seq: 0,
             withdraw_load_result: false,
+            bank_op_result_seq: 0,
+            bank_op_result: false,
             hold: false,
             ours: false,
             npcs: &[],
