@@ -1,0 +1,160 @@
+{
+  "schema": 1,
+  "cache_dir": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client",
+  "unpack_root": "/home/acfrazier/.274bot/unpack",
+  "cache_dir_requested": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client",
+  "unpack_root_requested": "/home/acfrazier/.274bot/unpack",
+  "snapshot_version": "2faf336eeb0462ed",
+  "snapshot_dir": "/home/acfrazier/.274bot/unpack/2faf336eeb0462ed",
+  "files": [
+    {
+      "label": "jag/config",
+      "path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client/config",
+      "canonical_path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client/config",
+      "present": true,
+      "size_bytes": 180928,
+      "sha256": "d26317cabdb6dd6eaa0bd983362fa9820f8ed063e73b7be145df30fb8fc1a914"
+    },
+    {
+      "label": "jag/interface",
+      "path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client/interface",
+      "canonical_path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client/interface",
+      "present": true,
+      "size_bytes": 102899,
+      "sha256": "3968805e8984826a60a9b9b90bd3fbbaa923c44947ba6e1b93daf4ff0af23903"
+    },
+    {
+      "label": "jag/textures",
+      "path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client/textures",
+      "canonical_path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client/textures",
+      "present": true,
+      "size_bytes": 205627,
+      "sha256": "b00c3643cfd9b872c80fa0812672a86e93e5b2402b7386fa59381a3015ab7c9e"
+    },
+    {
+      "label": "jag/media",
+      "path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client/media",
+      "canonical_path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client/media",
+      "present": true,
+      "size_bytes": 81426,
+      "sha256": "237206fe02bbd7b53906c5b0a7a05bfa99e4380f297223f3135c21b005e44de5"
+    },
+    {
+      "label": "jag/title",
+      "path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client/title",
+      "canonical_path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client/title",
+      "present": true,
+      "size_bytes": 59855,
+      "sha256": "b7a47dead79c241beb9c4ffbb4cb289bb3099eaf088f51e364cde40f3aa70b55"
+    },
+    {
+      "label": "jag/sounds",
+      "path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client/sounds",
+      "canonical_path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client/sounds",
+      "present": true,
+      "size_bytes": 57549,
+      "sha256": "6cb9addcc14ffbf5d76dfd76691f390dd83fa06a766ee879a56c700594c8c573"
+    },
+    {
+      "label": "jag/wordenc",
+      "path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client/wordenc",
+      "canonical_path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client/wordenc",
+      "present": true,
+      "size_bytes": 13310,
+      "sha256": "915c569e2d22a89eaf66c9b3f133c5d0ce25dd257fbef0222a8cc19492e65101"
+    },
+    {
+      "label": "jag/versionlist",
+      "path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client/versionlist",
+      "canonical_path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client/versionlist",
+      "present": true,
+      "size_bytes": 30474,
+      "sha256": "2faf336eeb0462edc50d2cdbccbdac7a4a2cda1e43087cd9a6ba2dd00aea78dd"
+    },
+    {
+      "label": "snapshot/models.bin",
+      "path": "/home/acfrazier/.274bot/unpack/2faf336eeb0462ed/models.bin",
+      "canonical_path": "/home/acfrazier/.274bot/unpack/2faf336eeb0462ed/models.bin",
+      "present": true,
+      "size_bytes": 5083042,
+      "sha256": "fa1d355a3616db2e1c9b7a20494e169f106850f8c7a36fc8972380bbe4e13c72"
+    },
+    {
+      "label": "snapshot/anims.bin",
+      "path": "/home/acfrazier/.274bot/unpack/2faf336eeb0462ed/anims.bin",
+      "canonical_path": "/home/acfrazier/.274bot/unpack/2faf336eeb0462ed/anims.bin",
+      "present": true,
+      "size_bytes": 705344,
+      "sha256": "d5f89d9603bf744f06f642af2e88bed8b0c19452db59cfb3b3a5f6746b405060"
+    },
+    {
+      "label": "store/direct/main_file_cache.dat",
+      "path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client/main_file_cache.dat",
+      "present": false
+    },
+    {
+      "label": "store/direct/main_file_cache.idx1",
+      "path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client/main_file_cache.idx1",
+      "present": false
+    },
+    {
+      "label": "store/direct/main_file_cache.idx2",
+      "path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client/main_file_cache.idx2",
+      "present": false
+    },
+    {
+      "label": "store/direct/main_file_cache.idx3",
+      "path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client/main_file_cache.idx3",
+      "present": false
+    },
+    {
+      "label": "store/direct/main_file_cache.idx4",
+      "path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/client/main_file_cache.idx4",
+      "present": false
+    },
+    {
+      "label": "store/parent/main_file_cache.dat",
+      "path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/main_file_cache.dat",
+      "canonical_path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/main_file_cache.dat",
+      "present": true,
+      "size_bytes": 8589114,
+      "sha256": "c3ddfd24313f1ba58347478e5bb55fcc0170ff2b8d69486cb66e0376afbc4e85"
+    },
+    {
+      "label": "store/parent/main_file_cache.idx1",
+      "path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/main_file_cache.idx1",
+      "canonical_path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/main_file_cache.idx1",
+      "present": true,
+      "size_bytes": 27702,
+      "sha256": "88566e42923d8031456bdf98b0db09d49ec3e06fd041064e626bd48dccfd956c"
+    },
+    {
+      "label": "store/parent/main_file_cache.idx2",
+      "path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/main_file_cache.idx2",
+      "canonical_path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/main_file_cache.idx2",
+      "present": true,
+      "size_bytes": 2016,
+      "sha256": "e2012f64d0ec182be55e8211f1e8b858fb24fff4d7811c7a5eb1927f53a64e1e"
+    },
+    {
+      "label": "store/parent/main_file_cache.idx3",
+      "path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/main_file_cache.idx3",
+      "canonical_path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/main_file_cache.idx3",
+      "present": true,
+      "size_bytes": 2070,
+      "sha256": "ee7a22299b5252fee16a20b6b90f806c5a49e759e21cdbe9004c8e095022909d"
+    },
+    {
+      "label": "store/parent/main_file_cache.idx4",
+      "path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/main_file_cache.idx4",
+      "canonical_path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/pack/main_file_cache.idx4",
+      "present": true,
+      "size_bytes": 6048,
+      "sha256": "e2ed7a2590e16083305aa25d85c68dc008cc3138fbc70249a103bd71cc7731ad"
+    }
+  ],
+  "scope": "8 jags, active version models/anims, direct and parent file-store inputs",
+  "network_asset_contents": "not captured by this file fingerprint",
+  "performance_acceptance": false,
+  "content_identity_sha256": "2a660d20eaccd1491da88e4b4d2e1ba0e0bdea7c73dbda954f8df4f97bb9d9a3"
+}

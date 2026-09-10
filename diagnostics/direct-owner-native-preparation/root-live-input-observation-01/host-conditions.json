@@ -1,0 +1,18 @@
+{
+  "mem_available_bytes": 957812736,
+  "swap_total_bytes": 0,
+  "swap_free_bytes": 0,
+  "vmstat": {
+    "pswpin": 0,
+    "pswpout": 0,
+    "oom_kill": 0
+  },
+  "cgroup": {
+    "identity": "system.slice/ssh.service",
+    "boot_id": "2217ec26-dc3e-47a3-a700-d3fafb34163f",
+    "memory_events": {
+      "oom": 0,
+      "oom_kill": 0
+    }
+  }
+}

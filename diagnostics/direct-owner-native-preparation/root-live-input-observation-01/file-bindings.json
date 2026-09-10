@@ -1,0 +1,27 @@
+[
+  {
+    "path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/config/world.json",
+    "bytes": 1093,
+    "sha256": "d454c8394299027b4dd9d7644cd89732186ad56ef8c8ba9436579e769a4de737"
+  },
+  {
+    "path": "/home/acfrazier/274bot-campaign/server-4c95f87/concord-fixture-manifest.json",
+    "bytes": 78092,
+    "sha256": "5dab6b1b7925a3419e1ddd9048a44e5f345e25e584742ea99ae609954c2bcdd4"
+  },
+  {
+    "path": "/home/acfrazier/274bot-campaign/server-4c95f87/data/config/public.pem",
+    "bytes": 272,
+    "sha256": "6e1c32ae31f41e4f57aae4cc528f3ba933e1b2db33bbb503e264ff98f766a579"
+  },
+  {
+    "path": "/home/acfrazier/274bot-campaign/server-4c95f87/server-login-public.json",
+    "bytes": 368,
+    "sha256": "0e711c0fe20772a26394222588034c3e86c3aa0d948053059d073d2ef0bce4a6"
+  },
+  {
+    "path": "/home/acfrazier/.274bot/js-scripts.json",
+    "bytes": 148,
+    "sha256": "85d15097e4e0547b7def6b15edc8a66314c13bcc1cfb5fc5ffbef285f431f78f"
+  }
+]

@@ -1,0 +1,33 @@
+{
+  "scope": "pre-admission observations only; no account receipt, authorization, capture or performance claim",
+  "started_unix": 1789001852.7682462,
+  "ended_unix": 1789001853.2952397,
+  "server_pid": 726,
+  "server_start_identity": "linux_proc_start_ticks:595",
+  "cache_snapshot_version": "2faf336eeb0462ed",
+  "cache_content_identity_sha256": "2a660d20eaccd1491da88e4b4d2e1ba0e0bdea7c73dbda954f8df4f97bb9d9a3",
+  "conflict_count": 0,
+  "files": [
+    {
+      "path": "cache.json",
+      "sha256": "d2b65fdd61565a32c439aeeb97041e0d87301d704c4f71b7e7e194668722112f"
+    },
+    {
+      "path": "file-bindings.json",
+      "sha256": "b6163afd6bf58035c569afebeef15b15e543641b5163197406ea891385e7b573"
+    },
+    {
+      "path": "host-conditions.json",
+      "sha256": "edaa6cc0c954a74e27583437d2cdc9676d01dd61189b09fe2090c901ece91e0b"
+    },
+    {
+      "path": "process-check.json",
+      "sha256": "9c0577c778ad1f84846c430a5a04b4c544aa10e09f7eba343b003203ae0180da"
+    },
+    {
+      "path": "server-sample.json",
+      "sha256": "c04d61d51531789598d1cbfaad512432ccd505bd512fd976033618d8ddbe4f1f"
+    }
+  ],
+  "admitted": false
+}

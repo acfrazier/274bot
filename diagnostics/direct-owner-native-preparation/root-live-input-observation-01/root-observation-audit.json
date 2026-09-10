@@ -1,0 +1,10 @@
+{
+  "observation_files_hash_verified": true,
+  "cache_matches_original_n1": {
+    "snapshot_version": true,
+    "content_identity_sha256": true,
+    "files": true
+  },
+  "admitted": false,
+  "scope": "preliminary observed file/cache/server/host bindings; executable access still unavailable and no live receipt"
+}
