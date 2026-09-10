@@ -1,0 +1,34 @@
+{
+  "candidate_id": "coordinate-ebf0f30",
+  "dense_admission_sha256": "79bfb63e7735a213f8e700b92ccd712bd04c37291a1ae3b72a8d001ae33e81ac",
+  "guard_report": "/home/builder/nav-coordinate-differential-a44a930-01/host/docs/memory/nav-tiled-differential/coordinate-native-guards-01/guards.json",
+  "guard_report_sha256": "9b50f234f3305e279482247a2d18f7e8c8feef4cabb0227fcf08e5027110517e",
+  "input_bytes": 73438581,
+  "input_path": "/home/builder/274bot-campaign/nav-census-3d32602-0218/real-input.navpack",
+  "input_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+  "launch.json_sha256": "e89f75545af253b169133b32df796a8a5dc25432de2ab36e2eb3082d43a7aa1d",
+  "limits": {
+    "address": 4294967296,
+    "cpu": 800,
+    "output": 4294967296,
+    "rss": 1073741824,
+    "wall": 900
+  },
+  "mode": "real",
+  "phase": "native-release",
+  "refined_admission_sha256": "046cf683c9172857873ff34a7cccdc6a83710dece96d79f887a930f2e04450fe",
+  "released": true,
+  "result.json_sha256": "0262aaf81172453eaa7c9a2b767f33b98a293b46448f26bf3f8d5117a3cd8bf7",
+  "root_preflight_sha256": "440d9623deaa75bff24577d5145b01c6f690f9419a63642158a1029c52ccd152",
+  "routes_path": "/home/builder/nav-coordinate-differential-a44a930-01/exact59-routes.tsv",
+  "routes_sha256": "49e348ea78806c8278d720d27b171c54a0a209930fa8191ffcd38d2e9bbbc125",
+  "schema": "nav-coordinate-differential-release-v1",
+  "scope": "One fresh exact ordered59 full-byte correctness comparison; no StageA performance acceptance",
+  "source_binding": {
+    "candidate_id": "coordinate-ebf0f30",
+    "filename": "coordinate-source-binding.json",
+    "schema": "nav-coordinate-source-v1",
+    "sha256": "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb"
+  },
+  "sources.json_sha256": "fa6ff39a95b7cb5f2074aacbf653c82a5961921d775c180ebbcfdfc964c96b19"
+}

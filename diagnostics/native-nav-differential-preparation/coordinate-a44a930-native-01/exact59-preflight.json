@@ -1,0 +1,42 @@
+{
+  "boot_id": "c127d892-87d4-41d7-8014-c14ce8cac46c",
+  "conflicting_matches": [],
+  "cpu_delta": [
+    0,
+    0,
+    0,
+    400,
+    0,
+    0,
+    0,
+    0
+  ],
+  "disk_free_bytes": 26763173888,
+  "ended_unix_s": 1788998329.4821696,
+  "hardware": {
+    "cpus": 4,
+    "machine": "x86_64",
+    "node": "274bot-builder",
+    "system": "Linux"
+  },
+  "idle_interval_s": 1,
+  "idle_percent": 100.0,
+  "mem_available_bytes": 7704502272,
+  "mem_total_bytes": 8326332416,
+  "qualified": true,
+  "scope": "fresh root exact59 correctness preflight",
+  "started_unix_s": 1788998328.4790072,
+  "steal_ticks": 0,
+  "swap_free_bytes": 0,
+  "swap_total_bytes": 0,
+  "vmstat_after": {
+    "oom_kill": 0,
+    "pswpin": 0,
+    "pswpout": 0
+  },
+  "vmstat_before": {
+    "oom_kill": 0,
+    "pswpin": 0,
+    "pswpout": 0
+  }
+}

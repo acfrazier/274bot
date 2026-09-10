@@ -11,6 +11,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-10 00:00 UTC
+
+- Root released ONE exact59 full-byte comparison on builder after fresh verified
+  source/native/generated checks and preflight100%idle/zeroSteal/no swap/OOM or
+  conflicts,7.70GBavailable/26.76GBdiskfree. Original pack73438581B/hash2f393138
+  and59-row hash49e348ea verified after admission checks. Root authorization
+  f8ed2150e9d2c0eda91fdf525165a09a94011c52f1d3504c75821cd0256b038d.
+  Actual session14903 running reviewed harness real, binding7b101c30; original
+  coordinate-native-generated-01/real-release, unchangedREAL limits/no retries.
+  No StageA/performance or owner-live release. Do not overlap builder native tests.
+- Owner fixture bb267d1 round2 CHANGES REQUESTED: missing cache_dir/unpack_root.
+  Luna1058 active correction on same card. Root separately dispatched escalation
+  t_6e97dd77 to configuredgrok46 for frozen bb267d1 whole fixture-setup/identity
+  review after two substantive rejections. It does not replace same-card review.
+
 ## Latest boundary — 2026-09-09 23:56 UTC
 
 - Fresh full-byte native wrapper qualification also PASS: generated337-byte
