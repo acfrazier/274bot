@@ -1,0 +1,2454 @@
+{
+  "verified": true,
+  "scope": "fresh exact59 real revision274 full-byte correctness only; no performance or live-action acceptance",
+  "verified_unix_s": 1788998692.2452118,
+  "authorization_sha256": "f8ed2150e9d2c0eda91fdf525165a09a94011c52f1d3504c75821cd0256b038d",
+  "input_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+  "routes_sha256": "49e348ea78806c8278d720d27b171c54a0a209930fa8191ffcd38d2e9bbbc125",
+  "source_binding": {
+    "candidate_id": "coordinate-ebf0f30",
+    "filename": "coordinate-source-binding.json",
+    "schema": "nav-coordinate-source-v1",
+    "sha256": "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb"
+  },
+  "comparison": {
+    "bytes": 2119776634,
+    "equal": true
+  },
+  "output_sha256": {
+    "dense": "bbb179b7bedf32e8811db730b6fe69e069c67d9f80aca62bf14a0c577e7dd022",
+    "refined": "bbb179b7bedf32e8811db730b6fe69e069c67d9f80aca62bf14a0c577e7dd022"
+  },
+  "arms": {
+    "dense": {
+      "frames": {
+        "geometry": 2,
+        "cells": 2,
+        "blocked-words": 2,
+        "bounds": 60,
+        "edges": 2,
+        "teleports": 2,
+        "at": 2,
+        "banks": 2,
+        "canonical": 1,
+        "round-canonical": 1,
+        "fixed-selector": 59,
+        "post-state": 59,
+        "fixed-model": 59,
+        "fixed-tele-model": 59,
+        "host-route": 47,
+        "host-outcome": 12,
+        "host-bank": 2,
+        "host-final": 2,
+        "complete-input-count": 1
+      },
+      "rows": [
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3213,
+            3424,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "fixed-tele-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "host-route": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3213,
+            3424,
+            0,
+            0,
+            3,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "60f7a8ebb54c194ac283060ec7ace6449f211813cc9ef082ac868b29cca30f3e",
+            "fixed-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "fixed-tele-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "host-route": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3213,
+            3424,
+            0,
+            1,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "fixed-tele-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "host-route": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3213,
+            3424,
+            0,
+            1,
+            3,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "60f7a8ebb54c194ac283060ec7ace6449f211813cc9ef082ac868b29cca30f3e",
+            "fixed-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "fixed-tele-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "host-route": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459"
+          }
+        },
+        {
+          "row": [
+            3207,
+            3216,
+            0,
+            3207,
+            3218,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "5a61df841f2134d097bd403557d6841ecc8e47a0657902ddab54e3e960cb928a",
+            "fixed-tele-model": "5a61df841f2134d097bd403557d6841ecc8e47a0657902ddab54e3e960cb928a",
+            "host-route": "5a61df841f2134d097bd403557d6841ecc8e47a0657902ddab54e3e960cb928a"
+          }
+        },
+        {
+          "row": [
+            3229,
+            3213,
+            0,
+            3229,
+            3213,
+            1,
+            0,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "b78d96569c1ab13ac41cad4b3d20421005de10579ce218660101b2d96eb209ee",
+            "fixed-tele-model": "b78d96569c1ab13ac41cad4b3d20421005de10579ce218660101b2d96eb209ee",
+            "host-route": "b78d96569c1ab13ac41cad4b3d20421005de10579ce218660101b2d96eb209ee"
+          }
+        },
+        {
+          "row": [
+            2212,
+            4941,
+            0,
+            2212,
+            4944,
+            1,
+            0,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "fd1d271bbad9041e17d043c3099ab9bc931dfae49969439f1f6d1b92b9407a58",
+            "fixed-tele-model": "fd1d271bbad9041e17d043c3099ab9bc931dfae49969439f1f6d1b92b9407a58",
+            "host-route": "fd1d271bbad9041e17d043c3099ab9bc931dfae49969439f1f6d1b92b9407a58"
+          }
+        },
+        {
+          "row": [
+            2885,
+            4850,
+            0,
+            3253,
+            3401,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            2885,
+            4850,
+            0,
+            3253,
+            3401,
+            0,
+            8,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-route": "81482e185817b41829f368835cd89d3129bfb57dc4101348ed03e610f7e26f6b"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3213,
+            3424,
+            0,
+            0,
+            0,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "ca96fe8d600f21b3fdf69433edd2266b405a9f09023ac25929edb74802d03046",
+            "fixed-tele-model": "ca96fe8d600f21b3fdf69433edd2266b405a9f09023ac25929edb74802d03046",
+            "host-route": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3213,
+            3424,
+            0,
+            0,
+            3,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "60f7a8ebb54c194ac283060ec7ace6449f211813cc9ef082ac868b29cca30f3e",
+            "fixed-model": "ca96fe8d600f21b3fdf69433edd2266b405a9f09023ac25929edb74802d03046",
+            "fixed-tele-model": "ca96fe8d600f21b3fdf69433edd2266b405a9f09023ac25929edb74802d03046",
+            "host-route": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3213,
+            3424,
+            0,
+            1,
+            0,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "ca96fe8d600f21b3fdf69433edd2266b405a9f09023ac25929edb74802d03046",
+            "fixed-tele-model": "ca96fe8d600f21b3fdf69433edd2266b405a9f09023ac25929edb74802d03046",
+            "host-route": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3213,
+            3424,
+            0,
+            1,
+            3,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "60f7a8ebb54c194ac283060ec7ace6449f211813cc9ef082ac868b29cca30f3e",
+            "fixed-model": "ca96fe8d600f21b3fdf69433edd2266b405a9f09023ac25929edb74802d03046",
+            "fixed-tele-model": "ca96fe8d600f21b3fdf69433edd2266b405a9f09023ac25929edb74802d03046",
+            "host-route": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459"
+          }
+        },
+        {
+          "row": [
+            3207,
+            3216,
+            0,
+            3207,
+            3218,
+            0,
+            0,
+            0,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "5a61df841f2134d097bd403557d6841ecc8e47a0657902ddab54e3e960cb928a",
+            "fixed-tele-model": "5a61df841f2134d097bd403557d6841ecc8e47a0657902ddab54e3e960cb928a",
+            "host-route": "5a61df841f2134d097bd403557d6841ecc8e47a0657902ddab54e3e960cb928a"
+          }
+        },
+        {
+          "row": [
+            3229,
+            3213,
+            0,
+            3229,
+            3213,
+            1,
+            0,
+            0,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "c23a23193b9b7265c7d46f16bf0740ba4abb0d432cc677a4fb6efa3db0611d5f",
+            "fixed-tele-model": "c23a23193b9b7265c7d46f16bf0740ba4abb0d432cc677a4fb6efa3db0611d5f",
+            "host-route": "b78d96569c1ab13ac41cad4b3d20421005de10579ce218660101b2d96eb209ee"
+          }
+        },
+        {
+          "row": [
+            2212,
+            4941,
+            0,
+            2212,
+            4944,
+            1,
+            0,
+            0,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "4957d9466976d378c1c7880d0482887252442d638f912ba5ef7354c9d9e49642",
+            "fixed-tele-model": "4957d9466976d378c1c7880d0482887252442d638f912ba5ef7354c9d9e49642",
+            "host-route": "fd1d271bbad9041e17d043c3099ab9bc931dfae49969439f1f6d1b92b9407a58"
+          }
+        },
+        {
+          "row": [
+            2885,
+            4850,
+            0,
+            3253,
+            3401,
+            0,
+            0,
+            0,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            2885,
+            4850,
+            0,
+            3253,
+            3401,
+            0,
+            8,
+            0,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-route": "81482e185817b41829f368835cd89d3129bfb57dc4101348ed03e610f7e26f6b"
+          }
+        },
+        {
+          "row": [
+            3269,
+            3227,
+            0,
+            3267,
+            3227,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "fixed-tele-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "host-route": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16"
+          }
+        },
+        {
+          "row": [
+            3269,
+            3227,
+            0,
+            3267,
+            3227,
+            0,
+            0,
+            1,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "479d3cdbb47b8ba6fda6479abf476b942dcb375278624e5f5ffb81181e66b67e",
+            "fixed-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "fixed-tele-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "host-route": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16"
+          }
+        },
+        {
+          "row": [
+            3269,
+            3227,
+            0,
+            3267,
+            3227,
+            0,
+            0,
+            2,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "a45b5a2fc99b24cdf2247c25c1e282a03b0006d44986516997b1e17f36b427f9",
+            "fixed-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "fixed-tele-model": "83a5c535087dee43ccd732108f4d961769e014c01e4cb23640025ecc357b1d07",
+            "host-route": "83a5c535087dee43ccd732108f4d961769e014c01e4cb23640025ecc357b1d07"
+          }
+        },
+        {
+          "row": [
+            3269,
+            3227,
+            0,
+            3267,
+            3227,
+            0,
+            0,
+            3,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "60f7a8ebb54c194ac283060ec7ace6449f211813cc9ef082ac868b29cca30f3e",
+            "fixed-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "fixed-tele-model": "83a5c535087dee43ccd732108f4d961769e014c01e4cb23640025ecc357b1d07",
+            "host-route": "83a5c535087dee43ccd732108f4d961769e014c01e4cb23640025ecc357b1d07"
+          }
+        },
+        {
+          "row": [
+            3269,
+            3227,
+            0,
+            3267,
+            3227,
+            0,
+            4,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "fixed-tele-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "host-route": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16"
+          }
+        },
+        {
+          "row": [
+            3269,
+            3227,
+            0,
+            3267,
+            3227,
+            0,
+            4,
+            1,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "479d3cdbb47b8ba6fda6479abf476b942dcb375278624e5f5ffb81181e66b67e",
+            "fixed-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "fixed-tele-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "host-route": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16"
+          }
+        },
+        {
+          "row": [
+            3269,
+            3227,
+            0,
+            3267,
+            3227,
+            0,
+            4,
+            2,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "a45b5a2fc99b24cdf2247c25c1e282a03b0006d44986516997b1e17f36b427f9",
+            "fixed-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "fixed-tele-model": "83a5c535087dee43ccd732108f4d961769e014c01e4cb23640025ecc357b1d07",
+            "host-route": "83a5c535087dee43ccd732108f4d961769e014c01e4cb23640025ecc357b1d07"
+          }
+        },
+        {
+          "row": [
+            3269,
+            3227,
+            0,
+            3267,
+            3227,
+            0,
+            4,
+            3,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "60f7a8ebb54c194ac283060ec7ace6449f211813cc9ef082ac868b29cca30f3e",
+            "fixed-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "fixed-tele-model": "83a5c535087dee43ccd732108f4d961769e014c01e4cb23640025ecc357b1d07",
+            "host-route": "83a5c535087dee43ccd732108f4d961769e014c01e4cb23640025ecc357b1d07"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3087,
+            3496,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "fixed-tele-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "host-route": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3087,
+            3496,
+            0,
+            0,
+            2,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "a45b5a2fc99b24cdf2247c25c1e282a03b0006d44986516997b1e17f36b427f9",
+            "fixed-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "fixed-tele-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "host-route": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3087,
+            3496,
+            0,
+            1,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "fixed-tele-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "host-route": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3087,
+            3496,
+            0,
+            1,
+            2,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "a45b5a2fc99b24cdf2247c25c1e282a03b0006d44986516997b1e17f36b427f9",
+            "fixed-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "fixed-tele-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "host-route": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3087,
+            3496,
+            0,
+            5,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "fixed-tele-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "host-route": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3087,
+            3496,
+            0,
+            5,
+            2,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "a45b5a2fc99b24cdf2247c25c1e282a03b0006d44986516997b1e17f36b427f9",
+            "fixed-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "fixed-tele-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "host-route": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692"
+          }
+        },
+        {
+          "row": [
+            3253,
+            3402,
+            0,
+            2912,
+            4833,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            2465,
+            3501,
+            3,
+            2971,
+            2969,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            3253,
+            3402,
+            0,
+            2912,
+            4833,
+            0,
+            0,
+            1,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "479d3cdbb47b8ba6fda6479abf476b942dcb375278624e5f5ffb81181e66b67e",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            2465,
+            3501,
+            3,
+            2971,
+            2969,
+            0,
+            0,
+            1,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "479d3cdbb47b8ba6fda6479abf476b942dcb375278624e5f5ffb81181e66b67e",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "88436549c796a7c9925a783f361d3ab4c34130ac6fc429e0b7444f2d51b828aa",
+            "host-route": "88436549c796a7c9925a783f361d3ab4c34130ac6fc429e0b7444f2d51b828aa"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3217,
+            3215,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3217,
+            3215,
+            0,
+            0,
+            0,
+            1,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-route": "598445cda7bd96c662842680079a96f8072f82dd4a94a5177a99deeeb41103ab"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3217,
+            3215,
+            0,
+            0,
+            0,
+            4,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-route": "22f39344900b072408a36a8fb6b05b665fda8863964f34b7df8550867e73a9b1"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            1855,
+            1280,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3213,
+            3424,
+            0,
+            1,
+            4,
+            4,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "cdff8bae4a77038355ccfcec29644efc978ffe504ca724d1caab059e5f0f644e",
+            "fixed-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "fixed-tele-model": "25db8b5735d08f738b6059d8d37e7f5abc4095ffa63b71c72175593f1d8b5e31",
+            "host-route": "5e12f4cc3bd84021589990eac5472a7f26d512517a459a79fb228ea1e56cc085"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3213,
+            3424,
+            0,
+            0,
+            4,
+            4,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "cdff8bae4a77038355ccfcec29644efc978ffe504ca724d1caab059e5f0f644e",
+            "fixed-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "fixed-tele-model": "25db8b5735d08f738b6059d8d37e7f5abc4095ffa63b71c72175593f1d8b5e31",
+            "host-route": "07b105f9876c0310baea51d21ea155a6b4a1e4bb9ce8061b6b303a95bb1c581c"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3213,
+            3424,
+            0,
+            1,
+            1,
+            4,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "479d3cdbb47b8ba6fda6479abf476b942dcb375278624e5f5ffb81181e66b67e",
+            "fixed-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "fixed-tele-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "host-route": "07b105f9876c0310baea51d21ea155a6b4a1e4bb9ce8061b6b303a95bb1c581c"
+          }
+        },
+        {
+          "row": [
+            3293,
+            3174,
+            0,
+            3087,
+            3496,
+            0,
+            1,
+            5,
+            4,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "c97aa5fb759e5649b6252ad7d029f0b5ea4d4a0c454aea811822b47132fb98e1",
+            "fixed-model": "8e89049f358e3a6f448deeba17e0d947ddb1ce8b1b3ad05aa5302f30382ebe94",
+            "fixed-tele-model": "3bbdb6fe745b9dedb087ee0eee1c412a4a0586f2814b7b84e9bfd8103992fc3e",
+            "host-route": "51e325bca1150eea33a6e069211edc87fc116b327e75f02e05fd4b30ae06ed0b"
+          }
+        },
+        {
+          "row": [
+            3293,
+            3174,
+            0,
+            3087,
+            3496,
+            0,
+            0,
+            5,
+            4,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "c97aa5fb759e5649b6252ad7d029f0b5ea4d4a0c454aea811822b47132fb98e1",
+            "fixed-model": "8e89049f358e3a6f448deeba17e0d947ddb1ce8b1b3ad05aa5302f30382ebe94",
+            "fixed-tele-model": "3bbdb6fe745b9dedb087ee0eee1c412a4a0586f2814b7b84e9bfd8103992fc3e",
+            "host-route": "377b2167585eb1a93db3d00e0ec39fbddb88760a796bcce4d59eaf84fcf065b1"
+          }
+        },
+        {
+          "row": [
+            3293,
+            3174,
+            0,
+            3087,
+            3496,
+            0,
+            1,
+            2,
+            4,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "a45b5a2fc99b24cdf2247c25c1e282a03b0006d44986516997b1e17f36b427f9",
+            "fixed-model": "8e89049f358e3a6f448deeba17e0d947ddb1ce8b1b3ad05aa5302f30382ebe94",
+            "fixed-tele-model": "95ed92cb439ca659506bd4daee2cd8b33bb443ec43fabd073695b0cd12f271f3",
+            "host-route": "e583a99059edf6cdd24a607cc725293fadfa78ad045c388b78bad209accdd3ac"
+          }
+        },
+        {
+          "row": [
+            3293,
+            3174,
+            0,
+            3087,
+            3496,
+            0,
+            1,
+            0,
+            4,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "8e89049f358e3a6f448deeba17e0d947ddb1ce8b1b3ad05aa5302f30382ebe94",
+            "fixed-tele-model": "8e89049f358e3a6f448deeba17e0d947ddb1ce8b1b3ad05aa5302f30382ebe94",
+            "host-route": "377b2167585eb1a93db3d00e0ec39fbddb88760a796bcce4d59eaf84fcf065b1"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3208,
+            3220,
+            2,
+            0,
+            3,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "60f7a8ebb54c194ac283060ec7ace6449f211813cc9ef082ac868b29cca30f3e",
+            "fixed-model": "de7970263bab79ebb42cae5810edb97b32721c58e3ea28b988ea1c51ef4d2005",
+            "fixed-tele-model": "de7970263bab79ebb42cae5810edb97b32721c58e3ea28b988ea1c51ef4d2005",
+            "host-route": "de7970263bab79ebb42cae5810edb97b32721c58e3ea28b988ea1c51ef4d2005"
+          }
+        },
+        {
+          "row": [
+            3213,
+            3424,
+            0,
+            3222,
+            3218,
+            0,
+            0,
+            3,
+            4,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "60f7a8ebb54c194ac283060ec7ace6449f211813cc9ef082ac868b29cca30f3e",
+            "fixed-model": "ea22813d5f3c36365634df61a00e95892f66f8fb6bfa0f3207c426636217d32d",
+            "fixed-tele-model": "ea22813d5f3c36365634df61a00e95892f66f8fb6bfa0f3207c426636217d32d",
+            "host-route": "cbb35c54eefca4e80d96ca68715193704db2c576a525d3923e1d69723ca8fad8"
+          }
+        },
+        {
+          "row": [
+            3027,
+            3218,
+            0,
+            2956,
+            3143,
+            1,
+            0,
+            6,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "41ff6da83c9cb57eb7101e8e75492fcd82834227a4c89b3c0d6f08d8c5041761",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "a2b8cb3c34cef91c266b939bec71979e6181adca85dc629aede6fe70cd02e640",
+            "host-route": "a2b8cb3c34cef91c266b939bec71979e6181adca85dc629aede6fe70cd02e640"
+          }
+        },
+        {
+          "row": [
+            3027,
+            3218,
+            0,
+            2956,
+            3143,
+            1,
+            0,
+            2,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "a45b5a2fc99b24cdf2247c25c1e282a03b0006d44986516997b1e17f36b427f9",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            3027,
+            3218,
+            0,
+            2956,
+            3143,
+            1,
+            0,
+            0,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            2683,
+            3272,
+            0,
+            2775,
+            3234,
+            1,
+            0,
+            6,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "41ff6da83c9cb57eb7101e8e75492fcd82834227a4c89b3c0d6f08d8c5041761",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "55dcc92da7584f2d0ea50038183fa1d8112c1675e28bb55dc0dc8b96a8492bcd",
+            "host-route": "caff8732d982e54b988bdbe6a38a46986ef98a9fefa286a96c95a60147c3346a"
+          }
+        },
+        {
+          "row": [
+            2683,
+            3272,
+            0,
+            2775,
+            3234,
+            1,
+            0,
+            2,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "a45b5a2fc99b24cdf2247c25c1e282a03b0006d44986516997b1e17f36b427f9",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            2683,
+            3272,
+            0,
+            2775,
+            3234,
+            1,
+            0,
+            0,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            2918,
+            3176,
+            0,
+            5,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-bank": "60b50471729f3db5d5ff7197e6fcba908564835a8595d86be94458dcecf3dfda",
+            "host-final": "201191e61daba97a2eb4bef02e240f7b38301a0e28f83e2a4319a762da69a836",
+            "host-route": "201191e61daba97a2eb4bef02e240f7b38301a0e28f83e2a4319a762da69a836"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            2918,
+            3176,
+            0,
+            5,
+            2,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "a45b5a2fc99b24cdf2247c25c1e282a03b0006d44986516997b1e17f36b427f9",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-bank": "60b50471729f3db5d5ff7197e6fcba908564835a8595d86be94458dcecf3dfda",
+            "host-final": "201191e61daba97a2eb4bef02e240f7b38301a0e28f83e2a4319a762da69a836",
+            "host-route": "201191e61daba97a2eb4bef02e240f7b38301a0e28f83e2a4319a762da69a836"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            2918,
+            3176,
+            0,
+            1,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            2918,
+            3176,
+            0,
+            5,
+            5,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "c97aa5fb759e5649b6252ad7d029f0b5ea4d4a0c454aea811822b47132fb98e1",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "201191e61daba97a2eb4bef02e240f7b38301a0e28f83e2a4319a762da69a836",
+            "host-route": "201191e61daba97a2eb4bef02e240f7b38301a0e28f83e2a4319a762da69a836"
+          }
+        }
+      ],
+      "geometry": [
+        "(WorldTile { x: 1856, z: 1280, level: 0 }, 1792, 9088, 65142784)",
+        "(WorldTile { x: 1856, z: 1280, level: 0 }, 1792, 9088, 65142784)"
+      ]
+    },
+    "refined": {
+      "frames": {
+        "geometry": 2,
+        "cells": 2,
+        "blocked-words": 2,
+        "bounds": 60,
+        "edges": 2,
+        "teleports": 2,
+        "at": 2,
+        "banks": 2,
+        "canonical": 1,
+        "round-canonical": 1,
+        "fixed-selector": 59,
+        "post-state": 59,
+        "fixed-model": 59,
+        "fixed-tele-model": 59,
+        "host-route": 47,
+        "host-outcome": 12,
+        "host-bank": 2,
+        "host-final": 2,
+        "complete-input-count": 1
+      },
+      "rows": [
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3213,
+            3424,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "fixed-tele-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "host-route": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3213,
+            3424,
+            0,
+            0,
+            3,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "60f7a8ebb54c194ac283060ec7ace6449f211813cc9ef082ac868b29cca30f3e",
+            "fixed-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "fixed-tele-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "host-route": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3213,
+            3424,
+            0,
+            1,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "fixed-tele-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "host-route": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3213,
+            3424,
+            0,
+            1,
+            3,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "60f7a8ebb54c194ac283060ec7ace6449f211813cc9ef082ac868b29cca30f3e",
+            "fixed-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "fixed-tele-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "host-route": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459"
+          }
+        },
+        {
+          "row": [
+            3207,
+            3216,
+            0,
+            3207,
+            3218,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "5a61df841f2134d097bd403557d6841ecc8e47a0657902ddab54e3e960cb928a",
+            "fixed-tele-model": "5a61df841f2134d097bd403557d6841ecc8e47a0657902ddab54e3e960cb928a",
+            "host-route": "5a61df841f2134d097bd403557d6841ecc8e47a0657902ddab54e3e960cb928a"
+          }
+        },
+        {
+          "row": [
+            3229,
+            3213,
+            0,
+            3229,
+            3213,
+            1,
+            0,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "b78d96569c1ab13ac41cad4b3d20421005de10579ce218660101b2d96eb209ee",
+            "fixed-tele-model": "b78d96569c1ab13ac41cad4b3d20421005de10579ce218660101b2d96eb209ee",
+            "host-route": "b78d96569c1ab13ac41cad4b3d20421005de10579ce218660101b2d96eb209ee"
+          }
+        },
+        {
+          "row": [
+            2212,
+            4941,
+            0,
+            2212,
+            4944,
+            1,
+            0,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "fd1d271bbad9041e17d043c3099ab9bc931dfae49969439f1f6d1b92b9407a58",
+            "fixed-tele-model": "fd1d271bbad9041e17d043c3099ab9bc931dfae49969439f1f6d1b92b9407a58",
+            "host-route": "fd1d271bbad9041e17d043c3099ab9bc931dfae49969439f1f6d1b92b9407a58"
+          }
+        },
+        {
+          "row": [
+            2885,
+            4850,
+            0,
+            3253,
+            3401,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            2885,
+            4850,
+            0,
+            3253,
+            3401,
+            0,
+            8,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-route": "81482e185817b41829f368835cd89d3129bfb57dc4101348ed03e610f7e26f6b"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3213,
+            3424,
+            0,
+            0,
+            0,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "ca96fe8d600f21b3fdf69433edd2266b405a9f09023ac25929edb74802d03046",
+            "fixed-tele-model": "ca96fe8d600f21b3fdf69433edd2266b405a9f09023ac25929edb74802d03046",
+            "host-route": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3213,
+            3424,
+            0,
+            0,
+            3,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "60f7a8ebb54c194ac283060ec7ace6449f211813cc9ef082ac868b29cca30f3e",
+            "fixed-model": "ca96fe8d600f21b3fdf69433edd2266b405a9f09023ac25929edb74802d03046",
+            "fixed-tele-model": "ca96fe8d600f21b3fdf69433edd2266b405a9f09023ac25929edb74802d03046",
+            "host-route": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3213,
+            3424,
+            0,
+            1,
+            0,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "ca96fe8d600f21b3fdf69433edd2266b405a9f09023ac25929edb74802d03046",
+            "fixed-tele-model": "ca96fe8d600f21b3fdf69433edd2266b405a9f09023ac25929edb74802d03046",
+            "host-route": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3213,
+            3424,
+            0,
+            1,
+            3,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "60f7a8ebb54c194ac283060ec7ace6449f211813cc9ef082ac868b29cca30f3e",
+            "fixed-model": "ca96fe8d600f21b3fdf69433edd2266b405a9f09023ac25929edb74802d03046",
+            "fixed-tele-model": "ca96fe8d600f21b3fdf69433edd2266b405a9f09023ac25929edb74802d03046",
+            "host-route": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459"
+          }
+        },
+        {
+          "row": [
+            3207,
+            3216,
+            0,
+            3207,
+            3218,
+            0,
+            0,
+            0,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "5a61df841f2134d097bd403557d6841ecc8e47a0657902ddab54e3e960cb928a",
+            "fixed-tele-model": "5a61df841f2134d097bd403557d6841ecc8e47a0657902ddab54e3e960cb928a",
+            "host-route": "5a61df841f2134d097bd403557d6841ecc8e47a0657902ddab54e3e960cb928a"
+          }
+        },
+        {
+          "row": [
+            3229,
+            3213,
+            0,
+            3229,
+            3213,
+            1,
+            0,
+            0,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "c23a23193b9b7265c7d46f16bf0740ba4abb0d432cc677a4fb6efa3db0611d5f",
+            "fixed-tele-model": "c23a23193b9b7265c7d46f16bf0740ba4abb0d432cc677a4fb6efa3db0611d5f",
+            "host-route": "b78d96569c1ab13ac41cad4b3d20421005de10579ce218660101b2d96eb209ee"
+          }
+        },
+        {
+          "row": [
+            2212,
+            4941,
+            0,
+            2212,
+            4944,
+            1,
+            0,
+            0,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "4957d9466976d378c1c7880d0482887252442d638f912ba5ef7354c9d9e49642",
+            "fixed-tele-model": "4957d9466976d378c1c7880d0482887252442d638f912ba5ef7354c9d9e49642",
+            "host-route": "fd1d271bbad9041e17d043c3099ab9bc931dfae49969439f1f6d1b92b9407a58"
+          }
+        },
+        {
+          "row": [
+            2885,
+            4850,
+            0,
+            3253,
+            3401,
+            0,
+            0,
+            0,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            2885,
+            4850,
+            0,
+            3253,
+            3401,
+            0,
+            8,
+            0,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-route": "81482e185817b41829f368835cd89d3129bfb57dc4101348ed03e610f7e26f6b"
+          }
+        },
+        {
+          "row": [
+            3269,
+            3227,
+            0,
+            3267,
+            3227,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "fixed-tele-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "host-route": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16"
+          }
+        },
+        {
+          "row": [
+            3269,
+            3227,
+            0,
+            3267,
+            3227,
+            0,
+            0,
+            1,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "479d3cdbb47b8ba6fda6479abf476b942dcb375278624e5f5ffb81181e66b67e",
+            "fixed-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "fixed-tele-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "host-route": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16"
+          }
+        },
+        {
+          "row": [
+            3269,
+            3227,
+            0,
+            3267,
+            3227,
+            0,
+            0,
+            2,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "a45b5a2fc99b24cdf2247c25c1e282a03b0006d44986516997b1e17f36b427f9",
+            "fixed-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "fixed-tele-model": "83a5c535087dee43ccd732108f4d961769e014c01e4cb23640025ecc357b1d07",
+            "host-route": "83a5c535087dee43ccd732108f4d961769e014c01e4cb23640025ecc357b1d07"
+          }
+        },
+        {
+          "row": [
+            3269,
+            3227,
+            0,
+            3267,
+            3227,
+            0,
+            0,
+            3,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "60f7a8ebb54c194ac283060ec7ace6449f211813cc9ef082ac868b29cca30f3e",
+            "fixed-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "fixed-tele-model": "83a5c535087dee43ccd732108f4d961769e014c01e4cb23640025ecc357b1d07",
+            "host-route": "83a5c535087dee43ccd732108f4d961769e014c01e4cb23640025ecc357b1d07"
+          }
+        },
+        {
+          "row": [
+            3269,
+            3227,
+            0,
+            3267,
+            3227,
+            0,
+            4,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "fixed-tele-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "host-route": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16"
+          }
+        },
+        {
+          "row": [
+            3269,
+            3227,
+            0,
+            3267,
+            3227,
+            0,
+            4,
+            1,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "479d3cdbb47b8ba6fda6479abf476b942dcb375278624e5f5ffb81181e66b67e",
+            "fixed-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "fixed-tele-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "host-route": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16"
+          }
+        },
+        {
+          "row": [
+            3269,
+            3227,
+            0,
+            3267,
+            3227,
+            0,
+            4,
+            2,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "a45b5a2fc99b24cdf2247c25c1e282a03b0006d44986516997b1e17f36b427f9",
+            "fixed-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "fixed-tele-model": "83a5c535087dee43ccd732108f4d961769e014c01e4cb23640025ecc357b1d07",
+            "host-route": "83a5c535087dee43ccd732108f4d961769e014c01e4cb23640025ecc357b1d07"
+          }
+        },
+        {
+          "row": [
+            3269,
+            3227,
+            0,
+            3267,
+            3227,
+            0,
+            4,
+            3,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "60f7a8ebb54c194ac283060ec7ace6449f211813cc9ef082ac868b29cca30f3e",
+            "fixed-model": "7e68ad9ca22b29259adab488e300c35b4c723bf22792ca9ad2d11e1b2d853f16",
+            "fixed-tele-model": "83a5c535087dee43ccd732108f4d961769e014c01e4cb23640025ecc357b1d07",
+            "host-route": "83a5c535087dee43ccd732108f4d961769e014c01e4cb23640025ecc357b1d07"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3087,
+            3496,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "fixed-tele-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "host-route": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3087,
+            3496,
+            0,
+            0,
+            2,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "a45b5a2fc99b24cdf2247c25c1e282a03b0006d44986516997b1e17f36b427f9",
+            "fixed-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "fixed-tele-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "host-route": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3087,
+            3496,
+            0,
+            1,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "fixed-tele-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "host-route": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3087,
+            3496,
+            0,
+            1,
+            2,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "a45b5a2fc99b24cdf2247c25c1e282a03b0006d44986516997b1e17f36b427f9",
+            "fixed-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "fixed-tele-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "host-route": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3087,
+            3496,
+            0,
+            5,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "fixed-tele-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "host-route": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3087,
+            3496,
+            0,
+            5,
+            2,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "a45b5a2fc99b24cdf2247c25c1e282a03b0006d44986516997b1e17f36b427f9",
+            "fixed-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "fixed-tele-model": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692",
+            "host-route": "9d10e6ad79da18b128c3bcd19b44b757bd73ea87d4f6b5acc1c1e5688a8cb692"
+          }
+        },
+        {
+          "row": [
+            3253,
+            3402,
+            0,
+            2912,
+            4833,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            2465,
+            3501,
+            3,
+            2971,
+            2969,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            3253,
+            3402,
+            0,
+            2912,
+            4833,
+            0,
+            0,
+            1,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "479d3cdbb47b8ba6fda6479abf476b942dcb375278624e5f5ffb81181e66b67e",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            2465,
+            3501,
+            3,
+            2971,
+            2969,
+            0,
+            0,
+            1,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "479d3cdbb47b8ba6fda6479abf476b942dcb375278624e5f5ffb81181e66b67e",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "88436549c796a7c9925a783f361d3ab4c34130ac6fc429e0b7444f2d51b828aa",
+            "host-route": "88436549c796a7c9925a783f361d3ab4c34130ac6fc429e0b7444f2d51b828aa"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3217,
+            3215,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3217,
+            3215,
+            0,
+            0,
+            0,
+            1,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-route": "598445cda7bd96c662842680079a96f8072f82dd4a94a5177a99deeeb41103ab"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3217,
+            3215,
+            0,
+            0,
+            0,
+            4,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-route": "22f39344900b072408a36a8fb6b05b665fda8863964f34b7df8550867e73a9b1"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            1855,
+            1280,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3213,
+            3424,
+            0,
+            1,
+            4,
+            4,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "cdff8bae4a77038355ccfcec29644efc978ffe504ca724d1caab059e5f0f644e",
+            "fixed-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "fixed-tele-model": "25db8b5735d08f738b6059d8d37e7f5abc4095ffa63b71c72175593f1d8b5e31",
+            "host-route": "5e12f4cc3bd84021589990eac5472a7f26d512517a459a79fb228ea1e56cc085"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3213,
+            3424,
+            0,
+            0,
+            4,
+            4,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "cdff8bae4a77038355ccfcec29644efc978ffe504ca724d1caab059e5f0f644e",
+            "fixed-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "fixed-tele-model": "25db8b5735d08f738b6059d8d37e7f5abc4095ffa63b71c72175593f1d8b5e31",
+            "host-route": "07b105f9876c0310baea51d21ea155a6b4a1e4bb9ce8061b6b303a95bb1c581c"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3213,
+            3424,
+            0,
+            1,
+            1,
+            4,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "479d3cdbb47b8ba6fda6479abf476b942dcb375278624e5f5ffb81181e66b67e",
+            "fixed-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "fixed-tele-model": "66f24962f251293729f42c132a0e8750e11d9fadd09750a13a83c863d5371459",
+            "host-route": "07b105f9876c0310baea51d21ea155a6b4a1e4bb9ce8061b6b303a95bb1c581c"
+          }
+        },
+        {
+          "row": [
+            3293,
+            3174,
+            0,
+            3087,
+            3496,
+            0,
+            1,
+            5,
+            4,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "c97aa5fb759e5649b6252ad7d029f0b5ea4d4a0c454aea811822b47132fb98e1",
+            "fixed-model": "8e89049f358e3a6f448deeba17e0d947ddb1ce8b1b3ad05aa5302f30382ebe94",
+            "fixed-tele-model": "3bbdb6fe745b9dedb087ee0eee1c412a4a0586f2814b7b84e9bfd8103992fc3e",
+            "host-route": "51e325bca1150eea33a6e069211edc87fc116b327e75f02e05fd4b30ae06ed0b"
+          }
+        },
+        {
+          "row": [
+            3293,
+            3174,
+            0,
+            3087,
+            3496,
+            0,
+            0,
+            5,
+            4,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "c97aa5fb759e5649b6252ad7d029f0b5ea4d4a0c454aea811822b47132fb98e1",
+            "fixed-model": "8e89049f358e3a6f448deeba17e0d947ddb1ce8b1b3ad05aa5302f30382ebe94",
+            "fixed-tele-model": "3bbdb6fe745b9dedb087ee0eee1c412a4a0586f2814b7b84e9bfd8103992fc3e",
+            "host-route": "377b2167585eb1a93db3d00e0ec39fbddb88760a796bcce4d59eaf84fcf065b1"
+          }
+        },
+        {
+          "row": [
+            3293,
+            3174,
+            0,
+            3087,
+            3496,
+            0,
+            1,
+            2,
+            4,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "a45b5a2fc99b24cdf2247c25c1e282a03b0006d44986516997b1e17f36b427f9",
+            "fixed-model": "8e89049f358e3a6f448deeba17e0d947ddb1ce8b1b3ad05aa5302f30382ebe94",
+            "fixed-tele-model": "95ed92cb439ca659506bd4daee2cd8b33bb443ec43fabd073695b0cd12f271f3",
+            "host-route": "e583a99059edf6cdd24a607cc725293fadfa78ad045c388b78bad209accdd3ac"
+          }
+        },
+        {
+          "row": [
+            3293,
+            3174,
+            0,
+            3087,
+            3496,
+            0,
+            1,
+            0,
+            4,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "8e89049f358e3a6f448deeba17e0d947ddb1ce8b1b3ad05aa5302f30382ebe94",
+            "fixed-tele-model": "8e89049f358e3a6f448deeba17e0d947ddb1ce8b1b3ad05aa5302f30382ebe94",
+            "host-route": "377b2167585eb1a93db3d00e0ec39fbddb88760a796bcce4d59eaf84fcf065b1"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            3208,
+            3220,
+            2,
+            0,
+            3,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "60f7a8ebb54c194ac283060ec7ace6449f211813cc9ef082ac868b29cca30f3e",
+            "fixed-model": "de7970263bab79ebb42cae5810edb97b32721c58e3ea28b988ea1c51ef4d2005",
+            "fixed-tele-model": "de7970263bab79ebb42cae5810edb97b32721c58e3ea28b988ea1c51ef4d2005",
+            "host-route": "de7970263bab79ebb42cae5810edb97b32721c58e3ea28b988ea1c51ef4d2005"
+          }
+        },
+        {
+          "row": [
+            3213,
+            3424,
+            0,
+            3222,
+            3218,
+            0,
+            0,
+            3,
+            4,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "60f7a8ebb54c194ac283060ec7ace6449f211813cc9ef082ac868b29cca30f3e",
+            "fixed-model": "ea22813d5f3c36365634df61a00e95892f66f8fb6bfa0f3207c426636217d32d",
+            "fixed-tele-model": "ea22813d5f3c36365634df61a00e95892f66f8fb6bfa0f3207c426636217d32d",
+            "host-route": "cbb35c54eefca4e80d96ca68715193704db2c576a525d3923e1d69723ca8fad8"
+          }
+        },
+        {
+          "row": [
+            3027,
+            3218,
+            0,
+            2956,
+            3143,
+            1,
+            0,
+            6,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "41ff6da83c9cb57eb7101e8e75492fcd82834227a4c89b3c0d6f08d8c5041761",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "a2b8cb3c34cef91c266b939bec71979e6181adca85dc629aede6fe70cd02e640",
+            "host-route": "a2b8cb3c34cef91c266b939bec71979e6181adca85dc629aede6fe70cd02e640"
+          }
+        },
+        {
+          "row": [
+            3027,
+            3218,
+            0,
+            2956,
+            3143,
+            1,
+            0,
+            2,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "a45b5a2fc99b24cdf2247c25c1e282a03b0006d44986516997b1e17f36b427f9",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            3027,
+            3218,
+            0,
+            2956,
+            3143,
+            1,
+            0,
+            0,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            2683,
+            3272,
+            0,
+            2775,
+            3234,
+            1,
+            0,
+            6,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "41ff6da83c9cb57eb7101e8e75492fcd82834227a4c89b3c0d6f08d8c5041761",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "55dcc92da7584f2d0ea50038183fa1d8112c1675e28bb55dc0dc8b96a8492bcd",
+            "host-route": "caff8732d982e54b988bdbe6a38a46986ef98a9fefa286a96c95a60147c3346a"
+          }
+        },
+        {
+          "row": [
+            2683,
+            3272,
+            0,
+            2775,
+            3234,
+            1,
+            0,
+            2,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "a45b5a2fc99b24cdf2247c25c1e282a03b0006d44986516997b1e17f36b427f9",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            2683,
+            3272,
+            0,
+            2775,
+            3234,
+            1,
+            0,
+            0,
+            0,
+            1
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            2918,
+            3176,
+            0,
+            5,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-bank": "60b50471729f3db5d5ff7197e6fcba908564835a8595d86be94458dcecf3dfda",
+            "host-final": "201191e61daba97a2eb4bef02e240f7b38301a0e28f83e2a4319a762da69a836",
+            "host-route": "201191e61daba97a2eb4bef02e240f7b38301a0e28f83e2a4319a762da69a836"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            2918,
+            3176,
+            0,
+            5,
+            2,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "a45b5a2fc99b24cdf2247c25c1e282a03b0006d44986516997b1e17f36b427f9",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-bank": "60b50471729f3db5d5ff7197e6fcba908564835a8595d86be94458dcecf3dfda",
+            "host-final": "201191e61daba97a2eb4bef02e240f7b38301a0e28f83e2a4319a762da69a836",
+            "host-route": "201191e61daba97a2eb4bef02e240f7b38301a0e28f83e2a4319a762da69a836"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            2918,
+            3176,
+            0,
+            1,
+            0,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "1fa81a4fc056eef8aa90d709f6063b6b9a1237193ad427106beb0da4ccb03e21",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "host-outcome": "50ddfe5e302083de3cc3d29419670353a02e75c82645798b21bf61aaa5231a02"
+          }
+        },
+        {
+          "row": [
+            3222,
+            3218,
+            0,
+            2918,
+            3176,
+            0,
+            5,
+            5,
+            0,
+            0
+          ],
+          "payload_sha256": {
+            "post-state": "c97aa5fb759e5649b6252ad7d029f0b5ea4d4a0c454aea811822b47132fb98e1",
+            "fixed-model": "91f2ad57421ed438d9529c35e85fa4e533a529e929eba3994fc16ca8bb591f8a",
+            "fixed-tele-model": "201191e61daba97a2eb4bef02e240f7b38301a0e28f83e2a4319a762da69a836",
+            "host-route": "201191e61daba97a2eb4bef02e240f7b38301a0e28f83e2a4319a762da69a836"
+          }
+        }
+      ],
+      "geometry": [
+        "(WorldTile { x: 1856, z: 1280, level: 0 }, 1792, 9088, 65142784)",
+        "(WorldTile { x: 1856, z: 1280, level: 0 }, 1792, 9088, 65142784)"
+      ]
+    }
+  },
+  "limitations": [
+    "No StageA CPU/p99/RSS or StageB acceptance",
+    "Bank/teleport plans are not live action execution"
+  ]
+}

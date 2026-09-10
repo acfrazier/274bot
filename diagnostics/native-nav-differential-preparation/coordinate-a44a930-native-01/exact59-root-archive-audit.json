@@ -1,0 +1,10 @@
+{
+  "verified": true,
+  "archive_sha256": "27e5f0a8d305a2dcbf4f654e7e42a1630b9af1f3fd5ffb3c141b42bdba59ccce",
+  "files": 15,
+  "uncompressed_bytes": 4313089141,
+  "full_output_bytes_per_arm": 2119776634,
+  "full_output_sha256": "bbb179b7bedf32e8811db730b6fe69e069c67d9f80aca62bf14a0c577e7dd022",
+  "rows": 59,
+  "scope": "independent complete archived bytes readback; correctness only"
+}

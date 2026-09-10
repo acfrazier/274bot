@@ -1,0 +1,80 @@
+{
+  "scope": "exact59 correctness raw evidence only; no performance acceptance",
+  "files": [
+    {
+      "path": "host/docs/memory/nav-tiled-differential/coordinate-native-generated-01/real-release/authorization.json",
+      "bytes": 1837,
+      "sha256": "f8ed2150e9d2c0eda91fdf525165a09a94011c52f1d3504c75821cd0256b038d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-differential/coordinate-native-generated-01/real-release/dense.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-differential/coordinate-native-generated-01/real-release/dense.out",
+      "bytes": 2119776634,
+      "sha256": "bbb179b7bedf32e8811db730b6fe69e069c67d9f80aca62bf14a0c577e7dd022"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-differential/coordinate-native-generated-01/real-release/dense.receipt.json",
+      "bytes": 902,
+      "sha256": "d2f9df17a902dfb4798c530161ff025e18d8036037c93e6f8bc0a78b62b6a1ad"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-differential/coordinate-native-generated-01/real-release/input.bin",
+      "bytes": 73438581,
+      "sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-differential/coordinate-native-generated-01/real-release/refined.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-differential/coordinate-native-generated-01/real-release/refined.out",
+      "bytes": 2119776634,
+      "sha256": "bbb179b7bedf32e8811db730b6fe69e069c67d9f80aca62bf14a0c577e7dd022"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-differential/coordinate-native-generated-01/real-release/refined.receipt.json",
+      "bytes": 904,
+      "sha256": "8848e2f041d751bbe5624f8b5b88857fca419007a6417c12081a54c6bcae6baa"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-differential/coordinate-native-generated-01/real-release/result.json",
+      "bytes": 2116,
+      "sha256": "e6c8b044b5272dffff16dab604a14a1490bbfaf59e919e6b75644f9264d0e6fa"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-differential/coordinate-native-generated-01/real-release/routes.tsv",
+      "bytes": 1888,
+      "sha256": "49e348ea78806c8278d720d27b171c54a0a209930fa8191ffcd38d2e9bbbc125"
+    },
+    {
+      "path": "exact59-root-audit.json",
+      "bytes": 78634,
+      "sha256": "f9fc51656caaadf0903b817a22154bcb5dc2e9681ac2872d73d7f589536756d2"
+    },
+    {
+      "path": "exact59-authorization.json",
+      "bytes": 1837,
+      "sha256": "f8ed2150e9d2c0eda91fdf525165a09a94011c52f1d3504c75821cd0256b038d"
+    },
+    {
+      "path": "exact59-preflight.json",
+      "bytes": 810,
+      "sha256": "440d9623deaa75bff24577d5145b01c6f690f9419a63642158a1029c52ccd152"
+    },
+    {
+      "path": "prepare_exact59_release.py",
+      "bytes": 4503,
+      "sha256": "120c5bfb328696ca461a46d9cfbe8d94703dc88630f5fa3a98ca6950b66b2e20"
+    },
+    {
+      "path": "audit_exact59.py",
+      "bytes": 3861,
+      "sha256": "bb1d697838c57144fd0ff9175ddf3785bffef867d68f57870957ea9a87997e52"
+    }
+  ]
+}

@@ -120,3 +120,32 @@ This completes fresh native generated qualification of the coordinate candidate.
 It does not turn the earlier failed scheduler run into a pass, nor establish real
 exact-59 correctness, CF1/CF2, clean acceptance, resource savings or live owner
 readiness. Those remain separately released work.
+
+
+## Fresh exact59 native correctness
+
+Root released one new dense/refined comparison of the original 73,438,581-byte
+pack and unchanged ordered 59-row TSV after fresh builder preflight. The source
+binding remains7b101c30; authorization SHA256 is
+f8ed2150e9d2c0eda91fdf525165a09a94011c52f1d3504c75821cd0256b038d.
+The actual reviewed harness completed with unchanged900s wall/800s CPU/1GiB
+sampled RSS/4GiB hard AS/4GiB output per arm. Both arms passed.
+
+A separate root readback verified all59 row identities and model/teleport/host
+frames, two complete65,142,784-cell world passes, geometry and frame boundaries,
+then compared every output byte. Each arm produced2,119,776,634 bytes with SHA256
+bbb179b7bedf32e8811db730b6fe69e069c67d9f80aca62bf14a0c577e7dd022.
+No old40/19 output was used to fill a current result slot.
+
+Raw archive27e5f0a8d305a2dcbf4f654e7e42a1630b9af1f3fd5ffb3c141b42bdba59ccce
+contains15 files,4,313,089,141 uncompressed bytes,34,822,129 compressed bytes.
+Root downloaded it and streamed every member through an independent byte-count
+and SHA256 verification without extracting multi-gigabyte files locally. All
+members, complete output hashes, input/routes and authorization bindings passed.
+Local evidence: diagnostics/native-nav-differential-preparation/coordinate-a44a930-native-01/
+exact59-{root-audit,root-archive-audit,evidence.manifest,evidence.receipt}.json
+and the retained raw archive. Native original output and source remain intact.
+
+This is fresh exact59 correctness only. StageA CF1/CF2/CA, CPU/p99/peak/RSS,
+StageB, actual live actions, deployed owner budgets and final branch review
+remain open. Independent evidence review is the next boundary before CF1.
