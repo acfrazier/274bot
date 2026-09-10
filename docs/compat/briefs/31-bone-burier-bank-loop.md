@@ -6,6 +6,37 @@ codex/rs2b0t-multirevision. Read applicable instructions, docs/execution.md,
 fail-closed-dispatch and plan step 6. Root owns scenario/live harness changes.
 Never move, restore or stash shared WIP; export exact sources for checks.
 
+The matching/fill implementer incorrectly closed t_41b2f50e without review.
+The real prerequisite is now corrective review t_d68ee0fc. Root reclaimed
+premature run 1137 before source edits; resume only after that gate completes.
+Use new commits for shared-branch corrections, including generated files.
+
+The next headed BankFletcher run exposed a related required deposit defect.
+At f2b04198/client 56d8027/catalog 100adccc on Mac 289, it cut the initial
+logs, opened the bank, then the slot panicked writing beyond the 5000-byte
+packet buffer. The original panel exited 0 after its earlier XP-only PASS;
+root classifies the run as failed. See evidence/catalog-headed/
+r289-bank-fletcher-100adccc-f2b04198.log and the read first.png capture.
+Root source diagnosis: Bank.depositAllMatching queues one named request for
+each equal bank-side row, and Rust InteractReq::Deposit loops over every
+matching row for each request. Twenty-seven identical rows can multiply into
+729 Deposit-All writes in one dispatch batch. Confirm this through the real
+script -> Rust boundary; do not paper over it by growing the packet buffer.
+Complete bounded, observed depositAllMatching/depositInventory/depositAllExcept
+behavior in Rust, with thin JS predicate selection. Preserve actual foreign
+side-view readiness (1200 ms), per-item settlement (2000 ms), 32-step guard,
+callback/matcher semantics, Pause/hold/Stop, and fresh slot/id identities.
+One Deposit-All of an item must not multiply over every duplicate row. Cover
+27 duplicate rows, mixed item types/kept tools, empty/loading view, refusal,
+partial progress and session cancellation. This is the same ordinary bank
+transfer family required by the existing enabled cards.
+
+Root's count-dialog dismissal is at 76d61beb and in corrective review; preserve
+it. Root owns the separately observed ScriptRunner.stop propagation fix in
+load.rs/slot.rs and headed panic/error reporting; coordinate any narrow shared
+file hotspot rather than restoring work. Do not broaden deposit fixes into
+new packet storage or an imported JavaScript controller.
+
 The operator observed the headed 289 BoneBurier run at frozen host e7915812,
 client 56d8027, catalog 100adccc. It buried five supplied bones, then stayed
 at Lumbridge (3220,3220,0), repeatedly logging `could not open a bank`.
