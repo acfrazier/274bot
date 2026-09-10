@@ -698,12 +698,14 @@ impl ScenarioRunner {
             let lp = client.local_player.as_ref();
             let phys = lp.map(|p| ((p.x - 64) / 128, (p.z - 64) / 128));
             eprintln!(
-                "[nav-runner] tick={} snap={:?} phys={:?} dest={:?} legs={}",
+                "[nav-runner] tick={} snap={:?} phys={:?} dest={:?} legs={} base=({},{}) route={:?} player_gen={} snapshot_tick={}",
                 self.total_ticks,
                 self.snapshot.tile(),
                 phys,
                 route.dest,
                 route.legs.len(),
+                client.map_build_base_x, client.map_build_base_z,
+                lp.map(|p| (p.route_x[0], p.route_z[0])), client.gens.player, self.snapshot.tick(),
             );
         }
         // Exact dest: default close_enough=2 reports Arrived a tile or two

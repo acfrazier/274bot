@@ -537,6 +537,11 @@ pub struct GameSnapshot {
     gens: ClientGens,
     npc: Vec<NpcView>,
     player: Option<LocalPlayerView>,
+    // Native observation history; deliberately absent from serialized snapshots.
+    #[serde(skip)]
+    thieving_stun_tick: Option<u32>,
+    #[serde(skip)]
+    thieving_stun_stamp: Option<i32>,
     players: Vec<PlayerView>,
     stats: Vec<StatView>,
     runenergy: i32,
@@ -669,6 +674,8 @@ impl Default for GameSnapshot {
             gens: ClientGens::default(),
             npc: Vec::new(),
             player: None,
+            thieving_stun_tick: None,
+            thieving_stun_stamp: None,
             players: Vec::new(),
             stats: Vec::new(),
             runenergy: 0,
@@ -825,6 +832,14 @@ impl GameSnapshot {
     /// slots).
     pub fn npcs(&self) -> &[NpcView] {
         &self.npc
+    }
+
+    /// Game tick when the latest thieving stun spot-animation packet was
+    /// observed. This is an onset hint, not an authoritative lock duration.
+    pub fn thieving_stun_tick(&self) -> Option<u32> {
+        (self.ingame && self.player.is_some())
+            .then_some(self.thieving_stun_tick)
+            .flatten()
     }
 
     /// The local player view from the last player rebuild; `None` before
@@ -1142,6 +1157,19 @@ impl GameSnapshot {
         }
         // One `PLAYER_INFO` per game tick: the snapshot's tick count.
         self.tick = self.tick.wrapping_add(1);
+        if !client.ingame || client.local_player.is_none() {
+            self.thieving_stun_tick = None;
+            self.thieving_stun_stamp = None;
+        } else if let Some(player) = client.local_player.as_ref() {
+            // Packet decoder stamps every SPOTANIM, including a restarted
+            // animation with the same ID. Visual expiry must not erase onset.
+            if player.spotanim_id == 245
+                && self.thieving_stun_stamp != Some(player.spotanim_last_cycle)
+            {
+                self.thieving_stun_tick = Some(self.tick);
+                self.thieving_stun_stamp = Some(player.spotanim_last_cycle);
+            }
+        }
         self.self_slot = client.self_slot;
         let base = (client.map_build_base_x, client.map_build_base_z);
         self.base = Some(base);

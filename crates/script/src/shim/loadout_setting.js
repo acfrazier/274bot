@@ -7,6 +7,6 @@ export const LOADOUT_SETTING = {
     help: 'gear and supplies to wear, defined in the Loadouts panel; blank uses the first one',
 };
 
-export function selectedLoadout(_bag) {
-    return null;
+export function selectedLoadout(bag) {
+    return globalThis.rustyscript.functions.__rs2b0t_selected_loadout(globalThis.__rs2b0t_host.loadouts || [], bag.str('loadout', ''));
 }

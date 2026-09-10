@@ -113,6 +113,20 @@ impl SlotScript {
         shape: LoadShape,
         siblings: Vec<(String, String)>,
     ) -> Result<(), String> {
+        let loadouts = crate::loadouts_store::LoadoutsStore::with_default_path();
+        self.start_load_with_loadouts(source, shape, siblings, loadouts.loadouts())
+    }
+
+    /// Start with explicit loadouts, avoiding operator filesystem inputs in
+    /// disposable live fixtures. Commands are posted before the first tick.
+    #[cfg(feature = "load")]
+    pub fn start_load_with_loadouts(
+        &mut self,
+        source: String,
+        shape: LoadShape,
+        siblings: Vec<(String, String)>,
+        loadouts: &[crate::loadouts_store::Loadout],
+    ) -> Result<(), String> {
         match self.state {
             RunState::Running | RunState::Paused | RunState::Stopping => {
                 Err("script already active: stop it first".to_string())
@@ -122,6 +136,7 @@ impl SlotScript {
                     return Err("compiled script active: stop it first".to_string());
                 }
                 let isolate = LoadIsolate::spawn(source, shape, siblings)?;
+                isolate.post_loadouts(loadouts);
                 self.load = Some(isolate);
                 self.want_run = true;
                 self.last_error = None;
@@ -212,6 +227,13 @@ impl SlotScript {
     pub fn post_settings_bag(&self, bag: &serde_json::Map<String, serde_json::Value>) {
         if let Some(isolate) = &self.load {
             isolate.post_settings_bag(bag);
+        }
+    }
+
+    #[cfg(feature = "load")]
+    pub fn post_loadouts(&self, loadouts: &[crate::loadouts_store::Loadout]) {
+        if let Some(isolate) = &self.load {
+            isolate.post_loadouts(loadouts);
         }
     }
 

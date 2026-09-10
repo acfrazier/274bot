@@ -1,4 +1,5 @@
 import { Execution } from '../execution/Execution.js';
+import { Inventory } from '../inventory/Inventory.js';
 const host = () => globalThis.__rs2b0t_host || {};
 const notImpl = (name, reason) =>
     new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
@@ -145,12 +146,17 @@ export const Bank = new Proxy(
             if (!row || !xOp) {
                 throw notImpl('Bank.withdrawX');
             }
+            const before = Inventory.count(row.name);
+            const target = before + Math.min(Number(count) || 0, row.count);
             return (async () => {
                 queue({ op: 'withdraw', name: row.name, action: String(xOp) });
                 await Execution.delayTicks(1);
                 queue({ op: 'answer-count', value: Number(count) || 0 });
-                await Execution.delayTicks(1);
-                return true;
+                // A queued answer is not inventory publication. Do not let the
+                // host withdrawal sequencer issue its fallback against old rows.
+                return Execution.delayUntil(() =>
+                    Inventory.count(row.name) >= target ||
+                    (Inventory.count(row.name) > before && Inventory.isFull()), 4000);
             })();
         },
         async withdrawXById(id, count, _landsAsId) {
@@ -201,8 +207,22 @@ export const Bank = new Proxy(
         async withdrawLoad(_name) {
             throw notImpl('Bank.withdrawLoad');
         },
-        async openNearestAccess(_access, _log) {
-            throw notImpl('Bank.openNearestAccess');
+        async openNearestAccess(access, _log) {
+            if ((access?.name ?? 'Bank booth').toLowerCase() !== 'bank booth' ||
+                (access?.op ?? 'Use-quickly').toLowerCase() !== 'use-quickly') {
+                throw notImpl('Bank.openNearestAccess', 'unsupported bank access');
+            }
+            const row = snap().nearest_booth;
+            if (!row) return false;
+            const adjacent = () => {
+                const h = snap().here;
+                return h && h.level === (row.level ?? 0) && Math.max(Math.abs(h.x-row.x), Math.abs(h.z-row.z)) <= 1;
+            };
+            if (!adjacent()) {
+                queue({op:'walk-near',x:row.x,z:row.z,level:row.level ?? 0,radius:1,allow_teleports:false});
+                if (!(await Execution.delayUntil(adjacent, 60000))) return false;
+            }
+            return Bank.openBooth();
         },
     },
     {

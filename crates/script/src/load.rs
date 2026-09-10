@@ -933,6 +933,7 @@ mod isolate {
         Snapshot(Vec<u8>),
         /// Merged operator settings JSON for the prelude's `this.settings.*`.
         Settings(String),
+        Loadouts(String),
         Pause,
         Resume,
         Probe(String, Sender<Result<serde_json::Value, String>>),
@@ -1032,6 +1033,12 @@ mod isolate {
         /// [`LoadIsolate::on_game_tick`] reaches JS in that order.
         pub fn post_snapshot(&self, bytes: Vec<u8>) {
             let _ = self.tx.send(IsolateCmd::Snapshot(bytes));
+        }
+
+        /// Post available loadouts before subsequent tick commands.
+        pub fn post_loadouts(&self, loadouts: &[crate::loadouts_store::Loadout]) {
+            let json = serde_json::to_string(loadouts).expect("serializable loadouts");
+            let _ = self.tx.send(IsolateCmd::Loadouts(json));
         }
 
         /// Post the merged operator settings bag (schema defaults + panel/TUI
@@ -1316,6 +1323,47 @@ mod isolate {
                 },
             )
             .map_err(|e| format!("register now: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_withdraw_step", |args: &[serde_json::Value]| {
+                Ok(crate::bank_withdraw::step(
+                    args.first().unwrap_or(&serde_json::Value::Null),
+                ))
+            })
+            .map_err(|e| format!("register withdraw: {e}"))?;
+        runtime
+            .register_function(
+                "__rs2b0t_selected_loadout",
+                |args: &[serde_json::Value]| {
+                    let rows: Vec<crate::loadouts_store::Loadout> = serde_json::from_value(
+                        args.first().cloned().unwrap_or(serde_json::json!([])),
+                    )
+                    .unwrap_or_default();
+                    Ok(crate::loadouts_store::selected_compat_loadout(
+                        &rows,
+                        args.get(1).and_then(|v| v.as_str()).unwrap_or(""),
+                    ))
+                },
+            )
+            .map_err(|e| format!("register loadout: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_food_of", |args: &[serde_json::Value]| {
+                let fallback = args.get(1).cloned().unwrap_or(serde_json::json!(""));
+                let food = args
+                    .first()
+                    .and_then(|v| v.get("carry"))
+                    .and_then(|v| v.as_array())
+                    .and_then(|rows| {
+                        rows.iter().find_map(|row| {
+                            let name = row.get("item")?.as_str()?;
+                            api::content::FOOD_HEALS
+                                .iter()
+                                .find(|(n, _)| n.eq_ignore_ascii_case(name))
+                                .map(|(n, _)| serde_json::json!(n))
+                        })
+                    });
+                Ok(food.unwrap_or(fallback))
+            })
+            .map_err(|e| format!("register food: {e}"))?;
         runtime
             .eval::<()>(crate::shim::PRELUDE)
             .map_err(|e| format!("shim: {e}"))?;
@@ -2342,6 +2390,13 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         Err(e) => {
                             let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
                         }
+                    }
+                }
+                IsolateCmd::Loadouts(json) => {
+                    if let Err(e) =
+                        runtime.eval::<()>(&format!("globalThis.__rs2b0t_host.loadouts = {json};"))
+                    {
+                        let _ = out.send(ThreadMsg::Log(format!("loadouts: {e}")));
                     }
                 }
                 IsolateCmd::Settings(json) => {
