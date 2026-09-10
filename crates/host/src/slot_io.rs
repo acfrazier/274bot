@@ -1,12 +1,104 @@
 use std::io::{Read, Write};
-use std::os::unix::io::AsRawFd;
-use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+#[cfg(unix)]
+use std::os::unix::io::{AsRawFd, RawFd};
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
+
+#[cfg(windows)]
+use std::net::TcpStream;
+#[cfg(windows)]
+use std::os::windows::io::{AsRawSocket, RawSocket};
 
 use client::client::{present::pack_rgb, GameShell, APPLET_H, APPLET_W};
 use client::render::backend::FrameOutput;
+
+/// OS socket handle used by the idle park (`poll` / `WSAPoll`).
+#[cfg(unix)]
+pub(crate) type WaitHandle = RawFd;
+#[cfg(windows)]
+pub(crate) type WaitHandle = RawSocket;
+
+/// Maximum handles one wait/park may observe (control + client socket).
+/// Fixed so wait/park stay stack-only — no heap per idle park.
+pub(crate) const MAX_WAIT_HANDLES: usize = 2;
+
+/// Wait until any of `handles` is readable (data, hangup, or error), or
+/// `timeout` elapses. Only the first `handles.len()` entries of the returned
+/// stack array are meaningful. Empty `handles` is a pure sleep (all false).
+///
+/// Stack-only: fixed `[pollfd|WSAPOLLFD; MAX_WAIT_HANDLES]` + `[bool; N]`.
+/// Unix: `poll(2)`. Windows: `WSAPoll` on pointer-width `SOCKET` values —
+/// never truncates to 32-bit fds and never busy-spins.
+#[allow(unsafe_code)]
+pub(crate) fn wait_readable(handles: &[WaitHandle], timeout: Duration) -> [bool; MAX_WAIT_HANDLES] {
+    debug_assert!(
+        handles.len() <= MAX_WAIT_HANDLES,
+        "wait_readable supports at most {MAX_WAIT_HANDLES} handles"
+    );
+    let n = handles.len().min(MAX_WAIT_HANDLES);
+    let mut out = [false; MAX_WAIT_HANDLES];
+    if n == 0 {
+        std::thread::sleep(timeout);
+        return out;
+    }
+    let ms = i32::try_from(timeout.as_millis()).unwrap_or(i32::MAX);
+
+    #[cfg(unix)]
+    {
+        let mut fds = [libc::pollfd {
+            fd: -1,
+            events: 0,
+            revents: 0,
+        }; MAX_WAIT_HANDLES];
+        for i in 0..n {
+            fds[i] = libc::pollfd {
+                fd: handles[i],
+                events: libc::POLLIN,
+                revents: 0,
+            };
+        }
+        let rc = unsafe { libc::poll(fds.as_mut_ptr(), n as libc::nfds_t, ms) };
+        if rc > 0 {
+            let mask = libc::POLLIN | libc::POLLHUP | libc::POLLERR | libc::POLLNVAL;
+            for i in 0..n {
+                out[i] = fds[i].revents & mask != 0;
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Networking::WinSock::{
+            WSAPoll, POLLERR, POLLHUP, POLLIN, POLLNVAL, SOCKET, WSAPOLLFD,
+        };
+        let mut fds = [WSAPOLLFD {
+            fd: SOCKET::MAX, // unused slots ignored; WSAPoll sees only `n`
+            events: 0,
+            revents: 0,
+        }; MAX_WAIT_HANDLES];
+        for i in 0..n {
+            fds[i] = WSAPOLLFD {
+                fd: handles[i] as SOCKET,
+                events: POLLIN,
+                revents: 0,
+            };
+        }
+        let rc = unsafe { WSAPoll(fds.as_mut_ptr(), n as u32, ms) };
+        if rc > 0 {
+            let mask = POLLIN | POLLHUP | POLLERR | POLLNVAL;
+            for i in 0..n {
+                out[i] = fds[i].revents & mask != 0;
+            }
+        }
+    }
+
+    out
+}
 
 /// Per-slot frame mailbox: the slot thread stores each rendered
 /// [`FrameOutput`] into [`FrameBuf::store`]; the panel hands it to the
@@ -157,35 +249,82 @@ impl SlotInput {
     }
 }
 
+#[cfg(unix)]
+type WakeStream = UnixStream;
+#[cfg(windows)]
+type WakeStream = TcpStream;
+
 /// Per-slot control wake: the panel/host-play side holds [`SlotWake`] ends
 /// and `wake()`s a parked slot thread (focus/draw/stop/spawn); the slot
 /// thread hands the [`SlotPark`] end to [`Host::run_client`], which polls
-/// its fd next to the client socket inside the idle park. A Unix socketpair
-/// rather than std `mpsc` because `poll(2)` needs an fd; the payload is an
-/// empty kick — the parker re-reads the shared state (`client.draw`,
-/// capture, the probe's stop flag) after waking.
+/// its wait handle next to the client socket inside the idle park. Unix
+/// uses a socketpair; Windows uses an owned nonblocking loopback TCP pair
+/// with peer identity checked. The payload is an empty kick — the parker
+/// re-reads the shared state (`client.draw`, capture, the probe's stop
+/// flag) after waking.
 #[derive(Clone)]
 pub struct SlotWake {
-    tx: Arc<UnixStream>,
+    tx: Arc<WakeStream>,
 }
 
 /// The slot-thread end of the control channel. Not shared: one per parked
 /// thread, polled by [`Host::run_client`].
 pub struct SlotPark {
-    rx: UnixStream,
+    rx: WakeStream,
 }
 
 /// Create a control-wake channel pair. A [`SlotWake::wake`] writes a byte
-/// that fires a `poll(2)` on [`SlotPark::fd`].
+/// that fires a readability wait on [`SlotPark`].
 pub fn wake_channel() -> (SlotWake, SlotPark) {
-    let (tx, rx) = UnixStream::pair().expect("socketpair for slot wake");
-    let _ = tx.set_nonblocking(true);
-    let _ = rx.set_nonblocking(true);
-    (SlotWake { tx: Arc::new(tx) }, SlotPark { rx })
+    #[cfg(unix)]
+    {
+        let (tx, rx) = UnixStream::pair().expect("socketpair for slot wake");
+        let _ = tx.set_nonblocking(true);
+        let _ = rx.set_nonblocking(true);
+        (SlotWake { tx: Arc::new(tx) }, SlotPark { rx })
+    }
+    #[cfg(windows)]
+    {
+        // Fail loudly: a blocking wake pair can stall kick/drain.
+        let (tx, rx) = loopback_tcp_pair().expect("loopback TCP pair for slot wake");
+        (SlotWake { tx: Arc::new(tx) }, SlotPark { rx })
+    }
+}
+
+/// Owned nonblocking loopback TCP pair. The accepted peer address must
+/// match the connector's local address so a stray connection cannot own
+/// the park end. Both ends are nonblocking + TCP_NODELAY (Nagle off) so
+/// kick latency is not delayed-ACK bound.
+#[cfg(windows)]
+fn loopback_tcp_pair() -> std::io::Result<(TcpStream, TcpStream)> {
+    use std::net::TcpListener;
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    let client = TcpStream::connect(addr)?;
+    let client_local = client.local_addr()?;
+    let (server, peer) = listener.accept()?;
+    if peer != client_local {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("wake pair peer mismatch: accepted {peer}, expected {client_local}"),
+        ));
+    }
+    if server.peer_addr()? != client_local {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "wake pair server peer_addr mismatch",
+        ));
+    }
+    // Writer end is `client` (SlotWake); set both ends.
+    client.set_nodelay(true)?;
+    server.set_nodelay(true)?;
+    client.set_nonblocking(true)?;
+    server.set_nonblocking(true)?;
+    Ok((client, server))
 }
 
 impl SlotWake {
-    /// Wake a parked slot thread: one byte on the socketpair. Nonblocking
+    /// Wake a parked slot thread: one byte on the control stream. Nonblocking
     /// and best-effort — a full wake buffer (only possible if the parker
     /// stopped draining) or a dead slot just drops the kick.
     pub fn wake(&self) {
@@ -195,11 +334,38 @@ impl SlotWake {
 
 impl SlotPark {
     /// The wake end's fd, for the slot thread's `poll(2)`.
-    pub fn fd(&self) -> i32 {
+    #[cfg(unix)]
+    pub fn fd(&self) -> RawFd {
         self.rx.as_raw_fd()
     }
+
+    /// The wake end as a Windows `SOCKET` for `WSAPoll`.
+    #[cfg(windows)]
+    pub fn raw_socket(&self) -> RawSocket {
+        self.rx.as_raw_socket()
+    }
+
+    /// Handle used by the host idle park.
+    pub(crate) fn wait_handle(&self) -> WaitHandle {
+        #[cfg(unix)]
+        {
+            self.fd()
+        }
+        #[cfg(windows)]
+        {
+            self.raw_socket()
+        }
+    }
+
+    /// Block until a wake byte is readable or `timeout` elapses.
+    /// Returns true when the control end is readable (including hangup).
+    /// Wraps one stack wait entry — no heap.
+    pub fn wait_readable(&self, timeout: Duration) -> bool {
+        wait_readable(&[self.wait_handle()], timeout)[0]
+    }
+
     /// Drain any queued wake bytes so a burst of kicks cannot fill the
-    /// socketpair buffer.
+    /// control-stream buffer.
     pub fn drain(&self) {
         let mut b = [0u8; 64];
         while let Ok(n) = (&self.rx).read(&mut b) {
@@ -212,9 +378,10 @@ impl SlotPark {
 
 #[cfg(test)]
 mod tests {
-    use super::{map_image_to_applet, wake_channel, FrameBuf, InputEv, SlotInput};
+    use super::{map_image_to_applet, wait_readable, wake_channel, FrameBuf, InputEv, SlotInput};
     use client::graphics::PixMap;
     use client::render::backend::FrameOutput;
+    use std::time::{Duration, Instant};
 
     fn applet_pixmap(pixels: Vec<i32>) -> FrameOutput {
         FrameOutput::PixMap(PixMap {
@@ -336,33 +503,108 @@ mod tests {
     #[test]
     fn wake_channel_fires_a_polling_parker_and_drains() {
         let (wake, park) = wake_channel();
-        let mut fds = [libc::pollfd {
-            fd: park.fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        }];
-        let rc = unsafe { libc::poll(fds.as_mut_ptr(), 1, 0) };
-        assert_eq!(rc, 0, "no kick yet: poll must time out");
+        assert!(
+            !park.wait_readable(Duration::from_millis(0)),
+            "no kick yet: wait must time out"
+        );
         wake.wake();
-        let rc = unsafe { libc::poll(fds.as_mut_ptr(), 1, 1000) };
-        assert_eq!(rc, 1, "a wake byte must fire the poll");
-        assert_ne!(fds[0].revents & libc::POLLIN, 0);
+        assert!(
+            park.wait_readable(Duration::from_millis(1000)),
+            "a wake byte must fire the wait"
+        );
         park.drain();
-        let rc = unsafe { libc::poll(fds.as_mut_ptr(), 1, 0) };
-        assert_eq!(rc, 0, "drained: poll goes quiet again");
+        assert!(
+            !park.wait_readable(Duration::from_millis(0)),
+            "drained: wait goes quiet again"
+        );
     }
 
     #[test]
     fn wake_channel_clones_share_one_wake() {
         let (wake, park) = wake_channel();
         let wake2 = wake.clone();
-        let mut fds = [libc::pollfd {
-            fd: park.fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        }];
         wake2.wake();
-        let rc = unsafe { libc::poll(fds.as_mut_ptr(), 1, 1000) };
-        assert_eq!(rc, 1, "a cloned SlotWake must wake the same park");
+        assert!(
+            park.wait_readable(Duration::from_millis(1000)),
+            "a cloned SlotWake must wake the same park"
+        );
+    }
+
+    #[test]
+    fn wake_channel_queued_kicks_drain_without_residual() {
+        let (wake, park) = wake_channel();
+        for _ in 0..8 {
+            wake.wake();
+        }
+        assert!(park.wait_readable(Duration::from_millis(1000)));
+        park.drain();
+        assert!(
+            !park.wait_readable(Duration::from_millis(0)),
+            "drain must clear coalesced kicks with no residual readability"
+        );
+    }
+
+    #[test]
+    fn wait_readable_reports_socket_data_and_close() {
+        use std::io::Write;
+        use std::net::{Shutdown, TcpListener, TcpStream};
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = TcpStream::connect(addr).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+
+        #[cfg(unix)]
+        let handle = {
+            use std::os::unix::io::AsRawFd;
+            client.as_raw_fd()
+        };
+        #[cfg(windows)]
+        let handle = {
+            use std::os::windows::io::AsRawSocket;
+            client.as_raw_socket()
+        };
+
+        assert!(
+            !wait_readable(&[handle], Duration::from_millis(0))[0],
+            "idle TCP pair must not be readable"
+        );
+        server.write_all(&[7]).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if wait_readable(&[handle], Duration::from_millis(0))[0] {
+                break;
+            }
+            assert!(Instant::now() < deadline, "socket never became readable");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // Consume the byte so only close remains to wake the next wait.
+        {
+            use std::io::Read;
+            let mut b = [0u8; 1];
+            let _ = (&client).read(&mut b);
+        }
+        server.shutdown(Shutdown::Both).unwrap();
+        assert!(
+            wait_readable(&[handle], Duration::from_millis(1000))[0],
+            "peer close must wake readability"
+        );
+    }
+
+    #[test]
+    fn wait_readable_honors_bounded_timeout() {
+        let (_wake, park) = wake_channel();
+        let start = Instant::now();
+        let fired = wait_readable(&[park.wait_handle()], Duration::from_millis(80));
+        assert!(!fired[0]);
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed >= Duration::from_millis(60),
+            "timeout returned too early: {elapsed:?}"
+        );
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "timeout waited too long: {elapsed:?}"
+        );
     }
 }

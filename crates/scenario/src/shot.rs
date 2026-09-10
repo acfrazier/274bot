@@ -67,7 +67,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 pub fn default_shot_root() -> PathBuf {
     match std::env::var(SHOT_ROOT_ENV) {
         Ok(dir) if !dir.is_empty() => PathBuf::from(dir),
-        _ => match std::env::var("HOME") {
+        _ => match client::operator_home() {
             Ok(home) => PathBuf::from(format!("{home}/.274bot/smoke")),
             Err(_) => PathBuf::from(".274bot/smoke"),
         },

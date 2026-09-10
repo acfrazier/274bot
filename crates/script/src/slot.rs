@@ -113,6 +113,20 @@ impl SlotScript {
         shape: LoadShape,
         siblings: Vec<(String, String)>,
     ) -> Result<(), String> {
+        let loadouts = crate::loadouts_store::LoadoutsStore::with_default_path();
+        self.start_load_with_loadouts(source, shape, siblings, loadouts.loadouts())
+    }
+
+    /// Start with explicit loadouts, avoiding operator filesystem inputs in
+    /// disposable live fixtures. Commands are posted before the first tick.
+    #[cfg(feature = "load")]
+    pub fn start_load_with_loadouts(
+        &mut self,
+        source: String,
+        shape: LoadShape,
+        siblings: Vec<(String, String)>,
+        loadouts: &[crate::loadouts_store::Loadout],
+    ) -> Result<(), String> {
         match self.state {
             RunState::Running | RunState::Paused | RunState::Stopping => {
                 Err("script already active: stop it first".to_string())
@@ -122,6 +136,7 @@ impl SlotScript {
                     return Err("compiled script active: stop it first".to_string());
                 }
                 let isolate = LoadIsolate::spawn(source, shape, siblings)?;
+                isolate.post_loadouts(loadouts);
                 self.load = Some(isolate);
                 self.want_run = true;
                 self.last_error = None;
@@ -172,6 +187,12 @@ impl SlotScript {
         if let Some(mut script) = self.compiled.take() {
             script.on_stop();
         }
+        #[cfg(feature = "load")]
+        {
+            self.last_snapshot = None;
+            self.last_world_id = None;
+            self.ipc = IsolateBuf::new();
+        }
         self.want_run = false;
         self.state = RunState::Idle;
     }
@@ -206,6 +227,13 @@ impl SlotScript {
     pub fn post_settings_bag(&self, bag: &serde_json::Map<String, serde_json::Value>) {
         if let Some(isolate) = &self.load {
             isolate.post_settings_bag(bag);
+        }
+    }
+
+    #[cfg(feature = "load")]
+    pub fn post_loadouts(&self, loadouts: &[crate::loadouts_store::Loadout]) {
+        if let Some(isolate) = &self.load {
+            isolate.post_loadouts(loadouts);
         }
     }
 
@@ -350,6 +378,33 @@ impl SlotScript {
         }
     }
 
+    #[cfg(all(feature = "memory-profile", feature = "load"))]
+    pub fn memory_metrics(&self) -> Option<serde_json::Value> {
+        self.load.as_ref().map(|i| i.memory_metrics())
+    }
+
+    #[cfg(all(feature = "memory-profile", feature = "load"))]
+    pub fn memory_progress(&self) -> serde_json::Value {
+        let mut value = self
+            .load
+            .as_ref()
+            .map(|i| i.memory_progress())
+            .unwrap_or(serde_json::json!({}));
+        if let Some(fp) = &self.last_snapshot {
+            let rows = |rs: &[crate::isolate_fb::ItemRowFp]| {
+                rs.iter()
+                    .take(32)
+                    .map(|r| serde_json::json!({"name":r.name,"count":r.count,"ops":r.ops}))
+                    .collect::<Vec<_>>()
+            };
+            value["inventory"] = serde_json::json!(rows(&fp.inv));
+            value["bank"] = serde_json::json!(rows(&fp.bank));
+            value["bank_open"] = serde_json::json!(fp.bank_open);
+            value["bank_loaded"] = serde_json::json!(fp.bank_loaded);
+        }
+        value
+    }
+
     pub fn last_error(&self) -> Option<&str> {
         self.last_error.as_deref()
     }
@@ -437,6 +492,37 @@ mod tests {
             "noop"
         }
         fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {}
+    }
+
+    #[cfg(feature = "load")]
+    #[test]
+    fn stop_releases_snapshot_storage_and_restart_emits_keyframe() {
+        let mut slot = SlotScript::new();
+        slot.start_compiled(Box::new(Noop)).unwrap();
+        let text = "x".repeat(1024 * 1024);
+        let mut input = crate::isolate_fb::tests::empty_input(1);
+        input.chat_text = Some(&text);
+        let first = slot.encode_snapshot_delta(&input, false);
+        assert!(first.len() > text.len());
+        slot.store_last_world_id(Some(123));
+        slot.last_error = Some("retained diagnostic".into());
+        slot.pending_logs.push("retained log".into());
+        slot.pause();
+        assert!(slot.has_snapshot_fingerprint());
+        assert_eq!(slot.last_world_id(), Some(123));
+        slot.resume();
+        let delta = slot.encode_snapshot_delta(&input, false);
+        assert!(delta.len() < 1024);
+        slot.stop();
+        assert!(!slot.has_snapshot_fingerprint());
+        assert_eq!(slot.last_world_id(), None);
+        assert_eq!(std::mem::take(&mut slot.ipc).into_backing_capacity(), 0);
+        assert_eq!(slot.last_error.as_deref(), Some("retained diagnostic"));
+        assert_eq!(slot.pending_logs, ["retained log"]);
+        slot.start_compiled(Box::new(Noop)).unwrap();
+        assert_eq!(slot.encode_snapshot_delta(&input, false), first);
+        // The earlier owned packet remains intact after reuse and Stop.
+        assert!(crate::isolate_fb::SnapshotReader::from_bytes(&first).is_ok());
     }
 
     #[test]

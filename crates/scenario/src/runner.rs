@@ -109,6 +109,11 @@ impl ScenarioRunner {
         Self::with_data(scenario, nav_world)
     }
 
+    /// Share the immutable navigation world without cloning its contents.
+    pub fn shared_world(&self) -> Option<Arc<NavWorld>> {
+        self.nav_world.clone()
+    }
+
     /// Runner with injected nav data: the whole-world [`NavWorld`]
     /// (collision + transport graph) both `Walk` and `Follow` steps route
     /// on. `None` keeps no world loaded, so a nav step fails with a clear
@@ -322,6 +327,15 @@ impl ScenarioRunner {
     /// Like [`ScenarioRunner::tick`], but skip `Traveller::follow` while
     /// `hold` is set (guardian hold — the armed route stays latched).
     pub fn tick_with_hold(&mut self, client: &mut Client, hold: bool) {
+        self.tick_inner(client, hold);
+        if matches!(self.phase, Phase::Done) {
+            // A follow failure may still be consumed by this tick's remaining
+            // checks. Release only after all existing callbacks and evidence.
+            self.snapshot = GameSnapshot::new();
+        }
+    }
+
+    fn tick_inner(&mut self, client: &mut Client, hold: bool) {
         if matches!(self.phase, Phase::Done) {
             return;
         }
@@ -698,12 +712,14 @@ impl ScenarioRunner {
             let lp = client.local_player.as_ref();
             let phys = lp.map(|p| ((p.x - 64) / 128, (p.z - 64) / 128));
             eprintln!(
-                "[nav-runner] tick={} snap={:?} phys={:?} dest={:?} legs={}",
+                "[nav-runner] tick={} snap={:?} phys={:?} dest={:?} legs={} base=({},{}) route={:?} player_gen={} snapshot_tick={}",
                 self.total_ticks,
                 self.snapshot.tile(),
                 phys,
                 route.dest,
                 route.legs.len(),
+                client.map_build_base_x, client.map_build_base_z,
+                lp.map(|p| (p.route_x[0], p.route_z[0])), client.gens.player, self.snapshot.tick(),
             );
         }
         // Exact dest: default close_enough=2 reports Arrived a tile or two
@@ -870,6 +886,106 @@ mod tests {
             companions: vec![],
             settings: ScenarioSettings::default(),
         }
+    }
+
+    #[test]
+    fn terminal_snapshot_is_released_after_shot_and_evidence() {
+        for failed in [false, true] {
+            let mut client = seeded_client();
+            client.runenergy = 73;
+            let mut runner = ScenarioRunner::with_world(stat_scenario(1, 10), None);
+            runner.snapshot.rebuild(&client);
+            let terminal = serde_json::to_value(&runner.snapshot).unwrap();
+            let empty = serde_json::to_value(GameSnapshot::new()).unwrap();
+            assert_ne!(terminal, empty);
+            let shots = Arc::new(Mutex::new(Vec::new()));
+            let captured = Arc::clone(&shots);
+            runner.set_terminal_shot("terminal");
+            runner.set_shot_sink(Box::new(move |label, snapshot| {
+                captured
+                    .lock()
+                    .unwrap()
+                    .push((label.to_owned(), serde_json::to_value(snapshot).unwrap()));
+            }));
+            if failed {
+                runner.finish_fail("original failure");
+            } else {
+                runner.finish_pass();
+            }
+            assert_eq!(
+                *shots.lock().unwrap(),
+                vec![("terminal".to_owned(), terminal)]
+            );
+            let evidence = runner.evidence().unwrap();
+            assert_eq!(evidence.tile, Some([3220, 3220, 0]));
+            assert_eq!(evidence.scene, 2);
+            assert_eq!(evidence.stat.as_ref().unwrap().runenergy, 73);
+            assert_eq!(evidence.outcome, if failed { "FAIL" } else { "PASS" });
+            assert_eq!(
+                evidence.message.as_deref(),
+                failed.then_some("original failure")
+            );
+            let retained_evidence = evidence.to_json();
+            let retained_status = format!("{:?}", runner.status());
+            runner.tick_with_hold(&mut client, false);
+            assert_eq!(serde_json::to_value(&runner.snapshot).unwrap(), empty);
+            client.runenergy = 1;
+            client.ingame = false;
+            runner.tick_with_hold(&mut client, true);
+            runner.tick(&mut client);
+            assert_eq!(runner.evidence().unwrap().to_json(), retained_evidence);
+            assert_eq!(format!("{:?}", runner.status()), retained_status);
+            assert_eq!(shots.lock().unwrap().len(), 1);
+            assert_eq!(serde_json::to_value(&runner.snapshot).unwrap(), empty);
+        }
+    }
+
+    #[test]
+    fn follow_failure_keeps_snapshot_for_existing_same_tick_budget_failure() {
+        let mut client = seeded_client();
+        let mut runner = ScenarioRunner::with_world(stat_scenario(999, 1), None);
+        runner.set_scene_settle(Duration::ZERO);
+        runner.phase = Phase::Running;
+        runner.step_sent = true;
+        runner.route = Some(Route {
+            dest: WorldTile {
+                x: 3221,
+                z: 3220,
+                level: 0,
+            },
+            legs: vec![nav::router::Leg::Walk {
+                tiles: vec![
+                    WorldTile {
+                        x: 3220,
+                        z: 3220,
+                        level: 0,
+                    },
+                    WorldTile {
+                        x: 3221,
+                        z: 3220,
+                        level: 0,
+                    },
+                ],
+            }],
+            ticks: 1.0,
+        });
+        let shots = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&shots);
+        runner.set_terminal_shot("failure");
+        runner.set_shot_sink(Box::new(move |_, snap| {
+            captured.lock().unwrap().push(snap.tile());
+        }));
+        runner.tick(&mut client);
+        // Existing behavior: follow refusal does not short-circuit the budget
+        // check. Memory cleanup must not change either callback's snapshot.
+        assert_eq!(*shots.lock().unwrap(), vec![Some((3220, 3220, 0)); 2]);
+        let evidence = runner.evidence().unwrap();
+        assert_eq!(evidence.tile, Some([3220, 3220, 0]));
+        assert!(evidence
+            .message
+            .as_ref()
+            .unwrap()
+            .contains("not seen within 1 ticks"));
     }
 
     #[test]

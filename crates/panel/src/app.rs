@@ -107,6 +107,8 @@ enum DockLayout {
 /// Per-frame panel state: lazily-created game texture and the session (vault,
 /// running slots, focus).
 struct PanelState {
+    #[cfg(feature = "memory-profile")]
+    memory: Option<host_play::memory::Run>,
     game_view: Option<GameView>,
     session: Session,
     dock_inited: bool,
@@ -233,6 +235,8 @@ struct LiveSmoke {
 /// first frame.
 #[derive(Debug)]
 enum Boot {
+    #[cfg(feature = "memory-profile")]
+    Memory(host_play::memory::Config),
     /// `BOT_VAULT_PASS` interactive/headed flow. Failure is non-fatal: the
     /// in-panel prompt covers typing.
     Unlock { pass: String },
@@ -356,6 +360,13 @@ fn boot_for(mode: &RunMode, vault_pass: Option<&str>) -> Option<Boot> {
 /// failure is non-fatal (the in-panel prompt covers typing).
 fn boot_execute(state: &mut PanelState, boot: Boot) -> Result<(), String> {
     match boot {
+        #[cfg(feature = "memory-profile")]
+        Boot::Memory(config) => {
+            let run = host_play::memory::Run::prepare_unseeded(config, "panel")?;
+            state.session.prepare_memory(&run)?;
+            state.memory = Some(run);
+            Ok(())
+        }
         Boot::Unlock { pass } => {
             if !state.session.unlock(&pass) {
                 eprintln!(
@@ -469,6 +480,8 @@ impl PanelState {
 impl Default for PanelState {
     fn default() -> Self {
         Self {
+            #[cfg(feature = "memory-profile")]
+            memory: None,
             game_view: None,
             session: Session::new(),
             dock_inited: false,
@@ -4002,6 +4015,22 @@ pub fn run_panel(mode: RunMode) -> Result<(), window::PanelError> {
     // next frame, after that present. Slot `maininit` (snapshot / maps)
     // must not sit on the first-present path.
     let mut boot = boot_for(&mode, std::env::var("BOT_VAULT_PASS").ok().as_deref());
+    #[cfg(feature = "memory-profile")]
+    match host_play::memory::Config::from_env() {
+        Ok(Some(config)) => {
+            client::profiling::enable();
+            if let Err(error) = host_play::memory::require_live_benchmark() {
+                eprintln!("FAIL: {error}");
+                std::process::exit(1);
+            }
+            boot = Some(Boot::Memory(config));
+        }
+        Ok(None) => {}
+        Err(error) => {
+            eprintln!("FAIL: {error}");
+            std::process::exit(1);
+        }
+    }
     let mut presented = false;
 
     let cfg = runner_config();
@@ -4025,6 +4054,7 @@ pub fn run_panel(mode: RunMode) -> Result<(), window::PanelError> {
         },
         Arc::clone(&state.shot_state),
         move |ui, gpu| {
+            let _profile_draw = client::profiling::UI_DRAW.start();
             // Frame 0 presents chrome with no slots. Frame 1+ runs boot so
             // a blocking `maininit` cannot hide the window.
             if presented {
@@ -4113,6 +4143,23 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     apply_amber_current(&state.session.ui.chrome);
     let wrote_shots = pump_shots(state);
     state.session.pump_status();
+    #[cfg(feature = "memory-profile")]
+    if let Some(run) = state.memory.as_mut() {
+        state.session.memory_focus(run);
+        if let Some(play) = state.session.play.as_ref() {
+            match run.poll(play) {
+                Ok(true) => {
+                    eprintln!("PASS: memory panel observation complete");
+                    std::process::exit(0);
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    eprintln!("FAIL: memory panel: {error}");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
     state.session.pump_script_transpile();
     let statuses = state.session.statuses();
     if let Some(live) = state.live.as_mut() {

@@ -924,15 +924,22 @@ mod isolate {
     /// Heap cap for the isolate (~64 MB, the brief's number).
     const MAX_HEAP: usize = 64 * 1024 * 1024;
 
+    struct SnapshotMessage {
+        bytes: Vec<u8>,
+        #[cfg(feature = "memory-profile")]
+        _lease: crate::memory_profile::SnapshotLease,
+    }
+
     enum IsolateCmd {
         Tick(u64),
         /// The host's FlatBuffer snapshot blob (schema: `crates/script/
         /// schema/isolate.fbs`), decoded on the isolate thread into the
         /// JS object the Game/Inventory/Skills/EventSignal shims read
         /// before the next dispatched tick. Never a JSON string.
-        Snapshot(Vec<u8>),
+        Snapshot(SnapshotMessage),
         /// Merged operator settings JSON for the prelude's `this.settings.*`.
         Settings(String),
+        Loadouts(String),
         Pause,
         Resume,
         Probe(String, Sender<Result<serde_json::Value, String>>),
@@ -964,6 +971,12 @@ mod isolate {
     /// command channel, so the host never blocks on JS. Ticks run on
     /// observed game-tick edges; stale ticks are skipped.
     pub struct LoadIsolate {
+        #[cfg(feature = "memory-profile")]
+        counters: std::sync::Arc<crate::memory_profile::Counters>,
+        #[cfg(feature = "memory-profile")]
+        last_completed: std::sync::atomic::AtomicU64,
+        #[cfg(feature = "memory-profile")]
+        dispatched: std::sync::atomic::AtomicU64,
         tx: Sender<IsolateCmd>,
         rx: Mutex<Receiver<ThreadMsg>>,
         logs: Mutex<Vec<String>>,
@@ -1000,9 +1013,24 @@ mod isolate {
             let (tx, rx) = mpsc::channel::<IsolateCmd>();
             let (msg_tx, msg_rx) = mpsc::channel::<ThreadMsg>();
             let (setup_tx, setup_rx) = mpsc::channel::<Result<v8::IsolateHandle, String>>();
+            #[cfg(feature = "memory-profile")]
+            let counters = crate::memory_profile::registered();
+            #[cfg(feature = "memory-profile")]
+            let thread_counters = counters.clone();
             let handle = std::thread::Builder::new()
                 .name("js-isolate".into())
-                .spawn(move || isolate_main(js, shape, siblings, rx, msg_tx, setup_tx))
+                .spawn(move || {
+                    isolate_main(
+                        js,
+                        shape,
+                        siblings,
+                        rx,
+                        msg_tx,
+                        setup_tx,
+                        #[cfg(feature = "memory-profile")]
+                        thread_counters,
+                    )
+                })
                 .map_err(|e| format!("isolate thread: {e}"))?;
             let terminate = match setup_rx.recv_timeout(Duration::from_secs(10)) {
                 Ok(Ok(handle)) => handle,
@@ -1010,6 +1038,12 @@ mod isolate {
                 Err(e) => return Err(format!("isolate init: {e}")),
             };
             Ok(LoadIsolate {
+                #[cfg(feature = "memory-profile")]
+                counters,
+                #[cfg(feature = "memory-profile")]
+                last_completed: std::sync::atomic::AtomicU64::new(0),
+                #[cfg(feature = "memory-profile")]
+                dispatched: std::sync::atomic::AtomicU64::new(0),
                 tx,
                 rx: Mutex::new(msg_rx),
                 logs: Mutex::new(Vec::new()),
@@ -1031,7 +1065,22 @@ mod isolate {
         /// the isolate thread, so a post followed by
         /// [`LoadIsolate::on_game_tick`] reaches JS in that order.
         pub fn post_snapshot(&self, bytes: Vec<u8>) {
-            let _ = self.tx.send(IsolateCmd::Snapshot(bytes));
+            let message = SnapshotMessage {
+                #[cfg(feature = "memory-profile")]
+                _lease: crate::memory_profile::SnapshotLease::new(
+                    self.counters.clone(),
+                    bytes.len(),
+                    bytes.capacity(),
+                ),
+                bytes,
+            };
+            let _ = self.tx.send(IsolateCmd::Snapshot(message));
+        }
+
+        /// Post available loadouts before subsequent tick commands.
+        pub fn post_loadouts(&self, loadouts: &[crate::loadouts_store::Loadout]) {
+            let json = serde_json::to_string(loadouts).expect("serializable loadouts");
+            let _ = self.tx.send(IsolateCmd::Loadouts(json));
         }
 
         /// Post the merged operator settings bag (schema defaults + panel/TUI
@@ -1049,6 +1098,9 @@ mod isolate {
         /// [`SLOW_TICK`] is interrupted and logged, and its stale ticks are
         /// skipped.
         pub fn on_game_tick(&self, snap_tick: u64) {
+            #[cfg(feature = "memory-profile")]
+            self.dispatched
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.pump_logs();
             let interrupted = {
                 let mut in_flight = self.in_flight.lock().unwrap();
@@ -1074,6 +1126,25 @@ mod isolate {
                     .push(format!("interrupted slow tick {tick} ({elapsed:?})"));
             }
             let _ = self.tx.send(IsolateCmd::Tick(snap_tick));
+        }
+
+        #[cfg(feature = "memory-profile")]
+        pub fn memory_metrics(&self) -> serde_json::Value {
+            self.counters.snapshot()
+        }
+        #[cfg(feature = "memory-profile")]
+        pub fn memory_metrics_handle(&self) -> std::sync::Arc<crate::memory_profile::Counters> {
+            self.counters.clone()
+        }
+
+        /// Read cached counters only; do not pump messages or probe JS.
+        #[cfg(feature = "memory-profile")]
+        pub fn memory_progress(&self) -> serde_json::Value {
+            use std::sync::atomic::Ordering::Relaxed;
+            serde_json::json!({"dispatched":self.dispatched.load(Relaxed),
+                "last_completed_tick":self.last_completed.load(Relaxed),
+                "paint":self.paint.lock().unwrap().as_ref().map(|p|serde_json::json!({"title":p.title,"lines":p.lines})),
+                "in_flight":self.in_flight.lock().unwrap().as_ref().map(|(tick,t)|(*tick,t.elapsed().as_millis()))})
         }
 
         /// Park tick dispatch. A runaway tick is interrupted first so the
@@ -1206,6 +1277,9 @@ mod isolate {
                         *self.ignored_randoms.lock().unwrap() = list;
                     }
                     ThreadMsg::Completed(up_to) => {
+                        #[cfg(feature = "memory-profile")]
+                        self.last_completed
+                            .fetch_max(up_to, std::sync::atomic::Ordering::Relaxed);
                         clear_through = Some(clear_through.map_or(up_to, |c| c.max(up_to)));
                     }
                 }
@@ -1257,7 +1331,12 @@ mod isolate {
         cmds: Receiver<IsolateCmd>,
         out: Sender<ThreadMsg>,
         setup: Sender<Result<v8::IsolateHandle, String>>,
+        #[cfg(feature = "memory-profile")] counters: std::sync::Arc<
+            crate::memory_profile::Counters,
+        >,
     ) {
+        #[cfg(feature = "memory-profile")]
+        let _heap_lifetime = crate::memory_profile::HeapLifetime(counters.clone());
         let mut runtime = match Runtime::new(RuntimeOptions {
             timeout: RUNTIME_TIMEOUT,
             max_heap_size: Some(MAX_HEAP),
@@ -1269,13 +1348,23 @@ mod isolate {
                 return;
             }
         };
+        #[cfg(feature = "memory-profile")]
+        counters
+            .heap_live
+            .store(1, std::sync::atomic::Ordering::Relaxed);
         if let Err(e) = wire_runtime(&mut runtime, &source, shape, &siblings) {
             let _ = setup.send(Err(e));
             return;
         }
         let terminate = runtime.deno_runtime().v8_isolate().thread_safe_handle();
         let _ = setup.send(Ok(terminate));
-        tick_loop(runtime, cmds, out);
+        tick_loop(
+            runtime,
+            cmds,
+            out,
+            #[cfg(feature = "memory-profile")]
+            counters,
+        );
     }
 
     /// Monotonic clock backing the prelude's `performance.now()` shim
@@ -1316,6 +1405,47 @@ mod isolate {
                 },
             )
             .map_err(|e| format!("register now: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_withdraw_step", |args: &[serde_json::Value]| {
+                Ok(crate::bank_withdraw::step(
+                    args.first().unwrap_or(&serde_json::Value::Null),
+                ))
+            })
+            .map_err(|e| format!("register withdraw: {e}"))?;
+        runtime
+            .register_function(
+                "__rs2b0t_selected_loadout",
+                |args: &[serde_json::Value]| {
+                    let rows: Vec<crate::loadouts_store::Loadout> = serde_json::from_value(
+                        args.first().cloned().unwrap_or(serde_json::json!([])),
+                    )
+                    .unwrap_or_default();
+                    Ok(crate::loadouts_store::selected_compat_loadout(
+                        &rows,
+                        args.get(1).and_then(|v| v.as_str()).unwrap_or(""),
+                    ))
+                },
+            )
+            .map_err(|e| format!("register loadout: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_food_of", |args: &[serde_json::Value]| {
+                let fallback = args.get(1).cloned().unwrap_or(serde_json::json!(""));
+                let food = args
+                    .first()
+                    .and_then(|v| v.get("carry"))
+                    .and_then(|v| v.as_array())
+                    .and_then(|rows| {
+                        rows.iter().find_map(|row| {
+                            let name = row.get("item")?.as_str()?;
+                            api::content::FOOD_HEALS
+                                .iter()
+                                .find(|(n, _)| n.eq_ignore_ascii_case(name))
+                                .map(|(n, _)| serde_json::json!(n))
+                        })
+                    });
+                Ok(food.unwrap_or(fallback))
+            })
+            .map_err(|e| format!("register food: {e}"))?;
         runtime
             .eval::<()>(crate::shim::PRELUDE)
             .map_err(|e| format!("shim: {e}"))?;
@@ -2307,7 +2437,16 @@ globalThis.__rs2b0t_tick_async = async (n) => {
     /// are queued is stashed for the next iteration instead of being
     /// dropped (a `while let Ok(IsolateCmd::Tick(..))` pattern would
     /// swallow it).
-    fn tick_loop(mut runtime: Runtime, cmds: Receiver<IsolateCmd>, out: Sender<ThreadMsg>) {
+    fn tick_loop(
+        mut runtime: Runtime,
+        cmds: Receiver<IsolateCmd>,
+        out: Sender<ThreadMsg>,
+        #[cfg(feature = "memory-profile")] counters: std::sync::Arc<
+            crate::memory_profile::Counters,
+        >,
+    ) {
+        #[cfg(feature = "memory-profile")]
+        let mut last_heap_sample = None::<Instant>;
         let mut paused = false;
         let mut pending: Option<IsolateCmd> = None;
         // Host-owned hold gate (SEC-004): set from the posted FlatBuffer
@@ -2318,6 +2457,26 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         let mut ipc = crate::isolate_fb::IsolateBuf::new();
         let mut last_forwarded_paint: Option<crate::shim::ScriptPaint> = None;
         loop {
+            #[cfg(feature = "memory-profile")]
+            if last_heap_sample.is_none_or(|t| t.elapsed() >= Duration::from_secs(1)) {
+                use std::sync::atomic::Ordering::Relaxed;
+                let heap = runtime.deno_runtime().v8_isolate().get_heap_statistics();
+                counters
+                    .heap_used
+                    .store(heap.used_heap_size() as u64, Relaxed);
+                counters
+                    .heap_total
+                    .store(heap.total_heap_size() as u64, Relaxed);
+                counters.heap_updated_ms.store(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64,
+                    Relaxed,
+                );
+                counters.heap_samples.fetch_add(1, Relaxed);
+                last_heap_sample = Some(Instant::now());
+            }
             let cmd = match pending.take() {
                 Some(cmd) => cmd,
                 None => match cmds.recv() {
@@ -2330,7 +2489,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     // Decode the posted FlatBuffer and materialise the JS
                     // object the shim reads on the host handle. A
                     // malformed blob is logged, never fatal.
-                    match crate::isolate_fb::SnapshotReader::from_bytes(&bytes) {
+                    match crate::isolate_fb::SnapshotReader::from_bytes(&bytes.bytes) {
                         Ok(snap) => {
                             if snap.has_hold() {
                                 host_hold = snap.hold();
@@ -2342,6 +2501,13 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         Err(e) => {
                             let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
                         }
+                    }
+                }
+                IsolateCmd::Loadouts(json) => {
+                    if let Err(e) =
+                        runtime.eval::<()>(&format!("globalThis.__rs2b0t_host.loadouts = {json};"))
+                    {
+                        let _ = out.send(ThreadMsg::Log(format!("loadouts: {e}")));
                     }
                 }
                 IsolateCmd::Settings(json) => {
@@ -2437,6 +2603,8 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         .v8_isolate()
                         .cancel_terminate_execution();
                     let elapsed = start.elapsed();
+                    #[cfg(feature = "memory-profile")]
+                    counters.tick(elapsed);
                     if let Err(e) = result {
                         let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
                     }

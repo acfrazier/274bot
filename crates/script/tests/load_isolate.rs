@@ -1127,7 +1127,11 @@ export default class T extends LoopingBot {
     iso.on_game_tick(1);
     assert_eq!(iso.probe("__rs_loops").unwrap(), 1, "first loop runs");
     let paints_after_first = iso.probe("__rs_paints").unwrap();
-    assert_eq!(paints_after_first, 1, "first tick paints");
+    // Existing runner paints once inside the loop wrapper and once when forwarding.
+    assert_eq!(
+        paints_after_first, 2,
+        "preserve the existing first-tick paint cadence"
+    );
     // Post hold via the FlatBuffer — never poke `__rs2b0t_host.hold`.
     let mut snap = base_snapshot();
     snap.hold = true;
@@ -2305,8 +2309,13 @@ export default class T extends LoopingBot {
         "next tick answers the count dialog"
     );
     iso.on_game_tick(3);
+    assert_eq!(iso.probe("typeof __ok").unwrap(), "undefined");
+    let inv = [item_row(526, Some("Bones"), 25, &[], false, -1, 0)];
+    snap.inv = &inv;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(4);
     let ok = iso.probe("__ok").unwrap();
-    assert_eq!(ok, true, "withdrawX resolves after the count answer");
+    assert_eq!(ok, true, "withdrawX resolves after inventory publication");
     iso.join();
 }
 

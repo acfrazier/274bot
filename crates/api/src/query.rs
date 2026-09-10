@@ -1936,9 +1936,7 @@ impl<'a> SceneQuery<'a> {
         }
         let from = self.to_local(player)?;
         let flags = |lx: i32, lz: i32| self.collision_at_local(LocalTile { lx, lz });
-        if flags(from.lx, from.lz).is_none() {
-            return None;
-        }
+        flags(from.lx, from.lz)?;
         let width = scene.width;
         let height = scene.height;
         let n = (width as usize) * (height as usize);

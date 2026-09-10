@@ -293,7 +293,11 @@ fn fire_pending_catalog_start(
 /// publication, and the per-username walk arms (the same `WalkArm` map
 /// `host_play::arm_walk_on` latches and the panel drives).
 pub struct TuiSession {
+    #[cfg(feature = "memory-profile")]
+    memory: Option<host_play::memory::Run>,
     play: Option<Play>,
+    #[cfg(test)]
+    suppress_slot_spawn: bool,
     vault: Option<Vault>,
     pub error: Option<String>,
     /// All profile names (for the strip's slot list), in vault order.
@@ -369,7 +373,11 @@ impl TuiSession {
         let mut js = script::JsLibrary::new(script::default_js_store());
         let _ = js.restore(); // missing/broken store is not fatal here
         Self {
+            #[cfg(feature = "memory-profile")]
+            memory: None,
             play: None,
+            #[cfg(test)]
+            suppress_slot_spawn: false,
             vault: None,
             error: None,
             names: Vec::new(),
@@ -523,6 +531,10 @@ impl TuiSession {
     /// immediately and re-handshakes after a DC only when the profile's
     /// `auto_login` is on.
     fn spawn(&mut self, name: &str) -> bool {
+        #[cfg(test)]
+        if self.suppress_slot_spawn {
+            return false;
+        }
         let Some(mut profile) = self.vault.as_ref().and_then(|v| v.get(name)).cloned() else {
             return false;
         };
@@ -934,6 +946,25 @@ impl TuiSession {
 
     /// Copy the focused slot's views into the app and poll the runner.
     fn pump(&mut self, app: &mut TuiApp) {
+        #[cfg(feature = "memory-profile")]
+        if let Some(run) = self.memory.as_mut() {
+            app.focused = Some(run.focus_index());
+            if let Some(play) = self.play.as_mut() {
+                play.focus(&run.names[run.focus_index()]);
+                match run.poll(play) {
+                    Ok(true) => {
+                        eprintln!("PASS: memory tui observation complete");
+                        std::process::exit(0);
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        eprintln!("FAIL: memory tui: {error}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+        }
+
         let statuses = self.play.as_ref().map(|p| p.statuses()).unwrap_or_default();
         // Running slots join the strip even when they are not in the
         // vault (live minted names).
@@ -1128,6 +1159,26 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         mainland: false,
     });
 
+    #[cfg(feature = "memory-profile")]
+    if let Some(config) = host_play::memory::Config::from_env()? {
+        host_play::memory::require_live_benchmark()?;
+        // Vault/card first; unlock constructs Play once (single load_pack).
+        let run = host_play::memory::Run::prepare_unseeded(config, "tui")?;
+        session.options.mainland = true;
+        session.unlock_at(&run.vault, &run.pass)?;
+        run.bind_seed_nav(host_play::memory::SeedNav::FromPlay(
+            session.play.as_ref().and_then(|p| p.world()),
+        ))?;
+        session.names = run.names.clone();
+        session.spawn_all();
+        session.focus(&run.names[0]);
+        let mut app = TuiApp::new("274bot memory benchmark");
+        app.names = run.names.clone();
+        app.focused = Some(0);
+        session.memory = Some(run);
+        return run_loop(session, app);
+    }
+
     match mode {
         RunMode::Live(name) => {
             let scenario = live_scenario(&name)?;
@@ -1232,13 +1283,17 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
         if let Some(code) = session.live_status() {
             return Ok(code);
         }
-        terminal
-            .draw(|frame| {
-                app.draw(frame);
-                app.draw_loadouts_overlay(frame, &mut session.loadouts);
-                app.draw_params_overlay(frame, &mut session.script_settings, &session.loadouts);
-            })
-            .map_err(|e| e.to_string())?;
+        {
+            let _profile_frame = client::profiling::UI_FRAME.start();
+            terminal
+                .draw(|frame| {
+                    let _profile_draw = client::profiling::UI_DRAW.start();
+                    app.draw(frame);
+                    app.draw_loadouts_overlay(frame, &mut session.loadouts);
+                    app.draw_params_overlay(frame, &mut session.script_settings, &session.loadouts);
+                })
+                .map_err(|e| e.to_string())?;
+        }
         if event::poll(Duration::from_millis(50)).map_err(|e| e.to_string())? {
             match event::read().map_err(|e| e.to_string())? {
                 Event::Key(k) if k.kind == KeyEventKind::Press => {
@@ -1461,6 +1516,7 @@ ScriptRegistry.register({
         let root = fake_rs2b0t_tree(&iso.dir);
         iso.set_rs2b0t(&root);
         let mut session = TuiSession::new(dummy_options());
+        session.suppress_slot_spawn = true;
         session
             .live_prepare_script(scenario::get("bone_burier").expect("registered"))
             .expect("prepare");
@@ -1475,10 +1531,19 @@ ScriptRegistry.register({
             "prepare sets script_sel to the catalog card"
         );
         let play = session.play.as_ref().expect("play started");
-        assert_ne!(
-            play.script_state(&name),
-            script::RunState::Running,
-            "isolate is not Running yet — Start waits for the StartScript step"
+        assert!(
+            play.arm(&name).is_none(),
+            "unit fixture must not create a slot worker"
+        );
+        assert_eq!(
+            session
+                .pending_script
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|pending| pending.slot.as_str()),
+            Some(name.as_str()),
+            "preparation stages the selected card for StartScript"
         );
     }
 
@@ -1503,6 +1568,7 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
         .unwrap();
         iso.set_rs2b0t(&root);
         let mut session = TuiSession::new(dummy_options());
+        session.suppress_slot_spawn = true;
         session
             .live_prepare_script(scenario::get("thiever").expect("registered"))
             .expect("prepare");

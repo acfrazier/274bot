@@ -5,6 +5,33 @@ All notable public changes to 274bot. Crate versions are `0.1.0` and
 
 ## [Unreleased] — 0.1.5
 
+### Selected allocation, gameplay and portability corrections
+
+- Reuse completed dynamic sprite slots; read animation delay without cloning
+  transform data; box sparse appearance packets; share private animation bases
+  while keeping public lookups independently owned.
+- Release script snapshot storage on explicit Stop, preserving Pause and fresh
+  restart keyframes. Release completed scenario snapshots after terminal evidence.
+- Share the Play navigation world with harness seeds, including failed-load
+  behavior. Allocate panel CPU upload storage only when a CPU frame needs it;
+  retain pixels through GPU/CPU switching.
+- Preserve routing worker ownership and stale-result rejection, retry failed
+  radius requests without losing the prior route, and keep bank approaches
+  radius-aware. Withdraw X now waits for published inventory; loadouts and food
+  resolve through Rust helpers. Existing unsupported helpers remain errors.
+- Correct adjacent door crossing and baked door edges; rebake existing v8 packs.
+  Retain the bounded revision-274 stun-recovery inference and focused login
+  priority across reconnects.
+- Restore overlay, minimap-freeze and main-modal uploads. Add native Windows
+  socket wakes, HOME/USERPROFILE selection and real process resource metrics.
+- Retain the opt-in fleet harness for preservation work, with explicit fixtures,
+  terminal evidence, TUI/panel integration and portable basic accounting. See
+  [harness usage and limits](docs/harness.md).
+
+These are selected engineering improvements, not a combined RSS or capacity
+claim. Experimental snapshot sharing, borrowed fingerprints, tiled navigation,
+and advanced campaign capture/controllers are excluded.
+
 ### TS shim (`crates/script`)
 
 - `$RS2B0T` registry parse (static scan of `src/bot/scripts/index.ts`, no

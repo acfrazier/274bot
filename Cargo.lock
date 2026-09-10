@@ -691,6 +691,7 @@ dependencies = [
  "softbuffer",
  "tungstenite",
  "wgpu",
+ "windows-sys 0.59.0",
  "winit",
 ]
 
@@ -2308,6 +2309,7 @@ dependencies = [
  "libc",
  "num-bigint",
  "vault",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2320,9 +2322,11 @@ dependencies = [
  "libc",
  "nav",
  "rand_core",
+ "scenario",
  "script",
  "serde_json",
  "vault",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
