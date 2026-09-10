@@ -1,0 +1,24 @@
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/profile-qualified/source-87084cbc-56d8027/crates/api)
+   Compiling vault v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/profile-qualified/source-87084cbc-56d8027/crates/vault)
+   Compiling nav v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/profile-qualified/source-87084cbc-56d8027/crates/nav)
+   Compiling host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/profile-qualified/source-87084cbc-56d8027/crates/host)
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/profile-qualified/source-87084cbc-56d8027/crates/script)
+   Compiling scenario v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/profile-qualified/source-87084cbc-56d8027/crates/scenario)
+   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/profile-qualified/source-87084cbc-56d8027/crates/host-play)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.27s
+     Running tests/session_profile.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/debug/deps/session_profile-c97074b8e366ddfe)
+
+running 10 tests
+test public_289_defaults_and_named_profile_override_lower_priority_inputs ... ok
+test flags_are_order_independent_and_override_saved_or_environment_revision ... ok
+test invalid_revision_public_pairing_and_conflicts_fail_before_vault_access ... ok
+test cache_and_nav_mismatch_are_rejected_before_creating_resources ... ok
+test catalog_is_a_default_path_while_cache_identity_remains_revision_bound ... ok
+test navigation_and_scatter_use_the_selected_shared_world_and_validate_its_sidecar ... ok
+test invalid_explicit_rsa_fails_without_fallback_and_binding_detects_resource_changes ... ok
+test both_revisions_reach_real_shared_client_constructor_and_keep_the_binding ... ok
+test bound_public_client_refuses_fixture_cheats_after_mutable_config_changes ... ok
+test qualified_revision_289_accepts_an_unarmed_slot_and_script_loading ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+

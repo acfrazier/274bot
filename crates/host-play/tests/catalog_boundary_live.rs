@@ -215,6 +215,10 @@ struct Observation {
     tile: Option<(i32, i32, i32)>,
     tick: u32,
     items: BTreeMap<String, i32>,
+    bank: BTreeMap<String, i32>,
+    bank_open: bool,
+    bank_loaded: bool,
+    bank_generation: u64,
     levels: BTreeMap<String, i32>,
     xp: BTreeMap<String, i32>,
     chat: Vec<(i32, String)>,
@@ -235,6 +239,14 @@ impl Observation {
             .iter()
             .map(|stat| (stat.name.to_ascii_lowercase(), stat.xp))
             .collect();
+        let mut bank = BTreeMap::new();
+        for row in snapshot.bank() {
+            let name = names
+                .name(row.def.id)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("obj#{}", row.def.id));
+            *bank.entry(name).or_insert(0) += row.count;
+        }
         let levels = snapshot
             .stats()
             .iter()
@@ -255,6 +267,10 @@ impl Observation {
             tile: snapshot.tile(),
             tick: snapshot.tick(),
             items,
+            bank,
+            bank_open: snapshot.bank_component_id() >= 0,
+            bank_loaded: snapshot.bank_loaded(),
+            bank_generation: snapshot.bank_session_generation(),
             levels,
             xp,
             chat,
@@ -267,6 +283,10 @@ impl Observation {
 
     fn skill_xp(&self, name: &str) -> i32 {
         self.xp.get(name).copied().unwrap_or(0)
+    }
+
+    fn bank_item(&self, name: &str) -> i32 {
+        self.bank.get(name).copied().unwrap_or(0)
     }
 
     fn level(&self, name: &str) -> i32 {
@@ -329,6 +349,51 @@ struct CoreWitness {
     max_xp: BTreeMap<String, i32>,
     saw_bury_chat: bool,
     post_start_observations: u64,
+    bone_bank_cycle: BoneBankCycle,
+}
+
+/// Ordered observations: seed depletion alone must never qualify this card.
+#[derive(Debug, Clone, Default, Serialize)]
+struct BoneBankCycle {
+    first_batch_buried: bool,
+    opened: Option<Observation>,
+    withdrawn: Option<Observation>,
+    buried_after_withdrawal: bool,
+}
+
+impl BoneBankCycle {
+    fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        self.first_batch_buried |=
+            now.item("Bones") == 0 && now.skill_xp("prayer") - baseline.skill_xp("prayer") >= 22;
+        if self.first_batch_buried
+            && self.opened.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item("Bones") == 0
+            && now.bank_item("Bones") == 28
+            && now.tile != baseline.tile
+        {
+            self.opened = Some(now.clone());
+        }
+        if let Some(opened) = &self.opened {
+            if self.withdrawn.is_none()
+                && now.bank_open
+                && now.bank_loaded
+                && now.bank_generation == opened.bank_generation
+                && now.item("Bones") == 28
+                && now.bank_item("Bones") == 0
+            {
+                self.withdrawn = Some(now.clone());
+            }
+        }
+        if let Some(withdrawn) = &self.withdrawn {
+            self.buried_after_withdrawal |= !now.bank_open
+                && !now.bank_loaded
+                && now.item("Bones") < withdrawn.item("Bones")
+                && now.skill_xp("prayer") > withdrawn.skill_xp("prayer");
+        }
+    }
 }
 
 impl CoreWitness {
@@ -341,10 +406,20 @@ impl CoreWitness {
             case,
             saw_bury_chat: false,
             post_start_observations: 0,
+            bone_bank_cycle: BoneBankCycle::default(),
         }
     }
 
     fn observe(&mut self, observation: &Observation) {
+        if !observation.ingame
+            || observation.scene_state != 2
+            || observation.player != self.baseline.player
+        {
+            return;
+        }
+        if matches!(self.case, CoreCase::BoneBurier) {
+            self.bone_bank_cycle.observe(&self.baseline, observation);
+        }
         let baseline_sequence = self
             .baseline
             .chat
@@ -393,9 +468,7 @@ impl CoreWitness {
         }
         let ok = match self.case {
             CoreCase::BoneBurier => {
-                self.item_consumed_from_baseline("Bones")
-                    && self.xp_gained("prayer")
-                    && self.saw_bury_chat
+                self.bone_bank_cycle.buried_after_withdrawal && self.saw_bury_chat
             }
             CoreCase::ChickenKiller => {
                 self.xp_gained("strength")
@@ -430,6 +503,7 @@ impl CoreWitness {
             "max_xp": self.max_xp,
             "saw_bury_chat": self.saw_bury_chat,
             "post_start_observations": self.post_start_observations,
+            "bone_bank_cycle": self.bone_bank_cycle,
         }))
     }
 }
@@ -966,6 +1040,10 @@ mod tests {
             player: Some("catalogtest".into()),
             tile: Some((3220, 3212, 0)),
             tick: 10,
+            bank: BTreeMap::new(),
+            bank_open: false,
+            bank_loaded: false,
+            bank_generation: 0,
             items: items
                 .iter()
                 .map(|(name, count)| ((*name).to_string(), *count))
@@ -1048,18 +1126,74 @@ mod tests {
     }
 
     #[test]
-    fn bone_burier_requires_post_start_consumption_and_prayer_xp() {
+    fn bone_burier_rejects_first_burial_and_requires_observed_bank_cycle() {
         let baseline = observation(&[("Bones", 5)], &[("prayer", 100)], &[]);
-        let unchanged = witness(CoreCase::BoneBurier, &baseline, [&baseline]);
-        assert!(unchanged.qualify().is_err());
-
-        let after = observation(
+        let first = observation(
             &[("Bones", 4)],
             &[("prayer", 104)],
             &[(2, "You bury the bones.")],
         );
-        let changed = witness(CoreCase::BoneBurier, &baseline, [&after]);
-        assert!(changed.qualify().is_ok());
+        assert!(witness(CoreCase::BoneBurier, &baseline, [&first])
+            .qualify()
+            .is_err());
+        let empty = observation(&[], &[("prayer", 122)], &[(6, "You bury the bones.")]);
+        assert!(witness(CoreCase::BoneBurier, &baseline, [&first, &empty])
+            .qualify()
+            .is_err());
+        let mut opened = empty.clone();
+        opened.tile = Some((3092, 3245, 0));
+        opened.bank_open = true;
+        opened.bank_loaded = true;
+        opened.bank_generation = 1;
+        opened.bank.insert("Bones".into(), 28);
+        let mut withdrawn = opened.clone();
+        withdrawn.items.insert("Bones".into(), 28);
+        withdrawn.bank.clear();
+        let mut buried = withdrawn.clone();
+        buried.bank_open = false;
+        buried.bank_loaded = false;
+        buried.items.insert("Bones".into(), 27);
+        buried.xp.insert("prayer".into(), 127);
+        buried.chat.push((7, "You bury the bones.".into()));
+        let observations = [&first, &empty, &opened, &withdrawn, &buried];
+        assert!(witness(CoreCase::BoneBurier, &baseline, observations)
+            .qualify()
+            .is_ok());
+        // An inventory rise without the observed bank transfer is insufficient.
+        assert!(witness(
+            CoreCase::BoneBurier,
+            &baseline,
+            [&empty, &withdrawn, &buried]
+        )
+        .qualify()
+        .is_err());
+        let mut stale = opened.clone();
+        stale.bank_loaded = false;
+        assert!(witness(
+            CoreCase::BoneBurier,
+            &baseline,
+            [&empty, &stale, &withdrawn, &buried]
+        )
+        .qualify()
+        .is_err());
+        let mut no_consumption = buried.clone();
+        no_consumption.items.insert("Bones".into(), 28);
+        assert!(witness(
+            CoreCase::BoneBurier,
+            &baseline,
+            [&empty, &opened, &withdrawn, &no_consumption]
+        )
+        .qualify()
+        .is_err());
+        let mut no_xp = buried.clone();
+        no_xp.xp.insert("prayer".into(), 122);
+        assert!(witness(
+            CoreCase::BoneBurier,
+            &baseline,
+            [&empty, &opened, &withdrawn, &no_xp]
+        )
+        .qualify()
+        .is_err());
     }
 
     #[test]

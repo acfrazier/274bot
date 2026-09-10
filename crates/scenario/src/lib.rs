@@ -1588,22 +1588,20 @@ fn nav_paint_path_scenario() -> Scenario {
     }
 }
 
-/// The `bone_burier` scenario: the **live BoneBurier gold** — the real
-/// rs2b0t TS `BoneBurier` (a `$RS2B0T` catalog card) runs through the
-/// shim on the driven slot, not a host re-implementation. The host
-/// selects the card (`settings.start_script`) at live boot and Starts
-/// it on [`StepKind::StartScript`] after the last seed wait; the runner
-/// then **observes** the script's burials. Steps: log in a unique minted
-/// account, mainland-hop into the Lumbridge courtyard, stick
-/// `tutorial=1000` and `give bones 5` **before** the clean relog (the
-/// engine persists the give across logout; a bare setvar leaves the
-/// side icons tutorial-locked, so the inv tab's TYPE_INV widget — and the
-/// script's `inventorySize()` gate — only binds after the relog), Start
-/// the card, then wait for the script's bury evidence: the server's
-/// `bury_bone.rs2` deletes the slot, advances prayer, and prints "You
-/// bury the bones." Proof is the bury message in the chat ring —
-/// burials happened.
+/// Run the real catalog BoneBurier through inventory depletion, off-scene
+/// banking, withdrawal and another burial. All stock is prepared before Start;
+/// the harness only observes after that boundary.
 fn bone_burier_scenario() -> Scenario {
+    let watch = |name, arm| Step {
+        name,
+        kind: StepKind::Perform {
+            send: Box::new(|_, _| true),
+        },
+        wait: Wait {
+            arm,
+            budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
+        },
+    };
     Scenario {
         name: "bone_burier",
         seed: Seed {
@@ -1612,12 +1610,13 @@ fn bone_burier_scenario() -> Scenario {
         },
         steps: vec![
             Step {
-                name: "stick tutorial skip and seed five bones",
+                name: "prepare five carried bones and twenty-eight banked bones",
                 kind: StepKind::Perform {
                     send: Box::new(|c, _| {
                         cheat(c, "setvar tutorial 1000");
                         cheat(c, "getvar tutorial");
                         cheat(c, "give bones 5");
+                        cheat(c, "givebank bones 28");
                         true
                     }),
                 },
@@ -1632,33 +1631,52 @@ fn bone_burier_scenario() -> Scenario {
                 name: "relog so the inv tab binds",
                 kind: StepKind::Relog,
                 wait: Wait {
-                    // Same arm as the nav kit: after the clean logout the
-                    // login payload binds side tab 3 (inventory).
                     arm: Proof::SideTabAvailable { index: 3 },
                     budget_ticks: 600,
                 },
             },
             start_catalog_step(),
-            Step {
-                // The BoneBurier card (started by the host on StartScript
-                // after the relog binds the inv tab) finds the five Bones
-                // and buries them one at a time. This step only watches
-                // the chat ring for the server's bury message.
-                name: "watch the script bury bones",
-                kind: StepKind::Perform {
-                    send: Box::new(|_, _| true),
+            watch(
+                "watch the first five burials",
+                Proof::StatXpGain { id: 5, min: 22 },
+            ),
+            watch(
+                "watch the carried bones run out",
+                Proof::ItemAtMost {
+                    name: "Bones",
+                    count: 0,
                 },
-                wait: Wait {
-                    arm: Proof::Chat {
-                        needle: "bury the bones",
-                    },
-                    budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
+            ),
+            watch(
+                "watch the script reach and open its stocked bank",
+                Proof::BankItem {
+                    name: "Bones",
+                    count: 28,
                 },
-            },
+            ),
+            watch(
+                "watch the script withdraw a full pack",
+                Proof::Item {
+                    name: "Bones",
+                    count: 28,
+                },
+            ),
+            watch(
+                "watch the bank stock decrease",
+                Proof::BankItemAtMost {
+                    name: "Bones",
+                    count: 0,
+                },
+            ),
+            watch("watch the script close its bank", Proof::BankClosed),
+            // XP baselines are retained for the scenario: six normal bones
+            // yield 27 integer XP. Five seed bones alone can yield only 22.
+            watch(
+                "watch a burial from the withdrawn pack",
+                Proof::StatXpGain { id: 5, min: 27 },
+            ),
         ],
-        proof: Proof::Chat {
-            needle: "bury the bones",
-        },
+        proof: Proof::StatXpGain { id: 5, min: 27 },
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
@@ -2787,9 +2805,7 @@ mod tests {
         );
         assert_eq!(
             bone.steps[i + 1].wait.arm,
-            Proof::Chat {
-                needle: "bury the bones"
-            }
+            Proof::StatXpGain { id: 5, min: 22 }
         );
         assert_eq!(bone.steps[i].wait.arm, Proof::Stat { id: 16, min: 0 });
         assert_eq!(bone.steps[i].wait.budget_ticks, 1);
@@ -2872,42 +2888,46 @@ mod tests {
     }
 
     #[test]
-    fn bone_burier_seeds_bones_relogs_and_watches_the_script_bury() {
-        let s = get("bone_burier").expect("bone_burier is registered");
-        assert_eq!(s.name, "bone_burier");
-        assert_eq!(s.seed.profiles, [("test", "test")]);
-        assert!(s.seed.mainland, "unique live accounts spawn on tutorial");
-        assert_eq!(s.steps.len(), 4, "seed, relog, StartScript, watch");
-        // Step 1 sticks the tutorial skip and cheats five Bones in
-        // BEFORE the relog (the engine persists the give across logout;
-        // the bones must be in the pack when the script's onStart wakes).
-        assert!(matches!(s.steps[0].kind, StepKind::Perform { .. }));
-        // Step 2 relogs so the inv tab binds (bare setvar leaves the
-        // side icons tutorial-locked).
-        assert!(matches!(s.steps[1].kind, StepKind::Relog));
-        assert_eq!(s.steps[1].wait.arm, Proof::SideTabAvailable { index: 3 });
-        // Step 3 starts the catalog card after the last seed wait.
-        assert!(matches!(s.steps[2].kind, StepKind::StartScript));
-        // Step 4 sends nothing; it watches the chat ring for the running
-        // script's burial evidence.
+    fn bone_burier_requires_banking_between_burial_cycles() {
+        let s = get("bone_burier").unwrap();
+        assert_eq!(s.settings.start_script, Some("BoneBurier"));
+        let start = s
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        assert!(s.steps[..start]
+            .iter()
+            .any(|step| matches!(step.kind, StepKind::Relog)));
+        let arms: Vec<_> = s.steps[start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect();
         assert_eq!(
-            s.steps[3].wait.arm,
-            Proof::Chat {
-                needle: "bury the bones"
-            }
+            arms,
+            vec![
+                Proof::StatXpGain { id: 5, min: 22 },
+                Proof::ItemAtMost {
+                    name: "Bones",
+                    count: 0
+                },
+                Proof::BankItem {
+                    name: "Bones",
+                    count: 28
+                },
+                Proof::Item {
+                    name: "Bones",
+                    count: 28
+                },
+                Proof::BankItemAtMost {
+                    name: "Bones",
+                    count: 0
+                },
+                Proof::BankClosed,
+                Proof::StatXpGain { id: 5, min: 27 },
+            ]
         );
-        // The host must start the real BoneBurier card on the driven
-        // slot; the scenario itself never buries.
-        assert_eq!(
-            s.settings.start_script,
-            Some("BoneBurier"),
-            "the live gold runs the $RS2B0T BoneBurier card, not host bury"
-        );
-        // The terminal proof is the server's bury message: a burial
-        // actually happened.
-        assert_eq!(s.proof.name(), "chat(contains \"bury the bones\")");
-        assert!(s.companions.is_empty());
-        assert!(s.settings.require_mainland_base);
+        assert_eq!(s.proof, Proof::StatXpGain { id: 5, min: 27 });
     }
 
     #[test]

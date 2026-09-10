@@ -1,0 +1,18 @@
+   Compiling image v0.25.10
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/bone-bank-proof/source-700cb59e-working/vendor/fr-client-rust/crates/client)
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/bone-bank-proof/source-700cb59e-working/crates/api)
+   Compiling nav v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/bone-bank-proof/source-700cb59e-working/crates/nav)
+   Compiling scenario v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/bone-bank-proof/source-700cb59e-working/crates/scenario)
+error[E0609]: no field `id` on type `&&ItemView`
+   --> crates/scenario/src/proof.rs:173:50
+    |
+173 |                     .filter(|row| names.name(row.id) == Some(*name))
+    |                                                  ^^ unknown field
+    |
+help: one of the expressions' fields has a field of the same name
+    |
+173 |                     .filter(|row| names.name(row.def.id) == Some(*name))
+    |                                                  ++++
+
+For more information about this error, try `rustc --explain E0609`.
+error: could not compile `scenario` (lib test) due to 1 previous error

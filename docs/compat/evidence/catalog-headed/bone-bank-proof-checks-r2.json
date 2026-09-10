@@ -1,0 +1,39 @@
+{
+  "checks": [
+    {
+      "name": "scenario",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "scenario",
+        "--lib"
+      ],
+      "source": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/bone-bank-proof/source-700cb59e-working",
+      "started_at": "2026-09-10T21:41:27.237299+00:00",
+      "elapsed_seconds": 1.713,
+      "exit_code": 0
+    },
+    {
+      "name": "witness",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "host-play",
+        "--test",
+        "catalog_boundary_live",
+        "--features",
+        "memory-profile",
+        "--",
+        "--skip",
+        "catalog_boundary_live"
+      ],
+      "source": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/bone-bank-proof/source-700cb59e-working",
+      "started_at": "2026-09-10T21:41:28.950704+00:00",
+      "elapsed_seconds": 4.781,
+      "exit_code": 0
+    }
+  ],
+  "source_files_verified_after_checks": 581
+}

@@ -1,0 +1,63 @@
+{
+  "id": 1135,
+  "task_id": "t_887b29b5",
+  "profile": "reviewer",
+  "step_key": null,
+  "status": "done",
+  "claim_lock": null,
+  "claim_expires": null,
+  "worker_pid": null,
+  "max_runtime_seconds": 5400,
+  "last_heartbeat_at": 1789074997,
+  "started_at": 1789074871,
+  "ended_at": 1789075004,
+  "outcome": "completed",
+  "summary": "Reviewed and approved. Round-1 cold artifact review of 5eeff8f0 + c9521d2f matches brief 25: Host::publish_frontend_snapshot reuses Pump/publish_snapshot watermarks; panel/TUI publish before local-player/Guardian returns; logout/response-15 clear facts+WalkArm/BankBudget+latches; slot spawn/stop (panel) and spawn (TUI) reset lifetime for same-name reuse; scene/Guardian preserve armed work. Independently reran all six exact frontend tests and cargo test -p host (136); fmt --check on host/panel/tui passed. No forbidden api/script/client/host-play/src/lib.rs edits in task commits.",
+  "metadata": {
+    "review_outcome": "approved",
+    "review_round": 1,
+    "review_lens": "artifact",
+    "commits": [
+      "5eeff8f0",
+      "c9521d2f"
+    ],
+    "changed_files": [
+      "crates/host/src/lib.rs",
+      "crates/panel/src/session.rs",
+      "crates/tui/src/bin.rs",
+      "docs/compat/06a-frontend-session-observations.md"
+    ],
+    "reviewer_checks": [
+      "brief 25 cold read vs diff",
+      "Host::publish_frontend_snapshot uses Pump::drain_client + publish_snapshot",
+      "panel/TUI publish before local-player and Guardian early returns",
+      "session_boundary clears travellers (WalkArm/BankBudget) and tick latch",
+      "panel spawn+stop and TUI spawn call reset_frontend_slot_lifetime",
+      "scene rebuild + Guardian hold do not clear armed work",
+      "no api/script/client/host-play/src/lib.rs in 5eeff8f0/c9521d2f",
+      "cargo test panel frontend_logout exact: pass",
+      "cargo test panel frontend_response_15 exact: pass",
+      "cargo test panel same_name_lifetime exact: pass",
+      "cargo test tui frontend_logout exact: pass",
+      "cargo test tui frontend_response_15 exact: pass",
+      "cargo test tui same_name_lifetime exact: pass",
+      "cargo test -p host --lib: 136 pass",
+      "cargo fmt -p host -p panel -p tui -- --check: pass",
+      "owned files clean vs HEAD after concurrent-restore audit"
+    ],
+    "caveats": [
+      "TUI has no stop_slot path; lifetime reset is on spawn only (existing TUI surface)",
+      "session_boundary is true for every !ingame frame (idempotent clears; production guardian edge is transition-only)"
+    ],
+    "worker_session_id": "20260910_171431_19a30e"
+  },
+  "error": null,
+  "session": {
+    "id": "20260910_171431_19a30e",
+    "model": "grok-4.5",
+    "profile_name": "reviewer",
+    "started_at": 1789074872.2453592,
+    "ended_at": 1789075005.1992471,
+    "billing_provider": "xai-oauth"
+  }
+}

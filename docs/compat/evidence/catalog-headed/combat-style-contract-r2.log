@@ -1,0 +1,9 @@
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/bone-bank-proof/source-700cb59e-working/crates/script)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.62s
+     Running tests/combat_style_contract.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/debug/deps/combat_style_contract-e5b1283e181ceb6f)
+
+running 1 test
+test matched_combat_style_result_can_be_described_by_the_catalog_helper ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+

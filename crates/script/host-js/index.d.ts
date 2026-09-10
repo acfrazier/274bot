@@ -159,6 +159,8 @@ export interface Snapshot {
   count_dialog_open: boolean;
   withdraw_x_result_seq: number;
   withdraw_x_result: boolean;
+  withdraw_load_result_seq: number;
+  withdraw_load_result: boolean;
   bank_note_on: number;
   bank_note_off: number;
   /** 2 = 3D ready. */

@@ -1,12 +1,16 @@
 # First banking capability family
 
-Current status (2026-09-10 20:53 UTC): source correction in progress. Candidate
-host `8a60eef77e9c4e74c3ee81332e495fb9331c046a` / client
-`56d80272bcbda3eb1e22db096c1c5e21d3497de4` is not yet accepted. Same-card
-Grok 4.5 review requested changes, and root found additional concrete outcome
-and supported-option gaps. The direct fixed-transfer bank-return cells subsequently passed on both
-revisions (03-world-capabilities.md); named access and Withdraw-X live
-qualification are not claimed.
+Current status (2026-09-10 21:43 UTC): candidate 75514ee3/client 56d8027
+passed same-card Grok 4.5 review 1134, but root acceptance remains withheld.
+The corrections below resolved named-open, rejected-result, noted-ID and zero
+quantity findings. Root then found a composed Pause/hold bug: the shim's new
+8000 ms wall timer can expire while Rust's pending operation is frozen. The
+matching/fill family owns its correction and explicit session-abort results.
+
+Direct fixed-transfer bank-return cells passed on both revisions
+(03-world-capabilities.md). The first headed BoneBurier run exposed missing
+ordinary bank travel and an undefined Bank.withdraw return value. Its original
+first-burial PASS is not full-loop acceptance; see 05a-catalog-live-harness.md.
 
 ## Implemented candidate
 
@@ -27,23 +31,24 @@ Rust dispatch, delayed count dialog, one answer and posted inventory outcome.
 Exact same-plane nearest-booth identity now reaches Rust dispatch and is checked
 again before action.
 
-## Remaining corrections
+## Corrections and remaining work
 
-- Named `Banking.open({stand, boothName, boothOp})`, `Bank.openBooth` and OpenStand
-  behavior remains incomplete. The candidate still drops supplied options.
-  Preserve defaults, walk near the requested stand, and dispatch the requested
-  loc/name/action without fallback to another access.
-- A rejected Withdraw-X is silently discarded in several host dispatch arms,
-  while the shim waits with no deadline. Every rejected request must post a
-  failure result, including same-generation stale/missing target/action cases.
-- `withdrawXById` still drops `landsAsId`. Enabled Alcher passes the noted output
-  ID; settlement must observe that actual delivered identity.
-- Count <= 0 must retain the required success/no-op behavior. Invalid positive
-  quantities and unsupported operations must still fail honestly.
+Sol 1132/session 20260910_165228_335293 corrected named stand/name/op forwarding,
+exact loc selection, rejected Withdraw-X outcomes, noted landsAsId settlement,
+and zero quantity no-ops in 75514ee3. Actual Grok 4.5 reviewer run 1134/session
+20260910_171431_af8915 approved those paths with composed and focused checks;
+its verified metadata is evidence/banking-capabilities/review-run-1134.json.
+That review did not catch the outer Pause timer conflict described above.
 
-These are original brief-18 requirements, not new product scope. Corrective Sol
-run 1132/session `20260910_165228_335293` uses the verified configured model
-`gpt-5.6-sol` / `openai-codex`. It must obtain another same-card Grok 4.5 review.
+Sol t_41b2f50e owns that conflict, session aborts, common-loot matching and
+withdrawLoad. Task t_90b60f12 follows its review to complete planned Rust-owned
+nearest-bank routing and honest Bank.withdraw dispatch results. This behavior
+is required by the frozen API; the user confirmed retaining the plan after
+root explained its existing travel fallback. The original BoneBurier fixture
+continues to start on the mainland, with bank stock prepared before Start.
+Root's strengthened observer requires depletion, fresh bank stock, withdrawal,
+closed bank and a second burial. Neither queued work nor a first burial is a
+passing catalog result.
 
 ## Checks and evidence
 

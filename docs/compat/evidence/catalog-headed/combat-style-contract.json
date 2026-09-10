@@ -1,0 +1,14 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "script",
+    "--test",
+    "combat_style_contract"
+  ],
+  "source": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/bone-bank-proof/source-700cb59e-working",
+  "started_at": "2026-09-10T21:46:13.918064+00:00",
+  "elapsed_seconds": 3.267,
+  "exit_code": 101
+}

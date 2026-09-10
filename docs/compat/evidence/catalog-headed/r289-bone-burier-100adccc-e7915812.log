@@ -1,0 +1,6 @@
+274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+live script_bone_burier: running step 1/4
+live script_bone_burier: running step 2/4
+live script_bone_burier: running step 3/4
+live script_bone_burier: running step 4/4
+PASS: live script_bone_burier {"scenario":"bone_burier","outcome":"PASS","predicate":"chat(contains \"bury the bones\")","ticks":7,"elapsed_ms":11309,"tile":[3220,3220,0],"inv":[{"id":526,"name":"Bones","count":1},{"id":526,"name":"Bones","count":1},{"id":526,"name":"Bones","count":1},{"id":526,"name":"Bones","count":1}],"stat":{"runenergy":100},"chat":[{"text":"You bury the bones."},{"text":"You dig a hole in the ground..."},{"text":"Welcome to RuneScape."}],"scene":2}
