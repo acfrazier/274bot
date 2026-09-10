@@ -391,7 +391,7 @@ fn revision_289_refuses_slots_and_scripts_before_arms_or_queue_mutation() {
     assert!(play.statuses().is_empty());
     assert!(play.login_queue_uids().is_empty());
     assert_eq!(
-        play.script_start("fixture", script::CompiledId("walk-to".into()))
+        play.script_start("fixture", script::CompiledId("walk-to"))
             .unwrap_err(),
         HOST_BOUNDARY_NOT_QUALIFIED
     );

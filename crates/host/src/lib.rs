@@ -12,7 +12,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use api::interact::set_run;
-use api::snapshot::{Family, GameSnapshot};
+use api::snapshot::GameSnapshot;
 use auto_run::{auto_run_ready, auto_run_tick};
 use client::client::{Client, ClientConfig};
 use client::config::{Cache, IfType, IfTypeMut};
@@ -891,8 +891,12 @@ impl SlotLoop {
     }
 
     fn after_drain(&mut self, client: &mut Client) -> DrainResult {
-        let result = self.pump.drain(client.gens);
-        rebuild_dirty(&mut self.snapshot, client, result.dirty);
+        let result = self.pump.drain_client(client);
+        if result.session_changed || (!client.ingame && self.snapshot.ingame()) {
+            self.guardian = Guardian::new();
+            self.run_on = false;
+        }
+        publish_snapshot(&mut self.snapshot, client, result);
 
         // Live client field: UPDATE_RUNENERGY writes here. Snapshot energy
         // can stay 0 if a stat-family rebuild ran before the energy packet.
@@ -904,7 +908,8 @@ impl SlotLoop {
             // Cannot be running; wins over a stale run-on echo.
             self.run_on = false;
         }
-        if auto_run_ready(client.ingame, client.scene_state)
+        if self.snapshot.local_player().is_some()
+            && auto_run_ready(client.ingame, client.scene_state)
             && auto_run_tick(energy, self.run_on)
             && set_run(client, true)
         {
@@ -915,62 +920,29 @@ impl SlotLoop {
     }
 }
 
-fn rebuild_dirty(snapshot: &mut GameSnapshot, client: &Client, dirty: DirtyFamilies) {
-    if dirty.npc {
-        snapshot.rebuild_family(client, Family::Npc);
+/// Publish one client drain into a host snapshot. Logout and every successful
+/// login/reconnect establish a new empty session view at the current generation
+/// watermark; ordinary drains rebuild only dirty families and advance the host
+/// tick only from the client's actual PLAYER_INFO observation.
+///
+/// This is the shared production seam for slot loops and narrow harnesses:
+/// callers own the [`Pump`] and pass its exact [`DrainResult`].
+pub fn publish_snapshot(snapshot: &mut GameSnapshot, client: &Client, result: DrainResult) {
+    if !client.ingame {
+        snapshot.reset_session(result.gens);
+        return;
     }
-    if dirty.player {
-        snapshot.rebuild_family(client, Family::Player);
-    }
-    if dirty.inv {
-        snapshot.rebuild_family(client, Family::Inv);
-    }
-    if dirty.varp {
-        snapshot.rebuild_family(client, Family::Varp);
-    }
-    if dirty.stat {
-        snapshot.rebuild_family(client, Family::Stat);
-    }
-    if dirty.chat {
-        snapshot.rebuild_family(client, Family::Chat);
-    }
-    if dirty.scene {
-        snapshot.rebuild_family(client, Family::Scene);
-        // Loc and ground-item changes bump the scene gen, so the same
-        // drain flag rebuilds their views.
-        snapshot.rebuild_family(client, Family::Loc);
-        snapshot.rebuild_family(client, Family::GroundItem);
-    }
-    if dirty.iface {
-        snapshot.rebuild_family(client, Family::Iface);
-    }
-    if dirty.camera {
-        snapshot.rebuild_family(client, Family::Camera);
-    }
-    if dirty.map_flag {
-        snapshot.rebuild_family(client, Family::MapFlag);
-    }
-    if dirty.world {
-        snapshot.rebuild_family(client, Family::World);
-    }
-    // The iface-derived families re-read the materialized `client.ifaces`
-    // (and the inv slot data), so their gens are the iface and inv flags;
-    // each family's own gate no-ops the ones that did not move.
-    if dirty.iface || dirty.inv {
-        snapshot.rebuild_family(client, Family::Inventory);
-        snapshot.rebuild_family(client, Family::Equipment);
-        snapshot.rebuild_family(client, Family::Bank);
-        snapshot.rebuild_family(client, Family::BankSide);
-        snapshot.rebuild_family(client, Family::Trade);
-        snapshot.rebuild_family(client, Family::Widgets);
-        snapshot.rebuild_family(client, Family::SideTabs);
-        snapshot.rebuild_family(client, Family::ChatOptions);
-        snapshot.rebuild_family(client, Family::MakeProducts);
-        snapshot.rebuild_family(client, Family::QuestStatuses);
-        snapshot.rebuild_family(client, Family::Modals);
-        snapshot.rebuild_family(client, Family::Controls);
-        snapshot.rebuild_family(client, Family::Menu);
-    }
+    let player_info = if result.session_changed {
+        // A drain can contain packets on both sides of a reconnect. The
+        // client records the exact grant watermark; only later generations
+        // may republish a family, including packets later in this same drain.
+        let start = client.session_start_gens();
+        snapshot.reset_session(start);
+        result.gens.player_info != start.player_info
+    } else {
+        result.player_info
+    };
+    snapshot.rebuild_from_drain(client, player_info);
 }
 
 /// Run on/off from the orb pair. 152 visible and 153 hidden → running;
@@ -1049,7 +1021,7 @@ mod tests {
         assert_eq!(slot.pump.dirty(client.gens), DirtyFamilies::default());
     }
 
-    /// The drain's dirty flags must feed `rebuild_dirty` for the four new
+    /// The drain's dirty flags must feed `publish_snapshot` for the four new
     /// families too, or `snapshot.gens().{iface,camera,map_flag,world}`
     /// stay permanently 0 (the snapshot views rely on this path).
     #[test]
@@ -1129,6 +1101,7 @@ mod tests {
             ifaces_mut,
         );
         client.side_icon[3] = 500;
+        client.ingame = true;
         let mut slot = SlotLoop::new();
 
         client.gens.iface = 1;
@@ -1149,9 +1122,541 @@ mod tests {
         assert!(!result.dirty.any());
     }
 
+    #[test]
+    fn logout_drain_resets_snapshot_instead_of_republishing_retained_client_state() {
+        use client::client::{ClientNpc, ClientPlayer};
+
+        let mut client = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        client.ingame = true;
+        client.scene_state = 2;
+        client.local_player = Some(ClientPlayer::at(5, 6));
+        client.npc[7] = Some(Box::new(ClientNpc::default()));
+        client.npc_ids[0] = 7;
+        client.npc_count = 1;
+        client.bump_gens(client::io::ServerProt::REBUILD_NORMAL);
+
+        let mut slot = SlotLoop::new();
+        slot.after_drain(&mut client);
+        assert_eq!(slot.snapshot.npcs().len(), 1);
+        assert!(slot.snapshot.local_player().is_some());
+        assert!(slot.snapshot.ingame());
+
+        client.logout();
+        let reset_gens = client.gens;
+        assert!(
+            client.npc[7].is_some(),
+            "logout retains the client actor table"
+        );
+        let result = slot.after_drain(&mut client);
+
+        assert!(result.dirty.npc && result.dirty.player && result.dirty.inv);
+        assert_eq!(slot.snapshot.gens().npc, reset_gens.npc);
+        assert_eq!(slot.snapshot.gens().player, reset_gens.player);
+        assert!(slot.snapshot.npcs().is_empty());
+        assert!(slot.snapshot.local_player().is_none());
+        assert!(slot.snapshot.players().is_empty());
+        assert!(slot.snapshot.inv().is_empty());
+        assert_eq!(slot.snapshot.tick(), 0);
+        assert!(!slot.snapshot.ingame());
+        assert!(!slot.snapshot.attached());
+
+        // A reconnect grant alone does not republish retained tables. Only a
+        // packet beyond the reset watermark may make its family current.
+        client.ingame = true;
+        client.scene_state = 2;
+        let quiet = slot.after_drain(&mut client);
+        assert!(!quiet.dirty.any());
+        assert!(slot.snapshot.npcs().is_empty());
+        assert!(slot.snapshot.local_player().is_none());
+
+        let mut player = client::io::Packet::new(vec![0xe0, 0x50, 0xc0, 0]);
+        client.psize = 4;
+        client.handle_packet(client::io::ServerProt::PLAYER_INFO, &mut player);
+        let fresh = slot.after_drain(&mut client);
+        assert!(fresh.player_info);
+        assert!(slot.snapshot.local_player().is_some());
+        assert!(slot.snapshot.npcs().is_empty());
+        assert_eq!(slot.snapshot.tick(), 1);
+    }
+
+    /// Drive the real handshake so the client records its grant watermark.
+    fn reconnect_grant(client: &mut Client) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        client.config.port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut header = [0; 2];
+            stream.read_exact(&mut header).unwrap();
+            assert_eq!(header[0], 14);
+            stream.write_all(&[0; 17]).unwrap();
+            stream.read_exact(&mut header).unwrap();
+            assert_eq!(header[0], 18);
+            let mut login = vec![0; header[1] as usize];
+            stream.read_exact(&mut login).unwrap();
+            stream.write_all(&[15]).unwrap();
+        });
+        client.login("snapshot", "test", true).unwrap();
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn successful_reconnect_generation_resets_snapshot_while_ingame_stays_true() {
+        use client::client::{ClientNpc, ClientPlayer};
+
+        let mut client = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        client.ingame = true;
+        client.scene_state = 2;
+        client.local_player = Some(ClientPlayer::at(5, 6));
+        client.npc[7] = Some(Box::new(ClientNpc::default()));
+        client.npc_ids[0] = 7;
+        client.npc_count = 1;
+        client.bump_gens(client::io::ServerProt::REBUILD_NORMAL);
+
+        let mut slot = SlotLoop::new();
+        slot.after_drain(&mut client);
+        assert_eq!(slot.snapshot.npcs().len(), 1);
+        assert!(slot.snapshot.local_player().is_some());
+
+        // A response-15 reconnect does not set ingame false or clear actor
+        // tables. The successful-session generation is the only reliable
+        // boundary available to the host.
+        reconnect_grant(&mut client);
+        let result = slot.after_drain(&mut client);
+
+        assert!(result.session_changed);
+        assert!(slot.snapshot.npcs().is_empty());
+        assert!(slot.snapshot.local_player().is_none());
+        assert!(slot.snapshot.ingame());
+        assert_eq!(slot.snapshot.gens().session, client.gens.session);
+    }
+
+    #[test]
+    fn rebuild_invalidation_refreshes_player_view_without_inventing_tick() {
+        use client::client::ClientPlayer;
+        use client::io::{Packet, ServerProt};
+
+        let mut client = prepare_client(
+            cfg(),
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        client.ingame = true;
+        client.local_player = Some(ClientPlayer::at(10, 10));
+        let mut rebuild = Packet::new(vec![0, 50, 0, 50]);
+        client.psize = 4;
+        client.handle_packet(ServerProt::REBUILD_NORMAL, &mut rebuild);
+
+        let mut slot = SlotLoop::new();
+        let result = slot.after_drain(&mut client);
+
+        assert!(result.dirty.player && result.dirty.scene);
+        assert!(!result.player_info);
+        assert_eq!(slot.snapshot.base(), Some((352, 352)));
+        assert_eq!(slot.snapshot.tick(), 0);
+    }
+
+    fn bit_packet(fields: &[(usize, u32)]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut position = 0;
+        for &(width, value) in fields {
+            assert!(value < (1 << width));
+            for shift in (0..width).rev() {
+                if position % 8 == 0 {
+                    bytes.push(0);
+                }
+                *bytes.last_mut().unwrap() |= (((value >> shift) & 1) as u8) << (7 - position % 8);
+                position += 1;
+            }
+        }
+        bytes
+    }
+
+    fn dispatch_packet(client: &mut Client, opcode: i32, bytes: Vec<u8>) {
+        use client::io::Packet;
+
+        client.psize = bytes.len() as i32;
+        let mut packet = Packet::new(bytes);
+        packet.set_frame_end(client.psize as usize);
+        client.handle_packet(opcode, &mut packet);
+        assert_eq!(packet.pos, client.psize as usize);
+        assert!(client.ingame, "fixture packet must not T2/logout");
+    }
+
+    fn install_revision_snapshot_ifaces(client: &mut Client) {
+        use client::config::if_type::ComponentType;
+
+        client.set_iface(
+            3,
+            IfType {
+                id: 3,
+                r#type: ComponentType::TYPE_INV,
+                obj_ops: true,
+                ..IfType::default()
+            },
+        );
+        client.set_iface_mut(
+            3,
+            IfTypeMut {
+                link_obj_type: Some(vec![0; 260]),
+                link_obj_number: Some(vec![0; 260]),
+                ..IfTypeMut::default()
+            },
+        );
+        client.side_icon[3] = 3;
+        client.set_iface(
+            11,
+            IfType {
+                id: 11,
+                layer_id: 11,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![13]),
+                ..IfType::default()
+            },
+        );
+        client.set_iface(12, IfType::default());
+        client.set_iface(
+            13,
+            IfType {
+                id: 13,
+                layer_id: 11,
+                r#type: ComponentType::TYPE_INV,
+                iop: [Some("Withdraw 1".into()), None, None, None, None],
+                ..IfType::default()
+            },
+        );
+        client.set_iface_mut(
+            13,
+            IfTypeMut {
+                link_obj_type: Some(vec![0; 4]),
+                link_obj_number: Some(vec![0; 4]),
+                ..IfTypeMut::default()
+            },
+        );
+    }
+
+    fn qualify_decoder_to_host_snapshot(revision: client::client::ClientRevision) {
+        use client::client::{ClientNpc, ClientPlayer};
+        use client::io::{ServerProt, ServerProt289};
+
+        let mut client = Client::new_with_revision(cfg(), revision);
+        client.ingame = true;
+        client.scene_state = 2;
+        client.self_slot = 5;
+        client.local_player = Some(ClientPlayer::at(10, 10));
+        client.players[2047] = Some(Box::new(ClientPlayer::at(10, 10)));
+        install_revision_snapshot_ifaces(&mut client);
+        let mut slot = SlotLoop::new();
+
+        let (inv_full, inv_partial, inv_full_opcode, inv_partial_opcode) = if revision.is_289() {
+            (
+                vec![0, 3, 0, 2, 0, 1, 2, 0, 3, 3],
+                vec![0, 3, 0x80, 0x80, 0, 5, 9],
+                ServerProt289::UPDATE_INV_FULL,
+                ServerProt289::UPDATE_INV_PARTIAL,
+            )
+        } else {
+            (
+                vec![0, 3, 2, 0, 1, 2, 0, 3, 3],
+                vec![0, 3, 1, 0, 5, 9],
+                ServerProt::UPDATE_INV_FULL,
+                ServerProt::UPDATE_INV_PARTIAL,
+            )
+        };
+        dispatch_packet(&mut client, inv_full_opcode, inv_full);
+        slot.after_drain(&mut client);
+        assert_eq!(slot.snapshot.inv_count(0), 2);
+        assert_eq!(slot.snapshot.inv_count(2), 3);
+
+        dispatch_packet(&mut client, inv_partial_opcode, inv_partial);
+        slot.after_drain(&mut client);
+        assert_eq!(slot.snapshot.inv_count(4), 9);
+        if revision.is_289() {
+            assert_eq!(slot.snapshot.inventory()[2].slot, 128);
+        } else {
+            assert_eq!(slot.snapshot.inventory()[1].slot, 1);
+        }
+
+        let (open_opcode, bank_full_opcode, bank_full) = if revision.is_289() {
+            (
+                ServerProt289::IF_OPENMAIN_SIDE,
+                ServerProt289::UPDATE_INV_FULL,
+                vec![0, 13, 0, 1, 0, 6, 20],
+            )
+        } else {
+            (
+                ServerProt::IF_OPENMAIN_SIDE,
+                ServerProt::UPDATE_INV_FULL,
+                vec![0, 13, 1, 0, 6, 20],
+            )
+        };
+        dispatch_packet(&mut client, open_opcode, vec![0, 11, 0, 12]);
+        dispatch_packet(&mut client, bank_full_opcode, bank_full);
+        slot.after_drain(&mut client);
+        assert_eq!((client.main_modal_id, client.side_modal_id), (11, 12));
+        assert_eq!(slot.snapshot.modals().main, 11);
+        assert_eq!(slot.snapshot.bank_component_id(), 13);
+        assert_eq!(slot.snapshot.bank()[0].def.id, 5);
+        assert_eq!(slot.snapshot.bank()[0].count, 20);
+
+        let rebuild_opcode = if revision.is_289() {
+            ServerProt289::REBUILD_NORMAL
+        } else {
+            ServerProt::REBUILD_NORMAL
+        };
+        let rebuild = if revision.is_289() {
+            vec![0, 16, 0, 32]
+        } else {
+            vec![0, 50, 0, 50]
+        };
+        dispatch_packet(&mut client, rebuild_opcode, rebuild);
+        let rebuild_result = slot.after_drain(&mut client);
+        assert!(!rebuild_result.player_info);
+        assert!(rebuild_result.dirty.scene && rebuild_result.dirty.player);
+        assert_eq!(
+            slot.snapshot.base(),
+            Some(if revision.is_289() {
+                (80, 208)
+            } else {
+                (352, 352)
+            })
+        );
+        assert_eq!(slot.snapshot.tick(), 0);
+
+        client.npc[3] = Some(Box::new(ClientNpc::default()));
+        client.npc_ids[0] = 3;
+        client.npc_count = 1;
+        let npc_opcode = if revision.is_289() {
+            ServerProt289::NPC_INFO
+        } else {
+            ServerProt::NPC_INFO
+        };
+        dispatch_packet(&mut client, npc_opcode, bit_packet(&[(8, 1), (1, 0)]));
+        slot.after_drain(&mut client);
+        assert_eq!(slot.snapshot.npcs()[0].index, 3);
+
+        let (player_opcode, player_frame, expected_tile) = if revision.is_289() {
+            (
+                ServerProt289::PLAYER_INFO,
+                bit_packet(&[
+                    (1, 1),
+                    (2, 3),
+                    (2, 2),
+                    (7, 80),
+                    (7, 81),
+                    (1, 1),
+                    (1, 0),
+                    (8, 0),
+                ]),
+                (160, 289, 2),
+            )
+        } else {
+            (
+                ServerProt::PLAYER_INFO,
+                vec![0xe0, 0x50, 0xc0, 0],
+                (357, 358, 0),
+            )
+        };
+        dispatch_packet(&mut client, player_opcode, player_frame);
+        let tick_result = slot.after_drain(&mut client);
+        assert!(tick_result.player_info);
+        assert!(should_emit_tick(tick_result.player_info));
+        assert_eq!(slot.snapshot.tick(), 1);
+        assert_eq!(slot.snapshot.tile(), Some(expected_tile));
+        assert_eq!(
+            slot.snapshot.local_player().map(|p| p.player.index),
+            Some(5)
+        );
+    }
+
+    #[test]
+    fn revision_274_decoder_packets_publish_host_snapshot() {
+        qualify_decoder_to_host_snapshot(client::client::ClientRevision::R274);
+    }
+
+    #[test]
+    fn revision_289_decoder_packets_publish_host_snapshot() {
+        qualify_decoder_to_host_snapshot(client::client::ClientRevision::R289);
+    }
+
+    #[test]
+    fn session_change_same_drain_publishes_fresh_packet_families() {
+        use client::client::ClientPlayer;
+        use client::io::ServerProt;
+
+        let mut client = Client::new(cfg());
+        client.ingame = true;
+        client.scene_state = 2;
+        client.self_slot = 5;
+        client.local_player = Some(ClientPlayer::at(10, 10));
+        client.players[2047] = Some(Box::new(ClientPlayer::at(10, 10)));
+        install_revision_snapshot_ifaces(&mut client);
+
+        let mut pump = Pump::new();
+        pump.drain(client.gens);
+        let mut snapshot = GameSnapshot::new();
+
+        reconnect_grant(&mut client);
+        dispatch_packet(
+            &mut client,
+            ServerProt::UPDATE_INV_FULL,
+            vec![0, 3, 2, 0, 1, 2, 0, 3, 3],
+        );
+        dispatch_packet(
+            &mut client,
+            ServerProt::IF_OPENMAIN_SIDE,
+            vec![0, 11, 0, 12],
+        );
+        dispatch_packet(
+            &mut client,
+            ServerProt::PLAYER_INFO,
+            vec![0xe0, 0x50, 0xc0, 0],
+        );
+
+        let result = pump.drain_client(&client);
+        assert!(result.session_changed && result.player_info);
+        publish_snapshot(&mut snapshot, &client, result);
+
+        assert_eq!(snapshot.tick(), 1);
+        assert!(snapshot.local_player().is_some());
+        assert_eq!(snapshot.inv_count(0), 2);
+        assert_eq!(snapshot.inventory()[0].count, 2);
+        assert_eq!(snapshot.modals().main, 11);
+    }
+
+    #[test]
+    fn reconnect_drain_discards_old_packets_and_invalidation_but_keeps_fresh_families() {
+        use client::client::{ClientNpc, ClientPlayer, ClientRevision};
+        use client::io::{ServerProt, ServerProt289};
+        for revision in [ClientRevision::R274, ClientRevision::R289] {
+            let mut client = Client::new_with_revision(cfg(), revision);
+            client.ingame = true;
+            client.scene_state = 2;
+            client.local_player = Some(ClientPlayer::at(10, 10));
+            client.players[2047] = Some(Box::new(ClientPlayer::at(10, 10)));
+            client.npc[7] = Some(Box::new(ClientNpc::default()));
+            client.npc_ids[0] = 7;
+            client.npc_count = 1;
+            install_revision_snapshot_ifaces(&mut client);
+            let mut pump = Pump::new();
+            pump.drain_client(&client);
+            let mut snapshot = GameSnapshot::new();
+            let (inv, player, rebuild, iface, inv_body, player_body) = if revision.is_289() {
+                (
+                    ServerProt289::UPDATE_INV_FULL,
+                    ServerProt289::PLAYER_INFO,
+                    ServerProt289::REBUILD_NORMAL,
+                    ServerProt289::IF_OPENMAIN_SIDE,
+                    vec![0, 3, 0, 2, 0, 1, 2, 0, 3, 3],
+                    bit_packet(&[
+                        (1, 1),
+                        (2, 3),
+                        (2, 0),
+                        (7, 10),
+                        (7, 12),
+                        (1, 1),
+                        (1, 0),
+                        (8, 0),
+                    ]),
+                )
+            } else {
+                (
+                    ServerProt::UPDATE_INV_FULL,
+                    ServerProt::PLAYER_INFO,
+                    ServerProt::REBUILD_NORMAL,
+                    ServerProt::IF_OPENMAIN_SIDE,
+                    vec![0, 3, 2, 0, 1, 2, 0, 3, 3],
+                    vec![0xe0, 0x50, 0xc0, 0],
+                )
+            };
+            // The observer has not drained these previous-session packets.
+            dispatch_packet(&mut client, inv, inv_body.clone());
+            dispatch_packet(&mut client, player, player_body.clone());
+            reconnect_grant(&mut client);
+            // A real new-session scene invalidation must not revive inventory
+            // or actors retained by response 15.
+            dispatch_packet(&mut client, rebuild, vec![0, 50, 0, 50]);
+            let drain = pump.drain_client(&client);
+            assert!(!drain.player_info);
+            publish_snapshot(&mut snapshot, &client, drain);
+            assert!(snapshot.local_player().is_none());
+            assert!(snapshot.npcs().is_empty());
+            assert!(snapshot.inv().is_empty());
+            dispatch_packet(&mut client, player, player_body);
+            dispatch_packet(&mut client, iface, vec![0, 11, 0, 12]);
+            publish_snapshot(&mut snapshot, &client, pump.drain_client(&client));
+            assert_eq!(snapshot.tick(), 1);
+            assert!(snapshot.local_player().is_some());
+            assert!(snapshot.npcs().is_empty());
+            assert!(snapshot.inventory().is_empty());
+            dispatch_packet(&mut client, inv, inv_body);
+            publish_snapshot(&mut snapshot, &client, pump.drain_client(&client));
+            assert_eq!(snapshot.inv_count(0), 2);
+            assert_eq!(snapshot.inventory()[0].count, 2);
+        }
+    }
+
+    #[test]
+    fn quiet_drain_refreshes_scene_ready_scalar_without_grid_rebuild() {
+        let mut client = Client::new(cfg());
+        client.ingame = true;
+        client.scene_state = 1;
+        client.gens.scene = 1;
+        let mut pump = Pump::new();
+        let mut snapshot = GameSnapshot::new();
+        publish_snapshot(&mut snapshot, &client, pump.drain(client.gens));
+        assert_eq!(snapshot.scene_state(), 1);
+        let scene_before = (
+            snapshot.scene().available,
+            snapshot.scene().base_x,
+            snapshot.scene().base_z,
+            snapshot.scene().level,
+            snapshot.scene().collision_flags.clone(),
+        );
+
+        // check_scene performs this transition locally without moving a
+        // packet-family generation.
+        client.scene_state = 2;
+        let quiet = pump.drain(client.gens);
+        assert!(!quiet.dirty.any());
+        publish_snapshot(&mut snapshot, &client, quiet);
+
+        assert_eq!(snapshot.scene_state(), 2);
+        assert_eq!(
+            (
+                snapshot.scene().available,
+                snapshot.scene().base_x,
+                snapshot.scene().base_z,
+                snapshot.scene().level,
+                snapshot.scene().collision_flags.clone(),
+            ),
+            scene_before
+        );
+    }
+
     fn ingame_scene2(client: &mut Client) {
         client.ingame = true;
         client.scene_state = 2;
+        client.local_player = Some(client::client::ClientPlayer::at(10, 10));
+        client.gens.player += 1;
+        client.gens.player_info += 1;
     }
 
     #[test]
@@ -2616,6 +3121,7 @@ mod tests {
         // Dirty families so `after_drain` rebuilds the snapshot.
         c.gens.npc = 1;
         c.gens.player = 1;
+        c.gens.player_info = 1;
         c.gens.scene = 1;
 
         let mut slot = SlotLoop::new();
@@ -2697,6 +3203,7 @@ mod tests {
         c.gens.iface = 1;
         c.gens.scene = 1;
         c.gens.player = 1;
+        c.gens.player_info = 1;
 
         let lamp_auto = Arc::new(AtomicBool::new(false));
         let lamp_skill = Arc::new(Mutex::new("strength".to_string()));
@@ -2719,6 +3226,7 @@ mod tests {
 
         lamp_auto.store(true, Ordering::Relaxed);
         c.gens.player = 2;
+        c.gens.player_info = 2;
         Host::client_frame(&mut c, &mut slot, "t", None, None, &mut sends, None);
         assert!(
             c.out.pos > 0,

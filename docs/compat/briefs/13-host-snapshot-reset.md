@@ -1,5 +1,38 @@
 # Step 4B: snapshot publication and session reset
 
+## Current root implementation and review scope
+
+Root reclaimed Sol run 1105 and completed the preserved implementation inline
+under manually claimed run 1106. That run's inherited Sol label does not identify
+an actual model run. Review the final named host/client commits in the handoff.
+Root owns Git hygiene; do not stash, checkout, reset, restore or edit the index.
+
+`Client::tcp_in` can call `lost_con` and continue draining packets in the same
+frame. The successful grant now records `session_start_gens`, alongside the
+successful-session counter. `Pump::drain_client` uses that exact watermark.
+A separate client `invalidations` counter explicitly records all-family resets;
+subtracting it from family movement prevents a later REBUILD from reviving
+retained packet data. This is an explicit observation, not equal-delta inference.
+Actual PLAYER_INFO has its own counter. Existing family generations, framing,
+login behavior, command ordering and timeouts remain unchanged.
+
+Review the shared host publication path, including scene-ready scalars that
+change without a packet. The production observer closes its producer gate and
+clears queues/routes before any frame hook sees the new session. Rust isolate
+channel generations discard old queued ticks, unread/late interaction replies,
+and completion messages. Script instances, operator run intent and parked wait
+deadlines survive. The next script snapshot is a full keyframe. No FlatBuffer
+wire or foreign JavaScript policy change is involved. The narrow live harness
+now uses the same `Pump::drain_client` + `host::publish_snapshot` helper.
+
+The operator subsequently clarified that script loading/starting must not be
+gated by revision; suitability belongs to the user and unsupported operations
+must refuse at the host/client operation boundary. Root is applying that policy
+in the next coherent change. Earlier text below requiring script revision gates
+is superseded by that instruction. This lifecycle review does not authorize or
+require a script compatibility gate. The temporary 289 slot gate remains until
+the controlled host/world qualification is complete.
+
 ## Orchestrator correction at 18:05 UTC (read before resuming)
 
 Root also accepts the concrete missing seam reported in this card's 13:48

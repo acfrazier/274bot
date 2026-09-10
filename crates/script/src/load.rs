@@ -931,7 +931,11 @@ mod isolate {
     }
 
     enum IsolateCmd {
-        Tick(u64),
+        Tick {
+            tick: u64,
+            generation: u64,
+        },
+        ResetSession,
         /// The host's FlatBuffer snapshot blob (schema: `crates/script/
         /// schema/isolate.fbs`), decoded on the isolate thread into the
         /// JS object the Game/Inventory/Skills/EventSignal shims read
@@ -951,7 +955,10 @@ mod isolate {
         /// The tick's shim interact queue (`__rs2b0t_host.interact`), a
         /// FlatBuffer `InteractBatch` of [`crate::shim::InteractReq`]s
         /// forwarded after the tick's JS finished (parked or not).
-        Interact(Vec<u8>),
+        Interact {
+            bytes: Vec<u8>,
+            generation: u64,
+        },
         /// The tick's recorded paint frame (`Paint.begin` … `end()` on the
         /// host handle), a FlatBuffer `Paint` forwarded for the script
         /// paint views. The host reads the latest frame off the handle
@@ -963,7 +970,10 @@ mod isolate {
         /// thread after the tick and cached on the host handle (no probe).
         IgnoredRandoms(Vec<String>),
         /// The highest tick the thread has fully processed (ran or skipped).
-        Completed(u64),
+        Completed {
+            tick: u64,
+            generation: u64,
+        },
     }
 
     /// One JS bot running in its own rustyscript/V8 isolate. Spawned only
@@ -977,6 +987,7 @@ mod isolate {
         last_completed: std::sync::atomic::AtomicU64,
         #[cfg(feature = "memory-profile")]
         dispatched: std::sync::atomic::AtomicU64,
+        work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
         tx: Sender<IsolateCmd>,
         rx: Mutex<Receiver<ThreadMsg>>,
         logs: Mutex<Vec<String>>,
@@ -998,7 +1009,7 @@ mod isolate {
         terminate: v8::IsolateHandle,
         /// The tick currently being dispatched and when it was sent; the
         /// thread clears it when the tick completes.
-        in_flight: Mutex<Option<(u64, Instant)>>,
+        in_flight: Mutex<Option<(u64, u64, Instant)>>,
     }
 
     impl LoadIsolate {
@@ -1017,6 +1028,8 @@ mod isolate {
             let counters = crate::memory_profile::registered();
             #[cfg(feature = "memory-profile")]
             let thread_counters = counters.clone();
+            let work_generation = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let thread_generation = work_generation.clone();
             let handle = std::thread::Builder::new()
                 .name("js-isolate".into())
                 .spawn(move || {
@@ -1027,6 +1040,7 @@ mod isolate {
                         rx,
                         msg_tx,
                         setup_tx,
+                        thread_generation,
                         #[cfg(feature = "memory-profile")]
                         thread_counters,
                     )
@@ -1044,6 +1058,7 @@ mod isolate {
                 last_completed: std::sync::atomic::AtomicU64::new(0),
                 #[cfg(feature = "memory-profile")]
                 dispatched: std::sync::atomic::AtomicU64::new(0),
+                work_generation,
                 tx,
                 rx: Mutex::new(msg_rx),
                 logs: Mutex::new(Vec::new()),
@@ -1102,15 +1117,18 @@ mod isolate {
             self.dispatched
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.pump_logs();
+            let generation = self
+                .work_generation
+                .load(std::sync::atomic::Ordering::Acquire);
             let interrupted = {
                 let mut in_flight = self.in_flight.lock().unwrap();
                 // The previous tick is still in flight (no `Completed`
                 // folded yet) past the budget: interrupt it.
                 let over = in_flight
                     .as_ref()
-                    .filter(|(_, started)| started.elapsed() > SLOW_TICK)
-                    .map(|(tick, started)| (*tick, started.elapsed()));
-                *in_flight = Some((snap_tick, Instant::now()));
+                    .filter(|(_, _, started)| started.elapsed() > SLOW_TICK)
+                    .map(|(_, tick, started)| (*tick, started.elapsed()));
+                *in_flight = Some((generation, snap_tick, Instant::now()));
                 over
             };
             if let Some((tick, elapsed)) = interrupted {
@@ -1125,7 +1143,10 @@ mod isolate {
                     .unwrap()
                     .push(format!("interrupted slow tick {tick} ({elapsed:?})"));
             }
-            let _ = self.tx.send(IsolateCmd::Tick(snap_tick));
+            let _ = self.tx.send(IsolateCmd::Tick {
+                tick: snap_tick,
+                generation,
+            });
         }
 
         #[cfg(feature = "memory-profile")]
@@ -1144,7 +1165,7 @@ mod isolate {
             serde_json::json!({"dispatched":self.dispatched.load(Relaxed),
                 "last_completed_tick":self.last_completed.load(Relaxed),
                 "paint":self.paint.lock().unwrap().as_ref().map(|p|serde_json::json!({"title":p.title,"lines":p.lines})),
-                "in_flight":self.in_flight.lock().unwrap().as_ref().map(|(tick,t)|(*tick,t.elapsed().as_millis()))})
+                "in_flight":self.in_flight.lock().unwrap().as_ref().map(|(_,tick,t)|(*tick,t.elapsed().as_millis()))})
         }
 
         /// Park tick dispatch. A runaway tick is interrupted first so the
@@ -1155,7 +1176,7 @@ mod isolate {
                 .in_flight
                 .lock()
                 .unwrap()
-                .map(|(_, started)| started.elapsed() > SLOW_TICK)
+                .map(|(_, _, started)| started.elapsed() > SLOW_TICK)
                 .unwrap_or(false);
             if over {
                 // No cancel here: the isolate thread clears the terminate
@@ -1207,6 +1228,20 @@ mod isolate {
             std::mem::take(&mut *self.interacts.lock().unwrap())
         }
 
+        /// Discard work from the previous connection, including batches that
+        /// an already running tick has not forwarded yet. Script state and
+        /// parked waits survive; the next snapshot is posted before a new tick.
+        pub fn reset_session_work(&self) {
+            {
+                let mut interacts = self.interacts.lock().unwrap();
+                self.work_generation
+                    .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                interacts.clear();
+            }
+            *self.in_flight.lock().unwrap() = None;
+            let _ = self.tx.send(IsolateCmd::ResetSession);
+        }
+
         /// The latest recorded paint frame (the tick thread forwards the
         /// host handle's `paint` record after every tick that painted).
         /// `None` when the script has not painted yet. No probe
@@ -1250,14 +1285,20 @@ mod isolate {
                     msgs.push(msg);
                 }
             }
-            let mut clear_through: Option<u64> = None;
             for msg in msgs {
                 match msg {
                     ThreadMsg::Log(line) => self.logs.lock().unwrap().push(line),
-                    ThreadMsg::Interact(bytes) => {
-                        // Decode the FlatBuffer interact batch (no JSON).
+                    ThreadMsg::Interact { bytes, generation } => {
+                        let mut interacts = self.interacts.lock().unwrap();
+                        if generation
+                            != self
+                                .work_generation
+                                .load(std::sync::atomic::Ordering::Acquire)
+                        {
+                            continue;
+                        }
                         match crate::isolate_fb::decode_interact_batch(&bytes) {
-                            Ok(reqs) => self.interacts.lock().unwrap().extend(reqs),
+                            Ok(reqs) => interacts.extend(reqs),
                             Err(e) => self.logs.lock().unwrap().push(format!("interact: {e}")),
                         }
                     }
@@ -1276,18 +1317,22 @@ mod isolate {
                     ThreadMsg::IgnoredRandoms(list) => {
                         *self.ignored_randoms.lock().unwrap() = list;
                     }
-                    ThreadMsg::Completed(up_to) => {
+                    ThreadMsg::Completed { tick, generation } => {
+                        let mut in_flight = self.in_flight.lock().unwrap();
+                        if generation
+                            != self
+                                .work_generation
+                                .load(std::sync::atomic::Ordering::Acquire)
+                        {
+                            continue;
+                        }
                         #[cfg(feature = "memory-profile")]
                         self.last_completed
-                            .fetch_max(up_to, std::sync::atomic::Ordering::Relaxed);
-                        clear_through = Some(clear_through.map_or(up_to, |c| c.max(up_to)));
+                            .fetch_max(tick, std::sync::atomic::Ordering::Relaxed);
+                        if in_flight.is_some_and(|(g, t, _)| g == generation && t <= tick) {
+                            *in_flight = None;
+                        }
                     }
-                }
-            }
-            if let Some(up_to) = clear_through {
-                let mut in_flight = self.in_flight.lock().unwrap();
-                if in_flight.map(|(t, _)| t <= up_to).unwrap_or(false) {
-                    *in_flight = None;
                 }
             }
         }
@@ -1324,6 +1369,7 @@ mod isolate {
 
     /// The isolate thread: create the Runtime, wire the module, hand the
     /// thread-safe isolate handle back, then run the tick loop.
+    #[allow(clippy::too_many_arguments)] // channel endpoints plus optional diagnostics
     fn isolate_main(
         source: String,
         shape: LoadShape,
@@ -1331,6 +1377,7 @@ mod isolate {
         cmds: Receiver<IsolateCmd>,
         out: Sender<ThreadMsg>,
         setup: Sender<Result<v8::IsolateHandle, String>>,
+        work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
         #[cfg(feature = "memory-profile")] counters: std::sync::Arc<
             crate::memory_profile::Counters,
         >,
@@ -1362,6 +1409,7 @@ mod isolate {
             runtime,
             cmds,
             out,
+            work_generation,
             #[cfg(feature = "memory-profile")]
             counters,
         );
@@ -2441,6 +2489,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         mut runtime: Runtime,
         cmds: Receiver<IsolateCmd>,
         out: Sender<ThreadMsg>,
+        work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
         #[cfg(feature = "memory-profile")] counters: std::sync::Arc<
             crate::memory_profile::Counters,
         >,
@@ -2515,8 +2564,13 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         let _ = out.send(ThreadMsg::Log(format!("settings: {e}")));
                     }
                 }
-                IsolateCmd::Tick(n) => {
-                    if paused {
+                IsolateCmd::Tick {
+                    tick: n,
+                    generation,
+                } => {
+                    if paused
+                        || generation != work_generation.load(std::sync::atomic::Ordering::Acquire)
+                    {
                         continue;
                     }
                     let start = Instant::now();
@@ -2553,7 +2607,10 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         let _ = out.send(ThreadMsg::IgnoredRandoms(eval_ignored_randoms(
                             &mut runtime,
                         )));
-                        let _ = out.send(ThreadMsg::Completed(n));
+                        let _ = out.send(ThreadMsg::Completed {
+                            tick: n,
+                            generation,
+                        });
                         continue;
                     }
                     // A parked Execution wait: settle it (cond / due tick /
@@ -2640,7 +2697,10 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         runtime.eval("globalThis.__rs2b0t_host.interact || []");
                     if let Ok(reqs) = interact {
                         if !reqs.is_empty() {
-                            let _ = out.send(ThreadMsg::Interact(ipc.encode_interact_batch(&reqs)));
+                            let _ = out.send(ThreadMsg::Interact {
+                                bytes: ipc.encode_interact_batch(&reqs),
+                                generation,
+                            });
                         }
                     }
                     let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
@@ -2687,7 +2747,10 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         )
                         .unwrap_or(false);
                     if stopped {
-                        let _ = out.send(ThreadMsg::Completed(n));
+                        let _ = out.send(ThreadMsg::Completed {
+                            tick: n,
+                            generation,
+                        });
                         let _ = out.send(ThreadMsg::Log(format!(
                             "script requested stop on tick {n}; isolate stopping"
                         )));
@@ -2700,7 +2763,10 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         let mut latest = n;
                         loop {
                             match cmds.try_recv() {
-                                Ok(IsolateCmd::Tick(next)) => latest = next,
+                                Ok(IsolateCmd::Tick {
+                                    tick: next,
+                                    generation: next_generation,
+                                }) if next_generation == generation => latest = next,
                                 Ok(other) => {
                                     pending = Some(other);
                                     break;
@@ -2712,10 +2778,19 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                             let _ = out
                                 .send(ThreadMsg::Log(format!("skipped stale ticks -> {latest}")));
                         }
-                        let _ = out.send(ThreadMsg::Completed(latest));
+                        let _ = out.send(ThreadMsg::Completed {
+                            tick: latest,
+                            generation,
+                        });
                     } else {
-                        let _ = out.send(ThreadMsg::Completed(n));
+                        let _ = out.send(ThreadMsg::Completed {
+                            tick: n,
+                            generation,
+                        });
                     }
+                }
+                IsolateCmd::ResetSession => {
+                    let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
                 }
                 IsolateCmd::Pause => paused = true,
                 IsolateCmd::Resume => paused = false,
@@ -2732,6 +2807,31 @@ globalThis.__rs2b0t_tick_async = async (n) => {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn reset_rejects_a_tick_queued_with_the_previous_session_generation() {
+            let iso = LoadIsolate::spawn(
+                "export function tick(api) { globalThis.n = (globalThis.n || 0) + 1; }".into(),
+                LoadShape::NativeTick,
+                vec![],
+            )
+            .unwrap();
+            iso.reset_session_work();
+            // A sender captured this tick before reset but enqueued it late.
+            iso.tx
+                .send(IsolateCmd::Tick {
+                    tick: 1,
+                    generation: 0,
+                })
+                .unwrap();
+            assert_eq!(
+                iso.probe("globalThis.n || 0").unwrap(),
+                serde_json::json!(0)
+            );
+            iso.on_game_tick(2);
+            assert_eq!(iso.probe("globalThis.n").unwrap(), serde_json::json!(1));
+            iso.join();
+        }
 
         #[test]
         fn shim_prelude_defines_globals_for_compat_fixture() {

@@ -212,6 +212,20 @@ impl SlotScript {
         };
     }
 
+    /// Re-gate a started script and invalidate deferred actions and snapshot
+    /// deltas at a connection boundary. Operator run intent is retained.
+    pub fn reset_session_work(&mut self) {
+        self.on_is_up(false);
+        #[cfg(feature = "load")]
+        {
+            if let Some(isolate) = &self.load {
+                isolate.reset_session_work();
+            }
+            self.last_snapshot = None;
+            self.last_world_id = None;
+        }
+    }
+
     /// Post the host's FlatBuffer snapshot blob into a Load isolate (no-op
     /// for a compiled script). Call it before [`SlotScript::on_game_tick`]
     /// so the posted blob is what the tick's JS reads.

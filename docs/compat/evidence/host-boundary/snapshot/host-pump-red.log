@@ -1,0 +1,21 @@
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/vendor/fr-client-rust/crates/client)
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/api)
+   Compiling host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/host)
+error[E0609]: no field `session_changed` on type `DrainResult`
+   --> crates/host/src/slot.rs:356:24
+    |
+356 |         assert!(!quiet.session_changed);
+    |                        ^^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `player_info`, `gens`, `dirty`
+
+error[E0609]: no field `session_changed` on type `DrainResult`
+   --> crates/host/src/slot.rs:367:27
+    |
+367 |         assert!(reconnect.session_changed);
+    |                           ^^^^^^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `player_info`, `gens`, `dirty`
+
+For more information about this error, try `rustc --explain E0609`.
+error: could not compile `host` (lib test) due to 2 previous errors

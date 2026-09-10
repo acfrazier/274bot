@@ -663,6 +663,13 @@ pub struct GameSnapshot {
     controls_gate: u64,
     #[serde(skip)]
     menu_gate: u64,
+    /// False only after a session reset, until that session publishes an
+    /// inventory packet. It prevents later unrelated iface updates from
+    /// reviving retained item tables from the previous session.
+    #[serde(skip)]
+    inv_session_current: bool,
+    #[serde(skip)]
+    session_start: Option<ClientGens>,
 }
 
 impl Default for GameSnapshot {
@@ -742,6 +749,8 @@ impl Default for GameSnapshot {
             modals_gate: 0,
             controls_gate: 0,
             menu_gate: 0,
+            inv_session_current: true,
+            session_start: None,
         }
     }
 }
@@ -749,6 +758,41 @@ impl Default for GameSnapshot {
 impl GameSnapshot {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Drop every session-derived view while retaining the client-owned
+    /// generation watermark. The client intentionally keeps some decoded
+    /// actor/interface tables across `logout()`; the host must not publish
+    /// those as current, and must not reinterpret the logout invalidation as
+    /// fresh data. A later packet moves its family beyond this watermark and
+    /// republishes only that family.
+    pub fn reset_session(&mut self, gens: ClientGens) {
+        let inv_iface_gate = InvIfaceGate {
+            iface: gens.iface,
+            inv: gens.inv,
+        };
+        *self = Self {
+            gens,
+            loc_gen: gens.scene,
+            ground_item_gen: gens.scene,
+            inventory_gate: inv_iface_gate,
+            equipment_gate: inv_iface_gate,
+            bank_gate: inv_iface_gate,
+            bank_side_gate: inv_iface_gate,
+            trade_gate: inv_iface_gate,
+            shop_gate: inv_iface_gate,
+            widgets_gate: inv_iface_gate,
+            side_tabs_gate: inv_iface_gate,
+            chat_options_gate: gens.iface,
+            make_products_gate: gens.iface,
+            quest_statuses_gate: gens.iface,
+            modals_gate: gens.iface,
+            controls_gate: gens.iface,
+            menu_gate: gens.iface,
+            inv_session_current: false,
+            session_start: Some(gens),
+            ..Self::default()
+        };
     }
 
     /// The generation counters this snapshot reflects.
@@ -763,9 +807,12 @@ impl GameSnapshot {
     /// borrowed immutably (the ground-item lists iterate through the
     /// `LinkList`'s shared iterator).
     pub fn rebuild_family(&mut self, client: &Client, family: Family) -> bool {
+        if !self.family_observed(client, family) {
+            return false;
+        }
         match family {
             Family::Npc => self.rebuild_npcs(client),
-            Family::Player => self.rebuild_player(client),
+            Family::Player => self.rebuild_player(client, true),
             Family::Inv => self.rebuild_inv(client),
             Family::Varp => self.rebuild_varps(client),
             Family::Stat => self.rebuild_stat(client),
@@ -794,12 +841,57 @@ impl GameSnapshot {
         }
     }
 
+    /// A scene invalidation refreshes current views but cannot make retained
+    /// packet data from an earlier connection current. Subtract the client's
+    /// explicit invalidation count, rather than guessing from equal deltas.
+    fn family_observed(&self, client: &Client, family: Family) -> bool {
+        let Some(start) = self.session_start else {
+            return true;
+        };
+        let current = client.gens;
+        let (now, before) = match family {
+            Family::Player => return current.player_info != start.player_info,
+            Family::Npc => (current.npc, start.npc),
+            Family::Inv
+            | Family::Inventory
+            | Family::Equipment
+            | Family::Bank
+            | Family::BankSide
+            | Family::Trade
+            | Family::Shop => (current.inv, start.inv),
+            Family::Varp => (current.varp, start.varp),
+            Family::Stat => (current.stat, start.stat),
+            Family::Chat => (current.chat, start.chat),
+            Family::Iface
+            | Family::Widgets
+            | Family::SideTabs
+            | Family::ChatOptions
+            | Family::MakeProducts
+            | Family::QuestStatuses
+            | Family::Modals
+            | Family::Controls
+            | Family::Menu => (current.iface, start.iface),
+            Family::Camera => (current.camera, start.camera),
+            Family::MapFlag => (current.map_flag, start.map_flag),
+            Family::World => (current.world, start.world),
+            Family::Scene | Family::Loc | Family::GroundItem => return true,
+        };
+        now.wrapping_sub(before) != current.invalidations.wrapping_sub(start.invalidations)
+    }
+
     /// Rebuild every family whose gen moved (the harness "one snapshot
     /// per tick" read). Returns true iff any family gen moved.
     pub fn rebuild(&mut self, client: &Client) -> bool {
+        self.rebuild_from_drain(client, true)
+    }
+
+    /// Refresh the complete host view, retaining each family's generation
+    /// gate and the cheap scalar reads that can change without a packet.
+    /// Only a real PLAYER_INFO observation advances the host tick.
+    pub fn rebuild_from_drain(&mut self, client: &Client, player_info: bool) -> bool {
         let mut dirty = false;
         dirty |= self.rebuild_family(client, Family::Npc);
-        dirty |= self.rebuild_family(client, Family::Player);
+        dirty |= self.rebuild_player(client, player_info);
         dirty |= self.rebuild_family(client, Family::Inv);
         dirty |= self.rebuild_family(client, Family::Varp);
         dirty |= self.rebuild_family(client, Family::Stat);
@@ -1151,12 +1243,17 @@ impl GameSnapshot {
     /// tile (base + route head), the `LocalPlayerView`, and the remote
     /// `players` list. `REBUILD_NORMAL` bumps every gen, so a new world
     /// origin re-arms this too.
-    fn rebuild_player(&mut self, client: &Client) -> bool {
+    fn rebuild_player(&mut self, client: &Client, advance_tick: bool) -> bool {
+        if !self.family_observed(client, Family::Player) {
+            return false;
+        }
         if !track(client.gens.player, &mut self.gens.player) {
             return false;
         }
-        // One `PLAYER_INFO` per game tick: the snapshot's tick count.
-        self.tick = self.tick.wrapping_add(1);
+        if advance_tick {
+            // One `PLAYER_INFO` per game tick: the snapshot's tick count.
+            self.tick = self.tick.wrapping_add(1);
+        }
         if !client.ingame || client.local_player.is_none() {
             self.thieving_stun_tick = None;
             self.thieving_stun_stamp = None;
@@ -1237,6 +1334,7 @@ impl GameSnapshot {
         if !track(client.gens.inv, &mut self.gens.inv) {
             return false;
         }
+        self.inv_session_current = true;
         self.inv.clear();
         // The live inv is the side-tab-3 TYPE_INV container (the same the
         // `inventory()` family reads); a naive first-TYPE_INV scan can
@@ -1311,7 +1409,7 @@ impl GameSnapshot {
     /// Inventory rebuild: the inv tab's (side tab 3) TYPE_INV component,
     /// with held ops from the obj defs. Gated on the iface + inv gens.
     fn rebuild_inventory(&mut self, client: &Client) -> bool {
-        if !self.inventory_gate.moved(client) {
+        if !self.inventory_gate.moved(client, self.inv_session_current) {
             return false;
         }
         self.inventory.clear();
@@ -1358,7 +1456,7 @@ impl GameSnapshot {
     /// Equipment rebuild: the worn-items tab's (side tab 4) TYPE_INV
     /// component with its own interface ops.
     fn rebuild_equipment(&mut self, client: &Client) -> bool {
-        if !self.equipment_gate.moved(client) {
+        if !self.equipment_gate.moved(client, self.inv_session_current) {
             return false;
         }
         self.equipment = tab_inv_component(client, 4)
@@ -1370,7 +1468,7 @@ impl GameSnapshot {
     /// Bank rebuild: the open main modal's withdraw component (m8aq
     /// `bankItems`).
     fn rebuild_bank(&mut self, client: &Client) -> bool {
-        if !self.bank_gate.moved(client) {
+        if !self.bank_gate.moved(client, self.inv_session_current) {
             return false;
         }
         self.bank_component_id = if client.main_modal_id == -1 {
@@ -1400,7 +1498,7 @@ impl GameSnapshot {
     /// Bank-side rebuild: the open side modal's deposit component (m8aq
     /// `bankSideItems`).
     fn rebuild_bank_side(&mut self, client: &Client) -> bool {
-        if !self.bank_side_gate.moved(client) {
+        if !self.bank_side_gate.moved(client, self.inv_session_current) {
             return false;
         }
         self.bank_side = if client.side_modal_id == -1 {
@@ -1423,7 +1521,7 @@ impl GameSnapshot {
     /// reads work whether or not a trade is open (m8aq reads the same
     /// hardcoded ids).
     fn rebuild_trade(&mut self, client: &Client) -> bool {
-        if !self.trade_gate.moved(client) {
+        if !self.trade_gate.moved(client, self.inv_session_current) {
             return false;
         }
         let my_offer =
@@ -1458,7 +1556,7 @@ impl GameSnapshot {
     /// Shop rebuild: the packed shop main modal's stock TYPE_INV. Empty
     /// while `main_modal_id` is not the shop root — never the backpack.
     fn rebuild_shop(&mut self, client: &Client) -> bool {
-        if !self.shop_gate.moved(client) {
+        if !self.shop_gate.moved(client, self.inv_session_current) {
             return false;
         }
         let open = client.main_modal_id == SHOPMAIN;
@@ -1477,7 +1575,7 @@ impl GameSnapshot {
     /// Gated on the iface gen (tree/component state) and the inv gen
     /// (TYPE_INV slot contents).
     fn rebuild_widgets(&mut self, client: &Client) -> bool {
-        if !self.widgets_gate.moved(client) {
+        if !self.widgets_gate.moved(client, self.inv_session_current) {
             return false;
         }
         self.widgets.clear();
@@ -1492,7 +1590,7 @@ impl GameSnapshot {
     /// Side-tabs rebuild: all 14 slots with the tab state and each
     /// available tab's widget tree.
     fn rebuild_side_tabs(&mut self, client: &Client) -> bool {
-        if !self.side_tabs_gate.moved(client) {
+        if !self.side_tabs_gate.moved(client, self.inv_session_current) {
             return false;
         }
         self.side_tabs.clear();
@@ -2518,7 +2616,10 @@ struct InvIfaceGate {
 }
 
 impl InvIfaceGate {
-    fn moved(&mut self, client: &Client) -> bool {
+    fn moved(&mut self, client: &Client, inv_session_current: bool) -> bool {
+        if !inv_session_current {
+            return false;
+        }
         let moved = client.gens.iface != self.iface || client.gens.inv != self.inv;
         self.iface = client.gens.iface;
         self.inv = client.gens.inv;

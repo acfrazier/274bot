@@ -1,0 +1,22 @@
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/vendor/fr-client-rust/crates/client)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.34s
+     Running tests/gens.rs (/Users/acfrazier/experiments/274bot/target/debug/deps/gens-027d9ae00d8d4be5)
+
+running 14 tests
+test applied_packets_bump_their_family ... ok
+test map_flag_packets_bump_map_flag_gen ... ok
+test npc_info_bumps_npc_gen_only ... ok
+test failed_revision_289_player_info_does_not_publish_player_info ... ok
+test world_packets_bump_world_gen ... ok
+test iface_packets_bump_iface_gen ... ok
+test gens_defaults_to_zero ... ok
+test camera_packets_bump_camera_gen ... ok
+test t1_unknown_opcode_bumps_all_gens ... ok
+test logout_method_bumps_all_gens ... ok
+test logout_bumps_all_gens ... ok
+test revision_289_player_info_publication_is_distinct_from_family_invalidation ... ok
+test rebuild_bumps_all_gens ... ok
+test packet_to_family_mapping_is_exact ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.30s
+

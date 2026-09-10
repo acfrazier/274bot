@@ -5217,3 +5217,36 @@ export default class T extends LoopingBot {
     );
     iso.join();
 }
+
+#[test]
+fn session_reset_discards_unread_old_interactions_and_preserves_the_isolate() {
+    let iso = LoadIsolate::spawn(
+        r#"export function tick(api) {
+            globalThis.__rs_n = (globalThis.__rs_n || 0) + 1;
+            globalThis.__rs2b0t_host.interact.push({op:"set-camera-yaw", yaw:globalThis.__rs_n});
+        }"#
+        .to_string(),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
+    iso.on_game_tick(1);
+    // Probe is ordered behind the real tick but does not pump its reply queue:
+    // the interaction batch is still unread when the session changes.
+    assert_eq!(
+        iso.probe("globalThis.__rs_n").unwrap(),
+        serde_json::json!(1)
+    );
+    iso.reset_session_work();
+    assert!(iso.drain_interacts().is_empty());
+    iso.on_game_tick(2);
+    assert_eq!(
+        iso.probe("globalThis.__rs_n").unwrap(),
+        serde_json::json!(2)
+    );
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::SetCameraYaw { yaw: 2 }]
+    );
+    iso.join();
+}

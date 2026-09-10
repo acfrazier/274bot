@@ -6,6 +6,15 @@ Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multir
 Host branch: `codex/rs2b0t-multirevision`; base `b2bd5023489ab2e0b6ba690f228217e8984ac91b`.
 Client branch: `codex/bothost-274-289`; published base `9b41e6e06b9fd42dc2247fc813a303c3fcb92941`.
 
+## Operator clarification: script suitability
+
+The operator clarified during step 4 that script loading and starting must not
+be restricted by revision. Users decide whether a script suits their selected
+revision and this platform. Host/client operation boundaries must refuse
+unsupported operations. Catalog qualification is evidence, not a loading or
+starting allowlist. Root is removing the earlier script/catalog binding gates;
+server, cache and navigation identities remain immutable per process.
+
 ## Current milestone
 
 Steps 1–3 are accepted on macOS within their stated scope. Step 3 binds the
@@ -201,3 +210,14 @@ frontend/fleet/native preservation, and reviewed public integration. Full 377,
 mixed fleets, tutorial/audio parity, named native rewrites, public live
 qualification and performance-budget claims remain outside the agreed scope.
 Alpha 2 / 0.1.7 release planning follows implementation acceptance.
+
+## Step-4 snapshot completion, source review pending
+
+Root completed the preserved snapshot task inline after reclaiming run 1105.
+The client now publishes actual PLAYER_INFO, successful-session and explicit
+all-family invalidation counters plus the grant watermark. Host snapshot
+publication, slot queue reset, isolate dispatch generations and the controlled
+live harness share the same boundary. See `02b-host-snapshot-reset.md` for exact
+scope, failures retained and focused passing checks. Same-card `t_0be9adbf`
+Grok 4.5 review is next, followed by the coherent Grok 4.6 integration review and
+controlled local 274/289 live proof. No step-4 live acceptance is claimed yet.
