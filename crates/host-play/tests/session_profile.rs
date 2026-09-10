@@ -4,9 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use client::{io::ClientRevision, BotTarget};
-use host_play::profile::{
-    CacheManifest, NavAvailability, NavManifest, ProfileEnvironment, HOST_BOUNDARY_NOT_QUALIFIED,
-};
+use host_play::profile::{CacheManifest, NavAvailability, NavManifest, ProfileEnvironment};
 use host_play::{parse_profile_args, ProfileOptions, SharedClientTemplate};
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -359,7 +357,7 @@ fn both_revisions_reach_real_shared_client_constructor_and_keep_the_binding() {
 }
 
 #[test]
-fn revision_289_slot_qualification_gate_does_not_gate_script_loading() {
+fn qualified_revision_289_accepts_an_unarmed_slot_and_script_loading() {
     let _clients = CLIENTS.lock().unwrap();
     let fixture = Fixture::new();
     let profile = fixture
@@ -383,18 +381,16 @@ fn revision_289_slot_qualification_gate_does_not_gate_script_loading() {
         |_, _, _| {},
     )
     .unwrap();
-    assert_eq!(
-        play.try_spawn_slot(account.clone(), None, None, None)
-            .unwrap_err(),
-        HOST_BOUNDARY_NOT_QUALIFIED
-    );
-    assert!(play.statuses().is_empty());
+    // An unarmed slot exercises the real spawn path without a login handshake.
+    play.try_spawn_slot(
+        account.clone(),
+        None,
+        None,
+        Some(host_play::SlotArm::new(account.uid, false)),
+    )
+    .unwrap();
+    assert!(play.arm("fixture").is_some());
     assert!(play.login_queue_uids().is_empty());
-    assert_eq!(
-        play.script_start("fixture", script::CompiledId("walk-to"))
-            .unwrap_err(),
-        "no slot: fixture"
-    );
     // The loader/start handle accepts the user's script under revision 289.
     // Runtime actions remain subject to the actual host/client capabilities.
     play.script_start_handle()
@@ -407,14 +403,8 @@ fn revision_289_slot_qualification_gate_does_not_gate_script_loading() {
         )
         .unwrap();
     play.script_stop("fixture");
-    assert!(host_play::run_with_template(
-        template,
-        false,
-        vec![account],
-        |_| panic!("per-slot must not run"),
-        |_, _, _| {}
-    )
-    .is_err());
+    play.stop_slot("fixture");
+    assert!(play.arm("fixture").is_none());
     assert!(!profile.vault_path().exists());
 }
 

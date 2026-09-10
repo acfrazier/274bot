@@ -1,0 +1,21 @@
+
+running 1 test
+{"phase":"identity","revision":274,"profile":"local-274 · 127.0.0.1:43594 · revision 274","cache_id":"4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navpack"}
+274bot: loaded snapshot (4556 models, 336 anim records)
+{"phase":"initial-scene2","tile":[3094,3106,0],"scene":2}
+{"phase":"mainland-seed","tile":[3220,3212,0],"scene":2}
+{"phase":"logout","tile":null,"scene":0}
+{"phase":"relogin","tile":[3220,3212,0],"scene":2}
+{"phase":"baseline-after-preparation","tile":[3220,3212,0]}
+{"phase":"bank-trip-baseline","tile":[2813,3436,0],"scene":2}
+{"phase":"bank-route-arrival","evidence":{"scenario":"bank_return","outcome":"PASS","predicate":"arrived(2809,3441,0)","ticks":10,"elapsed_ms":7374,"tile":[2809,3441,0],"inv":[{"id":995,"count":100}],"stat":{"runenergy":100},"chat":[{"text":"Welcome to RuneScape."}],"scene":2}}
+{"phase":"bank-fresh-open","tile":[2809,3441,0],"scene":2}
+{"phase":"bank-deposit-observed","tile":[2809,3441,0],"scene":2}
+{"phase":"bank-withdraw-observed","tile":[2809,3441,0],"scene":2}
+{"phase":"bank-closed","tile":[2809,3441,0],"scene":2}
+{"phase":"bank-route-arrival","evidence":{"scenario":"bank_return","outcome":"PASS","predicate":"arrived(2813,3436,0)","ticks":10,"elapsed_ms":7215,"tile":[2813,3436,0],"inv":[{"id":379,"count":1},{"id":379,"count":1},{"id":379,"count":1},{"id":379,"count":1},{"id":379,"count":1}],"stat":{"runenergy":100},"chat":[{"text":"Welcome to RuneScape."}],"scene":2}}
+PASS: bank_return: {"inventory_before":[[995,100]],"inventory_after":[[379,1],[379,1],[379,1],[379,1],[379,1]],"bank_before":[[379,20]],"bank_after":[[379,15],[995,100]],"returned_to":[2813,3436,0],"bank_loaded_after_close":false}
+test world_boundary_live ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 46.17s
+

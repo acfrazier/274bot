@@ -126,13 +126,11 @@ Passed on the campaign worktree:
 - `evidence/world-capabilities/input-audit-{274,289}.json`: selected cache,
   interface, food, guardian, transport and teleport inventories.
 
-## Still pending outside this offline task
+## Offline task boundary
 
-Root still owns controlled live qualification against its frozen sources:
-actual door passage, region movement, bank return including the 289 capacity,
-and guardian hold/resume/reset observations. Ordinary 289 bot operation remains
-gated. This report does not remove that gate, claim live acceptance, change
-script suitability policy, or qualify a public release.
+The original source audit ended before live qualification. Its results remain
+source/cache evidence; the subsequent controlled cells below supply bounded
+functional evidence. Catalog and frontend acceptance remain separate.
 
 ## Controlled world and Guardian qualification
 
@@ -184,3 +182,37 @@ and the actual failed-then-passing cells; final campaign review covers their
 combined source/evidence. The existing 43 Guardian unit tests cover claim,
 hold/resume and reset policy. This lamp cell does not claim live qualification
 of every supported solver, every frontend, banking or the catalog ledger.
+
+
+## Controlled bank-return qualification
+
+Both Mac bank-return cells passed on frozen host
+`469a50ba283b6c671539b8fd7f2f5faf751519e3` and client
+`56d80272bcbda3eb1e22db096c1c5e21d3497de4`. Binary SHA-256:
+`cbfd5ed0a96c28fae67caceff5cfe750828a4a9f7ddc54f7d71b8cc26a42167f`.
+The source export and focused build/Clippy receipts were recorded before live.
+
+After observed mainland preparation and logout/relogin, the fixture seeded
+20 bank lobsters and 100 carried coins, then moved to Catherby before the
+behavior baseline. The actual selected-world Traveller walked from (2813,3436)
+to booth stand (2809,3441), opened the exact booth at (2809,3442), waited for
+fresh bank contents, deposited all 100 coins, withdrew five lobsters with the
+real Withdraw 5 operation, observed closure and returned to (2813,3436).
+Both inventory and bank counts changed as required: carried coins 100 -> 0,
+carried lobsters 0 -> 5, bank lobsters 20 -> 15, bank coins 0 -> 100. The closed
+bank reported bank_loaded=false. No fixture commands ran after that baseline.
+
+| Revision | UTC start -> finish | Elapsed | Exit | Raw receipt |
+|---|---|---:|---:|---|
+| 289 | 21:07:07.360 -> 21:07:54.691 | 47.330 s | 0 | evidence/world-capabilities/live/r289-bank_return-469a50ba.json |
+| 274 | 21:08:30.921 -> 21:09:17.097 | 46.176 s | 0 | evidence/world-capabilities/live/r274-bank_return-469a50ba.json |
+
+This uses the first banking candidate's independently reviewed freshness path
+and fixed transfers. It does not exercise its still-correcting named-option or
+Withdraw-X paths, and does not accept the whole banking family. Running this
+bounded live check did not require waiting for those unrelated corrections.
+The eight scoped world cells now pass across both selected revisions. The
+root profile change permits ordinary 289 operation based on the accepted host
+boundary and these world observations; the combined source still goes through
+integration review before catalog runs. Catalog loops/options, frontend
+lifecycle/rendering and fleet preservation remain required campaign work.
