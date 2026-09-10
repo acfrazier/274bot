@@ -1,0 +1,18 @@
+{
+  "archive_sha256": "2c36d254c37c5ed56a55f78728357296d62be602f8653ed9ec041cd37d099d5d",
+  "files": [
+    {
+      "path": "direct-owner-source/crates/host-play/src/lib.rs",
+      "sha256": "f997f22f00bb205cdad74eec70d9dfc5750c3f8f80d9ba52c024f5ea4ea9120f",
+      "start_line": 71,
+      "excerpt": "pub fn mint_live_names(n: usize) -> Vec<String> {\n    static SERIAL: AtomicUsize = AtomicUsize::new(0);\n    let serial = SERIAL.fetch_add(1, Ordering::Relaxed);\n    let pid = std::process::id();\n    let slot_digits = n.saturating_sub(1).max(1).to_string().len();\n    let max_token = 12usize.saturating_sub(4 + 1 + slot_digits).max(1);\n    let token: String = format!(\"{pid:x}{serial:x}\")\n        .chars()\n        .take(max_token)\n        .collect();\n    (0..n).map(|i| format!(\"live{token}_{i}\")).collect()\n}\n\n/// High-entropy secret for prod profile passwords and live temp vaults.\nfn mint_high_entropy_secret() -> String {\n    let mut bytes = [0u8; 24];\n    OsRng.fill_bytes(&mut bytes);\n    bytes.iter().map(|b| format!(\"{b:02x}\")).collect()"
+    },
+    {
+      "path": "direct-owner-source/crates/host-play/src/memory.rs",
+      "sha256": "76e633acf9d4dcd1fd03f1a57ea722f5111025790071679119e7e5932ece2991",
+      "start_line": 735,
+      "excerpt": "        let names = crate::mint_live_names(config.n);\n        // Opt-in BOT_NAV_CAPTURES: panel keeps GPU screenshot drain; TUI uses\n        // data-only JSON drain. enable() is a no-op unless the env is set.\n        crate::nav_capture::enable(&names);\n        let diagnostics = std::env::var(\"BOT_MEMORY_DIAGNOSTICS\").as_deref() == Ok(\"1\");\n        // Resolved once at harness setup (not re-read per sample/failure).\n        let failure_capture =\n            std::env::var(\"BOT_MEMORY_FAILURE_CAPTURE\").as_deref() == Ok(\"1\");\n        if diagnostics {\n            crate::memory_diagnostics::enable(&names);\n        }\n        let pass = crate::live_vault_passphrase();\n        let dir = std::env::temp_dir().join(format!(\"274bot-memory-{}\", names[0]));\n        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;\n        let path = dir.join(\"vault\");\n        let mut vault = Vault::create(&path, &pass).map_err(|e| e.to_string())?;\n\n        for (i, name) in names.iter().enumerate() {\n            let mut settings = ProfileSettings::default();\n            settings.auto_login = true;\n            vault\n                .upsert(Profile {\n                    username: name.clone(),\n                    password: name.clone(),\n                    uid: 274_900_000 + i as i32,\n                    settings,\n                })\n                .map_err(|e| e.to_string())?;\n        }\n        // Seeds install after Play exists (or via prepare's LoadDefault path)."
+    }
+  ],
+  "scope": "source-only observation; no account identity or live admission issued"
+}
