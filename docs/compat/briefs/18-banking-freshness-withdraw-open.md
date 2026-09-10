@@ -15,6 +15,33 @@ awaits Rust facts/results. No foreign Banking router or universal job framework.
 
 ## Required corrections and evidence boundaries
 
+Root review of committed 8a60eef7 (2026-09-10 20:51 UTC) found these still
+required before acceptance, in addition to independent reviewer findings:
+
+- Banking.open and Bank.openBooth still ignore the named stand/name/op args.
+  Exact nearest-row identity is useful but does not implement the caller's
+  requested access. Complete the original named-open contract below.
+- Every rejected WithdrawX must post an explicit failure result. The current
+  guard-failure/missing-item/missing-op arms silently drop the request while the
+  shim waits with delayUntil(..., 0), whose timeoutAt is null. An unchanged
+  bank generation therefore leaves an unbounded pending promise. Add a
+  composed same-generation stale/rejected request test reaching returned false.
+- withdrawXById still drops landsAsId, which enabled Alcher passes as notedId.
+  Preserve exact input identity and count actual noted output in the host
+  settlement. Test noted and unnoted output through the composed boundary.
+- Restore the required count<=0 success/no-op behavior. Keep integer bounds and
+  meaningful 1/5/10 paths; no action should be sent for an already-satisfied
+  zero request.
+
+Root recovered raw implementation terminal checks and is writing the missing
+04-capabilities-banking.md report. Do not repeat passed broad suites solely for
+logs. Corrective tests should target the newly fixed behavior. The earlier
+world-harness build failure was missing its required memory-profile feature;
+STAFF_RUNES is an existing scoped casting gap, not catalog-worker product WIP.
+Root verified client 56d8027 and the exact host gitlink; no client changes are
+needed for these corrections unless a concrete new generic observation gap
+is demonstrated. Leave any future gitlink update for root as originally scoped.
+
 Pending-operation clarification for final implementation and review: Pause
 retains and freezes the Withdraw-X operation; Stop, disconnect/reconnect and
 isolate reset abort it. Use monotonic elapsed time for the existing 3000 ms

@@ -1,0 +1,16 @@
+
+running 1 test
+{"phase":"identity","revision":289,"profile":"local-289 · 127.0.0.1:44594 · revision 289","cache_id":"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack"}
+274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+{"phase":"initial-scene2","tile":[3094,3106,0]}
+{"phase":"mainland-seed","tile":[3220,3212,0]}
+{"phase":"logout","tile":null}
+{"phase":"relogin","tile":[3220,3212,0]}
+{"phase":"baseline-after-preparation","tile":[3220,3212,0]}
+{"phase":"door-outside","tile":[2813,3436,0]}
+{"phase":"door-baseline","door":[{"x":2818,"z":3438,"level":0},1530],"tile":[2813,3436,0]}
+PASS: nav_door: {"before_door":[{"x":2818,"z":3438,"level":0},1530],"after_door":[{"x":2816,"z":3439,"level":0},1531],"traveller_runner":{"scenario":"nav_door","outcome":"PASS","predicate":"arrived(2817,3443,0)","ticks":13,"elapsed_ms":8232,"tile":[2817,3443,0],"stat":{"runenergy":100},"chat":[{"text":"Welcome to RuneScape."}],"scene":2}}
+test world_boundary_live ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 38.50s
+

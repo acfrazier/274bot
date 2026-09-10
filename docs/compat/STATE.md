@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-10 20:39 UTC. The full implementation plan remains authorized:
+Updated 2026-09-10 20:54 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -46,8 +46,10 @@ same-card `t_1f03d5a7` review, actual Grok 4.5 run 1128/session
 `03c964a1f0fb014238b0fe419f2c92119359e505b6c96a452fee562fb6bb57b1`.
 Root reverified all 486 exported source files after build. Both nav_full cells
 passed actual cross-square arrival at (3220,3264,0), with engine-speed override
-cleared. Door and lamp Guardian cells are running next. Bank return remains
-pending banking completion; step 5 as a whole is not yet accepted. No ordinary
+cleared. Both final door and lamp Guardian cells passed at frozen 43a57c36/client
+6cb5a0b1 after diagnosed fixture corrections. All six scoped world cells are
+recorded in 03-world-capabilities.md. Bank return remains pending banking
+completion; step 5 as a whole is not yet accepted. No ordinary
 289 operation-gate removal has happened.
 
 ## Active and queued implementation
@@ -55,8 +57,10 @@ pending banking completion; step 5 as a whole is not yet accepted. No ordinary
 - `t_e52e0a03`, Sol: first banking family (brief 18). Fresh full-container and
   modal observations, Bank readiness, named booth options, host-owned bounded
   Withdraw-X, posted inventory settlement. Preserve 3000 ms dialog / 4000 ms
-  settlement deadlines, Pause freeze, Stop/session abort. Worker owns API,
-  script, host-play source and generic client facts; root owns exact gitlink.
+  settlement deadlines, Pause freeze, Stop/session abort. Candidate 8a60eef7/client 56d8027 needs correction after Grok 4.5 run 1131
+  and root findings (named open, rejected/noted/zero Withdraw-X). Actual Sol
+  corrective run 1132 is active; 04-capabilities-banking.md records evidence.
+  Worker owns API, script and host-play source; root audited the exact gitlink.
   Require actual same-card Grok 4.5 approval and composed script-to-host-result
   tests before accepting. No bank live proof yet.
 - `t_41b2f50e`, Sol, queued after banking: common-loot matching and withdrawLoad
@@ -64,9 +68,9 @@ pending banking completion; step 5 as a whole is not yet accepted. No ordinary
 - `t_14db340e`, Sol: controlled real-library catalog harness (brief 23), new
   test/report only. Actual run 1129/session `20260910_163525_589385` verified.
   Root owns live runs after review and required capability/world qualification.
-- `t_9f1baf44`, Grok 4.6: remaining combat/casting/shop/trade/production source
-  design (brief 24), run 1125/session `20260910_162824_e4d54b`. Report-only scope.
-- `t_887b29b5`, Sol, queued after that design: panel/TUI session snapshots and
+- `t_9f1baf44`, Grok 4.6: remaining combat/casting/shop/trade/production design
+  completed in 04-combat-production-design.md (brief 24), verified run 1125.
+- `t_887b29b5`, Sol run 1130/session `20260910_164126_9a71eb`: panel/TUI session snapshots and
   external armed-route cleanup (brief 25). Root found direct snapshot rebuild
   bypasses and retained external WalkArms/tick latches. Fix logout/reconnect and
   same-name slot recreation while retaining Guardian/ordinary-scene behavior.

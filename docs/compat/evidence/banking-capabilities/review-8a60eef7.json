@@ -1,0 +1,64 @@
+{
+  "actual_session": [
+    "20260910_164827_a8604b",
+    "grok-4.5",
+    "xai-oauth",
+    1789073308.223527,
+    1789073523.3813062
+  ],
+  "run": {
+    "id": 1131,
+    "profile": "reviewer",
+    "step_key": null,
+    "status": "ready",
+    "outcome": "changes_requested",
+    "summary": "Named booth open incomplete: Banking.open/Bank.openBooth still silently ignore stand/boothName/boothOp; OpenStand booth arm still Use-quickly-only. Implement walk-near + named loc/op with honest not-impl for unsupported options and tests; keep verified freshness/Withdraw-X behavior. Evidence docs owned by root.",
+    "error": null,
+    "metadata": null,
+    "worker_pid": null,
+    "started_at": 1789073307,
+    "ended_at": 1789073523
+  },
+  "comments": [
+    {
+      "author": "orch",
+      "body": "Controlled host-boundary live 274 passed. 289 login and walk passed, then failed because the chosen Hans NPC was absent from the visible snapshot. Root is diagnosing fixture visibility versus publication using the frozen binary/source; preserve your banking ownership, no client actor changes needed from you. All live acceptance remains pending until this is resolved.",
+      "created_at": 1789068927
+    },
+    {
+      "author": "orch",
+      "body": "Step-4 local boundary now passed on both revisions at frozen host 4f43800a/client 6cb5a0b1, including natural Hans, courtyard walking, exterior door and IF logout. Root is running separate world qualification; no banking ownership changes. Mac 289 givebank fixture addition passed Luna/Grok4.5 review at engine cc359656 and its owned process restarted. Keep the bounded pending Withdraw-X and composed script-to-host-to-posted-result proof in your brief as required completion; those remain distinct from snapshot freshness.",
+      "created_at": 1789070877
+    },
+    {
+      "author": "sol",
+      "body": "Operator update received: preserving banking-only ownership; no client actor changes. Step-4 local boundary has passed both revisions at frozen host/client. I am retaining bounded pending Withdraw-X plus composed script\u2192host\u2192posted-result proof as required completion; world/live qualification remains owned externally.",
+      "created_at": 1789070967
+    },
+    {
+      "author": "orch",
+      "body": "Review reminder from observed WIP: brief 18 requires Pause to freeze the bounded Withdraw-X operation, while Stop/reconnect abort it. Current SlotScript::pause clears pending_withdraw_x; do not finish with that as an accidental behavior change. Preserve the 3000 ms dialog / 4000 ms observed-settlement bounds in monotonic time; a count of PLAYER_INFO ticks cannot assume a fixed server cadence. Keep actual inventory outcome posting and the composed test in completion scope.",
+      "created_at": 1789071518
+    },
+    {
+      "author": "orch",
+      "body": "Root verified the handoff and actual reviewer run 1131 is Grok 4.5. Two evidence-label corrections: world_boundary_live.rs is committed source, and its required feature is memory-profile (the scenario dependency is feature-gated), so a build without that feature is not the required integration command. STAFF_RUNES is an existing scoped casting gap, not concurrent catalog product WIP; the catalog worker owns only a new harness. Include those accurate limits in review. Root is auditing the gitlink 56d8027 staged by the implementation; external repo/gitlink integration remains root-owned.",
+      "created_at": 1789073328
+    },
+    {
+      "author": "orch",
+      "body": "Root is recovering the missing brief-18 report/raw check receipts from this exact implementation session into docs/compat/evidence/banking-capabilities/implementation-checks.json and 04-capabilities-banking.md. The captured terminal results preserve intermediate failures and final suite outputs; root will distinguish timestamps/final candidate and accurate feature/catalog limits. Source review can proceed without asking Sol to repeat completed suites solely for documentation.",
+      "created_at": 1789073422
+    },
+    {
+      "author": "orch",
+      "body": "Root source review of 8a60eef7 found required brief-18 gaps: (1) Banking.open() and Bank.openBooth() still have no arguments and ignore stand/boothName/boothOp; exact nearest-row dispatch does not implement named access. (2) host-play script_observe silently drops WithdrawX when its current guard fails or item/op is missing; shim now waits delayUntil(...,0), which has no deadline, so an unchanged bank generation can leave the promise pending forever. Post one failure result for every rejected request and retain bounded waits. (3) withdrawXById still ignores landsAsId, while enabled Alcher explicitly passes its notedId; host settlement counts only bank item ID. Required noted output cannot succeed. Count<=0 now false also changes the required prior success/no-op contract. Please require focused composed failure/noted/named-option regressions before acceptance; root is preserving existing check logs/report.",
+      "created_at": 1789073506
+    },
+    {
+      "author": "reviewer",
+      "body": "Changes requested (round-1 artifact review of 8a60eef7 / client 56d8027):\n\n1. Named open args still missing (brief 18 + design \u00a73)\n   - `Banking.open()` still takes no options and only calls `Bank.openNearest()` (banking.js untouched).\n   - `Bank.openBooth` still documents and implements \u201cExtra rs2b0t args (stand / boothName / op / log) are ignored\u201d and only queues snapshot `nearest_booth` identity.\n   - `OpenStand` booth arm in host-play still calls the local `open_booth` helper (Use-quickly at tile only) and ignores name/op (unchanged since e621be867).\n   - Required: default no-arg path stays; supplied `stand` \u2192 walk-near radius 1 then open; supplied `boothName`/`boothOp` \u2192 named loc+op with no silent retarget; unsupported options (`obstacles`, `destination`, `preferNearby`, `nearbyRadius`, \u2026) throw `not impl` with the option name. Cover with isolate/host tests that prove stand is not dropped and wrong name/op refuse.\n\n2. Do not treat these as blocking this rework\n   - Freshness + host-owned Withdraw-X look correct and independently verified below.\n   - Evidence report/raw receipts: root is recovering `docs/compat/evidence/banking-capabilities/` + `04-capabilities-banking.md` from the implementer session; do not re-run suites solely for docs.\n   - Handoff limit corrections: `world_boundary_live.rs` is committed source and needs `--features memory-profile` (not a missing scenario dep); `STAFF_RUNES` is an existing casting catalog gap, not concurrent catalog product WIP; external client repo/gitlink integration remains root-owned (root auditing 56d8027).\n\nVerified independently (pass):\n- `cargo test -p script --lib pending_withdraw_x_pause_freezes`\n- `cargo test -p api bank_loaded_requires_current_component`\n- `cargo test -p host-play --lib withdraw_x` (compose + expired dialog)\n- `cargo test -p client --test gens inventory_packet_state_preserves|logout_clears_inventory`\n- `cargo test -p client --test revision_289_stage2 revision_289_inventory_and_modal`\n- `cargo test -p script --test load_isolate isolate_bank_withdraw_x|isolate_banking_open`\n- `cargo test -p script --lib bank_loaded_uses_packet`\n- `cargo test -p script --test gold_stubs withdraw_x`\n\nMinimum outcome to re-request review: named open path + tests as in (1); keep Pause freeze / Stop-reconnect abort / monotonic 3000+4000 Withdraw-X / packet-fresh bank_loaded behavior intact.",
+      "created_at": 1789073523
+    }
+  ]
+}
