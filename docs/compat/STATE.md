@@ -1,300 +1,110 @@
 # Compatibility campaign state
 
-Updated 2026-09-10. Implementation authorized by the operator.
-Plan: `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
+Updated 2026-09-10 20:39 UTC. The full implementation plan remains authorized:
+`docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
-Host branch: `codex/rs2b0t-multirevision`; base `b2bd5023489ab2e0b6ba690f228217e8984ac91b`.
-Client branch: `codex/bothost-274-289`; published base `9b41e6e06b9fd42dc2247fc813a303c3fcb92941`.
+Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
+Read `docs/execution.md` for dispatch/review rules. Reports below preserve dated
+results and failed cells; this state identifies current work.
 
-## Operator clarification: script suitability
+## Accepted milestones
 
-The operator clarified during step 4 that script loading and starting must not
-be restricted by revision. Users decide whether a script suits their selected
-revision and this platform. Host/client operation boundaries must refuse
-unsupported operations. Catalog qualification is evidence, not a loading or
-starting allowlist. Root has removed the earlier script/catalog binding gates;
-server, cache and navigation identities remain immutable per process.
+1. Frozen inputs and ledger: both immutable RS2B0T roots, 45 enabled cards each,
+   274 and 289 profiles, 180 card/source/revision rows before option branches.
+   `00-inputs-and-scope.md`, `support-matrix.json`, and `fixture-inputs.json`.
+   Loader evidence is not live gameplay acceptance.
+2. Bothost client reconciliation and independent whole-client Grok 4.6 review
+   completed. The later accepted publication/session seam is client commit
+   `6cb5a0b17aeef74da6b57b205e916681daee4f76`. Banking client edits are still WIP.
+   Client provenance and preservation results live in its integration report.
+3. Immutable server/revision/resource binding reaches actual shared templates
+   and both frontends. Local 274/289 remain distinct. Public configuration uses
+   revision 289 at w1.rs2b2t.com; public 274 is rejected. Script imports and Start
+   are revision agnostic by operator direction; users judge suitability and
+   unavailable operations refuse at host/client boundaries. See
+   `01-session-profile.md` and `evidence/script-loading-policy/`.
+4. Host outbound and snapshot/session source passed same-card Grok 4.5 review
+   and combined Grok 4.6 review. Controlled Mac live host boundary passed for
+   both revisions using frozen host `4f43800a` and client `6cb5a0b1`: preparation
+   logout/relogin, natural courtyard walking/Hans dialogue, exterior door
+   interaction/world change and actual IF logout clearing observations.
+   Exact commands, hashes and retained failed cells: `02-host-boundary.md`,
+   `02a-host-outbound.md`, `02b-host-snapshot-reset.md` and their raw evidence.
+   This is bounded host proof; it does not qualify every catalog row or frontend.
 
-## Current milestone
+## Current world qualification
 
-Steps 1–4 are accepted on macOS within their stated scope. Step 4 source passed
-actual Grok 4.5 task review and Grok 4.6 integration review. Controlled local
-274 and 289 both passed on identical frozen host `4f43800a` / client `6cb5a0b1`:
-courtyard walking, natural Hans dialogue, exterior door change and actual IF
-logout/reset. Read `02-host-boundary.md`; all failed attempts remain recorded.
+Step-5 source/bake commit `80720784` passed same-card Grok 4.5 review. Both fresh
+packs, raw flags and shared manifests are bound to their audited source/cache
+identity under `.superpowers/world-capabilities/{274,289}`. Report:
+`03-world-capabilities.md`. Controls, food and current Guardian inputs were
+checked against both selected caches; no new solver expansion is authorized.
 
-Step 5 world source is reviewed at `80720784` (actual Grok 4.5 run 1116).
-Both fresh packs and cache/nav manifests were produced and negative mismatch
-checks passed. `03-world-capabilities.md` records the source/cache audit.
-Navigation, bank return and guardian live proof remain open. The temporary
-289 ordinary-operation qualification gate remains pending these world checks.
+World harness corrections and panel/TUI ScenarioRunner world sharing passed
+same-card `t_1f03d5a7` review, actual Grok 4.5 run 1128/session
+`20260910_163425_67c166`. Frozen host `367af78f`, client `6cb5a0b1`, binary SHA
+`03c964a1f0fb014238b0fe419f2c92119359e505b6c96a452fee562fb6bb57b1`.
+Root reverified all 486 exported source files after build. Both nav_full cells
+passed actual cross-square arrival at (3220,3264,0), with engine-speed override
+cleared. Door and lamp Guardian cells are running next. Bank return remains
+pending banking completion; step 5 as a whole is not yet accepted. No ordinary
+289 operation-gate removal has happened.
 
-The first banking family is in progress on card `t_e52e0a03` (Sol run 1113),
-covering fresh packet-backed bank state, Withdraw-X and named access. Client
-and host WIP belong to that worker. Root retains the gitlink and live harness.
-Local 289 fixture addition `t_b237feb4` passed actual Luna/Grok 4.5 review
-at engine `cc359656`. Root restarted the isolated Mac fixture and applied the
-same guarded branch to Windows/Hyper-V/Concord; all passed fresh readiness and
-source/cache verification. See `platform-preparation.md` refresh section.
-Provisioning/recovery design `t_23695d9d` completed under actual Grok 4.6;
-`04-provisioning-recovery-design.md` is source-only guidance.
+## Active and queued implementation
 
-World harness `t_1f03d5a7` is in corrective implementation after Grok 4.5
-found missing preparation/observation predicates in its first draft. No world
-live cell has run. Root frontend change `6c70aed6` now shares Play::world with
-both live runners; focused existing frontend preparation tests passed and its
-review is grouped with this world harness. Next matching/fill card `t_41b2f50e`
-depends on reviewed banking source. Catalog harness `t_14db340e` depends on
-world-harness source review. Neither queued task is implementation acceptance.
+- `t_e52e0a03`, Sol: first banking family (brief 18). Fresh full-container and
+  modal observations, Bank readiness, named booth options, host-owned bounded
+  Withdraw-X, posted inventory settlement. Preserve 3000 ms dialog / 4000 ms
+  settlement deadlines, Pause freeze, Stop/session abort. Worker owns API,
+  script, host-play source and generic client facts; root owns exact gitlink.
+  Require actual same-card Grok 4.5 approval and composed script-to-host-result
+  tests before accepting. No bank live proof yet.
+- `t_41b2f50e`, Sol, queued after banking: common-loot matching and withdrawLoad
+  (brief 22), Rust matching and fresh observed bank settlement, thin mappings.
+- `t_14db340e`, Sol: controlled real-library catalog harness (brief 23), new
+  test/report only. Actual run 1129/session `20260910_163525_589385` verified.
+  Root owns live runs after review and required capability/world qualification.
+- `t_9f1baf44`, Grok 4.6: remaining combat/casting/shop/trade/production source
+  design (brief 24), run 1125/session `20260910_162824_e4d54b`. Report-only scope.
+- `t_887b29b5`, Sol, queued after that design: panel/TUI session snapshots and
+  external armed-route cleanup (brief 25). Root found direct snapshot rebuild
+  bypasses and retained external WalkArms/tick latches. Fix logout/reconnect and
+  same-name slot recreation while retaining Guardian/ordinary-scene behavior.
+  Banking owns host-play/src/lib.rs; serialize any needed callback seam first.
 
-Script loading/starting stays revision agnostic as clarified above. All 180
-catalog/revision proof rows and remaining steps 5–9 still require completion.
-Windows, Hyper-V Linux and Concord isolated 289 fixture setup/build preflight
-passed, but no platform gameplay/frontend acceptance is claimed. Concord is
-TUI only. No main integration, push, release tag or package publication occurred.
+Provisioning/recovery design is complete in
+`04-provisioning-recovery-design.md`, actual Grok 4.6 run 1118. Loadout
+quantities/slots, common loot, PeriodicBank and DeathRecovery are scoped by real
+in-scope callers. Design is guidance, not implemented or live acceptance.
 
-## Accepted step-2 snapshot
+## Platforms and fixtures
 
-Step-2 reviewed client candidate: `58120f28ee5208553ca07f41cb364f2cf98ea280`.
-Client product: `d14755da758c64d971c1103b2d7703f6fd8379fb`; the final candidate
-commit adds report/evidence only. The step-2 host gitlink pinned that candidate
-locally. Its publication and fresh recursive fetch/build proof belong to step 9.
-No public integration, release tag or package publication has occurred.
+Mac 274 remains the pre-existing shared local fixture. Root owns the isolated
+Mac 289 fixture and the Windows, Hyper-V and Concord campaign fixtures. The
+reviewed local-only moderator givebank addition is 289 engine `cc359656`,
+actual same-card Grok 4.5 approval. Root refreshed all four 289 runtimes and
+verified their unchanged cache archives and all 1,213 runtime files. See
+`platform-preparation.md` and `evidence/platform-preparation/bank-fixture/`.
 
-The client combines the published 274 improvements with 289 source
-`c18f3a1148e9caee73426e162677328ca64d1a83`. Reconciliation preserves boxed
-appearance storage, sharing, sprite reuse and Windows/home handling. One GPU
-overlay comparison now preserves hint updates alongside scene-state-1 minimap
-freeze and lazy uploads. Review exposed a stale input-frame limit during login;
-root also found that incoming report handlers completed existing 274 stubs.
-Both corrections have failing-before/passing-after regressions. Details:
-`client-integration-milestone.md` and the client's
-`docs/revision-289/bothost-integration-report.md`.
+All 289 fixture startup/HTTP/cache observations passed; remote host gameplay
+has not run yet. Windows native panel/client, Linux and Mac frontend acceptance
+remain open. Compile Linux on the Hyper-V builder; Concord is TUI-only and its
+old 274 system unit was stopped by the operator. Run revisions sequentially on
+Concord. Prior held SSH lifetime failures are retained; old recorded PIDs are
+not current authority. Verify process identity before stopping an owned process.
 
-| Current check | Result |
-|---|---|
-| Published 274 client baseline | 774 passed, 0 failed, 0 ignored |
-| Corrected client workspace | 992 passed, 0 failed, 2 ignored GPU tests |
-| Both explicit GPU tests on the same product | 2 passed, 0 failed, actual GPU |
-| Client format and strict all-target Clippy | Passed |
-| Final API/host/host-play with `host-play/memory-profile` | 441 passed, 0 failed, 7 live tests ignored |
-| Host format | Passed |
+## Remaining finish line
 
-The host check exposed a pre-existing fixture-name truncation collision. The
-scoped correction preserves changing serial digits and passed an extended
-existing uniqueness test plus the affected suites. This is fixture maintenance;
-the completed memory harvest has not been reopened. Raw failures and command
-receipts remain in `evidence/client-milestone/` and the client evidence folders.
-No local gameplay acceptance is claimed by these offline tests.
+Complete world/Guardian/bank-return qualification, required capability families,
+every supported card and option branch, both frontends and lifecycle controls,
+N=2 isolation, qualified N=32 Thiever on both revisions, actual native CPU/GPU
+preservation, and final whole-branch Grok 4.6 review. Then integrate the reviewed
+client into acfrazier/FR-client-bothost r274-bh-modular and the host exact gitlink,
+with recursive fresh-checkout verification. No main merge, push, release tag,
+package or announcement has occurred in this campaign.
 
-## Inputs and reviews
-
-Read-only catalog archives at `100adccc` and `8e7d965b` remain under
-`.superpowers/inputs/rs2b0t-<commit>`. The real loader exports freeze 45 enabled
-cards per catalog and 180 source/revision rows, with 9 dim declarations,
-2 import-blocked cards, 3 shape-omitted entries and native WalkTo recorded
-separately. All required gameplay rows remain pending or explicitly blocked.
-Initial ledger SHA-256:
-`70eca8b8545471af704d2f90c5a743c4ff32aa36b176bfa0cee810818cfb919e`.
-Fixture/cache/content identities and setup commands are in
-`fixture-inputs.json` and `fixture-inputs.md`.
-
-Architecture task `t_192621de` completed under actual Grok 4.6. Initial
-implementation card `t_e8e16acd` completed its same-card Grok 4.5 review.
-The required independent trial then compared actual Grok 4.6 and fresh Astra
-against identical frozen inputs. Astra's reproduced login failure overrode the
-earlier Grok approval; root added the report-control correction. The trial and
-timing/tool limits are recorded in `reviews/client-trial-reconciliation.md`.
-
-Corrective same-card `t_706ce8a5` was approved by actual Grok 4.5 / xai-oauth
-(session `20260910_103233_3506ce`). Fresh whole-client follow-up `t_4bed943f`
-was approved by actual Grok 4.6 / xai-oauth (session
-`20260910_103533_55a2fa`) against candidate `58120f28`. Both runs completed;
-no worker or review remains active for this milestone. Their exact model/run
-receipts and report are in `reviews/`. The final whole-campaign Grok review is
-still required after steps 3–8.
-
-## Accepted step-3 milestone
-
-Step 3 was authorized by the operator's 2026-09-10 follow-up: bind one immutable server profile through host, panel and TUI, including
-revision, game/asset endpoints, RSA/CRC, shared cache/interface resources and
-nav/content/catalog identity. Read `briefs/05-session-profile-preparation.md`:
-the shared constructor's HTTP default and ambient login/transport/unpack
-settings must be bound before actual spawn and reconnect. Architecture card
-`t_bfd3339c` approved the concrete design with binding constraints under actual
-Grok 4.6. Its completed review is in `reviews/session-profile-design-grok46.md`.
-Client card `t_1b93f768` and root host backend card `t_30007871` have completed
-actual Grok 4.5 reviews with approval. The reviewed client candidate is
-`2be1697060e4d2b8b709ad4d5e54d12513b38333` (product `c8e61557`), pinned locally
-for step-3 integration. Full client workspace: 1,001 passed, no failures, two
-ignored GPU tests; both explicit GPU tests passed separately. Affected host
-backend: 450 passed, no failures, seven live tests ignored.
-Frontend card `t_879d9607` completed its actual Grok 4.5 review with approval
-on source `7aaa8c39`. Root follow-up `a02c9dd5` binds the remaining fixture-button
-presentation call. The 384 panel and 89 TUI tests passed; current integrated
-binaries build successfully. Nine real binary negatives created no vaults.
-Current implementation, asset checks and review receipts are recorded in
-`01-session-profile.md`. Integration card `t_80dd7fd0` completed approval under
-actual Grok 4.6 / xai-oauth, session `20260910_124351_55201a`, at `a02c9dd5`.
-Root presentation correction `41d896b3` fixed two clipped profile labels and
-passed format/build/diff plus native visual checks. Ten original panel captures
-cover default/explicit selection, 289 refusal before vault writes, restart-required
-binding, local 274 scene 2 and title-screen return. TUI reached scene 2 in an
-actual macOS PTY and exited 0. Its first literal-text reader failure is retained;
-CUA denied iTerm2, so no native terminal-window visual proof is claimed.
-Both final asset constructors passed with shared resources and expected nav
-availability. Complete receipts: `evidence/session-profile/native-macos/proof.json`.
-Preferences were restored exactly and proof apps/owned 289 engine stopped;
-existing 274 engine PID1852 remained listening. No memory/performance claim.
-
-## Next implementation
-
-Operator correction, 2026-09-10: rs2b2t now serves revision 289. Public 289
-requires the known `w1.rs2b2t.com:443` game/asset pairing; public 274 is
-unavailable. This supersedes the public-profile assumption in the historical
-step-3 design and review receipts. Card `t_96dc78da` is correcting resolution,
-resource defaults, help and focused tests. Source `04d3e02f` passed same-card
-Grok 4.5 review (run 1099, actual session `20260910_133757_d52004`), including
-an independent rerun of ten profile tests, frontend/CLI tests, check and format.
-The public correction is accepted; no public live login was performed.
-The accepted local 274/289 macOS observations remain valid.
-
-Keep ordinary 289 bot operation gated until the host boundary and selected
-world are qualified; never fall back to 274 navigation. Step 4 qualifies the complete host action/snapshot
-boundary and the controlled local action sequence on both revisions. Design
-card `t_d6761a15` approved the design under actual Grok 4.6 (run 1096,
-session `20260910_132555_633342`). Root corrected its numeric blacklist mistake:
-legality must follow named packets, since ids 51/224 have valid R289 meanings.
-Outbound card `t_b22abf57` is accepted at `e946c2f9` after actual Grok 4.5 review
-(run 1102, session `20260910_135900_8cf8e7`), including 173 passing API tests.
-Root's narrow live harness `2f1d9709` passed same-card Grok 4.5 source review
-on `t_079d478d` (run 1101, session `20260910_135359_681e61`). The accepted step-4 live proof is recorded above. Ordinary 289 slots/guardians
-remain gated pending step-5 world checks.
-
-Snapshot/reset card `t_0be9adbf` is in actual Grok 4.5 review of host
-`15b706f67b3cef58f61fe874a512a7de3149b9fc` and client
-`6cb5a0b17aeef74da6b57b205e916681daee4f76`. Root completed the preserved WIP
-inline, including the grant watermark, explicit invalidation accounting, actual
-PLAYER_INFO observation, shared publication/harness and isolate dispatch epochs.
-Reviewer session `20260910_150509_d75b62` is verified as Grok 4.5 / xai-oauth.
-Focused tests and strict Clippy pass; source review and step-4 live proof remain
-pending. No temporary failure or startup-only result is accepted as gameplay.
-
-Operator platform clarification: validate step 3 on macOS first. Linux and
-Windows do not have a 289 engine configured; prepare those isolated engines
-before their later platform checks. No Linux/Windows qualification is implied
-by the macOS milestone.
-
-Use the established memory-campaign machines: Windows `austen@10.0.0.205`,
-Hyper-V Linux builder through SSH alias `274bot-builder`, and Concord through
-SSH alias `concord`. Concord is TUI-only for this campaign; compile Linux on
-the Hyper-V builder because the VPS has about 2 GB RAM. Concord is currently
-reachable and its isolated 274 service uses
-`/home/acfrazier/274bot-campaign/server-4c95f87`. Windows SSH initially timed
-out; the operator corrected the firewall rule tied to the Mac's previous IP.
-Windows is now reachable (`DESKTOP-SL99R6C`). Root started the existing powered-off
-Hyper-V VM; `274bot-builder` now responds with Rust 1.98.0, 8 GB RAM and 18 GB
-free disk. No SSH trust/key configuration was changed.
-
-Separate 289 fixtures are being prepared under each machine's existing campaign
-root at `multirevision-20260910/server-289`. Bundle SHA-256
-`d8361199f7f3af851c175e030b1e787cb62137de1ce62b6701bcde07cd75f2e8`
-was the initial bundle. Its builder startup failed because it omitted
-`data/raw/wordenc`. The complete corrected archive SHA-256 is
-`6524c4835aa825dc3994d7ae1a6536c1141836367eacaeccd5a3d61a5a373171`.
-All three machines now have verified 1,213-file runtimes, locked dependencies,
-fresh local RSA keys and SQLite schemas. All three passed World-ready,
-loopback `44594/1080/9898`, and asset HTTP 200 observations. The operator stopped
-Concord's existing 274 system service before its 289 smoke. Existing 274 files
-and service definitions are unchanged; Concord remains TUI-only, with Linux
-compilation on the builder. Read `platform-preparation.md` and the raw receipts.
-These setup results do not qualify host login, gameplay or native rendering.
-
-Build preflight on committed host `93e12ccf` / client `2be16970` passed for
-Linux `tui-play` on the Hyper-V builder and Windows `panel-play` / `tui-play`.
-The source export excludes snapshot WIP; final platform evidence must use
-the later reviewed candidate. Commands, hashes, timings and emitted warnings
-are recorded in `platform-preparation.md` and its build-preflight receipts.
-Root also prepared `world-source-audit.md`: selected source IDs agree, while
-bank/control definitions differ. This is step-5 preparation, not acceptance.
-
-Then follow steps 4–9 in order: host boundary and local live actions, world and
-guardian binding, required Rust capabilities, every enabled card/option proof,
-frontend/fleet/native preservation, and reviewed public integration. Full 377,
-mixed fleets, tutorial/audio parity, named native rewrites, public live
-qualification and performance-budget claims remain outside the agreed scope.
-Alpha 2 / 0.1.7 release planning follows implementation acceptance.
-
-## Step-4 snapshot completion, source review pending
-
-Root completed the preserved snapshot task inline after reclaiming run 1105.
-The client now publishes actual PLAYER_INFO, successful-session and explicit
-all-family invalidation counters plus the grant watermark. Host snapshot
-publication, slot queue reset, isolate dispatch generations and the controlled
-live harness share the same boundary. See `02b-host-snapshot-reset.md` for exact
-scope, failures retained and focused passing checks. Same-card `t_0be9adbf`
-Grok 4.5 review is next, followed by the coherent Grok 4.6 integration review and
-controlled local 274/289 live proof. No step-4 live acceptance is claimed yet.
-
-## Revision-agnostic script loading
-
-The script/catalog gate removal is implemented. `ServerProfile` retains only a
-default catalog path; binding does not read/hash/freeze scripts. Panel revision
-selection before binding and explicit catalog imports in either frontend do not
-reject already loaded sources. Script start paths do not check revision or a
-catalog hash. Loader syntax/import checks and runtime unsupported-operation
-refusals retain their own roles. Server/cache/nav identity checks remain.
-
-Focused existing checks passed: host profile 10, panel catalog 9 plus one
-binding/source-edit regression, TUI catalog library 4, and strict all-target
-Clippy for host-play/panel/TUI. The first TUI binary filter matched no tests;
-the corrected library invocation ran the four tests. Logs are in
-`evidence/script-loading-policy/`. This mechanical policy removal will be
-included in the next coherent integration review; it does not qualify live
-289 bot operations by itself.
-
-Step-5 source preparation is running on `t_13a850d5` under actual Sol session
-`20260910_151010_46fed4` (`gpt-5.6-sol` / `openai-codex`). Its scope is the
-verified nav manifest/bake and selected content/control/guardian audit; root
-retains external fixtures and live qualification. Combined step-4 integration
-review `t_0ec632f9` is queued behind the snapshot review, with the frozen contract
-in brief 15. Banking source gaps for the next capability task are recorded in
-`banking-capability-audit.md`; ledger statuses remain unqualified.
-
-## Snapshot review correction
-
-Actual Grok 4.5 run 1107 requested one correction: response-15 retains the
-client collision map but reset host SceneView stayed unavailable when scene gen
-did not move. Sol corrective run 1109/session `20260910_151510_195ea5` is now
-implementing the focused rehydration fix and unchanged-scene-gen regression.
-Its actual model/provider is verified. Earlier 15b706f6 source is not accepted.
-The same card will return to reviewer; integration review t_0ec632f9 is held by
-root until the corrected immutable candidate is named. No user input is needed.
-Frozen binary b9cacc6e is retained as a pre-correction artifact and will not be
-used for acceptance. No controlled live cell has run yet.
-
-The scene correction passed the focused failing-before/passing-after regression,
-API snapshot 61 and host 136. Root committed the unchanged Sol patch as
-`fede3c0dd5d5fbdc7fd7def10f2eb43630b8f16f` while the same-card Grok 4.5 follow-up
-was running. The implementer had interpreted the brief's broad index wording as
-forbidding its own scoped commit; root clarified the wording. The integration
-brief now names this exact corrected candidate, and remains gated by the parent
-review dependency (the attempt to explicitly block a todo card was refused by
-the CLI). No other worker source entered the correction commit.
-
-The corrective same-card Grok 4.5 review completed on run 1111 (session
-`20260910_152111_481ade`, actual `grok-4.5` / `xai-oauth`), approving the scene
-rehydration fix; the exact working-tree-to-commit mapping is recorded in
-`evidence/host-boundary/snapshot/review.json`. Combined integration review
-`t_0ec632f9` is now running on actual Grok 4.6 run 1112/session
-`20260910_152311_01b7b6`, against frozen host `fede3c0d` and client `6cb5a0b`.
-The old snapshot candidate is superseded. Root exported 481 exact committed
-source files, verified their hashes after compilation and built a separate
-controlled harness binary (SHA `3ce3ec1d1570e7cab2f0999490630457ea6a8c16760abaaa54fc2136cb8b6444`).
-This excludes concurrent world-source WIP. See the frozen source/build/binary
-receipts under `evidence/host-boundary/live/`. No controlled live cell yet.
-
-Banking design review `t_36e521e1` is independently running with verified actual
-Grok 4.6 session `20260910_152011_364a2f`; it owns a design report only, while
-`t_13a850d5` owns the world/nav source preparation. Neither run can claim live
-acceptance or add script compatibility gates.
+The target remains host alpha 2 / 0.1.7; release planning follows acceptance.
+Full 377, mixed fleets, tutorial/audio parity and the named quest/clue/gatherer/
+MarketMaker rewrites remain deferred. Do not shrink the enabled ledger or add
+script revision allowlists to make acceptance pass. Do not restart the completed
+memory optimization campaign or turn elapsed diagnostic time into savings claims.
