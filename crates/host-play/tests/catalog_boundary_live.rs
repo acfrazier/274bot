@@ -1311,6 +1311,34 @@ mod tests {
             .qualify()
             .is_err());
 
+        let plate_only = observation(
+            &[
+                ("Rune platebody", 1),
+                ("Rune chainbody", 0),
+                ("Nature rune", 1),
+                ("Coins", 0),
+            ],
+            &[("magic", 10_000)],
+            &[],
+        );
+        let plate_only_after = observation(
+            &[
+                ("Rune platebody", 0),
+                ("Rune chainbody", 0),
+                ("Nature rune", 0),
+                ("Coins", 1_000),
+            ],
+            &[("magic", 10_033)],
+            &[],
+        );
+        assert!(witness(
+            CoreCase::AlcherOrdered,
+            &baseline,
+            [&plate_only, &plate_only_after]
+        )
+        .qualify()
+        .is_err());
+
         let first = observation(
             &[
                 ("Rune platebody", 1),
