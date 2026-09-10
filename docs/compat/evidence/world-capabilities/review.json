@@ -1,0 +1,101 @@
+{
+  "task": "t_13a850d5",
+  "runs": [
+    {
+      "id": 1108,
+      "profile": "sol",
+      "status": "review",
+      "outcome": "review_requested",
+      "started_at": 1789067409,
+      "ended_at": 1789069363,
+      "summary": "Committed 80720784: shared revision/cache-bound nav manifests, explicit verified 274/289 bake inputs with legacy 274 preservation, startup mismatch rejection, selected-cache audit tooling, fresh offline bakes, and source/evidence report. All scoped tests, format, strict target Clippy, JSON validation, and diff checks pass; live door/region/bank-return/guardian qualification remains root-owned.",
+      "error": null,
+      "metadata": {
+        "commit": "80720784",
+        "changed_files": [
+          "Cargo.lock",
+          "crates/host-play/src/profile.rs",
+          "crates/nav/Cargo.toml",
+          "crates/nav/src/bin/nav-input-audit.rs",
+          "crates/nav/src/bin/nav-pack.rs",
+          "crates/nav/src/lib.rs",
+          "crates/nav/src/manifest.rs",
+          "crates/nav/tests/resource_manifest.rs",
+          "docs/compat/03-world-capabilities.md",
+          "docs/compat/world-source-audit.md",
+          "docs/compat/evidence/world-capabilities/*"
+        ],
+        "decisions": [
+          "Shared CacheManifest/NavManifest production schema lives in nav and is re-exported by host-play.",
+          "Explicit bakes require revision/content/cache/cache-manifest/out and reject duplicate, incomplete, unsupported, mismatched, or byte-incompatible inputs before output writes.",
+          "Legacy unmanifested 274 positional bake and host load paths remain supported; revision 289 requires a bound manifest.",
+          "No root-owned snapshot/interact/host-play lib/script/client files changed; selected-cache audit found no snapshot control mismatch."
+        ],
+        "hotspots": [
+          "vendor/fr-client-rust root-owned concurrent WIP remained uncommitted and was not touched"
+        ],
+        "tests": [
+          "cargo test -p nav --all-targets: 264 passed",
+          "cargo test -p host-play --test session_profile: 10 passed",
+          "cargo fmt --all -- --check: passed",
+          "cargo clippy -p nav --all-targets --no-deps -- -D warnings: passed",
+          "cargo clippy -p host-play --all-targets --features memory-profile --no-deps -- -D warnings: passed",
+          "jq empty docs/compat/evidence/world-capabilities/*.json: passed",
+          "git diff --check: passed"
+        ],
+        "verification": [
+          "Fresh isolated 274 bake: 483 mapsquares, 2,143 transports, 68 bank stands; pack 05db2474..., flags 92d5dea0...",
+          "Fresh isolated 289 bake: 534 mapsquares, 2,181 transports, 68 bank stands; pack 131db92e..., flags 67e4094d...",
+          "Wrong 274 cache manifest supplied to 289 exited 1 and preserved output sentinel hash.",
+          "Both selected archives audited for bank/control/shop/trade/guardian shapes, food mappings, transport endpoints, and teleport requirements."
+        ],
+        "worker_session_id": "20260910_151010_46fed4"
+      },
+      "worker_pid": null,
+      "step_key": null
+    },
+    {
+      "id": 1116,
+      "profile": "reviewer",
+      "status": "done",
+      "outcome": "completed",
+      "started_at": 1789069394,
+      "ended_at": 1789069520,
+      "summary": "Reviewed and approved commit 80720784. Round-1 artifact review of brief 16 + product diff matches the handoff: shared nav::manifest CacheManifest/NavManifest, explicit 274/289 bake inputs with legacy positional 274, 289 host bind still requires a sidecar, selected-cache audit tooling, and offline evidence without live claims or 289 gate removal. Re-ran cargo test -p nav --all-targets (264), cargo test -p host-play --test session_profile (10), scoped clippy -D warnings, and confirmed bake artifact SHA-256s and audit bank/control/guardian claims against retained evidence.",
+      "error": null,
+      "metadata": {
+        "review_outcome": "approved",
+        "review_round": 1,
+        "lens": "artifact",
+        "commit": "80720784",
+        "reviewer_checks": [
+          "brief 16 acceptance criteria mapped to deliverable",
+          "scoped commit paths only (nav, host-play profile, docs/evidence, Cargo.lock); no api/snapshot, interact, host-play lib, script, or client product edits in 80720784",
+          "nav::manifest single production schema; host-play re-export; legacy unmanifested 274 bind retained; 289 requires nav sidecar",
+          "nav-pack explicit mode requires revision/content/cache/cache-manifest/out; 274 config data/pack/config; 289 data/pack/client/config; verify before bake/write",
+          "cargo test -p nav --all-targets: 254 lib + 7 nav-pack + 3 resource_manifest = 264 passed",
+          "cargo test -p host-play --test session_profile: 10 passed including mismatch rejection and 289 slot gate not gating scripts",
+          "cargo clippy -p nav --all-targets --no-deps -D warnings: passed",
+          "cargo clippy -p host-play --all-targets --features memory-profile --no-deps -D warnings: passed",
+          "gitignored bake packs hash-match bake-summary/nav-manifests (274 05db2474.../92d5dea0..., 289 131db92e.../67e4094d...)",
+          "input-audit: bank 5292/5382 capacity 240 vs 288; controls 147 with 150-153; guardian mime/lamp/box roots; food 25/25; v8 format; audit SHAs match bake-summary",
+          "03-world-capabilities.md separates offline source/bake from pending root live door/region/bank-return/guardian proof; HOST_BOUNDARY_NOT_QUALIFIED retained"
+        ],
+        "non_blocking_notes": [
+          "docs/compat/world-source-audit.md still contains a mid-doc pre-step-5 sentence about bake CLI not emitting manifests, contradicted by the closing paragraph and 03-world-capabilities.md; not product-blocking",
+          "root-owned concurrent WIP outside this commit (api/snapshot, client) left untouched as claimed"
+        ],
+        "worker_session_id": "20260910_154314_b9e7c1"
+      },
+      "worker_pid": null,
+      "step_key": null
+    }
+  ],
+  "actual_session": {
+    "id": "20260910_154314_b9e7c1",
+    "model": "grok-4.5",
+    "provider": "xai-oauth",
+    "started_at": 1789069395.554545,
+    "ended_at": 1789069521.1820228
+  }
+}

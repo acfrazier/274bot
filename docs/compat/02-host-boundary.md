@@ -1,47 +1,66 @@
 # Host boundary qualification
 
-Current outcome: **pending**. Frozen host `fede3c0d` / client `6cb5a0b1`
-has completed source review, but the first controlled 289 live cell failed.
-Production 289 slots remain gated. No campaign acceptance or performance claim.
+Step 4 is accepted for the controlled local 274/289 scope on 2026-09-10.
+The same frozen host `4f43800ac0d1c2a617a1a4d03d60fd9b3824b3fc` / client
+`6cb5a0b17aeef74da6b57b205e916681daee4f76` binary passed both revisions on this
+Mac. Full campaign, catalog, frontend/fleet and world qualification remain open.
 
-Source and offline evidence: `02a-host-outbound.md`,
-`02b-host-snapshot-reset.md`, and
-`reviews/host-boundary-integration-grok46.{md,json}`. Actual Grok 4.6 run 1112
-approved the integrated source on 2026-09-10; final whole-campaign review remains.
+## Source and offline evidence
 
-## First controlled cells
+`02a-host-outbound.md` and `02b-host-snapshot-reset.md` record byte/state tests,
+actual packet/session publication, reset and queued-work rejection. Actual Grok
+4.5 reviewed both tasks, including the response-15 scene correction. Actual
+Grok 4.6 run 1112 approved integrated source `fede3c0d` / client `6cb5a0b1`:
+`reviews/host-boundary-integration-grok46.{md,json}`. The final whole-campaign
+review remains required. The later harness fixture changes passed focused
+compile, strict Clippy, format/diff and the controlled observations below.
 
-Both ran one revision per process against the recorded loopback fixtures,
-with the same immutable binary SHA
-`3ce3ec1d1570e7cab2f0999490630457ea6a8c16760abaaa54fc2136cb8b6444`.
-The source export excludes concurrent world/banking implementation.
+The immutable export contains the reviewed world-source change `80720784` but
+excludes concurrent banking WIP. Navigation is not used in this boundary test.
+All 484 exported source files, including Cargo.lock, matched their recorded
+hashes after compilation. Binary SHA-256:
+`7929af93b334944619c0602f73d063926660f6a640de88397c59e6ae6bed5280`.
 
-| Revision | Result | Observed outcome |
+## Accepted controlled cells
+
+Each process bound one revision to its matching loopback engine/cache, created
+a fresh disposable account, observed mainland preparation, then logged out and
+back in before the action baseline. Neither seed actions nor cleanup count as
+accepted actions. Walking uses Rust Interactions with exact observed arrival;
+NPC/door identities and actions come from the selected live snapshot.
+
+| Revision | Result | Post-baseline observations |
 |---|---|---|
-| 274 | PASS, exit 0, 36.290 s | After mainland preparation/relog, walked 3220,3212 to 3221,3212; Hans dialogue 4882 with new text; Door 1530 replaced by Door 1531 offering Close; actual IF logout emptied actors/inventory/bank. |
-| 289 | FAIL, exit 1, 6.269 s | Login/scene2 and mainland relog succeeded; post-baseline walk reached 3221,3212. The visible snapshot had 19 NPCs but no Hans with Talk-to, so NPC/loc/logout acceptance did not run. |
+| 274 | PASS, exit 0, 80.733 s | Five courtyard legs; natural Hans 2817 dialogue 4882; four perimeter approach legs; exterior Door 1530 replaced by Door 1531 offering Close; actual IF logout cleared actors, inventory, bank and scene. |
+| 289 | PASS, exit 0, 29.067 s | Three courtyard legs; natural Hans 2825 dialogue 4882; arrival at exterior stand; Door 1530 replaced by Door 1531 offering Close; actual IF logout cleared actors, inventory, bank and scene. |
 
-Raw logs/receipts: `evidence/host-boundary/live/r{274,289}-fede3c0d.{log,json}`.
-Failure cleanup is not logout proof. Readiness probes and seed actions are not
-action acceptance. Neither failure logs nor predicates have been discarded.
+Raw evidence: `evidence/host-boundary/live/r{274,289}-4f43800a.{log,json}`.
+The differing durations reflect different positions of the naturally roaming
+Hans and resulting approach routes; they are not a performance comparison.
+The door send in each run added 14 bytes and was followed by player movement
+and the required live door replacement. Existing per-action deadlines remain.
 
-## Fixture correction under review
+## Retained failed cells and fixture corrections
 
-The pinned 289 Hans source declares Talk-to and a patrol spanning
-x=3202..3221 and z=3205..3233, so the chosen static start does not guarantee
-visibility of that naturally roaming actor. The first log records only NPC
-count, so it cannot establish his exact position or conclusively attribute
-the absence to patrol visibility rather than publication.
+| Source / revision | Result | Diagnosis and correction |
+|---|---|---|
+| fede3c0d / 274 | PASS, 36.290 s | Original one-tile walk, dialogue, door and logout passed. |
+| fede3c0d / 289 | FAIL, 6.269 s | Walk passed; Hans absent from visible snapshot. Counts alone do not establish his exact position. Primary content confirms a perimeter patrol. |
+| 490f7438 / 289 | FAIL, 38.624 s | Temporary local Hans preparation made dialogue observable, but the nearest door interaction timed out. The target was not logged, so its exact cause is unproven. |
+| 8a2fafb9 / 289 | FAIL, 66.071 s | Five real courtyard legs and natural Hans dialogue passed. Nearest Door 1536 was inside the castle while the player stood outside its west wall; Open made no observed progress. |
 
-Root is making the fixture deterministic using the existing local `npcadd hans`
-command: observe a new nearby Talk-to identity before the action baseline, then
-require actual dialogue from that selected identity afterward. The handler
-creates a temporary NPC with a 500-cycle lifetime. No external server patch,
-new host capability or deadline extension is involved. The revised harness
-also records the pre-seed NPC observations. All action/logout predicates remain.
-The correction requires focused source review and a justified new controlled
-cell before 289 acceptance; an incidental rerun of the old fixture is not a fix.
+The operator requested courtyard walking. The temporary NPC addition was
+removed from the harness; no injected NPC was used by either accepted cell.
+The corrected harness walks the courtyard until natural Hans is visible,
+returns along the perimeter to the exterior door, and observes arrival before
+interacting. It also records the exact door, outbound byte count and path.
+This avoids choosing a castle-interior target across a wall while preserving
+the Open and logout predicates. Earlier source reviews are historical evidence
+for their named harness versions, not claims that they reviewed later changes.
+Every failed cell and immutable binary/source receipt is retained under
+`evidence/host-boundary/live/`; failures emitted FAIL and exited 1.
 
-Primary fixture references: lostcity-289 content commit `92649430`,
-`scripts/areas/area_lumbridge/configs/lumbridge.npc`, and engine `a275ea81`,
-`src/network/game/client/handler/ClientCheatHandler.ts` (existing npcadd branch).
+Primary fixture sources: 274 engine/content in `fixture-inputs.json`; 289 engine
+`a275ea81` / content `92649430`, including the Lumbridge Hans patrol. Neither
+engine was patched or restarted for these boundary cells. Source readiness,
+imports, startup and asset probes are not counted as functional acceptance.

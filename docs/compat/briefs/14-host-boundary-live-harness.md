@@ -1,18 +1,13 @@
 # Step 4C: controlled host boundary live harness
 
-## Live fixture correction, 2026-09-10
+Current status: accepted on local 274 and 289 at host `4f43800a` / client
+`6cb5a0b1`. Read `02-host-boundary.md` for exact observations and preserved
+failures. The current fixture walks the courtyard to find natural Hans, then
+walks the perimeter to the exterior door. The temporary npcadd proposal was
+removed at the operator's request. No source-review dispatch remains pending.
 
-The original frozen harness passed 274 but failed 289 after login and observed
-walk because visible Hans was absent. Read `02-host-boundary.md` and retained
-`evidence/host-boundary/live/r289-fede3c0d.{log,json}`. Root has changed only the
-harness to prepare a temporary nearby Hans via the existing local npcadd command,
-observe a new nearby identity, then establish the action baseline. Exact NPC
-dialogue, loc-change and logout assertions and action deadlines remain.
-Review the committed harness correction against `fede3c0d`, including the source
-of npcadd (non-production/staff guard, 500-cycle expiry) and primary patrol data.
-No live launch or worker source edits. Inspect named commits/source exports;
-never stash/reset/restore/checkout or alter shared WIP/index. This is corrective
-source review before a justified live reproduction, not a claim of acceptance.
+The historical brief below explains original scope; current source uses the
+shared `host::publish_snapshot` helper and the expanded courtyard route.
 
 ## Original task brief
 
