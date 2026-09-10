@@ -26,8 +26,9 @@ counter behavior, packet framing and failed-apply/reset semantics. No new opcode
 no inferred boolean from family-delta patterns, no bot policy inside client.
 
 Root authorizes this necessary generic seam in
-`vendor/fr-client-rust/crates/client/src/client/client.rs` plus focused client
-tests. First verify the client branch is `codex/bothost-274-289`; its accepted
+`vendor/fr-client-rust/crates/client/src/client/client.rs`, the corresponding
+publication flag in `client/actor_289.rs`, and focused client tests. First
+verify the client branch is `codex/bothost-274-289`; its accepted
 base is `2be16970`. Commit the client source/tests on that branch, report the
 commit, and leave the host gitlink to root. Root owns any remotes/integration.
 Host changes and this client seam remain one coherent same-card source review.

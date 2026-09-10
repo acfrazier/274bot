@@ -128,8 +128,8 @@ an independent rerun of ten profile tests, frontend/CLI tests, check and format.
 The public correction is accepted; no public live login was performed.
 The accepted local 274/289 macOS observations remain valid.
 
-Do not expose 289 bot operation using current direct 274 host writers or fall
-back to 274 navigation. Step 4 qualifies the complete host action/snapshot
+Keep ordinary 289 bot operation gated until the host boundary and selected
+world are qualified; never fall back to 274 navigation. Step 4 qualifies the complete host action/snapshot
 boundary and the controlled local action sequence on both revisions. Design
 card `t_d6761a15` approved the design under actual Grok 4.6 (run 1096,
 session `20260910_132555_633342`). Root corrected its numeric blacklist mistake:
@@ -148,6 +148,14 @@ Existing family counters/framing and ownership must survive. This is an
 implementation correction, not a failed live test. Root owns the client gitlink
 and harness adaptation after that helper is ready. Final integrated source
 checks/review and local 274/289 actions remain required.
+
+The client seam also includes a successful-session generation for response-15
+reconnects that return with `ingame` still true. The usage limit interrupted
+Sol run 1104 before completion. After the operator asked to continue, root
+resumed the same card with its WIP preserved. The new Sol session is
+`20260910_141557_9e3d29`, verified `gpt-5.6-sol` / `openai-codex`. Focused
+client counter/login/reconnect tests now pass; host publication and queue
+changes are still being completed and have not passed source review.
 
 Operator platform clarification: validate step 3 on macOS first. Linux and
 Windows do not have a 289 engine configured; prepare those isolated engines
@@ -178,6 +186,14 @@ Concord's existing 274 system service before its 289 smoke. Existing 274 files
 and service definitions are unchanged; Concord remains TUI-only, with Linux
 compilation on the builder. Read `platform-preparation.md` and the raw receipts.
 These setup results do not qualify host login, gameplay or native rendering.
+
+Build preflight on committed host `93e12ccf` / client `2be16970` passed for
+Linux `tui-play` on the Hyper-V builder and Windows `panel-play` / `tui-play`.
+The source export excludes snapshot WIP; final platform evidence must use
+the later reviewed candidate. Commands, hashes, timings and emitted warnings
+are recorded in `platform-preparation.md` and its build-preflight receipts.
+Root also prepared `world-source-audit.md`: selected source IDs agree, while
+bank/control definitions differ. This is step-5 preparation, not acceptance.
 
 Then follow steps 4–9 in order: host boundary and local live actions, world and
 guardian binding, required Rust capabilities, every enabled card/option proof,

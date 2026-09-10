@@ -54,3 +54,25 @@ Raw setup, failure, initialization and readiness receipts are under
 `evidence/platform-preparation/`; `platforms.json` collects the three readiness
 observations. Their PIDs describe those observations, not a persistent service
 contract. Host/client test candidates and live action evidence remain separate.
+
+## Build preflight after the usage-limit interruption
+
+The committed host `93e12ccf` with client `2be16970` was exported as 481 verified
+source files, excluding the active snapshot/reset edits. Archive SHA-256:
+`4bd8088ca0e68b3ad2f5f41fff8c71a6248fa91c0fec62136456b48e0e40cdcd`.
+Both remote source copies sit under the fixture parent's
+`candidates/source-93e12ccf-2be16970` directory. These are build preflight
+results, not the final source or native/live acceptance:
+
+- Hyper-V: release `tui-play` build passed in 30 seconds with Rust 1.98.0,
+  reusing `/home/builder/274bot-campaign/target` and two build jobs.
+- Windows: release `panel-play` and `tui-play` builds passed in 77 seconds
+  with Rust 1.98.0, reusing `C:\Users\Austen\274bot-campaign\target-native`
+  and two build jobs. The build emitted an unused RSS helper warning and
+  linker LNK4098 runtime-library warnings; the raw log retains them.
+- Concord: no compilation and no UI launch. Its later TUI binary comes from
+  the builder after the relevant candidate is reviewed.
+
+Logs, source identities, commands and exit statuses are in
+`evidence/platform-preparation/build-preflight/`. Final platform proofs must
+rebuild the later reviewed candidate and record its executable identity.
