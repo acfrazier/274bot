@@ -3260,8 +3260,10 @@ fn chrome_color_field(ui: &Ui, label: &str, color: &mut String) -> bool {
 
 fn global_config_section(ui: &Ui, session: &mut Session) {
     ui.text_colored([1.0, 1.0, 1.0, 1.0], "Server:");
-    ui.same_line();
-    ui.text_colored(session.ui.chrome.accent_rgba(), session.server_label());
+    {
+        let _color = ui.push_style_color(StyleColor::Text, session.ui.chrome.accent_rgba());
+        ui.text_wrapped(session.server_label());
+    }
     let revision_preview = session
         .effective_revision_label()
         .unwrap_or_else(|error| format!("invalid: {error}"));
@@ -3270,8 +3272,9 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
     } else {
         "Revision before session"
     };
+    ui.text(revision_label);
     ui.set_next_item_width(-1.0);
-    if let Some(_open) = ui.begin_combo(revision_label, &revision_preview) {
+    if let Some(_open) = ui.begin_combo("##session_revision", &revision_preview) {
         for revision in [274_u16, 289] {
             let selected = revision_preview == revision.to_string();
             if ui
