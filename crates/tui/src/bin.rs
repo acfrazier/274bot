@@ -67,7 +67,7 @@ pub struct Args {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: tui-play [--profile local-274|local-289|public-274] [--revision 274|289] \
+        "usage: tui-play [--profile local-274|local-289|public-289] [--revision 274|289] \
          [--prod] [--host HOST] [--port PORT] [--asset-host HOST] [--http-port PORT] \
          [--engine DIR] [--cache DIR] [--unpack DIR] [--nav-pack PATH] [--nav-flags PATH] \
          [--content DIR] [--vault PATH] [--catalog DIR] [--cache-manifest PATH] [--vault-pass PASS] \
@@ -1506,6 +1506,12 @@ mod tests {
         let args = parse_args_from(["--prod"]).expect("prod is a known flag");
         assert!(args.profile.prod);
         assert!(args.live.is_none());
+        let selection = args
+            .profile
+            .resolve_with_env(Some(274), &ProfileEnvironment::default())
+            .unwrap();
+        assert_eq!(selection.revision(), client::io::ClientRevision::R289);
+        assert_eq!(selection.target(), client::BotTarget::Prod);
     }
 
     #[test]

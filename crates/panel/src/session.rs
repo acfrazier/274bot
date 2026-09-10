@@ -3769,6 +3769,22 @@ mod tests {
     }
 
     #[test]
+    fn prod_default_ignores_the_saved_local_revision() {
+        let mut session = Session::new();
+        session.ui.server_revision = 274;
+        session
+            .configure_profile(ProfileOptions {
+                prod: true,
+                ..ProfileOptions::default()
+            })
+            .unwrap();
+        session.profile_environment = Some(ProfileEnvironment::default());
+        let selection = session.resolve_profile().unwrap();
+        assert_eq!(selection.revision(), client::io::ClientRevision::R289);
+        assert_eq!(selection.target(), client::BotTarget::Prod);
+    }
+
+    #[test]
     fn invalid_profile_refuses_vault_reset_without_deleting_explicit_path() {
         let root =
             std::env::temp_dir().join(format!("274bot-panel-invalid-reset-{}", std::process::id()));
