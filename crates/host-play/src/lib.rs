@@ -4051,6 +4051,95 @@ fn wait_for_permit(
     }
 }
 
+/// Candidate destinations for an explicit radius request. Exact walks retain
+/// their old routing behavior. Bound enumeration to the loaded scene size.
+fn approach_tiles(world: &NavWorld, from: WorldTile, to: WorldTile, radius: i32) -> Vec<WorldTile> {
+    let r = radius.clamp(0, 104);
+    let mut tiles = Vec::new();
+    for dx in -r..=r {
+        for dz in -r..=r {
+            let t = WorldTile {
+                x: to.x + dx,
+                z: to.z + dz,
+                level: to.level,
+            };
+            if world.collision.standable(t) {
+                tiles.push(t);
+            }
+        }
+    }
+    tiles.sort_by_key(|t| {
+        (
+            (t.x - from.x).abs().max((t.z - from.z).abs()),
+            (t.x - to.x).abs().max((t.z - to.z).abs()),
+            t.x,
+            t.z,
+        )
+    });
+    tiles
+}
+
+struct ScriptRouteRequest {
+    generation: u64,
+    world: Arc<NavWorld>,
+    from: WorldTile,
+    to: WorldTile,
+    radius: i32,
+    opts: FindOptions,
+    state: Option<WorldState>,
+    bank: Vec<(i32, i32)>,
+}
+impl ScriptRouteRequest {
+    fn calculate(&self) -> RouteOutcome {
+        let empty = WorldState::empty();
+        let state = self.state.as_ref().unwrap_or(&empty);
+        if self.radius <= 0 {
+            return route_or_bank_fetch(
+                &self.world,
+                self.from,
+                self.to,
+                self.opts,
+                state,
+                &self.bank,
+            );
+        }
+        for target in approach_tiles(&self.world, self.from, self.to, self.radius) {
+            let outcome =
+                route_or_bank_fetch(&self.world, self.from, target, self.opts, state, &self.bank);
+            if !matches!(outcome, RouteOutcome::NoPath) {
+                return outcome;
+            }
+        }
+        RouteOutcome::NoPath
+    }
+}
+impl NavBot {
+    fn publish_route(&mut self, generation: u64, allow_teleports: bool, outcome: RouteOutcome) {
+        if self.route_generation != generation {
+            return;
+        }
+        let (route, pending) = match outcome {
+            RouteOutcome::Routed(route) => (route, None),
+            RouteOutcome::BankSession { pending, route } => (route, Some(pending)),
+            RouteOutcome::NoPath => {
+                // The retained route belongs to the previous request. A later
+                // request for this failed destination must be allowed to retry.
+                self.requested_route = None;
+                return;
+            }
+        };
+        self.traveller.clear();
+        self.route = Some(route);
+        self.bank_fetch = pending;
+        self.allow_teleports = allow_teleports;
+    }
+}
+#[cfg(feature = "memory-profile")]
+pub mod memory;
+
+#[cfg(feature = "memory-profile")]
+mod memory_diagnostics;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -9493,98 +9582,3 @@ export default class T extends LoopingBot {
         );
     }
 }
-
-/// Candidate destinations for an explicit radius request. Exact walks retain
-/// their old routing behavior. Bound enumeration to the loaded scene size.
-fn approach_tiles(world: &NavWorld, from: WorldTile, to: WorldTile, radius: i32) -> Vec<WorldTile> {
-    let r = radius.clamp(0, 104);
-    let mut tiles = Vec::new();
-    for dx in -r..=r {
-        for dz in -r..=r {
-            let t = WorldTile {
-                x: to.x + dx,
-                z: to.z + dz,
-                level: to.level,
-            };
-            if world.collision.standable(t) {
-                tiles.push(t);
-            }
-        }
-    }
-    tiles.sort_by_key(|t| {
-        (
-            (t.x - from.x).abs().max((t.z - from.z).abs()),
-            (t.x - to.x).abs().max((t.z - to.z).abs()),
-            t.x,
-            t.z,
-        )
-    });
-    tiles
-}
-
-struct ScriptRouteRequest {
-    generation: u64,
-    world: Arc<NavWorld>,
-    from: WorldTile,
-    to: WorldTile,
-    radius: i32,
-    opts: FindOptions,
-    state: Option<WorldState>,
-    bank: Vec<(i32, i32)>,
-}
-impl ScriptRouteRequest {
-    fn calculate(&self) -> RouteOutcome {
-        let empty = WorldState::empty();
-        let state = self.state.as_ref().unwrap_or(&empty);
-        if self.radius <= 0 {
-            return route_or_bank_fetch(
-                &self.world,
-                self.from,
-                self.to,
-                self.opts.clone(),
-                state,
-                &self.bank,
-            );
-        }
-        for target in approach_tiles(&self.world, self.from, self.to, self.radius) {
-            let outcome = route_or_bank_fetch(
-                &self.world,
-                self.from,
-                target,
-                self.opts.clone(),
-                state,
-                &self.bank,
-            );
-            if !matches!(outcome, RouteOutcome::NoPath) {
-                return outcome;
-            }
-        }
-        RouteOutcome::NoPath
-    }
-}
-impl NavBot {
-    fn publish_route(&mut self, generation: u64, allow_teleports: bool, outcome: RouteOutcome) {
-        if self.route_generation != generation {
-            return;
-        }
-        let (route, pending) = match outcome {
-            RouteOutcome::Routed(route) => (route, None),
-            RouteOutcome::BankSession { pending, route } => (route, Some(pending)),
-            RouteOutcome::NoPath => {
-                // The retained route belongs to the previous request. A later
-                // request for this failed destination must be allowed to retry.
-                self.requested_route = None;
-                return;
-            }
-        };
-        self.traveller.clear();
-        self.route = Some(route);
-        self.bank_fetch = pending;
-        self.allow_teleports = allow_teleports;
-    }
-}
-#[cfg(feature = "memory-profile")]
-pub mod memory;
-
-#[cfg(feature = "memory-profile")]
-mod memory_diagnostics;
