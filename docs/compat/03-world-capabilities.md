@@ -1,8 +1,8 @@
 # World capabilities: revision-bound source and bake qualification
 
-Scope: offline source/cache/navigation preparation for revisions 274 and 289.
-This report does not claim client gameplay, door traversal, region movement,
-bank return, or guardian hold/resume/reset acceptance.
+Scope: selected source/cache/navigation binding plus controlled Mac region,
+door and lamp Guardian qualification for revisions 274 and 289. Bank return
+remains pending the first banking capability correction and review.
 
 ## Product changes
 
@@ -133,3 +133,54 @@ actual door passage, region movement, bank return including the 289 capacity,
 and guardian hold/resume/reset observations. Ordinary 289 bot operation remains
 gated. This report does not remove that gate, claim live acceptance, change
 script suitability policy, or qualify a public release.
+
+## Controlled world and Guardian qualification
+
+Six scoped Mac cells passed with the selected fresh nav pack and local engine.
+Every account completed actual mainland seed and observed logout/relogin before
+its behavior baseline. Both nav_full cells cleared the scenario's engine-speed
+override; no shared engine timing was changed. These are functional results,
+not performance measurements.
+
+| Revision | Case | Frozen host / client | Required observed result | Exit |
+|---|---|---|---|---:|
+| 274 | nav_full | 367af78f / 6cb5a0b1 | Route from (3220,3212) to (3220,3264), scene 2, crossed mapsquare | 0 |
+| 289 | nav_full | 367af78f / 6cb5a0b1 | Same selected-world route and arrival predicate | 0 |
+| 274 | nav_door | 43a57c36 / 6cb5a0b1 | Fresh scene closed 1530 at (2816,3438), open 1531 at (2816,3439), inside (2817,3443) | 0 |
+| 289 | nav_door | 43a57c36 / 6cb5a0b1 | Same closed/open/inside observations through selected-world Traveller | 0 |
+| 274 | guardian_lamp | 43a57c36 / 6cb5a0b1 | Lamp 2528, host hold/claim, real skill interface, consumption, Strength XP, hold release and walk to (3221,3212) | 0 |
+| 289 | guardian_lamp | 43a57c36 / 6cb5a0b1 | Same complete Guardian predicates and resumed host action | 0 |
+
+Raw logs and receipts: `evidence/world-capabilities/live/`. The 367af78f binary
+SHA is `03c964a1f0fb014238b0fe419f2c92119359e505b6c96a452fee562fb6bb57b1`;
+43a57c36 SHA is `1d3433903046c6a0c79252090c1e4b3b63a4b2bcdb5390256c72dfe517690155`.
+Root reverified all 486 exported source hashes after each build. These candidates
+exclude concurrent banking/client changes. Exact source/build/binary receipts
+are under `evidence/world-capabilities/harness/`.
+
+### Retained failed and limited cells
+
+- 289 nav_door at 367af78f failed, exit 1, after its 180 s runner bound with
+  zero route ticks. The harness had already proved mainland preparation and
+  moved to Catherby, then applied the old x >= 3000 mainland seed heuristic.
+  Catherby x=2813 could never release it. Root f52565f0 bypasses only that
+  redundant geographic heuristic after the exact mainland seed/relogin proof.
+- 289 guardian_lamp at 367af78f failed, exit 1, in the 30 s item-preparation
+  wait. `give lamp` did not resolve: both content obj packs map ID 2528 to the
+  internal name `macro_genilamp`, and ObjType.getId uses that internal map.
+  Root 6b925583 corrects only the fixture command.
+- 289 nav_door at f52565f0 exited 0 with door opening and arrival, but its
+  pre-route baseline was read during scene loading (a stale shifted tile
+  2818,3438). This cell is retained as limited evidence, not the accepted
+  closed-before-open proof. Root 43a57c36 waits for actual scene 2 at the
+  outside stand; both final cells observe the correct closed/open leaf tiles.
+  `catherby-packed-edges.json` confirms both selected packs contain the same
+  (2816,3438) door transport; the discrepancy was premature observation.
+
+Same-card Grok 4.5 run 1128 approved the initial corrected harness and the
+panel/TUI selected-world ScenarioRunner binding. The subsequent root changes
+above are small fixture corrections, checked by focused formatting/diff/build
+and the actual failed-then-passing cells; final campaign review covers their
+combined source/evidence. The existing 43 Guardian unit tests cover claim,
+hold/resume and reset policy. This lamp cell does not claim live qualification
+of every supported solver, every frontend, banking or the catalog ledger.

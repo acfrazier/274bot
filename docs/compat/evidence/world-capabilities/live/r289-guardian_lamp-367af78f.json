@@ -1,0 +1,29 @@
+{
+  "command": [
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/world-boundary-367af78f",
+    "--ignored",
+    "--nocapture"
+  ],
+  "environment": {
+    "LIVE": "1",
+    "WORLD_REVISION": "289",
+    "WORLD_CASE": "guardian_lamp",
+    "WORLD_NAV_PACK": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack",
+    "WORLD_NAV_FLAGS": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navflags",
+    "WORLD_ENGINE_DIR": "/Users/acfrazier/experiments/lostcity-289/engine"
+  },
+  "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision",
+  "started_at": "2026-09-10T20:42:56.727196+00:00",
+  "finished_at": "2026-09-10T20:43:56.798517+00:00",
+  "elapsed_seconds": 60.071,
+  "exit_code": 1,
+  "binary_sha256": "03c964a1f0fb014238b0fe419f2c92119359e505b6c96a452fee562fb6bb57b1",
+  "host_commit": "367af78fd3b6e4d7bcfc2ff1ae0cdc6f62f479ee",
+  "client_commit": "6cb5a0b17aeef74da6b57b205e916681daee4f76",
+  "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
+  "nav_pack_sha256": "131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924",
+  "nav_flags_sha256": "67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a",
+  "log_sha256": "33f9fb75d29e499924e7993a4f7b51aa0c53aa0e3d459c4740ce642e4742dbb9",
+  "fixture_preparation_is_not_action_proof": true,
+  "elapsed_is_not_performance_measurement": true
+}

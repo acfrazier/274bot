@@ -323,6 +323,242 @@ fn strength_xp(snapshot: &GameSnapshot) -> Option<i32> {
         .map(|s| s.xp)
 }
 
+fn follow_to(
+    client: &mut Client,
+    snapshot: &mut GameSnapshot,
+    pump: &mut Pump,
+    template: &SharedClientTemplate,
+    name: &str,
+    dest: api::snapshot::WorldTile,
+) {
+    let mut scenario = scenario::get("nav_full").expect("registered navigation scenario");
+    let arrival = scenario::Proof::Arrived {
+        x: dest.x,
+        z: dest.z,
+        level: dest.level,
+    };
+    scenario.name = "bank_return";
+    scenario.steps = vec![scenario::Step {
+        name: "follow the bank trip route",
+        kind: scenario::StepKind::Follow { dest },
+        wait: scenario::Wait {
+            arm: arrival,
+            budget_ticks: 600,
+        },
+    }];
+    scenario.proof = arrival;
+    // The exact mainland seed/relogin was observed before Catherby prep.
+    scenario.settings.require_mainland_base = false;
+    scenario.settings.nav.engine_speed_ms = None;
+    scenario.settings.deadline = Duration::from_secs(60);
+    let mut runner = ScenarioRunner::with_world(scenario, template.world());
+    runner.set_live_names(&[name.to_owned()]);
+    runner.set_shot_sink(Box::new(|_, _| {}));
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        pump_once(client, snapshot, pump);
+        runner.tick(client);
+        match runner.status() {
+            RunnerStatus::Passed => {
+                assert_eq!(snapshot.tile(), Some((dest.x, dest.z, dest.level)));
+                println!(
+                    "{}",
+                    json!({"phase": "bank-route-arrival", "evidence": runner.evidence()})
+                );
+                return;
+            }
+            RunnerStatus::Failed(message) => panic!("bank route: {message}"),
+            _ => assert!(Instant::now() < deadline, "bank route exceeded 60 s"),
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn item_count(rows: &[api::snapshot::ItemView], id: i32) -> i32 {
+    rows.iter()
+        .filter(|row| row.def.id == id)
+        .map(|row| row.count)
+        .sum()
+}
+
+fn bank_item_action(
+    client: &mut Client,
+    snapshot: &GameSnapshot,
+    id: i32,
+    label: &str,
+    side: bool,
+) {
+    let rows = if side {
+        snapshot.bank_side()
+    } else {
+        snapshot.bank()
+    };
+    let item = rows
+        .iter()
+        .find(|item| item.def.id == id)
+        .expect("bank item");
+    let op = item
+        .actions
+        .iter()
+        .position(|action| {
+            action
+                .as_deref()
+                .is_some_and(|action| action.replace('-', " ").eq_ignore_ascii_case(label))
+        })
+        .expect("selected bank item action") as i32
+        + 1;
+    assert!(matches!(
+        Interactions::new(snapshot, client).interact(
+            interact::OpTarget::Item(item),
+            interact::ActionSpec::Operation(op)
+        ),
+        SendResult::Sent { .. }
+    ));
+}
+
+fn run_bank_return(template: Arc<SharedClientTemplate>, profile: Arc<host_play::ServerProfile>) {
+    const COINS: i32 = 995;
+    const LOBSTER: i32 = 379;
+    const START: (i32, i32, i32) = (2813, 3436, 0);
+    let booth = api::snapshot::WorldTile {
+        x: 2809,
+        z: 3442,
+        level: 0,
+    };
+    let stand = api::snapshot::WorldTile {
+        x: 2809,
+        z: 3441,
+        level: 0,
+    };
+    let world = template.world().expect("selected navigation world");
+    assert!(
+        world.banks().iter().any(|bank| {
+            bank.tile == booth && matches!(bank.access, nav::pack::BankAccess::Booth { .. })
+        }),
+        "selected pack does not contain the Catherby booth"
+    );
+    let serial = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let name = format!("b{}{}", profile.revision().as_i32(), serial % 100_000_000);
+    let mut client = template
+        .prepare_client((serial % 1_000_000_000) as i32, true)
+        .expect("selected client");
+    let mut snapshot = GameSnapshot::new();
+    let mut pump = Pump::new();
+    prepare_mainland(&mut client, &mut snapshot, &mut pump, &name);
+    assert!(interact::cheat(&mut client, "givebank lobster 20"));
+    assert!(interact::cheat(&mut client, "give coins 100"));
+    assert!(interact::cheat(&mut client, "tele 0,43,53,61,44"));
+    wait_for(
+        &mut client,
+        &mut snapshot,
+        &mut pump,
+        Duration::from_secs(30),
+        "bank-trip-baseline",
+        |s| {
+            s.ingame()
+                && s.scene_state() == 2
+                && s.tile() == Some(START)
+                && item_count(s.inventory(), COINS) == 100
+                && item_count(s.inventory(), LOBSTER) == 0
+        },
+    );
+    let inventory_before = snapshot.inv().to_vec();
+    follow_to(
+        &mut client,
+        &mut snapshot,
+        &mut pump,
+        &template,
+        &name,
+        stand,
+    );
+    let target = snapshot
+        .locs()
+        .iter()
+        .find(|loc| loc.tile == booth && loc.name.as_deref() == Some("Bank booth"))
+        .expect("selected booth in fresh scene")
+        .id;
+    let generation_before = snapshot.bank_session_generation();
+    assert!(matches!(
+        Interactions::new(&snapshot, &mut client).open_booth_at(booth, target),
+        SendResult::Sent { .. }
+    ));
+    wait_for(
+        &mut client,
+        &mut snapshot,
+        &mut pump,
+        Duration::from_secs(5),
+        "bank-fresh-open",
+        |s| {
+            s.bank_loaded()
+                && s.bank_session_generation() != generation_before
+                && item_count(s.bank(), LOBSTER) == 20
+        },
+    );
+    let bank_before = snapshot
+        .bank()
+        .iter()
+        .map(|item| (item.def.id, item.count))
+        .collect::<Vec<_>>();
+    bank_item_action(&mut client, &snapshot, COINS, "Deposit All", true);
+    wait_for(
+        &mut client,
+        &mut snapshot,
+        &mut pump,
+        Duration::from_secs(4),
+        "bank-deposit-observed",
+        |s| item_count(s.inventory(), COINS) == 0 && item_count(s.bank(), COINS) == 100,
+    );
+    bank_item_action(&mut client, &snapshot, LOBSTER, "Withdraw 5", false);
+    wait_for(
+        &mut client,
+        &mut snapshot,
+        &mut pump,
+        Duration::from_secs(4),
+        "bank-withdraw-observed",
+        |s| item_count(s.inventory(), LOBSTER) == 5 && item_count(s.bank(), LOBSTER) == 15,
+    );
+    let bank_after = snapshot
+        .bank()
+        .iter()
+        .map(|item| (item.def.id, item.count))
+        .collect::<Vec<_>>();
+    assert!(matches!(
+        Interactions::new(&snapshot, &mut client).close_modal(),
+        SendResult::Sent { .. }
+    ));
+    wait_for(
+        &mut client,
+        &mut snapshot,
+        &mut pump,
+        Duration::from_secs(3),
+        "bank-closed",
+        |s| s.bank_component_id() < 0 && !s.bank_loaded(),
+    );
+    follow_to(
+        &mut client,
+        &mut snapshot,
+        &mut pump,
+        &template,
+        &name,
+        api::snapshot::WorldTile {
+            x: START.0,
+            z: START.1,
+            level: START.2,
+        },
+    );
+    assert_eq!(item_count(snapshot.inventory(), LOBSTER), 5);
+    println!(
+        "PASS: bank_return: {}",
+        json!({"inventory_before": inventory_before, "inventory_after": snapshot.inv(), "bank_before": bank_before, "bank_after": bank_after, "returned_to": snapshot.tile(), "bank_loaded_after_close": snapshot.bank_loaded()})
+    );
+    if client.ingame {
+        client.logout();
+    }
+}
+
 fn run_guardian(template: Arc<SharedClientTemplate>, profile: Arc<host_play::ServerProfile>) {
     let serial = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -422,12 +658,13 @@ fn world_boundary_live() {
         let case = required("WORLD_CASE");
         assert!(matches!(
             case.as_str(),
-            "nav_full" | "nav_door" | "guardian_lamp"
+            "nav_full" | "nav_door" | "guardian_lamp" | "bank_return"
         ));
         let (profile, template) = selected();
         match case.as_str() {
             "nav_full" | "nav_door" => run_nav(&case, template, profile),
             "guardian_lamp" => run_guardian(template, profile),
+            "bank_return" => run_bank_return(template, profile),
             _ => unreachable!(),
         }
     }));
