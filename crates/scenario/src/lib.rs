@@ -1696,6 +1696,7 @@ fn bone_burier_scenario() -> Scenario {
             require_mainland_base: true,
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("BoneBurier"),
+            terminal_shot: Some("bone_burier terminal"),
             nav: gold_script_nav(),
             ..Default::default()
         },
@@ -1828,6 +1829,7 @@ fn chicken_killer_scenario() -> Scenario {
             require_mainland_base: true,
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("ChickenKiller"),
+            terminal_shot: Some("chicken_killer terminal"),
             nav: gold_script_nav(),
             ..Default::default()
         },
@@ -2079,6 +2081,7 @@ fn alcher_variant_scenario(
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("Alcher"),
             script_settings_inject: Some(inject),
+            terminal_shot: Some(name),
             nav: gold_script_nav(),
             ..Default::default()
         },
@@ -2187,6 +2190,7 @@ fn alcher_scenario() -> Scenario {
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("Alcher"),
             script_settings_inject: Some(ALCHER_INJECT),
+            terminal_shot: Some("alcher terminal"),
             nav: gold_script_nav(),
             ..Default::default()
         },
@@ -2204,10 +2208,13 @@ const BANK_FLETCHER_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 
-/// The `bank_fletcher` scenario: live BankFletcher gold — West bank stand,
-/// knife + willow logs, arrow-shaft product. Proof is fletching XP delta.
+/// Run BankFletcher through a full pack, product deposit, log withdrawal and
+/// another product. All bank stock is prepared before the script starts.
 fn bank_fletcher_scenario() -> Scenario {
     let xp = Proof::StatXpGain { id: 9, min: 1 };
+    // Selected content awards 33.3 XP per willow shortbow: the 27 carried logs
+    // alone can produce at most 899 integer XP. This requires a banked log.
+    let second_batch_xp = Proof::StatXpGain { id: 9, min: 900 };
     let bank = VARROCK_WEST_BANK;
     Scenario {
         name: "bank_fletcher",
@@ -2224,6 +2231,7 @@ fn bank_fletcher_scenario() -> Scenario {
                         cheat(c, "advancestat fletching 35");
                         cheat(c, "give knife 1");
                         cheat(c, "give willow_logs 27");
+                        cheat(c, "givebank willow_logs 54");
                         cheat(c, &tele_args(bank.level, bank.x, bank.z));
                         true
                     }),
@@ -2248,9 +2256,45 @@ fn bank_fletcher_scenario() -> Scenario {
                     budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
                 },
             });
+            for (name, arm) in [
+                (
+                    "watch the script deposit its first pack of bows",
+                    Proof::BankItem {
+                        name: "Willow shortbow",
+                        count: 27,
+                    },
+                ),
+                (
+                    "watch the script withdraw its next pack of logs",
+                    Proof::Item {
+                        name: "Willow logs",
+                        count: 27,
+                    },
+                ),
+                (
+                    "watch the banked logs decrease",
+                    Proof::BankItemAtMost {
+                        name: "Willow logs",
+                        count: 27,
+                    },
+                ),
+                ("watch the script close its bank", Proof::BankClosed),
+                ("watch the script fletch a withdrawn log", second_batch_xp),
+            ] {
+                steps.push(Step {
+                    name,
+                    kind: StepKind::Perform {
+                        send: Box::new(|_, _| true),
+                    },
+                    wait: Wait {
+                        arm,
+                        budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
+                    },
+                });
+            }
             steps
         },
-        proof: xp,
+        proof: second_batch_xp,
         companions: vec![],
         settings: ScenarioSettings {
             full_rate: true,
@@ -2258,6 +2302,7 @@ fn bank_fletcher_scenario() -> Scenario {
             deadline: SCRIPT_GOLD_DEADLINE,
             start_script: Some("BankFletcher"),
             script_settings_inject: Some(BANK_FLETCHER_INJECT),
+            terminal_shot: Some("bank_fletcher terminal"),
             nav: gold_script_nav(),
             ..Default::default()
         },

@@ -15,7 +15,7 @@ use host::Pump;
 use host_play::{ProfileOptions, ScriptStartHandle, SharedClientTemplate};
 use scenario::{RunnerStatus, ScenarioRunner};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use vault::{Profile, ProfileSettings};
 
 const SUPPORT_MATRIX: &str = include_str!("../../../docs/compat/support-matrix.json");
@@ -366,6 +366,7 @@ struct CoreWitness {
     saw_bury_chat: bool,
     post_start_observations: u64,
     bone_bank_cycle: BoneBankCycle,
+    bank_fletcher_cycle: BankFletcherCycle,
     ordered_first_exhausted: bool,
 }
 
@@ -413,6 +414,57 @@ impl BoneBankCycle {
     }
 }
 
+/// A first product or an empty-stock stop cannot qualify the bank loop.
+#[derive(Debug, Clone, Default, Serialize)]
+struct BankFletcherCycle {
+    first_pack_created: bool,
+    deposited: Option<Observation>,
+    withdrawn: Option<Observation>,
+    crafted_after_withdrawal: bool,
+}
+
+impl BankFletcherCycle {
+    fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        self.first_pack_created |= now.item("Willow logs") == 0
+            && now.item("Willow shortbow") == 27
+            && now.skill_xp("fletching") > baseline.skill_xp("fletching");
+        if self.first_pack_created
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item("Knife") == 1
+            && now.item("Willow logs") == 0
+            && now.item("Willow shortbow") == 0
+            && now.bank_item("Willow shortbow") == 27
+            && now.bank_item("Willow logs") == 54
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            if self.withdrawn.is_none()
+                && now.bank_open
+                && now.bank_loaded
+                && now.bank_generation == deposited.bank_generation
+                && now.item("Knife") == 1
+                && now.item("Willow logs") == 27
+                && now.item("Willow shortbow") == 0
+                && now.bank_item("Willow logs") == 27
+                && now.bank_item("Willow shortbow") == 27
+            {
+                self.withdrawn = Some(now.clone());
+            }
+        }
+        if let Some(withdrawn) = &self.withdrawn {
+            self.crafted_after_withdrawal |= !now.bank_open
+                && !now.bank_loaded
+                && now.item("Willow logs") < withdrawn.item("Willow logs")
+                && now.item("Willow shortbow") > 0
+                && now.skill_xp("fletching") > withdrawn.skill_xp("fletching");
+        }
+    }
+}
+
 impl CoreWitness {
     fn new(case: CoreCase, baseline: Observation) -> Self {
         Self {
@@ -424,6 +476,7 @@ impl CoreWitness {
             saw_bury_chat: false,
             post_start_observations: 0,
             bone_bank_cycle: BoneBankCycle::default(),
+            bank_fletcher_cycle: BankFletcherCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -437,6 +490,10 @@ impl CoreWitness {
         }
         if matches!(self.case, CoreCase::BoneBurier) {
             self.bone_bank_cycle.observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::BankFletcher) {
+            self.bank_fletcher_cycle
+                .observe(&self.baseline, observation);
         }
         let baseline_sequence = self
             .baseline
@@ -522,7 +579,8 @@ impl CoreWitness {
                     }
             }
             CoreCase::BankFletcher => {
-                self.xp_gained("fletching")
+                self.bank_fletcher_cycle.crafted_after_withdrawal
+                    && self.xp_gained("fletching")
                     && self.item_consumed_from_baseline("Willow logs")
                     && self.item_increased("Willow shortbow")
             }
@@ -542,6 +600,7 @@ impl CoreWitness {
             "saw_bury_chat": self.saw_bury_chat,
             "post_start_observations": self.post_start_observations,
             "bone_bank_cycle": self.bone_bank_cycle,
+            "bank_fletcher_cycle": self.bank_fletcher_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -1180,13 +1239,17 @@ mod tests {
             &[("prayer", 104)],
             &[(2, "You bury the bones.")],
         );
-        assert!(witness(CoreCase::BoneBurier, &baseline, [&first])
-            .qualify()
-            .is_err());
+        assert!(
+            witness(CoreCase::BoneBurier, &baseline, [&first])
+                .qualify()
+                .is_err()
+        );
         let empty = observation(&[], &[("prayer", 122)], &[(6, "You bury the bones.")]);
-        assert!(witness(CoreCase::BoneBurier, &baseline, [&first, &empty])
-            .qualify()
-            .is_err());
+        assert!(
+            witness(CoreCase::BoneBurier, &baseline, [&first, &empty])
+                .qualify()
+                .is_err()
+        );
         let mut opened = empty.clone();
         opened.tile = Some((3092, 3245, 0));
         opened.bank_open = true;
@@ -1203,44 +1266,54 @@ mod tests {
         buried.xp.insert("prayer".into(), 127);
         buried.chat.push((7, "You bury the bones.".into()));
         let observations = [&first, &empty, &opened, &withdrawn, &buried];
-        assert!(witness(CoreCase::BoneBurier, &baseline, observations)
-            .qualify()
-            .is_ok());
+        assert!(
+            witness(CoreCase::BoneBurier, &baseline, observations)
+                .qualify()
+                .is_ok()
+        );
         // An inventory rise without the observed bank transfer is insufficient.
-        assert!(witness(
-            CoreCase::BoneBurier,
-            &baseline,
-            [&empty, &withdrawn, &buried]
-        )
-        .qualify()
-        .is_err());
+        assert!(
+            witness(
+                CoreCase::BoneBurier,
+                &baseline,
+                [&empty, &withdrawn, &buried]
+            )
+            .qualify()
+            .is_err()
+        );
         let mut stale = opened.clone();
         stale.bank_loaded = false;
-        assert!(witness(
-            CoreCase::BoneBurier,
-            &baseline,
-            [&empty, &stale, &withdrawn, &buried]
-        )
-        .qualify()
-        .is_err());
+        assert!(
+            witness(
+                CoreCase::BoneBurier,
+                &baseline,
+                [&empty, &stale, &withdrawn, &buried]
+            )
+            .qualify()
+            .is_err()
+        );
         let mut no_consumption = buried.clone();
         no_consumption.items.insert("Bones".into(), 28);
-        assert!(witness(
-            CoreCase::BoneBurier,
-            &baseline,
-            [&empty, &opened, &withdrawn, &no_consumption]
-        )
-        .qualify()
-        .is_err());
+        assert!(
+            witness(
+                CoreCase::BoneBurier,
+                &baseline,
+                [&empty, &opened, &withdrawn, &no_consumption]
+            )
+            .qualify()
+            .is_err()
+        );
         let mut no_xp = buried.clone();
         no_xp.xp.insert("prayer".into(), 122);
-        assert!(witness(
-            CoreCase::BoneBurier,
-            &baseline,
-            [&empty, &opened, &withdrawn, &no_xp]
-        )
-        .qualify()
-        .is_err());
+        assert!(
+            witness(
+                CoreCase::BoneBurier,
+                &baseline,
+                [&empty, &opened, &withdrawn, &no_xp]
+            )
+            .qualify()
+            .is_err()
+        );
     }
 
     #[test]
@@ -1314,9 +1387,11 @@ mod tests {
             &[("magic", 10_000)],
             &[],
         );
-        assert!(witness(CoreCase::AlcherOrdered, &seeded, [&seeded])
-            .qualify()
-            .is_err());
+        assert!(
+            witness(CoreCase::AlcherOrdered, &seeded, [&seeded])
+                .qualify()
+                .is_err()
+        );
 
         let plate_only = observation(
             &[
@@ -1338,13 +1413,15 @@ mod tests {
             &[("magic", 10_033)],
             &[],
         );
-        assert!(witness(
-            CoreCase::AlcherOrdered,
-            &baseline,
-            [&plate_only, &plate_only_after]
-        )
-        .qualify()
-        .is_err());
+        assert!(
+            witness(
+                CoreCase::AlcherOrdered,
+                &baseline,
+                [&plate_only, &plate_only_after]
+            )
+            .qualify()
+            .is_err()
+        );
 
         let first = observation(
             &[
@@ -1376,20 +1453,24 @@ mod tests {
             &[("magic", 10_066)],
             &[],
         );
-        assert!(witness(
-            CoreCase::AlcherOrdered,
-            &baseline,
-            [&first, &second, &ordered_after]
-        )
-        .qualify()
-        .is_ok());
-        assert!(witness(
-            CoreCase::AlcherLargeBatch,
-            &baseline,
-            [&second, &ordered_after]
-        )
-        .qualify()
-        .is_err());
+        assert!(
+            witness(
+                CoreCase::AlcherOrdered,
+                &baseline,
+                [&first, &second, &ordered_after]
+            )
+            .qualify()
+            .is_ok()
+        );
+        assert!(
+            witness(
+                CoreCase::AlcherLargeBatch,
+                &baseline,
+                [&second, &ordered_after]
+            )
+            .qualify()
+            .is_err()
+        );
 
         let large = observation(
             &[
@@ -1409,19 +1490,21 @@ mod tests {
             &[("magic", 10_033)],
             &[],
         );
-        assert!(witness(
-            CoreCase::AlcherLargeBatch,
-            &baseline,
-            [&large, &large_after]
-        )
-        .qualify()
-        .is_ok());
+        assert!(
+            witness(
+                CoreCase::AlcherLargeBatch,
+                &baseline,
+                [&large, &large_after]
+            )
+            .qualify()
+            .is_ok()
+        );
     }
 
     #[test]
-    fn bank_fletcher_requires_logs_consumed_product_created_and_xp() {
+    fn bank_fletcher_requires_a_fresh_bank_cycle_and_further_crafting() {
         let baseline = observation(
-            &[("Willow logs", 27), ("Willow shortbow", 0)],
+            &[("Knife", 1), ("Willow logs", 27)],
             &[("fletching", 22_000)],
             &[],
         );
@@ -1430,7 +1513,66 @@ mod tests {
             &[("fletching", 22_033)],
             &[],
         );
-        let changed = witness(CoreCase::BankFletcher, &baseline, [&after]);
-        assert!(changed.qualify().is_ok());
+        assert!(
+            witness(CoreCase::BankFletcher, &baseline, [&after])
+                .qualify()
+                .is_err()
+        );
+        let first_pack = observation(
+            &[("Knife", 1), ("Willow shortbow", 27)],
+            &[("fletching", 22_899)],
+            &[],
+        );
+        let mut deposited = observation(&[("Knife", 1)], &[("fletching", 22_899)], &[]);
+        deposited.bank_open = true;
+        deposited.bank_loaded = true;
+        deposited.bank_generation = 1;
+        deposited.bank =
+            BTreeMap::from([("Willow shortbow".into(), 27), ("Willow logs".into(), 54)]);
+        let mut withdrawn = deposited.clone();
+        withdrawn.items.insert("Willow logs".into(), 27);
+        withdrawn.bank.insert("Willow logs".into(), 27);
+        let second_product = observation(
+            &[("Knife", 1), ("Willow logs", 26), ("Willow shortbow", 1)],
+            &[("fletching", 22_932)],
+            &[],
+        );
+        let sequence = [&first_pack, &deposited, &withdrawn, &second_product];
+        assert!(
+            witness(CoreCase::BankFletcher, &baseline, sequence)
+                .qualify()
+                .is_ok()
+        );
+        assert!(
+            witness(
+                CoreCase::BankFletcher,
+                &baseline,
+                sequence[..3].iter().copied()
+            )
+            .qualify()
+            .is_err()
+        );
+        // Stale bank rows and a changed bank session cannot prove transfer.
+        deposited.bank_loaded = false;
+        assert!(
+            witness(
+                CoreCase::BankFletcher,
+                &baseline,
+                [&first_pack, &deposited, &withdrawn, &second_product]
+            )
+            .qualify()
+            .is_err()
+        );
+        deposited.bank_loaded = true;
+        withdrawn.bank_generation = 2;
+        assert!(
+            witness(
+                CoreCase::BankFletcher,
+                &baseline,
+                [&first_pack, &deposited, &withdrawn, &second_product]
+            )
+            .qualify()
+            .is_err()
+        );
     }
 }
