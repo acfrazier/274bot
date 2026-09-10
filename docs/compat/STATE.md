@@ -75,13 +75,19 @@ still required after steps 3–8.
 
 ## Next implementation
 
-Step 3: bind one immutable server profile through host, panel and TUI, including
+Step 3 is active by the operator's 2026-09-10 follow-up: bind one immutable server profile through host, panel and TUI, including
 revision, game/asset endpoints, RSA/CRC, shared cache/interface resources and
 nav/content/catalog identity. Read `briefs/05-session-profile-preparation.md`:
 the shared constructor's HTTP default and ambient login/transport/unpack
-settings must be bound before actual spawn and reconnect. No step-3 product
-implementation has begun. Do not expose 289 bot operation using current direct
+settings must be bound before actual spawn and reconnect. Architecture card
+`t_bfd3339c` (actual Grok 4.6) is reviewing the concrete design in
+`briefs/06-session-profile-design.md` before implementation. Do not expose 289 bot operation using current direct
 274 host writers or fall back to 274 navigation.
+
+Operator platform clarification: validate step 3 on macOS first. Linux and
+Windows do not have a 289 engine configured; prepare those isolated engines
+before their later platform checks. No Linux/Windows qualification is implied
+by the macOS milestone.
 
 Then follow steps 4–9 in order: host boundary and local live actions, world and
 guardian binding, required Rust capabilities, every enabled card/option proof,
