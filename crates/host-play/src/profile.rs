@@ -467,10 +467,22 @@ pub enum NavAvailability {
     Bound,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogIdentity {
     pub root: PathBuf,
     pub sha256: String,
+}
+
+impl CatalogIdentity {
+    /// Capture the selected catalog before a frontend reads or transpiles it.
+    /// Comparing this value with the bound profile also detects source edits
+    /// made at the same path while the panel is still locked.
+    pub fn capture(root: &Path) -> Result<Self, String> {
+        Ok(Self {
+            root: root.to_path_buf(),
+            sha256: catalog_hash(root)?,
+        })
+    }
 }
 
 /// Frozen session inputs. Getters expose no mutable connection/resource fields.
@@ -615,12 +627,7 @@ impl ProfileSelection {
         let catalog = self
             .catalog_root
             .as_ref()
-            .map(|root| {
-                Ok::<_, String>(CatalogIdentity {
-                    root: root.clone(),
-                    sha256: catalog_hash(root)?,
-                })
-            })
+            .map(|root| CatalogIdentity::capture(root))
             .transpose()?;
         Ok(Arc::new(ServerProfile {
             selection: self.selection,
