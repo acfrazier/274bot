@@ -29,9 +29,10 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use host_play::{
-    arm_walk_on, default_vault_path, live_vault_passphrase, mint_live_entries, mint_live_names,
-    open_vault, player_here_tile, profile_password, run_with_io, step_walk_arm_bank_fetch,
-    walk_arm_bank_fetch_freezes_follow, Play, PlayOptions, SlotArm, WalkArm, WireCmd,
+    arm_walk_on, live_vault_passphrase_for, mint_live_entries_for_target, mint_live_names,
+    open_vault, parse_profile_args, player_here_tile, profile_password_for, run_with_io,
+    run_with_template, step_walk_arm_bank_fetch, walk_arm_bank_fetch_freezes_follow, Play,
+    PlayOptions, ProfileOptions, ServerProfile, SharedClientTemplate, SlotArm, WalkArm, WireCmd,
 };
 use nav::tile::Tile;
 use nav::traveller::{TravelOptions, TravelOutcome};
@@ -58,21 +59,18 @@ pub enum RunMode {
 /// Parsed `tui-play` flags.
 #[derive(Debug, Clone)]
 pub struct Args {
-    pub vault: PathBuf,
     pub pass: Option<String>,
-    pub host: String,
-    pub port: u16,
-    pub cache: String,
     pub users: Vec<String>,
     pub live: Option<String>,
-    /// `--prod`: apply Prod host/port in `main` (OnceLock, not in parse).
-    pub prod: bool,
+    pub profile: ProfileOptions,
 }
 
 fn usage() -> ! {
     eprintln!(
-        "usage: tui-play [--vault PATH] [--vault-pass PASS] \
-         [--host HOST] [--port PORT] [--cache DIR] [--prod] \
+        "usage: tui-play [--profile local-274|local-289|public-274] [--revision 274|289] \
+         [--prod] [--host HOST] [--port PORT] [--asset-host HOST] [--http-port PORT] \
+         [--engine DIR] [--cache DIR] [--unpack DIR] [--nav-pack PATH] [--nav-flags PATH] \
+         [--content DIR] [--vault PATH] [--catalog DIR] [--cache-manifest PATH] [--vault-pass PASS] \
          [--live script_<name>] [--user USER]... (default user: first vault profile)"
     );
     std::process::exit(2);
@@ -87,17 +85,9 @@ fn need_value(
         .ok_or_else(|| format!("tui-play: {flag} needs a value"))
 }
 
-fn default_vault() -> PathBuf {
-    default_vault_path()
-}
-
-fn default_cache_dir() -> String {
-    client::cache_dir().display().to_string()
-}
-
 /// `--live NAME` wins over `BOT_LIVE`; empty env is ignored.
 /// `--help`/`-h` print the usage line (exit 2, the CLI family's
-/// convention). `--prod` is recorded here; `main` applies the OnceLock.
+/// convention). Shared server/profile flags are consumed first by host-play.
 pub fn parse_args() -> Args {
     match parse_args_from(env::args().skip(1)) {
         Ok(args) => args,
@@ -112,31 +102,19 @@ pub fn parse_args() -> Args {
 
 /// Testable CLI parse. Does not flip [`client::set_bot_target`].
 pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<Args, String> {
+    let (profile, rest) = parse_profile_args(args).map_err(|e| format!("tui-play: {e}"))?;
     let mut parsed = Args {
-        vault: default_vault(),
         pass: env::var("BOT_VAULT_PASS").ok(),
-        host: host_play::default_world_host(),
-        port: client::game_port_for(client::bot_target()),
-        cache: default_cache_dir(),
         users: Vec::new(),
         live: env::var("BOT_LIVE").ok().filter(|s| !s.is_empty()),
-        prod: false,
+        profile,
     };
-    let mut it = args.into_iter();
+    let mut it = rest.into_iter();
     while let Some(arg) = it.next() {
         match arg.as_ref() {
-            "--vault" => parsed.vault = PathBuf::from(need_value(&mut it, "--vault")?),
             "--vault-pass" => parsed.pass = Some(need_value(&mut it, "--vault-pass")?),
-            "--host" => parsed.host = need_value(&mut it, "--host")?,
-            "--port" => {
-                parsed.port = need_value(&mut it, "--port")?
-                    .parse()
-                    .map_err(|_| "tui-play: --port needs a number".to_string())?
-            }
-            "--cache" => parsed.cache = need_value(&mut it, "--cache")?,
             "--user" => parsed.users.push(need_value(&mut it, "--user")?),
             "--live" => parsed.live = Some(need_value(&mut it, "--live")?),
-            "--prod" => parsed.prod = true,
             "--help" | "-h" => return Err("usage".into()),
             other => return Err(format!("tui-play: unknown {other}")),
         }
@@ -302,7 +280,11 @@ pub struct TuiSession {
     pub error: Option<String>,
     /// All profile names (for the strip's slot list), in vault order.
     names: Vec<String>,
+    /// Legacy-only endpoint bag retained for unit-test constructors.
     options: PlayOptions,
+    /// Checked production assets and immutable server identity.
+    template: Option<Arc<SharedClientTemplate>>,
+    server_profile: Option<Arc<ServerProfile>>,
     /// The username the settings popup currently edits; reload
     /// `ProfileSettings` into the app when it changes.
     last_focused: Option<String>,
@@ -382,6 +364,8 @@ impl TuiSession {
             error: None,
             names: Vec::new(),
             options,
+            template: None,
+            server_profile: None,
             last_focused: None,
             snapshots: Arc::new(Mutex::new(HashMap::new())),
             travellers: Arc::new(Mutex::new(HashMap::new())),
@@ -404,6 +388,40 @@ impl TuiSession {
             loadouts: script::LoadoutsStore::with_default_path(),
             script_settings_inject: None,
             script_load_last_dir: None,
+        }
+    }
+
+    fn new_bound(template: Arc<SharedClientTemplate>) -> Self {
+        let profile = Arc::clone(template.profile());
+        let mut session = Self::new(PlayOptions {
+            host: profile.client().game_host().to_string(),
+            port: profile.client().game_port(),
+            cache_dir: profile.client().cache_dir().display().to_string(),
+            lowmem: true,
+            mainland: false,
+        });
+        session.template = Some(template);
+        session.server_profile = Some(profile);
+        session
+    }
+
+    fn target(&self) -> client::BotTarget {
+        self.server_profile
+            .as_ref()
+            .map_or_else(client::bot_target, |profile| profile.target())
+    }
+
+    fn profile_label(&self) -> String {
+        self.server_profile.as_ref().map_or_else(
+            || "legacy local-274 · revision 274".into(),
+            |profile| profile.label(),
+        )
+    }
+
+    fn catalog_root(&self) -> Option<PathBuf> {
+        match self.server_profile.as_ref() {
+            Some(profile) => profile.catalog().map(|catalog| catalog.root.clone()),
+            None => script::rs2b0t_root(),
         }
     }
 
@@ -446,13 +464,12 @@ impl TuiSession {
     /// Unlock (or first-run create) the vault at `path` and start the play.
     fn unlock_at(&mut self, path: &Path, pass: &str) -> Result<(), String> {
         let vault = open_vault(path, pass).map_err(|e| e.to_string())?;
-        self.start_play(vault);
-        Ok(())
+        self.start_play(vault)
     }
 
     /// Empty `Play` (shared cache + FIFO + per-frame hook), then spawn the
     /// focused profile only; `m` spawns the rest.
-    fn start_play(&mut self, vault: Vault) {
+    fn start_play(&mut self, vault: Vault) -> Result<(), String> {
         let snapshots = Arc::clone(&self.snapshots);
         let travellers = Arc::clone(&self.travellers);
         let tick_latch = Arc::clone(&self.tick_latch);
@@ -462,68 +479,73 @@ impl TuiSession {
         let pending_script = Arc::clone(&self.pending_script);
         let script_start_handle = Arc::clone(&self.script_start_handle);
         let options = self.options.clone();
-        let play = run_with_io(
-            &options,
-            Vec::new(),
-            |_| (None, None),
-            move |c, name, hold| {
-                // Publish the slot's snapshot (chat ring / modal, inv /
-                // stats / locs) for the UI thread; the rebuild is
-                // incremental, so a quiet frame publishes nothing new.
-                let mut all = snapshots.lock().unwrap();
-                let snap = all.entry(name.to_string()).or_default();
-                snap.rebuild(c);
+        let per_frame = move |c: &mut client::client::Client, name: &str, hold: bool| {
+            // Publish the slot's snapshot (chat ring / modal, inv /
+            // stats / locs) for the UI thread; the rebuild is
+            // incremental, so a quiet frame publishes nothing new.
+            let mut all = snapshots.lock().unwrap();
+            let snap = all.entry(name.to_string()).or_default();
+            snap.rebuild(c);
 
-                // The shared `--live script_*` runner: tick the driven
-                // slot and its companions before the local-player gate
-                // (seeding must observe frames with no player decode).
-                // Hold freezes scenario follow like `step_nav_bot`.
-                if let Some(runner) = scenario.lock().unwrap().as_mut() {
-                    if runner.drives(name) {
-                        if fire_pending_catalog_start(&pending_script, &script_start_handle, runner)
-                        {
-                            runner.tick_with_hold(c, hold);
-                        }
-                    } else if let Some(index) = runner.companion_for(name) {
-                        runner.companion_tick(index, c);
+            // The shared `--live script_*` runner: tick the driven
+            // slot and its companions before the local-player gate
+            // (seeding must observe frames with no player decode).
+            // Hold freezes scenario follow like `step_nav_bot`.
+            if let Some(runner) = scenario.lock().unwrap().as_mut() {
+                if runner.drives(name) {
+                    if fire_pending_catalog_start(&pending_script, &script_start_handle, runner) {
+                        runner.tick_with_hold(c, hold);
                     }
+                } else if let Some(index) = runner.companion_for(name) {
+                    runner.companion_tick(index, c);
                 }
+            }
 
-                let Some(here) = player_here_tile(c) else {
-                    return;
-                };
-                // Guardian hold freezes WalkArm follow; the armed route
-                // stays latched and resumes when hold lifts.
-                if !WalkArm::may_follow(hold) {
+            let Some(here) = player_here_tile(c) else {
+                return;
+            };
+            // Guardian hold freezes WalkArm follow; the armed route
+            // stays latched and resumes when hold lifts.
+            if !WalkArm::may_follow(hold) {
+                return;
+            }
+            // Step the armed walk route one leg per player-info tick
+            // (the panel's `tick_latch` pattern — a hop is sent once
+            // per server tick, not re-sent every 20 ms frame).
+            let Some(arm) = travellers.lock().unwrap().get(name).cloned() else {
+                return;
+            };
+            {
+                let mut latch = tick_latch.lock().unwrap();
+                if latch.get(name) == Some(&(c.gens.player, here)) {
                     return;
                 }
-                // Step the armed walk route one leg per player-info tick
-                // (the panel's `tick_latch` pattern — a hop is sent once
-                // per server tick, not re-sent every 20 ms frame).
-                let Some(arm) = travellers.lock().unwrap().get(name).cloned() else {
-                    return;
-                };
-                {
-                    let mut latch = tick_latch.lock().unwrap();
-                    if latch.get(name) == Some(&(c.gens.player, here)) {
-                        return;
-                    }
-                    latch.insert(name.to_string(), (c.gens.player, here));
-                }
-                let finished = {
-                    let mut arm = arm.lock().unwrap();
-                    let world = nav_world.lock().unwrap().clone();
-                    step_walk_arm_follow(c, snap, &mut arm, world.as_deref(), here)
-                };
-                if finished {
-                    walk_clear.store(true, Ordering::Relaxed);
-                }
-            },
-        );
+                latch.insert(name.to_string(), (c.gens.player, here));
+            }
+            let finished = {
+                let mut arm = arm.lock().unwrap();
+                let world = nav_world.lock().unwrap().clone();
+                step_walk_arm_follow(c, snap, &mut arm, world.as_deref(), here)
+            };
+            if finished {
+                walk_clear.store(true, Ordering::Relaxed);
+            }
+        };
+        let play = match self.template.clone() {
+            Some(template) => run_with_template(
+                template,
+                options.mainland,
+                Vec::new(),
+                |_| (None, None),
+                per_frame,
+            )?,
+            None => run_with_io(&options, Vec::new(), |_| (None, None), per_frame),
+        };
         self.nav_world.lock().unwrap().clone_from(&play.world());
         *self.script_start_handle.lock().unwrap() = Some(play.script_start_handle());
         self.play = Some(play);
         self.vault = Some(vault);
+        Ok(())
     }
 
     /// Spawn `name`'s profile as a slot thread. `RasterMode::Off` always
@@ -548,8 +570,13 @@ impl TuiSession {
             .store(profile.settings.lamp_auto, Ordering::Relaxed);
         *arm.lamp_skill.lock().unwrap() = profile.settings.lamp_skill.clone();
         if let Some(play) = self.play.as_mut() {
-            play.spawn_slot(profile, None, None, Some(arm));
-            true
+            match play.try_spawn_slot(profile, None, None, Some(arm)) {
+                Ok(()) => true,
+                Err(error) => {
+                    self.error = Some(error);
+                    false
+                }
+            }
         } else {
             false
         }
@@ -587,8 +614,8 @@ impl TuiSession {
         let start_script = scenario.settings.start_script;
         let settings_inject = scenario.settings.script_settings_inject;
         let names = mint_live_names(scenario.seed.profiles.len());
-        let entries = mint_live_entries(&names);
-        let pass = live_vault_passphrase();
+        let entries = mint_live_entries_for_target(&names, self.target());
+        let pass = live_vault_passphrase_for(self.target());
         let path = temp_live_vault(&entries, &pass);
         self.unlock_at(&path, &pass)?;
         self.live_name = Some(name);
@@ -756,7 +783,7 @@ impl TuiSession {
             return;
         }
         self.rs2b0t_filled = true;
-        if let Some(root) = script::rs2b0t_root() {
+        if let Some(root) = self.catalog_root() {
             if let Err(e) = self
                 .js
                 .register_rs2b0t(&root, &script::default_rs2b0t_path_file())
@@ -775,7 +802,7 @@ impl TuiSession {
             return;
         }
         self.rs2b0t_filled = true;
-        if let Some(root) = script::rs2b0t_root() {
+        if let Some(root) = self.catalog_root() {
             if let Err(e) = self
                 .js
                 .register_rs2b0t(&root, &script::default_rs2b0t_path_file())
@@ -803,6 +830,12 @@ impl TuiSession {
     }
 
     fn import_rs2b0t_catalog(&mut self, app: &mut TuiApp, root: &Path) -> Result<usize, String> {
+        if self.server_profile.is_some() {
+            return Err(
+                "catalog selection changed after server profile binding; restart with --catalog"
+                    .into(),
+            );
+        }
         if !rs2b0t_root_has_index(root) {
             return Err(format!(
                 "no catalog at {}",
@@ -1151,13 +1184,15 @@ fn chat_data_from(s: &api::snapshot::GameSnapshot) -> ChatData {
 
 /// Run the interactive (or `--live`) TUI: unlock, spawn, event loop.
 fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
-    let mut session = TuiSession::new(PlayOptions {
-        host: args.host.clone(),
-        port: args.port,
-        cache_dir: args.cache.clone(),
-        lowmem: true,
-        mainland: false,
-    });
+    let selection = args.profile.resolve(None)?;
+    let profile = selection.bind()?;
+    let template = SharedClientTemplate::load(profile)?;
+    let mut session = TuiSession::new_bound(template);
+    session
+        .server_profile
+        .as_ref()
+        .expect("bound session")
+        .require_bot_operation()?;
 
     #[cfg(feature = "memory-profile")]
     if let Some(config) = host_play::memory::Config::from_env()? {
@@ -1172,7 +1207,10 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         session.names = run.names.clone();
         session.spawn_all();
         session.focus(&run.names[0]);
-        let mut app = TuiApp::new("274bot memory benchmark");
+        let mut app = TuiApp::new(format!(
+            "274bot memory benchmark · {}",
+            session.profile_label()
+        ));
         app.names = run.names.clone();
         app.focused = Some(0);
         session.memory = Some(run);
@@ -1184,7 +1222,10 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             let scenario = live_scenario(&name)?;
             session.options.mainland = scenario.seed.mainland;
             session.live_prepare_script(scenario)?;
-            let mut app = TuiApp::new(format!("tui-play --live {name}"));
+            let mut app = TuiApp::new(format!(
+                "tui-play --live {name} · {}",
+                session.profile_label()
+            ));
             app.names = session.names.clone();
             app.focused = Some(0);
             run_loop(session, app)
@@ -1193,9 +1234,15 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             let Some(pass) = args.pass.clone() else {
                 return Err("no vault passphrase (set BOT_VAULT_PASS or --vault-pass)".into());
             };
-            let vault_exists = args.vault.is_file();
-            if let Err(e) = session.unlock_at(&args.vault, &pass) {
-                return Err(format!("vault {}: {e}", args.vault.display()));
+            let vault_path = session
+                .server_profile
+                .as_ref()
+                .expect("bound session")
+                .vault_path()
+                .to_path_buf();
+            let vault_exists = vault_path.is_file();
+            if let Err(e) = session.unlock_at(&vault_path, &pass) {
+                return Err(format!("vault {}: {e}", vault_path.display()));
             }
             if !vault_exists {
                 // First run: create the default `test`/`test` profile so
@@ -1224,7 +1271,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             };
             session.spawn(&focus);
             session.focus(&focus);
-            let mut app = TuiApp::new("274bot headless");
+            let mut app = TuiApp::new(format!("274bot headless · {}", session.profile_label()));
             app.names = session.names.clone();
             app.focused = session.names.iter().position(|n| n == &focus);
             run_loop(session, app)
@@ -1243,7 +1290,7 @@ impl TuiSession {
             .unwrap_or(274_000_001);
         let profile = Profile {
             username: username.into(),
-            password: profile_password(username),
+            password: profile_password_for(username, self.target()),
             uid,
             settings: vault::ProfileSettings::default(),
         };
@@ -1376,18 +1423,7 @@ fn multibox_key(session: &mut TuiSession, app: &mut TuiApp) {
 }
 
 pub fn main() -> ExitCode {
-    let mut args = parse_args();
-    if args.prod {
-        client::set_bot_target(client::BotTarget::Prod);
-        let (host, port) = host_play::play_endpoint_for(client::BotTarget::Prod);
-        args.host = host;
-        args.port = port;
-        args.cache = client::cache_dir().display().to_string();
-    }
-    if let Err(msg) = validate_startup_host(&args.host) {
-        eprintln!("{msg}");
-        return ExitCode::FAILURE;
-    }
+    let args = parse_args();
     let mode = match args.live.clone() {
         Some(name) => RunMode::Live(name),
         None => RunMode::Interactive,
@@ -1405,6 +1441,7 @@ pub fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use host_play::profile::ProfileEnvironment;
     use nav::grid::StepGrid;
     use nav::router::FindOptions;
     use nav::world::NavWorld;
@@ -1419,6 +1456,32 @@ mod tests {
             lowmem: true,
             mainland: false,
         }
+    }
+
+    fn checked_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf) {
+        let fixture =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../host-play/tests/fixtures/profile");
+        let root = std::env::temp_dir().join(format!(
+            "274bot-tui-profile-{revision}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let cache = root.join("cache");
+        std::fs::create_dir_all(&cache).unwrap();
+        for jag in [
+            "title",
+            "config",
+            "interface",
+            "media",
+            "versionlist",
+            "textures",
+            "wordenc",
+            "sounds",
+        ] {
+            std::fs::copy(fixture.join(jag), cache.join(jag)).unwrap();
+        }
+        let manifest = fixture.join(format!("manifest-{revision}.json"));
+        (root, cache, manifest)
     }
 
     /// The map pane reads `TuiApp::world`. The session holds the pack on
@@ -1441,8 +1504,59 @@ mod tests {
     #[test]
     fn parse_args_from_prod_is_not_unknown() {
         let args = parse_args_from(["--prod"]).expect("prod is a known flag");
-        assert!(args.prod);
+        assert!(args.profile.prod);
         assert!(args.live.is_none());
+    }
+
+    #[test]
+    fn parse_args_from_accepts_revision_profile_and_ordered_overrides() {
+        let args = parse_args_from([
+            "--live",
+            "script_bone_burier",
+            "--profile",
+            "local-289",
+            "--revision",
+            "289",
+            "--port",
+            "44595",
+        ])
+        .expect("shared profile flags parse before TUI flags");
+        assert_eq!(args.live.as_deref(), Some("script_bone_burier"));
+        assert_eq!(args.profile.profile.as_deref(), Some("local-289"));
+        assert_eq!(args.profile.revision.as_deref(), Some("289"));
+        assert_eq!(args.profile.port, Some(44595));
+    }
+
+    #[test]
+    fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
+        for revision in [274_u16, 289] {
+            let (root, cache, manifest) = checked_fixture(revision);
+            let args = parse_args_from([
+                "--live".to_string(),
+                "script_bone_burier".to_string(),
+                "--profile".to_string(),
+                format!("local-{revision}"),
+                "--cache".to_string(),
+                cache.display().to_string(),
+                "--cache-manifest".to_string(),
+                manifest.display().to_string(),
+            ])
+            .expect("frontend and shared flags parse in either order");
+            let env = ProfileEnvironment {
+                home: Some(root.clone()),
+                working_dir: Some(root.clone()),
+                rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
+                rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
+                ..ProfileEnvironment::default()
+            };
+            let selection = args.profile.resolve_with_env(None, &env).unwrap();
+            assert_eq!(selection.game_host(), "127.0.0.1");
+            let profile = selection.bind().unwrap();
+            let template = SharedClientTemplate::load(profile).unwrap();
+            let client = template.prepare_client(274_000_001, true).unwrap();
+            drop(client);
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
 
     #[test]
@@ -1475,7 +1589,9 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("vault.vault");
         let mut session = TuiSession::new(dummy_options());
-        session.start_play(Vault::create(&path, "bot").unwrap());
+        session
+            .start_play(Vault::create(&path, "bot").unwrap())
+            .unwrap();
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
         let err = session.create_profile("alice").unwrap_err();
         assert!(

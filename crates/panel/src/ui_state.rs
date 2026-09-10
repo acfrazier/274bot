@@ -22,6 +22,10 @@ pub struct PanelUiState {
     /// Global lowmem for every slot. Default true (headless default).
     #[serde(default = "default_true")]
     pub lowmem: bool,
+    /// Server revision selected before the process profile is bound.
+    /// Old preference files migrate to revision 274.
+    #[serde(default = "default_server_revision")]
+    pub server_revision: u16,
     /// Strip collapsing-header order. Empty = [`crate::chrome::HEADING_ORDER`].
     #[serde(default)]
     pub section_order: Vec<String>,
@@ -79,6 +83,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_server_revision() -> u16 {
+    274
+}
+
 impl Default for PanelUiState {
     fn default() -> Self {
         Self {
@@ -88,6 +96,7 @@ impl Default for PanelUiState {
             rail_preview: HashMap::new(),
             raster: vault::RasterMode::Gpu,
             lowmem: true,
+            server_revision: default_server_revision(),
             section_order: Vec::new(),
             script_category_order: Vec::new(),
             script_load_last_dir: None,
@@ -445,5 +454,20 @@ mod tests {
         let back: PanelUiState =
             serde_json::from_str(r#"{"last_focus":null,"collapsed":{}}"#).unwrap();
         assert_eq!(back.chrome, crate::theme::ChromeColors::default());
+    }
+
+    #[test]
+    fn old_prefs_default_revision_to_274_and_289_roundtrips() {
+        let old: PanelUiState =
+            serde_json::from_str(r#"{"last_focus":null,"collapsed":{}}"#).unwrap();
+        assert_eq!(old.server_revision, 274);
+
+        let state = PanelUiState {
+            server_revision: 289,
+            ..Default::default()
+        };
+        let bytes = serde_json::to_vec(&state).unwrap();
+        let back: PanelUiState = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(back.server_revision, 289);
     }
 }

@@ -1,0 +1,81 @@
+    Checking hashbrown v0.17.1
+    Checking either v1.18.0
+    Checking mio v1.2.2
+    Checking tracing-core v0.1.36
+    Checking log v0.4.34
+    Checking objc2-core-foundation v0.3.2
+    Checking hashbrown v0.16.1
+    Checking simd-adler32 v0.3.10
+    Checking rustix v1.1.4
+    Checking regex-automata v0.4.18
+    Checking image v0.25.10
+    Checking swc_visit v2.0.0
+    Checking miniz_oxide v0.8.9
+    Checking par-iter v1.0.2
+    Checking wgpu-types v29.0.4
+    Checking tracing v0.1.44
+    Checking tokio v1.53.1
+    Checking indexmap v2.14.0
+    Checking flate2 v1.1.9
+    Checking tempfile v3.27.0
+    Checking objc2-foundation v0.3.2
+    Checking serde_json v1.0.140
+    Checking naga v29.0.4
+    Checking native-tls v0.2.18
+    Checking tungstenite v0.24.0
+    Checking regex v1.13.1
+    Checking sourcemap v9.3.2
+    Checking elliptic-curve v0.13.8
+    Checking swc_config v3.0.0
+    Checking vault v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/vault)
+    Checking urlpattern v0.3.0
+    Checking primeorder v0.13.6
+    Checking ecdsa v0.16.9
+    Checking swc_common v9.2.0
+    Checking p256 v0.13.2
+    Checking p384 v0.13.1
+    Checking p521 v0.13.3
+    Checking objc2-metal v0.3.2
+    Checking swc_ecma_ast v9.0.0
+    Checking swc_ecma_loader v9.0.0
+    Checking deno_error v0.7.0
+    Checking deno_unsync v0.4.4
+    Checking tokio-util v0.7.19
+    Checking deno_path_util v0.6.1
+    Checking serde_v8 v0.264.0
+    Checking wasm_dep_analyzer v0.4.0
+    Checking deno_permissions v0.72.0
+    Checking deno_core v0.355.0
+    Checking objc2-quartz-core v0.3.2
+    Checking raw-window-metal v1.1.0
+    Checking wgpu-naga-bridge v29.0.4
+    Checking wgpu-hal v29.0.4
+    Checking wgpu-core-deps-apple v29.0.4
+    Checking wgpu-core v29.0.4
+    Checking deno_web v0.244.0
+    Checking deno_url v0.213.0
+    Checking deno_webidl v0.213.0
+    Checking deno_console v0.213.0
+    Checking deno_features v0.10.0
+    Checking swc_ecma_lexer v12.0.0
+    Checking swc_ecma_visit v9.0.0
+    Checking swc_ecma_codegen v11.0.0
+    Checking swc_ecma_parser v12.0.0
+    Checking deno_crypto v0.227.0
+    Checking wgpu v29.0.4
+    Checking swc_ecma_utils v13.1.0
+    Checking client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/vendor/fr-client-rust/crates/client)
+    Checking swc_ecma_transforms_base v13.0.0
+    Checking dprint-swc-ext v0.24.0
+    Checking swc_ecma_transforms_react v15.0.0
+    Checking swc_ecma_transforms_classes v13.0.0
+    Checking swc_ecma_transforms_proposal v13.0.0
+    Checking swc_ecma_transforms_typescript v15.0.0
+    Checking deno_ast v0.49.0
+    Checking rustyscript v0.12.3
+    Checking api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/api)
+    Checking host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/host)
+    Checking nav v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/nav)
+    Checking script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/script)
+    Checking host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/host-play)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.63s
