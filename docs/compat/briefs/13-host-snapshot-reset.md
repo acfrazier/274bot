@@ -2,6 +2,17 @@
 
 ## Orchestrator correction at 18:05 UTC (read before resuming)
 
+Root also accepts the concrete missing seam reported in this card's 13:48
+comment: successful response-15 reconnect can replace ClientStream while
+returning with ingame still true. The same scoped client change is explicitly
+authorized to add a monotonic client-owned session generation on successful
+login/reconnect. Host queues and publication must use that real session identity,
+not fd/pointer/byte-count or ingame-only heuristics. Include response-15 coverage
+through the existing real mock-login path and prove pre-reconnect work is
+discarded. Failed handshakes must not masquerade as a new successful session.
+This and the actual PLAYER_INFO observation below are the two authorized generic
+client facts; preserve wire bytes, login timing and all other lifecycle behavior.
+
 The WIP Pump::drain inference that equal deltas across all family counters mean
 a lifecycle invalidation is not sound. Different packet sequences can produce
 the same deltas: REBUILD plus an inventory/scene packet may invent a tick, while
