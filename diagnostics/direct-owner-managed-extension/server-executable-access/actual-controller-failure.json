@@ -1,0 +1,24 @@
+{
+  "observed_at": 1789001728.9777207,
+  "euid": 1000,
+  "server_pid": 726,
+  "sample": {
+    "start_identity": "linux_proc_start_ticks:595",
+    "state": "S",
+    "resident_bytes": 642490368,
+    "user_s": 3482.31,
+    "system_s": 146.86,
+    "provenance": {
+      "os": "linux",
+      "rss": "/proc/726/stat field 24 rss pages \u00d7 SC_PAGE_SIZE (current resident set; approximate)",
+      "cpu": "/proc/726/stat utime/stime \u00f7 SC_CLK_TCK (cumulative process CPU)",
+      "identity": "/proc/726/stat field 22 starttime ticks"
+    }
+  },
+  "unit": "MainPID=726\nAmbientCapabilities=cap_net_bind_service\nUser=acfrazier\nNoNewPrivileges=yes\n",
+  "error": {
+    "type": "CellError",
+    "message": "direct owner server executable identity unavailable",
+    "cause": "[Errno 13] Permission denied: '/proc/726/exe'"
+  }
+}
