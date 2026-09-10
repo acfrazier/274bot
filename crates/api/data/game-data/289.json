@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "revision": 289,
   "provenance": {
     "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
@@ -15,7 +15,54 @@
         "bytes": 201091,
         "sha256": "3eeb1085547fb3af66db55ec4368357dbbad5178b7747f8b7cb0339fdd04a4ce"
       }
-    ]
+    ],
+    "decoder_sources": [
+      {
+        "path": "src/cache/config/ObjType.ts",
+        "bytes": 9994,
+        "sha256": "35172ca7bcd3804bb4e389d45b7d1b8af405e1a57248d374516b46a252d22b84"
+      },
+      {
+        "path": "src/cache/config/ConfigType.ts",
+        "bytes": 514,
+        "sha256": "b78a1ad39fdec505451a3c5929fa234404cafdd5c1518833ba91056aee58e6c9"
+      },
+      {
+        "path": "src/cache/config/ParamHelper.ts",
+        "bytes": 1166,
+        "sha256": "bc0b35fd75f3ac6df71d348b3e3253b7542370ca058cd4fe221e7ae8572fc147"
+      },
+      {
+        "path": "src/cache/config/ParamType.ts",
+        "bytes": 3710,
+        "sha256": "ab9cd809d28d6ebc91a0a576deb0ade2d8b691e695b675ff0b3bfcf7d0643164"
+      },
+      {
+        "path": "src/io/Jagfile.ts",
+        "bytes": 12247,
+        "sha256": "b205bc9a9bbe397947eaae95720701d8ff3b4731898d337a32d057855575ab2e"
+      },
+      {
+        "path": "src/io/Packet.ts",
+        "bytes": 15124,
+        "sha256": "b862157bfbf03c102528cc8ddee7d75d463739da4b41649b1f44ff2e0e9fdc5c"
+      },
+      {
+        "path": "src/util/Environment.ts",
+        "bytes": 172,
+        "sha256": "07ec8993db7235dc460812a6413d9bf7e16a2bc4d3ec5331b887417cee6c952e"
+      },
+      {
+        "path": "src/util/Logger.ts",
+        "bytes": 1762,
+        "sha256": "12f0db23d43e2b58ae3f06d6d383b1b54af780b71a25fe71dd4350d8349d98cb"
+      }
+    ],
+    "cache_identity": {
+      "cache_id": "c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09",
+      "nav_sha256": "131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924",
+      "flags_sha256": "67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a"
+    }
   },
   "items": [
     {
