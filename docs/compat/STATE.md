@@ -8,15 +8,25 @@ Client branch: `codex/bothost-274-289`; published base `9b41e6e06b9fd42dc2247fc8
 
 ## Current milestone
 
-Step 1 is complete. Step 2 source reconciliation and macOS regression checks
-are accepted after corrective Grok 4.5 and fresh whole-client Grok 4.6 review.
-The complete campaign is not accepted: host revision/profile binding, live
-gameplay, catalog options, frontend/fleet and Linux/Windows checks remain.
-Historical platform failures have not been freshly reproduced.
+Steps 1–3 are accepted on macOS within their stated scope. Step 3 binds the
+immutable profile through host, panel and TUI, with completed actual Grok 4.5
+task reviews and Grok 4.6 integration approval. Native panel selection/binding
+and local 274 scene-2 login passed; the real macOS TUI PTY also reached scene 2
+and exited 0. Both final 274/289 asset constructors initialized successfully.
+Host product: `41d896b3007e476c76a9c01352b64d5afd5ed901`; current client pin:
+`2be1697060e4d2b8b709ad4d5e54d12513b38333` (product `c8e61557`).
 
-Reviewed client candidate: `58120f28ee5208553ca07f41cb364f2cf98ea280`.
+The complete campaign is not accepted: step-4 host action/snapshot qualification,
+289 navigation, catalog options, frontend/fleet and Linux/Windows checks remain.
+Production 289 bot operations still refuse before mutations. Historical platform
+failures have not been freshly reproduced. No workers remain active for step 3.
+Read `01-session-profile.md` and its native evidence receipt for acceptance.
+
+## Accepted step-2 snapshot
+
+Step-2 reviewed client candidate: `58120f28ee5208553ca07f41cb364f2cf98ea280`.
 Client product: `d14755da758c64d971c1103b2d7703f6fd8379fb`; the final candidate
-commit adds report/evidence only. The campaign host gitlink pins that candidate
+commit adds report/evidence only. The step-2 host gitlink pinned that candidate
 locally. Its publication and fresh recursive fetch/build proof belong to step 9.
 No public integration, release tag or package publication has occurred.
 
@@ -73,9 +83,9 @@ no worker or review remains active for this milestone. Their exact model/run
 receipts and report are in `reviews/`. The final whole-campaign Grok review is
 still required after steps 3–8.
 
-## Next implementation
+## Accepted step-3 milestone
 
-Step 3 is active by the operator's 2026-09-10 follow-up: bind one immutable server profile through host, panel and TUI, including
+Step 3 was authorized by the operator's 2026-09-10 follow-up: bind one immutable server profile through host, panel and TUI, including
 revision, game/asset endpoints, RSA/CRC, shared cache/interface resources and
 nav/content/catalog identity. Read `briefs/05-session-profile-preparation.md`:
 the shared constructor's HTTP default and ambient login/transport/unpack
@@ -93,9 +103,24 @@ on source `7aaa8c39`. Root follow-up `a02c9dd5` binds the remaining fixture-butt
 presentation call. The 384 panel and 89 TUI tests passed; current integrated
 binaries build successfully. Nine real binary negatives created no vaults.
 Current implementation, asset checks and review receipts are recorded in
-`01-session-profile.md`. Step-3 integration, native macOS frontend validation
-and the Grok 4.6 milestone review remain open. Do not expose 289 bot operation using current direct
-274 host writers or fall back to 274 navigation.
+`01-session-profile.md`. Integration card `t_80dd7fd0` completed approval under
+actual Grok 4.6 / xai-oauth, session `20260910_124351_55201a`, at `a02c9dd5`.
+Root presentation correction `41d896b3` fixed two clipped profile labels and
+passed format/build/diff plus native visual checks. Ten original panel captures
+cover default/explicit selection, 289 refusal before vault writes, restart-required
+binding, local 274 scene 2 and title-screen return. TUI reached scene 2 in an
+actual macOS PTY and exited 0. Its first literal-text reader failure is retained;
+CUA denied iTerm2, so no native terminal-window visual proof is claimed.
+Both final asset constructors passed with shared resources and expected nav
+availability. Complete receipts: `evidence/session-profile/native-macos/proof.json`.
+Preferences were restored exactly and proof apps/owned 289 engine stopped;
+existing 274 engine PID1852 remained listening. No memory/performance claim.
+
+## Next implementation
+
+Do not expose 289 bot operation using current direct 274 host writers or fall
+back to 274 navigation. Step 4 qualifies the complete host action/snapshot
+boundary and the controlled local action sequence on both revisions.
 
 Operator platform clarification: validate step 3 on macOS first. Linux and
 Windows do not have a 289 engine configured; prepare those isolated engines

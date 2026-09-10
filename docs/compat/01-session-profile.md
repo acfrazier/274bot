@@ -1,9 +1,12 @@
 # Step 3: immutable server profiles
 
-Implementation is complete on `codex/rs2b0t-multirevision` and
+Step 3 is accepted on macOS on `codex/rs2b0t-multirevision` and
 `codex/bothost-274-289`. Client, host backend and frontend same-card Grok 4.5
-reviews are approved. Native macOS frontend checks and the Grok 4.6 integration
-gate remain open. Step 3 is not accepted yet. The architecture review is
+reviews and the integrated Grok 4.6 source review are approved. Native panel
+selection/binding and local 274 login passed; the actual macOS TUI PTY reached
+scene 2 and exited cleanly. Final host product is `41d896b3`, client pin
+`2be16970`. Linux/Windows and the remaining campaign steps are still open.
+The architecture review is
 `reviews/session-profile-design-grok46.md` (card `t_bfd3339c`, actual Grok 4.6).
 
 ## Host behavior
@@ -60,7 +63,7 @@ A revision 289 navigation pack requires a `<pack>.json` manifest containing
 sidecar. A missing selected pack is explicitly unavailable; it never loads the
 other revision's default. Actual 289 baking and qualification belong to step 5.
 
-## Verification in progress
+## Verification
 
 `crates/host-play/tests/session_profile.rs` uses authored synthetic JAG files,
 with provenance and generator under `tests/fixtures/profile`. The fixtures
@@ -86,8 +89,9 @@ represent game content or a live session.
 - The real profile asset checks initialized both local fixtures on macOS,
   including matching server CRCs and shared client bindings. Revision 274 loaded
   its existing snapshot/nav; 289 used its separate cache/HTTP/unpack and reported
-  navigation unavailable plus the expected bot-operation gate. These are
-  development-candidate asset checks, pending the final integrated candidate.
+  navigation unavailable plus the expected bot-operation gate. The final
+  integrated constructor repeated both asset checks successfully on `41d896b3`;
+  its receipts are in `evidence/session-profile/native-macos/profile-assets.json`.
   The first 289 engine launch exited after readiness; its probe was terminated
   and preserved as a failed preparation attempt. Keeping the launcher session
   alive allowed the new engine PID91467 to remain ready before and after the
@@ -107,9 +111,51 @@ wrong cache pairing and unqualified 289 operation without creating vaults.
 Frontend review accepted `7aaa8c39`; root follow-up `a02c9dd5` routes the remaining
 fixture-button presentation helper through the bound target. Existing local and
 public button tests passed. This follow-up and the catalog identity helper are
-included in the fresh integration review. The final source candidate is
-`a02c9dd5`; current binary hashes and build command are in
+included in the completed integration review. The reviewed source candidate is
+`a02c9dd5`; its frozen binary hashes and build command are in
 `evidence/session-profile/frontends/integrated-binaries.json`.
+
+## macOS acceptance
+
+Actual Grok 4.6 / xai-oauth completed card `t_80dd7fd0`, run 1094, with source
+approval at host `a02c9dd5` and client `2be16970`. It independently verified all
+57 frozen evidence hashes and passed the nine profile tests. The report and
+actual session receipt are `reviews/session-profile-integration-grok46.{md,json}`.
+
+Native inspection then exposed clipped server/revision text in the narrow
+panel pane. Root correction `41d896b3` wraps the server label and places the
+revision caption above the combo. This presentation-only change passed diff,
+format, build and visual checks under the proportional verification guidance;
+it follows the integrated source review. Its binary hash/build receipt is
+`evidence/session-profile/native-macos/layout-build.json`.
+
+| Native check | Result |
+|---|---|
+| Default panel selection | Complete local-274 server label and revision 274 visible before binding |
+| Select 289 before binding | Effective server changes to local-289, port 44594; saved revision becomes 289 |
+| Attempt 289 startup | Explicit host-boundary refusal, no slots, synthetic vault SHA unchanged |
+| Change revision after binding | Active/saved 289 retained; visible restart-required error |
+| Explicit 274 over saved 289 | Effective revision 274 shown before binding, then retained by the live slot |
+| Real panel client | Local 274 Login reaches visible `ingame scene 2`, tile 3094,3106; rendered game and bound profile captured |
+| Real TUI client | Local 274 title/endpoint, `ingame scene 2`, then `q` and exit 0 in the macOS PTY |
+| Both final asset constructors | 274 and 289 initialize with matching CRC and shared cache/binding; distinct endpoints and expected nav availability |
+
+Ten original F12 PNGs were inspected directly, including the initial clipped
+layout and the title-screen return after panel Logout. Capture mapping, hashes,
+exact launch arguments and limits are in
+`evidence/session-profile/native-macos/proof.json`. F12 deliberately writes a
+default snapshot JSON, so those sidecars do not establish scene readiness.
+The rendered game and native status text provide the panel observation.
+The title-screen capture retains the status label `logging in...`; this proof
+does not qualify reconnect/lifecycle behavior.
+
+CUA denied access to iTerm2, so TUI evidence is an actual local PTY transcript,
+without a native terminal-window visual claim. The first reader missed cursor
+sequences between the state words; its failed receipt is preserved. A fresh run
+with the same-row cursor-aware reader passed and exited 0. The original panel
+preferences were restored byte-for-byte, proof apps closed, and owned 289
+engine PID91467 stopped after the final asset checks. Existing 274 PID1852
+remained listening. The account and vault were created for this local proof.
 
 ## Remaining gates
 
@@ -121,8 +167,8 @@ catalog/gameplay row is accepted by this step. The client and host backend same-
 The host pins the reviewed client candidate `2be1697060e4d2b8b709ad4d5e54d12513b38333`
 locally; its product commit is `c8e61557`. Root owns the gitlink and integration.
 The frontend same-card Grok 4.5 review is approved (card `t_879d9607`, actual
-session `20260910_123250_73d488`). Integrated Grok 4.6 review and native macOS
-frontend validation remain pending. Captured catalog identity also prevents
+session `20260910_123250_73d488`). Integrated Grok 4.6 source review and macOS
+frontend validation are complete. Captured catalog identity also prevents
 pre-bind Browse/warmup from retaining a different root or edited source. Custom
 file cards remain present when binding refuses a catalog mismatch.
 

@@ -1,0 +1,14 @@
+274bot: loaded snapshot (4556 models, 336 anim records)
+{
+  "profile": "local-274 · 127.0.0.1:43594 · revision 274",
+  "revision": 274,
+  "cache_id": "4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c",
+  "cache_dir": "/Users/acfrazier/experiments/Server/engine/data/pack/client",
+  "asset_endpoint": "127.0.0.1:80",
+  "shared_binding": true,
+  "shared_cache": true,
+  "navigation": "Legacy274",
+  "initialized": true,
+  "gameplay_started": false,
+  "bot_operation_error": null
+}
