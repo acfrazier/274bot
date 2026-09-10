@@ -794,7 +794,14 @@ fn prepare_catalog_card(
         .get(script::ScriptSource::Catalog, case.card_name())
         .cloned()
         .ok_or_else(|| format!("catalog registry has no {} card", case.card_name()))?;
-    if card.path != source_path {
+    let canonical_source = source_path
+        .canonicalize()
+        .map_err(|error| format!("canonicalize {}: {error}", source_path.display()))?;
+    let canonical_card = card
+        .path
+        .canonicalize()
+        .map_err(|error| format!("canonicalize {}: {error}", card.path.display()))?;
+    if canonical_card != canonical_source {
         return Err(format!(
             "registry path mismatch for {}: ledger {}, loader {}",
             case.card_name(),
