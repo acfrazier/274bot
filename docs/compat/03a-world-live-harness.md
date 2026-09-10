@@ -1,28 +1,32 @@
 # Controlled world live harness
 
-This step-5 harness is `crates/host-play/tests/world_boundary_live.rs`. It is
+The step-5 harness is `crates/host-play/tests/world_boundary_live.rs`. It is
 ignored by default and requires `LIVE=1`, `WORLD_REVISION=274|289`,
 `WORLD_CASE=nav_full|nav_door|guardian_lamp`, and an explicit
 `WORLD_NAV_PACK`; `WORLD_ENGINE_DIR` and `WORLD_NAV_FLAGS` are optional.
 
-The harness resolves and binds an explicit loopback `local-274` or `local-289`
-profile, loads the selected cache and `template.world()`, and prepares clients
-through `SharedClientTemplate`. Navigation uses the registered
-`ScenarioRunner::with_world` scenarios and their existing predicates/deadlines.
-Each frame publishes through `host::publish_snapshot` and passes the selected
-snapshot through the real `host::Guardian`; no production source, gate, engine,
-or original harness is changed.
+The harness resolves an explicit loopback local profile, loads the selected
+cache and `template.world()`, and mints a unique per-run account. Every cell
+performs the same preparation before its proof baseline: login, local
+mainland `seed_at(3220,3212,0)`, observed logout, and observed relogin.
 
-`nav_full` and `nav_door` use fresh per-run account names. `guardian_lamp`
-uses the local `give lamp` fixture, requires an observed inventory lamp, a
-Guardian-owned hold (`ours && hold`), and subsequent lamp consumption with the
-hold lifted. The harness intentionally makes no live acceptance claim: root
-runs and records the 274 and 289 cells against the frozen local engines.
+`nav_full` injects the selected world into `ScenarioRunner::with_world`,
+clears only the scenario fixture's `engine_speed_ms` to `None`, records that
+setting, and retains the scenario's 360-second deadline with a 400-second
+process bound. `nav_door` reuses the production Catherby outside/inside
+Traveller route and door identity, but removes the two-bot closer companion;
+it prepares at the outside stand, closes and observes the door before the
+baseline, then requires observed route-caused opening and inside arrival. The
+180-second outer bound and runner scene/send settlement behavior are retained.
 
-Support checks completed in this worktree:
+`guardian_lamp` gives a real lamp after mainland relog, records inventory and
+strength XP, drives the actual `host::random::Guardian` with default host
+claim, and requires an observed hold, lamp skill interface (`2808`), lamp
+consumption, strength XP gain, lifted hold, and a post-resolution host walk.
+Existing guardian hold/claim/resume/reset behavior is covered by the source
+unit-test evidence recorded in the harness evidence log. No live acceptance
+claim is made here: root runs and records the 274 and 289 cells.
 
-- `cargo test -p host-play --test world_boundary_live --features memory-profile --no-run`
-- `cargo clippy -p host-play --test world_boundary_live --features memory-profile --no-deps -- -D warnings`
-- `git diff --check`
-
-No live engine was launched, as required by the brief.
+Support checks and their exact outcomes are recorded in
+`evidence/world-capabilities/harness/support-checks.log`. Live engines were
+not launched by this task.

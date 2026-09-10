@@ -1,8 +1,17 @@
 Support-checks (no live acceptance)
 
-cargo test -p host-play --test world_boundary_live --features memory-profile --no-run: PASS
-cargo clippy -p host-play --test world_boundary_live --features memory-profile --no-deps -- -D warnings: PASS
-git diff --check: PASS
+PASS: cargo fmt --check -- crates/host-play/tests/world_boundary_live.rs
+PASS: git diff --check
+PASS: cargo test -p host --lib random::tests --no-default-features
+  43 passed; 0 failed; 93 filtered out
 
-Live cells were not launched. Root owns running explicit 274 and 289 cells and
-retaining their JSON/log output here.
+BLOCKED by pre-existing host-play banking WIP in the shared checkout:
+- cargo test -p host-play --test world_boundary_live --features memory-profile --no-run
+- cargo clippy -p host-play --test world_boundary_live --features memory-profile --no-deps -- -D warnings
+
+Both host-play commands fail before compiling the new test because
+`crates/host-play/src/lib.rs` has the unrelated `PendingWithdrawX`/
+`SnapshotInput` field mismatch (`expires_tick`, `withdraw_x_result`, and
+`withdraw_x_result_seq`). The task brief forbids editing or staging that WIP.
+A clean host-play compile/clippy must be rerun after its owner resolves the
+shared mismatch. Live engines were not launched.
