@@ -9,7 +9,7 @@ Validation:
 - Fresh selected navpack baked and validated; contested-door test passed both login orders. All32 macOS sustained Thiever slots restocked exactly22 food, closed the bank, returned and increased successful steals. Controlled Traveller stun recovery, timed live focus priority and live modal/freeze intervals are not newly proven.
 - One ordinary headless Play pair at N1 observed mean current RSS289.88→260.59MiB, with XP234→141; this is a short single-pair observation, not an equal-productivity CPU or general capacity claim. MainN32 qualified; selectedN32 was interrupted before measurement, with server save confirming a Maze destination. The failed artifact is retained; no N32 savings or recovery claim, and no favorable retry.
 
-The required Grok4.6 whole-diff review approved the assembled code; final acceptance review records the completed evidence and limits. Live/native artifacts bind host9527cc63/clientdaccb4ba. The final hostc5159d38/client9b41e6e adds product docs and behavior-equivalent lint cleanup, not relabeled native rebuilds.
+The required Grok4.6 whole-diff review approved the assembled code; closing review requested operator acceptance of the missing paired N32 performance result and documented limits, with no code change requested. The operator accepted publication and merge on September 10, 2026. Live/native artifacts bind host9527cc63/clientdaccb4ba. The final hostc5159d38/client9b41e6e adds product docs and behavior-equivalent lint cleanup, not relabeled native rebuilds.
 
 Source mapping (selected/reconstructed code, not cumulative campaign merges):
 

@@ -1,0 +1,14 @@
+{
+  "operator_authorization": "2026-09-10: The published license for the software clearly states that it is provided as-is, please merge/push",
+  "pr": "https://github.com/acfrazier/274bot/pull/1",
+  "merged_at": "2026-09-10T10:19:30Z",
+  "main": "217f150f125885dfbc84e07e81d4aa63ca617297",
+  "parent": "54cfcf8a33613735bde9f43dd9c9beb8ec06dae9",
+  "reviewed_tree": "c5159d38534281af66f5267e56fc5f0995d09071",
+  "tree_equal_verified": true,
+  "client": "9b41e6e06b9fd42dc2247fc813a303c3fcb92941",
+  "client_remote": "https://github.com/acfrazier/FR-client-bothost.git",
+  "client_branch": "r274-bh-modular",
+  "published_gitlink_verified": true,
+  "ci_at_merge": "in_progress"
+}
