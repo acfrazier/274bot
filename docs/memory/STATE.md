@@ -11,6 +11,23 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-10 00:57 UTC
+
+- CF2 failure review t_7ef3743e COMPLETE CONFIRM_FAILURE_PARK, actualGrok4.5/xai
+  session20260909_204744_6e9c05 ended1789001522.353339. Root read full report:
+ 316members/65chargedchildren corroborated; no continuation token, no CA/resume.
+  Navigation coordinate StageA is parked pending a separately reviewed method
+  decision; partials are not performance acceptance.
+- Owner account clarification APPROVED and plan updated5729e78. Fresh real server
+  identity check now fails: actual6f2b410linux_executable_basename(726) errno13,
+  sameuid1000, freshstart595, unitMainPID726/AmbientCapabilitiescap_net_bind_service.
+  Procstat/resource sampling works; readonlysudo-nreadlinkrequirespassword.
+  No permission/service change or privileged frontend performed.
+- Root4ad17ab records exact failure. Bounded architecture review t_f227a361
+  actually active20260909_205609_b02901 Grok4.6/xai for explicit minimal readonly
+  identity adapter and later concrete operator permission step. No implementation
+  or permissions authorized by that review card; no live launch.
+
 ## Latest boundary — 2026-09-10 00:52 UTC
 
 - Operator APPROVED account timing clarification: preserve fixture behavior,
