@@ -11,6 +11,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-10 00:12 UTC
+
+- Independent native navigation evidence reviewer t_518edea2 actually running,
+  session20260909_200810_a9f1cd Grok4.5/xai. No CF1 release before verdict.
+- Escalation t_6e97dd77 remains active; its portable frozen probes and root current
+  source inspection expose additional lifecycle fixture gaps beyond fixed cache:
+  generated ambient-start replaces real helper identity, and release-file expiry
+  300.0 disagrees with the supplied current-time preflight expiry. Native03 package
+  37be3a1 remains withheld; do not run it as corrected qualification.
+- Corrective Sol card t_6c6930b1 created behind escalation parent. It must restore
+  actual dummy process identities, coherent hashed release/preflight times, and
+  add a portable regression sharing the complete Linux fixture constructor.
+  Same-card reviewer then fresh Linux required. Card is pending parent, not yet
+  an executed worker. No production/cap/private/live edits authorized by the card.
+
 ## Latest boundary — 2026-09-10 00:07 UTC
 
 - Exact59 full-byte native comparison COMPLETE PASS, session14903 terminal0.
