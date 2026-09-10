@@ -1,0 +1,48 @@
+
+running 1 test
+{"phase":"identity","revision":289,"profile":"local-289 · 127.0.0.1:44594 · revision 289","cache_id":"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack","nav_sha256":"131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924","catalog_commit":"100adccc037d9f6898080e1cad58fcfc43364775","catalog_identity":"pre-289 frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"ChickenKiller","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/ChickenKiller/ChickenKiller.ts","source_sha256":"997caf51e5f409703f4523e74e52f9aa22d388059c36e2810358176b26f9087f","compiled_sha256":"1521855852ae0d0566aa67132be6f4ae2eb24ef45b15406127607733533e4d91","siblings":[],"settings":{"leashRadius":12.0,"fightHpGate":45.0,"restUntilHp":70.0,"targetName":"Chicken","lootMatch":"bones","buryBones":true,"combatStyle":"melee","meleeStyle":"strength","spell":"Wind Strike","runesWithdraw":100.0,"rangeStyle":"rapid","ammo":"Bronze arrow","ammoWithdraw":200.0,"bankStrategy":"Off","bankEveryItems":15.0,"bankEveryMinutes":10.0,"bankCommonJunk":true}},"account":"livegntfrm_0","engine_speed_ms":null}
+[host-play] slot livegntfrm_0: thread up
+274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+[host-play] slot livegntfrm_0: handshake begin reconnect=false
+[host-play] slot livegntfrm_0: handshake ok
+[host-play] slot livegntfrm_0: queued mainland tele+setvar (scene 2)
+[host] slot livegntfrm_0: d_loop_us=10078 d_raster_us=0 d_observe_us=43805 max_observe_us=4556 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot livegntfrm_0: handshake begin reconnect=true
+[host-play] slot livegntfrm_0: handshake ok
+[host-play] slot livegntfrm_0: queued mainland tele+setvar (scene 2)
+[host] slot livegntfrm_0: d_loop_us=9240 d_raster_us=0 d_observe_us=46489 max_observe_us=5328 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+{"phase":"baseline-after-preparation","scenario":"chicken_killer","account":"livegntfrm_0","observation":{"ingame":true,"scene_state":2,"player":"Livegntfrm 0","tile":[3235,3295,0],"tick":14,"items":{},"bank":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]]}}
+[script livegntfrm_0] start load
+{"phase":"start","account":"livegntfrm_0","count":1}
+[host] hitch livegntfrm_0: observe_us=65120 paints=0 skips=84 ticks=14
+[script livegntfrm_0] anchored at (3235, 3295, 0), hunting Chicken, leash 12, style melee (strength)
+[script livegntfrm_0] interact IfButton { component_id: 5862 }
+[host] slot livegntfrm_0: d_loop_us=10148 d_raster_us=0 d_observe_us=164008 max_observe_us=65120 d_paints=0 d_skips=50 d_ticks=14 window_ms=8724
+[script livegntfrm_0] combat style set to strength
+[script livegntfrm_0] interact Npc { name: "Chicken", action: "Attack", index: Some(2914) }
+[host] slot livegntfrm_0: d_loop_us=1873 d_raster_us=0 d_observe_us=88910 max_observe_us=5426 d_paints=0 d_skips=50 d_ticks=2 window_ms=1170
+[host] slot livegntfrm_0: d_loop_us=1739 d_raster_us=0 d_observe_us=68592 max_observe_us=7160 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+test catalog_boundary_live has been running for over 60 seconds
+[host] slot livegntfrm_0: d_loop_us=1576 d_raster_us=0 d_observe_us=55506 max_observe_us=3437 d_paints=0 d_skips=50 d_ticks=2 window_ms=1195
+[host] slot livegntfrm_0: d_loop_us=1554 d_raster_us=0 d_observe_us=50530 max_observe_us=2559 d_paints=0 d_skips=50 d_ticks=2 window_ms=1187
+[host] slot livegntfrm_0: d_loop_us=1682 d_raster_us=0 d_observe_us=51311 max_observe_us=2478 d_paints=0 d_skips=50 d_ticks=2 window_ms=1200
+[host] slot livegntfrm_0: d_loop_us=1797 d_raster_us=0 d_observe_us=61350 max_observe_us=3741 d_paints=0 d_skips=50 d_ticks=2 window_ms=1179
+[host] slot livegntfrm_0: d_loop_us=1537 d_raster_us=0 d_observe_us=56746 max_observe_us=3196 d_paints=0 d_skips=50 d_ticks=2 window_ms=1211
+[host] slot livegntfrm_0: d_loop_us=1482 d_raster_us=0 d_observe_us=49487 max_observe_us=3342 d_paints=0 d_skips=50 d_ticks=2 window_ms=1208
+[host] slot livegntfrm_0: d_loop_us=1619 d_raster_us=0 d_observe_us=48462 max_observe_us=2331 d_paints=0 d_skips=50 d_ticks=2 window_ms=1196
+[host] slot livegntfrm_0: d_loop_us=1330 d_raster_us=0 d_observe_us=52440 max_observe_us=3573 d_paints=0 d_skips=50 d_ticks=2 window_ms=1187
+[script livegntfrm_0] Chicken killed
+[host] slot livegntfrm_0: d_loop_us=1872 d_raster_us=0 d_observe_us=68458 max_observe_us=10364 d_paints=0 d_skips=50 d_ticks=2 window_ms=1199
+[host] slot livegntfrm_0: d_loop_us=1754 d_raster_us=0 d_observe_us=59757 max_observe_us=11647 d_paints=0 d_skips=50 d_ticks=2 window_ms=1173
+[script livegntfrm_0] interact Obj { x: 3231, z: 3296, level: 0, name: Some("Bones"), action: "Take" }
+[host] slot livegntfrm_0: d_loop_us=1833 d_raster_us=0 d_observe_us=67365 max_observe_us=8301 d_paints=0 d_skips=50 d_ticks=2 window_ms=1197
+[script livegntfrm_0] looted Bones
+[script livegntfrm_0] interact Held { name: "Bones", action: "Bury" }
+[shim-held] Bones Bury slot=1 -> sent
+[host] slot livegntfrm_0: d_loop_us=1954 d_raster_us=0 d_observe_us=62630 max_observe_us=7247 d_paints=0 d_skips=50 d_ticks=2 window_ms=1171
+[script livegntfrm_0] buried bones
+PASS: catalog_boundary_live: {"scenario":"chicken_killer","runner":"Some(Evidence { scenario: \"chicken_killer\", outcome: \"PASS\", predicate: \"stat_xp_gain(2)>=1\", ticks: 18, elapsed_ms: 33969, message: None, tile: Some([3233, 3296, 0]), inv: [], stat: Some(StatRow { runenergy: 99 }), chat: [ChatRow { text: \"set tutorial: to 1000\", username: None }, ChatRow { text: \"Welcome to RuneScape.\", username: None }], scene: 2 })","core":{"case":"chicken_killer","baseline":{"ingame":true,"scene_state":2,"player":"Livegntfrm 0","tile":[3235,3295,0],"tick":14,"items":{},"bank":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]]},"latest":{"ingame":true,"scene_state":2,"player":"Livegntfrm 0","tile":[3231,3296,0],"tick":45,"items":{"Feather":5},"bank":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1157,"magic":0,"mining":0,"prayer":4,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":12,"thieving":0,"woodcutting":0},"chat":[[8,"You bury the bones."],[7,"You dig a hole in the ground..."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]]},"max_items":{"Bones":1,"Feather":5},"max_xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1157,"magic":0,"mining":0,"prayer":4,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":12,"thieving":0,"woodcutting":0},"saw_bury_chat":true,"post_start_observations":756,"bone_bank_cycle":{"first_batch_buried":false,"opened":null,"withdrawn":null,"buried_after_withdrawal":false}}}
+test catalog_boundary_live ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 74.96s
+
