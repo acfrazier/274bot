@@ -5,7 +5,7 @@
 //! driver accepted the send, not that the server applied it.
 
 use client::client::{Client, MiniMenuAction};
-use client::io::ClientProt;
+use client::io::{map_client_prot, ClientProt, ClientRevision};
 
 use crate::prot::{Out, Send};
 use crate::snapshot::{
@@ -24,6 +24,11 @@ pub const OFF_ISLAND_TELE: &str = "0,50,50,20,20";
 /// The send-side driver the kernel writes through. `Client` implements it
 /// over `doAction`/`tryMove`/`out`; tests use a recording stub.
 pub trait Driver {
+    /// Protocol revision captured by the bound session. Legacy recorders and
+    /// stubs keep the existing revision-274 behavior by default.
+    fn revision(&self) -> ClientRevision {
+        ClientRevision::R274
+    }
     /// Target captured by a bound session. Legacy recorders retain the existing
     /// process default; real bound clients never re-read it for cheat policy.
     fn session_target(&self) -> client::BotTarget {
@@ -81,6 +86,10 @@ pub trait Driver {
 }
 
 impl Driver for Client {
+    fn revision(&self) -> ClientRevision {
+        Client::revision(self)
+    }
+
     fn session_target(&self) -> client::BotTarget {
         Client::session_target(self)
     }
@@ -233,14 +242,14 @@ pub fn op_loc<D: Driver + ?Sized>(driver: &mut D, x: i32, z: i32, loc_id: i32) -
 
 /// Close the open modal (`CLOSE_MODAL`).
 pub fn close_modal<D: Driver + ?Sized>(driver: &mut D) -> bool {
-    Send::close_modal().write(driver.out());
-    true
+    let revision = driver.revision();
+    Send::close_modal().write_for_revision(revision, driver.out())
 }
 
 /// Answer a count dialog with `amount` (`RESUME_P_COUNTDIALOG`).
 pub fn answer_count<D: Driver + ?Sized>(driver: &mut D, amount: i32) -> bool {
-    Send::count_dialog(amount).write(driver.out());
-    true
+    let revision = driver.revision();
+    Send::count_dialog(amount).write_for_revision(revision, driver.out())
 }
 
 /// Queue a `CLIENT_CHEAT` (`::` command) through the ISAAC sink.
@@ -273,8 +282,9 @@ pub fn cheat<D: Driver + ?Sized>(driver: &mut D, cmd: &str) -> bool {
     if !cheat_allowed(driver.session_target()) {
         return false;
     }
+    let revision = driver.revision();
     let out = driver.out();
-    out.p1_enc(ClientProt::CLIENT_CHEAT.id);
+    out.p1_enc(map_client_prot(revision, ClientProt::CLIENT_CHEAT).id);
     out.p1((cmd.len() + 1) as i32);
     out.pjstr(cmd);
     true
@@ -1315,12 +1325,12 @@ impl<'a> Interactions<'a> {
             WireCommand::Count { value } => answer_count(&mut *self.driver, *value),
             WireCommand::Walk { tile } => walk(&mut *self.driver, tile.x, tile.z),
             WireCommand::DoorStep { tile } => {
+                let revision = self.driver.revision();
                 crate::prot::WalkStep {
                     x: tile.x,
                     z: tile.z,
                 }
-                .write(self.driver.out());
-                true
+                .write_for_revision(revision, self.driver.out())
             }
             WireCommand::SideTab { tab } => self.driver.click_side_tab(*tab),
             WireCommand::Login { username, password } => {
