@@ -11,6 +11,11 @@
         "sha256": "5e2778f4ff8d64282dc89a92f44c323ff1fe064af5883b090d196a52dab43471"
       },
       {
+        "path": "data/pack/server/npc.dat",
+        "bytes": 95954,
+        "sha256": "112b08855d7b37c9faf36d6c37f354addbdbf886fe2d54a78a7ff832c8015cf9"
+      },
+      {
         "path": "data/pack/client/config",
         "bytes": 180928,
         "sha256": "d26317cabdb6dd6eaa0bd983362fa9820f8ed063e73b7be145df30fb8fc1a914"

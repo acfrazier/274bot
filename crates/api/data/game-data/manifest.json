@@ -8,8 +8,8 @@
       "records": 3894,
       "consumption": 250,
       "pickpocket": 12,
-      "bytes": 1372202,
-      "sha256": "c83042956ea6896e9fd5de9927556399fdc8c2d10732b0e59c98cfabd3a5d6a2",
+      "bytes": 1372372,
+      "sha256": "e1a95f255022587528008c7b5690d13b0008511e05c22eb4ccffc71b1cb1c192",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -17,6 +17,11 @@
           "path": "data/pack/server/obj.dat",
           "bytes": 170075,
           "sha256": "5e2778f4ff8d64282dc89a92f44c323ff1fe064af5883b090d196a52dab43471"
+        },
+        {
+          "path": "data/pack/server/npc.dat",
+          "bytes": 95954,
+          "sha256": "112b08855d7b37c9faf36d6c37f354addbdbf886fe2d54a78a7ff832c8015cf9"
         },
         {
           "path": "data/pack/client/config",
@@ -150,8 +155,8 @@
       "records": 4089,
       "consumption": 250,
       "pickpocket": 12,
-      "bytes": 1434697,
-      "sha256": "63289f8b2b6a0d6094d11bb9ec3b651a3b78acdfe45ea258b04bbe2e00078276",
+      "bytes": 1434868,
+      "sha256": "baef264dfd146fdc202069bc68e6a144dd0592af8362b1d3f53d27a47a01729c",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
@@ -159,6 +164,11 @@
           "path": "data/pack/server/obj.dat",
           "bytes": 178468,
           "sha256": "e3a388ecb8c4eeeca10596d32ca204fe5775a8937c72741534fccfdef256a243"
+        },
+        {
+          "path": "data/pack/server/npc.dat",
+          "bytes": 111807,
+          "sha256": "29b8e82b63df203e50ba376a1b9c01cbf9c734eabbfcc45444d887adf664baea"
         },
         {
           "path": "data/pack/client/config",
