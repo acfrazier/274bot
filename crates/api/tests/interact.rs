@@ -1743,11 +1743,59 @@ fn open_nearest_booth_clicks_use_quickly_on_the_same_plane() {
                 ..
             }
         ));
+        assert!(matches!(
+            ix.open_named_booth_at(
+                WorldTile {
+                    x: 3205,
+                    z: 3206,
+                    level: 0,
+                },
+                bank_id,
+                "Bank booth",
+                "Bank"
+            ),
+            SendResult::Sent { .. }
+        ));
+        assert!(matches!(
+            ix.open_named_booth_at(
+                WorldTile {
+                    x: 3205,
+                    z: 3206,
+                    level: 0,
+                },
+                bank_id,
+                "Bank booth",
+                "Use-quickly"
+            ),
+            SendResult::Refused {
+                reason: SendReason::StaleTarget,
+                ..
+            }
+        ));
+        assert!(matches!(
+            ix.open_named_booth_at(
+                WorldTile {
+                    x: 3205,
+                    z: 3206,
+                    level: 0,
+                },
+                bank_id,
+                "Wrong chest",
+                "Bank"
+            ),
+            SendResult::Refused {
+                reason: SendReason::StaleTarget,
+                ..
+            }
+        ));
     }
     assert_eq!(
         exact.menus,
-        vec![(0, MiniMenuAction::OP_LOC2, near_tc, 6, 5)],
-        "the explicit snapshot identity never retargets to another loc"
+        vec![
+            (0, MiniMenuAction::OP_LOC2, near_tc, 6, 5),
+            (0, MiniMenuAction::OP_LOC1, bank_tc, 5, 6),
+        ],
+        "exact default and named access never retarget to another loc or op"
     );
 
     let mut s = scene();

@@ -584,10 +584,17 @@ pub struct ScriptPaint {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 #[serde(tag = "op")]
 pub enum InteractReq {
-    /// Open the exact snapshot-selected Use-quickly loc. The host validates
-    /// both tile and definition id and refuses a stale identity.
+    /// Open the exact snapshot-selected loc. With no name/action the host
+    /// validates `Use-quickly`; named access validates both without fallback.
     #[serde(rename = "open-booth")]
-    OpenBooth { x: i32, z: i32, level: i32, id: i32 },
+    OpenBooth {
+        x: i32,
+        z: i32,
+        level: i32,
+        id: i32,
+        name: Option<String>,
+        action: Option<String>,
+    },
     /// Use a packed stand the player is adjacent to: a booth loc
     /// (Use-quickly) or a teller NPC (its 1-based op slot from the pack;
     /// `choose` is the dialog option the op's dialogue needs, deferred).
@@ -641,6 +648,9 @@ pub enum InteractReq {
     WithdrawX {
         name: String,
         count: i32,
+        bank_item_id: i32,
+        lands_as_id: i32,
+        action: String,
         bank_generation: u64,
     },
     /// Interact with the held item named `name` using the action label

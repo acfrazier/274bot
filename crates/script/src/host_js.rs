@@ -1079,6 +1079,18 @@ const INTERACT_VARIANTS: &[InteractVariant] = &[
                 optional: false,
                 doc: None,
             },
+            TsField {
+                name: "name",
+                ty: "string | null",
+                optional: true,
+                doc: None,
+            },
+            TsField {
+                name: "action",
+                ty: "string | null",
+                optional: true,
+                doc: None,
+            },
         ],
     },
     InteractVariant {
@@ -1218,6 +1230,24 @@ const INTERACT_VARIANTS: &[InteractVariant] = &[
             TsField {
                 name: "count",
                 ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "bank_item_id",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "lands_as_id",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "action",
+                ty: "string",
                 optional: false,
                 doc: None,
             },

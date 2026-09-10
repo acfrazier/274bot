@@ -5,7 +5,8 @@
 import { Bank } from './Bank.js';
 import { Execution } from '../execution/Execution.js';
 
-const notImpl = (name) => new Error('not impl: ' + name);
+const notImpl = (name, reason) =>
+    new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
 
 // The rs2b0t bankRules junk list, kept as data. Names match as
 // substrings; one that is not a 274 obj never matches a posted row (the
@@ -65,8 +66,15 @@ export function parseBankStrategy(label) {
 
 export const Banking = new Proxy(
     {
-        async open() {
-            return Bank.openNearest();
+        async open(opts = {}) {
+            opts = opts || {};
+            const supported = new Set(['stand', 'boothName', 'boothOp', 'log']);
+            for (const name of Object.keys(opts)) {
+                if (!supported.has(name) && opts[name] !== undefined) {
+                    throw notImpl('Banking.open', name);
+                }
+            }
+            return Bank.openBooth(opts.stand, opts.boothName, opts.boothOp, opts.log);
         },
 
         async bankNearest({ deposit = false, commonJunk = false } = {}) {

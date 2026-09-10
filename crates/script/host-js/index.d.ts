@@ -223,13 +223,13 @@ export interface HostHandle {
 
 /** One interact queued on the host handle; dispatched through the slot Driver. */
 export type InteractReq =
-  | { op: 'open-booth'; x: number; z: number; level: number; id: number}
+  | { op: 'open-booth'; x: number; z: number; level: number; id: number; name?: string | null; action?: string | null}
   | { op: 'open-stand'; x: number; z: number; level: number; kind: string; name?: string | null; stand_op?: number | null; choose?: string | null}
   | { op: 'walk'; x: number; z: number; level: number; allow_teleports?: boolean}
   | { op: 'walk-to'; x: number; z: number; level: number}
   | { op: 'deposit'; name: string}
   | { op: 'withdraw'; name: string; action: string}
-  | { op: 'withdraw-x'; name: string; count: number; bank_generation: number}
+  | { op: 'withdraw-x'; name: string; count: number; bank_item_id: number; lands_as_id: number; action: string; bank_generation: number}
   | { op: 'held'; name: string; action: string}
   | { op: 'close'}
   | { op: 'npc'; name: string; action: string; index?: number | null}

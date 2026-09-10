@@ -2141,6 +2141,8 @@ export default class T extends LoopingBot {
             z: 100,
             level: 0,
             id: 2213,
+            name: None,
+            action: None,
         }],
         "Banking.open carries the snapshot-selected Use-quickly loc"
     );
@@ -2154,7 +2156,7 @@ import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
     loop() {
         Bank.openNearest('Bank booth', 'Use-quickly');
-        Bank.openBooth({ x: 1, z: 1, level: 0 }, 'Bank booth', 'Use-quickly');
+        Bank.openBooth({ x: 100, z: 100, level: 0 }, 'Bank booth', 'Use-quickly');
     }
 }
 "#;
@@ -2173,6 +2175,27 @@ export default class T extends LoopingBot {
         name: "Bank booth",
         op: "Use-quickly",
     });
+    let use_quickly = ["Use-quickly".to_string()];
+    let locs = [script::isolate_fb::SceneEntityInput {
+        index: 0,
+        id: 2213,
+        name: Some("Bank booth"),
+        x: 101,
+        z: 100,
+        level: 0,
+        distance: 1,
+        health: -1,
+        max_health: -1,
+        in_combat: false,
+        animating: false,
+        actions: &use_quickly,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+    }];
+    snap.locs = &locs;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1");
@@ -2184,16 +2207,146 @@ export default class T extends LoopingBot {
                 z: 100,
                 level: 0,
                 id: 2213,
+                name: Some("Bank booth".into()),
+                action: Some("Use-quickly".into()),
             },
             script::shim::InteractReq::OpenBooth {
                 x: 101,
                 z: 100,
                 level: 0,
                 id: 2213,
+                name: Some("Bank booth".into()),
+                action: Some("Use-quickly".into()),
             },
         ],
         "openNearest / openBooth preserve the posted booth identity"
     );
+    iso.join();
+}
+
+#[test]
+fn isolate_banking_open_forwards_stand_and_exact_named_access() {
+    let src = r#"
+import { Banking } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = await Banking.open({
+            stand: { x: 150, z: 150, level: 0 },
+            boothName: 'Bank chest',
+            boothOp: 'Bank',
+        });
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let bank = ["Bank".to_string()];
+    let locs = [script::isolate_fb::SceneEntityInput {
+        index: 0,
+        id: 4483,
+        name: Some("Bank chest"),
+        x: 151,
+        z: 150,
+        level: 0,
+        distance: 50,
+        health: -1,
+        max_health: -1,
+        in_combat: false,
+        animating: false,
+        actions: &bank,
+        reachable: false,
+        reachable_adj: false,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+    }];
+    let mut snap = base_snapshot();
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 100,
+        z: 100,
+        level: 0,
+    });
+    snap.locs = &locs;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::WalkNear {
+            x: 150,
+            z: 150,
+            level: 0,
+            radius: 1,
+            allow_teleports: false,
+        }],
+        "the supplied stand is walked near instead of being dropped"
+    );
+
+    snap.tick = 2;
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 150,
+        z: 149,
+        level: 0,
+    });
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::OpenBooth {
+            x: 151,
+            z: 150,
+            level: 0,
+            id: 4483,
+            name: Some("Bank chest".into()),
+            action: Some("Bank".into()),
+        }],
+        "the exact requested name and op survive isolate IPC"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_banking_open_rejects_each_unsupported_option_by_name() {
+    let src = r#"
+import { Banking } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__errors = [];
+        const values = {
+            obstacles: [],
+            destination: { name: 'Elsewhere' },
+            preferNearby: false,
+            nearbyRadius: 14,
+        };
+        Promise.all(Object.entries(values).map(async ([name, value]) => {
+            try {
+                await Banking.open({ [name]: value });
+            } catch (error) {
+                globalThis.__errors.push(String(error && error.message));
+            }
+        })).then(() => { globalThis.__done = true; });
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    post_snapshot_input(&iso, &base_snapshot());
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(iso.probe("__done").unwrap(), true);
+    let errors = iso.probe("__errors").unwrap();
+    for name in ["obstacles", "destination", "preferNearby", "nearbyRadius"] {
+        assert!(
+            errors.as_array().unwrap().iter().any(|error| error
+                .as_str()
+                .is_some_and(|error| { error.contains("not impl") && error.contains(name) })),
+            "unsupported {name} must be named in its refusal: {errors}"
+        );
+    }
+    assert!(iso.drain_interacts().is_empty());
     iso.join();
 }
 
@@ -2359,6 +2512,9 @@ export default class T extends LoopingBot {
         vec![script::shim::InteractReq::WithdrawX {
             name: "Bones".into(),
             count: 25,
+            bank_item_id: 526,
+            lands_as_id: 526,
+            action: "Withdraw-X".into(),
             bank_generation: 7,
         }],
         "first tick queues one host-owned Withdraw-X continuation"
@@ -2390,6 +2546,70 @@ export default class T extends LoopingBot {
     iso.on_game_tick(5);
     let ok = iso.probe("__ok").unwrap();
     assert_eq!(ok, true, "withdrawX resolves after inventory publication");
+    iso.join();
+}
+
+#[test]
+fn isolate_bank_withdraw_x_zero_is_success_without_a_request() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__by_name = await Bank.withdrawX('Absent', 0);
+        globalThis.__by_id = await Bank.withdrawXById(999, -1, 1000);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    post_snapshot_input(&iso, &base_snapshot());
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(iso.probe("__by_name").unwrap(), true);
+    assert_eq!(iso.probe("__by_id").unwrap(), true);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "non-positive requests are successful no-ops"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_bank_withdraw_x_by_id_carries_noted_destination_and_fixed_op() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = await Bank.withdrawXById(100, 5, 101);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let ops = ["Withdraw 5".into(), "Withdraw X".into()];
+    let bank = [item_row(100, Some("Rune item"), 20, &ops, false, 101, 0)];
+    let mut snap = base_snapshot();
+    snap.bank = &bank;
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    snap.bank_generation = 9;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::WithdrawX {
+            name: "Rune item".into(),
+            count: 5,
+            bank_item_id: 100,
+            lands_as_id: 101,
+            action: "Withdraw 5".into(),
+            bank_generation: 9,
+        }],
+        "the selected bank id, noted output id, and fixed op survive IPC"
+    );
     iso.join();
 }
 

@@ -926,6 +926,29 @@ impl<'a> Interactions<'a> {
     /// the script snapshot. If it vanished or changed actions, refuse rather
     /// than retargeting to whichever booth is nearest at dispatch time.
     pub fn open_booth_at(&mut self, target: WorldTile, expected_id: i32) -> SendResult<'a> {
+        self.open_booth_at_matching(target, expected_id, None, "Use-quickly")
+    }
+
+    /// Open one exact snapshot-selected loc only when its definition name and
+    /// requested operation still match. Named bank access never falls back to
+    /// another loc or to `Use-quickly` when the requested operation vanished.
+    pub fn open_named_booth_at(
+        &mut self,
+        target: WorldTile,
+        expected_id: i32,
+        expected_name: &str,
+        expected_action: &str,
+    ) -> SendResult<'a> {
+        self.open_booth_at_matching(target, expected_id, Some(expected_name), expected_action)
+    }
+
+    fn open_booth_at_matching(
+        &mut self,
+        target: WorldTile,
+        expected_id: i32,
+        expected_name: Option<&str>,
+        expected_action: &str,
+    ) -> SendResult<'a> {
         let snapshot = self.snapshot;
         if let Some(reason) = self.precondition(snapshot, false) {
             return refuse(snapshot, reason);
@@ -939,10 +962,15 @@ impl<'a> Interactions<'a> {
         let Some(loc) = snapshot.locs().iter().find(|loc| {
             loc.tile == target
                 && loc.id == expected_id
+                && expected_name.is_none_or(|name| {
+                    loc.name
+                        .as_deref()
+                        .is_some_and(|actual| actual.eq_ignore_ascii_case(name))
+                })
                 && loc.actions.iter().any(|action| {
                     action
                         .as_deref()
-                        .is_some_and(|label| label.eq_ignore_ascii_case("Use-quickly"))
+                        .is_some_and(|label| label.eq_ignore_ascii_case(expected_action))
                 })
         }) else {
             return refuse(snapshot, SendReason::StaleTarget);
@@ -956,7 +984,7 @@ impl<'a> Interactions<'a> {
             };
             return self.walk(dest);
         }
-        let Some(op) = operation_of(&OpTarget::Loc(loc), "Use-quickly") else {
+        let Some(op) = operation_of(&OpTarget::Loc(loc), expected_action) else {
             return refuse(snapshot, SendReason::InvalidAction);
         };
         self.interact(OpTarget::Loc(loc), ActionSpec::Operation(op))
