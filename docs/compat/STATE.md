@@ -32,9 +32,20 @@ Navigation, bank return and guardian live proof remain open. The temporary
 The first banking family is in progress on card `t_e52e0a03` (Sol run 1113),
 covering fresh packet-backed bank state, Withdraw-X and named access. Client
 and host WIP belong to that worker. Root retains the gitlink and live harness.
-Local 289 fixture addition `t_b237feb4` uses Luna and same-card review; root
-alone restarts its owned engine after review. Provisioning/recovery design
-`t_23695d9d` uses Grok 4.6 and is source-only.
+Local 289 fixture addition `t_b237feb4` passed actual Luna/Grok 4.5 review
+at engine `cc359656`. Root restarted the isolated Mac fixture and applied the
+same guarded branch to Windows/Hyper-V/Concord; all passed fresh readiness and
+source/cache verification. See `platform-preparation.md` refresh section.
+Provisioning/recovery design `t_23695d9d` completed under actual Grok 4.6;
+`04-provisioning-recovery-design.md` is source-only guidance.
+
+World harness `t_1f03d5a7` is in corrective implementation after Grok 4.5
+found missing preparation/observation predicates in its first draft. No world
+live cell has run. Root frontend change `6c70aed6` now shares Play::world with
+both live runners; focused existing frontend preparation tests passed and its
+review is grouped with this world harness. Next matching/fill card `t_41b2f50e`
+depends on reviewed banking source. Catalog harness `t_14db340e` depends on
+world-harness source review. Neither queued task is implementation acceptance.
 
 Script loading/starting stays revision agnostic as clarified above. All 180
 catalog/revision proof rows and remaining steps 5–9 still require completion.

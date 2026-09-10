@@ -1,0 +1,35 @@
+{
+  "host": "6c70aed67c97b5cada70478d5eb158d8881b7921",
+  "client": "6cb5a0b17aeef74da6b57b205e916681daee4f76",
+  "source_export": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/host-boundary-live/source-6c70aed6-6cb5a0b",
+  "checks": [
+    {
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "panel",
+        "--lib",
+        "live_prepare_nav_full_runner_already_has_deadline_and_shot",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "log": "docs/compat/evidence/world-capabilities/frontend-binding/panel.log"
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "tui",
+        "--lib",
+        "live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "log": "docs/compat/evidence/world-capabilities/frontend-binding/tui.log"
+    }
+  ]
+}

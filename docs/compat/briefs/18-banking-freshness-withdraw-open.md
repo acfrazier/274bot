@@ -15,6 +15,12 @@ awaits Rust facts/results. No foreign Banking router or universal job framework.
 
 ## Required corrections and evidence boundaries
 
+Pending-operation clarification for final implementation and review: Pause
+retains and freezes the Withdraw-X operation; Stop, disconnect/reconnect and
+isolate reset abort it. Use monotonic elapsed time for the existing 3000 ms
+count-dialog and 4000 ms observed-settlement bounds, not a fixed assumption
+about PLAYER_INFO cadence. Retained old bank contents do not authorize a send.
+
 The design is guidance, not infallible source. Its `campaign HEAD` is an older
 snapshot. Preserve the corrected session/scene publication in current source.
 Resolve these semantic hazards explicitly in implementation and tests:
