@@ -14,10 +14,12 @@ ClientCheatHandler SHA must be `d206a141b61edb8610f645b7ff6b68e2d29017cdd00c8552
 Add only the existing 274 local `givebank` fixture behavior to
 `engine/src/network/game/client/handler/ClientCheatHandler.ts`: resolve the bank
 inventory and item by actual name, clamp the requested count, and add bank
-stock under the existing non-production and staffModLevel >= 4 guard. Preserve
+stock under an explicit `!Environment.node.production && player.staffModLevel >= 4`
+condition on the added branch. The surrounding block checks only staff >= 3;
+do not treat it as a non-production guard. Preserve
 every existing handler branch and error behavior. Expected candidate SHA is
-`0eefa08b523bd1a5f8a6846a5ed7588d22ce4507b15c473d6a1c2ebe06b7144e`;
-it matches the inspected 274 handler, but only this one added branch is scoped.
+`30466707ab67003aa4b54be9e451982ac8b0267bb24839b6eb15971e7c08db33`;
+only this one added branch is scoped, with the explicit local fixture guard.
 No accounts, databases, private keys or cache blobs may be copied or committed.
 
 Root owns the currently running exact 289 engine and will restart it after
