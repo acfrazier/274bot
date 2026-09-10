@@ -11,3 +11,13 @@ Also check appearance packet boxing throughout the new actor decoder and tests; 
 Use the frozen tests and raw receipts to recompute result counts and verify which GPU checks actually ran. Old standalone 289 review is not candidate approval. Fresh macOS published-base result is 774 passed, zero failed/ignored. Current Linux/Windows execution is unavailable in this session; historical GPU shade and CRC timing failures must be marked historical, not freshly reproduced. Source/client regression approval may proceed with those platform and later host/live gates explicitly outstanding. Raise newly introduced defects separately from existing limitations.
 
 Report actionable priority findings with exact candidate paths/lines and source/evidence. Do not implement fixes. State inspected base/head, actual model/provider/session, start/end times, tool/security restrictions or retries as timing confounders, tests independently inspected, verdict and scope limits. Return your independent result before seeing the other trial's findings. Root will reconcile confirmed findings, overlap, disagreements and corrections; wall time alone is not a model ranking.
+
+Also inspect the small host fixture correction named in the frozen manifest:
+`crates/host-play/src/lib.rs::mint_live_names` and its extended existing test.
+The first host dependency check exposed deterministic PID/serial truncation
+collisions; the red/green evidence and unchanged-base comparison are in host
+`docs/compat/client-integration-milestone.md`. Review the scoped correction's
+name-length, invocation isolation and frontend/harness effects. This does not
+expand the review to pending profile, navigation or catalog implementation.
+The passing API/host/host-play check includes memory-profile support: 441 passed,
+zero failed, seven live tests ignored. Those ignored tests are later live gates.
