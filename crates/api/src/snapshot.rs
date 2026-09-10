@@ -1828,14 +1828,18 @@ impl GameSnapshot {
     /// loop with no gen bump), so a gen-gated copy would pin the snapshot
     /// in a stale "loading" state. The `SceneView` (build base, level and
     /// the collision grid) only changes on a world build, so it rebuilds
-    /// when the scene gen moves. The return value still tracks the gen for
-    /// the harness's dirty/tick semantics.
+    /// when the scene gen moves. A session reset clears the host-owned grid,
+    /// though response-15 reconnect retains the client's current map; once
+    /// that client is scene-ready, materialize the missing host view exactly
+    /// once without inventing a generation move. The return value still
+    /// tracks the gen for the harness's dirty/tick semantics.
     fn rebuild_scene(&mut self, client: &Client) -> bool {
         let moved = track(client.gens.scene, &mut self.gens.scene);
         self.ingame = client.ingame;
         self.scene_state = client.scene_state;
         self.attached = client.stream.is_some();
-        if moved {
+        let materialize_missing = !self.scene.available && client.ingame && client.scene_state == 2;
+        if moved || materialize_missing {
             let level = client.minusedlevel;
             match client.collision.get(level as usize) {
                 Some(cmap) => {

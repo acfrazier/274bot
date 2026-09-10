@@ -24,8 +24,11 @@ grant watermark. Packet families require a new-session observation; explicit
 all-family invalidations are excluded from that decision. A later scene rebuild
 or unrelated interface packet cannot republish a retained actor or inventory.
 Fresh packets after the grant in the same drain remain publishable. Scene-ready
-scalars still refresh when `check_scene` changes state without a packet; the
-existing family gates continue to own collision and other large shared data.
+scalars still refresh when `check_scene` changes state without a packet. If a
+response-15 reset cleared the host scene while the scene-ready client retained
+its current collision map, publication materializes that missing host view once
+without a scene-generation bump. An already materialized grid is not rebuilt by
+a scalar-only transition; the family gates continue to own other large data.
 
 The host-play observer closes its published producer gate before clearing
 cheat/wire queues, route work and script work. Producers keep that gate locked
@@ -51,7 +54,10 @@ gated to Running script tick edges. No per-frame inventory zipper is added.
   coverage remains green, including reset/retained-iface tests.
 - Host unit tests: 136 passed. Production decoder fixtures cover both revisions,
   g2 inventory counts/gsmart slots, bank and interface updates, player/NPC
-  publication, REBUILD without a tick, and logout clearing.
+  publication, REBUILD without a tick, and logout clearing. The focused
+  response-15 regression proves an unchanged retained collision map becomes
+  available after reset without restoring old actors/inventory or advancing a
+  PLAYER_INFO tick; the scalar-only no-grid-rebuild regression remains green.
 - Real response-15 mock handshakes cover old packets before the grant, REBUILD
   after it, fresh player/interface packets, and later fresh inventory. A separate
   same-drain case retains new inventory and PLAYER_INFO immediately after grant.
