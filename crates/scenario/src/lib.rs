@@ -1604,8 +1604,15 @@ fn bone_burier_scenario() -> Scenario {
             send: Box::new(|_, _| true),
         },
         wait: Wait {
+            // The off-scene trip may legitimately outlast the ordinary
+            // 150-tick action observation. Observe the script's existing
+            // 120-second travel timeout instead of ending the proof first.
+            budget_ticks: if matches!(arm, Proof::BankItem { .. }) {
+                240
+            } else {
+                SCRIPT_GOLD_WATCH_TICKS
+            },
             arm,
-            budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
         },
     };
     Scenario {
