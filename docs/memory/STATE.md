@@ -11,6 +11,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-10 00:44 UTC
+
+- CF2 actual session6547 remains live; latest checkpoint56/114 children completed,
+  cumulative64children/469.26wall/355.51CPU, one reservation. Do not interrupt or
+  duplicate. Local archive_cf2.py/audit_cf2.py prepared only, not run on partials.
+- New OWNER prelaunch account identity question confirmed in exact runtime source
+  archive2c36d254: memory setup mints names from future frontend PID+serial, not
+  preexisting root-selected account. Plan5.3 actual identity at release versus
+  typed opaque fixture hash needs reconciliation; no fabricated receipt issued.
+  Root question90c716d; independent fidelity review t_d6f23813 profilegrok46,
+  actual20260909_204150_defd77 Grok4.6/xai active. No implementation delegated.
+  Report will distinguish fixture recipe admission from actual account proof.
+- Native owner149+3pass/runtimeverification still valid within their scopes;
+  no account/population private receipt or live release. No Concord overlap.
+
 ## Latest boundary — 2026-09-10 00:37 UTC
 
 - CF1 reviewer t_f7d038ac COMPLETE APPROVE, actualGrok4.5/xai
