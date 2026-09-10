@@ -11,6 +11,23 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-10 01:11 UTC
+
+- Architecture t_f227a361 COMPLETE approved optional sudo-readlink-v1 design901a409,
+  actualGrok4.6/xai20260909_205609_b02901 ended1789002435.212418. Root read full
+  report and reconciled stdout cap: post-communicate length check is insufficient;
+  implementation must bound consumption and reap helper. Keep original counter
+  window/twoexechecks; no capture helper role or silent sudo fallback.
+- Sol t_74e0c73e actually active20260909_210951_40b06c gpt5.6-sol/openai-codex,
+  exact scoped controller/calibration/tests/report only. Same-card reviewer then
+  full native qualification required. Brief retained in adapter-design directory.
+  No host grant or live authorization. User approved account clarification only.
+- Root read-only Concord tools proof: /usr/bin/sudo rootuid/mode4755 SHA136f2e48,
+  /usr/bin/readlink rootuid/mode755 SHA4c6117ae, GNU9.4 -n self-exe outputexact17B
+  no newline. Evidence root-executable-adapter-tools-01. Not a privileged read.
+  Final exact PID-pinned sudoers action awaits reviewed implementation/nativeproof
+  and separate user permission; no sysctl/service/capability changes proposed.
+
 ## Latest boundary — 2026-09-10 01:01 UTC
 
 - Fresh preliminary input observation at1789001852-53 completed, no admission:

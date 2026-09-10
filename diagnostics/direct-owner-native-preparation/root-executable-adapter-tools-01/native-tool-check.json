@@ -1,0 +1,26 @@
+{
+  "observed_at": 1789002623.87526,
+  "tools": {
+    "/usr/bin/sudo": {
+      "resolved": "/usr/bin/sudo",
+      "uid": 0,
+      "mode": "0o4755",
+      "bytes": 277936,
+      "sha256": "136f2e48b0295b9fc595b8259cf2411ac43f27ddbfe02b956649ddaa2e92b9fa"
+    },
+    "/usr/bin/readlink": {
+      "resolved": "/usr/bin/readlink",
+      "uid": 0,
+      "mode": "0o755",
+      "bytes": 43432,
+      "sha256": "4c6117ae99adf14e90ee49c860ca6f827db657423d0d0b3e4f6eb29d39daebe0"
+    }
+  },
+  "readlink_n_self_test": {
+    "returncode": 0,
+    "stdout_bytes": 17,
+    "no_newline": true
+  },
+  "readlink_version": "readlink (GNU coreutils) 9.4",
+  "scope": "read-only executable path/hash and GNU -n qualification; no sudo grant or privileged image read"
+}
