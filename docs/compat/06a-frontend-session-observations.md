@@ -14,7 +14,7 @@ No client, API, script, or `host-play/src/lib.rs` source was changed by this tas
 
 ## Focused behavior receipts
 
-The six new tests passed individually with exact filters before concurrent banking commits advanced the shared checkout:
+The six new tests passed individually with exact filters on the committed implementation and the current shared checkout:
 
 - `cargo test -p panel session::tests::frontend_logout_clears_facts_armed_work_and_tick_latch -- --exact --nocapture` — 1 passed
 - `cargo test -p panel session::tests::frontend_response_15_replacement_waits_for_post_grant_player_packet -- --exact --nocapture` — 1 passed
@@ -31,4 +31,4 @@ Current-base checks:
 
 ## Shared-checkout limit
 
-A later `cargo test -p panel -p tui` attempt on `659347e1` stopped in concurrently modified banking-owned `crates/host-play/src/lib.rs`: `InteractReq::WithdrawX` and `InteractReq::OpenBooth` patterns did not yet cover newly added fields. A workspace-wide format check likewise reported only concurrent formatting diffs in `crates/host-play/src/lib.rs` and `crates/script/src/isolate_fb.rs`. This task did not edit those files or work around the ownership boundary. No LIVE or external fixture actions were run.
+The first `cargo test -p panel -p tui` attempt on `659347e1` stopped while concurrent banking edits left `InteractReq::WithdrawX` and `InteractReq::OpenBooth` patterns temporarily incomplete. After that work advanced, a broad `cargo test -p panel frontend_ -- --nocapture` ran this task's two matching tests successfully but also selected the unrelated `app::tests::frontend_parser_prepares_real_clients_for_both_fixture_manifests`, which failed with `OnDemand identity mismatch for occupied endpoint`. A workspace-wide format check likewise reported only concurrent formatting diffs in banking-owned `crates/host-play/src/lib.rs` and `crates/script/src/isolate_fb.rs`; the scoped package format check passed. This task did not edit those files or work around the ownership boundary. No LIVE or external fixture actions were run.
