@@ -1,0 +1,11 @@
+{
+  "captured_at": "2026-09-10T13:10:13.487063+00:00",
+  "argv": [
+    "lsof",
+    "-nP",
+    "-iTCP:43594",
+    "-sTCP:LISTEN"
+  ],
+  "exit_code": 0,
+  "output": "COMMAND  PID      USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME\nnode    1852 acfrazier   68u  IPv4 0xf4585e85e7135e31      0t0  TCP *:43594 (LISTEN)\n"
+}

@@ -1,0 +1,12 @@
+{
+  "captured_at": "2026-09-10T13:10:13.489814+00:00",
+  "argv": [
+    "ps",
+    "-p",
+    "1852",
+    "-o",
+    "pid=,ppid=,lstart=,command="
+  ],
+  "exit_code": 0,
+  "output": " 1852  1851 Wed Sep  9 18:25:18 2026     /opt/homebrew/Cellar/node@24/24.20.0/bin/node --require /Users/acfrazier/experiments/Server/engine/node_modules/tsx/dist/preflight.cjs --import file:///Users/acfrazier/experiments/Server/engine/node_modules/tsx/dist/loader.mjs src/app.ts\n"
+}

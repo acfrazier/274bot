@@ -1,0 +1,14 @@
+[
+  {
+    "url": "http://127.0.0.1/rs2.cgi",
+    "status": 200,
+    "bytes": 14376,
+    "sha256": "1fd65e7afac5d175e486e014e01281f0ddc59d0f8fbba03f6cfe3e9d2d5a027e"
+  },
+  {
+    "url": "http://127.0.0.1/crc",
+    "status": 200,
+    "bytes": 40,
+    "sha256": "92ee1328092998be33242e220cc226f34efd9e061a09507c5b33e61eaf387243"
+  }
+]
