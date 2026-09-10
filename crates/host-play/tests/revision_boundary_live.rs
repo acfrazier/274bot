@@ -113,6 +113,40 @@ fn logout(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut Pump) -> 
     Ok(())
 }
 
+fn walk_leg(
+    client: &mut Client,
+    snapshot: &mut GameSnapshot,
+    pump: &mut Pump,
+    kind: &str,
+    leg: usize,
+    target: WorldTile,
+) -> Result<(), String> {
+    let before = snapshot.tile().ok_or("missing walk origin")?;
+    if before == (target.x, target.z, target.level) {
+        record(
+            "walk-already-at-waypoint",
+            snapshot,
+            json!({"kind": kind, "leg": leg, "target": target}),
+        );
+        return Ok(());
+    }
+    record(
+        "walk-request",
+        snapshot,
+        json!({"kind": kind, "leg": leg, "before": before, "target": target}),
+    );
+    accepted(Interactions::new(snapshot, client).walk(target), kind)?;
+    wait_for(client, snapshot, pump, kind, Duration::from_secs(20), |s| {
+        s.tile() == Some((target.x, target.z, target.level)) && s.tile() != Some(before)
+    })?;
+    record(
+        "walk-applied",
+        snapshot,
+        json!({"kind": kind, "leg": leg, "before": before, "target": target}),
+    );
+    Ok(())
+}
+
 fn run() -> Result<(), String> {
     let revision =
         std::env::var("BOUNDARY_REVISION").map_err(|_| "BOUNDARY_REVISION=274|289 is required")?;
@@ -198,33 +232,15 @@ fn run() -> Result<(), String> {
         .into_iter()
         .enumerate()
         {
-            let before_walk = snapshot.tile().ok_or("missing walk origin")?;
             let target = WorldTile { x, z, level: 0 };
-            record(
-                "walk-request",
-                &snapshot,
-                json!({"leg": leg, "before": before_walk, "target": target}),
-            );
-            accepted(
-                Interactions::new(&snapshot, &mut client).walk(target),
-                "courtyard walk",
-            )?;
-            wait_for(
+            walk_leg(
                 &mut client,
                 &mut snapshot,
                 &mut pump,
                 "courtyard walk",
-                Duration::from_secs(20),
-                |s| {
-                    s.tile() == Some((target.x, target.z, target.level))
-                        && s.tile() != Some(before_walk)
-                },
+                leg,
+                target,
             )?;
-            record(
-                "walk-applied",
-                &snapshot,
-                json!({"leg": leg, "before": before_walk, "target": target}),
-            );
             record(
                 "courtyard-npc-observation",
                 &snapshot,
@@ -298,12 +314,76 @@ fn run() -> Result<(), String> {
             |s| s.modals().chat == -1,
         )?;
 
+        // The nearest door by distance can be inside the castle while Hans
+        // and the player are outside its wall. Walk back along the perimeter
+        // to the exterior house door that the original 274 cell exercised.
+        let (x, z, _) = snapshot.tile().ok_or("missing door approach origin")?;
+        let approach: &[(i32, i32)] = if x >= 3218 {
+            &[(3225, 3214)]
+        } else if z >= 3219 {
+            &[(3207, 3233), (3219, 3230), (3221, 3222), (3225, 3214)]
+        } else {
+            &[(3202, 3205), (3214, 3205), (3220, 3212), (3225, 3214)]
+        };
+        for (leg, &(x, z)) in approach.iter().enumerate() {
+            walk_leg(
+                &mut client,
+                &mut snapshot,
+                &mut pump,
+                "door approach",
+                leg,
+                WorldTile { x, z, level: 0 },
+            )?;
+        }
+        let door_with = |s: &GameSnapshot, action: &str| {
+            s.locs()
+                .iter()
+                .find(|loc| {
+                    loc.name.as_deref() == Some("Door")
+                        && loc.tile.level == 0
+                        && loc.tile.z == 3214
+                        && (3226..=3227).contains(&loc.tile.x)
+                        && loc
+                            .actions
+                            .iter()
+                            .flatten()
+                            .any(|op| op.eq_ignore_ascii_case(action))
+                })
+                .cloned()
+        };
+        if door_with(&snapshot, "Open").is_none() {
+            let open = door_with(&snapshot, "Close").ok_or("exterior fixture door absent")?;
+            record("door-close-request", &snapshot, json!({"loc": open}));
+            accepted(
+                Interactions::new(&snapshot, &mut client)
+                    .interact(OpTarget::Loc(&open), ActionSpec::Label("Close".into())),
+                "loc Close",
+            )?;
+            wait_for(
+                &mut client,
+                &mut snapshot,
+                &mut pump,
+                "loc Close",
+                Duration::from_secs(30),
+                |s| {
+                    door_with(s, "Open").is_some()
+                        && !s.locs().iter().any(|current| {
+                            current.tile == open.tile
+                                && current.layer == open.layer
+                                && current.typecode == open.typecode
+                        })
+                },
+            )?;
+            record("door-close-applied", &snapshot, json!({"before_loc": open}));
+        }
         let loc = snapshot
             .locs()
             .iter()
             .filter(|loc| {
                 loc.name.as_deref() == Some("Door")
-                    && loc.distance <= 20
+                    && loc.tile.level == 0
+                    && loc.tile.z == 3214
+                    && (3226..=3227).contains(&loc.tile.x)
                     && loc
                         .actions
                         .iter()
@@ -314,11 +394,21 @@ fn run() -> Result<(), String> {
             .cloned()
             .ok_or("fixture missing a nearby closed Door")?;
         record("loc-request", &snapshot, json!({"loc": loc}));
+        let before_out = client.out.pos;
         accepted(
             Interactions::new(&snapshot, &mut client)
                 .interact(OpTarget::Loc(&loc), ActionSpec::Label("Open".into())),
             "loc Open",
         )?;
+        record(
+            "loc-dispatched",
+            &snapshot,
+            json!({
+                "outbound_bytes_added": client.out.pos - before_out,
+                "path": client.try_move_path,
+                "map_flag": [client.minimap_flag_x, client.minimap_flag_z],
+            }),
+        );
         wait_for(
             &mut client,
             &mut snapshot,
