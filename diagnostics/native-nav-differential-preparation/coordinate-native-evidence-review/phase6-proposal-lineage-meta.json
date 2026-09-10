@@ -1,0 +1,8 @@
+{
+  "status": "proposal only; no native build or real measurement release",
+  "routes_sha256": "49e348ea78806c8278d720d27b171c54a0a209930fa8191ffcd38d2e9bbbc125",
+  "rows": 59,
+  "scope": "Concatenation of all already-reviewed real selectors, unchanged and in original order. Three existing Stage A lanes per row; original host running model, fixed bank and facts 0..6 retained. Essence entry-derived roundtrip is not claimed.",
+  "hardware": "pending final native qualification and root preflight",
+  "tool": "pending same-card correction and independent review"
+}

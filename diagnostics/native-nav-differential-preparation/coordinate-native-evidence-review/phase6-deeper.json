@@ -1,0 +1,288 @@
+{
+  "checks": [
+    {
+      "name": "smoke_child_ids_count",
+      "ok": false,
+      "detail": [
+        "GQ/000-1-1-dense.err",
+        "GQ/000-1-1-dense.out",
+        "GQ/000-1-1-dense.receipt.json",
+        "GQ/000-1-1-dense.record.json",
+        "GQ/001-1-1-refined.err",
+        "GQ/001-1-1-refined.out",
+        "GQ/001-1-1-refined.receipt.json",
+        "GQ/001-1-1-refined.record.json",
+        "GQ/002-1-2-refined.err",
+        "GQ/002-1-2-refined.out",
+        "GQ/002-1-2-refined.receipt.json",
+        "GQ/002-1-2-refined.record.json",
+        "GQ/003-1-2-dense.err",
+        "GQ/003-1-2-dense.out",
+        "GQ/003-1-2-dense.receipt.json",
+        "GQ/003-1-2-dense.record.json"
+      ]
+    },
+    {
+      "name": "has_some_comparison_artifacts",
+      "ok": false,
+      "detail": {
+        "cmp_results": 0,
+        "comp_dirs": [],
+        "ref_dirs": [],
+        "equal_hits": []
+      }
+    },
+    {
+      "name": "smoke_receipts_ge_4",
+      "ok": true,
+      "detail": 12
+    },
+    {
+      "name": "smoke_outs_present",
+      "ok": true,
+      "detail": 15
+    },
+    {
+      "name": "pkg_tool_commit_113ce05",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "pkg_binding",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "113ce05_changes_include_test_sharded",
+      "ok": true,
+      "detail": [
+        "docs/memory/nav-scheduler-fixture-correction-report.md",
+        "docs/memory/nav-tiled-stage-a/diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction/bounded/runner-result.json",
+        "docs/memory/nav-tiled-stage-a/diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction/bounded/scheduler-full.err",
+        "docs/memory/nav-tiled-stage-a/diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction/bounded/scheduler-full.out",
+        "docs/memory/nav-tiled-stage-a/diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction/bounded/scheduler-full.receipt.json",
+        "docs/memory/nav-tiled-stage-a/diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction/full-generated-suite.log",
+        "docs/memory/nav-tiled-stage-a/diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction/full-generated-suite.log.sha256",
+        "docs/memory/nav-tiled-stage-a/diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction/run_bounded_fixture_suite.py",
+        "docs/memory/nav-tiled-stage-a/diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction/scheduler-fixture-correction.receipt.json",
+        "docs/memory/nav-tiled-stage-a/test_sharded.py"
+      ]
+    },
+    {
+      "name": "113ce05_only_fixture_py_among_stage_a_code",
+      "ok": true,
+      "detail": [
+        "docs/memory/nav-tiled-stage-a/diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction/run_bounded_fixture_suite.py",
+        "docs/memory/nav-tiled-stage-a/test_sharded.py"
+      ]
+    },
+    {
+      "name": "test_sharded_git_sha_recorded",
+      "ok": true,
+      "detail": "b39ee71d0778488c09ea6e4e97a08eeb995ab195296436a20160f433cfd3ec4d"
+    },
+    {
+      "name": "archive_test_sharded_matches_git",
+      "ok": true,
+      "detail": [
+        {
+          "name": "host/docs/memory/nav-tiled-stage-a/test_sharded.py",
+          "bytes": 25169,
+          "sha256": "b39ee71d0778488c09ea6e4e97a08eeb995ab195296436a20160f433cfd3ec4d"
+        }
+      ]
+    },
+    {
+      "name": "failure_audit_not_pass",
+      "ok": true,
+      "detail": [
+        "verified",
+        "archive_sha256",
+        "files",
+        "uncompressed_bytes",
+        "scheduler",
+        "scope"
+      ]
+    },
+    {
+      "name": "exact59_auth_no_40_19_fill",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "exact59_result_no_40_19",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "preflight_before_audit",
+      "ok": true,
+      "detail": {
+        "preflight_end": 1788998329.4821696,
+        "audit": 1788998692.2452118
+      }
+    },
+    {
+      "name": "prepare_mentions_preflight_before_input",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "dense_out_has_frame_tags",
+      "ok": true,
+      "detail": [
+        "geometry",
+        "WorldTile",
+        "level:",
+        "cells"
+      ]
+    },
+    {
+      "name": "a44a930_commit_present",
+      "ok": true,
+      "detail": "commit"
+    },
+    {
+      "name": "frozen_report_commit_present",
+      "ok": true,
+      "detail": "commit"
+    },
+    {
+      "name": "HEAD_is_frozen_or_descendant",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "wrapper_out_equal",
+      "ok": true,
+      "detail": 80987
+    },
+    {
+      "name": "wrapper_tiny_input_337",
+      "ok": true,
+      "detail": 337
+    },
+    {
+      "name": "wrapper_audit_equal",
+      "ok": false,
+      "detail": {
+        "verified": true,
+        "scope": "Generated337-byte native real-wrapper qualification only; no private pack",
+        "equal_bytes": 80987,
+        "files": [
+          {
+            "path": "authorization.json",
+            "bytes": 1855,
+            "sha256": "471677f5a2bbb25530266e6e936f13926f75c160e4dd938e5bd28ab43d70e9b9"
+          },
+          {
+            "path": "coordinate-generated-wrapper-authorization.json",
+            "bytes": 1855,
+            "sha256": "471677f5a2bbb25530266e6e936f13926f75c160e4dd938e5bd28ab43d70e9b9"
+          },
+          {
+            "path": "coordinate-generated-wrapper-result.json",
+            "bytes": 2604,
+            "sha256": "6d303d09473604c30fb09c5b46ab75040a53b7497d101c360393ae8c6ebab141"
+          },
+          {
+            "path": "dense.err",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "path": "dense.out",
+            "bytes": 80987,
+            "sha256": "e605a7623ad8de3420eabf84a0f447bfc456ed63afeec1222c8f5fb0fc93c686"
+          },
+          {
+            "path": "dense.receipt.json",
+            "bytes": 919,
+            "sha256": "32c7118de66c0aec035e274b02c0b8b76e90e4b0bb11669660473fc180990632"
+          },
+          {
+            "path": "input.bin",
+            "bytes": 337,
+            "sha256": "6b324fdd44c40cca6ea7920ce868d54c47d40e49d11d301c152f2565403523a4"
+          },
+          {
+            "path": "refined.err",
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "path": "refined.out",
+            "bytes": 80987,
+            "sha256": "e605a7623ad8de3420eabf84a0f447bfc456ed63afeec1222c8f5fb0fc93c686"
+          },
+          {
+            "path": "refined.receipt.json",
+            "bytes": 922,
+            "sha256": "c14cc166fae72d9a33197e6cdad009be643a69c9560ca2648ac6714d4d4d3c52"
+          },
+          {
+            "path": "result.json",
+            "bytes": 2146,
+            "sha256": "9559ba554cb3b510e9d0d8180188515e5f6ddf98d5bd66db7a934c51f24672f0"
+          },
+          {
+            "path": "routes.tsv",
+            "bytes": 4778,
+            "sha256": "9d7a44db107ec10d55f11267a19062b67c2ec149e31a7cfe050253e2ec2fd337"
+          }
+        ]
+      }
+    },
+    {
+      "name": "manifest_matches_streamed_members",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "manifest_file_count_15",
+      "ok": true,
+      "detail": 15
+    }
+  ],
+  "all_ok": false,
+  "smoke_children": [
+    "GQ/000-1-1-dense.err",
+    "GQ/000-1-1-dense.out",
+    "GQ/000-1-1-dense.receipt.json",
+    "GQ/000-1-1-dense.record.json",
+    "GQ/001-1-1-refined.err",
+    "GQ/001-1-1-refined.out",
+    "GQ/001-1-1-refined.receipt.json",
+    "GQ/001-1-1-refined.record.json",
+    "GQ/002-1-2-refined.err",
+    "GQ/002-1-2-refined.out",
+    "GQ/002-1-2-refined.receipt.json",
+    "GQ/002-1-2-refined.record.json",
+    "GQ/003-1-2-dense.err",
+    "GQ/003-1-2-dense.out",
+    "GQ/003-1-2-dense.receipt.json",
+    "GQ/003-1-2-dense.record.json"
+  ],
+  "smoke_receipt_count": 12,
+  "cmp_result_count": 0,
+  "linux_eq_candidates": 0,
+  "test_sharded_members": [
+    {
+      "name": "host/docs/memory/nav-tiled-stage-a/test_sharded.py",
+      "bytes": 25169,
+      "sha256": "b39ee71d0778488c09ea6e4e97a08eeb995ab195296436a20160f433cfd3ec4d"
+    }
+  ],
+  "113ce05_changed": [
+    "docs/memory/nav-scheduler-fixture-correction-report.md",
+    "docs/memory/nav-tiled-stage-a/diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction/bounded/runner-result.json",
+    "docs/memory/nav-tiled-stage-a/diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction/bounded/scheduler-full.err",
+    "docs/memory/nav-tiled-stage-a/diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction/bounded/scheduler-full.out",
+    "docs/memory/nav-tiled-stage-a/diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction/bounded/scheduler-full.receipt.json",
+    "docs/memory/nav-tiled-stage-a/diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction/full-generated-suite.log",
+    "docs/memory/nav-tiled-stage-a/diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction/full-generated-suite.log.sha256",
+    "docs/memory/nav-tiled-stage-a/diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction/run_bounded_fixture_suite.py",
+    "docs/memory/nav-tiled-stage-a/diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction/scheduler-fixture-correction.receipt.json",
+    "docs/memory/nav-tiled-stage-a/test_sharded.py"
+  ]
+}

@@ -1,0 +1,313 @@
+{
+  "checks": [
+    {
+      "name": "routes_sha256",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "routes_row_count",
+      "ok": true,
+      "detail": 59
+    },
+    {
+      "name": "routes_all_10_fields",
+      "ok": true,
+      "detail": {
+        "10": 59
+      }
+    },
+    {
+      "name": "routes_ordinals_1_to_59",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "routes_has_some_duplicate_tuples_ok",
+      "ok": true,
+      "detail": "unique_tuples=59"
+    },
+    {
+      "name": "auth_archive_eq_local",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "auth_sha",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "auth_input_sha",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "auth_routes_sha",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "auth_binding",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "auth_limits",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "auth_preflight_bind",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "auth_schema",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "auth_mode_real",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "auth_scope_correctness",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "preflight_qualified",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "preflight_steal_zero",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "preflight_no_conflict",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "preflight_idle_100",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "preflight_swap_zero",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "preflight_builder",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "preflight_no_private_path",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "preflight_sha_matches_auth",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "root_audit_verified",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "root_audit_equal",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "root_audit_bytes",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "root_audit_out_sha_dense",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "root_audit_out_sha_refined",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "dense_row_count",
+      "ok": true,
+      "detail": 59
+    },
+    {
+      "name": "dense_fixed_selector_59",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "dense_post_state_59",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "dense_fixed_model_59",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "dense_fixed_tele_59",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "dense_host_frames_59",
+      "ok": true,
+      "detail": 59
+    },
+    {
+      "name": "dense_cells_2",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "dense_geometry_2",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "dense_all_rows_have_model_tele_host",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "refined_row_count",
+      "ok": true,
+      "detail": 59
+    },
+    {
+      "name": "refined_fixed_selector_59",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "refined_post_state_59",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "refined_fixed_model_59",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "refined_fixed_tele_59",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "refined_host_frames_59",
+      "ok": true,
+      "detail": 59
+    },
+    {
+      "name": "refined_cells_2",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "refined_geometry_2",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "refined_all_rows_have_model_tele_host",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "dense_refined_row_identity_equal",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "audit_rows_match_tsv",
+      "ok": true,
+      "detail": "first_diff=None"
+    },
+    {
+      "name": "dense_refined_payload_sha_equal_all_rows",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "dense_out_size",
+      "ok": true,
+      "detail": 2119776634
+    },
+    {
+      "name": "dense_out_sha",
+      "ok": true,
+      "detail": "bbb179b7bedf32e8811db730b6fe69e069c67d9f80aca62bf14a0c577e7dd022"
+    },
+    {
+      "name": "refined_out_size",
+      "ok": true,
+      "detail": 2119776634
+    },
+    {
+      "name": "refined_out_sha",
+      "ok": true,
+      "detail": "bbb179b7bedf32e8811db730b6fe69e069c67d9f80aca62bf14a0c577e7dd022"
+    },
+    {
+      "name": "dense_refined_hash_equal",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "input_bin_size",
+      "ok": true,
+      "detail": 73438581
+    },
+    {
+      "name": "input_bin_sha",
+      "ok": true,
+      "detail": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30"
+    },
+    {
+      "name": "dense_err_empty",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "refined_err_empty",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "result_equal_true",
+      "ok": true,
+      "detail": null
+    }
+  ],
+  "all_ok": true,
+  "routes_unique_tuples": 59,
+  "routes_count": 59,
+  "dense_out_sha": "bbb179b7bedf32e8811db730b6fe69e069c67d9f80aca62bf14a0c577e7dd022",
+  "refined_out_sha": "bbb179b7bedf32e8811db730b6fe69e069c67d9f80aca62bf14a0c577e7dd022",
+  "input_sha": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+  "result_keys": [
+    "arms",
+    "comparison",
+    "mode",
+    "qualified"
+  ]
+}

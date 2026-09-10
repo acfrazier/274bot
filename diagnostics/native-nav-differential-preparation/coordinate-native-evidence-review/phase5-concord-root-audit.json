@@ -1,0 +1,121 @@
+{
+  "verified": true,
+  "scope": "native generated functional qualification only; no real input or performance acceptance",
+  "archive_sha256": "41cd71c943b11c3c899fe66693cc98dbe83e2936007eb10698fa83f161b02681",
+  "members_verified": 9999,
+  "reviewed_tool_commit": "113ce05525cd2bd27128bd3f420cafaad76c529c",
+  "source_binding_sha256": "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb",
+  "four_admissions_unchanged": true,
+  "all_admitted_source_and_executable_hashes_verified": true,
+  "guards": {
+    "address_guard_active": true,
+    "command": [
+      "/usr/bin/python3",
+      "-m",
+      "unittest",
+      "-v",
+      "test_sharded",
+      "test_sharded_guards"
+    ],
+    "cwd": "/home/acfrazier/274bot-campaign/nav-coordinate-113ce05-concord-01/host/docs/memory/nav-tiled-stage-a",
+    "failure": null,
+    "limits": {
+      "address": 4294967296,
+      "cpu": 300,
+      "file_size": 1048576,
+      "output": 1048576,
+      "rss": 536870912,
+      "wall": 360
+    },
+    "output_bytes": 10010,
+    "returncode": 0,
+    "sampled_group_peak_bytes": 48766976,
+    "wall_seconds": 162.0534358899895
+  },
+  "comparisons": 12,
+  "smoke_children": 4,
+  "progress": [
+    {
+      "name": "guards",
+      "command": [
+        "/usr/bin/python3",
+        "stage_a.py",
+        "guards",
+        "--run",
+        "/home/acfrazier/274bot-campaign/nav-coordinate-113ce05-concord-01/host/docs/memory/nav-tiled-stage-a/coordinate-concord-native-guards-01",
+        "--source-binding",
+        "/home/acfrazier/274bot-campaign/nav-coordinate-113ce05-concord-01/host/docs/memory/nav-tiled-stage-a/coordinate-source-binding.json",
+        "--source-binding-sha256",
+        "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb"
+      ],
+      "returncode": 0,
+      "wall_seconds": 9.421737473996473
+    },
+    {
+      "name": "generated-clean",
+      "command": [
+        "/usr/bin/python3",
+        "stage_a.py",
+        "generated",
+        "--run",
+        "/home/acfrazier/274bot-campaign/nav-coordinate-113ce05-concord-01/host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01",
+        "--variant",
+        "clean",
+        "--source-binding",
+        "/home/acfrazier/274bot-campaign/nav-coordinate-113ce05-concord-01/host/docs/memory/nav-tiled-stage-a/coordinate-source-binding.json",
+        "--source-binding-sha256",
+        "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb"
+      ],
+      "returncode": 0,
+      "wall_seconds": 203.00112005100527
+    },
+    {
+      "name": "generated-counting",
+      "command": [
+        "/usr/bin/python3",
+        "stage_a.py",
+        "generated",
+        "--run",
+        "/home/acfrazier/274bot-campaign/nav-coordinate-113ce05-concord-01/host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01",
+        "--variant",
+        "counting",
+        "--source-binding",
+        "/home/acfrazier/274bot-campaign/nav-coordinate-113ce05-concord-01/host/docs/memory/nav-tiled-stage-a/coordinate-source-binding.json",
+        "--source-binding-sha256",
+        "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb"
+      ],
+      "returncode": 0,
+      "wall_seconds": 202.43574515799992
+    },
+    {
+      "name": "integration",
+      "command": [
+        "/usr/bin/python3",
+        "test_stage_a.py",
+        "--run",
+        "/home/acfrazier/274bot-campaign/nav-coordinate-113ce05-concord-01/host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01",
+        "--source-binding",
+        "/home/acfrazier/274bot-campaign/nav-coordinate-113ce05-concord-01/host/docs/memory/nav-tiled-stage-a/coordinate-source-binding.json",
+        "--source-binding-sha256",
+        "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb"
+      ],
+      "returncode": 0,
+      "wall_seconds": 17.970721987003344
+    },
+    {
+      "name": "scheduler",
+      "command": [
+        "/usr/bin/python3",
+        "qualify_sharded.py",
+        "/home/acfrazier/274bot-campaign/nav-coordinate-113ce05-concord-01/host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01",
+        "coordinate-ebf0f30-qualification-03",
+        "--source-binding",
+        "/home/acfrazier/274bot-campaign/nav-coordinate-113ce05-concord-01/host/docs/memory/nav-tiled-stage-a/coordinate-source-binding.json",
+        "--source-binding-sha256",
+        "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb"
+      ],
+      "returncode": 0,
+      "wall_seconds": 172.3857014259993
+    }
+  ]
+}

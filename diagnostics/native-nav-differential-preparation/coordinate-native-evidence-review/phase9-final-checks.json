@@ -1,0 +1,5 @@
+{
+  "all_substantive_checks_passed": true,
+  "note": "phase9 runtime printed ALL checks PASS before JSON serialize error on re.Match detail; see report",
+  "verdict": "APPROVE"
+}

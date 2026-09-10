@@ -1,0 +1,53 @@
+{
+  "session": {
+    "id": "20260909_192724_9bf140",
+    "model": "grok-4.5",
+    "billing_provider": "xai-oauth",
+    "ended_at": 1788996670.00013
+  },
+  "completion": {
+    "task_id": "t_481b2857",
+    "summary": "Reviewed and approved 113ce05 (round 1, artifact + independent execution). Fixture-only admit cache with bounded identity keys and scalar hit counters reduces redundant admissions (5032 underlying vs ~2.8\u20133.0M hits) in both full matrices; final real audit, output+record mutation negatives, restore assertions, matrix counts, and untouched production/QUAL_LIMITS bytes all verified. Independent 29/29 suite OK; bounded QUAL_LIMITS rerun returncode 0, peak RSS ~104MB.",
+    "metadata": {
+      "review_outcome": "approved",
+      "review_round": 1,
+      "lens": "artifact+execution",
+      "reviewed_commit": "113ce05",
+      "reviewed_blob_test_sharded": "e61c7f29f6245ce7be5ad54f8bb778a7f4c8bbda",
+      "delta": "1404860\u219250a44ab (read_ref identity + final audits only) \u2192113ce05 (admit cache + scalar hits + output/record mutation negatives)",
+      "reviewer_checks": [
+        "worktree test_sharded.py blob matches 113ce05 (e61c7f29 / sha256 b39ee71d...)",
+        "git diff 1404860..113ce05 production sharded/frozen_support/qualify/guards/stage_a/source_binding: empty",
+        "113ce05 paths scoped to test_sharded.py + report + scheduler-fixture-correction diagnostics only",
+        "cached_admit keys (path,sha256,cap); first observation calls real stage.admit; hits are scalar stats['admit_cache_hits'] not per-hit list",
+        "matrix_fixture_doubles confined to two full-matrix tests; assertIs restore of read_ref/write_json/storage_guard/admit",
+        "audit_generated_matrix post-context real bind_entries+collect+admit over F1/F2/acceptance and CF1/CF2/CA; coordinate source rebind",
+        "assert_final_mutations_rejected covers both .out and .record.json sha256 rejection",
+        "matrix invariants still asserted: 826 launches both protocols, completed 708, coordinate children 830",
+        "focused guards/admission/mutation tests outside fixture double unchanged (test_sharded_guards hash 45dd91f9...)",
+        "independent unittest: 29 passed in 29.306s; structural prints legacy 5032/2844655 and coordinate 5032/3013143",
+        "independent frozen_support.bounded QUAL_LIMITS wall=360 cpu=300 rss=512MiB address=4GiB: returncode 0, 29 OK in 30.118s, sampled_group_peak_bytes 104202240",
+        "native Concord acceptance correctly withheld"
+      ],
+      "structural_admission_evidence": {
+        "legacy": {
+          "underlying_calls": 5032,
+          "cache_hits": 2844655
+        },
+        "coordinate": {
+          "underlying_calls": 5032,
+          "cache_hits": 3013143
+        }
+      },
+      "tests_run": [
+        "python3 -m unittest -v test_sharded test_sharded_guards \u2192 29 OK 29.306s",
+        "bounded QUAL_LIMITS independent rerun \u2192 returncode 0 peak_rss 104202240"
+      ],
+      "caveats": [
+        "HEAD had moved to 373b145 (root checkpoint restore); review locked to 113ce05 source bytes, not moving HEAD",
+        "native Concord re-qualification remains root-owned and withheld"
+      ],
+      "hygiene_note": "append-only corrective commits only; do not amend/reset/absorb shared-checkout rewrites"
+    }
+  }
+}

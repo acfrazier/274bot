@@ -1,0 +1,207 @@
+{
+  "checks": [
+    {
+      "name": "gq_child_count_4",
+      "ok": false,
+      "detail": [
+        "000-1-1-dense.err",
+        "000-1-1-dense.out",
+        "000-1-1-dense.receipt.json",
+        "000-1-1-dense.record.json",
+        "001-1-1-refined.err",
+        "001-1-1-refined.out",
+        "001-1-1-refined.receipt.json",
+        "001-1-1-refined.record.json",
+        "002-1-2-refined.err",
+        "002-1-2-refined.out",
+        "002-1-2-refined.receipt.json",
+        "002-1-2-refined.record.json",
+        "003-1-2-dense.err",
+        "003-1-2-dense.out",
+        "003-1-2-dense.receipt.json",
+        "003-1-2-dense.record.json",
+        "checkpoint.json",
+        "claim.json",
+        "result.json"
+      ]
+    },
+    {
+      "name": "gq_ids_expected",
+      "ok": false,
+      "detail": [
+        "000-1-1-dense.err",
+        "000-1-1-dense.out",
+        "000-1-1-dense.receipt.json",
+        "000-1-1-dense.record.json",
+        "001-1-1-refined.err",
+        "001-1-1-refined.out",
+        "001-1-1-refined.receipt.json",
+        "001-1-1-refined.record.json",
+        "002-1-2-refined.err",
+        "002-1-2-refined.out",
+        "002-1-2-refined.receipt.json",
+        "002-1-2-refined.record.json",
+        "003-1-2-dense.err",
+        "003-1-2-dense.out",
+        "003-1-2-dense.receipt.json",
+        "003-1-2-dense.record.json",
+        "checkpoint.json",
+        "claim.json",
+        "result.json"
+      ]
+    },
+    {
+      "name": "comparisons_count_12",
+      "ok": true,
+      "detail": 12
+    },
+    {
+      "name": "all_12_comparisons_ok",
+      "ok": false,
+      "detail": [
+        [
+          0,
+          [
+            "arm",
+            "fixture",
+            "new_sha256",
+            "old_sha256",
+            "raw_calls",
+            "reference_arm",
+            "variant"
+          ],
+          {
+            "arm": "dense",
+            "fixture": "all-uniform",
+            "new_sha256": "c80a1d9269890377167acbab37d7ccb260651d1b737a6eb8e5cdd586e204f1c2",
+            "old_sha256": "d253ba1d9a38c392e2b3d5b978377d870da35407565a652091fb575ec0a44926",
+            "raw_calls": 840,
+            "reference_arm": "dense",
+            "variant": "clean"
+          }
+        ],
+        [
+          1,
+          [
+            "arm",
+            "fixture",
+            "new_sha256",
+            "old_sha256",
+            "raw_calls",
+            "reference_arm",
+            "variant"
+          ],
+          {
+            "arm": "dense",
+            "fixture": "all-dense",
+            "new_sha256": "8a877b4aeb4db4da8e3577cfda5e0a74baf0e759e432bcb23136b5990756a26e",
+            "old_sha256": "522e418aa0ff89bb9989a98bf94dda8e951e432b46db0df1db513ef6d4dcea2f",
+            "raw_calls": 840,
+            "reference_arm": "dense",
+            "variant": "clean"
+          }
+        ],
+        [
+          2,
+          [
+            "arm",
+            "fixture",
+            "new_sha256",
+            "old_sha256",
+            "raw_calls",
+            "reference_arm",
+            "variant"
+          ],
+          {
+            "arm": "dense",
+            "fixture": "gated",
+            "new_sha256": "5a270c4b1390d17029dac154960dc4d483266883e1ff4610dc047f83c16ef4b8",
+            "old_sha256": "0e1d40c59f80e4d6234c69bf59527e7b037be952580715ed3934406a02ddc597",
+            "raw_calls": 840,
+            "reference_arm": "dense",
+            "variant": "clean"
+          }
+        ]
+      ]
+    },
+    {
+      "name": "gq_receipts_rc0",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "gq_receipt_files_16_or_4",
+      "ok": true,
+      "detail": 12
+    },
+    {
+      "name": "as_guard_active",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "guards_rc0",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "guards_limits_unchanged",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "all_progress_rc0",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "four_admissions_unchanged_flag",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "failure_scheduler_rc_neg9",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "failure_scope_failed",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "success_ne_failure_archive",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "wrapper_equal_bytes_80987",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "wrapper_result_equal",
+      "ok": true,
+      "detail": [
+        "arms",
+        "comparison",
+        "mode",
+        "qualified"
+      ]
+    },
+    {
+      "name": "real_result_sha_matches_manifest",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "auth_pre_result_hash_distinct_from_real",
+      "ok": true,
+      "detail": {
+        "auth": "0262aaf81172453eaa7c9a2b767f33b98a293b46448f26bf3f8d5117a3cd8bf7",
+        "real": "e6c8b044b5272dffff16dab604a14a1490bbfaf59e919e6b75644f9264d0e6fa"
+      }
+    }
+  ],
+  "all_ok": false
+}

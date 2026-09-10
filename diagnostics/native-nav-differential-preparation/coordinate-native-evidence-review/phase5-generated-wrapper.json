@@ -1,0 +1,71 @@
+{
+  "files": [
+    "authorization.json",
+    "coordinate-generated-wrapper-authorization.json",
+    "coordinate-generated-wrapper-result.json",
+    "dense.err",
+    "dense.out",
+    "dense.receipt.json",
+    "input.bin",
+    "refined.err",
+    "refined.out",
+    "refined.receipt.json",
+    "result.json",
+    "root-audit.json",
+    "routes.tsv"
+  ],
+  "hashed": {
+    "result.json": {
+      "bytes": 2146,
+      "sha256": "9559ba554cb3b510e9d0d8180188515e5f6ddf98d5bd66db7a934c51f24672f0"
+    },
+    "coordinate-generated-wrapper-result.json": {
+      "bytes": 2604,
+      "sha256": "6d303d09473604c30fb09c5b46ab75040a53b7497d101c360393ae8c6ebab141"
+    },
+    "dense.receipt.json": {
+      "bytes": 919,
+      "sha256": "32c7118de66c0aec035e274b02c0b8b76e90e4b0bb11669660473fc180990632"
+    },
+    "refined.receipt.json": {
+      "bytes": 922,
+      "sha256": "c14cc166fae72d9a33197e6cdad009be643a69c9560ca2648ac6714d4d4d3c52"
+    },
+    "authorization.json": {
+      "bytes": 1855,
+      "sha256": "471677f5a2bbb25530266e6e936f13926f75c160e4dd938e5bd28ab43d70e9b9"
+    },
+    "dense.out": {
+      "bytes": 80987,
+      "sha256": "e605a7623ad8de3420eabf84a0f447bfc456ed63afeec1222c8f5fb0fc93c686"
+    },
+    "input.bin": {
+      "bytes": 337,
+      "sha256": "6b324fdd44c40cca6ea7920ce868d54c47d40e49d11d301c152f2565403523a4"
+    },
+    "refined.out": {
+      "bytes": 80987,
+      "sha256": "e605a7623ad8de3420eabf84a0f447bfc456ed63afeec1222c8f5fb0fc93c686"
+    },
+    "routes.tsv": {
+      "bytes": 4778,
+      "sha256": "9d7a44db107ec10d55f11267a19062b67c2ec149e31a7cfe050253e2ec2fd337"
+    },
+    "refined.err": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "root-audit.json": {
+      "bytes": 1978,
+      "sha256": "5e795e0526e827fdd443ad07b2f980735229a427fb467b3e758935175d9cc43d"
+    },
+    "dense.err": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "coordinate-generated-wrapper-authorization.json": {
+      "bytes": 1855,
+      "sha256": "471677f5a2bbb25530266e6e936f13926f75c160e4dd938e5bd28ab43d70e9b9"
+    }
+  }
+}

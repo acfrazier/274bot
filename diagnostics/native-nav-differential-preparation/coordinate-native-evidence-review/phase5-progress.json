@@ -1,0 +1,93 @@
+[
+  {
+    "name": "guards",
+    "command": [
+      "/usr/bin/python3",
+      "harness.py",
+      "guards",
+      "--run",
+      "/home/builder/nav-coordinate-differential-a44a930-01/host/docs/memory/nav-tiled-differential/coordinate-native-guards-01",
+      "--source-binding",
+      "/home/builder/nav-coordinate-differential-a44a930-01/host/docs/memory/nav-tiled-stage-a/coordinate-source-binding.json",
+      "--source-binding-sha256",
+      "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb"
+    ],
+    "returncode": 0,
+    "wall_seconds": 2.2216223959985655
+  },
+  {
+    "name": "prepare",
+    "command": [
+      "/usr/bin/python3",
+      "harness.py",
+      "prepare",
+      "--run",
+      "/home/builder/nav-coordinate-differential-a44a930-01/host/docs/memory/nav-tiled-differential/coordinate-native-generated-01",
+      "--source-binding",
+      "/home/builder/nav-coordinate-differential-a44a930-01/host/docs/memory/nav-tiled-stage-a/coordinate-source-binding.json",
+      "--source-binding-sha256",
+      "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb"
+    ],
+    "returncode": 0,
+    "wall_seconds": 1.5252131699999154
+  },
+  {
+    "name": "build",
+    "command": [
+      "/usr/bin/python3",
+      "harness.py",
+      "build",
+      "--run",
+      "/home/builder/nav-coordinate-differential-a44a930-01/host/docs/memory/nav-tiled-differential/coordinate-native-generated-01",
+      "--source-binding",
+      "/home/builder/nav-coordinate-differential-a44a930-01/host/docs/memory/nav-tiled-stage-a/coordinate-source-binding.json",
+      "--source-binding-sha256",
+      "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb"
+    ],
+    "returncode": 0,
+    "wall_seconds": 61.2022535899996
+  },
+  {
+    "name": "generated",
+    "command": [
+      "/usr/bin/python3",
+      "harness.py",
+      "generated",
+      "--run",
+      "/home/builder/nav-coordinate-differential-a44a930-01/host/docs/memory/nav-tiled-differential/coordinate-native-generated-01",
+      "--source-binding",
+      "/home/builder/nav-coordinate-differential-a44a930-01/host/docs/memory/nav-tiled-stage-a/coordinate-source-binding.json",
+      "--source-binding-sha256",
+      "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb"
+    ],
+    "returncode": 0,
+    "wall_seconds": 167.70799212400016
+  },
+  {
+    "name": "audit",
+    "command": [
+      "/usr/bin/python3",
+      "audit.py",
+      "/home/builder/nav-coordinate-differential-a44a930-01/host/docs/memory/nav-tiled-differential/coordinate-native-generated-01",
+      "--source-binding",
+      "/home/builder/nav-coordinate-differential-a44a930-01/host/docs/memory/nav-tiled-stage-a/coordinate-source-binding.json",
+      "--source-binding-sha256",
+      "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb"
+    ],
+    "returncode": 0,
+    "wall_seconds": 4.927449438999247
+  },
+  {
+    "name": "admission-extension-tests",
+    "command": [
+      "/usr/bin/python3",
+      "-m",
+      "unittest",
+      "-v",
+      "test_admission",
+      "test_extension"
+    ],
+    "returncode": 0,
+    "wall_seconds": 3.2313457149994065
+  }
+]

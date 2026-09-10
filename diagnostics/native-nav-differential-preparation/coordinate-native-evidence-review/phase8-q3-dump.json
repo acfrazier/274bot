@@ -1,0 +1,168 @@
+{
+  "qualified": true,
+  "comparisons": [
+    {
+      "arm": "dense",
+      "fixture": "all-uniform",
+      "new_sha256": "c80a1d9269890377167acbab37d7ccb260651d1b737a6eb8e5cdd586e204f1c2",
+      "old_sha256": "d253ba1d9a38c392e2b3d5b978377d870da35407565a652091fb575ec0a44926",
+      "raw_calls": 840,
+      "reference_arm": "dense",
+      "variant": "clean"
+    },
+    {
+      "arm": "dense",
+      "fixture": "all-dense",
+      "new_sha256": "8a877b4aeb4db4da8e3577cfda5e0a74baf0e759e432bcb23136b5990756a26e",
+      "old_sha256": "522e418aa0ff89bb9989a98bf94dda8e951e432b46db0df1db513ef6d4dcea2f",
+      "raw_calls": 840,
+      "reference_arm": "dense",
+      "variant": "clean"
+    },
+    {
+      "arm": "dense",
+      "fixture": "gated",
+      "new_sha256": "5a270c4b1390d17029dac154960dc4d483266883e1ff4610dc047f83c16ef4b8",
+      "old_sha256": "0e1d40c59f80e4d6234c69bf59527e7b037be952580715ed3934406a02ddc597",
+      "raw_calls": 840,
+      "reference_arm": "dense",
+      "variant": "clean"
+    },
+    {
+      "arm": "refined",
+      "fixture": "all-uniform",
+      "new_sha256": "9b36719d18ee7db55e63e2af9ddbd463d84ffb9b0a2d5be69f1908e4d443f2d7",
+      "old_sha256": "d1280cf2e4d4c57b9bb6816171e15b678441b9c28088dc5493ae402ab70a981d",
+      "raw_calls": 840,
+      "reference_arm": "tiled",
+      "variant": "clean"
+    },
+    {
+      "arm": "refined",
+      "fixture": "all-dense",
+      "new_sha256": "c457ff6cee30af2775393673847989bfc83a3b693d8a4ae306806b7bd8cb5346",
+      "old_sha256": "0aee0e00e4263bef1745dd07c91a0ab608f95ed5c890ada8d4afe1f1a7e4c446",
+      "raw_calls": 840,
+      "reference_arm": "tiled",
+      "variant": "clean"
+    },
+    {
+      "arm": "refined",
+      "fixture": "gated",
+      "new_sha256": "85a1640472764dfcf2b9abd88dbc28779d3289acd40bcc57a2714992a503e6df",
+      "old_sha256": "292168007c1f6a5c095273edfa73d2b83c9b5e78a1790afd2c01b4597d8831de",
+      "raw_calls": 840,
+      "reference_arm": "tiled",
+      "variant": "clean"
+    },
+    {
+      "arm": "dense",
+      "fixture": "all-uniform",
+      "new_sha256": "81598f1d1c03454b2bc927c57364c4694d805be5f9e1450b13903b03af684b79",
+      "old_sha256": "170da5aeeb76d5f7c73785f9e0b39a32c7c75865bf766250baaf1193458db284",
+      "raw_calls": 840,
+      "reference_arm": "dense",
+      "variant": "counting"
+    },
+    {
+      "arm": "dense",
+      "fixture": "all-dense",
+      "new_sha256": "f6ad41b16ccba13e54998505caedd849db01f360e941ccc4a808894c66c5ea90",
+      "old_sha256": "e694266d6024efcee855cb612643c66a6a30648578deb405197e1ec59ae4ca73",
+      "raw_calls": 840,
+      "reference_arm": "dense",
+      "variant": "counting"
+    },
+    {
+      "arm": "dense",
+      "fixture": "gated",
+      "new_sha256": "7483177cca91e80c296f75581f58e1b78b53d6a522b4eeecb4d2992daa503b3e",
+      "old_sha256": "9829af44719e31bc42a36d824340eb8262bbd1fa90fed44a974ea6be9c3e2a61",
+      "raw_calls": 840,
+      "reference_arm": "dense",
+      "variant": "counting"
+    },
+    {
+      "arm": "refined",
+      "fixture": "all-uniform",
+      "new_sha256": "308644c86c5805912c6785aadc9e88b31a7f22570763dfbc6879b2e3b5eef24c",
+      "old_sha256": "263ee1055061a6da1cd252ec26781346e50092aafb7a5f1598f7c19a97192c48",
+      "raw_calls": 840,
+      "reference_arm": "tiled",
+      "variant": "counting"
+    },
+    {
+      "arm": "refined",
+      "fixture": "all-dense",
+      "new_sha256": "66fdbfbcd295bebd38215aeb2befcf6a92fbf48a1d3d24adf6d181b21cdee017",
+      "old_sha256": "754663e55757bc097c9fae36bdbe8b724b731b5b6012eb58eb094c9e359ae2ec",
+      "raw_calls": 840,
+      "reference_arm": "tiled",
+      "variant": "counting"
+    },
+    {
+      "arm": "refined",
+      "fixture": "gated",
+      "new_sha256": "1a741b8b24a7144e4d8503dfbad903b9ed325aab90366e922c1a52db3e02a378",
+      "old_sha256": "9b2acd35049a602ad748bdeaca271129b5b69aa3519f7b1c1d15f00a4df78e1c",
+      "raw_calls": 840,
+      "reference_arm": "tiled",
+      "variant": "counting"
+    }
+  ],
+  "smoke": {
+    "path": "/home/acfrazier/274bot-campaign/nav-coordinate-113ce05-concord-01/host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-03-smoke/GQ/result.json",
+    "sha256": "7f105199d892cc404ab1adb50ca219feadfa004791a3c16df9f31537e6e6abad"
+  },
+  "guards": {
+    ".err": {
+      "path": "/home/acfrazier/274bot-campaign/nav-coordinate-113ce05-concord-01/host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-03/scheduler-guards.err",
+      "sha256": "ff1ccbad0683edde8ea33443b9d64328f078ffb3828cbb822e9b56ff1a618bc0"
+    },
+    ".out": {
+      "path": "/home/acfrazier/274bot-campaign/nav-coordinate-113ce05-concord-01/host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-03/scheduler-guards.out",
+      "sha256": "b43bca2fc6b5495a83e565de71377bfb404b73aa3e9dfd5b01576c85f644bf50"
+    },
+    ".receipt.json": {
+      "path": "/home/acfrazier/274bot-campaign/nav-coordinate-113ce05-concord-01/host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-03/scheduler-guards.receipt.json",
+      "sha256": "96939e10aa712cdf059a1e2e7dfcc9e69a68fb667d409eb97e3c3234f902e977"
+    }
+  },
+  "admissions": {
+    "dense-clean": {
+      "path": "/home/acfrazier/274bot-campaign/nav-coordinate-113ce05-concord-01/host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense-clean-admission.json",
+      "sha256": "a7b41eca371e41662c02c5266f24e0ee5ff72a6fab90246e35af16120e714f56"
+    },
+    "dense-counting": {
+      "path": "/home/acfrazier/274bot-campaign/nav-coordinate-113ce05-concord-01/host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense-counting-admission.json",
+      "sha256": "b94f3f2a3a4daa103429d843dcb6b9c78ec077b2f9396c90c68a2020bcd75319"
+    },
+    "refined-clean": {
+      "path": "/home/acfrazier/274bot-campaign/nav-coordinate-113ce05-concord-01/host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined-clean-admission.json",
+      "sha256": "73366a7e5a2c8545fcde246bb0205ee01dda436d53acee0347d8a641a2a91225"
+    },
+    "refined-counting": {
+      "path": "/home/acfrazier/274bot-campaign/nav-coordinate-113ce05-concord-01/host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined-counting-admission.json",
+      "sha256": "d5346685e0bb4e7f2e7b9e5b1bc790b60a0f1b585ec9161128a908147e94518d"
+    }
+  },
+  "native_hard_as_qualified": true,
+  "generated_smoke_executed": true,
+  "helper_spans": {
+    "owners": "abf83cbc36409a8c0e0df94c7b0ed475d0470d52f9592cdd18b5b12484aa33d7",
+    "route_calls": "2baed5ffea20d7f6aa63d003ae1d085a37612be9fefba2b070b5e0a97b1e98dd",
+    "warm_timed": "d2fbb0849f3db5958792612fbd1372cfd00fdadbb5c1d81425f5a95dae21f975"
+  },
+  "source_binding": {
+    "candidate_id": "coordinate-ebf0f30",
+    "filename": "coordinate-source-binding.json",
+    "schema": "nav-coordinate-source-v1",
+    "sha256": "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb"
+  },
+  "gq_stems": [
+    "000-1-1-dense",
+    "001-1-1-refined",
+    "002-1-2-refined",
+    "003-1-2-dense"
+  ]
+}

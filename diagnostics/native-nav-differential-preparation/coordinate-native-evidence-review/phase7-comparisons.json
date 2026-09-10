@@ -1,0 +1,327 @@
+{
+  "q3_keys": [
+    "admissions",
+    "candidate_id",
+    "comparisons",
+    "generated_smoke_executed",
+    "guards",
+    "hardware",
+    "helper_spans",
+    "native_hard_as_qualified",
+    "phase",
+    "platform",
+    "python_sha256",
+    "qualified",
+    "schema",
+    "scope",
+    "smoke",
+    "source_binding",
+    "tools"
+  ],
+  "comparisons": [
+    {
+      "i": 0,
+      "keys": [
+        "arm",
+        "fixture",
+        "new_sha256",
+        "old_sha256",
+        "raw_calls",
+        "reference_arm",
+        "variant"
+      ],
+      "equal": null,
+      "name": null,
+      "snippet": {
+        "arm": "dense",
+        "fixture": "all-uniform",
+        "new_sha256": "c80a1d9269890377167acbab37d7ccb260651d1b737a6eb8e5cdd586e204f1c2",
+        "old_sha256": "d253ba1d9a38c392e2b3d5b978377d870da35407565a652091fb575ec0a44926",
+        "raw_calls": 840,
+        "reference_arm": "dense",
+        "variant": "clean"
+      }
+    },
+    {
+      "i": 1,
+      "keys": [
+        "arm",
+        "fixture",
+        "new_sha256",
+        "old_sha256",
+        "raw_calls",
+        "reference_arm",
+        "variant"
+      ],
+      "equal": null,
+      "name": null,
+      "snippet": {
+        "arm": "dense",
+        "fixture": "all-dense",
+        "new_sha256": "8a877b4aeb4db4da8e3577cfda5e0a74baf0e759e432bcb23136b5990756a26e",
+        "old_sha256": "522e418aa0ff89bb9989a98bf94dda8e951e432b46db0df1db513ef6d4dcea2f",
+        "raw_calls": 840,
+        "reference_arm": "dense",
+        "variant": "clean"
+      }
+    },
+    {
+      "i": 2,
+      "keys": [
+        "arm",
+        "fixture",
+        "new_sha256",
+        "old_sha256",
+        "raw_calls",
+        "reference_arm",
+        "variant"
+      ],
+      "equal": null,
+      "name": null,
+      "snippet": {
+        "arm": "dense",
+        "fixture": "gated",
+        "new_sha256": "5a270c4b1390d17029dac154960dc4d483266883e1ff4610dc047f83c16ef4b8",
+        "old_sha256": "0e1d40c59f80e4d6234c69bf59527e7b037be952580715ed3934406a02ddc597",
+        "raw_calls": 840,
+        "reference_arm": "dense",
+        "variant": "clean"
+      }
+    },
+    {
+      "i": 3,
+      "keys": [
+        "arm",
+        "fixture",
+        "new_sha256",
+        "old_sha256",
+        "raw_calls",
+        "reference_arm",
+        "variant"
+      ],
+      "equal": null,
+      "name": null,
+      "snippet": {
+        "arm": "refined",
+        "fixture": "all-uniform",
+        "new_sha256": "9b36719d18ee7db55e63e2af9ddbd463d84ffb9b0a2d5be69f1908e4d443f2d7",
+        "old_sha256": "d1280cf2e4d4c57b9bb6816171e15b678441b9c28088dc5493ae402ab70a981d",
+        "raw_calls": 840,
+        "reference_arm": "tiled",
+        "variant": "clean"
+      }
+    },
+    {
+      "i": 4,
+      "keys": [
+        "arm",
+        "fixture",
+        "new_sha256",
+        "old_sha256",
+        "raw_calls",
+        "reference_arm",
+        "variant"
+      ],
+      "equal": null,
+      "name": null,
+      "snippet": {
+        "arm": "refined",
+        "fixture": "all-dense",
+        "new_sha256": "c457ff6cee30af2775393673847989bfc83a3b693d8a4ae306806b7bd8cb5346",
+        "old_sha256": "0aee0e00e4263bef1745dd07c91a0ab608f95ed5c890ada8d4afe1f1a7e4c446",
+        "raw_calls": 840,
+        "reference_arm": "tiled",
+        "variant": "clean"
+      }
+    },
+    {
+      "i": 5,
+      "keys": [
+        "arm",
+        "fixture",
+        "new_sha256",
+        "old_sha256",
+        "raw_calls",
+        "reference_arm",
+        "variant"
+      ],
+      "equal": null,
+      "name": null,
+      "snippet": {
+        "arm": "refined",
+        "fixture": "gated",
+        "new_sha256": "85a1640472764dfcf2b9abd88dbc28779d3289acd40bcc57a2714992a503e6df",
+        "old_sha256": "292168007c1f6a5c095273edfa73d2b83c9b5e78a1790afd2c01b4597d8831de",
+        "raw_calls": 840,
+        "reference_arm": "tiled",
+        "variant": "clean"
+      }
+    },
+    {
+      "i": 6,
+      "keys": [
+        "arm",
+        "fixture",
+        "new_sha256",
+        "old_sha256",
+        "raw_calls",
+        "reference_arm",
+        "variant"
+      ],
+      "equal": null,
+      "name": null,
+      "snippet": {
+        "arm": "dense",
+        "fixture": "all-uniform",
+        "new_sha256": "81598f1d1c03454b2bc927c57364c4694d805be5f9e1450b13903b03af684b79",
+        "old_sha256": "170da5aeeb76d5f7c73785f9e0b39a32c7c75865bf766250baaf1193458db284",
+        "raw_calls": 840,
+        "reference_arm": "dense",
+        "variant": "counting"
+      }
+    },
+    {
+      "i": 7,
+      "keys": [
+        "arm",
+        "fixture",
+        "new_sha256",
+        "old_sha256",
+        "raw_calls",
+        "reference_arm",
+        "variant"
+      ],
+      "equal": null,
+      "name": null,
+      "snippet": {
+        "arm": "dense",
+        "fixture": "all-dense",
+        "new_sha256": "f6ad41b16ccba13e54998505caedd849db01f360e941ccc4a808894c66c5ea90",
+        "old_sha256": "e694266d6024efcee855cb612643c66a6a30648578deb405197e1ec59ae4ca73",
+        "raw_calls": 840,
+        "reference_arm": "dense",
+        "variant": "counting"
+      }
+    },
+    {
+      "i": 8,
+      "keys": [
+        "arm",
+        "fixture",
+        "new_sha256",
+        "old_sha256",
+        "raw_calls",
+        "reference_arm",
+        "variant"
+      ],
+      "equal": null,
+      "name": null,
+      "snippet": {
+        "arm": "dense",
+        "fixture": "gated",
+        "new_sha256": "7483177cca91e80c296f75581f58e1b78b53d6a522b4eeecb4d2992daa503b3e",
+        "old_sha256": "9829af44719e31bc42a36d824340eb8262bbd1fa90fed44a974ea6be9c3e2a61",
+        "raw_calls": 840,
+        "reference_arm": "dense",
+        "variant": "counting"
+      }
+    },
+    {
+      "i": 9,
+      "keys": [
+        "arm",
+        "fixture",
+        "new_sha256",
+        "old_sha256",
+        "raw_calls",
+        "reference_arm",
+        "variant"
+      ],
+      "equal": null,
+      "name": null,
+      "snippet": {
+        "arm": "refined",
+        "fixture": "all-uniform",
+        "new_sha256": "308644c86c5805912c6785aadc9e88b31a7f22570763dfbc6879b2e3b5eef24c",
+        "old_sha256": "263ee1055061a6da1cd252ec26781346e50092aafb7a5f1598f7c19a97192c48",
+        "raw_calls": 840,
+        "reference_arm": "tiled",
+        "variant": "counting"
+      }
+    },
+    {
+      "i": 10,
+      "keys": [
+        "arm",
+        "fixture",
+        "new_sha256",
+        "old_sha256",
+        "raw_calls",
+        "reference_arm",
+        "variant"
+      ],
+      "equal": null,
+      "name": null,
+      "snippet": {
+        "arm": "refined",
+        "fixture": "all-dense",
+        "new_sha256": "66fdbfbcd295bebd38215aeb2befcf6a92fbf48a1d3d24adf6d181b21cdee017",
+        "old_sha256": "754663e55757bc097c9fae36bdbe8b724b731b5b6012eb58eb094c9e359ae2ec",
+        "raw_calls": 840,
+        "reference_arm": "tiled",
+        "variant": "counting"
+      }
+    },
+    {
+      "i": 11,
+      "keys": [
+        "arm",
+        "fixture",
+        "new_sha256",
+        "old_sha256",
+        "raw_calls",
+        "reference_arm",
+        "variant"
+      ],
+      "equal": null,
+      "name": null,
+      "snippet": {
+        "arm": "refined",
+        "fixture": "gated",
+        "new_sha256": "1a741b8b24a7144e4d8503dfbad903b9ed325aab90366e922c1a52db3e02a378",
+        "old_sha256": "9b2acd35049a602ad748bdeaca271129b5b69aa3519f7b1c1d15f00a4df78e1c",
+        "raw_calls": 840,
+        "reference_arm": "tiled",
+        "variant": "counting"
+      }
+    }
+  ],
+  "gq_ids": [
+    "000-1-1-dense.err",
+    "000-1-1-dense.out",
+    "000-1-1-dense.receipt.json",
+    "000-1-1-dense.record.json",
+    "001-1-1-refined.err",
+    "001-1-1-refined.out",
+    "001-1-1-refined.receipt.json",
+    "001-1-1-refined.record.json",
+    "002-1-2-refined.err",
+    "002-1-2-refined.out",
+    "002-1-2-refined.receipt.json",
+    "002-1-2-refined.record.json",
+    "003-1-2-dense.err",
+    "003-1-2-dense.out",
+    "003-1-2-dense.receipt.json",
+    "003-1-2-dense.record.json",
+    "checkpoint.json",
+    "claim.json",
+    "result.json"
+  ],
+  "gq_receipt_count": 12,
+  "adm_hashes_sample": {
+    "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense-clean-admission.json": "a7b41eca371e41662c02c5266f24e0ee5ff72a6fab90246e35af16120e714f56",
+    "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense-counting-admission.json": "b94f3f2a3a4daa103429d843dcb6b9c78ec077b2f9396c90c68a2020bcd75319",
+    "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined-clean-admission.json": "73366a7e5a2c8545fcde246bb0205ee01dda436d53acee0347d8a641a2a91225",
+    "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined-counting-admission.json": "d5346685e0bb4e7f2e7b9e5b1bc790b60a0f1b585ec9161128a908147e94518d"
+  }
+}

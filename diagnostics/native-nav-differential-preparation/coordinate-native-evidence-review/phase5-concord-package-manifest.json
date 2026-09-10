@@ -1,0 +1,3884 @@
+{
+  "scope": "same four immutable stage admissions and binaries; only generated scheduler fixture changes; fresh native qualification required; no private release",
+  "tool_commit": "113ce05525cd2bd27128bd3f420cafaad76c529c",
+  "source_run": "/home/builder/nav-coordinate-a44a930-native-01/host/docs/memory/nav-tiled-stage-a/coordinate-native-build-01",
+  "destination_relative_run": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01",
+  "files": [
+    {
+      "path": "builder-provenance/build-clean.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "builder-provenance/build-counting.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "builder-provenance/coordinate-native-guards-01/guards.err",
+      "bytes": 2228,
+      "sha256": "8780d3a1981032c5cf34ae9b61b89c2268f6e0fa7a8c735497b1fc31c6e2fa53"
+    },
+    {
+      "path": "builder-provenance/coordinate-native-guards-01/guards.out",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "builder-provenance/coordinate-native-guards-01/guards.receipt.json",
+      "bytes": 574,
+      "sha256": "0d2854a8246824aa010d7b013422ced377e8d3ae624b8a402d598c745515d1c4"
+    },
+    {
+      "path": "builder-provenance/coordinate-native-guards-01/result.json",
+      "bytes": 1718,
+      "sha256": "b5a3f7a36d6170def1d73cd3668b08e6a8e0e6cb55a34b23bdc122ecaae4e71d"
+    },
+    {
+      "path": "builder-provenance/generated-clean.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "builder-provenance/generated-counting.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "builder-provenance/guards.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "builder-provenance/integration.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "builder-provenance/payload-manifest.json",
+      "bytes": 7580,
+      "sha256": "8376108ca6cac00b542492f4a61bbb0eb8f5b4954287471a6e17ad9d7c06bd5e"
+    },
+    {
+      "path": "builder-provenance/prepare.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "builder-provenance/root-qualification-progress.json",
+      "bytes": 4713,
+      "sha256": "0be7f5af76b3bf36ae0a18c84d4a3e051c875bdf0a49b7d18039ebe5a50423e9"
+    },
+    {
+      "path": "builder-provenance/root-staging-verification.json",
+      "bytes": 236,
+      "sha256": "6e82e469c8c0b26275018331f424771e475cbb4e6bf02a06f7e84319338cb328"
+    },
+    {
+      "path": "builder-provenance/scheduler.log",
+      "bytes": 251,
+      "sha256": "9cf5331c0fcc2b697575d1f8ee67e04a08685c834daa818bbc5be7259cdbc9bc"
+    },
+    {
+      "path": "fixture-correction/original-concord-payload-manifest.json",
+      "bytes": 189014,
+      "sha256": "67eef9bbabafc2fef7d1e0b3186c552208ae5e251184cc109593e151eac4abd6"
+    },
+    {
+      "path": "fixture-correction/original-test_sharded.py",
+      "bytes": 20118,
+      "sha256": "c3f4251ab1258ad1987aea1d53706878d83e1d3a1aef8ab77b2cc2f864dd76c9"
+    },
+    {
+      "path": "fixture-correction/record.json",
+      "bytes": 1766,
+      "sha256": "477dfac24d27fbc69d256131e8fc00b6a43003d1b52acdcebc3fabf44623ede1"
+    },
+    {
+      "path": "fixture-correction/review.json",
+      "bytes": 3321,
+      "sha256": "82d9da44b86284da7b7772b778d77f962d143bc33dab758e6664a59e066c3fae"
+    },
+    {
+      "path": "git-objects/client.pack",
+      "bytes": 669396,
+      "sha256": "b5ad4fa3f27f763ebba26a4e5d45a82f335b14c9434676d5f5ba511f2b974a3a"
+    },
+    {
+      "path": "git-objects/coordinate-overlay.pack",
+      "bytes": 15308,
+      "sha256": "43fe903cc1e334d48a287fb35328b5a2e99b2576236ab65f13503cab3b7bc0b2"
+    },
+    {
+      "path": "git-objects/host.pack",
+      "bytes": 498357,
+      "sha256": "cc589b631c8ce871ebec77c21424704b66f6bb7ab25b8f3e369cab1341c0577f"
+    },
+    {
+      "path": "git-objects/manifest.json",
+      "bytes": 71047,
+      "sha256": "141e1b298a78c72cc841b403abe0337681f6956b06aebef7368dcf27aa91eb03"
+    },
+    {
+      "path": "git-objects/qualifier-ancestor.pack",
+      "bytes": 46593,
+      "sha256": "f9c7514725ec0c2b87ae44e2c28edf8b54dbb4d8b614d9f24512a335bce39113"
+    },
+    {
+      "path": "git-objects/root-verification.json",
+      "bytes": 340,
+      "sha256": "015f0ff9c127d1e503ed442e2591f94a7960bbda0c33b2f20882fa807540ef66"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/README-sharded.md",
+      "bytes": 14660,
+      "sha256": "f31a8a38904c4484e5b755276468f924a38aaef8a77c2868cade295e949add89"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/README.md",
+      "bytes": 7262,
+      "sha256": "12bc6a356e479799085081e586ffc00c27ed7517ae30aa2f826a7e7385a4d7ce"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/allocator.rs",
+      "bytes": 1591,
+      "sha256": "652261fbb469b2f2e14736856641da99c486624d157898436c01e0b76e240b4f"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/GQ/000-1-1-dense.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/GQ/000-1-1-dense.out",
+      "bytes": 2156,
+      "sha256": "e6bf22da584bf30c0f305359b0962c498fcd80240bc4cff504dcedf463731a67"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/GQ/000-1-1-dense.receipt.json",
+      "bytes": 951,
+      "sha256": "66e2000174b6879661e570c2d2bcaa2df263053bc669289b165e03204d339683"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/GQ/000-1-1-dense.record.json",
+      "bytes": 622,
+      "sha256": "6443394ee124291f11e723f4b2a767e7e85015ce3506b13bbb21a4601cf7871b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/GQ/001-1-1-refined.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/GQ/001-1-1-refined.out",
+      "bytes": 2142,
+      "sha256": "a3ff02f4f287b0ab6a6c3555a0946d6157a41037534b9cea64c91fc69421ef73"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/GQ/001-1-1-refined.receipt.json",
+      "bytes": 952,
+      "sha256": "e5d4f8056f525408679cddfd6cc067bfeb01188b8287c3e254303b3e379ab3de"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/GQ/001-1-1-refined.record.json",
+      "bytes": 626,
+      "sha256": "a21067c913312cea4fed18c9cda19161a5e7f0fb057cf7bc8d5adac06804c16f"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/GQ/002-1-2-refined.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/GQ/002-1-2-refined.out",
+      "bytes": 2148,
+      "sha256": "33e5c3ffa48d32b1fa069d828b1118a7b687dfda14c042eff4418f39d108e90b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/GQ/002-1-2-refined.receipt.json",
+      "bytes": 953,
+      "sha256": "ab1be084f82ee860ca6c3cef6d952d6eff706b95dab2f168823f08362a677ede"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/GQ/002-1-2-refined.record.json",
+      "bytes": 624,
+      "sha256": "9afa9015ce102a583eda759e3d467825a05bb9bb59a3b25e24e1273c65c650f7"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/GQ/003-1-2-dense.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/GQ/003-1-2-dense.out",
+      "bytes": 2156,
+      "sha256": "a75c8c502bdba494fec599c2a78845cadaca9cf55c0b42c94c456397ec5a7542"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/GQ/003-1-2-dense.receipt.json",
+      "bytes": 951,
+      "sha256": "b2af93c454268ea818bbfe42d8daeb69ae460d0f7e14a7a12cf7510e46ae04b8"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/GQ/003-1-2-dense.record.json",
+      "bytes": 622,
+      "sha256": "fe7bafc693cb759b073a9586c4b863d118c5f67e178c9a7dc5231b1da0ece8d1"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/GQ/checkpoint.json",
+      "bytes": 646,
+      "sha256": "13ecd778308ffe401bae488c48aef46ea6da31e1e4eca4341193c8a82831d1f1"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/GQ/claim.json",
+      "bytes": 890,
+      "sha256": "15c3c6c3744d04df5c6741b4db074186c9c628312ad298cc1acbcb7972cc2e36"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/GQ/result.json",
+      "bytes": 2199,
+      "sha256": "20920d6ceb54469b00da6597df95d85feb8fb6f4f8407b78be44cd281126f94d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/input.bin",
+      "bytes": 18465,
+      "sha256": "526a66dbd711fa5aaf052704dbeaffb3b73c71271d55ce97efc4c7f7087a679b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/1.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/10.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/11.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/12.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/13.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/14.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/15.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/16.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/17.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/18.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/19.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/2.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/20.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/21.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/22.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/23.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/24.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/25.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/26.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/27.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/28.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/29.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/3.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/30.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/31.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/32.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/33.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/34.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/35.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/36.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/37.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/38.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/39.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/4.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/40.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/41.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/42.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/43.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/44.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/45.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/46.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/47.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/48.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/49.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/5.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/50.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/51.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/52.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/53.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/54.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/55.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/56.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/57.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/58.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/59.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/6.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/7.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/8.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01-smoke/selectors/9.tsv",
+      "bytes": 28,
+      "sha256": "444dae2c15f348ab1d37ddf16db5baaec78a5528898aff397215ab19821bad88"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01/GQ-authorization.json",
+      "bytes": 24038,
+      "sha256": "4dc0da2ba835d3d7938e0e232ebbcf0305b4842a6db9524acde0cc0ee68c8484"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01/result.json",
+      "bytes": 7345,
+      "sha256": "ebdf4fca3fcdfcc65c54eb5a600dbb9806758b05bd759e4b9027e02e8994fcc2"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01/scheduler-guards.err",
+      "bytes": 3558,
+      "sha256": "252cbf16204783c2535ce6244fd9af61703b70e0f31ea36d86945cb4ed7a59ca"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01/scheduler-guards.out",
+      "bytes": 5490,
+      "sha256": "803fd486518699a8bfc17480ea29819cff409bc5d8d84d76dfefc0bc0a77aefc"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-qualification-01/scheduler-guards.receipt.json",
+      "bytes": 544,
+      "sha256": "48ce095224a79e381237ed6de0161a73c2cc439656a31f074343f0d6853b6312"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/00-dense.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/00-dense.out",
+      "bytes": 7139,
+      "sha256": "8ee14af8c4edb6b44836d2fae63f8c4681f2908dcee73603f4bdfd4446346182"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/00-dense.receipt.json",
+      "bytes": 932,
+      "sha256": "d0b015590b2374557857deb04aa1001786387e7b9f882632b463b87ad193a6ce"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/00-dense.result.json",
+      "bytes": 16087,
+      "sha256": "c4bae41f308ddf2f65ffe48eeef4321d3df8f9738145cd315f2bcba99cfdf0f7"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/01-refined.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/01-refined.out",
+      "bytes": 7144,
+      "sha256": "a2b49b6e8447dd26d04dde555d31fd63a40de92b40f429eb6cabfe03791be765"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/01-refined.receipt.json",
+      "bytes": 934,
+      "sha256": "fba4de5c0e7e307896a01c4136ab267f495090276944cfeebf72c480826a4937"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/01-refined.result.json",
+      "bytes": 16094,
+      "sha256": "b203222052790926db64c853f5b9eaebbcf6cda4bccf80a264efc63f0eda4e99"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/02-refined.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/02-refined.out",
+      "bytes": 7141,
+      "sha256": "b1bf65075d115a42b70425c1fddf3a66cad8bb08aebc111a4b5bf0d8819911dc"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/02-refined.receipt.json",
+      "bytes": 934,
+      "sha256": "f032067200f911fcbdb13f0251864495308d6ace7513291fe8e3566fab648d2b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/02-refined.result.json",
+      "bytes": 16091,
+      "sha256": "ab0bb35f0188a5f8a59f95086da1578adf71e71547e725bbc302d3c4de8d3fc5"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/03-dense.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/03-dense.out",
+      "bytes": 7136,
+      "sha256": "d081daf2eaa17e3b3f6ea55f5107df00d07532653aa39f4fcfcfd3715982518a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/03-dense.receipt.json",
+      "bytes": 931,
+      "sha256": "8dd2c07c150f270218c51f12b40d41fc8302d7081c3e1bf59f6d4310df46f499"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/03-dense.result.json",
+      "bytes": 16083,
+      "sha256": "abb5670291eb3d6144002ce1656c266360f6455ea9658141eba8cc73f655bd6e"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/04-dense.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/04-dense.out",
+      "bytes": 7137,
+      "sha256": "7224cb70be863a797b50405c45bb4a1e5768936c441983fd1ba87d92f9b62286"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/04-dense.receipt.json",
+      "bytes": 932,
+      "sha256": "5d3f4b0ec36d0c5c9578c97c4792aee1cd2282115dd0bc81efafa7b2b1943148"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/04-dense.result.json",
+      "bytes": 16085,
+      "sha256": "a3b488ef71acc7347fe943572f3e16e2127fcccccd353d62fd6dc493cfdd71a9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/05-refined.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/05-refined.out",
+      "bytes": 7142,
+      "sha256": "6c43993561931bcfa9d8a452ff14969648a7103243b646cea72840a3cfe3147b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/05-refined.receipt.json",
+      "bytes": 933,
+      "sha256": "479416e285dfde6d9f58af6d855155ae862919507df7d33c1bcc96a22c3fec01"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/05-refined.result.json",
+      "bytes": 16091,
+      "sha256": "9a9366e127388f28a50d3482a8e1ea5d127cb5c5a65ff2f4d1ef294b38ddb3c5"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/06-refined.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/06-refined.out",
+      "bytes": 7140,
+      "sha256": "beb928cb5f5f461a6acb70db4800dcc806f0b576b57d1bd40986d9b8dd3c8280"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/06-refined.receipt.json",
+      "bytes": 933,
+      "sha256": "c445955cf3b7fc841606e83eca185956ad824ffff84acacb884e65199bc56836"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/06-refined.result.json",
+      "bytes": 16089,
+      "sha256": "13fc23fc269d473d480339249ef15c7069da20cccec978f5c6a1836b1dc3c82c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/07-dense.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/07-dense.out",
+      "bytes": 7141,
+      "sha256": "29fcdd93611280194e70a96f2c9d3fa30caf487ab80c77760d7bf66b80d1d85f"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/07-dense.receipt.json",
+      "bytes": 932,
+      "sha256": "1821a70fa62061c54db314d6e6b3a41a5b50044383470b1b9a52d941b458d65c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/07-dense.result.json",
+      "bytes": 16089,
+      "sha256": "dfd31306e38e314e677debd19cb15c8386fd8ec2560a9b8363f7983086f9e32e"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/08-dense.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/08-dense.out",
+      "bytes": 7138,
+      "sha256": "f1af228502433e14b62e965caf0dd73f63b912239bc014a4eca5fbe00c0322b5"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/08-dense.receipt.json",
+      "bytes": 932,
+      "sha256": "cffb982b3ef99ff622eba38c4c90d1f9e454b43de0ae204b0d9c9551da66049b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/08-dense.result.json",
+      "bytes": 16086,
+      "sha256": "477fd1a72338f55f252d5bcc1429b3630412e525280d55ef4d33c32cd0e8f8f8"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/09-refined.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/09-refined.out",
+      "bytes": 7142,
+      "sha256": "49b17cd5a12013f01d8c537f2a05ddfdb8070955b3112bb6f717083cb78ddb12"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/09-refined.receipt.json",
+      "bytes": 934,
+      "sha256": "2c53b145ab18cf5ca71c770074acb6c9251a7faa23e47e34290ba3514ba68039"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/09-refined.result.json",
+      "bytes": 16092,
+      "sha256": "be2544fd8dbc588fec1b3212ce850257afb963d09d62242119514edcdc463d1d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/10-refined.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/10-refined.out",
+      "bytes": 7138,
+      "sha256": "15b5e2dda6b3444b3a4b6b4f19ce27cd4ebecba2b0fd6e5e4f0bb0ad1d037ec0"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/10-refined.receipt.json",
+      "bytes": 932,
+      "sha256": "5a3224a5580a5e756b78b6bc99e3bf9aced904306879b40df966039f0206d154"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/10-refined.result.json",
+      "bytes": 16086,
+      "sha256": "f0f80aad58a96ea78694867fe49cbe286b7b8c3ce8a5e5c61d36f16c346dd9d5"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/11-dense.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/11-dense.out",
+      "bytes": 7140,
+      "sha256": "67187c98b13119a15fcd7b625aecf549c5ca7a1d74225008f3d0b1e0ad7bf263"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/11-dense.receipt.json",
+      "bytes": 932,
+      "sha256": "8a77d506e40fdaed267d81e0608791755001936e357c57a12d9035e7f7dd9e7d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/11-dense.result.json",
+      "bytes": 16088,
+      "sha256": "e299828ddf0c8b18153146220a710344355136525db89b5c1af382ceeb5c1cbb"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/authorization.json",
+      "bytes": 3096,
+      "sha256": "2efef0046a56f18291165b280e211721317854a4198088393f47c2458043dd32"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/input.bin",
+      "bytes": 337,
+      "sha256": "6b324fdd44c40cca6ea7920ce868d54c47d40e49d11d301c152f2565403523a4"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/launch.json",
+      "bytes": 4045,
+      "sha256": "761bca740731159e3a362500458ff59b8cbc11a14b85fafe9946cfb61a8e681c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/progress.json",
+      "bytes": 224391,
+      "sha256": "da6051d6176cb21416e36f42b0ba7dfdcbd34f3b26d75dad11a47a95a94f1367"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/result.json",
+      "bytes": 226463,
+      "sha256": "142f12b465045fd1b590bd9ef4dfe9ca66fdb69f85e7e63e7dd8f85c2413e0e9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/coordinate-ebf0f30-standin-release/routes.tsv",
+      "bytes": 984,
+      "sha256": "ae43e45c7e03a44edb8435c9e87da9d1bf0740d5b01ae1c0c23fd811424ee905"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense-clean-admission.json",
+      "bytes": 31259,
+      "sha256": "a7b41eca371e41662c02c5266f24e0ee5ff72a6fab90246e35af16120e714f56"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense-clean-build.err",
+      "bytes": 5112,
+      "sha256": "0982c099659df8b4d926479158242544251f805f263b8634a02b334e25528051"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense-clean-build.out",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense-clean-build.receipt.json",
+      "bytes": 902,
+      "sha256": "14ef8f8635d2376c8bd7737f65ecc6c5c7d95be520536cf57e7465657a8e5ca5"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense-counting-admission.json",
+      "bytes": 31321,
+      "sha256": "b94f3f2a3a4daa103429d843dcb6b9c78ec077b2f9396c90c68a2020bcd75319"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense-counting-build.err",
+      "bytes": 4975,
+      "sha256": "adccfc03c4a14f4618086d1d36c1464fa7b5d9f215b3332f53c833e935f9d170"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense-counting-build.out",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense-counting-build.receipt.json",
+      "bytes": 961,
+      "sha256": "4e11ed7ab2ab0af9adaf9441199f4a1c9da2c69ceae93002142ccc4906f1daea"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/Cargo.lock",
+      "bytes": 83536,
+      "sha256": "a29c894e9767b0a7de135ee40df00b00ec7dfc48f58eab212da241e335ef3e36"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/Cargo.toml",
+      "bytes": 138,
+      "sha256": "5b57ad106dae44beb7dd8f6c594e7c9b1d47419666ee4b253451c922cac5c172"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/api/Cargo.toml",
+      "bytes": 421,
+      "sha256": "f352be7684e1574cf6822497d0c4cc2029f2e49cd83a4b7c66e77c30fd4394d9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/api/src/content.rs",
+      "bytes": 6788,
+      "sha256": "7f3ecbed9e74c09d26690ca262f7376baba0bb7e55b040cdd23bbf9e61d27da8"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/api/src/interact.rs",
+      "bytes": 51746,
+      "sha256": "96deaff1961cc249e63c3e9508083bbe75e5f17d5a4c84d8bf7c05296080e9a9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/api/src/lib.rs",
+      "bytes": 577,
+      "sha256": "d0cb03cf9aa3bd0036d9c6e0f63e4db7870b8bfa3e501da36965442b1ddd2b25"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/api/src/obj_names.rs",
+      "bytes": 5565,
+      "sha256": "695e9f33e015723f1c168ceda2e44ac94efb9f005ec8950da6ee04eaef18ec99"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/api/src/prot.rs",
+      "bytes": 4838,
+      "sha256": "18f2a0fbdf6c52cb0599cae14e0f6e890ba63803541e3c8f5599203f563e054f"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/api/src/query.rs",
+      "bytes": 76400,
+      "sha256": "1fad8662b25eff0a389cd05e470e786e3d6bee1804355fd533e4cb54ae7f3b46"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/api/src/random.rs",
+      "bytes": 1132,
+      "sha256": "1a42eba04d9e5390c83b176a364931b0a8541cebf706ac89bf57a37f6f8b5576"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/api/src/settle.rs",
+      "bytes": 11994,
+      "sha256": "1dc16d0dd18bc42de6ad82e504809fd0b548d44b2377be5a703c590f8ddf892e"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/api/src/snapshot.rs",
+      "bytes": 119641,
+      "sha256": "1d7307e7c75fee3a9a26b1075afd78a8cfad67d626d8327c73a326881cd4cb28"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/api/src/snapshot_dedup.rs",
+      "bytes": 32960,
+      "sha256": "3f1d1cfd4c287f4251630e34fce5dcedfddd6271f4f592b6748f1de26ee52293"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/api/src/snapshot_dedup_proto.rs",
+      "bytes": 17982,
+      "sha256": "4f82856dac1ce4ddec2fbcf3acc0948961b5ce6421d750160be9abf60390a1fa"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/api/tests/interact.rs",
+      "bytes": 85851,
+      "sha256": "4275fd5395859f81ddabc4cc92b619bd0854ff71f04e76fb1b27efddc9519008"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/api/tests/obj_names.rs",
+      "bytes": 5038,
+      "sha256": "00b269737441f3b3625fafe0d162b345d9a2b83c099d0b114c47acdc40846667"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/api/tests/query.rs",
+      "bytes": 42650,
+      "sha256": "e02a6ae836aa6f0097f071f6d360c7fbc4221dcfcf678802260277ba930b5dcb"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/api/tests/settle.rs",
+      "bytes": 20462,
+      "sha256": "7c0d2825110948129457a506c735cc0dd4ad7548974a229c55494bb6f350066d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/api/tests/snapshot.rs",
+      "bytes": 112453,
+      "sha256": "a749c453c7297b9c60ca996c75ff564aa111ec2c1e9d885987e5c56f50abda9a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/api/tests/snapshot_dedup.rs",
+      "bytes": 19252,
+      "sha256": "4b8d1cd62a710f0f30b85ceece22f6328d25fefef4d5e54f45e6495c231d421e"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/api/tests/snapshot_dedup_proto.rs",
+      "bytes": 19991,
+      "sha256": "0817f435cf120dc7777b7e13d4ff2f947a148c24dc4b8701171af07e54e57a9e"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/Cargo.toml",
+      "bytes": 379,
+      "sha256": "7c4be2de6526578d05562d47339e44af81bf015c8adca045a932d694db648a5d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/examples/check_bank_return.rs",
+      "bytes": 795,
+      "sha256": "283cb64d551be084b5dd427ac7b31bc5243b7c8f69ab9188cc0f312a563db7ad"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/arrival.rs",
+      "bytes": 1326,
+      "sha256": "a44f793aaac1d12654b4179d5b016a9d4dd2d377993961b1be398ff44ca4029c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/bank_fetch.rs",
+      "bytes": 23838,
+      "sha256": "7a5e953142e7f1ef51cc35fde2a4259616906b26e25f6c8d80551e23d8832b6f"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/bin/nav-pack.rs",
+      "bytes": 9655,
+      "sha256": "8277aeed6b7c8a44dfd3b710d54321e1f7b09f14326c848996b3884456c23799"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/camera.rs",
+      "bytes": 4701,
+      "sha256": "7f98b2b365b7908b10b3a9334d36028a3dad899e34d02ad54a85302b1041235a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/collision.rs",
+      "bytes": 50182,
+      "sha256": "3234216467223a7edf1d170bb97fec3e55f151f584d24fd8be563f9c2c53ec24"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/differential.rs",
+      "bytes": 2081,
+      "sha256": "1bb0f8984c85c6cd7a20d14dbc0dfc29d3df79c6459171de2956d88884471a5d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/essence.rs",
+      "bytes": 8934,
+      "sha256": "159213c55e6be1a6e98228d2c149abc32de5fe5282992a10f1770f9c58410894"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/grid.rs",
+      "bytes": 5256,
+      "sha256": "7c79284083bac9cbb8445b9621faf4f4078ee22c1b8cbbb53c783d443221a2c2"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/host-probe.rs",
+      "bytes": 3278,
+      "sha256": "31d6345c75be52ba285c171f50744a6839201a21e70b109b9e82fcf73f6b7db7"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/lib.rs",
+      "bytes": 2041,
+      "sha256": "dcedb3e6709150a79489f9f274fe83740a99ebfb73902be9befc13d1c5fbb2c0"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/pack.rs",
+      "bytes": 75815,
+      "sha256": "4a6609e7395e3e849050c87517da2a1d1bd292c9308d25a971dbfdf1caafdb96"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/paint.rs",
+      "bytes": 37308,
+      "sha256": "fa1047ef0b61c7f7b0d136afd42d9d65dee25a4e9889fc0c98c1393f791922b8"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/probe.rs",
+      "bytes": 18996,
+      "sha256": "6017020c56d410e204cd4bdac04eb16104141acf7eed919dfded6b868f25ef75"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/router-access.rs",
+      "bytes": 380,
+      "sha256": "44d942a72d6b1cf8f87a52d0cfd939bea4bac58b1df8a42f07da9b2ae1c7b895"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/router.rs",
+      "bytes": 80101,
+      "sha256": "220d8e24213b39a27adfcc72c69fbbab242e1b343f7e3045d94ba9c9d15b4b66"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/stage-allocator.rs",
+      "bytes": 1591,
+      "sha256": "652261fbb469b2f2e14736856641da99c486624d157898436c01e0b76e240b4f"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/stage-facts.rs",
+      "bytes": 1039,
+      "sha256": "4c4fdc802531c206cae6239127fdbdbf916168404fe929d17697444956b2a736"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/stage-layout.rs",
+      "bytes": 644,
+      "sha256": "bed1174e21c79fbb4c8c99467753bc2b6521cb643c490a75caf7568e930317bd"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/stage.rs",
+      "bytes": 2090,
+      "sha256": "cd3899653e08d8f76de9c239947665cf21bab147527cf9ac7dc02f088b8d0fc1"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/stage_probe.rs",
+      "bytes": 15971,
+      "sha256": "1c3fb5f7674d59c3f13140e76db92b42ae01d76973884e21d0e86ffc2c118c12"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/tile.rs",
+      "bytes": 527,
+      "sha256": "9dd6a970f468afe600f6721bbd42c0fffbaeea30b6246ad794ff331999fab31c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/transport.rs",
+      "bytes": 202743,
+      "sha256": "45bfa7ea4a9d6cc6c43d936635b35a71b238d4eff27c68eba15adcdc3cef58d8"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/traveller.rs",
+      "bytes": 267596,
+      "sha256": "e2b24d90ab71325109d25243d7597cc24166b390abeeae6f6bdae915122cff00"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/walk_destinations.rs",
+      "bytes": 2179,
+      "sha256": "e1cc9fdf47c75a1b977da48f70fb27ddf523b72e43426c4d7ce8985bc4488b2f"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/wilderness.rs",
+      "bytes": 3215,
+      "sha256": "743c1c2b1d85555f070d46203a83c7e350af128f6df3734e271f404c798a40e6"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/world.rs",
+      "bytes": 21942,
+      "sha256": "73ffbfef4d2375a6dd564383b939345df3e8e7097a71e3dcf3bf0e9d46e9888d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/crates/nav/src/world_state.rs",
+      "bytes": 14749,
+      "sha256": "20ead8cad03fbef596a6c324b7b074604681261af285175b8fc2833ae691271d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/effective-source-manifest.json",
+      "bytes": 57879,
+      "sha256": "a94544175b32086f8f973e50255e0fcae10a1548d5ea8b9e1e380d5ec30f7953"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/host-spans.json",
+      "bytes": 1318,
+      "sha256": "64511942ff338186b22f8ad1289019619363d0fa8b0abce466a9f19b024c499e"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/original-Cargo.lock",
+      "bytes": 173350,
+      "sha256": "03059d02f8274c8fc9cd7e2f69a48f317e3f44417570ecf4730b31710f8d4b83"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/original-Cargo.toml",
+      "bytes": 524,
+      "sha256": "6664481f8718f49f101b89c3abc5a4a7b163281608536e8edfb9d686ae55caeb"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/original-host-lib.rs",
+      "bytes": 355293,
+      "sha256": "ab8284adda3b7c5f07d0eabbfa11e5eef2435bb3079f242d34f0218ed10683b4"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/original-source-manifest.json",
+      "bytes": 51981,
+      "sha256": "ec2e0644a6c30fbb9b765c7409ad88d05220579b0b804a83fc99cb83830dc7e1"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/target-clean/release/stage-a-probe",
+      "bytes": 1255776,
+      "sha256": "3fb22ef212db8d700ca84f40bbf35ef20639fc2caf0ad491e6d3932e57545421"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/target-counting/release/stage-a-probe",
+      "bytes": 1263176,
+      "sha256": "d4b4a41bda1433532b81eb72812a089baa0139868b40f3960d53290df5cbe4ae"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/Cargo.toml",
+      "bytes": 833,
+      "sha256": "02abd1e47594f5a1e81b9b30c4928e64c63e7e8481745e2cea640d6ad498536e"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/bin/unpack-cache.rs",
+      "bytes": 2251,
+      "sha256": "c3fb2d38365721585c2a9a8c536fc939dd7bbc8df8f0fa81f41abcfab4e6a64d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/bot_target.rs",
+      "bytes": 8453,
+      "sha256": "0e96444007cbde1ad374ad17b5db91e73b81863f015c8bd2133ac5e702c401e0"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/client/client.rs",
+      "bytes": 460620,
+      "sha256": "de5a57f6c67049930edd39f29acfc43e5e6ac4707fefa94c2242074fb04cf94b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/client/config.rs",
+      "bytes": 364,
+      "sha256": "d62e7e1d19dd8c77ea444392433ef4bfe983508f9dc30600cf9c5c342e468874"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/client/game_shell.rs",
+      "bytes": 8522,
+      "sha256": "f3224b6ca8e86cf271ca89fe0e1b8560d77ed391ea520dee29b608730abbd8b7"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/client/key_codes.rs",
+      "bytes": 2395,
+      "sha256": "6dbe4ccf5638e3bea192a83d661ab72376862c80c175ff8fd7fbc412f8ca1337"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/client/login_error.rs",
+      "bytes": 242,
+      "sha256": "590a788f66ee4275d73c368ff68df25b152c590d2bb46608678da8815b868e9b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/client/mini_menu_action.rs",
+      "bytes": 2738,
+      "sha256": "d7dcb6024eb6406613d78b516b0d487c9fd75e02528de898ddca2f8fbd2936af"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/client/mod.rs",
+      "bytes": 729,
+      "sha256": "758eb6c81736efaa37f08f02d7bce5dbe30c0028feff7512f24cdedbf86ce4be"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/client/present.rs",
+      "bytes": 15444,
+      "sha256": "92c7b766b57d56927f8774eed7d8fdf6af5d907a7dd8d21d24283fe885caab26"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/client/skill.rs",
+      "bytes": 974,
+      "sha256": "67657ebaf90fce8a28d410304e0dcc9ea4e25dd13d4bed5ddfc0bd0af08d6451"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/client/title_flames.rs",
+      "bytes": 14880,
+      "sha256": "9a73dd7f3122e02945d35d11151145ce9a089d231b6a775bad8beb8f7887ed04"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/config/flo_type.rs",
+      "bytes": 4738,
+      "sha256": "ee3c8e52b5b6e5ed2160089c26301b0d92286475cfbc18428ed4347a90c0de3d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/config/idk_type.rs",
+      "bytes": 3827,
+      "sha256": "b00a9e87b6211fb27956cacdeada7545069caa3ce8a07df7f8c3b4c4daf6ba33"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/config/if_type.rs",
+      "bytes": 26747,
+      "sha256": "f905bd60f246d7afec18255864c4a60e4f769c0c44addb0fc08795145ba687cd"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/config/loc_type.rs",
+      "bytes": 21617,
+      "sha256": "601b72cc3befa3ec2a488a7763f63d1aef96c947341ad39438a70c23f84079d2"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/config/mod.rs",
+      "bytes": 2923,
+      "sha256": "6237850e4fe374aa2fc23c74c81afb4255305089a113b27a93a4550ee03e54d6"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/config/npc_type.rs",
+      "bytes": 10026,
+      "sha256": "b10f59aaba9df90ebe3ec56cbb18d30b062731b86181fed9352c31a21e5d1896"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/config/obj_type.rs",
+      "bytes": 29842,
+      "sha256": "571cad9e36349ac4f8c7da0d5387a92ea216b81a331a8f8caa4c70f15122491b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/config/seq_type.rs",
+      "bytes": 5229,
+      "sha256": "8a31888a2d7949dd50d19d47ae88e1b72f136332562fa5ed7da02ff246bf9b08"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/config/spot_type.rs",
+      "bytes": 3640,
+      "sha256": "06123e68ecf3142a80d5596cf6df56aca7f36aa80c6096567c8a50ce39c0c03a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/config/varbit_type.rs",
+      "bytes": 1653,
+      "sha256": "25f92d7c072945169770232fdb8e7fafbb75436548d430148da7d9f3e3beb4bf"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/config/varp_type.rs",
+      "bytes": 1544,
+      "sha256": "efdb0e6ad546e533a1afd0008e71d361054279975b50c1a088e84ab89286b675"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/core/build.rs",
+      "bytes": 80011,
+      "sha256": "be4d54a9efbe44f56862b0da7928537e709a0758d0f05d43b023ef704b93fb2c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/core/mod.rs",
+      "bytes": 80,
+      "sha256": "a9de8986a1221c3b07908c760317bae0f93d794ff753083315afc066654b8cc9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/core/world.rs",
+      "bytes": 42969,
+      "sha256": "f2dc0e728f9a51fe9016468b8ead897f131c94a1aacda37ffca81c779449fe05"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/anim_base.rs",
+      "bytes": 1100,
+      "sha256": "75bcbdb5cce8a9047c12b8562501c36c14639e70a91c32a29aa10a299ddac51a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/anim_frame.rs",
+      "bytes": 25683,
+      "sha256": "92ee2012d95905cc7ce01ca49c276e10fc517ca76626451e47dec49cfe1fcf00"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/client_entity.rs",
+      "bytes": 14719,
+      "sha256": "262ac62f0ec8f2f1c102e3f3977d43da0c8553b6e341e20e95e339c1e674ae3e"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/client_loc_anim.rs",
+      "bytes": 4176,
+      "sha256": "f1d0a1848e351fc898b5b3f5aca4f1de6c0fc4547bb011975235dcf091250c62"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/client_npc.rs",
+      "bytes": 4331,
+      "sha256": "e7f7503aa9f2744d4a91d7fd2f88362910a083ccec76fdcb32924ef8d2c007f8"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/client_obj.rs",
+      "bytes": 1110,
+      "sha256": "925488d46a34ea23397feaef0bfa4bf51409d027e97db769c71583179059a1fc"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/client_player.rs",
+      "bytes": 19679,
+      "sha256": "5407dbe945b67b3ca3df101d7bb6fe57c14b6fe3826b9a1b8cec47327553b833"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/client_proj.rs",
+      "bytes": 6709,
+      "sha256": "d04f7e1c7dbed9bc40361aef19fdabbe45cf72079c5354bd1fb71f8c5de7fb3b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/collision_flag.rs",
+      "bytes": 1761,
+      "sha256": "875c6384ec2c0f7f4a2d49cc47c14465048c1a5d93395c1ddb9b87a8ad01e508"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/collision_map.rs",
+      "bytes": 23917,
+      "sha256": "00e366d93793e9feaced92bbbfac53c19546458c49f77f30de9352bc24312cbd"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/decor.rs",
+      "bytes": 1593,
+      "sha256": "50cbb1718855dc9769b51d5e55acfabf9ab3a67ce9024817c5cafa4b0a7d4019"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/direction_flag.rs",
+      "bytes": 249,
+      "sha256": "05e583bd869abe15c368e40dd6259e996ef90e7d1c87cb6ecde4a45bbe92db64"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/ground.rs",
+      "bytes": 15266,
+      "sha256": "306c7fb734b3a9cc07bd8d9151f73a0353201821d7beb81035f9a6f0a5047c14"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/ground_decor.rs",
+      "bytes": 1242,
+      "sha256": "7601164357a54382ff6f5cacdba238d56136250323cba8e24ba5ac533be6d090"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/ground_object.rs",
+      "bytes": 1250,
+      "sha256": "5f95e4cfe7f11e66424196f9fbb186a3dafa6c6eb4eabbbcb7e8f1d2add37a8e"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/loc_angle.rs",
+      "bytes": 226,
+      "sha256": "47cc47933ec14921f3556e9b2e90f78518831517169c18ac50e0fc7369e6642a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/loc_change.rs",
+      "bytes": 1087,
+      "sha256": "eb39f7fa2bd8d9689385eeedb304f59bd8c8c0df851588d54005c78028a4e144"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/loc_layer.rs",
+      "bytes": 240,
+      "sha256": "15b792768a5347b02719632fcb109af528cbba4259c20ef53dc7466606dd0fb5"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/loc_shape.rs",
+      "bytes": 1723,
+      "sha256": "91b53fbe351fb22aa367e964737574bf5c5017ec963f9e4dc19abe520e04af25"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/map_flag.rs",
+      "bytes": 293,
+      "sha256": "8b236b1a5a36c9bb257da4a4ad36120a76176ea7f95db8bf7d33406e5ac11dc4"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/map_spot_anim.rs",
+      "bytes": 3347,
+      "sha256": "85bb5ff03a88a64d873de513e8cd43217543bde0978625b42711155dd8920048"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/mod.rs",
+      "bytes": 3415,
+      "sha256": "34a8be4f30f67371b4cebe5eb156c58dfea539725ff14c11da5c5d99bb441a97"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/model.rs",
+      "bytes": 121536,
+      "sha256": "c2af8c399862d262348efc48d1e0fc7772de4286e9cb7c6554a27f6d2393dfb4"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/model_source.rs",
+      "bytes": 5712,
+      "sha256": "56b023f753a0762654faeff58dcc8b0f292bb83c9e04e7eecf5fd1606b2ff372"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/occlude.rs",
+      "bytes": 1291,
+      "sha256": "924933b30217673116b0ca08bb3c5050f664810e2b4e098f939ed23390f0d241"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/point_normal.rs",
+      "bytes": 188,
+      "sha256": "fda8ac092ae5ad785941f535a74139ee53a3015747b91f81bb3072ed80504564"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/quick_ground.rs",
+      "bytes": 841,
+      "sha256": "9f8678ae0b4357bafe6d74c03b1c8811a021a507e6e82be531ab3b6c802dbf1a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/sprite.rs",
+      "bytes": 2394,
+      "sha256": "36a89a2606185d8fbca4b18da8822cbff2cdde7873f71009742a5bad2b0430b5"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/square.rs",
+      "bytes": 3781,
+      "sha256": "819f12ca45872ef069aaab8613d20bc4c9825834d5763223db1e5e9896219cc3"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/store.rs",
+      "bytes": 7656,
+      "sha256": "e8a8e1c92c2e0553961257480983cc663b19996684cde5e485642678a939168b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/terrain_overlay_shape.rs",
+      "bytes": 608,
+      "sha256": "3823b56c879d768f394d25684d9e418b2ee4ba3082f5682fc04313d72721be08"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/dash3d/wall.rs",
+      "bytes": 1760,
+      "sha256": "212bc292f06f0b577f8ef2b1c9f0b9244d72d20fc2f4303ef30944e9c62f2c18"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/datastruct/hash_table.rs",
+      "bytes": 2255,
+      "sha256": "3a948b80b78488f096d2291b216b07abe6d1976f73de5a9aca2ee1487432213d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/datastruct/link_list.rs",
+      "bytes": 9426,
+      "sha256": "dfcb92d2775ccacfe1d8da3525357a3f877aebbadfde097d044f2ac6f43c3dcc"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/datastruct/linkable.rs",
+      "bytes": 4358,
+      "sha256": "b37d502bc7cdae57cc423eb708e0736dcc058cfc2ce7198c057eb6980bb8bcb7"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/datastruct/lru_cache.rs",
+      "bytes": 3030,
+      "sha256": "74411fb9e8a9059d22b30392768d86eb5bf4bc982b1be6815299242ddd6ddcff"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/datastruct/mod.rs",
+      "bytes": 238,
+      "sha256": "d3917436b4db2db2cca10f2285ce9e8694efa97958c18a86cc3d987c4ffefc32"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/graphics/colour.rs",
+      "bytes": 746,
+      "sha256": "b6811935fd90683ed9aea46570b91bd7af278eb9aa5045bd4ed028f085a686ee"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/graphics/mod.rs",
+      "bytes": 282,
+      "sha256": "5dc282ba70431416096f5282b8b2a16340e1ddfb5dc668b442ce703497c9c0f5"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/graphics/pix2d.rs",
+      "bytes": 14310,
+      "sha256": "b5860a119a2f1e808d4b9768a4a39c6045072ab252b1f9bf840fcd0e45c305a4"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/graphics/pix32.rs",
+      "bytes": 21951,
+      "sha256": "cdc4fa06a47d680882aa574287d7617c0a4c00eefa820162dde87408b0ac016d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/graphics/pix3d.rs",
+      "bytes": 158213,
+      "sha256": "76920ea984c73b44c64678e542f6a48b50ceb8df1a88693446e69b31fd3dbeaf"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/graphics/pix8.rs",
+      "bytes": 13118,
+      "sha256": "94d182d06a9192ef48e70a619ad458727c68481407f154b7465f017a8af24608"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/graphics/pixfont.rs",
+      "bytes": 19052,
+      "sha256": "1e466d0b47195963bf23d307372b5fada0da14ef5a3c3357da92300e41252441"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/graphics/pixmap.rs",
+      "bytes": 1561,
+      "sha256": "b581c44a2a4587180960f72c373605e99921795520fef4caf0038330d3324dbb"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/io/bzip2.rs",
+      "bytes": 743,
+      "sha256": "dfe92d0142f90d2136d925b5486a038afb536c94372995bbd9611001b2d557ac"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/io/client_prot.rs",
+      "bytes": 6777,
+      "sha256": "88a165ec42b0cb5b0c4dc171835eb238f53f1643d368f4811aa9eabef07d3c83"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/io/client_stream.rs",
+      "bytes": 16671,
+      "sha256": "93c551c33ef67eefb87931421b39bec108ebdab1479760ed5a6e941dc42e18a2"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/io/isaac.rs",
+      "bytes": 6213,
+      "sha256": "05ce959bd92b16ce2fb54fbd5c8a486c530c60a8bc5bb4f3860a96d7bec7bf89"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/io/jagfile.rs",
+      "bytes": 3461,
+      "sha256": "949deb870fc6f36681fe1425af569a7e1e5cfe8d1c7eb569871973fbcca6870a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/io/mod.rs",
+      "bytes": 431,
+      "sha256": "ecc9c81b8e846265bcc5796a6081b4f1cf884bcbc64e67a4d0f778a255eee142"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/io/ondemand.rs",
+      "bytes": 56174,
+      "sha256": "002fd903eaaa3238f0db0a7b80d228450da397c33411e7dccbfe57b3df56932c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/io/packet.rs",
+      "bytes": 9768,
+      "sha256": "a8521469506c2fb48f8fbb61f3e9fe749a248f444f9f5ef922910d2efcada201"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/io/server_prot.rs",
+      "bytes": 4090,
+      "sha256": "1315abc430be316f5f7827a8a8facc0cb0477ffd96db8fa01b69578455283506"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/lib.rs",
+      "bytes": 1661,
+      "sha256": "cc9518039065627115947bf9e8805fb976fa65a23a462e3754befcd0e642e23f"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/login_rsa.rs",
+      "bytes": 9245,
+      "sha256": "0b40b7ec99b2425520fa1f9c2dc9d90654bc3f99add04aa89b1a2a748d62f9a2"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/profiling.rs",
+      "bytes": 3781,
+      "sha256": "2429ff1d9ae2e62f7a4f85c7c5ed77fc8d51ec1787c6df203999ab4048825a2a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/render/backend/cpu.rs",
+      "bytes": 30943,
+      "sha256": "e6e265c97e26d4644d36f0f2aec4d280c6483ab54c4e5eb5d9ac23c35cb8e97d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/render/backend/gpu.rs",
+      "bytes": 78391,
+      "sha256": "46d5531d2b00e86a0c4fc67e2437372f0e45c211460a0f3b2faa09fe6424df64"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/render/backend/gpu_atlas.rs",
+      "bytes": 53449,
+      "sha256": "02b992b91fb2c5478242c9444d2856f910b21780aee272eea4b1018a9380e3d3"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/render/backend/mod.rs",
+      "bytes": 8889,
+      "sha256": "8efa0f948dede69f7b3e456084fd92c23de199be802a76385f6bfd1d653155db"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/render/draw.rs",
+      "bytes": 189598,
+      "sha256": "2c0a416d8454e3f858cffc603bcb96a9a465a7f82d67568a6ac23ffbb0e8a1cf"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/render/media.rs",
+      "bytes": 15412,
+      "sha256": "59d43065b87df3a5be12fd1f0ab02709c5dbf5621ca2dfee0e49674a857f6abe"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/render/mod.rs",
+      "bytes": 191,
+      "sha256": "493b1ab7410af6b80bcc7ab3114681baa0dfb355fde716103dec3af8145f3367"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/render/nav_debug.rs",
+      "bytes": 25041,
+      "sha256": "5a0bfa660f35284236ee95cd0fcb35b5332cf98db5c2f943f9a037a3208e65ce"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/render/renderer.rs",
+      "bytes": 15252,
+      "sha256": "c09c71925395252cbee093cbeeb60ac88e4f5375beb432491a5980546bc868a3"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/render/store.rs",
+      "bytes": 16234,
+      "sha256": "6fd891ddb135f79af016bb896ed660dcfeb04adc748f558a87181d4ad1a473f9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/render/world.rs",
+      "bytes": 254096,
+      "sha256": "9e2cc21a2c42c9f9956b7bd7e0a7790f0138a975b66413b41e8ca64a432e54e9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/sound/jagfx.rs",
+      "bytes": 11144,
+      "sha256": "69322fda04550289198195d8e0fdae7903d823792a118ae8831e93dde11754ec"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/sound/midi.rs",
+      "bytes": 8856,
+      "sha256": "83b250109c55d8d1e61f193e69db871369c671f7531fcc9a26c2841f40c2b620"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/sound/mod.rs",
+      "bytes": 470,
+      "sha256": "33497279d9d38ebbdc9fe78f5a44ab77a30cba1d6347a3596b85f50dbf236b41"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/sound/output.rs",
+      "bytes": 15613,
+      "sha256": "bad117206f3d760233426de0b6cad91b4d0b5258f922e59f5dbfe3e86d387c8e"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/sound/tone.rs",
+      "bytes": 24580,
+      "sha256": "246e0a5fbafc6317633e15046ea42bd7bec8be6367cc1035044fd93b21d83093"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/unpack/mod.rs",
+      "bytes": 18908,
+      "sha256": "12b2237014a8d2c6efd150366435adc3ff172216f7380d68f3e77536dd57f395"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/util/java_random.rs",
+      "bytes": 2602,
+      "sha256": "f60392c2e8a35d094a3360c587e635eff20211f1c17d914e8cf3a3db60ae98ce"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/util/jstring.rs",
+      "bytes": 3669,
+      "sha256": "b3523550d57e04db3e4dd6dae6c1cc433d4e1ef27d65fefd89f8b9e9e6be3212"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/util/mod.rs",
+      "bytes": 97,
+      "sha256": "1d5d34567ee5645d41b1388c86ad5690b95e48a52ddaafdec00bdf28fe0c232d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/wordfilter/mod.rs",
+      "bytes": 102,
+      "sha256": "804cdea63731cfa3761d94e655f204ec49ab73d313e87e67c384ec36a3d6d7af"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/wordfilter/word_filter.rs",
+      "bytes": 43726,
+      "sha256": "f1bb93e7201b119b2940376f8ef2aedc82c1a572d43037aab6606c19d71b9701"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/src/wordfilter/word_pack.rs",
+      "bytes": 3259,
+      "sha256": "5f8e28b92d10750d5006279169d6d47c0c9a3cd681d0d3037674b900046b004a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/cache_share.rs",
+      "bytes": 1459,
+      "sha256": "f718b9e769e8b66026684be0247c22751ce697fed6bd46c5b193537031d52647"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/cache_short_circuit.rs",
+      "bytes": 6995,
+      "sha256": "53f6cb1ffcfaf8b9d2a0972d8eabfcaa649ba8c56a083e1fd433d7d95567e8c7"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/chat_mode.rs",
+      "bytes": 2673,
+      "sha256": "c9bb7db395ec740e73869d426c29360adcfb23036e6f732df72a616ea15244af"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/client_build.rs",
+      "bytes": 34666,
+      "sha256": "13e3932341d1e7c082b1ac4e4a142f1d77d3c5dab8f201e0eadd593e0345d34c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/client_skeleton.rs",
+      "bytes": 1668,
+      "sha256": "903475d33051211b796af41803abbe25b81a6091173f11b4af522f099abd124c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/client_stream.rs",
+      "bytes": 1883,
+      "sha256": "8a070a5366f146a4eceed835b2d5dedb166d23dd3e8b29e94b51481383764b4c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/collision.rs",
+      "bytes": 7441,
+      "sha256": "db72db4789e7886ef9c8514709d479942665879c6d7d56d68dfbbbcb5717b7da"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/config_types.rs",
+      "bytes": 7842,
+      "sha256": "3bfef99bb2ef2af594f5b02a828379ba3ceb5a0ec4b3917b1e39dfe79ff98a57"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/datastruct.rs",
+      "bytes": 6876,
+      "sha256": "79821680ee48c95c9e8f64831e72667ea601f56e2945c5351f7b3e2d8e911fc3"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/do_action.rs",
+      "bytes": 10535,
+      "sha256": "247b1063ec3325b88783bcfafc89227c0cf6586da92b8c90da7447588f8413ac"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/draw.rs",
+      "bytes": 1501,
+      "sha256": "7f0ed2dbc3f9a549d181075056da39d7a008137c2b9053bcf293194b85495955"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/entity_move.rs",
+      "bytes": 3369,
+      "sha256": "2070e14539b4ef331f7b25fe62444bcb39acb6bd5b1959edf26f41e4b5a8dcbe"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/fade.rs",
+      "bytes": 2942,
+      "sha256": "2d937ffee97f5ed681a350c70de895b3b68fb6431a087942733faa67e1812415"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/from_shared.rs",
+      "bytes": 11628,
+      "sha256": "11707e30b3cb8e661e82d6ca7530743494844dc93046f092b0eb4c30c7d89252"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/game_shell.rs",
+      "bytes": 1085,
+      "sha256": "c3ba0b02c9d898360cecb05f70c77d0924477714addeaa943aa9e0debf5ffb42"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/gens.rs",
+      "bytes": 13522,
+      "sha256": "8413c3b71b5fe42e44071147ec1cf4853e264ad4d6a81a6dfd24dd169fdbd390"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/gpu_backend.rs",
+      "bytes": 16914,
+      "sha256": "7f200d2a2549f5049570efe79828e09ff56b0d60559115b1912e66685d5c3d7c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/gpu_depth.rs",
+      "bytes": 41859,
+      "sha256": "8f8fcf2738156056f4dcc96505e1ee8c8224520839ab67295c639b89afdc3872"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/gpu_inject.rs",
+      "bytes": 2776,
+      "sha256": "13bbdb89308cddd01ca07f43d06a1999539eaf3df02fd9017aeb899a44f9d092"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/gpu_memory_profile.rs",
+      "bytes": 1063,
+      "sha256": "db2af2920a2b61889e094c2dccda1231c91d7c3ec2fb3199d3a8a5e0e5fdf723"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/gpu_mesh.rs",
+      "bytes": 28944,
+      "sha256": "c3c13e3ca49cb73d21de0b889656dcb11d16f14e872bffc67c4d672a84c97e93"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/gpu_pipelines.rs",
+      "bytes": 1285,
+      "sha256": "ce533bf3ca763fa2713074f7fb5190e0a7b6e2c6bee8ccecc60c06ef97d48a29"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/gpu_texture.rs",
+      "bytes": 28871,
+      "sha256": "053eaef148d5a15e9bfe5da2d55393717707aef675e30a26aa40a22351513e9f"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/graphics.rs",
+      "bytes": 25422,
+      "sha256": "21f03924630807ab3694952035689da4ac9b2ed902a76b5d4e59a42f7595bfb9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/headless.rs",
+      "bytes": 9353,
+      "sha256": "38726b438fafc2a0f1846c36c3dc1f88dc5fcc7f03535f3f563eb54a886e4cf6"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/hud.rs",
+      "bytes": 75905,
+      "sha256": "5b92306c97691553d522e59cfda37a22ca73cea92adb763a086216e68462d378"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/iface_model.rs",
+      "bytes": 13173,
+      "sha256": "02b830391a4d4791cecc9807c5b9e74f04088c138828b25497f622468fb55b1b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/ingame.rs",
+      "bytes": 22628,
+      "sha256": "e071a852f53811361a41bd9a9b37936b26c6c0c7cd13bf697c2bb7a99538ea39"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/inject.rs",
+      "bytes": 6865,
+      "sha256": "8a38a0d26b0b2f1a2eb713c74c5d8e0340834e57d0f66f02bff9ee78ddb0a508"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/input.rs",
+      "bytes": 7095,
+      "sha256": "7b57c56dd45eafd936de09fb7da29597cb5c90ee8355f0d5bdef5e9bd0ef0155"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/isaac.rs",
+      "bytes": 419,
+      "sha256": "d6a48feaa9969ce572ae4e7a8c3f7576f3fa712bff3a982a601aa29fb35bd391"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/jagfile.rs",
+      "bytes": 860,
+      "sha256": "e3c937fb5d5c8a9d234fe6541826de8389dfd829d915443222868126bf89a8f3"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/leftover.rs",
+      "bytes": 29005,
+      "sha256": "8a49ae40a5652d8cbd5fbb45b4151351a5fc5857cd7cac5301443cc1f58aade6"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/login.rs",
+      "bytes": 16054,
+      "sha256": "7ec2ba32a1179c068a87e277ce261168c1435a97814bc391fb208e6bb7dc3bb5"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/login_rsa.rs",
+      "bytes": 1428,
+      "sha256": "217800181c8416ab0516eec1d74379872285bb4b60b2117b575c612ee6e8c391"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/login_uid.rs",
+      "bytes": 3043,
+      "sha256": "5d99ece0c9e387bf9dd6aa4389b66b0c449e575c60b4b94d5f7d714b20c39c29"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/logout.rs",
+      "bytes": 8418,
+      "sha256": "0dbd7f18073347893828e9f89c6432198482100256b5679d0b2cefe6cb3d58c5"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/lost_con.rs",
+      "bytes": 5634,
+      "sha256": "776cce002b1df3ab23540140ee327da1d6c4b5173ef4c60fada98c8f8f383c7d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/maininit.rs",
+      "bytes": 23015,
+      "sha256": "9640365538f3258adc689483f01f1213e2779725c053dc8c4a419cb8afbf959d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/midi.rs",
+      "bytes": 9858,
+      "sha256": "87ed74143760cd835b093d0ba7b210a8b1c8c60bd7b39a7c8a547d78bc73571b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/minimenu.rs",
+      "bytes": 35334,
+      "sha256": "358311284b2064d71a1b524f1c690c2fdd2e0b4bfc5c9cd16fd9188f9dec6cae"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/model.rs",
+      "bytes": 11783,
+      "sha256": "f40c040e393c541b0bdc1c280c72e6e58e6c8c470601bab4a27c3fd1a64cd66e"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/music.rs",
+      "bytes": 8319,
+      "sha256": "dab6409c81ab6a4e42dbed3ea3b1526b2b57ae4368142114f449563c93af2ad1"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/ondemand.rs",
+      "bytes": 29938,
+      "sha256": "93b34cf899fa0e250482a540ed95a78402e61cd6aa9c9f0347a742c2d688eb20"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/overlays.rs",
+      "bytes": 8255,
+      "sha256": "86d1b3e827c892d7e13374ee6a6078c8d6c41db9d01b7f6c6891b6c25d89b57f"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/packet.rs",
+      "bytes": 1914,
+      "sha256": "8d34896595bc4b518f6596222a25849826e27d0e59bcb64729b1794fe491e44f"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/player_info.rs",
+      "bytes": 10067,
+      "sha256": "ca663e7e69cc83b8e59ec741161b80e0f0705db959420c0dd81f316fcd7423cf"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/present_pack.rs",
+      "bytes": 2342,
+      "sha256": "789e1ec7db7ce33b70733c72abd7d723bb092cdedb307521079d4898f2053eb9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/prot.rs",
+      "bytes": 1025,
+      "sha256": "25333a2c4d256a249938f5a6aa693baa1ff02ed6daeaa089bb08b14367e21929"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/rebuild.rs",
+      "bytes": 13790,
+      "sha256": "00ec4caf7ae86eef12ec26e43e4fcc880b10df2618a178238947c5b1c5781a2b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/render_backend.rs",
+      "bytes": 9234,
+      "sha256": "3e8c38be3c5795da14966cdce8c283ae40d2cc7d60ec8a313ec9729d520eda7b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/render_media.rs",
+      "bytes": 1717,
+      "sha256": "4684e226744f1c4bfb28e8b53c3087548b7fdb812beee015ab68bbb9e76391a0"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/run_loop.rs",
+      "bytes": 1075,
+      "sha256": "638a49381e17021ec30316002e33bb35d80f53ce236211b14dd20de8d2afb1b1"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/seq_delay.rs",
+      "bytes": 2801,
+      "sha256": "d28eed1a32ebafca614016de13226a47b5f8c12f5caf237e5ef525e2410296e9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/server_packets.rs",
+      "bytes": 6827,
+      "sha256": "cffe343a0f14c8b6d30d755bd8d18add4fdc2a7de3cd382bd7729b5ab21c8b6c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/social.rs",
+      "bytes": 15365,
+      "sha256": "907fe547d98f79975963a70008c736df5bfa89925b6152fc19cacd0b32ca0728"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/title.rs",
+      "bytes": 5031,
+      "sha256": "4ce12e113d9b906e07d0998270d76fdc9596bf0cbd22ea1ec1ec4f416f9d0a7b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/unpack_cache.rs",
+      "bytes": 11854,
+      "sha256": "83b4a0a88dff56479f1319d7d4973cf0e90f4cda9eac65fee8b828722498fef6"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/walk.rs",
+      "bytes": 5074,
+      "sha256": "32c4066e317a953b69f222f23a196c5d0b400e7da4f4fbd7b92a02c1d85f54ba"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/wordfilter.rs",
+      "bytes": 740,
+      "sha256": "8fbdb823fec6d4423dba3443775e5cf722c07751d35ec66ffb749d39a52b3858"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/wordpack.rs",
+      "bytes": 1565,
+      "sha256": "0cb497e0f24417c7d37e663669977b1ab831c8b6236cb7304bfadf3b1cb1c98a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/world.rs",
+      "bytes": 70080,
+      "sha256": "b01739cad36b8e56fae33c3b0235e3ecca8a6c0aa094f51096b98d46413f67b5"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/vendor/fr-client-rust/crates/client/tests/zone.rs",
+      "bytes": 38684,
+      "sha256": "2a4071473388a572ddc3ff5fe068f7c3e5ccf5b662b4b29b5fa03bfda003a200"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/fixtures.json",
+      "bytes": 749,
+      "sha256": "594020b8ec38b319acb501f975c200ab5eb1041c9be7f6a4ba949b976b1067a7"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/fixtures/all-dense.bin",
+      "bytes": 18465,
+      "sha256": "37a74073784afe881bb76887e1d48a0374d66c475d5580ccb75ea7be31df7e6d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/fixtures/all-uniform.bin",
+      "bytes": 18465,
+      "sha256": "526a66dbd711fa5aaf052704dbeaffb3b73c71271d55ce97efc4c7f7087a679b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/fixtures/coordinate-ebf0f30-qualification-01-59.tsv",
+      "bytes": 1652,
+      "sha256": "f5287734fd6cb91b6718bd6eee5371710acb4f8da46c2f4b9176bffb86e8a042"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/fixtures/coordinate-ebf0f30-qualification-01-tiny.bin",
+      "bytes": 18465,
+      "sha256": "526a66dbd711fa5aaf052704dbeaffb3b73c71271d55ce97efc4c7f7087a679b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/fixtures/gated.bin",
+      "bytes": 337,
+      "sha256": "6b324fdd44c40cca6ea7920ce868d54c47d40e49d11d301c152f2565403523a4"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/fixtures/routes.json",
+      "bytes": 3017,
+      "sha256": "f7a1e02b83d0a545db69985d61d03c3277dd36f0cd7a0359191bb958d7f076c5"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/fixtures/routes.tsv",
+      "bytes": 984,
+      "sha256": "ae43e45c7e03a44edb8435c9e87da9d1bf0740d5b01ae1c0c23fd811424ee905"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/immutable-helper/probe.rs",
+      "bytes": 18952,
+      "sha256": "ee91e2370d04de8a1c9b9d55eaf9cbb3c8bbd9d0153b4748208fc50656e40cd8"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/bad-output",
+      "bytes": 9854,
+      "sha256": "a9df7edbd172046aa9ffc5ef69a51a5b01abc26836d159d183352b795f898dcf"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/bad.tsv",
+      "bytes": 28,
+      "sha256": "6016152611a425fc48dd49cb8913849b63359411f74eae5ede4a4dc0868e13c8"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/dense-bad-selector.err",
+      "bytes": 278,
+      "sha256": "52c9ae22d7e987cbc77bc6cfd41e3738f38dba4621eadf9d21639107694251d2"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/dense-bad-selector.out",
+      "bytes": 155,
+      "sha256": "bceab59ba3d05caaf4747624bedcb82bc60554325c98597070caed6ee45e30fd"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/dense-bad-selector.receipt.json",
+      "bytes": 903,
+      "sha256": "846faf6b99f76702981dc5ef23309bc878bcae5fbed3c8383c4740d282af56c7"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/dense-clean-self-test.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/dense-clean-self-test.out",
+      "bytes": 143,
+      "sha256": "657b3ee0ecbdc860feb6922941247dda20ed54393cc6ef8d1960e2c0e1dbecb6"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/dense-clean-self-test.receipt.json",
+      "bytes": 612,
+      "sha256": "49229f24496740058ca8253d991047e616660bb707d2632f048283a1a47afa4c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/dense-counting-self-test.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/dense-counting-self-test.out",
+      "bytes": 143,
+      "sha256": "1bbfe776bdd16d99c2bb5f5083e93cd4d400f07f754747a0afefbf5942adc4b0"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/dense-counting-self-test.receipt.json",
+      "bytes": 615,
+      "sha256": "79354d62f9cf9d97fc291c2adcce564b169ce527403653dc9babddbff15fb9af"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/dense-malformed-0.err",
+      "bytes": 194,
+      "sha256": "402eb5a8c104ba2b36eba78a4db744b667bfbd9930878d9ea292eabb9f2fc380"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/dense-malformed-0.out",
+      "bytes": 330,
+      "sha256": "bf743477212304b9dfdf694b106e32e8f8b1b54fd9b317589e1b970bcaf6bbfe"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/dense-malformed-0.receipt.json",
+      "bytes": 896,
+      "sha256": "a3e8e351dfb63f4e9ee85c6bd88ce66e097e54877c75ef2ed1864cc185e56ea0"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/dense-malformed-1.err",
+      "bytes": 194,
+      "sha256": "22b95f560e2a4b317abd7a5b830c506387011e28738cb11d332972180a3d07ea"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/dense-malformed-1.out",
+      "bytes": 327,
+      "sha256": "57eafa462cd82de809292249b58898cc71aaa73a4a91e8643fdfb9f0fe08266d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/dense-malformed-1.receipt.json",
+      "bytes": 896,
+      "sha256": "c04ca8c239197f7c8fcb147178c6128a00e163de9b2ae1649f384ec5b977e9ea"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/dense-malformed-2.err",
+      "bytes": 233,
+      "sha256": "1666c8b591647cc839e97911dd5e8b98a7a9d4223f0f069cdb207b466337d0bc"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/dense-malformed-2.out",
+      "bytes": 329,
+      "sha256": "4b347b72a7a37515a61df2a03c88d72487ae38c9e5dfdb22a50957393a1a35ab"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/dense-malformed-2.receipt.json",
+      "bytes": 896,
+      "sha256": "5d5f82df3ea031680e3a2652dfd694d340a6bddd966d2b30feff82755bbc61f0"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/dense-malformed-3.err",
+      "bytes": 194,
+      "sha256": "ae25d4d7dee1a26b1f1c12a79ed010d001985dc11e5c5a1583c493da48fc1fd1"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/dense-malformed-3.out",
+      "bytes": 328,
+      "sha256": "40aca0393782d14fb47b55820e6bc9bc17928af397b9a37c3ef07e8a4d627db3"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/dense-malformed-3.receipt.json",
+      "bytes": 896,
+      "sha256": "63eec9cae2ba800c5a2fc966cf0067d9175abeec279ffe574ecd1513b00fd2ab"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/malformed.bin",
+      "bytes": 77,
+      "sha256": "84193970568663658351c89a88715b855fbf09c46f857f63e2359eca8d98fe29"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/refined-bad-selector.err",
+      "bytes": 278,
+      "sha256": "541113d46f86ea59b2777f5ec5620c13df03082cfabf53fd4073254d9b4de691"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/refined-bad-selector.out",
+      "bytes": 156,
+      "sha256": "650facc2465f16c21c195efa98a4bfdf7f6d79506679596040a533b8ca3e440d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/refined-bad-selector.receipt.json",
+      "bytes": 905,
+      "sha256": "112ac5810b70090491ee2fef2d8d88a867a516c95007870a8e5322236ddc7570"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/refined-clean-self-test.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/refined-clean-self-test.out",
+      "bytes": 143,
+      "sha256": "84eebe771d2d176d5346090334e184c0326d3d7332a31679793a2cf778a3a99d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/refined-clean-self-test.receipt.json",
+      "bytes": 614,
+      "sha256": "670206db216a8481dc437cf954b447e57830e9efe8327fb9cb825bf34678fb96"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/refined-counting-self-test.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/refined-counting-self-test.out",
+      "bytes": 143,
+      "sha256": "1d18558154d2bccf8f3178f93dc2d665f8c292fcac2bb9358cb16032f4eb0fa3"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/refined-counting-self-test.receipt.json",
+      "bytes": 617,
+      "sha256": "3e18bb0ab1446e3bb6ee65d2c3c78ed1318017f2e136e9c1f1817fc868bae25e"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/refined-malformed-0.err",
+      "bytes": 194,
+      "sha256": "b561b720f5e98689ad3fd5a81cabb2f7428d2c8f6af9e6776322bd7330b26ebd"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/refined-malformed-0.out",
+      "bytes": 327,
+      "sha256": "029d36cbb60a730c17d259276ea2c6b1982aa129f3057c706a426e0844c85f7d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/refined-malformed-0.receipt.json",
+      "bytes": 898,
+      "sha256": "ac110d463c4a5953a824d995e37218ed973bd1693a8e2c17e5a42278f460ba16"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/refined-malformed-1.err",
+      "bytes": 194,
+      "sha256": "85222448e4b101e4dec0243b2a97c6808c46b119b582c9fd2bf1c029bd322428"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/refined-malformed-1.out",
+      "bytes": 328,
+      "sha256": "26868ea737d3123301979ab95f06ebaccce0ab282ac21fc5dd51f32d737e5fd2"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/refined-malformed-1.receipt.json",
+      "bytes": 899,
+      "sha256": "b6af9e77eadf9c3b637925bb6b2c34a9f3a9304275175c90915bbe6f0e040a00"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/refined-malformed-2.err",
+      "bytes": 233,
+      "sha256": "fefb91bc2706b9864d5aa56d46718f4509d25bdc81e5a253eff89e0bd26e2432"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/refined-malformed-2.out",
+      "bytes": 330,
+      "sha256": "14337fd4714ec8bf451013b27dc7f03cce04f2643d3e0e78a5fcd7b16afd8aa0"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/refined-malformed-2.receipt.json",
+      "bytes": 898,
+      "sha256": "818e1208e77c578cdc6e682517b99849d70089c8f606dedfe9e701437d7624b3"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/refined-malformed-3.err",
+      "bytes": 194,
+      "sha256": "873fd1e9f7158ff3a696c63929333bfeaeec976756223c9577549ca36ed81944"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/refined-malformed-3.out",
+      "bytes": 330,
+      "sha256": "a29d7bf9c3b67130d0ec8512679351fd7d0481f0d9ede442fd6a9312fd551e82"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/refined-malformed-3.receipt.json",
+      "bytes": 899,
+      "sha256": "da7f643b3692ba81270475740de01ca2d935ddb1ecafdabe50e0bc51f1a93eb9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/integration-tests/result.json",
+      "bytes": 1235,
+      "sha256": "b1d95a42e8000a94d6fed3c796f86db806c6f70d6839679b78e59c3ae59a177c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/prepared.json",
+      "bytes": 59723,
+      "sha256": "6e90260a66c1dfd23a419e7eb952f4f33b5118994525cd928fd0e8b894867c51"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/dense-all-dense.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/dense-all-dense.out",
+      "bytes": 9698,
+      "sha256": "7e00c7f99defecbc59ca40d9c0300936ca14476ac1737ea677c7e2a11b037f05"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/dense-all-dense.receipt.json",
+      "bytes": 883,
+      "sha256": "a99822f1146cf09b999b4a13202d1fffcfdccbd5c4be889d9f79f7c9b18696b6"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/dense-all-dense.result.json",
+      "bytes": 18597,
+      "sha256": "f550fa2a7ce0403c7f24b94dcddf1480ad2e7af297b697241caa2083e88b41a8"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/dense-all-uniform.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/dense-all-uniform.out",
+      "bytes": 9692,
+      "sha256": "ef6907b799599f8090d0421575aeada2bf707ff5c9e54497f742e6855e505eff"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/dense-all-uniform.receipt.json",
+      "bytes": 885,
+      "sha256": "4e0e699cc47c98684c4e92a84ad7c191bb14b756540bf8283012e44e3e26f551"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/dense-all-uniform.result.json",
+      "bytes": 18593,
+      "sha256": "2487a76d6ecd07843dc580f216c25d48706ed49bc5c44500d92c5c4b6f0cc9fb"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/dense-gated.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/dense-gated.out",
+      "bytes": 7147,
+      "sha256": "46d7710c53bd7428c36faf41cadce3e91a7557303e2f8f5735957f3d55234116"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/dense-gated.receipt.json",
+      "bytes": 879,
+      "sha256": "921d551f8e3f2f60438b5ddae24b079e2f5639e9af161b6436b4742d3a79bbb9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/dense-gated.result.json",
+      "bytes": 16042,
+      "sha256": "75bc6557d4db9248496d7fad065ad2c2aa583a6caa7433e97edde266934eef74"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/refined-all-dense.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/refined-all-dense.out",
+      "bytes": 9697,
+      "sha256": "14336a4f8a0c80507e0d382b81832c4846948ef231a73137bbf128250152546c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/refined-all-dense.receipt.json",
+      "bytes": 885,
+      "sha256": "d6a65bffe4d6f96e6755e86e1f471743e7649783c8a43bc990d3941f58488540"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/refined-all-dense.result.json",
+      "bytes": 18598,
+      "sha256": "6af660e864dd17661e4ec18584b66782a2a86d8d524b5e68f151c475082cea4f"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/refined-all-uniform.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/refined-all-uniform.out",
+      "bytes": 9680,
+      "sha256": "91d0e491dda193dc89d61687eda22030d4112349da7f10e83c2023d4fc48706d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/refined-all-uniform.receipt.json",
+      "bytes": 887,
+      "sha256": "51ad5a37817b74d6fa542c37d07396a7d8a7b4d73131deb6421bbba91c2ba2f2"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/refined-all-uniform.result.json",
+      "bytes": 18583,
+      "sha256": "9960f9f9f8a4b63bd891692120c7c0eaff9068d0c66ad5d2870a3dfe33b40457"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/refined-gated.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/refined-gated.out",
+      "bytes": 7139,
+      "sha256": "8e8eff9f8873b22c88cc50228122267617091ec9703f248c49badedf34e707f9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/refined-gated.receipt.json",
+      "bytes": 882,
+      "sha256": "b4d9a5f5b4c7e94e3f3a174b82f56f1eef72cbdbb485be630a937313fe842583"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/refined-gated.result.json",
+      "bytes": 16037,
+      "sha256": "5c1e075749ce309caca9dced85487f7de6df22e81df4787688db2aaae2d7d71c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-clean/result.json",
+      "bytes": 110490,
+      "sha256": "6279175e7d482cb5934afb27a2ce25cf1efbbc529a6ee5ecb620db1b05668dba"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/dense-all-dense.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/dense-all-dense.out",
+      "bytes": 9699,
+      "sha256": "0b1915cf5a28d8902358e422c466dc5f4d2a1f70953fbca42cfad3c206bd1cb9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/dense-all-dense.receipt.json",
+      "bytes": 886,
+      "sha256": "73186162623c78b9a26b88571811605dc4294fcf30b7bec43773aa296fdbeb35"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/dense-all-dense.result.json",
+      "bytes": 18600,
+      "sha256": "4a1810cec2bd6d5c7a68724931ddf344929c0beb5831e6d63bf281557d0e7330"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/dense-all-uniform.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/dense-all-uniform.out",
+      "bytes": 9686,
+      "sha256": "f779db3ff39ff84a8c6c4e5cef2d4d10bdacc0e0757dce98bd6e9dd9374c6539"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/dense-all-uniform.receipt.json",
+      "bytes": 888,
+      "sha256": "1c4de0550d9569329be82be0b0910418c63f80e2399641fea6ace4c9dc3e344e"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/dense-all-uniform.result.json",
+      "bytes": 18589,
+      "sha256": "441f90bbec51c7dd0e28bd22dfa1d1e9ddf1bfa4725ce8809b6663a9b74ec6b2"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/dense-gated.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/dense-gated.out",
+      "bytes": 7154,
+      "sha256": "362ef2d8b3a0a60d08075d13019fe1f1bbaca0542710098188e9d45cd5b98866"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/dense-gated.receipt.json",
+      "bytes": 883,
+      "sha256": "e3b9f11b15d49dbeb27d1aa76db68345efca1f8bdd567d29a890cce1e81b17f4"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/dense-gated.result.json",
+      "bytes": 16052,
+      "sha256": "56a72998f316ba51f8d20fbd65a91f28649fcb9bf06ab5cf3e8fc7d0b75c3d83"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/refined-all-dense.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/refined-all-dense.out",
+      "bytes": 9696,
+      "sha256": "89c4f7476b7d2b93fcb0e19c46cd40f97d518de94d6e3e6c09f8d58b21c9db5a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/refined-all-dense.receipt.json",
+      "bytes": 888,
+      "sha256": "95b9b57f30cedb6a57781063be7bfe7b07f535020203631bbf245a0e8a4ad191"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/refined-all-dense.result.json",
+      "bytes": 18599,
+      "sha256": "70d70769e3a96516b9e3470078c89b4740cefc42fd469a119a6a1e1c7e376af6"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/refined-all-uniform.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/refined-all-uniform.out",
+      "bytes": 9685,
+      "sha256": "25d0b1ead95d863537b602e54e7477d108003edf4cfb348ceed8b3e1e11a497d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/refined-all-uniform.receipt.json",
+      "bytes": 890,
+      "sha256": "d61bcb7c14dff263d1bcc0cead6a124c18e2dc3ee0dd2edd24f86649a85b8aa6"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/refined-all-uniform.result.json",
+      "bytes": 18590,
+      "sha256": "0a019249b954ef6b75324688f848d3b598879454b962306031dbea325c3c1772"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/refined-gated.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/refined-gated.out",
+      "bytes": 7155,
+      "sha256": "1ed1385ea1109586157bc0100a463cf405ee02327636af0d3bf1edc47ce8f063"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/refined-gated.receipt.json",
+      "bytes": 885,
+      "sha256": "b0980f5f6aa2966e6a1fb60578ca2af9d7f52c6e0b92875c33cbb88e5bbdfcd3"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/refined-gated.result.json",
+      "bytes": 16055,
+      "sha256": "327eeff55e496bf9f123cdff742be4a373ad3ef95979c2ef368a2176d0dc7e9c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/qualification-counting/result.json",
+      "bytes": 110513,
+      "sha256": "1e0d8c03a0a1cbc8a3f526646b650e7dae1bf417f02d8a0b8e4f2480885ec5da"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined-clean-admission.json",
+      "bytes": 31381,
+      "sha256": "73366a7e5a2c8545fcde246bb0205ee01dda436d53acee0347d8a641a2a91225"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined-clean-build.err",
+      "bytes": 5118,
+      "sha256": "e5b4a838d8b8709b66afe3ac46366202bbbd6533a553e5cf3966f0c8069d7036"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined-clean-build.out",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined-clean-build.receipt.json",
+      "bytes": 908,
+      "sha256": "d391b17e3886a3c165481facdb5613f4bb552e811a4840b16108e5acdf4c3c78"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined-counting-admission.json",
+      "bytes": 31443,
+      "sha256": "d5346685e0bb4e7f2e7b9e5b1bc790b60a0f1b585ec9161128a908147e94518d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined-counting-build.err",
+      "bytes": 4981,
+      "sha256": "c5f3ddb28c79f34167792ba0ed0ce47682028720f6729aef52c2b27b0c600031"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined-counting-build.out",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined-counting-build.receipt.json",
+      "bytes": 967,
+      "sha256": "0e2a470d483afe51298034dd10da9965d71739122c7e4052ba54e7821fe88126"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/Cargo.lock",
+      "bytes": 83536,
+      "sha256": "a29c894e9767b0a7de135ee40df00b00ec7dfc48f58eab212da241e335ef3e36"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/Cargo.toml",
+      "bytes": 138,
+      "sha256": "5b57ad106dae44beb7dd8f6c594e7c9b1d47419666ee4b253451c922cac5c172"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/api/Cargo.toml",
+      "bytes": 421,
+      "sha256": "f352be7684e1574cf6822497d0c4cc2029f2e49cd83a4b7c66e77c30fd4394d9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/api/src/content.rs",
+      "bytes": 6788,
+      "sha256": "7f3ecbed9e74c09d26690ca262f7376baba0bb7e55b040cdd23bbf9e61d27da8"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/api/src/interact.rs",
+      "bytes": 51746,
+      "sha256": "96deaff1961cc249e63c3e9508083bbe75e5f17d5a4c84d8bf7c05296080e9a9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/api/src/lib.rs",
+      "bytes": 577,
+      "sha256": "d0cb03cf9aa3bd0036d9c6e0f63e4db7870b8bfa3e501da36965442b1ddd2b25"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/api/src/obj_names.rs",
+      "bytes": 5565,
+      "sha256": "695e9f33e015723f1c168ceda2e44ac94efb9f005ec8950da6ee04eaef18ec99"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/api/src/prot.rs",
+      "bytes": 4838,
+      "sha256": "18f2a0fbdf6c52cb0599cae14e0f6e890ba63803541e3c8f5599203f563e054f"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/api/src/query.rs",
+      "bytes": 76400,
+      "sha256": "1fad8662b25eff0a389cd05e470e786e3d6bee1804355fd533e4cb54ae7f3b46"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/api/src/random.rs",
+      "bytes": 1132,
+      "sha256": "1a42eba04d9e5390c83b176a364931b0a8541cebf706ac89bf57a37f6f8b5576"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/api/src/settle.rs",
+      "bytes": 11994,
+      "sha256": "1dc16d0dd18bc42de6ad82e504809fd0b548d44b2377be5a703c590f8ddf892e"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/api/src/snapshot.rs",
+      "bytes": 119641,
+      "sha256": "1d7307e7c75fee3a9a26b1075afd78a8cfad67d626d8327c73a326881cd4cb28"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/api/src/snapshot_dedup.rs",
+      "bytes": 32960,
+      "sha256": "3f1d1cfd4c287f4251630e34fce5dcedfddd6271f4f592b6748f1de26ee52293"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/api/src/snapshot_dedup_proto.rs",
+      "bytes": 17982,
+      "sha256": "4f82856dac1ce4ddec2fbcf3acc0948961b5ce6421d750160be9abf60390a1fa"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/api/tests/interact.rs",
+      "bytes": 85851,
+      "sha256": "4275fd5395859f81ddabc4cc92b619bd0854ff71f04e76fb1b27efddc9519008"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/api/tests/obj_names.rs",
+      "bytes": 5038,
+      "sha256": "00b269737441f3b3625fafe0d162b345d9a2b83c099d0b114c47acdc40846667"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/api/tests/query.rs",
+      "bytes": 42650,
+      "sha256": "e02a6ae836aa6f0097f071f6d360c7fbc4221dcfcf678802260277ba930b5dcb"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/api/tests/settle.rs",
+      "bytes": 20462,
+      "sha256": "7c0d2825110948129457a506c735cc0dd4ad7548974a229c55494bb6f350066d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/api/tests/snapshot.rs",
+      "bytes": 112453,
+      "sha256": "a749c453c7297b9c60ca996c75ff564aa111ec2c1e9d885987e5c56f50abda9a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/api/tests/snapshot_dedup.rs",
+      "bytes": 19252,
+      "sha256": "4b8d1cd62a710f0f30b85ceece22f6328d25fefef4d5e54f45e6495c231d421e"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/api/tests/snapshot_dedup_proto.rs",
+      "bytes": 19991,
+      "sha256": "0817f435cf120dc7777b7e13d4ff2f947a148c24dc4b8701171af07e54e57a9e"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/Cargo.toml",
+      "bytes": 379,
+      "sha256": "7c4be2de6526578d05562d47339e44af81bf015c8adca045a932d694db648a5d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/examples/check_bank_return.rs",
+      "bytes": 795,
+      "sha256": "283cb64d551be084b5dd427ac7b31bc5243b7c8f69ab9188cc0f312a563db7ad"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/arrival.rs",
+      "bytes": 1326,
+      "sha256": "a44f793aaac1d12654b4179d5b016a9d4dd2d377993961b1be398ff44ca4029c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/bank_fetch.rs",
+      "bytes": 23864,
+      "sha256": "e02cca60b6b3e7431cef154a5f8e62be77ffd8170901628cc608b12a296ca20c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/bin/nav-pack.rs",
+      "bytes": 9673,
+      "sha256": "692f954aa142d916b5c9ca610a053a868083d780522d2f8cb6c622049db92700"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/camera.rs",
+      "bytes": 4701,
+      "sha256": "7f98b2b365b7908b10b3a9334d36028a3dad899e34d02ad54a85302b1041235a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/collision.rs",
+      "bytes": 65870,
+      "sha256": "33b98cc84ed255cdca55b46ca6fc38da0e51bcdc82656c552df55cec7c53fd45"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/collision_tiled_oracle.rs",
+      "bytes": 32887,
+      "sha256": "3b37331b2aca50363d608392e77ce8a014cda6f75a477d072c96c657752b1a5a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/differential.rs",
+      "bytes": 2081,
+      "sha256": "1bb0f8984c85c6cd7a20d14dbc0dfc29d3df79c6459171de2956d88884471a5d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/essence.rs",
+      "bytes": 8934,
+      "sha256": "159213c55e6be1a6e98228d2c149abc32de5fe5282992a10f1770f9c58410894"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/grid.rs",
+      "bytes": 5256,
+      "sha256": "7c79284083bac9cbb8445b9621faf4f4078ee22c1b8cbbb53c783d443221a2c2"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/host-probe.rs",
+      "bytes": 3278,
+      "sha256": "31d6345c75be52ba285c171f50744a6839201a21e70b109b9e82fcf73f6b7db7"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/lib.rs",
+      "bytes": 2041,
+      "sha256": "dcedb3e6709150a79489f9f274fe83740a99ebfb73902be9befc13d1c5fbb2c0"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/pack.rs",
+      "bytes": 76062,
+      "sha256": "8debc59dec1dc4b83db8e0ed22b014d2fb899c2210188cd4d7906b6f8dd2c784"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/paint.rs",
+      "bytes": 37389,
+      "sha256": "8148ba8d2aa9341b24154c439ef9a7b5d65ed3e7c19dc798ae88e77db127764b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/probe.rs",
+      "bytes": 19003,
+      "sha256": "c7129710077dc3e8628a37931670285770c96755c8873e03021fb67ed19b5939"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/router-access.rs",
+      "bytes": 380,
+      "sha256": "44d942a72d6b1cf8f87a52d0cfd939bea4bac58b1df8a42f07da9b2ae1c7b895"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/router.rs",
+      "bytes": 80180,
+      "sha256": "2bb6b7e60b0bb8f4e79c14818c58dcc9f7f492c30d25fb01be08db206f33f9d3"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/stage-allocator.rs",
+      "bytes": 1591,
+      "sha256": "652261fbb469b2f2e14736856641da99c486624d157898436c01e0b76e240b4f"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/stage-facts.rs",
+      "bytes": 1039,
+      "sha256": "4c4fdc802531c206cae6239127fdbdbf916168404fe929d17697444956b2a736"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/stage-layout.rs",
+      "bytes": 879,
+      "sha256": "93e54bee8903f0ae980b0027665b1bcbdadb1aacf6265734699419b310d7b533"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/stage.rs",
+      "bytes": 2090,
+      "sha256": "cd3899653e08d8f76de9c239947665cf21bab147527cf9ac7dc02f088b8d0fc1"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/stage_probe.rs",
+      "bytes": 15971,
+      "sha256": "1c3fb5f7674d59c3f13140e76db92b42ae01d76973884e21d0e86ffc2c118c12"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/tile.rs",
+      "bytes": 527,
+      "sha256": "9dd6a970f468afe600f6721bbd42c0fffbaeea30b6246ad794ff331999fab31c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/transport.rs",
+      "bytes": 202777,
+      "sha256": "e7857c5743676b82eb847178f1ea1617a878203a1e7c4df3ad8d7e4568e69812"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/traveller.rs",
+      "bytes": 267596,
+      "sha256": "e2b24d90ab71325109d25243d7597cc24166b390abeeae6f6bdae915122cff00"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/walk_destinations.rs",
+      "bytes": 2179,
+      "sha256": "e1cc9fdf47c75a1b977da48f70fb27ddf523b72e43426c4d7ce8985bc4488b2f"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/wilderness.rs",
+      "bytes": 3215,
+      "sha256": "743c1c2b1d85555f070d46203a83c7e350af128f6df3734e271f404c798a40e6"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/world.rs",
+      "bytes": 22044,
+      "sha256": "0c51076616cfad08738f7e7d5e8a0dca918a7f0378ba15ba66816be6a43071d2"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/crates/nav/src/world_state.rs",
+      "bytes": 14749,
+      "sha256": "20ead8cad03fbef596a6c324b7b074604681261af285175b8fc2833ae691271d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/effective-source-manifest.json",
+      "bytes": 58149,
+      "sha256": "08258377c346d181874445f1c634a59d7f105f0ede38a3c86eb666977035613d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/host-spans.json",
+      "bytes": 1318,
+      "sha256": "f494ab32ff28f976e2f4a93c7778844bdd90944e42d1ea77ee4220608e7bbd91"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/original-Cargo.lock",
+      "bytes": 173350,
+      "sha256": "03059d02f8274c8fc9cd7e2f69a48f317e3f44417570ecf4730b31710f8d4b83"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/original-Cargo.toml",
+      "bytes": 524,
+      "sha256": "6664481f8718f49f101b89c3abc5a4a7b163281608536e8edfb9d686ae55caeb"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/original-host-lib.rs",
+      "bytes": 358762,
+      "sha256": "9a094d8b011b92b794c16457230e8084b897b6305c259392aca8ff77d520e2df"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/original-source-manifest.json",
+      "bytes": 52218,
+      "sha256": "714feec0c91181fa7456d95aed4ecfb779e83542fdbaa091c36b15e2bded4a7d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/target-clean/release/stage-a-probe",
+      "bytes": 1260896,
+      "sha256": "9264b001b320cdb761e486ff7f9ebb54d231b7bf2cdc1b7eb24b920eee900039"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/target-counting/release/stage-a-probe",
+      "bytes": 1269160,
+      "sha256": "81fc1e751972ab17ba8455e91247ddcc18481bae8c1f639a448c1dee4502a3c1"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/Cargo.toml",
+      "bytes": 833,
+      "sha256": "02abd1e47594f5a1e81b9b30c4928e64c63e7e8481745e2cea640d6ad498536e"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/bin/unpack-cache.rs",
+      "bytes": 2251,
+      "sha256": "c3fb2d38365721585c2a9a8c536fc939dd7bbc8df8f0fa81f41abcfab4e6a64d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/bot_target.rs",
+      "bytes": 8453,
+      "sha256": "0e96444007cbde1ad374ad17b5db91e73b81863f015c8bd2133ac5e702c401e0"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/client/client.rs",
+      "bytes": 460620,
+      "sha256": "de5a57f6c67049930edd39f29acfc43e5e6ac4707fefa94c2242074fb04cf94b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/client/config.rs",
+      "bytes": 364,
+      "sha256": "d62e7e1d19dd8c77ea444392433ef4bfe983508f9dc30600cf9c5c342e468874"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/client/game_shell.rs",
+      "bytes": 8522,
+      "sha256": "f3224b6ca8e86cf271ca89fe0e1b8560d77ed391ea520dee29b608730abbd8b7"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/client/key_codes.rs",
+      "bytes": 2395,
+      "sha256": "6dbe4ccf5638e3bea192a83d661ab72376862c80c175ff8fd7fbc412f8ca1337"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/client/login_error.rs",
+      "bytes": 242,
+      "sha256": "590a788f66ee4275d73c368ff68df25b152c590d2bb46608678da8815b868e9b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/client/mini_menu_action.rs",
+      "bytes": 2738,
+      "sha256": "d7dcb6024eb6406613d78b516b0d487c9fd75e02528de898ddca2f8fbd2936af"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/client/mod.rs",
+      "bytes": 729,
+      "sha256": "758eb6c81736efaa37f08f02d7bce5dbe30c0028feff7512f24cdedbf86ce4be"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/client/present.rs",
+      "bytes": 15444,
+      "sha256": "92c7b766b57d56927f8774eed7d8fdf6af5d907a7dd8d21d24283fe885caab26"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/client/skill.rs",
+      "bytes": 974,
+      "sha256": "67657ebaf90fce8a28d410304e0dcc9ea4e25dd13d4bed5ddfc0bd0af08d6451"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/client/title_flames.rs",
+      "bytes": 14880,
+      "sha256": "9a73dd7f3122e02945d35d11151145ce9a089d231b6a775bad8beb8f7887ed04"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/config/flo_type.rs",
+      "bytes": 4738,
+      "sha256": "ee3c8e52b5b6e5ed2160089c26301b0d92286475cfbc18428ed4347a90c0de3d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/config/idk_type.rs",
+      "bytes": 3827,
+      "sha256": "b00a9e87b6211fb27956cacdeada7545069caa3ce8a07df7f8c3b4c4daf6ba33"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/config/if_type.rs",
+      "bytes": 26747,
+      "sha256": "f905bd60f246d7afec18255864c4a60e4f769c0c44addb0fc08795145ba687cd"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/config/loc_type.rs",
+      "bytes": 21617,
+      "sha256": "601b72cc3befa3ec2a488a7763f63d1aef96c947341ad39438a70c23f84079d2"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/config/mod.rs",
+      "bytes": 2923,
+      "sha256": "6237850e4fe374aa2fc23c74c81afb4255305089a113b27a93a4550ee03e54d6"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/config/npc_type.rs",
+      "bytes": 10026,
+      "sha256": "b10f59aaba9df90ebe3ec56cbb18d30b062731b86181fed9352c31a21e5d1896"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/config/obj_type.rs",
+      "bytes": 29842,
+      "sha256": "571cad9e36349ac4f8c7da0d5387a92ea216b81a331a8f8caa4c70f15122491b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/config/seq_type.rs",
+      "bytes": 5229,
+      "sha256": "8a31888a2d7949dd50d19d47ae88e1b72f136332562fa5ed7da02ff246bf9b08"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/config/spot_type.rs",
+      "bytes": 3640,
+      "sha256": "06123e68ecf3142a80d5596cf6df56aca7f36aa80c6096567c8a50ce39c0c03a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/config/varbit_type.rs",
+      "bytes": 1653,
+      "sha256": "25f92d7c072945169770232fdb8e7fafbb75436548d430148da7d9f3e3beb4bf"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/config/varp_type.rs",
+      "bytes": 1544,
+      "sha256": "efdb0e6ad546e533a1afd0008e71d361054279975b50c1a088e84ab89286b675"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/core/build.rs",
+      "bytes": 80011,
+      "sha256": "be4d54a9efbe44f56862b0da7928537e709a0758d0f05d43b023ef704b93fb2c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/core/mod.rs",
+      "bytes": 80,
+      "sha256": "a9de8986a1221c3b07908c760317bae0f93d794ff753083315afc066654b8cc9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/core/world.rs",
+      "bytes": 42969,
+      "sha256": "f2dc0e728f9a51fe9016468b8ead897f131c94a1aacda37ffca81c779449fe05"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/anim_base.rs",
+      "bytes": 1100,
+      "sha256": "75bcbdb5cce8a9047c12b8562501c36c14639e70a91c32a29aa10a299ddac51a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/anim_frame.rs",
+      "bytes": 25683,
+      "sha256": "92ee2012d95905cc7ce01ca49c276e10fc517ca76626451e47dec49cfe1fcf00"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/client_entity.rs",
+      "bytes": 14719,
+      "sha256": "262ac62f0ec8f2f1c102e3f3977d43da0c8553b6e341e20e95e339c1e674ae3e"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/client_loc_anim.rs",
+      "bytes": 4176,
+      "sha256": "f1d0a1848e351fc898b5b3f5aca4f1de6c0fc4547bb011975235dcf091250c62"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/client_npc.rs",
+      "bytes": 4331,
+      "sha256": "e7f7503aa9f2744d4a91d7fd2f88362910a083ccec76fdcb32924ef8d2c007f8"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/client_obj.rs",
+      "bytes": 1110,
+      "sha256": "925488d46a34ea23397feaef0bfa4bf51409d027e97db769c71583179059a1fc"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/client_player.rs",
+      "bytes": 19679,
+      "sha256": "5407dbe945b67b3ca3df101d7bb6fe57c14b6fe3826b9a1b8cec47327553b833"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/client_proj.rs",
+      "bytes": 6709,
+      "sha256": "d04f7e1c7dbed9bc40361aef19fdabbe45cf72079c5354bd1fb71f8c5de7fb3b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/collision_flag.rs",
+      "bytes": 1761,
+      "sha256": "875c6384ec2c0f7f4a2d49cc47c14465048c1a5d93395c1ddb9b87a8ad01e508"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/collision_map.rs",
+      "bytes": 23917,
+      "sha256": "00e366d93793e9feaced92bbbfac53c19546458c49f77f30de9352bc24312cbd"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/decor.rs",
+      "bytes": 1593,
+      "sha256": "50cbb1718855dc9769b51d5e55acfabf9ab3a67ce9024817c5cafa4b0a7d4019"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/direction_flag.rs",
+      "bytes": 249,
+      "sha256": "05e583bd869abe15c368e40dd6259e996ef90e7d1c87cb6ecde4a45bbe92db64"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/ground.rs",
+      "bytes": 15266,
+      "sha256": "306c7fb734b3a9cc07bd8d9151f73a0353201821d7beb81035f9a6f0a5047c14"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/ground_decor.rs",
+      "bytes": 1242,
+      "sha256": "7601164357a54382ff6f5cacdba238d56136250323cba8e24ba5ac533be6d090"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/ground_object.rs",
+      "bytes": 1250,
+      "sha256": "5f95e4cfe7f11e66424196f9fbb186a3dafa6c6eb4eabbbcb7e8f1d2add37a8e"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/loc_angle.rs",
+      "bytes": 226,
+      "sha256": "47cc47933ec14921f3556e9b2e90f78518831517169c18ac50e0fc7369e6642a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/loc_change.rs",
+      "bytes": 1087,
+      "sha256": "eb39f7fa2bd8d9689385eeedb304f59bd8c8c0df851588d54005c78028a4e144"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/loc_layer.rs",
+      "bytes": 240,
+      "sha256": "15b792768a5347b02719632fcb109af528cbba4259c20ef53dc7466606dd0fb5"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/loc_shape.rs",
+      "bytes": 1723,
+      "sha256": "91b53fbe351fb22aa367e964737574bf5c5017ec963f9e4dc19abe520e04af25"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/map_flag.rs",
+      "bytes": 293,
+      "sha256": "8b236b1a5a36c9bb257da4a4ad36120a76176ea7f95db8bf7d33406e5ac11dc4"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/map_spot_anim.rs",
+      "bytes": 3347,
+      "sha256": "85bb5ff03a88a64d873de513e8cd43217543bde0978625b42711155dd8920048"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/mod.rs",
+      "bytes": 3415,
+      "sha256": "34a8be4f30f67371b4cebe5eb156c58dfea539725ff14c11da5c5d99bb441a97"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/model.rs",
+      "bytes": 121536,
+      "sha256": "c2af8c399862d262348efc48d1e0fc7772de4286e9cb7c6554a27f6d2393dfb4"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/model_source.rs",
+      "bytes": 5712,
+      "sha256": "56b023f753a0762654faeff58dcc8b0f292bb83c9e04e7eecf5fd1606b2ff372"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/occlude.rs",
+      "bytes": 1291,
+      "sha256": "924933b30217673116b0ca08bb3c5050f664810e2b4e098f939ed23390f0d241"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/point_normal.rs",
+      "bytes": 188,
+      "sha256": "fda8ac092ae5ad785941f535a74139ee53a3015747b91f81bb3072ed80504564"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/quick_ground.rs",
+      "bytes": 841,
+      "sha256": "9f8678ae0b4357bafe6d74c03b1c8811a021a507e6e82be531ab3b6c802dbf1a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/sprite.rs",
+      "bytes": 2394,
+      "sha256": "36a89a2606185d8fbca4b18da8822cbff2cdde7873f71009742a5bad2b0430b5"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/square.rs",
+      "bytes": 3781,
+      "sha256": "819f12ca45872ef069aaab8613d20bc4c9825834d5763223db1e5e9896219cc3"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/store.rs",
+      "bytes": 7656,
+      "sha256": "e8a8e1c92c2e0553961257480983cc663b19996684cde5e485642678a939168b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/terrain_overlay_shape.rs",
+      "bytes": 608,
+      "sha256": "3823b56c879d768f394d25684d9e418b2ee4ba3082f5682fc04313d72721be08"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/dash3d/wall.rs",
+      "bytes": 1760,
+      "sha256": "212bc292f06f0b577f8ef2b1c9f0b9244d72d20fc2f4303ef30944e9c62f2c18"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/datastruct/hash_table.rs",
+      "bytes": 2255,
+      "sha256": "3a948b80b78488f096d2291b216b07abe6d1976f73de5a9aca2ee1487432213d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/datastruct/link_list.rs",
+      "bytes": 9426,
+      "sha256": "dfcb92d2775ccacfe1d8da3525357a3f877aebbadfde097d044f2ac6f43c3dcc"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/datastruct/linkable.rs",
+      "bytes": 4358,
+      "sha256": "b37d502bc7cdae57cc423eb708e0736dcc058cfc2ce7198c057eb6980bb8bcb7"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/datastruct/lru_cache.rs",
+      "bytes": 3030,
+      "sha256": "74411fb9e8a9059d22b30392768d86eb5bf4bc982b1be6815299242ddd6ddcff"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/datastruct/mod.rs",
+      "bytes": 238,
+      "sha256": "d3917436b4db2db2cca10f2285ce9e8694efa97958c18a86cc3d987c4ffefc32"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/graphics/colour.rs",
+      "bytes": 746,
+      "sha256": "b6811935fd90683ed9aea46570b91bd7af278eb9aa5045bd4ed028f085a686ee"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/graphics/mod.rs",
+      "bytes": 282,
+      "sha256": "5dc282ba70431416096f5282b8b2a16340e1ddfb5dc668b442ce703497c9c0f5"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/graphics/pix2d.rs",
+      "bytes": 14310,
+      "sha256": "b5860a119a2f1e808d4b9768a4a39c6045072ab252b1f9bf840fcd0e45c305a4"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/graphics/pix32.rs",
+      "bytes": 21951,
+      "sha256": "cdc4fa06a47d680882aa574287d7617c0a4c00eefa820162dde87408b0ac016d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/graphics/pix3d.rs",
+      "bytes": 158213,
+      "sha256": "76920ea984c73b44c64678e542f6a48b50ceb8df1a88693446e69b31fd3dbeaf"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/graphics/pix8.rs",
+      "bytes": 13118,
+      "sha256": "94d182d06a9192ef48e70a619ad458727c68481407f154b7465f017a8af24608"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/graphics/pixfont.rs",
+      "bytes": 19052,
+      "sha256": "1e466d0b47195963bf23d307372b5fada0da14ef5a3c3357da92300e41252441"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/graphics/pixmap.rs",
+      "bytes": 1561,
+      "sha256": "b581c44a2a4587180960f72c373605e99921795520fef4caf0038330d3324dbb"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/io/bzip2.rs",
+      "bytes": 743,
+      "sha256": "dfe92d0142f90d2136d925b5486a038afb536c94372995bbd9611001b2d557ac"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/io/client_prot.rs",
+      "bytes": 6777,
+      "sha256": "88a165ec42b0cb5b0c4dc171835eb238f53f1643d368f4811aa9eabef07d3c83"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/io/client_stream.rs",
+      "bytes": 16671,
+      "sha256": "93c551c33ef67eefb87931421b39bec108ebdab1479760ed5a6e941dc42e18a2"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/io/isaac.rs",
+      "bytes": 6213,
+      "sha256": "05ce959bd92b16ce2fb54fbd5c8a486c530c60a8bc5bb4f3860a96d7bec7bf89"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/io/jagfile.rs",
+      "bytes": 3461,
+      "sha256": "949deb870fc6f36681fe1425af569a7e1e5cfe8d1c7eb569871973fbcca6870a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/io/mod.rs",
+      "bytes": 431,
+      "sha256": "ecc9c81b8e846265bcc5796a6081b4f1cf884bcbc64e67a4d0f778a255eee142"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/io/ondemand.rs",
+      "bytes": 56174,
+      "sha256": "002fd903eaaa3238f0db0a7b80d228450da397c33411e7dccbfe57b3df56932c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/io/packet.rs",
+      "bytes": 9768,
+      "sha256": "a8521469506c2fb48f8fbb61f3e9fe749a248f444f9f5ef922910d2efcada201"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/io/server_prot.rs",
+      "bytes": 4090,
+      "sha256": "1315abc430be316f5f7827a8a8facc0cb0477ffd96db8fa01b69578455283506"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/lib.rs",
+      "bytes": 1661,
+      "sha256": "cc9518039065627115947bf9e8805fb976fa65a23a462e3754befcd0e642e23f"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/login_rsa.rs",
+      "bytes": 9245,
+      "sha256": "0b40b7ec99b2425520fa1f9c2dc9d90654bc3f99add04aa89b1a2a748d62f9a2"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/profiling.rs",
+      "bytes": 3781,
+      "sha256": "2429ff1d9ae2e62f7a4f85c7c5ed77fc8d51ec1787c6df203999ab4048825a2a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/render/backend/cpu.rs",
+      "bytes": 30943,
+      "sha256": "e6e265c97e26d4644d36f0f2aec4d280c6483ab54c4e5eb5d9ac23c35cb8e97d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/render/backend/gpu.rs",
+      "bytes": 78391,
+      "sha256": "46d5531d2b00e86a0c4fc67e2437372f0e45c211460a0f3b2faa09fe6424df64"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/render/backend/gpu_atlas.rs",
+      "bytes": 53449,
+      "sha256": "02b992b91fb2c5478242c9444d2856f910b21780aee272eea4b1018a9380e3d3"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/render/backend/mod.rs",
+      "bytes": 8889,
+      "sha256": "8efa0f948dede69f7b3e456084fd92c23de199be802a76385f6bfd1d653155db"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/render/draw.rs",
+      "bytes": 189598,
+      "sha256": "2c0a416d8454e3f858cffc603bcb96a9a465a7f82d67568a6ac23ffbb0e8a1cf"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/render/media.rs",
+      "bytes": 15412,
+      "sha256": "59d43065b87df3a5be12fd1f0ab02709c5dbf5621ca2dfee0e49674a857f6abe"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/render/mod.rs",
+      "bytes": 191,
+      "sha256": "493b1ab7410af6b80bcc7ab3114681baa0dfb355fde716103dec3af8145f3367"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/render/nav_debug.rs",
+      "bytes": 25041,
+      "sha256": "5a0bfa660f35284236ee95cd0fcb35b5332cf98db5c2f943f9a037a3208e65ce"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/render/renderer.rs",
+      "bytes": 15252,
+      "sha256": "c09c71925395252cbee093cbeeb60ac88e4f5375beb432491a5980546bc868a3"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/render/store.rs",
+      "bytes": 16234,
+      "sha256": "6fd891ddb135f79af016bb896ed660dcfeb04adc748f558a87181d4ad1a473f9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/render/world.rs",
+      "bytes": 254096,
+      "sha256": "9e2cc21a2c42c9f9956b7bd7e0a7790f0138a975b66413b41e8ca64a432e54e9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/sound/jagfx.rs",
+      "bytes": 11144,
+      "sha256": "69322fda04550289198195d8e0fdae7903d823792a118ae8831e93dde11754ec"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/sound/midi.rs",
+      "bytes": 8856,
+      "sha256": "83b250109c55d8d1e61f193e69db871369c671f7531fcc9a26c2841f40c2b620"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/sound/mod.rs",
+      "bytes": 470,
+      "sha256": "33497279d9d38ebbdc9fe78f5a44ab77a30cba1d6347a3596b85f50dbf236b41"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/sound/output.rs",
+      "bytes": 15613,
+      "sha256": "bad117206f3d760233426de0b6cad91b4d0b5258f922e59f5dbfe3e86d387c8e"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/sound/tone.rs",
+      "bytes": 24580,
+      "sha256": "246e0a5fbafc6317633e15046ea42bd7bec8be6367cc1035044fd93b21d83093"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/unpack/mod.rs",
+      "bytes": 18908,
+      "sha256": "12b2237014a8d2c6efd150366435adc3ff172216f7380d68f3e77536dd57f395"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/util/java_random.rs",
+      "bytes": 2602,
+      "sha256": "f60392c2e8a35d094a3360c587e635eff20211f1c17d914e8cf3a3db60ae98ce"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/util/jstring.rs",
+      "bytes": 3669,
+      "sha256": "b3523550d57e04db3e4dd6dae6c1cc433d4e1ef27d65fefd89f8b9e9e6be3212"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/util/mod.rs",
+      "bytes": 97,
+      "sha256": "1d5d34567ee5645d41b1388c86ad5690b95e48a52ddaafdec00bdf28fe0c232d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/wordfilter/mod.rs",
+      "bytes": 102,
+      "sha256": "804cdea63731cfa3761d94e655f204ec49ab73d313e87e67c384ec36a3d6d7af"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/wordfilter/word_filter.rs",
+      "bytes": 43726,
+      "sha256": "f1bb93e7201b119b2940376f8ef2aedc82c1a572d43037aab6606c19d71b9701"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/src/wordfilter/word_pack.rs",
+      "bytes": 3259,
+      "sha256": "5f8e28b92d10750d5006279169d6d47c0c9a3cd681d0d3037674b900046b004a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/cache_share.rs",
+      "bytes": 1459,
+      "sha256": "f718b9e769e8b66026684be0247c22751ce697fed6bd46c5b193537031d52647"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/cache_short_circuit.rs",
+      "bytes": 6995,
+      "sha256": "53f6cb1ffcfaf8b9d2a0972d8eabfcaa649ba8c56a083e1fd433d7d95567e8c7"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/chat_mode.rs",
+      "bytes": 2673,
+      "sha256": "c9bb7db395ec740e73869d426c29360adcfb23036e6f732df72a616ea15244af"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/client_build.rs",
+      "bytes": 34666,
+      "sha256": "13e3932341d1e7c082b1ac4e4a142f1d77d3c5dab8f201e0eadd593e0345d34c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/client_skeleton.rs",
+      "bytes": 1668,
+      "sha256": "903475d33051211b796af41803abbe25b81a6091173f11b4af522f099abd124c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/client_stream.rs",
+      "bytes": 1883,
+      "sha256": "8a070a5366f146a4eceed835b2d5dedb166d23dd3e8b29e94b51481383764b4c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/collision.rs",
+      "bytes": 7441,
+      "sha256": "db72db4789e7886ef9c8514709d479942665879c6d7d56d68dfbbbcb5717b7da"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/config_types.rs",
+      "bytes": 7842,
+      "sha256": "3bfef99bb2ef2af594f5b02a828379ba3ceb5a0ec4b3917b1e39dfe79ff98a57"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/datastruct.rs",
+      "bytes": 6876,
+      "sha256": "79821680ee48c95c9e8f64831e72667ea601f56e2945c5351f7b3e2d8e911fc3"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/do_action.rs",
+      "bytes": 10535,
+      "sha256": "247b1063ec3325b88783bcfafc89227c0cf6586da92b8c90da7447588f8413ac"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/draw.rs",
+      "bytes": 1501,
+      "sha256": "7f0ed2dbc3f9a549d181075056da39d7a008137c2b9053bcf293194b85495955"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/entity_move.rs",
+      "bytes": 3369,
+      "sha256": "2070e14539b4ef331f7b25fe62444bcb39acb6bd5b1959edf26f41e4b5a8dcbe"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/fade.rs",
+      "bytes": 2942,
+      "sha256": "2d937ffee97f5ed681a350c70de895b3b68fb6431a087942733faa67e1812415"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/from_shared.rs",
+      "bytes": 11628,
+      "sha256": "11707e30b3cb8e661e82d6ca7530743494844dc93046f092b0eb4c30c7d89252"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/game_shell.rs",
+      "bytes": 1085,
+      "sha256": "c3ba0b02c9d898360cecb05f70c77d0924477714addeaa943aa9e0debf5ffb42"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/gens.rs",
+      "bytes": 13522,
+      "sha256": "8413c3b71b5fe42e44071147ec1cf4853e264ad4d6a81a6dfd24dd169fdbd390"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/gpu_backend.rs",
+      "bytes": 16914,
+      "sha256": "7f200d2a2549f5049570efe79828e09ff56b0d60559115b1912e66685d5c3d7c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/gpu_depth.rs",
+      "bytes": 41859,
+      "sha256": "8f8fcf2738156056f4dcc96505e1ee8c8224520839ab67295c639b89afdc3872"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/gpu_inject.rs",
+      "bytes": 2776,
+      "sha256": "13bbdb89308cddd01ca07f43d06a1999539eaf3df02fd9017aeb899a44f9d092"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/gpu_memory_profile.rs",
+      "bytes": 1063,
+      "sha256": "db2af2920a2b61889e094c2dccda1231c91d7c3ec2fb3199d3a8a5e0e5fdf723"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/gpu_mesh.rs",
+      "bytes": 28944,
+      "sha256": "c3c13e3ca49cb73d21de0b889656dcb11d16f14e872bffc67c4d672a84c97e93"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/gpu_pipelines.rs",
+      "bytes": 1285,
+      "sha256": "ce533bf3ca763fa2713074f7fb5190e0a7b6e2c6bee8ccecc60c06ef97d48a29"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/gpu_texture.rs",
+      "bytes": 28871,
+      "sha256": "053eaef148d5a15e9bfe5da2d55393717707aef675e30a26aa40a22351513e9f"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/graphics.rs",
+      "bytes": 25422,
+      "sha256": "21f03924630807ab3694952035689da4ac9b2ed902a76b5d4e59a42f7595bfb9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/headless.rs",
+      "bytes": 9353,
+      "sha256": "38726b438fafc2a0f1846c36c3dc1f88dc5fcc7f03535f3f563eb54a886e4cf6"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/hud.rs",
+      "bytes": 75905,
+      "sha256": "5b92306c97691553d522e59cfda37a22ca73cea92adb763a086216e68462d378"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/iface_model.rs",
+      "bytes": 13173,
+      "sha256": "02b830391a4d4791cecc9807c5b9e74f04088c138828b25497f622468fb55b1b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/ingame.rs",
+      "bytes": 22628,
+      "sha256": "e071a852f53811361a41bd9a9b37936b26c6c0c7cd13bf697c2bb7a99538ea39"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/inject.rs",
+      "bytes": 6865,
+      "sha256": "8a38a0d26b0b2f1a2eb713c74c5d8e0340834e57d0f66f02bff9ee78ddb0a508"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/input.rs",
+      "bytes": 7095,
+      "sha256": "7b57c56dd45eafd936de09fb7da29597cb5c90ee8355f0d5bdef5e9bd0ef0155"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/isaac.rs",
+      "bytes": 419,
+      "sha256": "d6a48feaa9969ce572ae4e7a8c3f7576f3fa712bff3a982a601aa29fb35bd391"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/jagfile.rs",
+      "bytes": 860,
+      "sha256": "e3c937fb5d5c8a9d234fe6541826de8389dfd829d915443222868126bf89a8f3"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/leftover.rs",
+      "bytes": 29005,
+      "sha256": "8a49ae40a5652d8cbd5fbb45b4151351a5fc5857cd7cac5301443cc1f58aade6"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/login.rs",
+      "bytes": 16054,
+      "sha256": "7ec2ba32a1179c068a87e277ce261168c1435a97814bc391fb208e6bb7dc3bb5"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/login_rsa.rs",
+      "bytes": 1428,
+      "sha256": "217800181c8416ab0516eec1d74379872285bb4b60b2117b575c612ee6e8c391"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/login_uid.rs",
+      "bytes": 3043,
+      "sha256": "5d99ece0c9e387bf9dd6aa4389b66b0c449e575c60b4b94d5f7d714b20c39c29"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/logout.rs",
+      "bytes": 8418,
+      "sha256": "0dbd7f18073347893828e9f89c6432198482100256b5679d0b2cefe6cb3d58c5"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/lost_con.rs",
+      "bytes": 5634,
+      "sha256": "776cce002b1df3ab23540140ee327da1d6c4b5173ef4c60fada98c8f8f383c7d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/maininit.rs",
+      "bytes": 23015,
+      "sha256": "9640365538f3258adc689483f01f1213e2779725c053dc8c4a419cb8afbf959d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/midi.rs",
+      "bytes": 9858,
+      "sha256": "87ed74143760cd835b093d0ba7b210a8b1c8c60bd7b39a7c8a547d78bc73571b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/minimenu.rs",
+      "bytes": 35334,
+      "sha256": "358311284b2064d71a1b524f1c690c2fdd2e0b4bfc5c9cd16fd9188f9dec6cae"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/model.rs",
+      "bytes": 11783,
+      "sha256": "f40c040e393c541b0bdc1c280c72e6e58e6c8c470601bab4a27c3fd1a64cd66e"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/music.rs",
+      "bytes": 8319,
+      "sha256": "dab6409c81ab6a4e42dbed3ea3b1526b2b57ae4368142114f449563c93af2ad1"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/ondemand.rs",
+      "bytes": 29938,
+      "sha256": "93b34cf899fa0e250482a540ed95a78402e61cd6aa9c9f0347a742c2d688eb20"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/overlays.rs",
+      "bytes": 8255,
+      "sha256": "86d1b3e827c892d7e13374ee6a6078c8d6c41db9d01b7f6c6891b6c25d89b57f"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/packet.rs",
+      "bytes": 1914,
+      "sha256": "8d34896595bc4b518f6596222a25849826e27d0e59bcb64729b1794fe491e44f"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/player_info.rs",
+      "bytes": 10067,
+      "sha256": "ca663e7e69cc83b8e59ec741161b80e0f0705db959420c0dd81f316fcd7423cf"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/present_pack.rs",
+      "bytes": 2342,
+      "sha256": "789e1ec7db7ce33b70733c72abd7d723bb092cdedb307521079d4898f2053eb9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/prot.rs",
+      "bytes": 1025,
+      "sha256": "25333a2c4d256a249938f5a6aa693baa1ff02ed6daeaa089bb08b14367e21929"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/rebuild.rs",
+      "bytes": 13790,
+      "sha256": "00ec4caf7ae86eef12ec26e43e4fcc880b10df2618a178238947c5b1c5781a2b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/render_backend.rs",
+      "bytes": 9234,
+      "sha256": "3e8c38be3c5795da14966cdce8c283ae40d2cc7d60ec8a313ec9729d520eda7b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/render_media.rs",
+      "bytes": 1717,
+      "sha256": "4684e226744f1c4bfb28e8b53c3087548b7fdb812beee015ab68bbb9e76391a0"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/run_loop.rs",
+      "bytes": 1075,
+      "sha256": "638a49381e17021ec30316002e33bb35d80f53ce236211b14dd20de8d2afb1b1"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/seq_delay.rs",
+      "bytes": 2801,
+      "sha256": "d28eed1a32ebafca614016de13226a47b5f8c12f5caf237e5ef525e2410296e9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/server_packets.rs",
+      "bytes": 6827,
+      "sha256": "cffe343a0f14c8b6d30d755bd8d18add4fdc2a7de3cd382bd7729b5ab21c8b6c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/social.rs",
+      "bytes": 15365,
+      "sha256": "907fe547d98f79975963a70008c736df5bfa89925b6152fc19cacd0b32ca0728"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/title.rs",
+      "bytes": 5031,
+      "sha256": "4ce12e113d9b906e07d0998270d76fdc9596bf0cbd22ea1ec1ec4f416f9d0a7b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/unpack_cache.rs",
+      "bytes": 11854,
+      "sha256": "83b4a0a88dff56479f1319d7d4973cf0e90f4cda9eac65fee8b828722498fef6"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/walk.rs",
+      "bytes": 5074,
+      "sha256": "32c4066e317a953b69f222f23a196c5d0b400e7da4f4fbd7b92a02c1d85f54ba"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/wordfilter.rs",
+      "bytes": 740,
+      "sha256": "8fbdb823fec6d4423dba3443775e5cf722c07751d35ec66ffb749d39a52b3858"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/wordpack.rs",
+      "bytes": 1565,
+      "sha256": "0cb497e0f24417c7d37e663669977b1ab831c8b6236cb7304bfadf3b1cb1c98a"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/world.rs",
+      "bytes": 70080,
+      "sha256": "b01739cad36b8e56fae33c3b0235e3ecca8a6c0aa094f51096b98d46413f67b5"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/vendor/fr-client-rust/crates/client/tests/zone.rs",
+      "bytes": 38684,
+      "sha256": "2a4071473388a572ddc3ff5fe068f7c3e5ccf5b662b4b29b5fa03bfda003a200"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/sources.json",
+      "bytes": 230600,
+      "sha256": "fa6ff39a95b7cb5f2074aacbf653c82a5961921d775c180ebbcfdfc964c96b19"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-source-binding.json",
+      "bytes": 856,
+      "sha256": "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/frozen_generate.py",
+      "bytes": 8483,
+      "sha256": "f51c88b73186b9e7a50ea45494cc160523339d2be9c6e10f8134d7de05bdd784"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/frozen_probe.rs",
+      "bytes": 18952,
+      "sha256": "ee91e2370d04de8a1c9b9d55eaf9cbb3c8bbd9d0153b4748208fc50656e40cd8"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/frozen_support.py",
+      "bytes": 27825,
+      "sha256": "8707784bdea6df255ce3eee4329918d58524dfe5c2053a891e7fc5c3355c22ae"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/proposed-manifest.json",
+      "bytes": 4322,
+      "sha256": "0a64a4ffa50c4b74bd6e17daaa2bf8ebc1673ac93afedfaec16b9b41c500cfc8"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/qualify_sharded.py",
+      "bytes": 5854,
+      "sha256": "38692e38c7174cdc5e13f31048a80aa0dfe026362a7fb1de8a4e391c3e894e41"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/run-05/qualification-clean/dense-all-dense.out",
+      "bytes": 2034,
+      "sha256": "522e418aa0ff89bb9989a98bf94dda8e951e432b46db0df1db513ef6d4dcea2f"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/run-05/qualification-clean/dense-all-uniform.out",
+      "bytes": 2029,
+      "sha256": "d253ba1d9a38c392e2b3d5b978377d870da35407565a652091fb575ec0a44926"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/run-05/qualification-clean/dense-gated.out",
+      "bytes": 1959,
+      "sha256": "0e1d40c59f80e4d6234c69bf59527e7b037be952580715ed3934406a02ddc597"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/run-05/qualification-clean/tiled-all-dense.out",
+      "bytes": 2038,
+      "sha256": "0aee0e00e4263bef1745dd07c91a0ab608f95ed5c890ada8d4afe1f1a7e4c446"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/run-05/qualification-clean/tiled-all-uniform.out",
+      "bytes": 2020,
+      "sha256": "d1280cf2e4d4c57b9bb6816171e15b678441b9c28088dc5493ae402ab70a981d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/run-05/qualification-clean/tiled-gated.out",
+      "bytes": 1952,
+      "sha256": "292168007c1f6a5c095273edfa73d2b83c9b5e78a1790afd2c01b4597d8831de"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/run-05/qualification-counting/dense-all-dense.out",
+      "bytes": 2035,
+      "sha256": "e694266d6024efcee855cb612643c66a6a30648578deb405197e1ec59ae4ca73"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/run-05/qualification-counting/dense-all-uniform.out",
+      "bytes": 2029,
+      "sha256": "170da5aeeb76d5f7c73785f9e0b39a32c7c75865bf766250baaf1193458db284"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/run-05/qualification-counting/dense-gated.out",
+      "bytes": 1956,
+      "sha256": "9829af44719e31bc42a36d824340eb8262bbd1fa90fed44a974ea6be9c3e2a61"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/run-05/qualification-counting/tiled-all-dense.out",
+      "bytes": 2034,
+      "sha256": "754663e55757bc097c9fae36bdbe8b724b731b5b6012eb58eb094c9e359ae2ec"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/run-05/qualification-counting/tiled-all-uniform.out",
+      "bytes": 2022,
+      "sha256": "263ee1055061a6da1cd252ec26781346e50092aafb7a5f1598f7c19a97192c48"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/run-05/qualification-counting/tiled-gated.out",
+      "bytes": 1958,
+      "sha256": "9b2acd35049a602ad748bdeaca271129b5b69aa3519f7b1c1d15f00a4df78e1c"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/sharded-proposed-manifest.json",
+      "bytes": 39457,
+      "sha256": "46abf79ee5097dd4f0e6dd7506e85ee25dcae13ca5130ab53291f29fccd750d6"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/sharded.py",
+      "bytes": 39895,
+      "sha256": "f4b7cc0bd2ca0135f84f9ad2f0d11829b39218bc7b12acc5b3925978f1fa53bf"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/source_binding.py",
+      "bytes": 5506,
+      "sha256": "004b1ee9fd8958ef1097bda5b2546766b31de00e0a4b197f49687c95778888c9"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/stage_a.py",
+      "bytes": 31869,
+      "sha256": "7c527f6dc1d783c2691e7cdc5b3f1d7b151a6a6d2035393d2befbd373986a3dc"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/stage_probe.rs",
+      "bytes": 15971,
+      "sha256": "1c3fb5f7674d59c3f13140e76db92b42ae01d76973884e21d0e86ffc2c118c12"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/test_sharded.py",
+      "bytes": 25169,
+      "sha256": "b39ee71d0778488c09ea6e4e97a08eeb995ab195296436a20160f433cfd3ec4d"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/test_sharded_guards.py",
+      "bytes": 21515,
+      "sha256": "45dd91f94b7c9128647e26d243666fd7ea658a82dce56c4dd19b6d2b01cae15b"
+    },
+    {
+      "path": "host/docs/memory/nav-tiled-stage-a/test_stage_a.py",
+      "bytes": 18608,
+      "sha256": "07bae41ede6d8f8df3525162b7ac7f0bf2bc0adf5009e32405903a5226d868cc"
+    },
+    {
+      "path": "native-reference-manifest.json",
+      "bytes": 9699,
+      "sha256": "8c7718c9eecbfd50d370493c892736a6a37f5ed12a02ef428b5e2948d689462c"
+    },
+    {
+      "path": "reference-qualification.json",
+      "bytes": 7140,
+      "sha256": "49152104c244730e82d07631169fb7b5d76c058e29b40669e85e0a6abc072df6"
+    }
+  ],
+  "candidate_id": "coordinate-ebf0f30",
+  "source_binding_sha256": "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb",
+  "scheduler_fixture_correction": {
+    "record_path": "fixture-correction/record.json",
+    "record_sha256": "477dfac24d27fbc69d256131e8fc00b6a43003d1b52acdcebc3fabf44623ede1"
+  }
+}
