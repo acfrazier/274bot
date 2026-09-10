@@ -2480,6 +2480,62 @@ fn answer_count_writes_resume_p_countdialog_and_refuses_bad_states() {
     assert!(rec.out.0.is_empty());
 }
 
+/// The real client must dismiss a submitted amount prompt before the next
+/// bank request. A recorder-only packet assertion missed this Alcher failure.
+#[test]
+fn answer_count_closes_real_client_prompt_before_next_withdrawal() {
+    // These locally observed prompt fields need no synthetic server packet or
+    // revision-specific publication outcome to build a fresh snapshot.
+    let rebuild = |client: &mut Client| {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.rebuild(client);
+        snapshot
+    };
+    for (revision, opcode) in [(ClientRevision::R274, 102), (ClientRevision::R289, 180)] {
+        let mut s = scene_revision(revision);
+        s.client.apply_p_countdialog();
+        s.client.redraw_chat = false;
+        let before = rebuild(&mut s.client);
+        assert!(before.count_dialog_open());
+        assert!(matches!(
+            Interactions::new(&before, &mut s.client).answer_count(-1),
+            SendResult::Refused {
+                reason: SendReason::InvalidCount,
+                ..
+            }
+        ));
+        assert!(
+            s.client.dialog_input_open,
+            "a refused count leaves the prompt open"
+        );
+        assert!(!s.client.redraw_chat);
+        assert_eq!(s.client.out.pos, 0);
+
+        assert!(matches!(
+            Interactions::new(&before, &mut s.client).answer_count(27),
+            SendResult::Sent { .. }
+        ));
+        assert_eq!(
+            &s.client.out.data()[..s.client.out.pos],
+            &[opcode, 0, 0, 0, 27]
+        );
+        assert!(
+            s.client.redraw_chat,
+            "same local redraw as keyboard submission"
+        );
+        let after = rebuild(&mut s.client);
+        assert!(
+            !after.count_dialog_open(),
+            "next script bank call is not vetoed by a stale prompt"
+        );
+        s.client.apply_p_countdialog();
+        assert!(
+            rebuild(&mut s.client).count_dialog_open(),
+            "a later server prompt still opens normally"
+        );
+    }
+}
+
 /// `click_side_tab` routes the tab through `Driver::click_side_tab` (the
 /// client-local side-icon flip) and refuses an unavailable tab before the
 /// driver sees it.
