@@ -11,6 +11,18 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-10 01:01 UTC
+
+- Fresh preliminary input observation at1789001852-53 completed, no admission:
+  cache snapshot2faf336eeb0462ed/content2a660d20/allfilehashes exactly originalN1;
+  currentserver726/start595 and43594probe succeed. MemAvailable957812736B,
+  swap0/rawOOM0/cgroupOOM0, no fixed-name conflicting processes. Root downloaded
+  and verified all observation hashes; commit5938eb3. These will need freshness
+  at eventual release; they are not typed admitted receipts.
+- Server executable adapter architecture t_f227a361 remains actually active
+  Grok4.6/xai session20260909_205609_b02901. No code adapter, host permission or
+  live action performed. Complete concrete design/tooling before permission step.
+
 ## Latest boundary — 2026-09-10 00:57 UTC
 
 - CF2 failure review t_7ef3743e COMPLETE CONFIRM_FAILURE_PARK, actualGrok4.5/xai
