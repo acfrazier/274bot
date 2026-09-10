@@ -29,6 +29,11 @@ engine also has existing web-client changes; they remain external inputs and
 are not campaign product edits. Do not rebuild or restart that shared process
 casually. Runtime config hashes do not contain configuration secrets.
 
+The local 274 cheat handler and item-cheat source were also copied read-only to
+`.superpowers/inputs/fixture-274-local-additions/`, so the setup additions can be
+reproduced even if the external checkout advances. Their source/snapshot hashes
+are recorded in `evidence/input-preflight/274-local-additions.json`.
+
 Reproduce the read-only identity inventory from the campaign checkout:
 
 ```sh
