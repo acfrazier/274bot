@@ -33,7 +33,7 @@ pub const HOST_BOUNDARY_NOT_QUALIFIED: &str =
 pub enum ServerSelection {
     Local274,
     Local289,
-    Public274,
+    Public289,
 }
 
 impl ServerSelection {
@@ -41,10 +41,10 @@ impl ServerSelection {
         match name {
             "local-274" => Ok(Self::Local274),
             "local-289" => Ok(Self::Local289),
-            "public-274" => Ok(Self::Public274),
-            "public-289" => Err("public-289 has no qualified server/asset pairing".into()),
+            "public-289" => Ok(Self::Public289),
+            "public-274" => Err("public revision 274 is unavailable; use public-289".into()),
             _ => Err(format!(
-                "unsupported server profile {name:?}; use local-274, local-289 or public-274"
+                "unsupported server profile {name:?}; use local-274, local-289 or public-289"
             )),
         }
     }
@@ -53,21 +53,21 @@ impl ServerSelection {
         match self {
             Self::Local274 => "local-274",
             Self::Local289 => "local-289",
-            Self::Public274 => "public-274",
+            Self::Public289 => "public-289",
         }
     }
 
     pub fn revision(self) -> ClientRevision {
         match self {
-            Self::Local274 | Self::Public274 => ClientRevision::R274,
-            Self::Local289 => ClientRevision::R289,
+            Self::Local274 => ClientRevision::R274,
+            Self::Local289 | Self::Public289 => ClientRevision::R289,
         }
     }
 
     pub fn target(self) -> BotTarget {
         match self {
             Self::Local274 | Self::Local289 => BotTarget::Local,
-            Self::Public274 => BotTarget::Prod,
+            Self::Public289 => BotTarget::Prod,
         }
     }
 }
@@ -266,17 +266,6 @@ impl ProfileOptions {
                 .as_deref()
                 .map(ServerSelection::parse)
                 .transpose()?;
-            let revision = if let Some(revision) = cli_revision {
-                revision
-            } else if let Some(named) = env_named {
-                named.revision()
-            } else if let Some(revision) = env.revision.as_deref() {
-                parse_revision(revision)?
-            } else if let Some(revision) = saved_revision {
-                parse_revision(&revision.to_string())?
-            } else {
-                ClientRevision::R274
-            };
             let target = if self.prod {
                 BotTarget::Prod
             } else {
@@ -284,18 +273,31 @@ impl ProfileOptions {
                     client::bot_target::bot_target_from_env(env.target.as_deref())
                 })
             };
+            let revision = if let Some(revision) = cli_revision {
+                revision
+            } else if let Some(named) = env_named {
+                named.revision()
+            } else if let Some(revision) = env.revision.as_deref() {
+                parse_revision(revision)?
+            } else if target == BotTarget::Prod {
+                ClientRevision::R289
+            } else if let Some(revision) = saved_revision {
+                parse_revision(&revision.to_string())?
+            } else {
+                ClientRevision::R274
+            };
             match (target, revision) {
                 (BotTarget::Local, ClientRevision::R274) => ServerSelection::Local274,
                 (BotTarget::Local, ClientRevision::R289) => ServerSelection::Local289,
-                (BotTarget::Prod, ClientRevision::R274) => ServerSelection::Public274,
-                (BotTarget::Prod, ClientRevision::R289) => {
-                    return Err("public-289 has no qualified server/asset pairing".into())
+                (BotTarget::Prod, ClientRevision::R274) => {
+                    return Err("public revision 274 is unavailable; use revision 289".into())
                 }
+                (BotTarget::Prod, ClientRevision::R289) => ServerSelection::Public289,
             }
         };
         let home = env.home.clone().unwrap_or_default();
         let bot_dir = home.join(".274bot");
-        let is_289 = selection == ServerSelection::Local289;
+        let is_289 = selection.revision() == ClientRevision::R289;
         let engine_dir = self
             .engine_dir
             .clone()
@@ -326,13 +328,13 @@ impl ProfileOptions {
         let game_port = self.port.unwrap_or(match selection {
             ServerSelection::Local274 => 43594,
             ServerSelection::Local289 => 44594,
-            ServerSelection::Public274 => 443,
+            ServerSelection::Public289 => 443,
         });
         let asset_host = self.asset_host.clone().unwrap_or_else(|| game_host.clone());
         let asset_port = self.http_port.unwrap_or(match selection {
             ServerSelection::Local274 => 80,
             ServerSelection::Local289 => 1080,
-            ServerSelection::Public274 => 443,
+            ServerSelection::Public289 => 443,
         });
         if selection.target() == BotTarget::Local {
             crate::validate_play_host(&game_host, BotTarget::Local).map_err(str::to_string)?;
@@ -343,7 +345,7 @@ impl ProfileOptions {
             || asset_port != 443
         {
             return Err(
-                "public-274 requires the known w1.rs2b2t.com:443 game/asset pairing".into(),
+                "public-289 requires the known w1.rs2b2t.com:443 game/asset pairing".into(),
             );
         }
         if game_port == 0 || asset_port == 0 {
@@ -375,7 +377,7 @@ impl ProfileOptions {
             bot_dir.join(match selection {
                 ServerSelection::Local274 => "vault",
                 ServerSelection::Local289 => "vault-289",
-                ServerSelection::Public274 => "vault-prod",
+                ServerSelection::Public289 => "vault-prod",
             })
         });
         let working_dir = env

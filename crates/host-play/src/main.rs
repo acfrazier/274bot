@@ -21,7 +21,7 @@ struct Args {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: host-play [--profile local-274|local-289|public-274] \
+        "usage: host-play [--profile local-274|local-289|public-289] \
          [--revision 274|289] [--prod] [--host HOST] [--port PORT] \
          [--asset-host HOST] [--http-port PORT] [--engine PATH] \
          [--cache DIR] [--unpack DIR] [--nav-pack PATH] [--nav-flags PATH] \
@@ -187,8 +187,6 @@ mod tests {
             "--cache",
             "/tmp/host-play-explicit-cache",
             "--prod",
-            "--revision",
-            "274",
             "--user",
             "alice",
         ])
@@ -199,7 +197,7 @@ mod tests {
             selection.cache_dir(),
             std::path::Path::new("/tmp/host-play-explicit-cache")
         );
-        assert_eq!(selection.revision(), ClientRevision::R274);
+        assert_eq!(selection.revision(), ClientRevision::R289);
         assert_eq!(parsed.users, ["alice"]);
     }
 

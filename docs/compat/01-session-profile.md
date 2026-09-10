@@ -1,5 +1,11 @@
 # Step 3: immutable server profiles
 
+Correction (2026-09-10): the public rs2b2t service moved to revision 289.
+`public-289` is the supported public profile and requires the known
+`w1.rs2b2t.com:443` game/asset pairing. Public revision 274 is unavailable.
+The earlier step-3 receipts below remain historical evidence for the assumption
+in force when they ran; local 274/289 construction evidence is unaffected.
+
 Step 3 is accepted on macOS on `codex/rs2b0t-multirevision` and
 `codex/bothost-274-289`. Client, host backend and frontend same-card Grok 4.5
 reviews and the integrated Grok 4.6 source review are approved. Native panel
@@ -38,13 +44,24 @@ scatter uses one seed vector from the selected shared world.
 |---|---|---|---|
 | local-274 | 43594 / 80 | `~/experiments/Server/engine/data/pack/client` | `unpack`, `274bot.navpack`, `vault` |
 | local-289 | 44594 / 1080 | `~/experiments/lostcity-289/engine/data/pack/client` | `unpack-289`, `289/274bot.navpack`, `vault-289` |
-| public-274 | 443 / 443 | `~/.274bot/unpack` | `unpack`, `274bot.navpack`, `vault-prod` |
+| public-289 | 443 / 443 | `~/.274bot/unpack-289` | `unpack-289`, `289/274bot.navpack`, `vault-prod` |
 
-Public 274 requires the known `w1.rs2b2t.com` game/asset pairing. Public 289 is
+Public 289 requires the known `w1.rs2b2t.com` game/asset pairing. Public 274 is
 unavailable. Explicit resource-path overrides remain supported, with identity
 validation. The bundled cache manifests identify the two inventoried local
 fixtures. A new server/cache build needs an explicitly prepared manifest; the
 application does not silently assign an unknown cache to the selected revision.
+
+The correction's focused checks cover named CLI and environment profiles,
+`--prod`, environment targets, saved local preferences, explicit revision
+conflicts, all game/asset host and port drift, revision-derived resources,
+explicit resource paths, unchanged local defaults, frontend resolution, and
+the bound-target fixture-cheat refusal. Public assets remain an explicit setup
+requirement; no public login or gameplay qualification was attempted. Raw logs
+are under `evidence/public-profile-correction/`: all ten host profile tests and
+the focused host-play, panel and TUI frontend tests pass; the three affected
+crates pass `cargo check`, formatting is clean, and `git diff --check` passes.
+
 For a cache whose server revision has been established:
 
 ```sh

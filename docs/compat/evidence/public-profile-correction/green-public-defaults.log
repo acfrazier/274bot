@@ -1,0 +1,8 @@
+   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/host-play)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.57s
+     Running tests/session_profile.rs (/Users/acfrazier/experiments/274bot/target/debug/deps/session_profile-94866a94ccb2e024)
+
+running 1 test
+test public_289_defaults_and_named_profile_override_lower_priority_inputs ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.01s

@@ -121,6 +121,88 @@ fn flags_are_order_independent_and_override_saved_or_environment_revision() {
 }
 
 #[test]
+fn public_289_defaults_and_named_profile_override_lower_priority_inputs() {
+    let fixture = Fixture::new();
+    let mut lower_priority = fixture.env();
+    lower_priority.profile = Some("local-274".into());
+    lower_priority.revision = Some("274".into());
+    lower_priority.target = Some("local".into());
+
+    let (named, _) = parse_profile_args(["--profile", "public-289"]).unwrap();
+    let selected = named.resolve_with_env(Some(274), &lower_priority).unwrap();
+    assert_eq!(selected.revision(), ClientRevision::R289);
+    assert_eq!(selected.target(), BotTarget::Prod);
+    assert_eq!(selected.game_host(), "w1.rs2b2t.com");
+    assert_eq!(selected.game_port(), 443);
+    assert_eq!(selected.asset_host(), "w1.rs2b2t.com");
+    assert_eq!(selected.asset_port(), 443);
+    assert!(selected.unpack_dir().ends_with(".274bot/unpack-289"));
+    assert_eq!(selected.cache_dir(), selected.unpack_dir());
+    assert!(selected.nav_pack().ends_with(".274bot/289/274bot.navpack"));
+    assert!(selected
+        .nav_flags()
+        .ends_with(".274bot/289/274bot.navflags"));
+    assert!(selected
+        .content_dir()
+        .ends_with("experiments/lostcity-289/content"));
+    assert!(selected.vault_path().ends_with(".274bot/vault-prod"));
+
+    let (prod, _) = parse_profile_args(["--prod"]).unwrap();
+    let selected = prod.resolve_with_env(Some(274), &fixture.env()).unwrap();
+    assert_eq!(selected.revision(), ClientRevision::R289);
+    assert_eq!(selected.target(), BotTarget::Prod);
+
+    let mut named_environment = fixture.env();
+    named_environment.profile = Some("public-289".into());
+    let selected = ProfileOptions::default()
+        .resolve_with_env(Some(274), &named_environment)
+        .unwrap();
+    assert_eq!(selected.revision(), ClientRevision::R289);
+    assert_eq!(selected.target(), BotTarget::Prod);
+
+    let mut prod_environment = fixture.env();
+    prod_environment.target = Some("prod".into());
+    let selected = ProfileOptions::default()
+        .resolve_with_env(Some(274), &prod_environment)
+        .unwrap();
+    assert_eq!(selected.revision(), ClientRevision::R289);
+    assert_eq!(selected.target(), BotTarget::Prod);
+
+    let local_default = ProfileOptions::default()
+        .resolve_with_env(None, &fixture.env())
+        .unwrap();
+    assert_eq!(local_default.revision(), ClientRevision::R274);
+    assert_eq!(local_default.target(), BotTarget::Local);
+    let saved_local_289 = ProfileOptions::default()
+        .resolve_with_env(Some(289), &fixture.env())
+        .unwrap();
+    assert_eq!(saved_local_289.revision(), ClientRevision::R289);
+    assert_eq!(saved_local_289.target(), BotTarget::Local);
+
+    let explicit = ProfileOptions {
+        profile: Some("public-289".into()),
+        cache_dir: Some("explicit-cache".into()),
+        unpack_dir: Some("explicit-unpack".into()),
+        nav_pack: Some("explicit.navpack".into()),
+        nav_flags: Some("explicit.navflags".into()),
+        content_dir: Some("explicit-content".into()),
+        vault_path: Some("explicit-vault".into()),
+        ..ProfileOptions::default()
+    };
+    let mut explicit_environment = fixture.env();
+    explicit_environment.working_dir = Some(fixture.0.clone());
+    let selected = explicit
+        .resolve_with_env(Some(274), &explicit_environment)
+        .unwrap();
+    assert_eq!(selected.cache_dir(), fixture.0.join("explicit-cache"));
+    assert_eq!(selected.unpack_dir(), fixture.0.join("explicit-unpack"));
+    assert_eq!(selected.nav_pack(), fixture.0.join("explicit.navpack"));
+    assert_eq!(selected.nav_flags(), fixture.0.join("explicit.navflags"));
+    assert_eq!(selected.content_dir(), fixture.0.join("explicit-content"));
+    assert_eq!(selected.vault_path(), fixture.0.join("explicit-vault"));
+}
+
+#[test]
 fn invalid_revision_public_pairing_and_conflicts_fail_before_vault_access() {
     let fixture = Fixture::new();
     for args in [
@@ -132,15 +214,37 @@ fn invalid_revision_public_pairing_and_conflicts_fail_before_vault_access() {
         assert!(parse_profile_args(args).is_err());
     }
     for args in [
-        vec!["--prod", "--revision", "289"],
+        vec!["--prod", "--revision", "274"],
         vec!["--profile", "local-274", "--revision", "289"],
         vec!["--profile", "local-289", "--prod"],
-        vec!["--profile", "public-274", "--host", "localhost"],
-        vec!["--profile", "public-274", "--http-port", "80"],
+        vec!["--profile", "public-274"],
+        vec!["--profile", "public-289", "--host", "localhost"],
+        vec!["--profile", "public-289", "--port", "43594"],
+        vec!["--profile", "public-289", "--asset-host", "localhost"],
+        vec!["--profile", "public-289", "--http-port", "80"],
     ] {
         let (options, _) = parse_profile_args(args).unwrap();
         assert!(options.resolve_with_env(None, &fixture.env()).is_err());
     }
+    let mut explicit_env_274 = fixture.env();
+    explicit_env_274.revision = Some("274".into());
+    let error = ProfileOptions {
+        prod: true,
+        ..ProfileOptions::default()
+    }
+    .resolve_with_env(None, &explicit_env_274)
+    .unwrap_err();
+    assert!(error.contains("public revision 274 is unavailable"));
+
+    let mut public_env_274 = fixture.env();
+    public_env_274.target = Some("prod".into());
+    let error = ProfileOptions {
+        revision: Some("274".into()),
+        ..ProfileOptions::default()
+    }
+    .resolve_with_env(None, &public_env_274)
+    .unwrap_err();
+    assert!(error.contains("public revision 274 is unavailable"));
     assert!(!fixture.0.join(".274bot").exists());
 }
 
@@ -306,13 +410,15 @@ fn revision_289_refuses_slots_and_scripts_before_arms_or_queue_mutation() {
 fn bound_public_client_refuses_fixture_cheats_after_mutable_config_changes() {
     let _clients = CLIENTS.lock().unwrap();
     let fixture = Fixture::new();
-    let mut options = fixture.options(274);
+    let mut options = fixture.options(289);
     options.prod = true;
     let profile = options
         .resolve_with_env(None, &fixture.env())
         .unwrap()
         .bind()
         .unwrap();
+    assert_eq!(profile.target(), BotTarget::Prod);
+    assert_eq!(profile.revision(), ClientRevision::R289);
     let template = SharedClientTemplate::load(profile).unwrap();
     let mut client = template.prepare_client(740_003, true).unwrap();
     client.config.host = "127.0.0.1".into();
