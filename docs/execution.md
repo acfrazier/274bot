@@ -61,6 +61,9 @@ Choose `--workspace worktree` for a new isolated task, or `--workspace dir:PATH`
 for the orchestrator-designated existing campaign checkout/branch. Avoid a second
 worktree for review. Briefs identify exact scope, plan section, verification,
 report location, and the branch to verify. Do not copy Git policy into plans.
+For checks needing committed dependencies, export the exact host and client
+source into a separate directory. Never temporarily restore, stash, or copy over
+concurrent working files to make a build pass; their owners may be editing them.
 Use `fail-closed-dispatch` for foreign-API compatibility work; it is not a
 mandatory dependency of a memory measurement or documentation task.
 
