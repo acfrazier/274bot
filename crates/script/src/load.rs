@@ -1830,6 +1830,19 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         } else if !had {
             set(&mut scope, obj, "withdraw_load_result", falsy)?;
         }
+        if snap.has_bank_op_result_seq() {
+            let seq = num(&mut scope, snap.bank_op_result_seq() as f64);
+            set(&mut scope, obj, "bank_op_result_seq", seq)?;
+        } else if !had {
+            let seq = num(&mut scope, 0.0);
+            set(&mut scope, obj, "bank_op_result_seq", seq)?;
+        }
+        if snap.has_bank_op_result() {
+            let result = v8::Boolean::new(&mut scope, snap.bank_op_result());
+            set(&mut scope, obj, "bank_op_result", result.into())?;
+        } else if !had {
+            set(&mut scope, obj, "bank_op_result", falsy)?;
+        }
         if snap.has_bank_note_on() {
             let bank_note_on = num(&mut scope, snap.bank_note_on() as f64);
             set(&mut scope, obj, "bank_note_on", bank_note_on)?;

@@ -183,6 +183,8 @@ fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
         withdraw_x_result: false,
         withdraw_load_result_seq: 0,
         withdraw_load_result: false,
+        bank_op_result_seq: 0,
+        bank_op_result: false,
         hold: false,
         ours: false,
         npcs: &[],
@@ -2087,6 +2089,63 @@ fn real_bone_burier_queues_bury_when_seeded() {
     iso.join();
 }
 
+#[test]
+fn real_bone_burier_without_bones_queues_host_bank_route() {
+    let Some(root) = script::rs2b0t_root() else {
+        eprintln!("skip: $RS2B0T not set");
+        return;
+    };
+    let path = root.join("src/bot/scripts/BoneBurier/BoneBurier.ts");
+    let source = std::fs::read_to_string(&path).expect("read captured BoneBurier.ts");
+    let shape = script::detect_shape(&source);
+    let js = script::transpile_ts(&source).expect("transpile captured BoneBurier.ts");
+    let iso = LoadIsolate::spawn(js, shape, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.ingame = true;
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    });
+    let banks = [script::isolate_fb::BankStandInput {
+        name: "Bank booth",
+        x: 3210,
+        z: 3210,
+        level: 0,
+        kind: "booth",
+        op: 2,
+        choose: None,
+    }];
+    snap.banks = &banks;
+    let inv = [nc(Some("Coins"), 1)];
+    snap.inv = &inv;
+    snap.inv_size = 28;
+    let stats = [script::isolate_fb::StatInput {
+        index: 5,
+        name: "Prayer",
+        xp: 31,
+        base: 1,
+        effective: 1,
+    }];
+    snap.stats = &stats;
+    post_snapshot_input(&iso, &snap);
+    for tick in 1..=8 {
+        iso.on_game_tick(tick);
+    }
+    let _ = iso.probe("true");
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter().all(|line| !is_throw_shaped_log(line)),
+        "captured BoneBurier bank trip must not throw: {logs:?}"
+    );
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::WalkNearestBank],
+        "captured BoneBurier must request host-owned nearest-bank routing; logs: {logs:?}"
+    );
+    iso.join();
+}
+
 // Task 3 — the native tick `api` is a Proxy: `api.tick` is set by the
 // host and readable; every other member read or set throws `not impl`.
 #[test]
@@ -2319,6 +2378,113 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+fn isolate_banking_bank_nearest_routes_to_an_off_scene_packed_booth() {
+    let src = r#"
+import { Banking } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__banked = await Banking.bankNearest();
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let stands = [script::isolate_fb::BankStandInput {
+        name: "Falador east bank",
+        x: 300,
+        z: 400,
+        level: 0,
+        kind: "booth",
+        op: 2,
+        choose: None,
+    }];
+    let mut snap = base_snapshot();
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 100,
+        z: 100,
+        level: 0,
+    });
+    snap.banks = &stands;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("true");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::WalkNearestBank]
+    );
+
+    snap.tick = 2;
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 299,
+        z: 400,
+        level: 0,
+    });
+    snap.nearest_booth = Some(script::isolate_fb::NearestBoothInput {
+        x: 300,
+        z: 400,
+        level: 0,
+        id: 2213,
+        name: "Bank booth",
+        op: "Use-quickly",
+    });
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    let _ = iso.probe("true");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::OpenBooth {
+            x: 300,
+            z: 400,
+            level: 0,
+            id: 2213,
+            name: None,
+            action: None,
+        }]
+    );
+
+    snap.tick = 3;
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    snap.bank_generation = 1;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(3);
+    let _ = iso.probe("true");
+    snap.tick = 4;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(4);
+    assert_eq!(iso.probe("__banked").unwrap(), true);
+    iso.join();
+}
+
+#[test]
+fn isolate_banking_bank_nearest_fails_closed_without_a_packed_booth() {
+    let src = r#"
+import { Banking } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__bank_result = await Banking.bankNearest();
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    });
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("true");
+    assert!(iso.drain_interacts().is_empty());
+    assert_eq!(iso.probe("globalThis.__bank_result").unwrap(), false);
+    iso.join();
+}
+
+#[test]
 fn isolate_banking_open_rejects_each_unsupported_option_by_name() {
     let src = r#"
 import { Banking } from '../../api/bank/Banking.js';
@@ -2399,15 +2565,14 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn isolate_banking_deposit_all_matching_records_bank_side_ops() {
+fn isolate_banking_deposit_all_matching_bounds_duplicate_rows_to_one_request() {
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
     loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
         Bank.depositAllMatching((name) => true);
-        Bank.withdraw('Bones', 'all');
-        Bank.withdraw('Lobster', 10);
-        Bank.withdraw('Vial', 1);
     }
 }
 "#;
@@ -2418,13 +2583,9 @@ export default class T extends LoopingBot {
         z: 100,
         level: 0,
     });
-    let bank = [
-        nc(Some("Bones"), 20),
-        nc(Some("Lobster"), 30),
-        nc(Some("Vial"), 1),
-    ];
-    let bank_side = [nc(Some("Bones"), 3), nc(Some("Big bones"), 1)];
-    snap.bank = &bank;
+    let bank_side = (0..27)
+        .map(|_| nc(Some("Willow shortbow (u)"), 1))
+        .collect::<Vec<_>>();
     snap.bank_side = &bank_side;
     snap.bank_open = true;
     snap.bank_loaded = true;
@@ -2433,28 +2594,63 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1"); // round-trip: the tick finished first
     assert_eq!(
         iso.drain_interacts(),
-        vec![
-            script::shim::InteractReq::Deposit {
-                name: "Bones".into()
-            },
-            script::shim::InteractReq::Deposit {
-                name: "Big bones".into()
-            },
-            script::shim::InteractReq::Withdraw {
-                name: "Bones".into(),
-                action: "Withdraw All".into()
-            },
-            script::shim::InteractReq::Withdraw {
-                name: "Lobster".into(),
-                action: "Withdraw 10".into()
-            },
-            script::shim::InteractReq::Withdraw {
-                name: "Vial".into(),
-                action: "Withdraw 1".into()
-            },
-        ],
-        "depositAllMatching queues one Deposit-All per row; withdraw maps name + op"
+        vec![script::shim::InteractReq::Deposit {
+            name: "Willow shortbow (u)".into()
+        }],
+        "one helper step must queue one deposit, not one request per duplicate row"
     );
+    iso.join();
+}
+
+#[test]
+fn isolate_banking_deposit_waits_for_observed_host_result() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__clock = 0;
+        globalThis.performance.now = () => globalThis.__clock;
+        await Bank.depositAllMatching((name) => name === 'Bones');
+        globalThis.__depositDone = true;
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let deposit_ops = ["Deposit All".to_string()];
+    let first = [item_row(1, Some("Bones"), 3, &deposit_ops, false, -1, 0)];
+    let mut snap = base_snapshot();
+    snap.bank_side = &first;
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    snap.bank_generation = 7;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::Deposit {
+            name: "Bones".into(),
+        }]
+    );
+    assert!(
+        iso.probe("__depositDone").is_err(),
+        "the helper stays parked"
+    );
+
+    snap.tick = 2;
+    snap.bank_side = &[];
+    snap.bank_op_result_seq = 1;
+    snap.bank_op_result = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    iso.probe("globalThis.__clock = 2001").unwrap();
+    snap.tick = 3;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(3);
+    assert_eq!(iso.probe("__depositDone").unwrap(), true);
+    assert!(iso.drain_interacts().is_empty());
     iso.join();
 }
 
@@ -4026,7 +4222,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn isolate_silent_fakes_and_policy_tables_throw_not_impl() {
+fn isolate_silent_fakes_throw_and_rust_policy_tables_are_published() {
     let src = r#"
 import { clientName, displayName } from '../../api/market/catalog.js';
 import { parseCombatStyle } from '../../api/combat/CombatStyle.js';
@@ -4077,6 +4273,10 @@ export default class T extends LoopingBot {
     );
     for (i, hit) in hits.iter().enumerate() {
         let s = hit.as_str().unwrap_or("");
+        if i == 5 {
+            assert_eq!(s, "ok", "the Rust common-loot predicate is supported");
+            continue;
+        }
         assert!(
             s.contains("not impl"),
             "probe {i} must throw not impl, got {s:?}"
@@ -4084,8 +4284,8 @@ export default class T extends LoopingBot {
     }
     let loot = parsed["loot"].as_array().expect("COMMON_BANK_LOOT");
     assert!(
-        loot.is_empty(),
-        "COMMON_BANK_LOOT must not ship a junk policy table: {loot:?}"
+        loot.iter().any(|value| value == "uncut"),
+        "COMMON_BANK_LOOT must mirror the Rust-owned policy table: {loot:?}"
     );
     let hostile = parsed["hostile"].as_array().expect("HOSTILE_NAMES");
     assert!(

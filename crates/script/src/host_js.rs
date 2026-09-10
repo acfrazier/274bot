@@ -798,6 +798,18 @@ const SNAPSHOT_FIELDS: &[TsField] = &[
         doc: None,
     },
     TsField {
+        name: "bank_op_result_seq",
+        ty: "number",
+        optional: false,
+        doc: None,
+    },
+    TsField {
+        name: "bank_op_result",
+        ty: "boolean",
+        optional: false,
+        doc: None,
+    },
+    TsField {
         name: "bank_note_on",
         ty: "number",
         optional: false,

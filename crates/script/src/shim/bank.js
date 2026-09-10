@@ -10,6 +10,34 @@ const queue = (req) => {
     h.interact.push(req);
 };
 let withdrawXPending = false;
+let bankOpPending = false;
+
+function bankOp(req) {
+    if (!Bank.ready() || bankOpPending) return Promise.resolve(false);
+    const generation = Bank.snapshotGeneration();
+    const resultSeq = Number(snap().bank_op_result_seq) || 0;
+    bankOpPending = true;
+    queue(req);
+    return (async () => {
+        try {
+            await Execution.delayUntil(
+                () =>
+                    (Number(snap().bank_op_result_seq) || 0) !== resultSeq ||
+                    !Bank.isOpen() ||
+                    Bank.snapshotGeneration() !== generation,
+                0,
+            );
+            return (
+                Bank.isOpen() &&
+                Bank.snapshotGeneration() === generation &&
+                (Number(snap().bank_op_result_seq) || 0) !== resultSeq &&
+                snap().bank_op_result === true
+            );
+        } finally {
+            bankOpPending = false;
+        }
+    })();
+}
 
 function withdrawXRow(row, count, landsAsId) {
     const amount = Number(count);
@@ -129,26 +157,40 @@ export const Bank = new Proxy(
             const wanted = String(name).toLowerCase();
             for (const row of snap().bank_side || []) {
                 if (row && typeof row.name === 'string' && row.name.toLowerCase() === wanted) {
-                    queue({ op: 'deposit', name: row.name });
+                    return bankOp({ op: 'deposit', name: row.name });
                 }
             }
+            return Promise.resolve(false);
         },
-        depositInventory() {
-            Bank.depositAllMatching(() => true);
+        async depositInventory() {
+            await Bank.depositAllMatching(() => true);
         },
-        depositAllMatching(predicate) {
+        async depositAllMatching(predicate) {
             if (typeof predicate !== 'function') {
                 throw notImpl('Bank.depositAllMatching', 'requires a function');
             }
-            for (const row of snap().bank_side || []) {
-                if (row && typeof row.name === 'string' && predicate(row.name, row.id ?? -1)) {
-                    queue({ op: 'deposit', name: row.name });
+            for (let guard = 0; guard < 32; guard++) {
+                let rows = snap().bank_side || [];
+                if (rows.length === 0 && Bank.isOpen()) {
+                    await Execution.delayUntil(
+                        () => (snap().bank_side || []).length > 0 || !Bank.isOpen(),
+                        1200,
+                    );
+                    rows = snap().bank_side || [];
                 }
+                const row = rows.find(
+                    (item) =>
+                        item &&
+                        predicate(item.name ?? '', item.id ?? -1),
+                );
+                if (!row) return;
+                if (typeof row.name !== 'string') return;
+                if (!(await bankOp({ op: 'deposit', name: row.name }))) return;
             }
         },
-        depositAllExcept(keep) {
+        async depositAllExcept(keep) {
             const kept = new Set(Array.from(keep || []).map((k) => String(k).toLowerCase()));
-            Bank.depositAllMatching((name) => !kept.has(name.toLowerCase()));
+            await Bank.depositAllMatching((name) => !kept.has(name.toLowerCase()));
         },
         // Withdraw by name + op: an action label string is used verbatim
         // (`Withdraw All` / `Withdraw 10` / `Withdraw 1`, or `'all'` for
@@ -167,7 +209,7 @@ export const Bank = new Proxy(
                 const count = row && typeof row.count === 'number' ? row.count : 0;
                 action = n >= 10 && n >= count ? 'Withdraw All' : n >= 10 ? 'Withdraw 10' : 'Withdraw 1';
             }
-            queue({ op: 'withdraw', name: String(name), action });
+            return bankOp({ op: 'withdraw', name: String(name), action });
         },
         async setNoteMode(on) {
             if (!Bank.isOpen()) {
@@ -198,8 +240,7 @@ export const Bank = new Proxy(
                 op.toLowerCase() === 'withdraw-all' || op.toLowerCase() === 'all'
                     ? 'Withdraw All'
                     : op.replace(/-/g, ' ');
-            queue({ op: 'withdraw', name: row.name, action });
-            return true;
+            return bankOp({ op: 'withdraw', name: row.name, action });
         },
         withdrawX(name, count) {
             const amount = Number(count);
@@ -258,7 +299,7 @@ export const Bank = new Proxy(
                         radius: 1,
                         allow_teleports: false,
                     });
-                    if (!(await Execution.delayUntil(adjacent, 60000))) return false;
+                    if (!(await Execution.delayUntil(adjacent, 120000))) return false;
                 }
                 if (Bank.isOpen()) return Bank.waitReady(5000);
             }
@@ -305,6 +346,30 @@ export const Bank = new Proxy(
         },
         async openNearest(boothName, op, log) {
             return Bank.openBooth(undefined, boothName, op, log);
+        },
+        async openNearestWorld() {
+            if (Bank.isOpen()) return Bank.waitReady(5000);
+            const adjacent = () => {
+                const here = snap().here;
+                const booth = snap().nearest_booth;
+                return (
+                    here &&
+                    booth &&
+                    here.level === booth.level &&
+                    Math.max(Math.abs(here.x - booth.x), Math.abs(here.z - booth.z)) <= 1
+                );
+            };
+            if (!adjacent()) {
+                if (
+                    !snap().here ||
+                    !(snap().banks || []).some((stand) => stand && stand.kind === 'booth')
+                ) {
+                    return false;
+                }
+                queue({ op: 'walk-nearest-bank' });
+                if (!(await Execution.delayUntil(adjacent, 120000))) return false;
+            }
+            return Bank.openBooth();
         },
         async waitReady(timeoutMs, _log) {
             const ms = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 5000;
