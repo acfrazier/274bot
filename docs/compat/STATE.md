@@ -9,8 +9,8 @@ Both published refs were rechecked and match these bases.
 Step 1 is complete: frozen catalog inventory, fixture/source identities, and
 274/289/377 architecture and preservation audit. Source catalogs are immutable
 archives under `.superpowers/inputs/rs2b0t-<commit>` at `100adccc` and `8e7d965b`.
-289 source commit `c18f3a1148e9caee73426e162677328ca64d1a83` has been fetched into
-the isolated client; integration has not started.
+289 source commit `c18f3a1148e9caee73426e162677328ca64d1a83` is included in the
+intermediate client merge described below; that candidate is not yet accepted.
 
 All configured Hermes profile models/providers match AGENTS.md, and sol/grok46
 use high reasoning. Architecture review t_192621de completed under actual grok-4.6 / xai-oauth
@@ -28,6 +28,16 @@ set is 45 enabled cards per catalog, 9 dim declarations, 2 import-blocked cards,
 3 shape-omitted entries, and native WalkTo. All gameplay proof remains pending.
 Initial support-matrix SHA-256: 70eca8b8545471af704d2f90c5a743c4ff32aa36b176bfa0cee810818cfb919e.
 
-Next: reconcile
-the client. Full 377 qualification, native rewrites and release publication
+Next: finish client reconciliation, regression checks and the required reviews,
+then bind the immutable server profile through the host and frontends. Full 377 qualification, native rewrites and release publication
 remain outside this campaign's implementation scope.
+
+Step 2 active: client merge 4098a50fb4803f5d6ec9131af38d18e0ba6a395f prepared inline by root.
+Card t_e8e16acd is assigned to sol for semantic reconciliation, tests,
+and same-card reviewer handoff. This intermediate client is unqualified;
+host gitlink, public refs and live acceptance remain unchanged.
+
+The raw merge required boxed appearance assignments in the 289 actor decoder.
+A combined production-NPC-hint / held-minimap GPU test now reproduces the
+expected overlay invalidation defect before the correction (exit 101). Keep
+that failure receipt; it is an offline GPU regression, not a live world run.
