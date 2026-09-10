@@ -1,0 +1,27 @@
+error[E0373]: closure may outlive the current function, but it borrows `specifier`, which is owned by the current function
+  --> crates/script/examples/catalog_inventory.rs:65:40
+   |
+65 |                     members.iter().map(|member| {
+   |                                        ^^^^^^^^ may outlive borrowed value `specifier`
+...
+68 |                             "specifier": specifier,
+   |                                          --------- `specifier` is borrowed here
+   |
+note: closure is returned here
+  --> crates/script/examples/catalog_inventory.rs:65:21
+   |
+65 | /                     members.iter().map(|member| {
+66 | |                         let (exported_member, local_binding) = binding_names(member);
+67 | |                         json!({
+68 | |                             "specifier": specifier,
+...  |
+72 | |                         })
+73 | |                     })
+   | |______________________^
+help: to force the closure to take ownership of `specifier` (and any other referenced variables), use the `move` keyword
+   |
+65 |                     members.iter().map(move |member| {
+   |                                        ++++
+
+For more information about this error, try `rustc --explain E0373`.
+error: could not compile `script` (example "catalog_inventory") due to 1 previous error
