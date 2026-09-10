@@ -11,6 +11,21 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-10 00:25 UTC
+
+- Corrective evidence review t_5159d6b4 APPROVE b62f173; actual Grok4.5/xai
+  session20260909_201855_e53149 ended1788999823.041877. Root inspected direct
+  archive/source reconstruction and raw comparison scripts/results; missing
+  prerequisite checks now complete. Report SHA d5e0e87e600479fc7e338e83d2a5631e6a8cb14e4ae40c3ec98b17a6166f508e.
+- Fresh Concord admission passed reviewed source/native/generated/scheduler
+  checks then original pack/routes hashes. Fresh 1s sample97.99%idle/zeroSteal,
+  962596864Bavailable/no swap/conflicts; boot2217ec26. Root released ONLY CF1
+  four children, unchanged caps and accepted prior-cost ledger/122 total ceiling.
+  Authorization62835390bdcbee419029f6c0fcf38f1126a502cde926be643de0c64acd9977ec;
+  actual native session39435 started. No CF2/CA or owner live authorization.
+- Sol lifecycle fidelity correction t_6c6930b1 still active; native fixture
+  qualification awaits same-card review. Do not use withheld37be native03.
+
 ## Latest boundary — 2026-09-10 00:19 UTC
 
 - Native evidence t_518edea2 completed limited APPROVE atf13d682. Root read report
