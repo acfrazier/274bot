@@ -584,17 +584,10 @@ pub struct ScriptPaint {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 #[serde(tag = "op")]
 pub enum InteractReq {
-    /// Open the nearest Use-quickly loc on the player's plane. Tile
-    /// fields are unused (host finds the loc); JS may omit them.
+    /// Open the exact snapshot-selected Use-quickly loc. The host validates
+    /// both tile and definition id and refuses a stale identity.
     #[serde(rename = "open-booth")]
-    OpenBooth {
-        #[serde(default)]
-        x: i32,
-        #[serde(default)]
-        z: i32,
-        #[serde(default)]
-        level: i32,
-    },
+    OpenBooth { x: i32, z: i32, level: i32, id: i32 },
     /// Use a packed stand the player is adjacent to: a booth loc
     /// (Use-quickly) or a teller NPC (its 1-based op slot from the pack;
     /// `choose` is the dialog option the op's dialogue needs, deferred).
@@ -641,6 +634,15 @@ pub enum InteractReq {
     /// (`Withdraw All` / `Withdraw 10` / `Withdraw 1`).
     #[serde(rename = "withdraw")]
     Withdraw { name: String, action: String },
+    /// Begin a host-owned, bounded Withdraw-X continuation. The host sends
+    /// the X menu action now and only answers a later count dialog while the
+    /// same bank session generation remains current.
+    #[serde(rename = "withdraw-x")]
+    WithdrawX {
+        name: String,
+        count: i32,
+        bank_generation: u64,
+    },
     /// Interact with the held item named `name` using the action label
     /// (`Bury`, `Wear`, …). The host resolves the name through ObjNames
     /// and dispatches the item's menu op (rs2b0t `Item.interact`).

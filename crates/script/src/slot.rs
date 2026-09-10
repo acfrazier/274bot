@@ -4,6 +4,7 @@
 //! must return; panics are caught, never abort the process.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::time::{Duration, Instant};
 
 use crate::ctx::{Script, ScriptCtx};
 #[cfg(feature = "load")]
@@ -21,6 +22,73 @@ pub enum RunState {
     Paused,
     Stopping,
     Error,
+}
+
+/// Host-owned second phase of a bank Withdraw-X operation. The first phase
+/// sent the X menu action; this record authorizes one count response only
+/// while the same bank session remains current and before its deadline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingWithdrawXPhase {
+    Dialog,
+    Settlement,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PendingWithdrawX {
+    pub item_id: i32,
+    pub count: i32,
+    pub before: i32,
+    pub target: i32,
+    pub bank_generation: u64,
+    pub phase: PendingWithdrawXPhase,
+    pub deadline: Option<Instant>,
+    pub remaining: Duration,
+}
+
+impl PendingWithdrawX {
+    pub fn waiting_dialog(
+        item_id: i32,
+        count: i32,
+        before: i32,
+        target: i32,
+        bank_generation: u64,
+    ) -> Self {
+        let remaining = Duration::from_millis(3000);
+        Self {
+            item_id,
+            count,
+            before,
+            target,
+            bank_generation,
+            phase: PendingWithdrawXPhase::Dialog,
+            deadline: Some(Instant::now() + remaining),
+            remaining,
+        }
+    }
+
+    pub fn waiting_settlement(mut self) -> Self {
+        self.phase = PendingWithdrawXPhase::Settlement;
+        self.remaining = Duration::from_millis(4000);
+        self.deadline = Some(Instant::now() + self.remaining);
+        self
+    }
+
+    pub fn expired(self) -> bool {
+        self.deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+    }
+
+    fn freeze(&mut self) {
+        if let Some(deadline) = self.deadline.take() {
+            self.remaining = deadline.saturating_duration_since(Instant::now());
+        }
+    }
+
+    fn resume(&mut self) {
+        if self.deadline.is_none() {
+            self.deadline = Some(Instant::now() + self.remaining);
+        }
+    }
 }
 
 /// Per-uid runner. Compiled XOR Load (a JS isolate) — never both.
@@ -49,6 +117,10 @@ pub struct SlotScript {
     pending_logs: Vec<String>,
     /// Dispatched game ticks since the last Start.
     ticks: u64,
+    pending_withdraw_x: Option<PendingWithdrawX>,
+    withdraw_x_result_seq: u64,
+    withdraw_x_result: bool,
+    work_epoch: u64,
 }
 
 impl Default for SlotScript {
@@ -74,6 +146,10 @@ impl SlotScript {
             last_error: None,
             pending_logs: Vec::new(),
             ticks: 0,
+            pending_withdraw_x: None,
+            withdraw_x_result_seq: 0,
+            withdraw_x_result: false,
+            work_epoch: 0,
         }
     }
 
@@ -98,6 +174,9 @@ impl SlotScript {
                 self.want_run = true;
                 self.last_error = None;
                 self.ticks = 0;
+                self.pending_withdraw_x = None;
+                self.withdraw_x_result_seq = 0;
+                self.withdraw_x_result = false;
                 self.state = RunState::Running;
                 Ok(())
             }
@@ -141,6 +220,9 @@ impl SlotScript {
                 self.want_run = true;
                 self.last_error = None;
                 self.ticks = 0;
+                self.pending_withdraw_x = None;
+                self.withdraw_x_result_seq = 0;
+                self.withdraw_x_result = false;
                 // Fresh isolate: the first posted snapshot is a keyframe.
                 self.last_snapshot = None;
                 self.last_world_id = None;
@@ -154,6 +236,9 @@ impl SlotScript {
     /// Resume. Instance kept. No-op when there is no instance.
     pub fn pause(&mut self) {
         self.want_run = false;
+        if let Some(pending) = &mut self.pending_withdraw_x {
+            pending.freeze();
+        }
         if self.has_instance() && self.state == RunState::Running {
             #[cfg(feature = "load")]
             if let Some(isolate) = &self.load {
@@ -168,6 +253,9 @@ impl SlotScript {
     /// no instance or the slot errored.
     pub fn resume(&mut self) {
         self.want_run = true;
+        if let Some(pending) = &mut self.pending_withdraw_x {
+            pending.resume();
+        }
         if self.has_instance() && self.state == RunState::Paused {
             #[cfg(feature = "load")]
             if let Some(isolate) = &self.load {
@@ -194,6 +282,8 @@ impl SlotScript {
             self.ipc = IsolateBuf::new();
         }
         self.want_run = false;
+        self.pending_withdraw_x = None;
+        self.work_epoch = self.work_epoch.wrapping_add(1);
         self.state = RunState::Idle;
     }
 
@@ -202,6 +292,10 @@ impl SlotScript {
     /// Paused. Without an instance the state is untouched (Idle, or Error
     /// after a panic — `is_up` must not resurrect or wipe an error).
     pub fn on_is_up(&mut self, up: bool) {
+        if !up {
+            self.pending_withdraw_x = None;
+            self.work_epoch = self.work_epoch.wrapping_add(1);
+        }
         if !self.has_instance() {
             return;
         }
@@ -215,6 +309,7 @@ impl SlotScript {
     /// Re-gate a started script and invalidate deferred actions and snapshot
     /// deltas at a connection boundary. Operator run intent is retained.
     pub fn reset_session_work(&mut self) {
+        self.pending_withdraw_x = None;
         self.on_is_up(false);
         #[cfg(feature = "load")]
         {
@@ -224,6 +319,47 @@ impl SlotScript {
             self.last_snapshot = None;
             self.last_world_id = None;
         }
+    }
+
+    /// Current host-owned Withdraw-X continuation, if one is armed.
+    pub fn pending_withdraw_x(&self) -> Option<PendingWithdrawX> {
+        self.pending_withdraw_x
+    }
+
+    /// Replace the one bounded Withdraw-X continuation for this slot.
+    pub fn set_pending_withdraw_x(&mut self, pending: Option<PendingWithdrawX>) {
+        self.pending_withdraw_x = pending;
+    }
+
+    /// Freeze the monotonic deadline without discarding the operation.
+    pub fn freeze_pending_withdraw_x(&mut self) {
+        if let Some(pending) = &mut self.pending_withdraw_x {
+            pending.freeze();
+        }
+    }
+
+    /// Resume a previously frozen monotonic deadline.
+    pub fn resume_pending_withdraw_x(&mut self) {
+        if let Some(pending) = &mut self.pending_withdraw_x {
+            pending.resume();
+        }
+    }
+
+    /// Last host-owned Withdraw-X result posted to this isolate.
+    pub fn withdraw_x_result(&self) -> (u64, bool) {
+        (self.withdraw_x_result_seq, self.withdraw_x_result)
+    }
+
+    /// Lifecycle stamp used to reject work that raced a stop/reconnect.
+    pub fn work_epoch(&self) -> u64 {
+        self.work_epoch
+    }
+
+    /// Complete the current operation and advance the posted result token.
+    pub fn complete_withdraw_x(&mut self, result: bool) {
+        self.pending_withdraw_x = None;
+        self.withdraw_x_result_seq = self.withdraw_x_result_seq.wrapping_add(1);
+        self.withdraw_x_result = result;
     }
 
     /// Post the host's FlatBuffer snapshot blob into a Load isolate (no-op
@@ -635,5 +771,48 @@ mod tests {
             obj_names: None,
         });
         assert_eq!(s.ticks, 1);
+    }
+
+    #[test]
+    fn pending_withdraw_x_pause_freezes_while_stop_and_reconnect_abort() {
+        let mut slot = SlotScript::new();
+        slot.start_compiled(Box::new(Noop)).unwrap();
+        slot.set_pending_withdraw_x(Some(PendingWithdrawX::waiting_dialog(2, 7, 0, 7, 3)));
+        assert_eq!(
+            slot.pending_withdraw_x().unwrap().remaining,
+            Duration::from_millis(3000)
+        );
+
+        slot.pause();
+        let paused = slot
+            .pending_withdraw_x()
+            .expect("Pause retains pending work");
+        assert!(paused.deadline.is_none(), "Pause freezes monotonic time");
+        slot.resume();
+        assert!(
+            slot.pending_withdraw_x().unwrap().deadline.is_some(),
+            "Resume restores the remaining deadline"
+        );
+
+        slot.stop();
+        assert!(
+            slot.pending_withdraw_x().is_none(),
+            "Stop aborts pending work"
+        );
+
+        slot.start_compiled(Box::new(Noop)).unwrap();
+        slot.set_pending_withdraw_x(Some(PendingWithdrawX::waiting_dialog(2, 7, 0, 7, 3)));
+        slot.reset_session_work();
+        assert!(
+            slot.pending_withdraw_x().is_none(),
+            "reconnect/session reset aborts pending work"
+        );
+
+        let settlement = PendingWithdrawX::waiting_dialog(2, 7, 0, 7, 3).waiting_settlement();
+        assert_eq!(settlement.remaining, Duration::from_millis(4000));
+
+        let mut expired = PendingWithdrawX::waiting_dialog(2, 7, 0, 7, 3);
+        expired.deadline = Some(Instant::now() - Duration::from_millis(1));
+        assert!(expired.expired(), "expiry uses monotonic wall time");
     }
 }

@@ -611,6 +611,14 @@ pub struct GameSnapshot {
     /// The open main modal's withdraw component (the m8aq
     /// `bankComponentId`); -1 while no bank is open.
     bank_component_id: i32,
+    /// Snapshot-local identity for the current bank session. This advances
+    /// whenever the selected withdraw component opens, closes, or changes.
+    bank_session_generation: u64,
+    #[serde(skip)]
+    bank_modal_generation_seen: u64,
+    /// True only when the selected withdraw component has a current full
+    /// inventory packet after the last main-modal close and is transmitting.
+    bank_loaded: bool,
     trade: TradeView,
     shop: ShopView,
     widgets: Vec<WidgetView>,
@@ -710,6 +718,9 @@ impl Default for GameSnapshot {
             bank_side: Vec::new(),
             inventory_size: 0,
             bank_component_id: -1,
+            bank_session_generation: 0,
+            bank_modal_generation_seen: 0,
+            bank_loaded: false,
             trade: TradeView::default(),
             shop: ShopView::default(),
             widgets: Vec::new(),
@@ -1099,6 +1110,16 @@ impl GameSnapshot {
         self.bank_component_id
     }
 
+    /// Identity of the current bank open/close session.
+    pub fn bank_session_generation(&self) -> u64 {
+        self.bank_session_generation
+    }
+
+    /// Whether the current bank component has fresh, transmitting full data.
+    pub fn bank_loaded(&self) -> bool {
+        self.bank_loaded
+    }
+
     /// Bank-side (deposit) item views from the last bank-side rebuild.
     pub fn bank_side(&self) -> &[ItemView] {
         &self.bank_side
@@ -1471,7 +1492,7 @@ impl GameSnapshot {
         if !self.bank_gate.moved(client, self.inv_session_current) {
             return false;
         }
-        self.bank_component_id = if client.main_modal_id == -1 {
+        let bank_component_id = if client.main_modal_id == -1 {
             -1
         } else {
             let root = client.main_modal_id;
@@ -1482,6 +1503,24 @@ impl GameSnapshot {
             })
             .unwrap_or(-1)
         };
+        let modal_generation = client.main_modal_packet_state().generation;
+        let modal_delta = modal_generation.wrapping_sub(self.bank_modal_generation_seen);
+        if modal_delta != 0 {
+            self.bank_session_generation = self.bank_session_generation.wrapping_add(modal_delta);
+            self.bank_modal_generation_seen = modal_generation;
+        } else if bank_component_id != self.bank_component_id {
+            self.bank_session_generation = self.bank_session_generation.wrapping_add(1);
+        }
+        self.bank_component_id = bank_component_id;
+        self.bank_loaded = self.bank_component_id >= 0
+            && client
+                .inventory_packet_state(self.bank_component_id)
+                .is_some_and(|state| {
+                    state.transmitting
+                        && state.full_generation != 0
+                        && state.full_observation
+                            > client.main_modal_packet_state().closed_observation
+                });
         self.bank = if self.bank_component_id == -1 {
             Vec::new()
         } else {
@@ -2165,6 +2204,16 @@ impl<'a> ReadContext<'a> {
     /// The open main modal's withdraw component, -1 while no bank is open.
     pub fn bank_component_id(&self) -> i32 {
         self.0.bank_component_id()
+    }
+
+    /// Identity of the current bank open/close session.
+    pub fn bank_session_generation(&self) -> u64 {
+        self.0.bank_session_generation()
+    }
+
+    /// Whether the current bank component has fresh, transmitting full data.
+    pub fn bank_loaded(&self) -> bool {
+        self.0.bank_loaded()
     }
 
     /// The full chat ring, newest first (the snapshot's `chat()` head

@@ -916,10 +916,35 @@ impl<'a> Interactions<'a> {
         if let Some(reason) = self.precondition(snapshot, false) {
             return refuse(snapshot, reason);
         }
+        let Some(loc) = snapshot.nearest_use_quickly_booth() else {
+            return refuse(snapshot, SendReason::StaleTarget);
+        };
+        self.open_booth_at(loc.tile, loc.id)
+    }
+
+    /// Open the exact same-plane `Use-quickly` booth identity selected by
+    /// the script snapshot. If it vanished or changed actions, refuse rather
+    /// than retargeting to whichever booth is nearest at dispatch time.
+    pub fn open_booth_at(&mut self, target: WorldTile, expected_id: i32) -> SendResult<'a> {
+        let snapshot = self.snapshot;
+        if let Some(reason) = self.precondition(snapshot, false) {
+            return refuse(snapshot, reason);
+        }
         let Some((px, pz, level)) = snapshot.tile() else {
             return refuse(snapshot, SendReason::OffScene);
         };
-        let Some(loc) = snapshot.nearest_use_quickly_booth() else {
+        if target.level != level {
+            return refuse(snapshot, SendReason::OffScene);
+        }
+        let Some(loc) = snapshot.locs().iter().find(|loc| {
+            loc.tile == target
+                && loc.id == expected_id
+                && loc.actions.iter().any(|action| {
+                    action
+                        .as_deref()
+                        .is_some_and(|label| label.eq_ignore_ascii_case("Use-quickly"))
+                })
+        }) else {
             return refuse(snapshot, SendReason::StaleTarget);
         };
         let cheb = (loc.tile.x - px).abs().max((loc.tile.z - pz).abs());

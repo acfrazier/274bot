@@ -177,6 +177,10 @@ fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
         bank_side: &[],
         bank_open: false,
         bank_loaded: false,
+        bank_generation: 0,
+        count_dialog_open: false,
+        withdraw_x_result_seq: 0,
+        withdraw_x_result: false,
         hold: false,
         ours: false,
         npcs: &[],
@@ -235,6 +239,7 @@ fn nearest_booth_input<'a>(
         x,
         z,
         level,
+        id: 2213,
         name,
         op: "Use-quickly",
     }
@@ -2094,9 +2099,8 @@ fn isolate_native_tick_api_is_throw_on_missing_proxy() {
     iso.join();
 }
 
-// Task 7 — Banking shim: `Banking.open()` / `Bank.openNearest` /
-// `Bank.openBooth` are thin names onto the host's nearest Use-quickly
-// interact. No radius-1 JS router, no packed-stand walk.
+// Banking opening preserves the exact nearest-booth identity posted in the
+// snapshot so dispatch cannot retarget between observation and action.
 #[test]
 fn isolate_banking_open_queues_open_booth_without_walk() {
     let src = r#"
@@ -2119,17 +2123,26 @@ export default class T extends LoopingBot {
         z: 100,
         level: 0,
     }];
+    snap.nearest_booth = Some(script::isolate_fb::NearestBoothInput {
+        x: 200,
+        z: 100,
+        level: 0,
+        id: 2213,
+        name: "Bank booth",
+        op: "Use-quickly",
+    });
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1"); // round-trip: the tick finished first
     assert_eq!(
         iso.drain_interacts(),
         vec![script::shim::InteractReq::OpenBooth {
-            x: 0,
-            z: 0,
-            level: 0
+            x: 200,
+            z: 100,
+            level: 0,
+            id: 2213,
         }],
-        "Banking.open queues open-booth; the host finds the nearest Use-quickly loc"
+        "Banking.open carries the snapshot-selected Use-quickly loc"
     );
     iso.join();
 }
@@ -2152,6 +2165,14 @@ export default class T extends LoopingBot {
         z: 100,
         level: 0,
     });
+    snap.nearest_booth = Some(script::isolate_fb::NearestBoothInput {
+        x: 101,
+        z: 100,
+        level: 0,
+        id: 2213,
+        name: "Bank booth",
+        op: "Use-quickly",
+    });
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1");
@@ -2159,18 +2180,57 @@ export default class T extends LoopingBot {
         iso.drain_interacts(),
         vec![
             script::shim::InteractReq::OpenBooth {
-                x: 0,
-                z: 0,
-                level: 0
+                x: 101,
+                z: 100,
+                level: 0,
+                id: 2213,
             },
             script::shim::InteractReq::OpenBooth {
-                x: 0,
-                z: 0,
-                level: 0
+                x: 101,
+                z: 100,
+                level: 0,
+                id: 2213,
             },
         ],
-        "openNearest / openBooth are thin names onto open-booth"
+        "openNearest / openBooth preserve the posted booth identity"
     );
+    iso.join();
+}
+
+#[test]
+fn isolate_bank_snapshot_generation_waits_for_a_new_ready_session() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ready = Bank.snapshotReady();
+        globalThis.__generation = Bank.snapshotGeneration();
+        Bank.waitSnapshotAfter(globalThis.__generation, 5000)
+            .then((ok) => { globalThis.__after = ok; });
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    snap.bank_generation = 7;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__ready").unwrap(), true);
+    assert_eq!(iso.probe("__generation").unwrap(), 7);
+    assert!(
+        iso.probe("__after").is_err(),
+        "same generation stays pending"
+    );
+
+    snap.tick = 2;
+    snap.bank_generation = 8;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("__after").unwrap(), true);
     iso.join();
 }
 
@@ -2272,7 +2332,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn isolate_bank_withdraw_x_queues_x_op_then_answer_count() {
+fn isolate_bank_withdraw_x_queues_one_host_owned_continuation() {
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
@@ -2290,32 +2350,86 @@ export default class T extends LoopingBot {
     snap.bank = &bank;
     snap.bank_open = true;
     snap.bank_loaded = true;
+    snap.bank_generation = 7;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::Withdraw {
+        vec![script::shim::InteractReq::WithdrawX {
             name: "Bones".into(),
-            action: "Withdraw-X".into()
+            count: 25,
+            bank_generation: 7,
         }],
-        "first tick queues the posted Withdraw-X op"
+        "first tick queues one host-owned Withdraw-X continuation"
     );
     iso.on_game_tick(2);
     let _ = iso.probe("1 + 1");
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "no count answer before the matching dialog is observed"
+    );
+    snap.tick = 3;
+    snap.count_dialog_open = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(3);
+    let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::AnswerCount { value: 25 }],
-        "next tick answers the count dialog"
+        Vec::<script::shim::InteractReq>::new(),
+        "the isolate never owns or sends the dialog answer"
     );
-    iso.on_game_tick(3);
+    iso.on_game_tick(4);
     assert_eq!(iso.probe("typeof __ok").unwrap(), "undefined");
     let inv = [item_row(526, Some("Bones"), 25, &[], false, -1, 0)];
     snap.inv = &inv;
+    snap.withdraw_x_result_seq = 1;
+    snap.withdraw_x_result = true;
+    snap.tick = 5;
     post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(4);
+    iso.on_game_tick(5);
     let ok = iso.probe("__ok").unwrap();
     assert_eq!(ok, true, "withdrawX resolves after inventory publication");
+    iso.join();
+}
+
+#[test]
+fn isolate_bank_withdraw_x_never_answers_after_bank_session_changes() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = await Bank.withdrawX('Bones', 25);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    let ops = ["Withdraw-X".into()];
+    let bank = [item_row(526, Some("Bones"), 40, &ops, false, -1, 0)];
+    snap.bank = &bank;
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    snap.bank_generation = 7;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(iso.drain_interacts().len(), 1);
+
+    snap.tick = 2;
+    snap.bank_open = false;
+    snap.bank_loaded = false;
+    snap.bank_generation = 8;
+    snap.count_dialog_open = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a later session's dialog must never receive the stale amount"
+    );
+    assert_eq!(iso.probe("__ok").unwrap(), false);
     iso.join();
 }
 

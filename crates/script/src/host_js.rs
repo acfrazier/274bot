@@ -531,6 +531,12 @@ const SUPPORTING_INTERFACES: &[TsInterface] = &[
                 doc: None,
             },
             TsField {
+                name: "id",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
                 name: "name",
                 ty: "string",
                 optional: false,
@@ -751,6 +757,30 @@ const SNAPSHOT_FIELDS: &[TsField] = &[
     },
     TsField {
         name: "bank_loaded",
+        ty: "boolean",
+        optional: false,
+        doc: None,
+    },
+    TsField {
+        name: "bank_generation",
+        ty: "number",
+        optional: false,
+        doc: None,
+    },
+    TsField {
+        name: "count_dialog_open",
+        ty: "boolean",
+        optional: false,
+        doc: None,
+    },
+    TsField {
+        name: "withdraw_x_result_seq",
+        ty: "number",
+        optional: false,
+        doc: None,
+    },
+    TsField {
+        name: "withdraw_x_result",
         ty: "boolean",
         optional: false,
         doc: None,
@@ -1028,19 +1058,25 @@ const INTERACT_VARIANTS: &[InteractVariant] = &[
             TsField {
                 name: "x",
                 ty: "number",
-                optional: true,
+                optional: false,
                 doc: None,
             },
             TsField {
                 name: "z",
                 ty: "number",
-                optional: true,
+                optional: false,
                 doc: None,
             },
             TsField {
                 name: "level",
                 ty: "number",
-                optional: true,
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "id",
+                ty: "number",
+                optional: false,
                 doc: None,
             },
         ],
@@ -1165,6 +1201,29 @@ const INTERACT_VARIANTS: &[InteractVariant] = &[
             TsField {
                 name: "action",
                 ty: "string",
+                optional: false,
+                doc: None,
+            },
+        ],
+    },
+    InteractVariant {
+        op: "withdraw-x",
+        fields: &[
+            TsField {
+                name: "name",
+                ty: "string",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "count",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "bank_generation",
+                ty: "number",
                 optional: false,
                 doc: None,
             },

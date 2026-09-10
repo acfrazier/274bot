@@ -83,6 +83,7 @@ const VT_NEAREST_Z: VOffsetT = 6;
 const VT_NEAREST_LEVEL: VOffsetT = 8;
 const VT_NEAREST_NAME: VOffsetT = 10;
 const VT_NEAREST_OP: VOffsetT = 12;
+const VT_NEAREST_ID: VOffsetT = 14;
 
 // Snapshot: { tick, here, ingame, inv, inv_size, stats, booths, nearest_booth,
 //             bank, bank_side, bank_open, bank_loaded, hold, ours }
@@ -143,6 +144,10 @@ const VT_SNAP_TRADE_ACCEPT_ID: VOffsetT = 110;
 const VT_SNAP_TRADE_DECLINE_ID: VOffsetT = 112;
 const VT_SNAP_SHOP_OPEN: VOffsetT = 114;
 const VT_SNAP_SHOP_STOCK: VOffsetT = 116;
+const VT_SNAP_BANK_GENERATION: VOffsetT = 118;
+const VT_SNAP_COUNT_DIALOG_OPEN: VOffsetT = 120;
+const VT_SNAP_WITHDRAW_X_RESULT_SEQ: VOffsetT = 122;
+const VT_SNAP_WITHDRAW_X_RESULT: VOffsetT = 124;
 
 // SideTabIface: { index, id }
 const VT_STI_INDEX: VOffsetT = 4;
@@ -194,7 +199,7 @@ const VT_VARP_INDEX: VOffsetT = 4;
 const VT_VARP_VALUE: VOffsetT = 6;
 
 // Interact: { op, x, z, level, kind, name, stand_op, choose, action,
-//             index, component_id }
+//             index, component_id, bank_generation }
 const VT_IN_OP: VOffsetT = 4;
 const VT_IN_X: VOffsetT = 6;
 const VT_IN_Z: VOffsetT = 8;
@@ -206,6 +211,7 @@ const VT_IN_CHOOSE: VOffsetT = 18;
 const VT_IN_ACTION: VOffsetT = 20;
 const VT_IN_INDEX: VOffsetT = 22;
 const VT_IN_COMPONENT_ID: VOffsetT = 24;
+const VT_IN_BANK_GENERATION: VOffsetT = 26;
 
 // InteractBatch: { reqs: [Interact] }
 const VT_REQS: VOffsetT = 4;
@@ -350,6 +356,7 @@ pub struct NearestBoothInput<'a> {
     pub x: i32,
     pub z: i32,
     pub level: i32,
+    pub id: i32,
     pub name: &'a str,
     pub op: &'a str,
 }
@@ -377,6 +384,10 @@ pub struct SnapshotInput<'a> {
     pub bank_side: &'a [ItemRowInput<'a>],
     pub bank_open: bool,
     pub bank_loaded: bool,
+    pub bank_generation: u64,
+    pub count_dialog_open: bool,
+    pub withdraw_x_result_seq: u64,
+    pub withdraw_x_result: bool,
     pub hold: bool,
     pub ours: bool,
     pub npcs: &'a [SceneEntityInput<'a>],
@@ -667,6 +678,9 @@ impl NearestBoothReader<'_> {
     pub fn op(&self) -> &str {
         unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_NEAREST_OP, None) }.unwrap_or("")
     }
+    pub fn id(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_NEAREST_ID, None) }.unwrap_or(-1)
+    }
 }
 
 impl Verifiable for NearestBoothReader<'_> {
@@ -677,6 +691,7 @@ impl Verifiable for NearestBoothReader<'_> {
             .visit_field::<i32>("level", VT_NEAREST_LEVEL, false)?
             .visit_field::<ForwardsUOffset<&str>>("name", VT_NEAREST_NAME, false)?
             .visit_field::<ForwardsUOffset<&str>>("op", VT_NEAREST_OP, false)?
+            .visit_field::<i32>("id", VT_NEAREST_ID, false)?
             .finish();
         Ok(())
     }
@@ -849,6 +864,14 @@ impl Verifiable for SnapshotReader<'_> {
                 VT_SNAP_SHOP_STOCK,
                 false,
             )?
+            .visit_field::<u64>("bank_generation", VT_SNAP_BANK_GENERATION, false)?
+            .visit_field::<bool>("count_dialog_open", VT_SNAP_COUNT_DIALOG_OPEN, false)?
+            .visit_field::<u64>(
+                "withdraw_x_result_seq",
+                VT_SNAP_WITHDRAW_X_RESULT_SEQ,
+                false,
+            )?
+            .visit_field::<bool>("withdraw_x_result", VT_SNAP_WITHDRAW_X_RESULT, false)?
             .finish();
         Ok(())
     }
@@ -939,6 +962,42 @@ impl SnapshotReader<'_> {
     }
     pub fn bank_loaded(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_BANK_LOADED, None) }.unwrap_or(false)
+    }
+    pub fn has_bank_generation(&self) -> bool {
+        unsafe { self.tab.get::<u64>(VT_SNAP_BANK_GENERATION, None).is_some() }
+    }
+    pub fn bank_generation(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_BANK_GENERATION, None) }.unwrap_or(0)
+    }
+    pub fn has_count_dialog_open(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<bool>(VT_SNAP_COUNT_DIALOG_OPEN, None)
+                .is_some()
+        }
+    }
+    pub fn count_dialog_open(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_COUNT_DIALOG_OPEN, None) }.unwrap_or(false)
+    }
+    pub fn has_withdraw_x_result_seq(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<u64>(VT_SNAP_WITHDRAW_X_RESULT_SEQ, None)
+                .is_some()
+        }
+    }
+    pub fn withdraw_x_result_seq(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_WITHDRAW_X_RESULT_SEQ, None) }.unwrap_or(0)
+    }
+    pub fn has_withdraw_x_result(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<bool>(VT_SNAP_WITHDRAW_X_RESULT, None)
+                .is_some()
+        }
+    }
+    pub fn withdraw_x_result(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_WITHDRAW_X_RESULT, None) }.unwrap_or(false)
     }
     pub fn has_bank_note_on(&self) -> bool {
         unsafe { self.tab.get::<i32>(VT_SNAP_BANK_NOTE_ON, None).is_some() }
@@ -1377,6 +1436,7 @@ pub struct NearestBoothFp {
     pub x: i32,
     pub z: i32,
     pub level: i32,
+    pub id: i32,
     pub name: String,
     pub op: String,
 }
@@ -1399,6 +1459,10 @@ pub struct SnapshotFingerprint {
     pub bank_side: Vec<ItemRowFp>,
     pub bank_open: bool,
     pub bank_loaded: bool,
+    pub bank_generation: u64,
+    pub count_dialog_open: bool,
+    pub withdraw_x_result_seq: u64,
+    pub withdraw_x_result: bool,
     pub hold: bool,
     pub ours: bool,
     pub npcs: Vec<SceneEntityFp>,
@@ -1495,6 +1559,7 @@ impl SnapshotFingerprint {
                 x: b.x,
                 z: b.z,
                 level: b.level,
+                id: b.id,
                 name: b.name.to_string(),
                 op: b.op.to_string(),
             }),
@@ -1515,6 +1580,10 @@ impl SnapshotFingerprint {
             bank_side: input.bank_side.iter().map(item_row_fp).collect(),
             bank_open: input.bank_open,
             bank_loaded: input.bank_loaded,
+            bank_generation: input.bank_generation,
+            count_dialog_open: input.count_dialog_open,
+            withdraw_x_result_seq: input.withdraw_x_result_seq,
+            withdraw_x_result: input.withdraw_x_result,
             hold: input.hold,
             ours: input.ours,
             npcs: input.npcs.iter().map(entity_fp).collect(),
@@ -1621,6 +1690,10 @@ pub struct DeltaMask {
     pub bank_side: bool,
     pub bank_open: bool,
     pub bank_loaded: bool,
+    pub bank_generation: bool,
+    pub count_dialog_open: bool,
+    pub withdraw_x_result_seq: bool,
+    pub withdraw_x_result: bool,
     pub hold: bool,
     pub ours: bool,
     pub npcs: bool,
@@ -1683,6 +1756,10 @@ impl DeltaMask {
             bank_side: true,
             bank_open: true,
             bank_loaded: true,
+            bank_generation: true,
+            count_dialog_open: true,
+            withdraw_x_result_seq: true,
+            withdraw_x_result: true,
             hold: true,
             ours: true,
             npcs: true,
@@ -1752,6 +1829,10 @@ impl DeltaMask {
             bank_side: next.bank_side != last.bank_side,
             bank_open: next.bank_open != last.bank_open,
             bank_loaded: next.bank_loaded != last.bank_loaded,
+            bank_generation: next.bank_generation != last.bank_generation,
+            count_dialog_open: next.count_dialog_open != last.count_dialog_open,
+            withdraw_x_result_seq: next.withdraw_x_result_seq != last.withdraw_x_result_seq,
+            withdraw_x_result: next.withdraw_x_result != last.withdraw_x_result,
             // SEC-004: re-post hold every tick so JS cannot clear
             // `__rs2b0t_host.hold` in onPaint and unfreeze loop().
             hold: true,
@@ -2177,6 +2258,18 @@ fn encode_snapshot_masked_into(
     if mask.bank_loaded {
         b.push_slot_always(VT_SNAP_BANK_LOADED, input.bank_loaded);
     }
+    if mask.bank_generation {
+        b.push_slot_always(VT_SNAP_BANK_GENERATION, input.bank_generation);
+    }
+    if mask.count_dialog_open {
+        b.push_slot_always(VT_SNAP_COUNT_DIALOG_OPEN, input.count_dialog_open);
+    }
+    if mask.withdraw_x_result_seq {
+        b.push_slot_always(VT_SNAP_WITHDRAW_X_RESULT_SEQ, input.withdraw_x_result_seq);
+    }
+    if mask.withdraw_x_result {
+        b.push_slot_always(VT_SNAP_WITHDRAW_X_RESULT, input.withdraw_x_result);
+    }
     if mask.hold {
         b.push_slot_always(VT_SNAP_HOLD, input.hold);
     }
@@ -2510,6 +2603,7 @@ fn nearest_booth_table_off<'b>(
     b.push_slot_always(VT_NEAREST_LEVEL, s.level);
     b.push_slot_always(VT_NEAREST_NAME, name_off);
     b.push_slot_always(VT_NEAREST_OP, op_off);
+    b.push_slot_always(VT_NEAREST_ID, s.id);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -2886,11 +2980,20 @@ impl InteractReader<'_> {
     pub fn x(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_IN_X, None) }.unwrap_or(0)
     }
+    pub fn required_x(&self) -> Option<i32> {
+        unsafe { self.tab.get::<i32>(VT_IN_X, None) }
+    }
     pub fn z(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_IN_Z, None) }.unwrap_or(0)
     }
+    pub fn required_z(&self) -> Option<i32> {
+        unsafe { self.tab.get::<i32>(VT_IN_Z, None) }
+    }
     pub fn level(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_IN_LEVEL, None) }.unwrap_or(0)
+    }
+    pub fn required_level(&self) -> Option<i32> {
+        unsafe { self.tab.get::<i32>(VT_IN_LEVEL, None) }
     }
     pub fn kind(&self) -> Option<&str> {
         unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_IN_KIND, None) }
@@ -2913,6 +3016,9 @@ impl InteractReader<'_> {
     pub fn component_id(&self) -> Option<i32> {
         unsafe { self.tab.get::<i32>(VT_IN_COMPONENT_ID, None) }
     }
+    pub fn bank_generation(&self) -> Option<u64> {
+        unsafe { self.tab.get::<u64>(VT_IN_BANK_GENERATION, None) }
+    }
 }
 
 impl Verifiable for InteractReader<'_> {
@@ -2929,6 +3035,7 @@ impl Verifiable for InteractReader<'_> {
             .visit_field::<ForwardsUOffset<&str>>("action", VT_IN_ACTION, false)?
             .visit_field::<i32>("index", VT_IN_INDEX, false)?
             .visit_field::<i32>("component_id", VT_IN_COMPONENT_ID, false)?
+            .visit_field::<u64>("bank_generation", VT_IN_BANK_GENERATION, false)?
             .finish();
         Ok(())
     }
@@ -3085,9 +3192,18 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
             .ok_or_else(|| "interact row has no op".to_string())?;
         match op {
             "open-booth" => out.push(crate::shim::InteractReq::OpenBooth {
-                x: row.x(),
-                z: row.z(),
-                level: row.level(),
+                x: row
+                    .required_x()
+                    .ok_or_else(|| "open-booth has no x".to_string())?,
+                z: row
+                    .required_z()
+                    .ok_or_else(|| "open-booth has no z".to_string())?,
+                level: row
+                    .required_level()
+                    .ok_or_else(|| "open-booth has no level".to_string())?,
+                id: row
+                    .index()
+                    .ok_or_else(|| "open-booth has no id".to_string())?,
             }),
             "open-stand" => out.push(crate::shim::InteractReq::OpenStand {
                 x: row.x(),
@@ -3131,6 +3247,16 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                     .action()
                     .ok_or_else(|| "withdraw has no action".to_string())?
                     .to_string(),
+            }),
+            "withdraw-x" => out.push(crate::shim::InteractReq::WithdrawX {
+                name: row
+                    .name()
+                    .ok_or_else(|| "withdraw-x has no name".to_string())?
+                    .to_string(),
+                count: row.x(),
+                bank_generation: row
+                    .bank_generation()
+                    .ok_or_else(|| "withdraw-x has no bank_generation".to_string())?,
             }),
             "held" => out.push(crate::shim::InteractReq::Held {
                 name: row
@@ -3259,6 +3385,7 @@ fn interact_off<'b>(
         InteractReq::WalkTo { .. } => "walk-to",
         InteractReq::Deposit { .. } => "deposit",
         InteractReq::Withdraw { .. } => "withdraw",
+        InteractReq::WithdrawX { .. } => "withdraw-x",
         InteractReq::Held { .. } => "held",
         InteractReq::Close => "close",
         InteractReq::Npc { .. } => "npc",
@@ -3289,6 +3416,7 @@ fn interact_off<'b>(
         InteractReq::OpenStand { name, .. } => name.as_deref().map(|n| b.create_string(n)),
         InteractReq::Deposit { name }
         | InteractReq::Withdraw { name, .. }
+        | InteractReq::WithdrawX { name, .. }
         | InteractReq::Held { name, .. }
         | InteractReq::Npc { name, .. }
         | InteractReq::Player { name, .. }
@@ -3328,10 +3456,11 @@ fn interact_off<'b>(
     let tab = b.start_table();
     b.push_slot_always(VT_IN_OP, op_off);
     match req {
-        InteractReq::OpenBooth { x, z, level } => {
+        InteractReq::OpenBooth { x, z, level, id } => {
             b.push_slot_always(VT_IN_X, *x);
             b.push_slot_always(VT_IN_Z, *z);
             b.push_slot_always(VT_IN_LEVEL, *level);
+            b.push_slot_always(VT_IN_INDEX, *id);
         }
         InteractReq::OpenStand {
             x,
@@ -3383,6 +3512,15 @@ fn interact_off<'b>(
         InteractReq::Withdraw { .. } => {
             b.push_slot_always(VT_IN_NAME, name_off.unwrap());
             b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+        }
+        InteractReq::WithdrawX {
+            count,
+            bank_generation,
+            ..
+        } => {
+            b.push_slot_always(VT_IN_NAME, name_off.unwrap());
+            b.push_slot_always(VT_IN_X, *count);
+            b.push_slot_always(VT_IN_BANK_GENERATION, *bank_generation);
         }
         InteractReq::Held { .. } => {
             b.push_slot_always(VT_IN_NAME, name_off.unwrap());
@@ -3498,6 +3636,10 @@ pub(crate) mod tests {
             bank_side: &[],
             bank_open: false,
             bank_loaded: false,
+            bank_generation: 0,
+            count_dialog_open: false,
+            withdraw_x_result_seq: 0,
+            withdraw_x_result: false,
             hold: false,
             ours: false,
             npcs: &[],

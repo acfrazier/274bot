@@ -149,14 +149,11 @@ impl ScriptCtx<'_> {
         self.snapshot.is_some_and(|s| s.bank_component_id() != -1)
     }
 
-    /// Whether the bank's item list has actually been decoded: the open
-    /// bank's withdraw component is present and shows at least one item
-    /// row. The component appears a beat before the server fills the
-    /// list, so an empty list is *not* proof of an empty bank — it means
-    /// the list has not loaded yet (fail-closed).
+    /// Whether the selected bank component has a current full inventory
+    /// packet for this modal session and is still transmitting.
     pub fn bank_loaded(&self) -> bool {
         self.snapshot
-            .is_some_and(|s| s.bank_component_id() != -1 && !s.bank().is_empty())
+            .is_some_and(api::snapshot::GameSnapshot::bank_loaded)
     }
 }
 
@@ -230,7 +227,7 @@ mod tests {
     use client::client::{Client, ClientConfig};
     use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
     use client::config::{Cache, VarpType};
-    use client::io::ServerProt;
+    use client::io::{Packet, ServerProt};
     use std::sync::Arc;
 
     fn cfg() -> ClientConfig {
@@ -404,6 +401,8 @@ mod tests {
         ] {
             c.bump_gens(prot);
         }
+        let mut full = Packet::new(vec![2, 89, 2, 0, 6, 2, 0, 0, 0]);
+        c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut full);
         c
     }
 
@@ -544,29 +543,20 @@ mod tests {
     }
 
     #[test]
-    fn bank_open_and_loaded_distinguish_component_from_items() {
+    fn bank_loaded_uses_packet_freshness_and_allows_empty_full() {
         let mut c = seeded();
         let s = snap(&mut c);
         let mut d = test_support::NullDriver::default();
         let ctx = mk_ctx(&mut d, Some(&s));
         assert!(ctx.bank_open());
-        assert!(ctx.bank_loaded(), "the withdraw component has item rows");
-        // An open bank whose list has not filled is NOT loaded: an empty
-        // item list is not proof of an empty bank.
-        c.set_iface_mut(
-            601,
-            IfTypeMut {
-                link_obj_type: Some(vec![0, 0]),
-                link_obj_number: Some(vec![0, 0]),
-                ..Default::default()
-            },
-        );
-        c.bump_gens(ServerProt::UPDATE_INV_FULL);
+        assert!(ctx.bank_loaded(), "the withdraw component has a fresh full");
+        let mut empty_full = Packet::new(vec![2, 89, 2, 0, 0, 0, 0, 0, 0]);
+        c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_full);
         let s = snap(&mut c);
         let mut empty_d = test_support::NullDriver::default();
         let empty = mk_ctx(&mut empty_d, Some(&s));
         assert!(empty.bank_open(), "the component is still present");
-        assert!(!empty.bank_loaded(), "empty list ≠ empty bank");
+        assert!(empty.bank_loaded(), "an observed empty full is still ready");
         let mut bare_d = test_support::NullDriver::default();
         let bare = mk_ctx(&mut bare_d, None);
         assert!(!bare.bank_open(), "no snapshot fails closed");
