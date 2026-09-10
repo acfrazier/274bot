@@ -250,3 +250,12 @@ The same card will return to reviewer; integration review t_0ec632f9 is held by
 root until the corrected immutable candidate is named. No user input is needed.
 Frozen binary b9cacc6e is retained as a pre-correction artifact and will not be
 used for acceptance. No controlled live cell has run yet.
+
+The scene correction passed the focused failing-before/passing-after regression,
+API snapshot 61 and host 136. Root committed the unchanged Sol patch as
+`fede3c0dd5d5fbdc7fd7def10f2eb43630b8f16f` while the same-card Grok 4.5 follow-up
+was running. The implementer had interpreted the brief's broad index wording as
+forbidding its own scoped commit; root clarified the wording. The integration
+brief now names this exact corrected candidate, and remains gated by the parent
+review dependency (the attempt to explicitly block a todo card was refused by
+the CLI). No other worker source entered the correction commit.
