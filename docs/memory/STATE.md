@@ -11,6 +11,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-10 00:29 UTC
+
+- Coordinate CF1 COMPLETE exit0 native39435,4children. Root archived all82files
+  archive6b6314fe (834734B), downloaded and independently hashed/read outputs,
+  selectors and receipts. Root audit in coordinate-cf1-result-01 passes.
+  Fresh41.65462229swall/31.437117CPU; cumulative81.74507052/60.938457 with8children.
+  All4actual24-call summaries aggregate-equal per row, zero narrow allocations,
+  unchanged native hardAS/caps. No CF2/CA/performance release yet.
+- Root audit corrections preserved: selector normalization is spaces; separately
+  sampled CPU components differ16microseconds; waited-child total includes extra
+  0.120699825s beyond probe-record sums, retained for independent ledger review.
+- Sol corrective implementation6f2b410 requested SAME-card reviewer; native
+  owner qualification waits for actual verdict. No owner live release.
+
 ## Latest boundary — 2026-09-10 00:25 UTC
 
 - Corrective evidence review t_5159d6b4 APPROVE b62f173; actual Grok4.5/xai

@@ -1,0 +1,2 @@
+First root audit failed selector equality: audit joined numeric tokens with tabs, while reviewed normalized_rows emits spaces. Correct audit to integer normalization joined with spaces; retain original native bytes. No native rerun.
+Second audit attempted exact equality across separately sampled Budget.snapshot CPU clocks; observed 16 microseconds difference. Record component delta with 1ms audit tolerance; production budgets unchanged. Also report waited-vs-recorded child CPU difference for review, not infer equality.

@@ -1,0 +1,121 @@
+{
+  "qualified": true,
+  "scope": "CF1 raw artifact and ledger verification only; no CF2 or performance acceptance",
+  "archive_sha256": "6b6314fe9e60235ab92feeb65f972921104c66bccbc5fabcf385e4e28f576cdf",
+  "members": 82,
+  "cpu_component_sampling_delta_s": -1.599999999940538e-05,
+  "waited_minus_recorded_child_cpu_s": 0.1206998249999991,
+  "children": [
+    {
+      "name": "000-1-1-dense",
+      "child_cpu": 2.9348069999999997,
+      "receipt_wall": 2.4237546090007527,
+      "peak_rss": 149553152,
+      "raw_calls": 24,
+      "aggregate": {
+        "calls": 24,
+        "no_path": 0,
+        "routes": 24,
+        "empty": 0,
+        "legs": 24,
+        "tiles": 5448,
+        "transports": 0,
+        "banks": 0,
+        "ticks": 2712,
+        "checksum": 623185598985449784
+      }
+    },
+    {
+      "name": "001-1-1-refined",
+      "child_cpu": 3.271838000000001,
+      "receipt_wall": 2.6995711049967213,
+      "peak_rss": 153616384,
+      "raw_calls": 24,
+      "aggregate": {
+        "calls": 24,
+        "no_path": 0,
+        "routes": 24,
+        "empty": 0,
+        "legs": 24,
+        "tiles": 5448,
+        "transports": 0,
+        "banks": 0,
+        "ticks": 2712,
+        "checksum": 623185598985449784
+      }
+    },
+    {
+      "name": "002-1-2-refined",
+      "child_cpu": 5.418711999999999,
+      "receipt_wall": 4.406783804995939,
+      "peak_rss": 153616384,
+      "raw_calls": 24,
+      "aggregate": {
+        "calls": 24,
+        "no_path": 0,
+        "routes": 24,
+        "empty": 0,
+        "legs": 24,
+        "tiles": 5448,
+        "transports": 0,
+        "banks": 0,
+        "ticks": 2712,
+        "checksum": 623185598985449784
+      }
+    },
+    {
+      "name": "003-1-2-dense",
+      "child_cpu": 4.870386,
+      "receipt_wall": 3.980087484989781,
+      "peak_rss": 149553152,
+      "raw_calls": 24,
+      "aggregate": {
+        "calls": 24,
+        "no_path": 0,
+        "routes": 24,
+        "empty": 0,
+        "legs": 24,
+        "tiles": 5448,
+        "transports": 0,
+        "banks": 0,
+        "ticks": 2712,
+        "checksum": 623185598985449784
+      }
+    }
+  ],
+  "cumulative_budget": {
+    "children": 8,
+    "cpu": 60.938457,
+    "publication_reserved_cpu": 0.2,
+    "publication_reserved_wall": 2,
+    "reserved_children": 0,
+    "reserved_cpu": 0,
+    "reserved_wall": 0,
+    "stopped": false,
+    "supervisor_cpu": 27.368504807,
+    "unknown_cpu_charge": 0,
+    "waited_children_cpu": 33.369968193,
+    "wall": 81.74507052099216
+  },
+  "prior_budget": {
+    "archive_sha256": "102c6d41806620247e3c9d23f19a743f4503ca53b556afd4d7da9f05851cf031",
+    "audit_sha256": "98366a1a5a4b3bccae346cb9deef041ab1b983c6a367a97b9346ce4875bdf81d",
+    "authorization_sha256": "d6da3b78dfdc419c53dea6c25bc131aebea9c3a380f7e12d858d2b4f0d194820",
+    "candidate_id": "tiled-8385",
+    "checkpoint_sha256": "b1d72bfc93e44f5be7fad48a0b2a50a56156ef3fc7a61b41abc04fa9d6c45665",
+    "children": 4,
+    "claim_sha256": "f25ef0b02697440f98d197ffab50f98ce1c5086661da444104c4455bb9cd336f",
+    "cpu": 29.50134,
+    "publication_reserved_cpu": 0.1,
+    "publication_reserved_wall": 1,
+    "result_sha256": "30d9e6ecb7c25b63214e61e9a342b468568dbe0682425c9fb5dd74f600e703ba",
+    "schema": "stage-a-prior-campaign-ledger-v1",
+    "stopped": false,
+    "supervisor_cpu": 12.647822631999999,
+    "unknown_cpu_charge": 0,
+    "waited_children_cpu": 16.753525368,
+    "wall": 40.090448230999755
+  },
+  "fresh_wall": 41.6546222899924,
+  "fresh_cpu": 31.437117
+}
