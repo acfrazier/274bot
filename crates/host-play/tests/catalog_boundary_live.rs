@@ -560,7 +560,8 @@ impl LiveState {
             .player
             .as_deref()
             .ok_or_else(|| "Start baseline has no local player".to_string())?;
-        if !player.eq_ignore_ascii_case(&self.account) {
+        let expected_player = client::util::jstring::JString::to_screen_name(&self.account);
+        if !player.eq_ignore_ascii_case(&expected_player) {
             return Err(format!(
                 "Start baseline player {player:?} is not fresh account {:?}",
                 self.account
