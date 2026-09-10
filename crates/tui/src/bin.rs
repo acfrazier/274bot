@@ -619,7 +619,8 @@ impl TuiSession {
         let path = temp_live_vault(&entries, &pass);
         self.unlock_at(&path, &pass)?;
         self.live_name = Some(name);
-        let mut runner = scenario::ScenarioRunner::new(scenario);
+        let world = self.play.as_ref().and_then(|play| play.world());
+        let mut runner = scenario::ScenarioRunner::with_world(scenario, world);
         if let Some(budget) = scenario::budget_s_from_env() {
             runner.set_deadline(budget);
             self.live_soak_until = Some(Instant::now() + budget);

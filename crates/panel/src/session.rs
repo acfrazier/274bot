@@ -1677,7 +1677,8 @@ impl Session {
         self.nav_live_force_layers = view.nav.show_nav_path;
         // NEVER assign sidecar_50 — it stays the operator knob.
         self.sync_sidecar_cadence();
-        let mut runner = scenario::ScenarioRunner::new(scenario);
+        let world = self.play.as_ref().and_then(|play| play.world());
+        let mut runner = scenario::ScenarioRunner::with_world(scenario, world);
         if let Some(budget) = scenario::budget_s_from_env() {
             runner.set_deadline(budget);
         }
