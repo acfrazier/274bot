@@ -1,0 +1,37 @@
+{
+  "host_commit": "c933f37c5bec108d752e28aa850c46bccd405d3b",
+  "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "platform": "linux",
+  "revision": "289",
+  "case": "alcher",
+  "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+  "binary_sha256": "b009254e1b13cbbd853aa17e34cc9603590202e2704648e84e6dd7590ec397c0",
+  "command": [
+    "/home/builder/274bot-campaign/multirevision-20260910/catalog-c933f37c/bin/catalog_boundary_live-c933f37c",
+    "catalog_boundary_live",
+    "--ignored",
+    "--exact",
+    "--nocapture"
+  ],
+  "environment": {
+    "LIVE": "1",
+    "BOT_CPU": "1",
+    "BOT_DEBUG": "1",
+    "RUST_BACKTRACE": "1",
+    "CATALOG_REVISION": "289",
+    "CATALOG_SCENARIO": "alcher",
+    "CATALOG_COMMIT": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "CATALOG_ROOT": "/home/builder/274bot-campaign/multirevision-20260910/catalog-c933f37c/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775",
+    "CATALOG_NAV_PACK": "/home/builder/274bot-campaign/multirevision-20260910/catalog-c933f37c/nav/289/274bot.navpack",
+    "CATALOG_NAV_FLAGS": "/home/builder/274bot-campaign/multirevision-20260910/catalog-c933f37c/nav/289/274bot.navflags",
+    "CATALOG_ENGINE_DIR": "/home/builder/274bot-campaign/multirevision-20260910/server-289"
+  },
+  "started_at": "2026-09-10T23:04:43.544889+00:00",
+  "elapsed_is_not_performance_measurement": true,
+  "pid": 16540,
+  "exit_code": 0,
+  "elapsed_seconds": 48.349,
+  "finished_at": "2026-09-10T23:05:31.893518+00:00",
+  "log_sha256": "61f5c769446c4e3fec70272654ea8bf2e355dde36e37368522c7bdf6c6a04efb",
+  "nav_sha256": "131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924"
+}

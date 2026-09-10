@@ -137,8 +137,9 @@ not current authority. Verify process identity before stopping an owned process.
 
 The operator requests programmatic server-derived data consumed through serde.
 Generator t_48d33ff0 has produced revisioned item JSON at c1eda4a6, with
-provenance corrections bc452cf9 and 3b53ce2c; its third same-card Grok 4.5
-review remains pending. Runtime consumer t_f1572cf0 waits for generator and
+provenance corrections bc452cf9 and 3b53ce2c. Actual Grok 4.5 run 1154,
+session 20260910_192748_d2767b, approved 3b53ce2c after independently
+verifying source/output hashes and byte-identical regeneration. Runtime consumer t_f1572cf0 waits for generator and
 startup approval. Briefs 26-29 and 34-40 require extending this pipeline for
 large game-fact tables; host policy stays separately owned. Quester parser
 feasibility was discussed against the existing native Quester plan; it remains

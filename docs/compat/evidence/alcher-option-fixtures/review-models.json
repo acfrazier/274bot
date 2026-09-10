@@ -1,0 +1,16 @@
+[
+  {
+    "run": 1144,
+    "session": "20260910_184543_1455d7",
+    "actual_model": "grok-4.5",
+    "verdict": "changes_requested"
+  },
+  {
+    "run": 1146,
+    "session": "20260910_185043_ba29fc",
+    "actual_model": "grok-4.5",
+    "verdict": "approved",
+    "candidate": "41d7a1e3dec688a538e49ae3dd801a216d55917d",
+    "client": "56d80272bcbda3eb1e22db096c1c5e21d3497de4"
+  }
+]

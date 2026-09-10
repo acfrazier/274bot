@@ -1,0 +1,3 @@
+
+running 1 test
+FAIL: catalog_boundary_live: registry path mismatch for Alcher: ledger C:\Users\Austen\274bot-campaign\multirevision-20260910\catalog-c933f37c\inputs\rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775\src/bot/scripts/Alcher/Alcher.ts, loader \\?\C:\Users\Austen\274bot-campaign\multirevision-20260910\catalog-c933f37c\inputs\rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775\src\bot\scripts\Alcher\Alcher.ts

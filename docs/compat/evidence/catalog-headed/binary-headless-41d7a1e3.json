@@ -1,0 +1,12 @@
+{
+  "host_commit": "41d7a1e3dec688a538e49ae3dd801a216d55917d",
+  "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "source_root": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-41d7a1e3-56d8027",
+  "binary": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-41d7a1e3",
+  "binary_sha256": "16c6e1b7d4d25c438eb711b328c66da0c7be924920f73060667d8788fc552e58",
+  "features": [
+    "memory-profile"
+  ],
+  "source_files_verified_after_build": 1175,
+  "exit_code": 0
+}

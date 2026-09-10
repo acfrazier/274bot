@@ -1,0 +1,9 @@
+   Compiling client v0.1.0 (C:\Users\Austen\274bot-campaign\multirevision-20260910\catalog-584d05bc\source\vendor\fr-client-rust\crates\client)
+   Compiling vault v0.1.0 (C:\Users\Austen\274bot-campaign\multirevision-20260910\catalog-584d05bc\source\crates\vault)
+   Compiling api v0.1.0 (C:\Users\Austen\274bot-campaign\multirevision-20260910\catalog-584d05bc\source\crates\api)
+   Compiling nav v0.1.0 (C:\Users\Austen\274bot-campaign\multirevision-20260910\catalog-584d05bc\source\crates\nav)
+   Compiling scenario v0.1.0 (C:\Users\Austen\274bot-campaign\multirevision-20260910\catalog-584d05bc\source\crates\scenario)
+   Compiling script v0.1.0 (C:\Users\Austen\274bot-campaign\multirevision-20260910\catalog-584d05bc\source\crates\script)
+   Compiling host v0.1.0 (C:\Users\Austen\274bot-campaign\multirevision-20260910\catalog-584d05bc\source\crates\host)
+   Compiling host-play v0.1.0 (C:\Users\Austen\274bot-campaign\multirevision-20260910\catalog-584d05bc\source\crates\host-play)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 28.71s
