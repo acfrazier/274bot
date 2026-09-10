@@ -11,11 +11,13 @@ use api::interact::{
     WireCommand, MAX_OPERATIONS, OFF_ISLAND_TELE, RUN_ORB_IFACE, RUN_ORB_OFF, SCENE_READY,
 };
 use api::obj_names::ItemDefView;
-use api::prot::{LegalSend, LEGAL_SEND};
+use api::prot::{legal_sends_for, LegalSend, Send, LEGAL_SEND};
 use api::snapshot::{
     GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, NpcView, WorldTile,
 };
-use client::client::{Client, ClientConfig, ClientNpc, ClientPlayer, MiniMenuAction};
+use client::client::{
+    Client, ClientConfig, ClientNpc, ClientPlayer, ClientRevision, MiniMenuAction,
+};
 use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::config::{LocType, NpcType, ObjType};
 use client::dash3d::ClientObj;
@@ -120,6 +122,207 @@ const ALL_CLIENT_PROTS: &[ClientProt] = &[
     ClientProt::MOVE_GAMECLICK,
 ];
 
+/// Named revision-289 rows copied from the pinned primary-source fixture
+/// (`client/tests/fixtures/revision_289/outbound_lengths.rs`).
+const ALL_CLIENT_PROTS_289: &[(ClientProt, LegalSend)] = &[
+    (ClientProt::NO_TIMEOUT, LegalSend { id: 181, length: 0 }),
+    (ClientProt::IDLE_TIMER, LegalSend { id: 145, length: 0 }),
+    (
+        ClientProt::EVENT_MOUSE_CLICK,
+        LegalSend { id: 224, length: 4 },
+    ),
+    (
+        ClientProt::EVENT_MOUSE_MOVE,
+        LegalSend {
+            id: 229,
+            length: -1,
+        },
+    ),
+    (
+        ClientProt::EVENT_APPLET_FOCUS,
+        LegalSend { id: 149, length: 1 },
+    ),
+    (
+        ClientProt::EVENT_CAMERA_POSITION,
+        LegalSend { id: 193, length: 4 },
+    ),
+    (
+        ClientProt::ANTICHEAT_OPLOGIC1,
+        LegalSend { id: 195, length: 4 },
+    ),
+    (
+        ClientProt::ANTICHEAT_OPLOGIC2,
+        LegalSend { id: 81, length: 2 },
+    ),
+    (
+        ClientProt::ANTICHEAT_OPLOGIC3,
+        LegalSend { id: 122, length: 4 },
+    ),
+    (
+        ClientProt::ANTICHEAT_OPLOGIC4,
+        LegalSend { id: 49, length: 1 },
+    ),
+    (
+        ClientProt::ANTICHEAT_OPLOGIC5,
+        LegalSend { id: 46, length: 1 },
+    ),
+    (
+        ClientProt::ANTICHEAT_OPLOGIC6,
+        LegalSend { id: 73, length: 2 },
+    ),
+    (
+        ClientProt::ANTICHEAT_OPLOGIC7,
+        LegalSend { id: 133, length: 4 },
+    ),
+    (
+        ClientProt::ANTICHEAT_OPLOGIC8,
+        LegalSend { id: 168, length: 1 },
+    ),
+    (
+        ClientProt::ANTICHEAT_OPLOGIC9,
+        LegalSend { id: 88, length: 3 },
+    ),
+    (
+        ClientProt::ANTICHEAT_CYCLELOGIC1,
+        LegalSend {
+            id: 130,
+            length: -1,
+        },
+    ),
+    (
+        ClientProt::ANTICHEAT_CYCLELOGIC2,
+        LegalSend {
+            id: 154,
+            length: -1,
+        },
+    ),
+    (
+        ClientProt::ANTICHEAT_CYCLELOGIC3,
+        LegalSend { id: 125, length: 1 },
+    ),
+    (
+        ClientProt::ANTICHEAT_CYCLELOGIC4,
+        LegalSend { id: 137, length: 1 },
+    ),
+    (
+        ClientProt::ANTICHEAT_CYCLELOGIC5,
+        LegalSend { id: 85, length: 0 },
+    ),
+    (
+        ClientProt::ANTICHEAT_CYCLELOGIC6,
+        LegalSend { id: 255, length: 1 },
+    ),
+    (
+        ClientProt::ANTICHEAT_CYCLELOGIC7,
+        LegalSend { id: 232, length: 0 },
+    ),
+    (ClientProt::OPOBJ1, LegalSend { id: 97, length: 6 }),
+    (ClientProt::OPOBJ2, LegalSend { id: 4, length: 6 }),
+    (ClientProt::OPOBJ3, LegalSend { id: 110, length: 6 }),
+    (ClientProt::OPOBJ4, LegalSend { id: 147, length: 6 }),
+    (ClientProt::OPOBJ5, LegalSend { id: 22, length: 6 }),
+    (ClientProt::OPOBJT, LegalSend { id: 241, length: 8 }),
+    (ClientProt::OPOBJU, LegalSend { id: 55, length: 12 }),
+    (ClientProt::OPNPC1, LegalSend { id: 252, length: 2 }),
+    (ClientProt::OPNPC2, LegalSend { id: 21, length: 2 }),
+    (ClientProt::OPNPC3, LegalSend { id: 178, length: 2 }),
+    (ClientProt::OPNPC4, LegalSend { id: 30, length: 2 }),
+    (ClientProt::OPNPC5, LegalSend { id: 247, length: 2 }),
+    (ClientProt::OPNPCT, LegalSend { id: 108, length: 4 }),
+    (ClientProt::OPNPCU, LegalSend { id: 160, length: 8 }),
+    (ClientProt::OPLOC1, LegalSend { id: 10, length: 6 }),
+    (ClientProt::OPLOC2, LegalSend { id: 45, length: 6 }),
+    (ClientProt::OPLOC3, LegalSend { id: 196, length: 6 }),
+    (ClientProt::OPLOC4, LegalSend { id: 53, length: 6 }),
+    (ClientProt::OPLOC5, LegalSend { id: 126, length: 6 }),
+    (ClientProt::OPLOCT, LegalSend { id: 218, length: 8 }),
+    (
+        ClientProt::OPLOCU,
+        LegalSend {
+            id: 184,
+            length: 12,
+        },
+    ),
+    (ClientProt::OPPLAYER1, LegalSend { id: 220, length: 2 }),
+    (ClientProt::OPPLAYER2, LegalSend { id: 51, length: 2 }),
+    (ClientProt::OPPLAYER3, LegalSend { id: 13, length: 2 }),
+    (ClientProt::OPPLAYER4, LegalSend { id: 189, length: 2 }),
+    (ClientProt::OPPLAYER5, LegalSend { id: 69, length: 2 }),
+    (ClientProt::OPPLAYERT, LegalSend { id: 138, length: 4 }),
+    (ClientProt::OPPLAYERU, LegalSend { id: 16, length: 8 }),
+    (ClientProt::OPHELD1, LegalSend { id: 76, length: 6 }),
+    (ClientProt::OPHELD2, LegalSend { id: 177, length: 6 }),
+    (ClientProt::OPHELD3, LegalSend { id: 40, length: 6 }),
+    (ClientProt::OPHELD4, LegalSend { id: 191, length: 6 }),
+    (ClientProt::OPHELD5, LegalSend { id: 79, length: 6 }),
+    (ClientProt::OPHELDT, LegalSend { id: 112, length: 8 }),
+    (
+        ClientProt::OPHELDU,
+        LegalSend {
+            id: 200,
+            length: 12,
+        },
+    ),
+    (ClientProt::INV_BUTTON1, LegalSend { id: 44, length: 6 }),
+    (ClientProt::INV_BUTTON2, LegalSend { id: 111, length: 6 }),
+    (ClientProt::INV_BUTTON3, LegalSend { id: 124, length: 6 }),
+    (ClientProt::INV_BUTTON4, LegalSend { id: 248, length: 6 }),
+    (ClientProt::INV_BUTTON5, LegalSend { id: 227, length: 6 }),
+    (ClientProt::IF_BUTTON, LegalSend { id: 86, length: 2 }),
+    (
+        ClientProt::RESUME_PAUSEBUTTON,
+        LegalSend { id: 166, length: 2 },
+    ),
+    (ClientProt::CLOSE_MODAL, LegalSend { id: 93, length: 0 }),
+    (
+        ClientProt::RESUME_P_COUNTDIALOG,
+        LegalSend { id: 180, length: 4 },
+    ),
+    (ClientProt::TUT_CLICKSIDE, LegalSend { id: 146, length: 1 }),
+    (
+        ClientProt::MAP_BUILD_COMPLETE,
+        LegalSend { id: 214, length: 0 },
+    ),
+    (ClientProt::MOVE_OPCLICK, LegalSend { id: 67, length: -1 }),
+    (ClientProt::REPORT_ABUSE, LegalSend { id: 94, length: 10 }),
+    (
+        ClientProt::MOVE_MINIMAPCLICK,
+        LegalSend {
+            id: 236,
+            length: -1,
+        },
+    ),
+    (ClientProt::INV_BUTTOND, LegalSend { id: 253, length: 7 }),
+    (ClientProt::IGNORELIST_DEL, LegalSend { id: 251, length: 8 }),
+    (ClientProt::IGNORELIST_ADD, LegalSend { id: 192, length: 8 }),
+    (ClientProt::IDK_SAVEDESIGN, LegalSend { id: 27, length: 13 }),
+    (ClientProt::CHAT_SETMODE, LegalSend { id: 161, length: 3 }),
+    (
+        ClientProt::MESSAGE_PRIVATE,
+        LegalSend {
+            id: 107,
+            length: -1,
+        },
+    ),
+    (ClientProt::FRIENDLIST_DEL, LegalSend { id: 203, length: 8 }),
+    (ClientProt::FRIENDLIST_ADD, LegalSend { id: 235, length: 8 }),
+    (ClientProt::CLIENT_CHEAT, LegalSend { id: 34, length: -1 }),
+    (
+        ClientProt::MESSAGE_PUBLIC,
+        LegalSend {
+            id: 156,
+            length: -1,
+        },
+    ),
+    (
+        ClientProt::MOVE_GAMECLICK,
+        LegalSend {
+            id: 234,
+            length: -1,
+        },
+    ),
+];
+
 /// The outbound writes a driver receives, as recorded by the stub.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum OutByte {
@@ -155,6 +358,8 @@ struct OutSink(Vec<OutByte>);
 /// Recording driver: captures every kernel call instead of sending.
 #[derive(Default)]
 struct Recorder {
+    revision: ClientRevision,
+    session_target: Option<client::BotTarget>,
     menus: Vec<(i32, i32, i32, i32, i32)>,
     actions: Vec<i32>,
     moves: Vec<WalkMove>,
@@ -172,6 +377,14 @@ struct Recorder {
 type WalkMove = (i32, i32, i32, i32, bool, i32, i32, i32, i32, i32, i32);
 
 impl Driver for Recorder {
+    fn revision(&self) -> ClientRevision {
+        self.revision
+    }
+
+    fn session_target(&self) -> client::BotTarget {
+        self.session_target.unwrap_or_else(client::bot_target)
+    }
+
     fn set_menu(&mut self, slot: i32, action: i32, a: i32, b: i32, c: i32) {
         self.menus.push((slot, action, a, b, c));
     }
@@ -379,6 +592,21 @@ fn cheat_allowed_only_on_local_target() {
     assert!(!cheat_allowed(client::BotTarget::Prod));
 }
 
+#[test]
+fn public_target_cheat_refuses_without_bytes_on_both_revisions() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let mut r = Recorder {
+            revision,
+            session_target: Some(client::BotTarget::Prod),
+            ..Recorder::default()
+        };
+        assert!(!cheat(&mut r, "ping"));
+        assert!(r.out.0.is_empty());
+        assert!(r.menus.is_empty());
+        assert!(r.moves.is_empty());
+    }
+}
+
 /// `mainland_hop` queues tele + setvar tutorial 1000 (no relog).
 #[test]
 fn mainland_hop_queues_tele_and_tutorial_setvar() {
@@ -429,6 +657,63 @@ fn client_driver_cheat_matches_java_client_cheat() {
     assert_eq!(c.out.data()[0] as i32, ClientProt::CLIENT_CHEAT.id & 0xff);
     assert_eq!(c.out.data()[1], 5);
     assert_eq!(&c.out.data()[2..7], b"ping\n");
+}
+
+/// Revision-289 direct host writers use the primary-source packet rows and
+/// preserve each existing payload builder.
+#[test]
+fn revision_289_direct_host_writers_match_primary_bytes() {
+    let mut c = Client::new_with_revision(cfg(), ClientRevision::R289);
+
+    assert!(Send::if_button(0x1234).write_for_revision(c.revision(), &mut c.out));
+    assert_eq!(&c.out.data()[..c.out.pos], &[86, 0x12, 0x34]);
+
+    c.out.pos = 0;
+    assert!(close_modal(&mut c));
+    assert_eq!(&c.out.data()[..c.out.pos], &[93]);
+
+    c.out.pos = 0;
+    assert!(answer_count(&mut c, 0x0102_0304));
+    assert_eq!(&c.out.data()[..c.out.pos], &[180, 1, 2, 3, 4]);
+
+    c.out.pos = 0;
+    assert!(cheat(&mut c, "ping"));
+    assert_eq!(
+        &c.out.data()[..c.out.pos],
+        &[34, 5, b'p', b'i', b'n', b'g', 10]
+    );
+}
+
+#[test]
+fn revision_289_forged_typed_send_refuses_before_any_mutation() {
+    let seed = [1, 2, 3, 4];
+    let mut c = Client::new_with_revision(cfg(), ClientRevision::R289);
+    c.out.random = Some(Isaac::new(&seed));
+    c.menu_action[0] = MiniMenuAction::OP_PLAYER2;
+    c.menu_param_a[0] = 7;
+    c.local_player = Some(ClientPlayer::at(5, 6));
+
+    assert!(!Send {
+        prot: ClientProt::OPNPC1,
+        value: 99,
+    }
+    .write_for_revision(c.revision(), &mut c.out));
+    assert_eq!(c.out.pos, 0, "no packet bytes");
+    assert_eq!(c.menu_action[0], MiniMenuAction::OP_PLAYER2);
+    assert_eq!(c.menu_param_a[0], 7);
+    assert_eq!(c.local_player.as_ref().unwrap().route_x[0], 5);
+    assert_eq!(c.local_player.as_ref().unwrap().route_z[0], 6);
+
+    assert!(Send::if_button(0x1234).write_for_revision(c.revision(), &mut c.out));
+    let actual = c.out.data()[..c.out.pos].to_vec();
+    let mut control = Client::new_with_revision(cfg(), ClientRevision::R289);
+    control.out.random = Some(Isaac::new(&seed));
+    assert!(Send::if_button(0x1234).write_for_revision(control.revision(), &mut control.out));
+    assert_eq!(
+        actual,
+        control.out.data()[..control.out.pos],
+        "the refusal must not consume ISAAC"
+    );
 }
 
 /// `close_modal` writes the CLOSE_MODAL opcode through the ISAAC sink.
@@ -564,6 +849,17 @@ fn legal_send_covers_every_client_prot() {
         legal_row(ClientProt::IF_BUTTON),
         LegalSend { id: 9, length: 2 }
     );
+}
+
+#[test]
+fn legal_send_rows_are_selected_for_revision_289() {
+    let rows = legal_sends_for(ClientRevision::R289);
+    assert_eq!(rows.len(), ALL_CLIENT_PROTS_289.len());
+    for (index, (named, expected)) in ALL_CLIENT_PROTS_289.iter().enumerate() {
+        assert_eq!(ALL_CLIENT_PROTS[index], *named, "fixture name at {index}");
+        assert_eq!(rows[index], *expected, "revision-289 row for {named:?}");
+    }
+    assert_eq!(legal_sends_for(ClientRevision::R274), LEGAL_SEND);
 }
 
 fn legal_row(prot: ClientProt) -> LegalSend {
@@ -862,7 +1158,11 @@ struct Scene {
 }
 
 fn configured_client() -> Client {
-    let mut c = Client::new(cfg());
+    configured_client_revision(ClientRevision::R274)
+}
+
+fn configured_client_revision(revision: ClientRevision) -> Client {
+    let mut c = Client::new_with_revision(cfg(), revision);
     c.ingame = true;
     c.scene_state = SCENE_READY;
     c.map_build_base_x = 3200;
@@ -871,11 +1171,15 @@ fn configured_client() -> Client {
 }
 
 fn scene() -> Scene {
+    scene_revision(ClientRevision::R274)
+}
+
+fn scene_revision(revision: ClientRevision) -> Scene {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("local addr");
     let stream =
         client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).expect("connect");
-    let mut c = configured_client();
+    let mut c = configured_client_revision(revision);
     c.stream = Some(stream);
     Scene {
         _listener: listener,
@@ -2711,6 +3015,161 @@ fn create_interactions_wires_snapshot_and_driver() {
 }
 
 #[test]
+fn revision_289_named_host_interactions_match_primary_bytes() {
+    let mut source = scene();
+    source.client.map_build_base_x = 0;
+    source.client.map_build_base_z = 0;
+    source.client.local_player = Some(ClientPlayer::at(5, 5));
+
+    plant_npc_type(&mut source.client, 9, "Goblin", &["Attack"]);
+    plant_npc(&mut source.client, 7, 9);
+
+    let mut other = ClientPlayer::at(5, 5);
+    other.name = Some("Other".into());
+    source.client.players[3] = Some(Box::new(other));
+    source.client.player_ids = vec![3];
+    source.client.player_count = 1;
+    source.client.player_op[1] = Some("Trade".into());
+
+    let typecode = 0x4000_0000 + (1 << 14) + 3 + (4 << 7);
+    source
+        .client
+        .world
+        .set_wall(0, 3, 4, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
+    {
+        let cache = Arc::get_mut(&mut source.client.cache).expect("sole cache owner");
+        while cache.locs.len() < 2 {
+            cache.locs.push(LocType::default());
+        }
+        cache.locs[1] = LocType {
+            id: 1,
+            name: "Door".into(),
+            op: vec![Some("Open".into()), None, None, None, None],
+            ..Default::default()
+        };
+        cache.objs.resize(5, ObjType::default());
+        cache.objs[3] = ObjType {
+            id: 3,
+            name: "Knife".into(),
+            iop: [Some("Use".into()), None, None, None, None],
+            ..Default::default()
+        };
+        cache.objs[4] = ObjType {
+            id: 4,
+            name: "Bones".into(),
+            op: [Some("Take".into()), None, None, None, None],
+            ..Default::default()
+        };
+    }
+    plant_inventory(&mut source.client);
+    let mut ground = LinkList::new();
+    ground.push(ClientObj::new(4, 1));
+    source.client.ground_obj[0][10][12] = Some(Box::new(ground));
+    plant_modal(&mut source.client);
+    let snap = rebuild(&mut source.client);
+
+    let mut npc_driver = Client::new_with_revision(cfg(), ClientRevision::R289);
+    npc_driver.ingame = true;
+    npc_driver.local_player = Some(ClientPlayer::at(5, 5));
+    npc_driver.npc[7] = Some(Box::new(ClientNpc::at(5, 5)));
+    assert!(matches!(
+        Interactions::new(&snap, &mut npc_driver)
+            .interact(OpTarget::Npc(&snap.npcs()[0]), ActionSpec::Operation(1),),
+        SendResult::Sent { .. }
+    ));
+    assert!(npc_driver.out.data()[..npc_driver.out.pos].ends_with(&[252, 0, 7]));
+
+    let mut player_driver = Client::new_with_revision(cfg(), ClientRevision::R289);
+    player_driver.ingame = true;
+    player_driver.local_player = Some(ClientPlayer::at(5, 5));
+    player_driver.players[3] = Some(Box::new(ClientPlayer::at(5, 5)));
+    assert!(matches!(
+        Interactions::new(&snap, &mut player_driver).interact(
+            OpTarget::Player(&snap.players()[0]),
+            ActionSpec::Operation(2),
+        ),
+        SendResult::Sent { .. }
+    ));
+    assert!(
+        player_driver.out.data()[..player_driver.out.pos].ends_with(&[51, 0, 3]),
+        "R289 OPPLAYER2 legitimately uses numeric id 51"
+    );
+
+    let loc = snap.locs().iter().find(|loc| loc.id == 1).unwrap();
+    let mut loc_driver = Client::new_with_revision(cfg(), ClientRevision::R289);
+    loc_driver.ingame = true;
+    loc_driver.local_player = Some(ClientPlayer::at(3, 4));
+    loc_driver
+        .world
+        .set_wall(0, 3, 4, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
+    assert!(matches!(
+        Interactions::new(&snap, &mut loc_driver)
+            .interact(OpTarget::Loc(loc), ActionSpec::Operation(1)),
+        SendResult::Sent { .. }
+    ));
+    assert!(loc_driver.out.data()[..loc_driver.out.pos].ends_with(&[10, 0, 3, 0, 4, 0, 1]));
+
+    let ground_item = snap
+        .ground_items()
+        .iter()
+        .find(|item| item.def.id == 4)
+        .unwrap();
+    let mut ground_driver = Client::new_with_revision(cfg(), ClientRevision::R289);
+    ground_driver.ingame = true;
+    ground_driver.local_player = Some(ClientPlayer::at(10, 12));
+    assert!(matches!(
+        Interactions::new(&snap, &mut ground_driver)
+            .interact(OpTarget::GroundItem(ground_item), ActionSpec::Operation(1),),
+        SendResult::Sent { .. }
+    ));
+    assert!(ground_driver.out.data()[..ground_driver.out.pos].ends_with(&[97, 0, 10, 0, 12, 0, 4]));
+
+    let held = snap
+        .inventory()
+        .iter()
+        .find(|item| item.def.id == 3)
+        .unwrap();
+    let mut item_driver = Client::new_with_revision(cfg(), ClientRevision::R289);
+    item_driver.ingame = true;
+    assert!(matches!(
+        Interactions::new(&snap, &mut item_driver)
+            .interact(OpTarget::Item(held), ActionSpec::Operation(1),),
+        SendResult::Sent { .. }
+    ));
+    assert!(item_driver.out.data()[..item_driver.out.pos].ends_with(&[76, 0, 3, 0, 0, 1, 244]));
+
+    let widget = snap
+        .widgets()
+        .iter()
+        .find(|widget| widget.component_id == 102)
+        .unwrap();
+    let mut widget_driver = Client::new_with_revision(cfg(), ClientRevision::R289);
+    widget_driver.ingame = true;
+    assert!(matches!(
+        Interactions::new(&snap, &mut widget_driver).press(widget),
+        SendResult::Sent { .. }
+    ));
+    assert_eq!(
+        &widget_driver.out.data()[..widget_driver.out.pos],
+        &[86, 0, 102]
+    );
+
+    let mut refused_driver = Client::new_with_revision(cfg(), ClientRevision::R289);
+    refused_driver.ingame = true;
+    assert!(matches!(
+        Interactions::new(&snap, &mut refused_driver).interact(
+            OpTarget::Npc(&snap.npcs()[0]),
+            ActionSpec::Operation(MAX_OPERATIONS + 1),
+        ),
+        SendResult::Refused {
+            reason: SendReason::InvalidAction,
+            ..
+        }
+    ));
+    assert_eq!(refused_driver.out.pos, 0);
+}
+
+#[test]
 fn pending_door_step_is_one_cardinal_packet_with_normal_gates() {
     let mut s = scene();
     s.client.local_player = Some(ClientPlayer::at(5, 5));
@@ -2769,6 +3228,28 @@ fn pending_door_step_is_one_cardinal_packet_with_normal_gates() {
         SendResult::Refused { .. }
     ));
     assert!(rec.out.0.is_empty());
+}
+
+#[test]
+fn revision_289_pending_door_step_matches_primary_bytes() {
+    let mut s = scene();
+    s.client.local_player = Some(ClientPlayer::at(5, 5));
+    let snap = rebuild(&mut s.client);
+    let mut driver = Client::new_with_revision(cfg(), ClientRevision::R289);
+    let tile = WorldTile {
+        x: 3205,
+        z: 3206,
+        level: 0,
+    };
+
+    assert!(matches!(
+        Interactions::new(&snap, &mut driver).pending_door_step(tile),
+        SendResult::Sent { .. }
+    ));
+    assert_eq!(
+        &driver.out.data()[..driver.out.pos],
+        &[234, 5, 0, 12, 133, 12, 134]
+    );
 }
 
 #[test]

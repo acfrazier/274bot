@@ -1,0 +1,22 @@
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/api)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.69s
+     Running tests/interact.rs (/Users/acfrazier/experiments/274bot/target/debug/deps/interact-f2fa6f9749d1a9ff)
+
+running 1 test
+
+thread 'revision_289_forged_typed_send_refuses_before_any_mutation' (3033807) panicked at crates/api/tests/interact.rs:550:5:
+assertion failed: !Send {
+            prot: ClientProt::OPNPC1,
+            value: 99,
+        }.write_for_revision(c.revision(), &mut c.out)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test revision_289_forged_typed_send_refuses_before_any_mutation ... FAILED
+
+failures:
+
+failures:
+    revision_289_forged_typed_send_refuses_before_any_mutation
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 61 filtered out; finished in 0.13s
+
+error: test failed, to rerun pass `-p api --test interact`

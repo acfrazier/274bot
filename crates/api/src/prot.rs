@@ -5,7 +5,7 @@
 //! raw opcode inject. Anticheat/event packets are `pub` in the table but
 //! unused by the kernel.
 
-use client::io::{ClientProt, Packet};
+use client::io::{map_client_prot, ClientProt, ClientRevision, Packet};
 
 /// One legal outbound packet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,6 +16,9 @@ pub struct LegalSend {
 
 macro_rules! legal_send {
     ($($name:ident),* $(,)?) => {
+        const NAMED_CLIENT_PROTS: &[ClientProt] = &[
+            $(ClientProt::$name),*
+        ];
         pub const LEGAL_SEND: &[LegalSend] = &[
             $(LegalSend {
                 id: ClientProt::$name.id,
@@ -110,6 +113,21 @@ legal_send!(
     MOVE_GAMECLICK,
 );
 
+/// Legal outbound rows selected by named packet identity for `revision`.
+/// The existing [`LEGAL_SEND`] constant remains the revision-274 table.
+pub fn legal_sends_for(revision: ClientRevision) -> Vec<LegalSend> {
+    NAMED_CLIENT_PROTS
+        .iter()
+        .map(|named| {
+            let selected = map_client_prot(revision, *named);
+            LegalSend {
+                id: selected.id,
+                length: selected.length,
+            }
+        })
+        .collect()
+}
+
 /// Outbound packet sink: ISAAC-encrypted opcode write plus plaintext
 /// payload. The client's `Packet` implements it; the kernel never writes a
 /// bare opcode outside this path.
@@ -182,6 +200,35 @@ impl Send {
             out.p4(self.value);
         }
     }
+
+    /// Append this supported typed send using the row selected for `revision`.
+    /// The original named packet selects the payload shape; a forged `Send`
+    /// is refused before the output cursor or ISAAC state can move.
+    pub fn write_for_revision(self, revision: ClientRevision, out: &mut dyn Out) -> bool {
+        enum Payload {
+            None,
+            P2,
+            P4,
+        }
+
+        let payload = if self.prot == ClientProt::IF_BUTTON {
+            Payload::P2
+        } else if self.prot == ClientProt::CLOSE_MODAL {
+            Payload::None
+        } else if self.prot == ClientProt::RESUME_P_COUNTDIALOG {
+            Payload::P4
+        } else {
+            return false;
+        };
+        let selected = map_client_prot(revision, self.prot);
+        out.p1_enc(selected.id);
+        match payload {
+            Payload::None => {}
+            Payload::P2 => out.p2(self.value),
+            Payload::P4 => out.p4(self.value),
+        }
+        true
+    }
 }
 
 /// One cardinal movement step. The server validates collision when it processes
@@ -198,5 +245,15 @@ impl WalkStep {
         out.p1(0);
         out.p2(self.x);
         out.p2(self.z);
+    }
+
+    /// Write this cardinal step using the session's named movement row.
+    pub fn write_for_revision(self, revision: ClientRevision, out: &mut dyn Out) -> bool {
+        out.p1_enc(map_client_prot(revision, ClientProt::MOVE_GAMECLICK).id);
+        out.p1(5); // one waypoint: control byte, absolute x and z
+        out.p1(0);
+        out.p2(self.x);
+        out.p2(self.z);
+        true
     }
 }

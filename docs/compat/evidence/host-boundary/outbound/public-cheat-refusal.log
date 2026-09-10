@@ -1,0 +1,10 @@
+    Blocking waiting for file lock on build directory
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/api)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.59s
+     Running tests/interact.rs (/Users/acfrazier/experiments/274bot/target/debug/deps/interact-f2fa6f9749d1a9ff)
+
+running 1 test
+test public_target_cheat_refuses_without_bytes_on_both_revisions ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 63 filtered out; finished in 0.00s
+
