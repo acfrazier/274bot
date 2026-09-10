@@ -1,0 +1,44 @@
+{
+  "outer_sha256": "41cd71c943b11c3c899fe66693cc98dbe83e2936007eb10698fa83f161b02681",
+  "member_count": 9999,
+  "uncompressed_bytes": 24948143,
+  "checks": [
+    {
+      "name": "concord_outer_sha",
+      "ok": true,
+      "detail": "41cd71c943b11c3c899fe66693cc98dbe83e2936007eb10698fa83f161b02681"
+    },
+    {
+      "name": "receipt_sha",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "receipt_files_count",
+      "ok": true,
+      "detail": 9999
+    },
+    {
+      "name": "all_9999_members_hashed",
+      "ok": true,
+      "detail": {
+        "present": 9999,
+        "missing": 0,
+        "mismatch": 0,
+        "mismatch_sample": [],
+        "missing_sample": []
+      }
+    },
+    {
+      "name": "concord_uncomp_24948143",
+      "ok": true,
+      "detail": 24948143
+    },
+    {
+      "name": "receipt_qualification_eq_q3",
+      "ok": true,
+      "detail": null
+    }
+  ],
+  "all_ok": true
+}

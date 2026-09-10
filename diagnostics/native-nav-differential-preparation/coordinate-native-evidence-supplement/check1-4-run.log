@@ -1,0 +1,42 @@
+PASS gen_outer_sha baa98510e1c4044bf817e9ceffddfcee4dcf3178ce4f94ba3d37d42e291c7524
+PASS gen_outer_bytes 18765670
+PASS manifest_outer_sha baa98510e1c4044bf817e9ceffddfcee4dcf3178ce4f94ba3d37d42e291c7524
+PASS manifest_unique_paths 13436
+PASS all_members_present {'missing_count': 0, 'extra_count': 0, 'missing_sample': [], 'extra_sample': []}
+PASS member_hash_mismatches []
+PASS member_count 13436
+PASS uncompressed_bytes 681424323
+PASS result_qualified 
+PASS result_input_count 12954
+PASS result_comparison {'bytes': 328120731, 'equal': True}
+PASS result_protocol {'bytes': 80987, 'equal': True}
+PASS result_output_hashes_vs_stream []
+PASS dense_eq_refined_probe 
+PASS dense_eq_refined_protocol 
+PASS corpus_len_12954 12954
+PASS corpus_all_hashes {'bad': 0, 'sample': []}
+PASS binding_sha_in_archive 
+PASS result_binding_sha 
+PASS launch_tools_vs_stream_and_git_a44a930 []
+PASS dense_commit_align {}
+PASS dense_admission_eff_manifest_sha {}
+PASS dense_admission_source_vs_archive {'bad': [], 'count': 221}
+PASS dense_orig_eff_path_sets_equal {'orig': 209, 'eff': 209}
+PASS dense_overlay_count {'overlays': []}
+PASS dense_every_entry_reconstructed {'failures': [], 'failure_count': 0, 'entry_count': 209}
+PASS dense_host_lib_vs_git {'bytes': 355293}
+PASS dense_host_spans_source_sha {}
+PASS dense_host_spans_pieces {}
+PASS dense_host_probe_from_spans {}
+PASS refined_commit_align {}
+PASS refined_admission_eff_manifest_sha {}
+PASS refined_admission_source_vs_archive {'bad': [], 'count': 222}
+PASS refined_orig_eff_path_sets_equal {'orig': 210, 'eff': 210}
+PASS refined_overlay_count {'overlays': ['crates/nav/src/collision.rs']}
+PASS refined_every_entry_reconstructed {'failures': [], 'failure_count': 0, 'entry_count': 210}
+PASS refined_host_lib_vs_git {'bytes': 358762}
+PASS refined_host_spans_source_sha {}
+PASS refined_host_spans_pieces {}
+PASS refined_host_probe_from_spans {}
+PASS source_counts_209_210 {'dense': 209, 'refined': 210}
+ALL_OK

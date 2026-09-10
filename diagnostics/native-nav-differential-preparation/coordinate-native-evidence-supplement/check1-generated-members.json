@@ -1,0 +1,264 @@
+{
+  "scope": "supplement checks 1+4 generated archive full member hash + git source reconstruction",
+  "archive": "diagnostics/native-nav-differential-preparation/coordinate-a44a930-native-01/coordinate-native-generated-01.tar.gz",
+  "outer_sha256": "baa98510e1c4044bf817e9ceffddfcee4dcf3178ce4f94ba3d37d42e291c7524",
+  "member_count": 13436,
+  "uncompressed_bytes": 681424323,
+  "payload_retained_under_16mib": 13425,
+  "checks": [
+    {
+      "name": "gen_outer_sha",
+      "ok": true,
+      "detail": "baa98510e1c4044bf817e9ceffddfcee4dcf3178ce4f94ba3d37d42e291c7524"
+    },
+    {
+      "name": "gen_outer_bytes",
+      "ok": true,
+      "detail": 18765670
+    },
+    {
+      "name": "manifest_outer_sha",
+      "ok": true,
+      "detail": "baa98510e1c4044bf817e9ceffddfcee4dcf3178ce4f94ba3d37d42e291c7524"
+    },
+    {
+      "name": "manifest_unique_paths",
+      "ok": true,
+      "detail": 13436
+    },
+    {
+      "name": "all_members_present",
+      "ok": true,
+      "detail": {
+        "missing_count": 0,
+        "extra_count": 0,
+        "missing_sample": [],
+        "extra_sample": []
+      }
+    },
+    {
+      "name": "member_hash_mismatches",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "member_count",
+      "ok": true,
+      "detail": 13436
+    },
+    {
+      "name": "uncompressed_bytes",
+      "ok": true,
+      "detail": 681424323
+    },
+    {
+      "name": "result_qualified",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "result_input_count",
+      "ok": true,
+      "detail": 12954
+    },
+    {
+      "name": "result_comparison",
+      "ok": true,
+      "detail": {
+        "bytes": 328120731,
+        "equal": true
+      }
+    },
+    {
+      "name": "result_protocol",
+      "ok": true,
+      "detail": {
+        "bytes": 80987,
+        "equal": true
+      }
+    },
+    {
+      "name": "result_output_hashes_vs_stream",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "dense_eq_refined_probe",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "dense_eq_refined_protocol",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "corpus_len_12954",
+      "ok": true,
+      "detail": 12954
+    },
+    {
+      "name": "corpus_all_hashes",
+      "ok": true,
+      "detail": {
+        "bad": 0,
+        "sample": []
+      }
+    },
+    {
+      "name": "binding_sha_in_archive",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "result_binding_sha",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "launch_tools_vs_stream_and_git_a44a930",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "dense_commit_align",
+      "ok": true,
+      "detail": {}
+    },
+    {
+      "name": "dense_admission_eff_manifest_sha",
+      "ok": true,
+      "detail": {}
+    },
+    {
+      "name": "dense_admission_source_vs_archive",
+      "ok": true,
+      "detail": {
+        "bad": [],
+        "count": 221
+      }
+    },
+    {
+      "name": "dense_orig_eff_path_sets_equal",
+      "ok": true,
+      "detail": {
+        "orig": 209,
+        "eff": 209
+      }
+    },
+    {
+      "name": "dense_overlay_count",
+      "ok": true,
+      "detail": {
+        "overlays": []
+      }
+    },
+    {
+      "name": "dense_every_entry_reconstructed",
+      "ok": true,
+      "detail": {
+        "failures": [],
+        "failure_count": 0,
+        "entry_count": 209
+      }
+    },
+    {
+      "name": "dense_host_lib_vs_git",
+      "ok": true,
+      "detail": {
+        "bytes": 355293
+      }
+    },
+    {
+      "name": "dense_host_spans_source_sha",
+      "ok": true,
+      "detail": {}
+    },
+    {
+      "name": "dense_host_spans_pieces",
+      "ok": true,
+      "detail": {}
+    },
+    {
+      "name": "dense_host_probe_from_spans",
+      "ok": true,
+      "detail": {}
+    },
+    {
+      "name": "refined_commit_align",
+      "ok": true,
+      "detail": {}
+    },
+    {
+      "name": "refined_admission_eff_manifest_sha",
+      "ok": true,
+      "detail": {}
+    },
+    {
+      "name": "refined_admission_source_vs_archive",
+      "ok": true,
+      "detail": {
+        "bad": [],
+        "count": 222
+      }
+    },
+    {
+      "name": "refined_orig_eff_path_sets_equal",
+      "ok": true,
+      "detail": {
+        "orig": 210,
+        "eff": 210
+      }
+    },
+    {
+      "name": "refined_overlay_count",
+      "ok": true,
+      "detail": {
+        "overlays": [
+          "crates/nav/src/collision.rs"
+        ]
+      }
+    },
+    {
+      "name": "refined_every_entry_reconstructed",
+      "ok": true,
+      "detail": {
+        "failures": [],
+        "failure_count": 0,
+        "entry_count": 210
+      }
+    },
+    {
+      "name": "refined_host_lib_vs_git",
+      "ok": true,
+      "detail": {
+        "bytes": 358762
+      }
+    },
+    {
+      "name": "refined_host_spans_source_sha",
+      "ok": true,
+      "detail": {}
+    },
+    {
+      "name": "refined_host_spans_pieces",
+      "ok": true,
+      "detail": {}
+    },
+    {
+      "name": "refined_host_probe_from_spans",
+      "ok": true,
+      "detail": {}
+    },
+    {
+      "name": "source_counts_209_210",
+      "ok": true,
+      "detail": {
+        "dense": 209,
+        "refined": 210
+      }
+    }
+  ],
+  "all_ok": true,
+  "elapsed_s": 6.985501050949097
+}

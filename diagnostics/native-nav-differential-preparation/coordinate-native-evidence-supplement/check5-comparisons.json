@@ -1,0 +1,279 @@
+{
+  "comparisons": [
+    {
+      "i": 0,
+      "variant": "clean",
+      "arm": "dense",
+      "fixture": "all-uniform",
+      "reference_arm": "dense",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    },
+    {
+      "i": 1,
+      "variant": "clean",
+      "arm": "dense",
+      "fixture": "all-dense",
+      "reference_arm": "dense",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    },
+    {
+      "i": 2,
+      "variant": "clean",
+      "arm": "dense",
+      "fixture": "gated",
+      "reference_arm": "dense",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    },
+    {
+      "i": 3,
+      "variant": "clean",
+      "arm": "refined",
+      "fixture": "all-uniform",
+      "reference_arm": "tiled",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    },
+    {
+      "i": 4,
+      "variant": "clean",
+      "arm": "refined",
+      "fixture": "all-dense",
+      "reference_arm": "tiled",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    },
+    {
+      "i": 5,
+      "variant": "clean",
+      "arm": "refined",
+      "fixture": "gated",
+      "reference_arm": "tiled",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    },
+    {
+      "i": 6,
+      "variant": "counting",
+      "arm": "dense",
+      "fixture": "all-uniform",
+      "reference_arm": "dense",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    },
+    {
+      "i": 7,
+      "variant": "counting",
+      "arm": "dense",
+      "fixture": "all-dense",
+      "reference_arm": "dense",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    },
+    {
+      "i": 8,
+      "variant": "counting",
+      "arm": "dense",
+      "fixture": "gated",
+      "reference_arm": "dense",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    },
+    {
+      "i": 9,
+      "variant": "counting",
+      "arm": "refined",
+      "fixture": "all-uniform",
+      "reference_arm": "tiled",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    },
+    {
+      "i": 10,
+      "variant": "counting",
+      "arm": "refined",
+      "fixture": "all-dense",
+      "reference_arm": "tiled",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    },
+    {
+      "i": 11,
+      "variant": "counting",
+      "arm": "refined",
+      "fixture": "gated",
+      "reference_arm": "tiled",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    }
+  ],
+  "compare_keys": [
+    "aggregate",
+    "logical_cells",
+    "lookup_checksum",
+    "narrow_checksum",
+    "layout",
+    "narrow_allocations",
+    "narrow_requested_bytes"
+  ],
+  "all_ok": true,
+  "count": 12
+}

@@ -1,0 +1,161 @@
+[
+  {
+    "path": "diagnostics/native-nav-differential-preparation/coordinate-a44a930-native-01/coordinate-native-generated-01-archive.json",
+    "bytes": 2174665,
+    "type": "dict",
+    "keys": [
+      "archive_sha256",
+      "bytes",
+      "files"
+    ],
+    "val_archive_sha256": "baa98510e1c4044bf817e9ceffddfcee4dcf3178ce4f94ba3d37d42e291c7524",
+    "val_bytes": 18765670,
+    "len_files": 13436,
+    "sample0_files_keys": [
+      "bytes",
+      "path",
+      "sha256"
+    ],
+    "sample0_files": {
+      "bytes": 48064,
+      "path": "audit.json",
+      "sha256": "3c045bf4d8550f81531a1daf079ac174d2ad5b96c44851f5dfa1f070c5a7649e"
+    }
+  },
+  {
+    "path": "diagnostics/native-nav-differential-preparation/coordinate-a44a930-native-01/manifest.json",
+    "bytes": 4009,
+    "type": "dict",
+    "keys": [
+      "tool_commit",
+      "scope",
+      "binding_sha256",
+      "files",
+      "archive_sha256"
+    ],
+    "val_tool_commit": "a44a930e0b2a8bf546458fb160daa061c22a3dce",
+    "val_scope": "fresh native generated coordinate differential qualification only; no private input or real release",
+    "val_binding_sha256": "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb",
+    "len_files": 20,
+    "sample0_files_keys": [
+      "path",
+      "bytes",
+      "sha256"
+    ],
+    "sample0_files": {
+      "path": "host/docs/memory/nav-tiled-differential/README.md",
+      "bytes": 11630,
+      "sha256": "2c5ab6704c5f6b07315b062d589a67cd0ac207f6978051053ba5d428b3069913"
+    },
+    "val_archive_sha256": "731a491be77cbff9e838cfe0b6cc4ed855235344e3bc1dd1e4393a23603ed633"
+  },
+  {
+    "path": "diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction-native-01/coordinate-concord-qualified-03.manifest.json",
+    "bytes": 2332436,
+    "type": "dict",
+    "keys": [
+      "scope",
+      "files"
+    ],
+    "val_scope": "native generated qualification only; includes immutable relocated builder/reference lineage; no private input or performance acceptance",
+    "len_files": 9999,
+    "sample0_files_keys": [
+      "path",
+      "bytes",
+      "sha256"
+    ],
+    "sample0_files": {
+      "path": "concord-payload-manifest.json",
+      "bytes": 189918,
+      "sha256": "37b90da867e995b27341ffd53483090ccef15fbf9638c8be9d52a2ccc2e745b5"
+    }
+  },
+  {
+    "path": "diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction-native-01/package-manifest.json",
+    "bytes": 189918,
+    "type": "dict",
+    "keys": [
+      "scope",
+      "tool_commit",
+      "source_run",
+      "destination_relative_run",
+      "files",
+      "candidate_id",
+      "source_binding_sha256",
+      "scheduler_fixture_correction"
+    ],
+    "val_scope": "same four immutable stage admissions and binaries; only generated scheduler fixture changes; fresh native qualification required; no private release",
+    "val_tool_commit": "113ce05525cd2bd27128bd3f420cafaad76c529c",
+    "val_source_run": "/home/builder/nav-coordinate-a44a930-native-01/host/docs/memory/nav-tiled-stage-a/coordinate-native-build-01",
+    "val_destination_relative_run": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01",
+    "len_files": 774,
+    "sample0_files_keys": [
+      "path",
+      "bytes",
+      "sha256"
+    ],
+    "sample0_files": {
+      "path": "builder-provenance/build-clean.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "val_candidate_id": "coordinate-ebf0f30",
+    "val_source_binding_sha256": "7b101c30bfd64c302815f9844fe27d3a52302feedaec58737726ab6a062491bb",
+    "keys_scheduler_fixture_correction": [
+      "record_path",
+      "record_sha256"
+    ]
+  },
+  {
+    "path": "diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction-native-01/review.json",
+    "bytes": 3321,
+    "type": "dict",
+    "keys": [
+      "session",
+      "completion"
+    ],
+    "keys_session": [
+      "id",
+      "model",
+      "billing_provider",
+      "ended_at"
+    ],
+    "keys_completion": [
+      "task_id",
+      "summary",
+      "metadata"
+    ]
+  },
+  {
+    "path": "diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction-native-01/package-receipt.json",
+    "bytes": 2080,
+    "type": "dict",
+    "keys": [
+      "verified",
+      "archive",
+      "sha256",
+      "bytes",
+      "files",
+      "uncompressed_bytes",
+      "fixture_correction"
+    ],
+    "val_verified": true,
+    "val_archive": "native-coordinate-113ce05-concord-01.tar.gz",
+    "val_sha256": "a00f35f77e740f7583c64c7f847ad95dcf4f09d219acf2cb8129b66877163b74",
+    "val_bytes": 5974224,
+    "val_files": 775,
+    "val_uncompressed_bytes": 19538600,
+    "keys_fixture_correction": [
+      "schema",
+      "base_archive_sha256",
+      "base_tool_commit",
+      "tool_commit",
+      "review_sha256",
+      "changed_path",
+      "old_sha256",
+      "new_sha256",
+      "unchanged_top_level_tools",
+      "scope"
+    ]
+  }
+]

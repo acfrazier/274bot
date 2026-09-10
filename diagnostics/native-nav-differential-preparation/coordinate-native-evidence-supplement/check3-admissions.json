@@ -1,0 +1,49 @@
+{
+  "admissions": {
+    "dense-clean": {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense-clean-admission.json",
+      "match_package_and_q_ref": true,
+      "binding_ok": true,
+      "source_count": 226,
+      "source_hash_failures": [],
+      "source_hash_fail_count": 0,
+      "executable_path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/target-clean/release/stage-a-probe",
+      "executable_ok": true,
+      "ok": true
+    },
+    "dense-counting": {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense-counting-admission.json",
+      "match_package_and_q_ref": true,
+      "binding_ok": true,
+      "source_count": 226,
+      "source_hash_failures": [],
+      "source_hash_fail_count": 0,
+      "executable_path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/target-counting/release/stage-a-probe",
+      "executable_ok": true,
+      "ok": true
+    },
+    "refined-clean": {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined-clean-admission.json",
+      "match_package_and_q_ref": true,
+      "binding_ok": true,
+      "source_count": 227,
+      "source_hash_failures": [],
+      "source_hash_fail_count": 0,
+      "executable_path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/target-clean/release/stage-a-probe",
+      "executable_ok": true,
+      "ok": true
+    },
+    "refined-counting": {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined-counting-admission.json",
+      "match_package_and_q_ref": true,
+      "binding_ok": true,
+      "source_count": 227,
+      "source_hash_failures": [],
+      "source_hash_fail_count": 0,
+      "executable_path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/target-counting/release/stage-a-probe",
+      "executable_ok": true,
+      "ok": true
+    }
+  },
+  "all_ok": true
+}

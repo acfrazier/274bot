@@ -1,0 +1,65 @@
+PASS concord_outer_sha 41cd71c943b11c3c899fe66693cc98dbe83e2936007eb10698fa83f161b02681
+PASS receipt_sha 
+PASS manifest_unique_9999 9999
+PASS receipt_files_count 9999
+PASS all_9999_members_hashed {'present': 9999, 'missing': 0, 'mismatch': 0, 'mismatch_sample': [], 'missing_sample': []}
+PASS concord_uncomp_24948143 24948143
+PASS q_qualified 
+PASS q_native_hard_as 
+PASS q_smoke_executed 
+PASS q_candidate 
+PASS q_phase_GQ 
+PASS binding_in_archive 
+PASS tools_vs_git_113ce05 []
+PASS guard_ref_.err 
+PASS guard_ref_.out 
+PASS guard_ref_.receipt.json 
+PASS guards_rc0 
+PASS guards_as_active 
+PASS guards_limits {'address': 4294967296, 'cpu': 300, 'file_size': 1048576, 'output': 1048576, 'rss': 536870912, 'wall': 360}
+PASS guards_ran_29 
+PASS guards_OK 
+PASS guards_no_skipped 
+PASS smoke_completed_4 {'completed': 4, 'status': 'complete'}
+PASS smoke_order ['000-1-1-dense', '001-1-1-refined', '002-1-2-refined', '003-1-2-dense']
+PASS smoke_record_hashes []
+PASS gq_receipts_rc0 []
+PASS gq_receipt_count_nonzero 12
+PASS package_files_774 774
+PASS package_binding 
+PASS package_tool_commit 
+PASS admissions_count_4 ['dense-clean', 'dense-counting', 'refined-clean', 'refined-counting']
+PASS admission_dense-clean_package_bytes {'pkg': 'a7b41eca371e41662c02c5266f24e0ee5ff72a6fab90246e35af16120e714f56', 'arc': 'a7b41eca371e41662c02c5266f24e0ee5ff72a6fab90246e35af16120e714f56', 'q': 'a7b41eca371e41662c02c5266f24e0ee5ff72a6fab90246e35af16120e714f56'}
+PASS admission_dense-clean_binding 
+PASS admission_dense-clean_all_source_hashes {'count': 226, 'bad': 0}
+PASS admission_dense-clean_executable ['host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/target-clean/release/stage-a-probe']
+PASS admission_dense-counting_package_bytes {'pkg': 'b94f3f2a3a4daa103429d843dcb6b9c78ec077b2f9396c90c68a2020bcd75319', 'arc': 'b94f3f2a3a4daa103429d843dcb6b9c78ec077b2f9396c90c68a2020bcd75319', 'q': 'b94f3f2a3a4daa103429d843dcb6b9c78ec077b2f9396c90c68a2020bcd75319'}
+PASS admission_dense-counting_binding 
+PASS admission_dense-counting_all_source_hashes {'count': 226, 'bad': 0}
+PASS admission_dense-counting_executable ['host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/target-counting/release/stage-a-probe']
+PASS admission_refined-clean_package_bytes {'pkg': '73366a7e5a2c8545fcde246bb0205ee01dda436d53acee0347d8a641a2a91225', 'arc': '73366a7e5a2c8545fcde246bb0205ee01dda436d53acee0347d8a641a2a91225', 'q': '73366a7e5a2c8545fcde246bb0205ee01dda436d53acee0347d8a641a2a91225'}
+PASS admission_refined-clean_binding 
+PASS admission_refined-clean_all_source_hashes {'count': 227, 'bad': 0}
+PASS admission_refined-clean_executable ['host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/target-clean/release/stage-a-probe']
+PASS admission_refined-counting_package_bytes {'pkg': 'd5346685e0bb4e7f2e7b9e5b1bc790b60a0f1b585ec9161128a908147e94518d', 'arc': 'd5346685e0bb4e7f2e7b9e5b1bc790b60a0f1b585ec9161128a908147e94518d', 'q': 'd5346685e0bb4e7f2e7b9e5b1bc790b60a0f1b585ec9161128a908147e94518d'}
+PASS admission_refined-counting_binding 
+PASS admission_refined-counting_all_source_hashes {'count': 227, 'bad': 0}
+PASS admission_refined-counting_executable ['host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/target-counting/release/stage-a-probe']
+PASS all_four_admissions_independent {'dense-clean': True, 'dense-counting': True, 'refined-clean': True, 'refined-counting': True}
+PASS comparisons_count_12 12
+PASS comp_0_clean_dense_all-uniform {'sha_new_ok': True, 'sha_old_ok': True, 'fields': {'aggregate': True, 'logical_cells': True, 'lookup_checksum': True, 'narrow_checksum': True, 'layout': True, 'narrow_allocations': True, 'narrow_requested_bytes': True}, 'raw_ok': True, 'narrow_zero': True}
+PASS comp_1_clean_dense_all-dense {'sha_new_ok': True, 'sha_old_ok': True, 'fields': {'aggregate': True, 'logical_cells': True, 'lookup_checksum': True, 'narrow_checksum': True, 'layout': True, 'narrow_allocations': True, 'narrow_requested_bytes': True}, 'raw_ok': True, 'narrow_zero': True}
+PASS comp_2_clean_dense_gated {'sha_new_ok': True, 'sha_old_ok': True, 'fields': {'aggregate': True, 'logical_cells': True, 'lookup_checksum': True, 'narrow_checksum': True, 'layout': True, 'narrow_allocations': True, 'narrow_requested_bytes': True}, 'raw_ok': True, 'narrow_zero': True}
+PASS comp_3_clean_refined_all-uniform {'sha_new_ok': True, 'sha_old_ok': True, 'fields': {'aggregate': True, 'logical_cells': True, 'lookup_checksum': True, 'narrow_checksum': True, 'layout': True, 'narrow_allocations': True, 'narrow_requested_bytes': True}, 'raw_ok': True, 'narrow_zero': True}
+PASS comp_4_clean_refined_all-dense {'sha_new_ok': True, 'sha_old_ok': True, 'fields': {'aggregate': True, 'logical_cells': True, 'lookup_checksum': True, 'narrow_checksum': True, 'layout': True, 'narrow_allocations': True, 'narrow_requested_bytes': True}, 'raw_ok': True, 'narrow_zero': True}
+PASS comp_5_clean_refined_gated {'sha_new_ok': True, 'sha_old_ok': True, 'fields': {'aggregate': True, 'logical_cells': True, 'lookup_checksum': True, 'narrow_checksum': True, 'layout': True, 'narrow_allocations': True, 'narrow_requested_bytes': True}, 'raw_ok': True, 'narrow_zero': True}
+PASS comp_6_counting_dense_all-uniform {'sha_new_ok': True, 'sha_old_ok': True, 'fields': {'aggregate': True, 'logical_cells': True, 'lookup_checksum': True, 'narrow_checksum': True, 'layout': True, 'narrow_allocations': True, 'narrow_requested_bytes': True}, 'raw_ok': True, 'narrow_zero': True}
+PASS comp_7_counting_dense_all-dense {'sha_new_ok': True, 'sha_old_ok': True, 'fields': {'aggregate': True, 'logical_cells': True, 'lookup_checksum': True, 'narrow_checksum': True, 'layout': True, 'narrow_allocations': True, 'narrow_requested_bytes': True}, 'raw_ok': True, 'narrow_zero': True}
+PASS comp_8_counting_dense_gated {'sha_new_ok': True, 'sha_old_ok': True, 'fields': {'aggregate': True, 'logical_cells': True, 'lookup_checksum': True, 'narrow_checksum': True, 'layout': True, 'narrow_allocations': True, 'narrow_requested_bytes': True}, 'raw_ok': True, 'narrow_zero': True}
+PASS comp_9_counting_refined_all-uniform {'sha_new_ok': True, 'sha_old_ok': True, 'fields': {'aggregate': True, 'logical_cells': True, 'lookup_checksum': True, 'narrow_checksum': True, 'layout': True, 'narrow_allocations': True, 'narrow_requested_bytes': True}, 'raw_ok': True, 'narrow_zero': True}
+PASS comp_10_counting_refined_all-dense {'sha_new_ok': True, 'sha_old_ok': True, 'fields': {'aggregate': True, 'logical_cells': True, 'lookup_checksum': True, 'narrow_checksum': True, 'layout': True, 'narrow_allocations': True, 'narrow_requested_bytes': True}, 'raw_ok': True, 'narrow_zero': True}
+PASS comp_11_counting_refined_gated {'sha_new_ok': True, 'sha_old_ok': True, 'fields': {'aggregate': True, 'logical_cells': True, 'lookup_checksum': True, 'narrow_checksum': True, 'layout': True, 'narrow_allocations': True, 'narrow_requested_bytes': True}, 'raw_ok': True, 'narrow_zero': True}
+PASS all_12_comparisons_fields {'ok_count': 12}
+PASS progress_5_rc0 [{'name': 'guards', 'rc': 0}, {'name': 'generated-clean', 'rc': 0}, {'name': 'generated-counting', 'rc': 0}, {'name': 'integration', 'rc': 0}, {'name': 'scheduler', 'rc': 0}]
+PASS receipt_qualification_eq_q3 
+ALL_OK

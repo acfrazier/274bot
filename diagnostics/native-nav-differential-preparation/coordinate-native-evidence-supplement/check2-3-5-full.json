@@ -1,0 +1,901 @@
+{
+  "scope": "supplement checks 2+3+5 concord members, admissions, 12 comparisons",
+  "archive": "diagnostics/nav-stage-a-native-preparation/scheduler-fixture-correction-native-01/coordinate-concord-qualified-03.tar.gz",
+  "outer_sha256": "41cd71c943b11c3c899fe66693cc98dbe83e2936007eb10698fa83f161b02681",
+  "member_count": 9999,
+  "uncompressed_bytes": 24948143,
+  "admissions": {
+    "dense-clean": {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense-clean-admission.json",
+      "match_package_and_q_ref": true,
+      "binding_ok": true,
+      "source_count": 226,
+      "source_hash_failures": [],
+      "source_hash_fail_count": 0,
+      "executable_path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/target-clean/release/stage-a-probe",
+      "executable_ok": true,
+      "ok": true
+    },
+    "dense-counting": {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense-counting-admission.json",
+      "match_package_and_q_ref": true,
+      "binding_ok": true,
+      "source_count": 226,
+      "source_hash_failures": [],
+      "source_hash_fail_count": 0,
+      "executable_path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/target-counting/release/stage-a-probe",
+      "executable_ok": true,
+      "ok": true
+    },
+    "refined-clean": {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined-clean-admission.json",
+      "match_package_and_q_ref": true,
+      "binding_ok": true,
+      "source_count": 227,
+      "source_hash_failures": [],
+      "source_hash_fail_count": 0,
+      "executable_path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/target-clean/release/stage-a-probe",
+      "executable_ok": true,
+      "ok": true
+    },
+    "refined-counting": {
+      "path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined-counting-admission.json",
+      "match_package_and_q_ref": true,
+      "binding_ok": true,
+      "source_count": 227,
+      "source_hash_failures": [],
+      "source_hash_fail_count": 0,
+      "executable_path": "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/target-counting/release/stage-a-probe",
+      "executable_ok": true,
+      "ok": true
+    }
+  },
+  "comparisons": [
+    {
+      "i": 0,
+      "variant": "clean",
+      "arm": "dense",
+      "fixture": "all-uniform",
+      "reference_arm": "dense",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    },
+    {
+      "i": 1,
+      "variant": "clean",
+      "arm": "dense",
+      "fixture": "all-dense",
+      "reference_arm": "dense",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    },
+    {
+      "i": 2,
+      "variant": "clean",
+      "arm": "dense",
+      "fixture": "gated",
+      "reference_arm": "dense",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    },
+    {
+      "i": 3,
+      "variant": "clean",
+      "arm": "refined",
+      "fixture": "all-uniform",
+      "reference_arm": "tiled",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    },
+    {
+      "i": 4,
+      "variant": "clean",
+      "arm": "refined",
+      "fixture": "all-dense",
+      "reference_arm": "tiled",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    },
+    {
+      "i": 5,
+      "variant": "clean",
+      "arm": "refined",
+      "fixture": "gated",
+      "reference_arm": "tiled",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    },
+    {
+      "i": 6,
+      "variant": "counting",
+      "arm": "dense",
+      "fixture": "all-uniform",
+      "reference_arm": "dense",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    },
+    {
+      "i": 7,
+      "variant": "counting",
+      "arm": "dense",
+      "fixture": "all-dense",
+      "reference_arm": "dense",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    },
+    {
+      "i": 8,
+      "variant": "counting",
+      "arm": "dense",
+      "fixture": "gated",
+      "reference_arm": "dense",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    },
+    {
+      "i": 9,
+      "variant": "counting",
+      "arm": "refined",
+      "fixture": "all-uniform",
+      "reference_arm": "tiled",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    },
+    {
+      "i": 10,
+      "variant": "counting",
+      "arm": "refined",
+      "fixture": "all-dense",
+      "reference_arm": "tiled",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    },
+    {
+      "i": 11,
+      "variant": "counting",
+      "arm": "refined",
+      "fixture": "gated",
+      "reference_arm": "tiled",
+      "sha_new_ok": true,
+      "sha_old_ok": true,
+      "field_eq": {
+        "aggregate": true,
+        "logical_cells": true,
+        "lookup_checksum": true,
+        "narrow_checksum": true,
+        "layout": true,
+        "narrow_allocations": true,
+        "narrow_requested_bytes": true
+      },
+      "raw_calls": 840,
+      "raw_len": 840,
+      "narrow_zero": true,
+      "ok": true
+    }
+  ],
+  "checks": [
+    {
+      "name": "concord_outer_sha",
+      "ok": true,
+      "detail": "41cd71c943b11c3c899fe66693cc98dbe83e2936007eb10698fa83f161b02681"
+    },
+    {
+      "name": "receipt_sha",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "manifest_unique_9999",
+      "ok": true,
+      "detail": 9999
+    },
+    {
+      "name": "receipt_files_count",
+      "ok": true,
+      "detail": 9999
+    },
+    {
+      "name": "all_9999_members_hashed",
+      "ok": true,
+      "detail": {
+        "present": 9999,
+        "missing": 0,
+        "mismatch": 0,
+        "mismatch_sample": [],
+        "missing_sample": []
+      }
+    },
+    {
+      "name": "concord_uncomp_24948143",
+      "ok": true,
+      "detail": 24948143
+    },
+    {
+      "name": "q_qualified",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "q_native_hard_as",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "q_smoke_executed",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "q_candidate",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "q_phase_GQ",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "binding_in_archive",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "tools_vs_git_113ce05",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "guard_ref_.err",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "guard_ref_.out",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "guard_ref_.receipt.json",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "guards_rc0",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "guards_as_active",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "guards_limits",
+      "ok": true,
+      "detail": {
+        "address": 4294967296,
+        "cpu": 300,
+        "file_size": 1048576,
+        "output": 1048576,
+        "rss": 536870912,
+        "wall": 360
+      }
+    },
+    {
+      "name": "guards_ran_29",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "guards_OK",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "guards_no_skipped",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "smoke_completed_4",
+      "ok": true,
+      "detail": {
+        "completed": 4,
+        "status": "complete"
+      }
+    },
+    {
+      "name": "smoke_order",
+      "ok": true,
+      "detail": [
+        "000-1-1-dense",
+        "001-1-1-refined",
+        "002-1-2-refined",
+        "003-1-2-dense"
+      ]
+    },
+    {
+      "name": "smoke_record_hashes",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "gq_receipts_rc0",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "gq_receipt_count_nonzero",
+      "ok": true,
+      "detail": 12
+    },
+    {
+      "name": "package_files_774",
+      "ok": true,
+      "detail": 774
+    },
+    {
+      "name": "package_binding",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "package_tool_commit",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "admissions_count_4",
+      "ok": true,
+      "detail": [
+        "dense-clean",
+        "dense-counting",
+        "refined-clean",
+        "refined-counting"
+      ]
+    },
+    {
+      "name": "admission_dense-clean_package_bytes",
+      "ok": true,
+      "detail": {
+        "pkg": "a7b41eca371e41662c02c5266f24e0ee5ff72a6fab90246e35af16120e714f56",
+        "arc": "a7b41eca371e41662c02c5266f24e0ee5ff72a6fab90246e35af16120e714f56",
+        "q": "a7b41eca371e41662c02c5266f24e0ee5ff72a6fab90246e35af16120e714f56"
+      }
+    },
+    {
+      "name": "admission_dense-clean_binding",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "admission_dense-clean_all_source_hashes",
+      "ok": true,
+      "detail": {
+        "count": 226,
+        "bad": 0
+      }
+    },
+    {
+      "name": "admission_dense-clean_executable",
+      "ok": true,
+      "detail": [
+        "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/target-clean/release/stage-a-probe"
+      ]
+    },
+    {
+      "name": "admission_dense-counting_package_bytes",
+      "ok": true,
+      "detail": {
+        "pkg": "b94f3f2a3a4daa103429d843dcb6b9c78ec077b2f9396c90c68a2020bcd75319",
+        "arc": "b94f3f2a3a4daa103429d843dcb6b9c78ec077b2f9396c90c68a2020bcd75319",
+        "q": "b94f3f2a3a4daa103429d843dcb6b9c78ec077b2f9396c90c68a2020bcd75319"
+      }
+    },
+    {
+      "name": "admission_dense-counting_binding",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "admission_dense-counting_all_source_hashes",
+      "ok": true,
+      "detail": {
+        "count": 226,
+        "bad": 0
+      }
+    },
+    {
+      "name": "admission_dense-counting_executable",
+      "ok": true,
+      "detail": [
+        "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/dense/target-counting/release/stage-a-probe"
+      ]
+    },
+    {
+      "name": "admission_refined-clean_package_bytes",
+      "ok": true,
+      "detail": {
+        "pkg": "73366a7e5a2c8545fcde246bb0205ee01dda436d53acee0347d8a641a2a91225",
+        "arc": "73366a7e5a2c8545fcde246bb0205ee01dda436d53acee0347d8a641a2a91225",
+        "q": "73366a7e5a2c8545fcde246bb0205ee01dda436d53acee0347d8a641a2a91225"
+      }
+    },
+    {
+      "name": "admission_refined-clean_binding",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "admission_refined-clean_all_source_hashes",
+      "ok": true,
+      "detail": {
+        "count": 227,
+        "bad": 0
+      }
+    },
+    {
+      "name": "admission_refined-clean_executable",
+      "ok": true,
+      "detail": [
+        "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/target-clean/release/stage-a-probe"
+      ]
+    },
+    {
+      "name": "admission_refined-counting_package_bytes",
+      "ok": true,
+      "detail": {
+        "pkg": "d5346685e0bb4e7f2e7b9e5b1bc790b60a0f1b585ec9161128a908147e94518d",
+        "arc": "d5346685e0bb4e7f2e7b9e5b1bc790b60a0f1b585ec9161128a908147e94518d",
+        "q": "d5346685e0bb4e7f2e7b9e5b1bc790b60a0f1b585ec9161128a908147e94518d"
+      }
+    },
+    {
+      "name": "admission_refined-counting_binding",
+      "ok": true,
+      "detail": null
+    },
+    {
+      "name": "admission_refined-counting_all_source_hashes",
+      "ok": true,
+      "detail": {
+        "count": 227,
+        "bad": 0
+      }
+    },
+    {
+      "name": "admission_refined-counting_executable",
+      "ok": true,
+      "detail": [
+        "host/docs/memory/nav-tiled-stage-a/coordinate-concord-run-01/refined/target-counting/release/stage-a-probe"
+      ]
+    },
+    {
+      "name": "all_four_admissions_independent",
+      "ok": true,
+      "detail": {
+        "dense-clean": true,
+        "dense-counting": true,
+        "refined-clean": true,
+        "refined-counting": true
+      }
+    },
+    {
+      "name": "comparisons_count_12",
+      "ok": true,
+      "detail": 12
+    },
+    {
+      "name": "comp_0_clean_dense_all-uniform",
+      "ok": true,
+      "detail": {
+        "sha_new_ok": true,
+        "sha_old_ok": true,
+        "fields": {
+          "aggregate": true,
+          "logical_cells": true,
+          "lookup_checksum": true,
+          "narrow_checksum": true,
+          "layout": true,
+          "narrow_allocations": true,
+          "narrow_requested_bytes": true
+        },
+        "raw_ok": true,
+        "narrow_zero": true
+      }
+    },
+    {
+      "name": "comp_1_clean_dense_all-dense",
+      "ok": true,
+      "detail": {
+        "sha_new_ok": true,
+        "sha_old_ok": true,
+        "fields": {
+          "aggregate": true,
+          "logical_cells": true,
+          "lookup_checksum": true,
+          "narrow_checksum": true,
+          "layout": true,
+          "narrow_allocations": true,
+          "narrow_requested_bytes": true
+        },
+        "raw_ok": true,
+        "narrow_zero": true
+      }
+    },
+    {
+      "name": "comp_2_clean_dense_gated",
+      "ok": true,
+      "detail": {
+        "sha_new_ok": true,
+        "sha_old_ok": true,
+        "fields": {
+          "aggregate": true,
+          "logical_cells": true,
+          "lookup_checksum": true,
+          "narrow_checksum": true,
+          "layout": true,
+          "narrow_allocations": true,
+          "narrow_requested_bytes": true
+        },
+        "raw_ok": true,
+        "narrow_zero": true
+      }
+    },
+    {
+      "name": "comp_3_clean_refined_all-uniform",
+      "ok": true,
+      "detail": {
+        "sha_new_ok": true,
+        "sha_old_ok": true,
+        "fields": {
+          "aggregate": true,
+          "logical_cells": true,
+          "lookup_checksum": true,
+          "narrow_checksum": true,
+          "layout": true,
+          "narrow_allocations": true,
+          "narrow_requested_bytes": true
+        },
+        "raw_ok": true,
+        "narrow_zero": true
+      }
+    },
+    {
+      "name": "comp_4_clean_refined_all-dense",
+      "ok": true,
+      "detail": {
+        "sha_new_ok": true,
+        "sha_old_ok": true,
+        "fields": {
+          "aggregate": true,
+          "logical_cells": true,
+          "lookup_checksum": true,
+          "narrow_checksum": true,
+          "layout": true,
+          "narrow_allocations": true,
+          "narrow_requested_bytes": true
+        },
+        "raw_ok": true,
+        "narrow_zero": true
+      }
+    },
+    {
+      "name": "comp_5_clean_refined_gated",
+      "ok": true,
+      "detail": {
+        "sha_new_ok": true,
+        "sha_old_ok": true,
+        "fields": {
+          "aggregate": true,
+          "logical_cells": true,
+          "lookup_checksum": true,
+          "narrow_checksum": true,
+          "layout": true,
+          "narrow_allocations": true,
+          "narrow_requested_bytes": true
+        },
+        "raw_ok": true,
+        "narrow_zero": true
+      }
+    },
+    {
+      "name": "comp_6_counting_dense_all-uniform",
+      "ok": true,
+      "detail": {
+        "sha_new_ok": true,
+        "sha_old_ok": true,
+        "fields": {
+          "aggregate": true,
+          "logical_cells": true,
+          "lookup_checksum": true,
+          "narrow_checksum": true,
+          "layout": true,
+          "narrow_allocations": true,
+          "narrow_requested_bytes": true
+        },
+        "raw_ok": true,
+        "narrow_zero": true
+      }
+    },
+    {
+      "name": "comp_7_counting_dense_all-dense",
+      "ok": true,
+      "detail": {
+        "sha_new_ok": true,
+        "sha_old_ok": true,
+        "fields": {
+          "aggregate": true,
+          "logical_cells": true,
+          "lookup_checksum": true,
+          "narrow_checksum": true,
+          "layout": true,
+          "narrow_allocations": true,
+          "narrow_requested_bytes": true
+        },
+        "raw_ok": true,
+        "narrow_zero": true
+      }
+    },
+    {
+      "name": "comp_8_counting_dense_gated",
+      "ok": true,
+      "detail": {
+        "sha_new_ok": true,
+        "sha_old_ok": true,
+        "fields": {
+          "aggregate": true,
+          "logical_cells": true,
+          "lookup_checksum": true,
+          "narrow_checksum": true,
+          "layout": true,
+          "narrow_allocations": true,
+          "narrow_requested_bytes": true
+        },
+        "raw_ok": true,
+        "narrow_zero": true
+      }
+    },
+    {
+      "name": "comp_9_counting_refined_all-uniform",
+      "ok": true,
+      "detail": {
+        "sha_new_ok": true,
+        "sha_old_ok": true,
+        "fields": {
+          "aggregate": true,
+          "logical_cells": true,
+          "lookup_checksum": true,
+          "narrow_checksum": true,
+          "layout": true,
+          "narrow_allocations": true,
+          "narrow_requested_bytes": true
+        },
+        "raw_ok": true,
+        "narrow_zero": true
+      }
+    },
+    {
+      "name": "comp_10_counting_refined_all-dense",
+      "ok": true,
+      "detail": {
+        "sha_new_ok": true,
+        "sha_old_ok": true,
+        "fields": {
+          "aggregate": true,
+          "logical_cells": true,
+          "lookup_checksum": true,
+          "narrow_checksum": true,
+          "layout": true,
+          "narrow_allocations": true,
+          "narrow_requested_bytes": true
+        },
+        "raw_ok": true,
+        "narrow_zero": true
+      }
+    },
+    {
+      "name": "comp_11_counting_refined_gated",
+      "ok": true,
+      "detail": {
+        "sha_new_ok": true,
+        "sha_old_ok": true,
+        "fields": {
+          "aggregate": true,
+          "logical_cells": true,
+          "lookup_checksum": true,
+          "narrow_checksum": true,
+          "layout": true,
+          "narrow_allocations": true,
+          "narrow_requested_bytes": true
+        },
+        "raw_ok": true,
+        "narrow_zero": true
+      }
+    },
+    {
+      "name": "all_12_comparisons_fields",
+      "ok": true,
+      "detail": {
+        "ok_count": 12
+      }
+    },
+    {
+      "name": "progress_5_rc0",
+      "ok": true,
+      "detail": [
+        {
+          "name": "guards",
+          "rc": 0
+        },
+        {
+          "name": "generated-clean",
+          "rc": 0
+        },
+        {
+          "name": "generated-counting",
+          "rc": 0
+        },
+        {
+          "name": "integration",
+          "rc": 0
+        },
+        {
+          "name": "scheduler",
+          "rc": 0
+        }
+      ]
+    },
+    {
+      "name": "receipt_qualification_eq_q3",
+      "ok": true,
+      "detail": null
+    }
+  ],
+  "all_ok": true,
+  "elapsed_s": 0.4978678226470947
+}
