@@ -1,0 +1,10 @@
+{
+  "recorded_at": 1789059978.717748,
+  "owned_289_pid": 91467,
+  "verified_command": "node --import tsx src/app.ts",
+  "verified_cwd": "/Users/acfrazier/experiments/lostcity-289/engine",
+  "signal": "SIGTERM",
+  "owned_engine_stopped": true,
+  "existing_274_engine_pid": 1852,
+  "listeners_after": "COMMAND  PID      USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME\nnode    1852 acfrazier   68u  IPv4 0xf4585e85e7135e31      0t0  TCP *:43594 (LISTEN)\n"
+}

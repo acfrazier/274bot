@@ -1,0 +1,14 @@
+274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+{
+  "profile": "local-289 · 127.0.0.1:44594 · revision 289",
+  "revision": 289,
+  "cache_id": "c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09",
+  "cache_dir": "/Users/acfrazier/experiments/lostcity-289/engine/data/pack/client",
+  "asset_endpoint": "127.0.0.1:1080",
+  "shared_binding": true,
+  "shared_cache": true,
+  "navigation": "Unavailable(\"navigation unavailable: /Users/acfrazier/.274bot/289/274bot.navpack has not been prepared\")",
+  "initialized": true,
+  "gameplay_started": false,
+  "bot_operation_error": "host-boundary-not-qualified: revision 289 bot operation awaits host action qualification (plan step 4)"
+}

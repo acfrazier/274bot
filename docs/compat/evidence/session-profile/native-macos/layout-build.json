@@ -1,0 +1,20 @@
+{
+  "source_head": "41d896b3007e476c76a9c01352b64d5afd5ed901",
+  "client_head": "2be1697060e4d2b8b709ad4d5e54d12513b38333",
+  "command": "CARGO_TARGET_DIR=/Users/acfrazier/experiments/274bot/target cargo build --locked -p panel --features memory-profile -p host-play --example profile_check --bin panel-play",
+  "exit_code": 0,
+  "recorded_at": 1789059493.022906,
+  "changes_since_integration_review": "Only server-label wrapping and revision-caption placement in panel app.rs; no profile behavior changes.",
+  "artifacts": [
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/profile-native/bin/panel-play-41d896b3",
+      "bytes": 183676072,
+      "sha256": "c97a212fe72282864a5304baadbc4e053b5961e725fde71c5d90da1e85fc1875"
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/profile-native/bin/profile-check-41d896b3",
+      "bytes": 45645024,
+      "sha256": "b1f6a522927d7de30762b80ffe1d1841b852d6526e830275cb59e73eaca236e2"
+    }
+  ]
+}

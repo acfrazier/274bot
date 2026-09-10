@@ -1,0 +1,22 @@
+{
+  "binary": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/profile-native/bin/tui-play",
+  "platform": "darwin",
+  "source_head": "a02c9dd531124a5bb8dfb936bed20bd92e52730d",
+  "revision": 274,
+  "username": "p3m89056007",
+  "started_at": 1789059306.991319,
+  "elapsed_seconds": 85.11517715454102,
+  "pty_rows": 44,
+  "pty_columns": [
+    155,
+    156
+  ],
+  "native_window_visual_inspection": false,
+  "terminal_access_note": "CUA refused iTerm2 app access; actual TUI verified through local macOS PTY",
+  "readiness_marker": null,
+  "quit_key_sent": true,
+  "process_exit_code": 0,
+  "passed": false,
+  "transcript": "docs/compat/evidence/session-profile/native-macos/tui-local-274-attempt1.ansi",
+  "harness_failure": "Literal byte marker missed cursor-positioned ingame scene 2 text; application reached that state and exited 0."
+}

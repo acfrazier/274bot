@@ -1,7 +1,9 @@
 # Session profile frontend wiring
 
 Status: frontend commit `7aaa8c39` approved by completed actual Grok 4.5 review
-(card `t_879d9607`). Root integration and native macOS proof remain open.
+(card `t_879d9607`). Root integration at `a02c9dd5` is approved by actual Grok 4.6;
+macOS native proof passed after presentation-only correction `41d896b3`.
+See `01-session-profile.md` for the accepted milestone and limits.
 
 ## What changed
 
@@ -11,7 +13,7 @@ Status: frontend commit `7aaa8c39` approved by completed actual Grok 4.5 review
 - Target-sensitive vault paths, live passphrases, generated passwords, and catalog roots come from the selected/bound profile rather than mutable ambient process state.
 - Panel exposes the effective server and revision before session binding. The single persisted revision field migrates to 274. Explicit CLI/environment choices retain precedence. Once bound, revision changes and rebinding return restart-required errors, including after vault lock.
 - Panel captures profile environment once, resolves explicit pre-bind catalogs instead of ambient `RS2B0T`, binds the selected navflags path, and records full catalog identity when cards load. Binding refuses root or source-hash changes, including same-root edits after warmup, without clearing custom file cards.
-- Panel and TUI stress scatter capture the selected shared template and use its world-specific scatter seed.
+- Panel stress scatter uses the selected shared template's world-specific seed. TUI startup reuses the selected template.
 - Both frontends exercise their real parser-to-profile-to-template-to-client path against the synthetic 274 and 289 manifests, each with a private copy of all eight JAGs and explicit public RSA values. Both assert the default game host is `127.0.0.1`.
 - `host-play` no longer mutates global target state while parsing and now loads checked assets before touching its vault.
 
@@ -29,9 +31,14 @@ Status: frontend commit `7aaa8c39` approved by completed actual Grok 4.5 review
 
 Raw logs: `docs/compat/evidence/session-profile/frontends/`.
 
-## Remaining integrated proof
+## Integrated proof
 
-The root integrator owns native macOS UI/visual validation with the prepared proof vault. No live gameplay was launched by this frontend task, and offline construction tests are not represented as 289 gameplay acceptance.
+Root completed native macOS panel selection, binding, refusal and local 274
+scene-2 proof with a synthetic vault; the real macOS TUI PTY also reached scene
+2 and exited 0. The panel clipping found visually was corrected in `41d896b3`.
+Receipts and all limits are in `evidence/session-profile/native-macos/proof.json`.
+Revision 289 asset initialization passed; its bot operation remains gated for
+step 4. Linux/Windows and terminal-window visual proof remain unqualified.
 
 ## Root follow-up to the review
 

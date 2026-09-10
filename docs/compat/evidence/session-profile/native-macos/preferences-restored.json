@@ -1,0 +1,9 @@
+{
+  "recorded_at": 1789059853.655786,
+  "path": "/Users/acfrazier/.274bot/panel-ui.json",
+  "before_sha256": "0c11e7675ef73cdb856ff416632b2172ce551ec802e9a64e177c1677c96d6e09",
+  "proof_sha256": "a8715f2f62047527e2d081163d911f7a9938d0784792d8117f77d9f64804483f",
+  "restored_sha256": "0c11e7675ef73cdb856ff416632b2172ce551ec802e9a64e177c1677c96d6e09",
+  "restored_exactly": true,
+  "proof_panel_stopped": true
+}
