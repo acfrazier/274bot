@@ -11,6 +11,20 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-10 00:33 UTC
+
+- Corrective lifecycle6f2b410 APPROVED actualGrok4.5/xai reviewer1064,
+  session20260909_202841_3e7376 ended1789000232.603879. Fresh native builder
+  /home/builder/direct-owner-controller-6f2b410-native-01 COMPLETE exit0 session36576.
+  All69sources verified before/after; full-focused35.867s and owner-validator0.064s
+  pass. Root downloaded/hashed logs and confirmed actual Linux lifecycle ...ok.
+  Evidence root-native-qualification-04, sourcearchivef1f8b0cb retained untracked.
+- Live owner admission is now ready for fresh runtime/source verification and
+  actual private account/population/cache/server/conflict typed receipts; none
+  issued yet, no live launch. Previous07b runtime verification is historical.
+- CF1 raw evidence reviewer t_f7d038ac actually active20260909_202924_5405e7
+  Grok4.5/xai; CF2 remains unreleased. No native measurement active now.
+
 ## Latest boundary — 2026-09-10 00:29 UTC
 
 - Coordinate CF1 COMPLETE exit0 native39435,4children. Root archived all82files

@@ -1,0 +1,53 @@
+{
+  "scope": "native Linux generated functional qualification only; no live/private inputs",
+  "commit": "6f2b41008f16414dc360b626f7283052888ec0fb",
+  "platform": "Linux-6.8.0-139-generic-x86_64-with-glibc2.39",
+  "machine": "x86_64",
+  "python": "3.12.3 (main, Jul 15 2026, 23:46:41) [GCC 13.3.0]",
+  "git": "git version 2.43.0",
+  "source_verified_before": true,
+  "steps": [
+    {
+      "argv": [
+        "/usr/bin/python3",
+        "-B",
+        "-m",
+        "unittest",
+        "-v",
+        "docs.memory.test_current_tui_calibration",
+        "docs.memory.test_run_managed_cell",
+        "docs.memory.test_run_diagnostic",
+        "docs.memory.test_build_provenance",
+        "docs.memory.test_managed_receipt"
+      ],
+      "cwd": "/home/builder/direct-owner-controller-6f2b410-native-01/source",
+      "exit_code": 0,
+      "timeout": false,
+      "elapsed_s": 35.86745195500043,
+      "owned_process_group_absent": true,
+      "log": "full-focused.log",
+      "sha256": "dce65778d45397763622e08cda7ff3ecdb2714558985d09d2acfac71fec4581c",
+      "bytes": 41161
+    },
+    {
+      "argv": [
+        "/usr/bin/python3",
+        "-B",
+        "-m",
+        "unittest",
+        "-v",
+        "test_validate_direct_owner_capture"
+      ],
+      "cwd": "/home/builder/direct-owner-controller-6f2b410-native-01/source/docs/memory",
+      "exit_code": 0,
+      "timeout": false,
+      "elapsed_s": 0.06446981899716775,
+      "owned_process_group_absent": true,
+      "log": "owner-validator.log",
+      "sha256": "d20015505d4a5e0ceaab45aa5d84b7d1415664cdf59dd86682c6646bfea114d1",
+      "bytes": 490
+    }
+  ],
+  "source_verified_after": true,
+  "commands_passed": true
+}
