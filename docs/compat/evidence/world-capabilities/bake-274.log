@@ -1,0 +1,10 @@
+derive_transports(/Users/acfrazier/experiments/Server/content): 2143 edges (1247 doors, 550 ladders, 282 stairs, 25 agility shortcuts, 8 boats, 14 gliders, 8 spirit trees, 9 npc hops); 39 teleports (7 spells, 32 jewellery); 92 skipped rows
+derive_transports: skipped 1: destination handed to another script
+derive_transports: skipped 34: destination is behind a dialog
+derive_transports: skipped 2: destination is randomised
+derive_transports: skipped 1: destination outside the grid box
+derive_transports: skipped 1: no measured tick cost for this loc name
+derive_transports: skipped 7: no rule for this placement (script reports it unhandled)
+derive_transports: skipped 46: player-relative destination with a horizontal shift
+nav-pack: bound revision 274 cache 4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c nav 05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4 flags 92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb
+nav-pack: baked 483 mapsquares into a 1792x9088 collision grid, 1152462 walkable tiles, 2143 transport edges, 68 bank stands -> 73438581 bytes -> .superpowers/world-capabilities/274/274bot.navpack; 260571161 flag bytes -> .superpowers/world-capabilities/274/274bot.navflags

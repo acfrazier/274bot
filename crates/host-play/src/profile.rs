@@ -4,7 +4,6 @@
 //! The client receives only its immutable connection and resource binding. Legacy `PlayOptions` remains
 //! available for old callers; the frontends use this checked path.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -12,19 +11,10 @@ use client::client::ClientConfig;
 use client::io::{ClientRevision, Packet};
 use client::session::{ClientSessionConfig, ClientSessionProfile};
 use client::BotTarget;
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use nav::manifest::hash_file;
+pub use nav::manifest::{nav_manifest_path, CacheManifest, NavManifest};
 
-const JAGS: [&str; 8] = [
-    "title",
-    "config",
-    "interface",
-    "media",
-    "versionlist",
-    "textures",
-    "wordenc",
-    "sounds",
-];
+const JAGS: [&str; 8] = CacheManifest::ARCHIVES;
 
 pub const HOST_BOUNDARY_NOT_QUALIFIED: &str =
     "host-boundary-not-qualified: revision 289 bot operation awaits host action qualification (plan step 4)";
@@ -422,46 +412,6 @@ impl ProfileOptions {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct CacheManifest {
-    pub revision: u16,
-    pub archives: BTreeMap<String, String>,
-}
-
-impl CacheManifest {
-    /// Explicit tooling input: caller asserts the source revision. This does
-    /// not automatically qualify an unknown cache during normal startup.
-    pub fn capture(revision: u16, cache_dir: &Path) -> Result<Self, String> {
-        parse_revision(&revision.to_string())?;
-        let mut archives = BTreeMap::new();
-        for name in JAGS {
-            archives.insert(name.into(), hash_file(&cache_dir.join(name))?);
-        }
-        Ok(Self { revision, archives })
-    }
-
-    pub fn identity(&self) -> String {
-        let mut digest = Sha256::new();
-        digest.update(self.revision.to_be_bytes());
-        for (name, hash) in &self.archives {
-            digest.update(name.as_bytes());
-            digest.update([0]);
-            digest.update(hash.as_bytes());
-        }
-        format!("{:x}", digest.finalize())
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NavManifest {
-    pub revision: u16,
-    pub cache_id: String,
-    pub nav_sha256: String,
-    pub flags_sha256: Option<String>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NavAvailability {
     Unavailable(String),
@@ -748,15 +698,4 @@ fn require_bot_operation(revision: ClientRevision) -> Result<(), String> {
         ClientRevision::R274 => Ok(()),
         ClientRevision::R289 => Err(HOST_BOUNDARY_NOT_QUALIFIED.into()),
     }
-}
-
-pub fn nav_manifest_path(pack: &Path) -> PathBuf {
-    let mut path = pack.as_os_str().to_os_string();
-    path.push(".json");
-    PathBuf::from(path)
-}
-
-fn hash_file(path: &Path) -> Result<String, String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("resource {}: {e}", path.display()))?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
 }
