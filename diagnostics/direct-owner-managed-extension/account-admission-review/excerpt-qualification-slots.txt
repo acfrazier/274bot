@@ -1,0 +1,22 @@
+409|/// Build one qualification slot row per entry in `names` (authoritative fixture
+410|/// ordinal = enumerate order). Status/hash-map order must never drive ordinals.
+411|fn qualification_slot_rows(
+412|    names: &[String],
+413|    mut fields_for: impl FnMut(&str) -> QualificationSlotFields,
+414|) -> Vec<serde_json::Value> {
+415|    names
+416|        .iter()
+417|        .enumerate()
+418|        .map(|(ordinal, name)| {
+419|            let f = fields_for(name);
+420|            let mut row = serde_json::json!({
+421|                "ordinal": ordinal,
+422|                "name": name,
+423|                // Run-local FNV ids: map instrumentation onto fixture ordinal.
+424|                // Do not compare these ids numerically across separate runs.
+425|                "responsiveness_slot_id": host::responsiveness_profile::slot_id_for(name),
+426|                "cadence_slot_id": host::cadence::slot_id_for(name),
+427|                "state": f.state,
+428|                "error": f.error,
+429|                "runtime": f.runtime,
+430|                "client": f.client,

@@ -1,0 +1,22 @@
+885|        elif kind == 'account':
+886|            evidence = _exact_object(
+887|                evidence, {'fixture_binding_sha256', 'slot_count', 'active_slot_count'},
+888|                'account evidence',
+889|            )
+890|            if (evidence['fixture_binding_sha256'] != expected_context['fixture_binding_sha256']
+891|                    or type(evidence['slot_count']) is not int or evidence['slot_count'] != 1
+892|                    or type(evidence['active_slot_count']) is not int
+893|                    or evidence['active_slot_count'] != 1):
+894|                raise CellError('direct owner account receipt does not admit one active fixture')
+895|            summary = {'slot_count': 1, 'active_slot_count': 1}
+896|        elif kind == 'population':
+897|            evidence = _exact_object(
+898|                evidence, {'fixture_binding_sha256', 'requested_n', 'admitted_n', 'workload'},
+899|                'population evidence',
+900|            )
+901|            if (evidence['fixture_binding_sha256'] != expected_context['fixture_binding_sha256']
+902|                    or type(evidence['requested_n']) is not int or evidence['requested_n'] != 1
+903|                    or type(evidence['admitted_n']) is not int or evidence['admitted_n'] != 1
+904|                    or evidence['workload'] != 'active'):
+905|                raise CellError('direct owner population receipt mismatch')
+906|            summary = {'requested_n': 1, 'admitted_n': 1, 'workload': 'active'}

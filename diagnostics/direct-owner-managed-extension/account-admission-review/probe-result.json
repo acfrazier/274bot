@@ -1,0 +1,277 @@
+{
+  "claimed_observation_hashes_match": {
+    "lib": true,
+    "memory": true
+  },
+  "git_dcdbeebf_present": false,
+  "members": {
+    "lib": {
+      "bytes": 357877,
+      "path": "direct-owner-source/crates/host-play/src/lib.rs",
+      "sha256": "f997f22f00bb205cdad74eec70d9dfc5750c3f8f80d9ba52c024f5ea4ea9120f"
+    },
+    "memory": {
+      "bytes": 161591,
+      "path": "direct-owner-source/crates/host-play/src/memory.rs",
+      "sha256": "76e633acf9d4dcd1fd03f1a57ea722f5111025790071679119e7e5932ece2991"
+    },
+    "owner_capture": {
+      "bytes": 21090,
+      "path": "direct-owner-source/crates/host-play/src/owner_capture.rs",
+      "sha256": "f767b36e1fdbc96d9c50a18bea1a0c1be15682d0372bd68e5af693305d2c7415"
+    },
+    "owner_out": {
+      "bytes": 10013,
+      "path": "direct-owner-source/crates/host-play/src/owner_capture_output.rs",
+      "sha256": "d4a9a7800228c7e06f8e17103ce89dfe9f9141f82bb29c13c8e4bee74e2d8b23"
+    },
+    "tui_bin": {
+      "bytes": 92724,
+      "path": "direct-owner-source/crates/tui/src/bin.rs",
+      "sha256": "a859ca06b33066cbb55641facb7eea449317c9d3e7a6f93ff11c5787d01499d2"
+    },
+    "vault": {
+      "bytes": 22873,
+      "path": "direct-owner-source/crates/vault/src/lib.rs",
+      "sha256": "303398b848c971d2df3b278c927128246c4531656e26b5beaffc5e9c43865f64"
+    }
+  },
+  "moving_host_play_equals_frozen": {
+    "crates/host-play/src/lib.rs": false,
+    "crates/host-play/src/memory.rs": false
+  },
+  "moving_host_play_sha256": {
+    "crates/host-play/src/lib.rs": "096753fc31636e829058e33f54770090810688346c9be47b4ed49193813801ee",
+    "crates/host-play/src/main.rs": "c53f2e007819c83e49d9adb0b36dd153d563d8e9242c9683506eacd1a9ef687e",
+    "crates/host-play/src/memory.rs": "74b7a18164f1b6861697ec8c651c2f81a400dbd41c8bf772cdab29ff4b3bb923"
+  },
+  "no_name_override_env_in_frozen_memory_or_tui": true,
+  "scope": "source-only; no account identity, cache, SSH, native, or live admission",
+  "searches": {
+    "lib": {
+      "--user": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_ACCOUNT": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_LIVE_NAMES": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_MEMORY_NAMES": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_USER": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "mint_live_names": {
+        "count": 9,
+        "first": "pub fn mint_live_names(n: usize) -> Vec<String> {",
+        "lines": [
+          71,
+          4300,
+          4301,
+          4302,
+          4324,
+          4326,
+          4336,
+          4337,
+          4377
+        ]
+      }
+    },
+    "memory": {
+      "--user": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_ACCOUNT": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_LIVE_NAMES": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_MEMORY_NAMES": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_USER": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "mint_live_names": {
+        "count": 1,
+        "first": "        let names = crate::mint_live_names(config.n);",
+        "lines": [
+          735
+        ]
+      }
+    },
+    "owner_capture": {
+      "--user": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_ACCOUNT": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_LIVE_NAMES": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_MEMORY_NAMES": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_USER": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "mint_live_names": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      }
+    },
+    "owner_out": {
+      "--user": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_ACCOUNT": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_LIVE_NAMES": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_MEMORY_NAMES": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_USER": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "mint_live_names": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      }
+    },
+    "tui_bin": {
+      "--user": {
+        "count": 5,
+        "first": "//! `--host`, `--port`, `--cache`, `--user`, `--live script_<name>`).",
+        "lines": [
+          3,
+          76,
+          137,
+          1221,
+          1239
+        ]
+      },
+      "BOT_ACCOUNT": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_LIVE_NAMES": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_MEMORY_NAMES": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_USER": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "mint_live_names": {
+        "count": 2,
+        "first": "    arm_walk_on, default_vault_path, live_vault_passphrase, mint_live_entries, mint_live_names,",
+        "lines": [
+          32,
+          581
+        ]
+      }
+    },
+    "vault": {
+      "--user": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_ACCOUNT": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_LIVE_NAMES": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_MEMORY_NAMES": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "BOT_USER": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      },
+      "mint_live_names": {
+        "count": 0,
+        "first": null,
+        "lines": []
+      }
+    }
+  },
+  "tar_member_count": 1214,
+  "tar_path": "diagnostics/direct-owner-native-preparation/root-runtime-preparation-01/frozen-direct-owner-source.tar.gz",
+  "tar_sha256": "2c36d254c37c5ed56a55f78728357296d62be602f8653ed9ec041cd37d099d5d",
+  "tar_sha256_expected": "2c36d254c37c5ed56a55f78728357296d62be602f8653ed9ec041cd37d099d5d",
+  "tar_sha256_match": true,
+  "workspace_controller_sha256": {
+    "docs/memory/cpu_screen.py": "fab08d9a6a12f1740c25ff673bff71325847e799614acc1685c789dd1a8a200d",
+    "docs/memory/qualify_control.py": "0dbc6775356acd4d967b70d42f575a72b05d3f063d1ca2ddd659605b6705fbb5",
+    "docs/memory/run_current_tui_calibration.py": "6dc132c8ba8c54f471f359a1a5e4f3e40004fe8414c74aacc6e876a2cc5e2dbd",
+    "docs/memory/run_diagnostic.py": "8100cd7eba904d9da04e399bf271665bd369a457abaeb3084dde8cc21251b2c1",
+    "docs/memory/run_managed_cell.py": "012d7007a79e30567c7a3f8b9ad86cd3d2b49bf3d409a395af0a83290aaf35b1"
+  }
+}

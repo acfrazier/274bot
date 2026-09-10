@@ -1,0 +1,61 @@
+197|def build_child_env(a, run_dir, base_env=None, *, platform=None):
+198|    """Construct the host-play child environment from CLI args.
+199|
+200|    Shared by main and unit tests so scrub/set regressions are caught against
+201|    the real launcher path (tests must not reimplement pop/set).
+202|    `run_dir` may be str or pathlib.Path; samples.jsonl is placed under it.
+203|    """
+204|    run = pathlib.Path(run_dir)
+205|    env = dict(base_env) if base_env is not None else os.environ.copy()
+206|    for k in _SCRUB_CHILD_ENV:
+207|        env.pop(k, None)
+208|    env.update(
+209|        LIVE='1',
+210|        BOT_TARGET='local',
+211|        BOT_MEMORY_N=str(a.n),
+212|        BOT_MEMORY_WORKLOAD=a.workload,
+213|        BOT_MEMORY_OUTPUT=str(run / 'samples.jsonl'),
+214|        BOT_MEMORY_DIAGNOSTICS='0' if a.no_diagnostics else '1',
+215|        BOT_MEMORY_WARMUP_S=str(a.warmup),
+216|        BOT_MEMORY_OBSERVE_S=str(a.observe),
+217|    )
+218|    apply_rs2b0t_default(env, platform=platform)
+219|    # Scrub inherited failure-capture above; set only when the CLI flag is on.
+220|    if a.failure_capture:
+221|        env['BOT_MEMORY_FAILURE_CAPTURE'] = '1'
+222|    if a.debug:
+223|        env['BOT_DEBUG'] = '1'
+224|    # BOT_CPU is always scrubbed above; set only on explicit --cpu-fallback.
+225|    if a.cpu_fallback:
+226|        env['BOT_CPU'] = '1'
+227|    if a.nav_captures:
+228|        env['BOT_NAV_CAPTURES'] = '1'
+229|        env['274BOT_SMOKE_DIR'] = str(run / 'captures')
+230|    if a.single_renderer:
+231|        env['BOT_MEMORY_SINGLE_RENDERER'] = '1'
+232|    elif a.focused_one:
+233|        env['BOT_MEMORY_RENDER_POLICY'] = 'focused-one'
+234|    elif a.focused_background:
+235|        env['BOT_MEMORY_RENDER_POLICY'] = 'focused-plus-background'
+236|    if a.sustain:
+237|        env['BOT_MEMORY_SUSTAIN'] = '1'
+238|    if a.stack_logging:
+239|        env['MallocStackLogging'] = '1'
+240|    if a.stack_logging_lite:
+241|        env['MallocStackLogging'] = 'lite'
+242|    if a.scheduling_profile:
+243|        env['BOT_SCHEDULING_PROFILE'] = '1'
+244|    if a.render_profile:
+245|        env['BOT_RENDER_PROFILE'] = '1'
+246|    if a.gpu_completion_profile:
+247|        env['BOT_GPU_COMPLETION_PROFILE'] = '1'
+248|    if a.responsiveness_profile:
+249|        env['BOT_RESPONSIVENESS_PROFILE'] = '1'
+250|    if a.responsiveness_fine:
+251|        env['BOT_RESPONSIVENESS_FINE'] = '1'
+252|    if getattr(a, 'direct_owner_capture', False):
+253|        env['BOT_MEMORY_OWNER_CAPTURE'] = '1'
+254|    capture = getattr(a, 'heaptrack_capture', None)
+255|    if capture:
+256|        env = hc.child_env(env, capture['output'], capture['preload'])
+257|    return env

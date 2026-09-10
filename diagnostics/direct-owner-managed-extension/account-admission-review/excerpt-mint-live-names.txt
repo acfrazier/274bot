@@ -1,0 +1,19 @@
+64|/// Mint `n` per-run usernames for a live boot (`live<token>_<i>`). The
+65|/// engine auto-registers unknown names, so a minted name logs into a
+66|/// fresh save instead of the shared `test` account. The engine enforces
+67|/// the classic 12-character username limit, so the token is the pid plus
+68|/// a per-process serial, truncated to fit `live<token>_<i>` in 12 chars.
+69|/// Player saves accumulate under the engine's `player/` dir — wipe it to
+70|/// reset.
+71|pub fn mint_live_names(n: usize) -> Vec<String> {
+72|    static SERIAL: AtomicUsize = AtomicUsize::new(0);
+73|    let serial = SERIAL.fetch_add(1, Ordering::Relaxed);
+74|    let pid = std::process::id();
+75|    let slot_digits = n.saturating_sub(1).max(1).to_string().len();
+76|    let max_token = 12usize.saturating_sub(4 + 1 + slot_digits).max(1);
+77|    let token: String = format!("{pid:x}{serial:x}")
+78|        .chars()
+79|        .take(max_token)
+80|        .collect();
+81|    (0..n).map(|i| format!("live{token}_{i}")).collect()
+82|}

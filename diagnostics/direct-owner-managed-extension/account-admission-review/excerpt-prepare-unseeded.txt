@@ -1,0 +1,89 @@
+675|impl Run {
+676|    /// Mint ephemeral accounts, throwaway vault, optional Thiever card, and
+677|    /// install seed runners via [`SeedNav::LoadDefault`]. Prefer
+678|    /// [`prepare_with_seed_nav`] from panel/TUI so seeds share `Play::world`.
+679|    /// Idle modes: no card or RS2B0T. SeededIdle runs the Thiever setup only.
+680|    /// Active/lifecycle: RS2B0T required.
+681|    pub fn prepare(config: Config, frontend: &'static str) -> Result<Self, String> {
+682|        Self::prepare_with_seed_nav(config, frontend, SeedNav::LoadDefault)
+683|    }
+684|
+685|    /// Like [`prepare`], but seed runners take navigation from `seed_nav`
+686|    /// instead of always decoding a second pack copy.
+687|    pub fn prepare_with_seed_nav(
+688|        config: Config,
+689|        frontend: &'static str,
+690|        seed_nav: SeedNav,
+691|    ) -> Result<Self, String> {
+692|        let run = Self::prepare_unseeded(config, frontend)?;
+693|        run.bind_seed_nav(seed_nav)?;
+694|        Ok(run)
+695|    }
+696|
+697|    /// Vault, names, card, and sample outputs — **no** seed runners yet.
+698|    /// Frontends start `Play` next, then [`bind_seed_nav`] with
+699|    /// [`SeedNav::FromPlay`](`play.world()`) before spawning slots.
+700|    pub fn prepare_unseeded(config: Config, frontend: &'static str) -> Result<Self, String> {
+701|        // Fail closed on panel-only / conflicting flags before minting vaults.
+702|        let render_policy = parse_render_policy(frontend)?;
+703|        let single_renderer =
+704|            std::env::var("BOT_MEMORY_SINGLE_RENDERER").as_deref() == Ok("1");
+705|        client::profiling::enable();
+706|        if std::env::var("BOT_SCHEDULING_PROFILE").as_deref() == Ok("1") { host::cadence::enable(); }
+707|        #[cfg(feature = "memory-owner-capture")]
+708|        {
+709|            crate::owner_capture::init().map_err(|e| e.to_string())?;
+710|        }
+711|        if std::env::var("BOT_RENDER_PROFILE").as_deref() == Ok("1") {
+712|            host::render_profile::enable();
+713|            if std::env::var("BOT_GPU_COMPLETION_PROFILE").as_deref() == Ok("1") {
+714|                host::render_profile::enable_gpu_completion();
+715|            }
+716|        }
+717|        if std::env::var("BOT_RESPONSIVENESS_PROFILE").as_deref() == Ok("1") {
+718|            host::responsiveness_profile::enable();
+719|            if std::env::var("BOT_RESPONSIVENESS_FINE").as_deref() == Ok("1") {
+720|                host::responsiveness_profile::enable_fine();
+721|            }
+722|            if frontend == "panel" {
+723|                host::responsiveness_profile::set_input_surface(
+724|                    host::responsiveness_profile::InputSurface::Panel,
+725|                );
+726|            } else if frontend == "tui" {
+727|                // Headless memory harness has no terminal.draw path.
+728|                host::responsiveness_profile::set_input_surface(
+729|                    host::responsiveness_profile::InputSurface::TuiHeadless,
+730|                );
+731|            }
+732|        }
+733|        use vault::{Profile, ProfileSettings, Vault};
+734|
+735|        let names = crate::mint_live_names(config.n);
+736|        // Opt-in BOT_NAV_CAPTURES: panel keeps GPU screenshot drain; TUI uses
+737|        // data-only JSON drain. enable() is a no-op unless the env is set.
+738|        crate::nav_capture::enable(&names);
+739|        let diagnostics = std::env::var("BOT_MEMORY_DIAGNOSTICS").as_deref() == Ok("1");
+740|        // Resolved once at harness setup (not re-read per sample/failure).
+741|        let failure_capture =
+742|            std::env::var("BOT_MEMORY_FAILURE_CAPTURE").as_deref() == Ok("1");
+743|        if diagnostics {
+744|            crate::memory_diagnostics::enable(&names);
+745|        }
+746|        let pass = crate::live_vault_passphrase();
+747|        let dir = std::env::temp_dir().join(format!("274bot-memory-{}", names[0]));
+748|        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+749|        let path = dir.join("vault");
+750|        let mut vault = Vault::create(&path, &pass).map_err(|e| e.to_string())?;
+751|
+752|        for (i, name) in names.iter().enumerate() {
+753|            let mut settings = ProfileSettings::default();
+754|            settings.auto_login = true;
+755|            vault
+756|                .upsert(Profile {
+757|                    username: name.clone(),
+758|                    password: name.clone(),
+759|                    uid: 274_900_000 + i as i32,
+760|                    settings,
+761|                })
+762|                .map_err(|e| e.to_string())?;
+763|        }

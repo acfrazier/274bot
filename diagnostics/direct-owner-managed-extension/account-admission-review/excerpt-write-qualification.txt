@@ -1,0 +1,62 @@
+1622|    fn qualification_slots(&self, play: &Play) -> Vec<serde_json::Value> {
+1623|        let statuses = play.statuses();
+1624|        // One read per boundary when enabled; never entire histories.
+1625|        let render_obs = host::render_profile::read();
+1626|        let render_slice = render_obs.as_deref();
+1627|        qualification_slot_rows(&self.names, |name| {
+1628|            let status = statuses.iter().find(|s| s.username == name);
+1629|            let client = status.map(|s| {
+1630|                serde_json::json!({
+1631|                    "ingame": s.ingame,
+1632|                    "scene_state": s.scene_state,
+1633|                    "x": s.tile_x,
+1634|                    "z": s.tile_z,
+1635|                    "level": s.tile_level
+1636|                })
+1637|            });
+1638|            let runtime_settings =
+1639|                runtime_settings_value(status.and_then(|s| s.runtime_settings));
+1640|            let renderer = renderer_evidence_for(name, render_slice);
+1641|            QualificationSlotFields {
+1642|                state: format!("{:?}", play.script_state(name)),
+1643|                error: play.script_last_error(name),
+1644|                runtime: play.memory_script_progress(name),
+1645|                client,
+1646|                runtime_settings,
+1647|                renderer,
+1648|            }
+1649|        })
+1650|    }
+1651|
+1652|    fn write_qualification(&mut self, play: &Play, phase: &str) -> Result<(), String> {
+1653|        // Slots first (progress evidence), then elapsed, then settings.
+1654|        let slots = self.qualification_slots(play);
+1655|        // Bracket the harness Instant read in wall time. The launcher has a
+1656|        // different elapsed-time origin and cannot supply this correlation.
+1657|        let wall_before = std::time::SystemTime::now()
+1658|            .duration_since(std::time::UNIX_EPOCH)
+1659|            .ok()
+1660|            .map(|d| d.as_secs_f64());
+1661|        let elapsed_s = self.started.elapsed().as_secs_f64();
+1662|        let wall_after = std::time::SystemTime::now()
+1663|            .duration_since(std::time::UNIX_EPOCH)
+1664|            .ok()
+1665|            .map(|d| d.as_secs_f64());
+1666|        // Child module can read private parent `Play.options` — no public API.
+1667|        let settings = qualification_settings_value(
+1668|            &play.options,
+1669|            self.frontend,
+1670|            &self.config,
+1671|            self.render_policy,
+1672|            self.single_renderer,
+1673|            self.diagnostics,
+1674|            self.failure_capture,
+1675|        );
+1676|        let mut value = serialize_qualification_boundary(phase, slots, elapsed_s, Some(settings));
+1677|        value["elapsed_wall_bracket"] = serde_json::json!({
+1678|            "before_unix_s": wall_before,
+1679|            "after_unix_s": wall_after,
+1680|            "meaning": "SystemTime reads bracketing this row's harness elapsed Instant read",
+1681|        });
+1682|        self.attach_cohort_qualification_meta(&mut value, phase);
+1683|        writeln!(self.qualification_output, "{value}").map_err(|e| e.to_string())

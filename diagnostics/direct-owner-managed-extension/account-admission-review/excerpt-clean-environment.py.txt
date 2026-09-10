@@ -1,0 +1,22 @@
+216|def clean_environment(base: Optional[Mapping[str, str]] = None, n: int = 16,
+217|                      direct_owner_capture: bool = False) -> Dict[str, str]:
+218|    env = dict(base if base is not None else os.environ)
+219|    forced_off = (
+220|        "BOT_DEBUG", "BOT_CPU", "BOT_SCHEDULING_PROFILE", "BOT_RESPONSIVENESS_PROFILE",
+221|        "BOT_RESPONSIVENESS_FINE", "BOT_RENDER_PROFILE", "BOT_GPU_COMPLETION_PROFILE",
+222|        "MallocStackLogging", "MallocStackLoggingNoCompact", "BOT_MEMORY_FAILURE_CAPTURE",
+223|        "BOT_MEMORY_OWNER_CAPTURE",
+224|    )
+225|    for key in forced_off:
+226|        env.pop(key, None)
+227|    warmup = DIRECT_WARMUP_S if direct_owner_capture else WARMUP_S
+228|    observe = DIRECT_OBSERVE_S if direct_owner_capture else OBSERVE_S
+229|    env.update(
+230|        BOT_MEMORY_N=str(n), BOT_MEMORY_WORKLOAD="active", BOT_MEMORY_WARMUP_S=str(warmup),
+231|        BOT_MEMORY_OBSERVE_S=str(observe), BOT_MEMORY_DIAGNOSTICS="0",
+232|        BOT_MEMORY_SUSTAIN="1", BOT_SCHEDULING_PROFILE="0", BOT_RESPONSIVENESS_PROFILE="0",
+233|        BOT_RESPONSIVENESS_FINE="0", BOT_RENDER_PROFILE="0", BOT_GPU_COMPLETION_PROFILE="0",
+234|    )
+235|    if direct_owner_capture:
+236|        env['BOT_MEMORY_OWNER_CAPTURE'] = '1'
+237|    return env

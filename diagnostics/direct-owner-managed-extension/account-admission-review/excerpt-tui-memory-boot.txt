@@ -1,0 +1,29 @@
+1168|/// Run the interactive (or `--live`) TUI: unlock, spawn, event loop.
+1169|fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
+1170|    let mut session = TuiSession::new(PlayOptions {
+1171|        host: args.host.clone(),
+1172|        port: args.port,
+1173|        cache_dir: args.cache.clone(),
+1174|        lowmem: true,
+1175|        mainland: false,
+1176|    });
+1177|
+1178|    #[cfg(feature = "memory-profile")]
+1179|    if let Some(config) = host_play::memory::Config::from_env()? {
+1180|        host_play::memory::require_live_benchmark()?;
+1181|        // Vault/card first; unlock constructs Play once (single load_pack).
+1182|        let run = host_play::memory::Run::prepare_unseeded(config, "tui")?;
+1183|        session.options.mainland = true;
+1184|        session.unlock_at(&run.vault, &run.pass)?;
+1185|        run.bind_seed_nav(host_play::memory::SeedNav::FromPlay(
+1186|            session.play.as_ref().and_then(|p| p.world()),
+1187|        ))?;
+1188|        session.names = run.names.clone();
+1189|        session.spawn_all();
+1190|        session.focus(&run.names[0]);
+1191|        let mut app = TuiApp::new("274bot memory benchmark");
+1192|        app.names = run.names.clone();
+1193|        app.focused = Some(0);
+1194|        session.memory = Some(run);
+1195|        return run_loop(session, app);
+1196|    }

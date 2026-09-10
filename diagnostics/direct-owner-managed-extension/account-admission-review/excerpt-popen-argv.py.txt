@@ -1,0 +1,20 @@
+437|            before_children = _linux_direct_children(binary)
+438|            nonce = secrets.token_hex(16)
+439|            spawn_before = time.monotonic()
+440|            child = subprocess.Popen(
+441|                [str(binary)], cwd=root, env=env, stdin=slave, stdout=slave, stderr=slave,
+442|                preexec_fn=compose_direct_child_setup(
+443|                    terminal_setup, pre_block_mask, dispositions
+444|                ),
+445|            )
+446|            spawn_after = time.monotonic()
+447|            holder['child'] = child
+448|            sampled = sr.sample_process(child.pid, timeout=.2)
+449|            identity = sampled.get('start_identity')
+450|            if not isinstance(identity, str) or not identity:
+451|                raise RuntimeError('direct owner frontend start identity unavailable')
+452|            handoff = build_spawn_handoff(
+453|                nonce=nonce, frontend_pid=child.pid, frontend_start_identity=identity,
+454|                launcher_pid=os.getpid(), run_dir=run_dir, spawn_before=spawn_before,
+455|                spawn_after=spawn_after, frontend=frontend, n=n, workload=workload,
+456|                warmup_s=warmup_s, observe_s=observe_s,

@@ -1,0 +1,20 @@
+707|def _direct_context(spec: Mapping[str, Any], provenance: Mapping[str, Any],
+708|                    cache_snapshot: Mapping[str, Any], server_sample: Mapping[str, Any],
+709|                    server_executable: str, fixture_binding: Any) -> Dict[str, Any]:
+710|    context = {
+711|        'fixture_binding_sha256': _hex(fixture_binding, 'fixture binding'),
+712|        'host_commit': provenance.get('build_commit'),
+713|        'client_commit': provenance.get('client_commit'),
+714|        'host_sources_sha256': provenance.get('host_sources_sha256'),
+715|        'client_sources_sha256': provenance.get('client_sources_sha256'),
+716|        'build_manifest_sha256': bp.file_sha256(spec['build_manifest']),
+717|        'binary_sha256': bp.file_sha256(spec['binary']),
+718|        'nav_pack_sha256': bp.file_sha256(spec['nav_pack']),
+719|        'nav_flags_sha256': bp.file_sha256(spec['nav_flags']),
+720|        'catalog_sha256': bp.file_sha256(spec['catalog_path']),
+721|        'cache_content_identity_sha256': cache_snapshot.get('content_identity_sha256'),
+722|        'cache_snapshot_version': cache_snapshot.get('snapshot_version'),
+723|        'server_pid': spec['game_server_pid'],
+724|        'server_start_identity': server_sample.get('start_identity'),
+725|        'server_executable_basename': _basename(server_executable, 'server'),
+726|    }

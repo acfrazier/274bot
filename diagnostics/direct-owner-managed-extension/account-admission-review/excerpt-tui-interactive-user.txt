@@ -1,0 +1,43 @@
+1198|    match mode {
+1199|        RunMode::Live(name) => {
+1200|            let scenario = live_scenario(&name)?;
+1201|            session.options.mainland = scenario.seed.mainland;
+1202|            session.live_prepare_script(scenario)?;
+1203|            let mut app = TuiApp::new(format!("tui-play --live {name}"));
+1204|            app.names = session.names.clone();
+1205|            app.focused = Some(0);
+1206|            run_loop(session, app)
+1207|        }
+1208|        RunMode::Interactive => {
+1209|            let Some(pass) = args.pass.clone() else {
+1210|                return Err("no vault passphrase (set BOT_VAULT_PASS or --vault-pass)".into());
+1211|            };
+1212|            let vault_exists = args.vault.is_file();
+1213|            if let Err(e) = session.unlock_at(&args.vault, &pass) {
+1214|                return Err(format!("vault {}: {e}", args.vault.display()));
+1215|            }
+1216|            if !vault_exists {
+1217|                // First run: create the default `test`/`test` profile so
+1218|                // unlock is not a dead end (host-play CLI convention).
+1219|                session.create_profile("test")?;
+1220|            }
+1221|            // `--user` names may not exist: create them like host-play
+1222|            // does (`password = username`, fresh uid).
+1223|            for u in &args.users {
+1224|                if session.vault.as_ref().is_none_or(|v| v.get(u).is_none()) {
+1225|                    session.create_profile(u)?;
+1226|                }
+1227|            }
+1228|            session.names = session
+1229|                .vault
+1230|                .as_ref()
+1231|                .map(|v| v.profiles().map(|p| p.username.clone()).collect())
+1232|                .unwrap_or_default();
+1233|            let focus = args
+1234|                .users
+1235|                .first()
+1236|                .cloned()
+1237|                .or_else(|| session.names.first().cloned());
+1238|            let Some(focus) = focus else {
+1239|                return Err("vault has no profiles (create one with host-play --user)".into());
+1240|            };

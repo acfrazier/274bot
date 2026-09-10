@@ -1,0 +1,21 @@
+270|def build_spawn_handoff(*, nonce, frontend_pid, frontend_start_identity, launcher_pid,
+271|                        run_dir, spawn_before, spawn_after, frontend, n, workload,
+272|                        warmup_s, observe_s):
+273|    spawn = {
+274|        'nonce': nonce,
+275|        'frontend_pid': int(frontend_pid),
+276|        'frontend_start_identity': frontend_start_identity,
+277|        'launcher_pid': int(launcher_pid),
+278|        'run_dir': str(pathlib.Path(run_dir).resolve()),
+279|        'spawn_before_monotonic_s': float(spawn_before),
+280|        'spawn_after_monotonic_s': float(spawn_after),
+281|        'frontend': frontend,
+282|        'terminal': True,
+283|        'terminal_size': [120, 40],
+284|        'n': int(n),
+285|        'workload': workload,
+286|        'warmup_s': int(warmup_s),
+287|        'observe_s': int(observe_s),
+288|        'teardown_grace_s': 60,
+289|    }
+290|    return {'schema': 1, 'mode': 'direct-owner-v1', 'state': 'spawned', 'spawn': spawn}
