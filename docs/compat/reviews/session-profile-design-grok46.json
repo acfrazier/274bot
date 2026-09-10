@@ -1,0 +1,60 @@
+{
+  "task_id": "t_bfd3339c",
+  "run": {
+    "id": 1086,
+    "profile": "grok46",
+    "status": "done",
+    "outcome": "completed",
+    "started_at": 1789052376,
+    "ended_at": 1789052760,
+    "summary": "Proceed to step-3 implementation under required constraints. Ownership split is sound; ambient login/HTTP/OnDemand/cheat/vault call sites, OnDemand reject-before-join, and PlayOptions source-of-truth must be bound before dispatch. Design approval is not runtime evidence.",
+    "error": null,
+    "metadata": {
+      "review_outcome": "proceed_with_constraints",
+      "reviewer_profile": "grok46",
+      "model": "grok-4.6",
+      "provider": "xai-oauth",
+      "deliverable": "docs/compat/reviews/session-profile-design-grok46.md",
+      "host_product_base": "5bb500262fb4e7ab8507589c0784a36f9eac14ce",
+      "campaign_head_at_writeup": "f1a9cfcb2d6769d984f6b3ca09743192beba22f3",
+      "accepted_client": "58120f28ee5208553ca07f41cb364f2cf98ea280",
+      "branch": "codex/rs2b0t-multirevision",
+      "product_edits": false,
+      "suites_rerun": false,
+      "changed_files": [
+        "docs/compat/reviews/session-profile-design-grok46.md"
+      ],
+      "required_constraints": [
+        "bind ambient call sites",
+        "PlayOptions profile is source of truth",
+        "OnDemand reject mismatch before join",
+        "bound adopt rejects before taking sockets",
+        "RSA and cheats fail-closed on bound path",
+        "wrong cache is not empty tables",
+        "distinct 289 vault default",
+        "parse all flags then resolve once",
+        "289 refusal is action gate not constructor skip",
+        "additive API only"
+      ],
+      "not_approved": [
+        "runtime validation",
+        "289 bot operation",
+        "step 4 writers",
+        "Linux/Windows 289 engine"
+      ],
+      "artifacts": [
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/reviews/session-profile-design-grok46.md"
+      ],
+      "worker_session_id": "20260910_105937_9fb443"
+    },
+    "worker_pid": null,
+    "step_key": null
+  },
+  "actual_session": {
+    "id": "20260910_105937_9fb443",
+    "model": "grok-4.6",
+    "billing_provider": "xai-oauth",
+    "started_at": 1789052377.932786,
+    "ended_at": 1789052760.862195
+  }
+}
