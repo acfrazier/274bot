@@ -1,0 +1,96 @@
+{
+  "task": "t_96957a0c",
+  "reviewer": "grok46",
+  "verdict": "f1_evidence_accepted",
+  "next_bounded_action": "generated_coordinate_lookup_experiment_first",
+  "f2_released": false,
+  "evidence_blocker": false,
+  "tool_commit": "7965c4cbe037c8c7ba0b2b0a1317f852890df4d7",
+  "root_report_commit": "03df80d7cc43f0b2eb7310474482f5ce801b6b5d",
+  "archives": {
+    "f1_tar_sha256": "102c6d41806620247e3c9d23f19a743f4503ca53b556afd4d7da9f05851cf031",
+    "f1_tar_bytes": 173779,
+    "f1_tar_members": 144,
+    "f1_manifest_payload_files": 143,
+    "package_sha256": "330985b48e016c96dc53455d730ef4bb41c307463c0f13869154e05c8644e8b1",
+    "package_bytes": 5890431,
+    "package_members": 942
+  },
+  "contract": {
+    "authorization_sha256": "d6da3b78dfdc419c53dea6c25bc131aebea9c3a380f7e12d858d2b4f0d194820",
+    "mode": "real",
+    "phase": "F1",
+    "original_pack_sha256": "2f393138c905aaf1b2db4f77442426db01ff2dfad5ee575d77454012d27a4a30",
+    "original_pack_bytes": 73438581,
+    "original_tsv_sha256": "49e348ea78806c8278d720d27b171c54a0a209930fa8191ffcd38d2e9bbbc125",
+    "concatenated_shard_tsv_sha256": "49e348ea78806c8278d720d27b171c54a0a209930fa8191ffcd38d2e9bbbc125",
+    "selector_rows": 59,
+    "selector_unique": 59,
+    "arms": {
+      "dense": "29b7aea779322c8611f83dc193e939ca7d756f75",
+      "tiled": "8385babb23fd15b876506d4a3f6154984a6b2df1"
+    },
+    "client": "3456edc8dabf7b25ada78110ffa56327af9f67a4",
+    "f1_order": [[1, 1, "dense"], [1, 1, "tiled"], [1, 2, "tiled"], [1, 2, "dense"]]
+  },
+  "hot_route_cpu_s": {
+    "row1_dense": 1.713325,
+    "row1_tiled": 1.755984,
+    "row1_pct": 2.489837012825938,
+    "row2_dense": 3.069559,
+    "row2_tiled": 3.426256,
+    "row2_pct": 11.6204640471
+  },
+  "lane_cpu_ns": {
+    "row1_dense": [536883000, 631750000, 544592000],
+    "row1_tiled": [558774000, 645297000, 551816000],
+    "row2_dense": [521262000, 1576356000, 971854000],
+    "row2_tiled": [596487000, 1722115000, 1107540000]
+  },
+  "whole_child_cpu_s": {
+    "row1_dense": 2.859623,
+    "row1_tiled": 3.340869,
+    "row2_tiled": 5.718850999999997,
+    "row2_dense": 4.716645999999999
+  },
+  "charged": {
+    "cpu": 29.50134,
+    "wall": 40.090448230999755,
+    "supervisor_cpu": 12.647822631999999,
+    "waited_children_cpu": 16.753525368,
+    "publication_reserved_cpu": 0.1,
+    "publication_reserved_wall": 1,
+    "completed": 4,
+    "stopped": false
+  },
+  "remaining_f1_plus_f2": {
+    "wall": 1759.9095517690002,
+    "cpu": 1470.49866,
+    "children": 114,
+    "ceiling": [1800, 1500, 118]
+  },
+  "headroom": {
+    "max_child_wall_s": 4.626718857995002,
+    "max_child_cpu_s": 5.718850999999997,
+    "limits": {"wall": 120, "cpu": 90, "rss": 1073741824, "address": 4294967296, "output": 262144},
+    "stop": [80, 60]
+  },
+  "peaks_bytes": {
+    "construction_dense": 149553152,
+    "construction_tiled": 153616384,
+    "delta": 4063232
+  },
+  "qualification06": {
+    "steps": ["guards", "generated-clean", "generated-counting", "integration", "scheduler"],
+    "qualified": true,
+    "native_hard_as_qualified": true,
+    "comparisons": 12,
+    "scheduler_wall_s": 224.32358857800136
+  },
+  "caveats": [
+    "Two rows cannot establish regression or a 5%/p99 verdict or an all-59 projection.",
+    "Original pack bytes were not locally rehashed; identity is contract-bound plus per-probe input_bytes=73438581.",
+    "Coordinate-lookup redundant arithmetic is not proved executed cost.",
+    "Direct-owner artifacts in 03df80d were out of scope."
+  ]
+}

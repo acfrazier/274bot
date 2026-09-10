@@ -11,6 +11,24 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-10 00:16 UTC
+
+- Grok4.6 escalation COMPLETE, report35d613c. Root read full report: cache is the
+  frozen bb267 setup blocker; synthetic ambient identity is fixture-fidelity loss
+  hidden by the existing completion mock. Expired unit-test release JSON does
+  not itself fail the mocked path; coherent file/mock clocks are a fixture
+  improvement, not a production expiry bug. No claim of a new runtime defect.
+- Corrective Sol t_6c6930b1 actually active, session20260909_201239_7e8169
+  gpt5.6-sol/openai-codex. Original37be native03 package withheld. Native evidence
+  reviewer t_518edea2 remains active; no new native run or CF1 issued.
+- Root independently reverified exact prior F1 authorization/claim/checkpoint/
+  result/reviewer-audit/archive hashes, all precise spent totals, and accepted
+  b00ba2c child-decision hash6e53a133. Copies/verification are in
+  diagnostics/nav-stage-a-native-preparation/coordinate-cf1-preparation-01.
+  The reviewer audit is a separate docs/memory artifact, not a native archive
+  member; initial lookup assumption corrected with exact hash verification.
+  Old4+fresh118=122, wall1800/CPU1500 unchanged. Preparation only.
+
 ## Latest boundary — 2026-09-10 00:12 UTC
 
 - Independent native navigation evidence reviewer t_518edea2 actually running,
