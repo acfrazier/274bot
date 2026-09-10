@@ -853,15 +853,16 @@ fn script_observe(
                                         )
                                     },
                                 );
-                                let stock = snapshot.map_or(fill.before_stock, |snap| {
-                                    snap.bank()
-                                        .iter()
-                                        .find(|item| item.def.id == fill.bank_item_id)
-                                        .map_or(0, |item| item.count)
-                                });
+                                let stock_decreased = snapshot
+                                    .and_then(|snap| {
+                                        snap.bank()
+                                            .iter()
+                                            .find(|item| item.def.id == fill.bank_item_id)
+                                    })
+                                    .is_some_and(|item| item.count < fill.before_stock);
                                 used > fill.before_used
                                     || count > fill.before_count
-                                    || stock < fill.before_stock
+                                    || stock_decreased
                             });
                             if load_settled
                                 || (pending.fill.is_none()
@@ -7072,7 +7073,8 @@ export default class T extends LoopingBot {
         );
         assert!(c.out.pos > before_send, "Withdraw-All reaches the driver");
 
-        let filled_inv = [(1, 3), (2, 20)];
+        let mut empty_bank = Packet::new(vec![2, 89, 0, 0]);
+        c.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_bank);
         snap.rebuild(&c);
         script_observe(
             &mut c,
@@ -7080,6 +7082,42 @@ export default class T extends LoopingBot {
             true,
             true,
             2,
+            Some((3205, 3205, 0)),
+            Some(&before_inv),
+            None,
+            Some(&snap),
+            Some(&names),
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
+            false,
+            false,
+        );
+        assert_eq!(
+            script_slot(&scripts, "alice")
+                .unwrap()
+                .lock()
+                .unwrap()
+                .probe("typeof globalThis.__fill_result")
+                .unwrap(),
+            "undefined",
+            "a vanished stock row alone cannot claim fill progress"
+        );
+        assert!(script_slot(&scripts, "alice")
+            .unwrap()
+            .lock()
+            .unwrap()
+            .pending_withdraw_x()
+            .is_some());
+
+        let filled_inv = [(1, 3), (2, 20)];
+        script_observe(
+            &mut c,
+            "alice",
+            true,
+            true,
+            3,
             Some((3205, 3205, 0)),
             Some(&filled_inv),
             None,
