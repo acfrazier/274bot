@@ -2,51 +2,27 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-
 const root = path.resolve(import.meta.dirname, '../..');
 const expected: Record<number, { engine: string; content: string; engineRoot: string; contentRoot: string; cache: { cache_id: string; nav_sha256: string; flags_sha256: string } }> = {
     274: { engine: '4c95f87efe00b068cadbd229d94736626907bd1a', content: '000c19997e07206131bcb3c884265840efce416d', engineRoot: process.env.GAME_DATA_274_ENGINE || '/Users/acfrazier/experiments/Server/engine', contentRoot: process.env.GAME_DATA_274_CONTENT || '/Users/acfrazier/experiments/Server/content', cache: { cache_id: '4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c', nav_sha256: '05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4', flags_sha256: '92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb' } },
     289: { engine: 'cc359656b4acd216ca452495874b6beba9a0ac75', content: '92649430fcbc83538d8c4367ecb96cee1a67a944', engineRoot: process.env.GAME_DATA_289_ENGINE || '/Users/acfrazier/experiments/lostcity-289/engine', contentRoot: process.env.GAME_DATA_289_CONTENT || '/Users/acfrazier/experiments/lostcity-289/content', cache: { cache_id: 'c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09', nav_sha256: '131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924', flags_sha256: '67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a' } }
 };
-// Keep this in lockstep with generate.ts: all local modules in ObjType's load graph.
-// The third-party BZip2 wasm package is bound by the pinned engine commit.
-const decoderSources = [
-    'src/cache/config/ObjType.ts', 'src/cache/config/ConfigType.ts', 'src/cache/config/ParamHelper.ts', 'src/cache/config/ParamType.ts', 'src/cache/config/ScriptVarType.ts',
-    'src/io/BZip2.ts', 'src/io/Jagfile.ts', 'src/io/Packet.ts',
-    'src/datastruct/DoublyLinkable.ts', 'src/datastruct/LinkList.ts', 'src/datastruct/Linkable.ts',
-    'src/util/Environment.ts', 'src/util/Logger.ts', 'src/util/TryParse.ts', 'src/util/WorldConfig.ts'
-];
+const decoderSources = ['src/cache/config/ObjType.ts', 'src/cache/config/NpcType.ts', 'src/cache/config/ConfigType.ts', 'src/cache/config/ParamHelper.ts', 'src/cache/config/ParamType.ts', 'src/cache/config/ScriptVarType.ts', 'src/io/BZip2.ts', 'src/io/Jagfile.ts', 'src/io/Packet.ts', 'src/datastruct/DoublyLinkable.ts', 'src/datastruct/LinkList.ts', 'src/datastruct/Linkable.ts', 'src/util/Environment.ts', 'src/util/Logger.ts', 'src/util/TryParse.ts', 'src/util/WorldConfig.ts'];
+const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2'];
 function digest(file: string) { const data = fs.readFileSync(file); return { bytes: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex') }; }
 function commit(dir: string) { return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); }
 function assertEqual(actual: unknown, expectedValue: unknown, label: string) { if (actual !== expectedValue) throw new Error(`${label}: expected ${expectedValue}, got ${actual}`); }
-
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'crates/api/data/game-data/manifest.json'), 'utf8')) as { schema_version: number; revisions: any[] };
-assertEqual(manifest.schema_version, 2, 'manifest schema');
+assertEqual(manifest.schema_version, 3, 'manifest schema');
 const results = [];
 for (const revision of [274, 289]) {
-    const file = path.join(root, `crates/api/data/game-data/${revision}.json`);
-    const payload = JSON.parse(fs.readFileSync(file, 'utf8')) as any;
-    const pin = expected[revision]; const manifestRow = manifest.revisions.find((entry) => entry.revision === revision);
-    if (!manifestRow) throw new Error(`${revision}: missing manifest row`);
-    assertEqual(payload.schema_version, 2, `${revision} schema`); assertEqual(payload.revision, revision, `${revision} revision`);
-    assertEqual(payload.provenance.engine_commit, pin.engine, `${revision} engine pin`); assertEqual(payload.provenance.content_commit, pin.content, `${revision} content pin`);
-    assertEqual(commit(pin.engineRoot), pin.engine, `${revision} live engine commit`); assertEqual(commit(pin.contentRoot), pin.content, `${revision} live content commit`);
-    const sourcePaths = [...decoderSources, 'data/pack/server/obj.dat', 'data/pack/client/config'];
-    const dirty = execFileSync('git', ['-C', pin.engineRoot, 'status', '--porcelain', '--untracked-files=all', '--', ...sourcePaths], { encoding: 'utf8' }).trim();
-    if (dirty) throw new Error(`${revision}: relevant source inputs are dirty: ${dirty}`);
-    for (const input of [...payload.provenance.inputs, ...payload.provenance.decoder_sources]) {
-        const actual = digest(path.join(pin.engineRoot, input.path)); const recorded = input;
-        assertEqual(actual.bytes, recorded.bytes, `${revision} ${input.path} bytes`); assertEqual(actual.sha256, recorded.sha256, `${revision} ${input.path} hash`);
-    }
-    const output = digest(file); assertEqual(output.bytes, manifestRow.bytes, `${revision} output bytes`); assertEqual(output.sha256, manifestRow.sha256, `${revision} output hash`);
-    assertEqual(JSON.stringify(payload.provenance.cache_identity), JSON.stringify(pin.cache), `${revision} cache identity`);
-    const byAlias = new Map(payload.items.filter((item: any) => item.alias !== null).map((item: any) => [item.alias, item]));
-    const plate = byAlias.get('rune_platebody'); const chain = byAlias.get('rune_chainbody');
-    if (!plate || plate.name !== 'Rune platebody' || !chain || chain.name !== 'Rune chainbody' || plate.cost <= chain.cost) throw new Error(`${revision}: Rune platebody/chainbody value order`);
-    if (payload.items.filter((item: any) => item.name === 'Dragonhide').length < 2) throw new Error(`${revision}: same-name Dragonhide identity`);
-    if (new Set(payload.items.map((item: any) => item.id)).size !== payload.items.length || new Set(payload.items.map((item: any) => item.alias)).size !== payload.items.length) throw new Error(`${revision}: duplicate IDs or aliases`);
-    results.push({ revision, records: payload.items.length, output_sha256: output.sha256, input_hashes: true, source_pins: true, dirty_gate: true, cost_order: [plate.cost, chain.cost], cache_identity: pin.cache });
+    const file = path.join(root, `crates/api/data/game-data/${revision}.json`); const payload = JSON.parse(fs.readFileSync(file, 'utf8')) as any; const pin = expected[revision]; const manifestRow = manifest.revisions.find((entry) => entry.revision === revision); if (!manifestRow) throw new Error(`${revision}: missing manifest row`);
+    assertEqual(payload.schema_version, 3, `${revision} schema`); assertEqual(payload.revision, revision, `${revision} revision`); assertEqual(payload.provenance.engine_commit, pin.engine, `${revision} engine pin`); assertEqual(payload.provenance.content_commit, pin.content, `${revision} content pin`); assertEqual(commit(pin.engineRoot), pin.engine, `${revision} live engine commit`); assertEqual(commit(pin.contentRoot), pin.content, `${revision} live content commit`);
+    const sourcePaths = [...decoderSources, 'data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config']; const dirtyEngine = execFileSync('git', ['-C', pin.engineRoot, 'status', '--porcelain', '--untracked-files=all', '--', ...sourcePaths], { encoding: 'utf8' }).trim(); if (dirtyEngine) throw new Error(`${revision}: relevant engine inputs are dirty: ${dirtyEngine}`); const dirtyContent = execFileSync('git', ['-C', pin.contentRoot, 'status', '--porcelain', '--untracked-files=all', '--', ...contentFiles], { encoding: 'utf8' }).trim(); if (dirtyContent) throw new Error(`${revision}: relevant content inputs are dirty: ${dirtyContent}`);
+    for (const input of [...payload.provenance.inputs, ...payload.provenance.decoder_sources, ...payload.provenance.content_inputs]) { const base = payload.provenance.content_inputs.includes(input) ? pin.contentRoot : pin.engineRoot; const actual = digest(path.join(base, input.path)); assertEqual(actual.bytes, input.bytes, `${revision} ${input.path} bytes`); assertEqual(actual.sha256, input.sha256, `${revision} ${input.path} hash`); }
+    const output = digest(file); assertEqual(output.bytes, manifestRow.bytes, `${revision} output bytes`); assertEqual(output.sha256, manifestRow.sha256, `${revision} output hash`); assertEqual(JSON.stringify(payload.provenance.cache_identity), JSON.stringify(pin.cache), `${revision} cache identity`);
+    const byAlias = new Map(payload.items.filter((item: any) => item.alias !== null).map((item: any) => [item.alias, item])); const plate = byAlias.get('rune_platebody'); const chain = byAlias.get('rune_chainbody'); if (!plate || plate.name !== 'Rune platebody' || !chain || chain.name !== 'Rune chainbody' || plate.cost <= chain.cost) throw new Error(`${revision}: Rune platebody/chainbody value order`); if (payload.items.filter((item: any) => item.name === 'Dragonhide').length < 2) throw new Error(`${revision}: same-name Dragonhide identity`); if (new Set(payload.items.map((item: any) => item.id)).size !== payload.items.length || new Set(payload.items.map((item: any) => item.alias)).size !== payload.items.length) throw new Error(`${revision}: duplicate IDs or aliases`);
+    const fixed = new Map(payload.consumption.filter((fact: any) => fact.qualification === 'fixed_hp_heal').map((fact: any) => [fact.item.alias, fact.stat_heal[0].base])); for (const [alias, heal] of [['lobster', 12], ['bread', 4], ['anchovies', 3]] as const) if (fixed.get(alias) !== heal) throw new Error(`${revision}: ${alias} fixed heal mismatch`); const guard = payload.pickpocket.find((fact: any) => fact.npcs.some((npc: any) => npc.alias === 'guard1')); if (!guard || guard.level !== 40) throw new Error(`${revision}: Guard thieving level mismatch`); if (payload.pickpocket.some((fact: any) => fact.npcs.length === 0 || fact.loot.some((loot: any) => loot.min > loot.max))) throw new Error(`${revision}: invalid pickpocket joins`);
+    results.push({ revision, records: payload.items.length, consumption: payload.consumption.length, pickpocket: payload.pickpocket.length, fixed_food_heals: Object.fromEntries(fixed), output_sha256: output.sha256, input_hashes: true, content_hashes: true, source_pins: true, dirty_gate: true, cache_identity: pin.cache });
 }
-const evidence = { schema_version: 2, generator: 'tools/game-data/generate.ts', verification: 'tools/game-data/verify.ts', revisions: results };
-const evidencePath = path.join(root, 'docs/compat/evidence/generated-game-data/verification.json'); fs.mkdirSync(path.dirname(evidencePath), { recursive: true }); fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
-console.log(JSON.stringify(evidence));
+const evidence = { schema_version: 3, generator: 'tools/game-data/generate.ts', verification: 'tools/game-data/verify.ts', revisions: results }; const evidencePath = path.join(root, 'docs/compat/evidence/generated-game-data/verification.json'); fs.mkdirSync(path.dirname(evidencePath), { recursive: true }); fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`); console.log(JSON.stringify(evidence));
