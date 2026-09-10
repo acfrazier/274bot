@@ -11,6 +11,15 @@ Use this file for current actions. Dated reports are evidence, not instructions
 to repeat their old next steps. Hermes board `274bot` supplies live task status;
 verify it on resume because a worker may finish after this snapshot.
 
+## Latest boundary — 2026-09-10 00:49 UTC
+
+- CF2 failure evidence review t_7ef3743e actually active reviewer session
+  20260909_204744_6e9c05 modelGrok4.5; provider billing field initially pending.
+  Read-only316member/57newchild/charged-ledger audit plus park/review boundary.
+- Owner account fidelity reviewer t_d6f23813 remains actually activeGrok4.6/xai.
+  No native runs active and no new owner/account admission issued. Await concrete
+  findings before any protocol clarification or operator decision.
+
 ## Latest boundary — 2026-09-10 00:47 UTC
 
 - CF2 session6547 TERMINAL exit1 after57/114, native idle/steal pre-child admission
