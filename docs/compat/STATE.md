@@ -118,14 +118,53 @@ existing 274 engine PID1852 remained listening. No memory/performance claim.
 
 ## Next implementation
 
+Operator correction, 2026-09-10: rs2b2t now serves revision 289. Public 289
+requires the known `w1.rs2b2t.com:443` game/asset pairing; public 274 is
+unavailable. This supersedes the public-profile assumption in the historical
+step-3 design and review receipts. Card `t_96dc78da` is correcting resolution,
+resource defaults, help and focused tests. Source `04d3e02f` passed same-card
+Grok 4.5 review (run 1099, actual session `20260910_133757_d52004`), including
+an independent rerun of ten profile tests, frontend/CLI tests, check and format.
+The public correction is accepted; no public live login was performed.
+The accepted local 274/289 macOS observations remain valid.
+
 Do not expose 289 bot operation using current direct 274 host writers or fall
 back to 274 navigation. Step 4 qualifies the complete host action/snapshot
-boundary and the controlled local action sequence on both revisions.
+boundary and the controlled local action sequence on both revisions. Design
+card `t_d6761a15` approved the design under actual Grok 4.6 (run 1096,
+session `20260910_132555_633342`). Root corrected its numeric blacklist mistake:
+legality must follow named packets, since ids 51/224 have valid R289 meanings.
+Implementation cards `t_b22abf57` (outbound) and `t_0be9adbf` (snapshots/reset)
+are running under configured Sol, with same-card reviewer handoffs required.
+Root owns the narrow local proof while ordinary 289 slots/guardians remain
+gated for step 5. Briefs 12/13 give disjoint implementation ownership.
 
 Operator platform clarification: validate step 3 on macOS first. Linux and
 Windows do not have a 289 engine configured; prepare those isolated engines
 before their later platform checks. No Linux/Windows qualification is implied
 by the macOS milestone.
+
+Use the established memory-campaign machines: Windows `austen@10.0.0.205`,
+Hyper-V Linux builder through SSH alias `274bot-builder`, and Concord through
+SSH alias `concord`. Concord is TUI-only for this campaign; compile Linux on
+the Hyper-V builder because the VPS has about 2 GB RAM. Concord is currently
+reachable and its isolated 274 service uses
+`/home/acfrazier/274bot-campaign/server-4c95f87`. Windows SSH initially timed
+out; the operator corrected the firewall rule tied to the Mac's previous IP.
+Windows is now reachable (`DESKTOP-SL99R6C`). Root started the existing powered-off
+Hyper-V VM; `274bot-builder` now responds with Rust 1.98.0, 8 GB RAM and 18 GB
+free disk. No SSH trust/key configuration was changed.
+
+Separate 289 fixtures are being prepared under each machine's existing campaign
+root at `multirevision-20260910/server-289`. Bundle SHA-256
+`d8361199f7f3af851c175e030b1e787cb62137de1ce62b6701bcde07cd75f2e8`
+contains the pinned engine/cache/scripts and content maps; no account/key/database
+material was copied. Concord and Windows extracted and verified all 1,212 files,
+installed locked dependencies and generated fresh local RSA keys and SQLite
+schemas. The builder is staging the same bundle. These are setup receipts;
+engine readiness and platform client qualification are still pending. Existing
+274 fixtures remain unchanged. Concord remains TUI-only with Linux compilation
+on the builder.
 
 Then follow steps 4–9 in order: host boundary and local live actions, world and
 guardian binding, required Rust capabilities, every enabled card/option proof,
