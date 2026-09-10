@@ -52,8 +52,8 @@ Verify the live source pins, dirty gates, all provenance hashes, cache identitie
 
 A complete generation was run twice after the schema extension. The three generated files were byte-identical on the second run. Final output SHA-256 values were:
 
-- 274: `c83042956ea6896e9fd5de9927556399fdc8c2d10732b0e59c98cfabd3a5d6a2`
-- 289: `63289f8b2b6a0d6094d11bb9ec3b651a3b78acdfe45ea258b04bbe2e00078276`
-- manifest: `077dc252ec496b4160215aeb044f2a2961fb69add5f57187875c720748916697`
+- 274: `e1a95f255022587528008c7b5690d13b0008511e05c22eb4ccffc71b1cb1c192`
+- 289: `baef264dfd146fdc202069bc68e6a144dd0592af8362b1d3f53d27a47a01729c`
+- manifest: `01291c104b674905049fafdc737d42d91f21adac04e54277ea44e1520d888430`
 
 Verification exited 0 for both revisions and emitted the receipt at `docs/compat/evidence/generated-game-data/verification.json`.
