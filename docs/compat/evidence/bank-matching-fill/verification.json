@@ -1,0 +1,57 @@
+{
+  "task": "t_41b2f50e",
+  "branch": "codex/rs2b0t-multirevision",
+  "source_commits": [
+    "06077fe9",
+    "23a30524"
+  ],
+  "generated_dts_diff": {
+    "from": "f2b04198",
+    "to": "bf8452ec",
+    "path": "crates/script/host-js/index.d.ts"
+  },
+  "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "isolated_export": {
+    "path": ".superpowers/task-exports/t_41b2f50e-06077fe9",
+    "base_commit": "700cb59eb54c6ebd33c41172d0007347d5053b2b",
+    "base_archive_sha256": "4cf1a0e61d0bf8769f04f4c515f529ddd1a1ed2e63382146af718e23cf7c326e",
+    "task_patch_sha256": "cc14b88792de644864b1e33cb80fbea9960100cf6db5e75886a4a3bdc7f8410f",
+    "followup_patch_sha256": "6f84d16c65f76987631cd3cc1fa5afe74d4c83991fb6c15807822a7e4daff162",
+    "client_archive_sha256": "5f152ac1b44903bb848ebfa4ebf6c95c1ac855780972346afff9cd5eda547aa2"
+  },
+  "content_evidence": {
+    "274": {
+      "source_commit": "0b6a0cb7d11667be0828ccec95ef02057763b768",
+      "obj_pack_sha256": "358e01a1f2e3751e3d1f8c6704b2f248f8f160567a73eddfc53feeaaf49c7f77",
+      "cache_manifest_sha256": "d2a67e1b52bbb8ccf5a9b8c764d5c11bd9740dc9ba2d23818a98c5a84417a2f4",
+      "mapping": "405=casket"
+    },
+    "289": {
+      "source_commit": "c236b0e578373af3d7d0097eebb2d89ab2bb95d1",
+      "obj_pack_sha256": "b5e97146856661a96b2f78690da7f366fed1e871637a0982d4a5ebfa30ac2bf7",
+      "cache_manifest_sha256": "d9be46828fbaeaaa2a8a9ffcfb882847e931994ae145f1395cfe4a6ce47c773e",
+      "mapping": "405=casket"
+    }
+  },
+  "checks": [
+    {"command": "cargo test -p api common_bank_loot_matches_names_and_verified_casket_id", "outcome": "pass", "raw": "api-common-loot.txt"},
+    {"command": "cargo test -p script --test load_isolate isolate_common_bank_loot_uses_rust_predicate_and_preserves_short_circuit -- --exact", "outcome": "pass", "raw": "script-common-loot.txt"},
+    {"command": "cargo test -p script --test load_isolate isolate_bank_withdraw_load", "outcome": "2 passed", "raw": "script-withdraw-load.txt"},
+    {"command": "cargo test -p script --test load_isolate isolate_bank", "outcome": "17 passed", "raw": "script-bank-family.txt"},
+    {"command": "cargo test -p script --lib pending_withdraw_x_pause_freezes_while_stop_and_reconnect_abort", "outcome": "pass", "raw": "script-pending-reset.txt"},
+    {"command": "cargo test -p host-play --lib withdraw_load", "outcome": "2 passed", "raw": "host-withdraw-load.txt"},
+    {"command": "cargo test -p host-play --lib withdraw_x_composes_script_host_dialog_and_posted_inventory_result", "outcome": "pass", "raw": "host-pause-hold.txt"},
+    {"command": "cargo test -p host-play --lib", "outcome": "122 passed", "raw": "host-play-lib.txt"},
+    {"command": "cargo test -p script --test gold_stubs withdraw", "outcome": "pass", "raw": "script-gold-withdraw.txt"},
+    {"command": "cargo test -p script --test host_js", "outcome": "2 passed, 1 ignored", "raw": "script-host-js.txt"},
+    {"command": "cargo clippy -p script --all-targets --no-deps -- -D warnings", "outcome": "pass", "raw": "script-clippy.txt"},
+    {"command": "cargo clippy -p host-play --lib --no-deps -- -D warnings", "outcome": "pass", "raw": "host-clippy.txt"},
+    {"command": "cargo fmt --all -- --check", "outcome": "pass", "raw": "fmt-check.txt"}
+  ],
+  "live_run": false,
+  "remaining_root_owned": [
+    "revision 274/289 live acceptance",
+    "frontend integration",
+    "final whole-branch review"
+  ]
+}

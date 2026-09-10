@@ -1,0 +1,8 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.14s
+     Running tests/load_isolate.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/debug/deps/load_isolate-bcff1c1e27bf7f7e)
+
+running 2 tests
+test isolate_bank_withdraw_load_queues_one_host_owned_request ... ok
+test isolate_bank_withdraw_load_handles_stale_and_full_snapshots_without_requests ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 152 filtered out; finished in 0.11s
