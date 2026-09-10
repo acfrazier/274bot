@@ -1212,6 +1212,7 @@ mod tests {
     #[test]
     fn successful_reconnect_generation_resets_snapshot_while_ingame_stays_true() {
         use client::client::{ClientNpc, ClientPlayer};
+        use client::io::ServerProt;
 
         let mut client = prepare_client(
             cfg(),
@@ -1226,24 +1227,61 @@ mod tests {
         client.npc[7] = Some(Box::new(ClientNpc::default()));
         client.npc_ids[0] = 7;
         client.npc_count = 1;
-        client.bump_gens(client::io::ServerProt::REBUILD_NORMAL);
+        client.map_build_base_x = 3200;
+        client.map_build_base_z = 3201;
+        client.minusedlevel = 1;
+        client.collision[1].add_wall(5, 6, 0, 0, false);
+        install_revision_snapshot_ifaces(&mut client);
+        dispatch_packet(
+            &mut client,
+            ServerProt::UPDATE_INV_FULL,
+            vec![0, 3, 1, 0, 1, 2],
+        );
+        client.bump_gens(ServerProt::REBUILD_NORMAL);
 
-        let mut slot = SlotLoop::new();
-        slot.after_drain(&mut client);
-        assert_eq!(slot.snapshot.npcs().len(), 1);
-        assert!(slot.snapshot.local_player().is_some());
+        let mut pump = Pump::new();
+        let mut snapshot = GameSnapshot::new();
+        publish_snapshot(&mut snapshot, &client, pump.drain_client(&client));
+        assert_eq!(snapshot.npcs().len(), 1);
+        assert!(snapshot.local_player().is_some());
+        assert_eq!(snapshot.inv_count(0), 2);
+        assert!(snapshot.scene().available);
 
         // A response-15 reconnect does not set ingame false or clear actor
         // tables. The successful-session generation is the only reliable
         // boundary available to the host.
+        let scene_gen = client.gens.scene;
         reconnect_grant(&mut client);
-        let result = slot.after_drain(&mut client);
+        let result = pump.drain_client(&client);
+        publish_snapshot(&mut snapshot, &client, result);
 
         assert!(result.session_changed);
-        assert!(slot.snapshot.npcs().is_empty());
-        assert!(slot.snapshot.local_player().is_none());
-        assert!(slot.snapshot.ingame());
-        assert_eq!(slot.snapshot.gens().session, client.gens.session);
+        assert_eq!(
+            client.gens.scene, scene_gen,
+            "grant must not invent a scene gen"
+        );
+        assert!(snapshot.npcs().is_empty());
+        assert!(snapshot.local_player().is_none());
+        assert!(snapshot.inv().is_empty());
+        assert_eq!(snapshot.tick(), 0);
+        assert!(snapshot.ingame());
+        assert_eq!(snapshot.gens().session, client.gens.session);
+
+        let scene = snapshot.scene();
+        assert!(
+            scene.available,
+            "the retained current collision map is usable"
+        );
+        assert_eq!((scene.base_x, scene.base_z, scene.level), (3200, 3201, 1));
+        assert_eq!(
+            scene.collision_flags,
+            client.collision[1]
+                .flags
+                .iter()
+                .flatten()
+                .copied()
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
