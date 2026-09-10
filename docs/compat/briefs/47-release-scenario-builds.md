@@ -2,7 +2,12 @@
 
 The operator requests another Grok architecture task: segregate what belongs in
 release binaries versus scenario builds, building on the memory-profile feature
-idea. This is design work alongside brief 46. Use grok46 profile defaults, read
+idea. The operator clarifies the audience: these development facilities are
+for us, script authors and potential external contributors. Ordinary users
+should receive a leaner gameplay release. Make that audience separation the
+design premise, while retaining the support diagnostics that ordinary users
+actually need. Treat footprint savings as a hypothesis to measure later, not
+an accepted result. This is design work alongside brief 46. Use grok46 profile defaults, read
 applicable AGENTS.md and docs/execution.md, and verify the current campaign
 branch. Own only docs/harness-integration/06-build-capabilities.md; commit the
 report and complete. No source edits, LIVE, remote work or implementation cards.
