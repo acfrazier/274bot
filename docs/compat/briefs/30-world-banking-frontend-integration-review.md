@@ -87,3 +87,8 @@ with actual proof references; no first-XP or seeded-result substitution. Also
 include brief 42's panel preparation/validation ownership and consuming checked
 handoff. Verify final validation still occurs off the event thread immediately
 before UI-side Play assembly, and stale completions cannot create sessions.
+
+Additional required inputs: generated game-data tooling/assets (t_48d33ff0,
+brief 44) and serde selected-profile metadata integration (t_f1572cf0, brief 43),
+per operator instruction. Check server fidelity, source/cache binding, startup
+publication and shared ownership before accepting ordered/custom Alcher proof.

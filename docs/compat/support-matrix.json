@@ -8775,7 +8775,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the moss giant drop table; ticked drops get grabbed. Everything picked up is banked \u2014 the bank keeps only food/runes/ammo/weapon."
+          "help": "the moss giant drop table; ticked drops get grabbed. Everything picked up is banked — the bank keeps only food/runes/ammo/weapon."
         },
         {
           "id": "bankCommonJunk",
@@ -9043,7 +9043,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "Best available walks Rune\u2192Bronze against your Mining level (worn \u2192 inventory \u2192 bank withdraw); a specific tier stops if you can't use or don't own it"
+          "help": "Best available walks Rune→Bronze against your Mining level (worn → inventory → bank withdraw); a specific tier stops if you can't use or don't own it"
         },
         {
           "id": "purgePackOnStart",
@@ -9665,7 +9665,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the moss giant drop table; ticked drops get grabbed. Everything picked up is banked \u2014 the bank keeps only food/runes/ammo/weapon."
+          "help": "the moss giant drop table; ticked drops get grabbed. Everything picked up is banked — the bank keeps only food/runes/ammo/weapon."
         },
         {
           "id": "bankCommonJunk",
@@ -9933,7 +9933,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "Best available walks Rune\u2192Bronze against your Mining level (worn \u2192 inventory \u2192 bank withdraw); a specific tier stops if you can't use or don't own it"
+          "help": "Best available walks Rune→Bronze against your Mining level (worn → inventory → bank withdraw); a specific tier stops if you can't use or don't own it"
         },
         {
           "id": "purgePackOnStart",
@@ -10965,7 +10965,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "melee / mage / range \u2014 same shape as AutoFighter. "
+          "help": "melee / mage / range — same shape as AutoFighter. "
         },
         {
           "id": "meleeStyle",
@@ -11019,7 +11019,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['mage'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "kept armed via autocast \u2014 a staff must be wielded"
+          "help": "kept armed via autocast — a staff must be wielded"
         },
         {
           "id": "runesWithdraw",
@@ -11516,7 +11516,7 @@
         "death detection, reacquisition and return-to-anchor behavior"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded core cell.",
+      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
       "observable_proof_requirement": "after Start at the chicken pen, combat XP plus supported loot/bury deltas; for banking, force depletion, bank restock, return, and renewed combat progress",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -11530,7 +11530,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Recorded independent core cell passed; remaining supported option branches and integrated source acceptance are open. See proof_references.",
+      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references.",
       "fixture_id": "local-274",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-100adccc-c933f37c.json"
@@ -11659,7 +11659,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "melee / mage / range \u2014 same shape as AutoFighter. "
+          "help": "melee / mage / range — same shape as AutoFighter. "
         },
         {
           "id": "meleeStyle",
@@ -11713,7 +11713,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['mage'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "kept armed via autocast \u2014 a staff must be wielded"
+          "help": "kept armed via autocast — a staff must be wielded"
         },
         {
           "id": "runesWithdraw",
@@ -12210,7 +12210,7 @@
         "death detection, reacquisition and return-to-anchor behavior"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded core cell.",
+      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
       "observable_proof_requirement": "after Start at the chicken pen, combat XP plus supported loot/bury deltas; for banking, force depletion, bank restock, return, and renewed combat progress",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -12224,7 +12224,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Recorded independent core cell passed; remaining supported option branches and integrated source acceptance are open. See proof_references.",
+      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references.",
       "fixture_id": "local-289",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-100adccc-c933f37c.json"
@@ -12773,7 +12773,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "Tower: picklock the door (46 Thieving). Yanille: Chaos druid warriors past the 40 Agility ledge \u2014 bring a slash weapon or knife for the entrance web"
+          "help": "Tower: picklock the door (46 Thieving). Yanille: Chaos druid warriors past the 40 Agility ledge — bring a slash weapon or knife for the entrance web"
         },
         {
           "id": "loadout",
@@ -13169,7 +13169,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "Tower: picklock the door (46 Thieving). Yanille: Chaos druid warriors past the 40 Agility ledge \u2014 bring a slash weapon or knife for the entrance web"
+          "help": "Tower: picklock the door (46 Thieving). Yanille: Chaos druid warriors past the 40 Agility ledge — bring a slash weapon or knife for the entrance web"
         },
         {
           "id": "loadout",
@@ -15636,7 +15636,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the moss giant drop table; ticked drops get grabbed. Everything picked up is banked \u2014 the bank keeps only food/runes/ammo/weapon."
+          "help": "the moss giant drop table; ticked drops get grabbed. Everything picked up is banked — the bank keeps only food/runes/ammo/weapon."
         },
         {
           "id": "bankCommonJunk",
@@ -16378,7 +16378,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the moss giant drop table; ticked drops get grabbed. Everything picked up is banked \u2014 the bank keeps only food/runes/ammo/weapon."
+          "help": "the moss giant drop table; ticked drops get grabbed. Everything picked up is banked — the bank keeps only food/runes/ammo/weapon."
         },
         {
           "id": "bankCommonJunk",
@@ -16894,7 +16894,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "range is unavailable \u2014 a bow blocks the anti-dragon shield slot"
+          "help": "range is unavailable — a bow blocks the anti-dragon shield slot"
         },
         {
           "id": "meleeStyle",
@@ -16931,7 +16931,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['melee'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "arms the spec bar whenever energy allows and the wielded weapon has one (dragon dagger, dragon longsword, \u2026); does nothing with a weapon that has no special"
+          "help": "arms the spec bar whenever energy allows and the wielded weapon has one (dragon dagger, dragon longsword, …); does nothing with a weapon that has no special"
         },
         {
           "id": "weapon",
@@ -17030,7 +17030,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "worn to absorb the dragonfire \u2014 required"
+          "help": "worn to absorb the dragonfire — required"
         },
         {
           "id": "usePotions",
@@ -17110,7 +17110,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "a full pack spends food to make room for loot instead of banking \u2014 never below this many"
+          "help": "a full pack spends food to make room for loot instead of banking — never below this many"
         },
         {
           "id": "solveClues",
@@ -17126,7 +17126,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "green dragons drop hard clues \u2014 the trail runs out of the wilderness and back"
+          "help": "green dragons drop hard clues — the trail runs out of the wilderness and back"
         },
         {
           "id": "escape",
@@ -17822,7 +17822,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "range is unavailable \u2014 a bow blocks the anti-dragon shield slot"
+          "help": "range is unavailable — a bow blocks the anti-dragon shield slot"
         },
         {
           "id": "meleeStyle",
@@ -17859,7 +17859,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['melee'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "arms the spec bar whenever energy allows and the wielded weapon has one (dragon dagger, dragon longsword, \u2026); does nothing with a weapon that has no special"
+          "help": "arms the spec bar whenever energy allows and the wielded weapon has one (dragon dagger, dragon longsword, …); does nothing with a weapon that has no special"
         },
         {
           "id": "weapon",
@@ -17958,7 +17958,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "worn to absorb the dragonfire \u2014 required"
+          "help": "worn to absorb the dragonfire — required"
         },
         {
           "id": "usePotions",
@@ -18038,7 +18038,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "a full pack spends food to make room for loot instead of banking \u2014 never below this many"
+          "help": "a full pack spends food to make room for loot instead of banking — never below this many"
         },
         {
           "id": "solveClues",
@@ -18054,7 +18054,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "green dragons drop hard clues \u2014 the trail runs out of the wilderness and back"
+          "help": "green dragons drop hard clues — the trail runs out of the wilderness and back"
         },
         {
           "id": "escape",
@@ -18853,7 +18853,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['mage'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "withdrawn on top of the cast budget. Looted runes (fire giants drop chaos) let the trip cast past its planned count and drain whichever rune is scarcest \u2014 if that rune is also the escape teleport's, the bot cannot leave. Runes stack, so this costs no extra slots"
+          "help": "withdrawn on top of the cast budget. Looted runes (fire giants drop chaos) let the trip cast past its planned count and drain whichever rune is scarcest — if that rune is also the escape teleport's, the bot cannot leave. Runes stack, so this costs no extra slots"
         },
         {
           "id": "bow",
@@ -18992,7 +18992,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the fire giant drop table; ticked drops get grabbed. Everything picked up is banked \u2014 the bank keeps only food/runes/ammo/weapon plus the amulet, rope, and escape runes."
+          "help": "the fire giant drop table; ticked drops get grabbed. Everything picked up is banked — the bank keeps only food/runes/ammo/weapon plus the amulet, rope, and escape runes."
         },
         {
           "id": "bankCommonJunk",
@@ -19040,7 +19040,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['mage', 'range'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "preferred spot in the west room \u2014 sees two giants. If one reaches it the bot drops to the fallback tile for a minute"
+          "help": "preferred spot in the west room — sees two giants. If one reaches it the bot drops to the fallback tile for a minute"
         },
         {
           "id": "safespotFallbackTile",
@@ -19072,7 +19072,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['melee'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "centre of the east chamber \u2014 7 giants within 6 tiles"
+          "help": "centre of the east chamber — 7 giants within 6 tiles"
         },
         {
           "id": "escapeTele",
@@ -19088,7 +19088,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "Barrel walks out through the dungeon door and rides the barrel off the ledge to 2527,3413 \u2014 free, no runes or magic level, 118 tiles from Ardougne West. A teleport only saves the walk back to the exit door"
+          "help": "Barrel walks out through the dungeon door and rides the barrel off the ledge to 2527,3413 — free, no runes or magic level, 118 tiles from Ardougne West. A teleport only saves the walk back to the exit door"
         },
         {
           "id": "teleStock",
@@ -19707,7 +19707,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['mage'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "withdrawn on top of the cast budget. Looted runes (fire giants drop chaos) let the trip cast past its planned count and drain whichever rune is scarcest \u2014 if that rune is also the escape teleport's, the bot cannot leave. Runes stack, so this costs no extra slots"
+          "help": "withdrawn on top of the cast budget. Looted runes (fire giants drop chaos) let the trip cast past its planned count and drain whichever rune is scarcest — if that rune is also the escape teleport's, the bot cannot leave. Runes stack, so this costs no extra slots"
         },
         {
           "id": "bow",
@@ -19846,7 +19846,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the fire giant drop table; ticked drops get grabbed. Everything picked up is banked \u2014 the bank keeps only food/runes/ammo/weapon plus the amulet, rope, and escape runes."
+          "help": "the fire giant drop table; ticked drops get grabbed. Everything picked up is banked — the bank keeps only food/runes/ammo/weapon plus the amulet, rope, and escape runes."
         },
         {
           "id": "bankCommonJunk",
@@ -19894,7 +19894,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['mage', 'range'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "preferred spot in the west room \u2014 sees two giants. If one reaches it the bot drops to the fallback tile for a minute"
+          "help": "preferred spot in the west room — sees two giants. If one reaches it the bot drops to the fallback tile for a minute"
         },
         {
           "id": "safespotFallbackTile",
@@ -19926,7 +19926,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['melee'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "centre of the east chamber \u2014 7 giants within 6 tiles"
+          "help": "centre of the east chamber — 7 giants within 6 tiles"
         },
         {
           "id": "escapeTele",
@@ -19942,7 +19942,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "Barrel walks out through the dungeon door and rides the barrel off the ledge to 2527,3413 \u2014 free, no runes or magic level, 118 tiles from Ardougne West. A teleport only saves the walk back to the exit door"
+          "help": "Barrel walks out through the dungeon door and rides the barrel off the ledge to 2527,3413 — free, no runes or magic level, 118 tiles from Ardougne West. A teleport only saves the walk back to the exit door"
         },
         {
           "id": "teleStock",
@@ -22359,13 +22359,16 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
       "observable_proof_requirement": "script-caused steals/Thieving XP; for food banking, force depletion, restock, return, and further steals",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references.",
+      "fixture_id": "local-274",
+      "proof_references": [
+        "docs/compat/evidence/catalog-harness/live/r274-thiever-100adccc-c933f37c.json"
+      ]
     },
     {
       "display_name": "Thiever",
@@ -22920,12 +22923,12 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded core cell.",
+      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
       "observable_proof_requirement": "script-caused steals/Thieving XP; for food banking, force depletion, restock, return, and further steals",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Recorded independent core cell passed; remaining supported option branches and integrated source acceptance are open. See proof_references.",
+      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references.",
       "fixture_id": "local-289",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r289-thiever-100adccc-c933f37c.json"
@@ -23059,7 +23062,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['melee', 'range'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "arms the spec bar whenever energy covers the wielded weapon's special (dragon dagger, dragon longsword, magic shortbow, \u2026); does nothing with a weapon that has no special"
+          "help": "arms the spec bar whenever energy covers the wielded weapon's special (dragon dagger, dragon longsword, magic shortbow, …); does nothing with a weapon that has no special"
         },
         {
           "id": "spell",
@@ -23092,7 +23095,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['mage'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "kept armed via autocast \u2014 a staff must be wielded"
+          "help": "kept armed via autocast — a staff must be wielded"
         },
         {
           "id": "runesWithdraw",
@@ -23208,7 +23211,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "exact item name to eat (e.g. Shark, Monkfish, Trout). Leave blank to use the loadout\u2019s food, falling back to Trout"
+          "help": "exact item name to eat (e.g. Shark, Monkfish, Trout). Leave blank to use the loadout’s food, falling back to Trout"
         },
         {
           "id": "foodWithdraw",
@@ -24010,7 +24013,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['melee', 'range'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "arms the spec bar whenever energy covers the wielded weapon's special (dragon dagger, dragon longsword, magic shortbow, \u2026); does nothing with a weapon that has no special"
+          "help": "arms the spec bar whenever energy covers the wielded weapon's special (dragon dagger, dragon longsword, magic shortbow, …); does nothing with a weapon that has no special"
         },
         {
           "id": "spell",
@@ -24043,7 +24046,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['mage'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "kept armed via autocast \u2014 a staff must be wielded"
+          "help": "kept armed via autocast — a staff must be wielded"
         },
         {
           "id": "runesWithdraw",
@@ -24159,7 +24162,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "exact item name to eat (e.g. Shark, Monkfish, Trout). Leave blank to use the loadout\u2019s food, falling back to Trout"
+          "help": "exact item name to eat (e.g. Shark, Monkfish, Trout). Leave blank to use the loadout’s food, falling back to Trout"
         },
         {
           "id": "foodWithdraw",
@@ -24861,7 +24864,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the bot knows each target's market spot \u2014 no anchor to place"
+          "help": "the bot knows each target's market spot — no anchor to place"
         },
         {
           "id": "guardResponse",
@@ -25495,7 +25498,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the bot knows each target's market spot \u2014 no anchor to place"
+          "help": "the bot knows each target's market spot — no anchor to place"
         },
         {
           "id": "guardResponse",
@@ -26143,7 +26146,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "Fight mode kills guards, which drop medium clues \u2014 solve them on the spot"
+          "help": "Fight mode kills guards, which drop medium clues — solve them on the spot"
         }
       ],
       "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
@@ -26509,7 +26512,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "Fight mode kills guards, which drop medium clues \u2014 solve them on the spot"
+          "help": "Fight mode kills guards, which drop medium clues — solve them on the spot"
         }
       ],
       "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
@@ -27936,7 +27939,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "which rune to craft \u2014 Air is the ruins south of Falador (Falador East bank), Earth is north-east of Varrock (Varrock East bank)"
+          "help": "which rune to craft — Air is the ruins south of Falador (Falador East bank), Earth is north-east of Varrock (Varrock East bank)"
         },
         {
           "id": "mode",
@@ -27956,7 +27959,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "Solo banks its own essence. A Runner needs its own talisman: it banks essence, enters the altar and hands the load over inside. The Mule Recipient camps next to the altar and never leaves \u2014 it takes every essence trade and crafts between them"
+          "help": "Solo banks its own essence. A Runner needs its own talisman: it banks essence, enters the altar and hands the load over inside. The Mule Recipient camps next to the altar and never leaves — it takes every essence trade and crafts between them"
         },
         {
           "id": "partner",
@@ -28225,7 +28228,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "which rune to craft \u2014 Air is the ruins south of Falador (Falador East bank), Earth is north-east of Varrock (Varrock East bank)"
+          "help": "which rune to craft — Air is the ruins south of Falador (Falador East bank), Earth is north-east of Varrock (Varrock East bank)"
         },
         {
           "id": "mode",
@@ -28245,7 +28248,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "Solo banks its own essence. A Runner needs its own talisman: it banks essence, enters the altar and hands the load over inside. The Mule Recipient camps next to the altar and never leaves \u2014 it takes every essence trade and crafts between them"
+          "help": "Solo banks its own essence. A Runner needs its own talisman: it banks essence, enters the altar and hands the load over inside. The Mule Recipient camps next to the altar and never leaves — it takes every essence trade and crafts between them"
         },
         {
           "id": "partner",
@@ -28565,7 +28568,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "Master: walks to the bank on this timer and deposits everything except the talisman \u2014 banks the runes and clears out whatever random events have left in the pack. Air banks at Falador East; the nature master's nearest bank is the quest-gated Shilo Village one, so it may not be reachable"
+          "help": "Master: walks to the bank on this timer and deposits everything except the talisman — banks the runes and clears out whatever random events have left in the pack. Air banks at Falador East; the nature master's nearest bank is the quest-gated Shilo Village one, so it may not be reachable"
         },
         {
           "id": "withdrawEss",
@@ -28983,7 +28986,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "Master: walks to the bank on this timer and deposits everything except the talisman \u2014 banks the runes and clears out whatever random events have left in the pack. Air banks at Falador East; the nature master's nearest bank is the quest-gated Shilo Village one, so it may not be reachable"
+          "help": "Master: walks to the bank on this timer and deposits everything except the talisman — banks the runes and clears out whatever random events have left in the pack. Air banks at Falador East; the nature master's nearest bank is the quest-gated Shilo Village one, so it may not be reachable"
         },
         {
           "id": "withdrawEss",
@@ -30323,7 +30326,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the exact log to withdraw and fletch \u2014 only regular Logs make Arrow shafts; every log makes a bow. Selects the unstrung wood for String short/long bow. Ignored for the arrow attach products"
+          "help": "the exact log to withdraw and fletch — only regular Logs make Arrow shafts; every log makes a bow. Selects the unstrung wood for String short/long bow. Ignored for the arrow attach products"
         },
         {
           "id": "product",
@@ -30368,7 +30371,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "stand adjacent to a bank booth \u2014 start the bot here"
+          "help": "stand adjacent to a bank booth — start the bot here"
         },
         {
           "id": "bankBooth",
@@ -30660,7 +30663,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the exact log to withdraw and fletch \u2014 only regular Logs make Arrow shafts; every log makes a bow. Selects the unstrung wood for String short/long bow. Ignored for the arrow attach products"
+          "help": "the exact log to withdraw and fletch — only regular Logs make Arrow shafts; every log makes a bow. Selects the unstrung wood for String short/long bow. Ignored for the arrow attach products"
         },
         {
           "id": "product",
@@ -30705,7 +30708,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "stand adjacent to a bank booth \u2014 start the bot here"
+          "help": "stand adjacent to a bank booth — start the bot here"
         },
         {
           "id": "bankBooth",
@@ -32288,7 +32291,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "check specific herbs to restrict the run; leave all unchecked to clean every herb your Herblore level allows \u2014 the bot deposits everything from your pack into the bank each cycle, including non-herbs, so start with nothing valuable carried"
+          "help": "check specific herbs to restrict the run; leave all unchecked to clean every herb your Herblore level allows — the bot deposits everything from your pack into the bank each cycle, including non-herbs, so start with nothing valuable carried"
         }
       ],
       "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
@@ -32472,7 +32475,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "check specific herbs to restrict the run; leave all unchecked to clean every herb your Herblore level allows \u2014 the bot deposits everything from your pack into the bank each cycle, including non-herbs, so start with nothing valuable carried"
+          "help": "check specific herbs to restrict the run; leave all unchecked to clean every herb your Herblore level allows — the bot deposits everything from your pack into the bank each cycle, including non-herbs, so start with nothing valuable carried"
         }
       ],
       "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
@@ -32672,7 +32675,7 @@
           "show_if": "{ key: 'herb', anyOf: [CUSTOM] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "Shown when Herb is Custom \u2014 a clean herb name like \"guam leaf\" or \"ranarr\"."
+          "help": "Shown when Herb is Custom — a clean herb name like \"guam leaf\" or \"ranarr\"."
         },
         {
           "id": "secondary",
@@ -32704,7 +32707,7 @@
           "show_if": "{ key: 'secondary', anyOf: [CUSTOM] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "Shown when Secondary is Custom \u2014 a secondary name like \"eye of newt\" or \"snape\"."
+          "help": "Shown when Secondary is Custom — a secondary name like \"eye of newt\" or \"snape\"."
         }
       ],
       "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
@@ -32902,7 +32905,7 @@
           "show_if": "{ key: 'herb', anyOf: [CUSTOM] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "Shown when Herb is Custom \u2014 a clean herb name like \"guam leaf\" or \"ranarr\"."
+          "help": "Shown when Herb is Custom — a clean herb name like \"guam leaf\" or \"ranarr\"."
         },
         {
           "id": "secondary",
@@ -32934,7 +32937,7 @@
           "show_if": "{ key: 'secondary', anyOf: [CUSTOM] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "Shown when Secondary is Custom \u2014 a secondary name like \"eye of newt\" or \"snape\"."
+          "help": "Shown when Secondary is Custom — a secondary name like \"eye of newt\" or \"snape\"."
         }
       ],
       "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
@@ -34673,15 +34676,17 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded core cell.",
+      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
       "observable_proof_requirement": "Magic XP, target/rune consumption and coin increase, including noted stock and bank restock",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Recorded independent core cell passed; remaining supported option branches and integrated source acceptance are open. See proof_references.",
+      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references. Ordered two-item LIVE failed because host ITEM_DB only contained Rune chainbody; generated server-data/serde integration is required.",
       "fixture_id": "local-274",
       "proof_references": [
-        "docs/compat/evidence/catalog-harness/live/r274-alcher-100adccc-c933f37c.json"
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-100adccc-c933f37c.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-100adccc-41d7a1e3.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-large-batch-100adccc-41d7a1e3.json"
       ]
     },
     {
@@ -34932,15 +34937,17 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded core cell.",
+      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
       "observable_proof_requirement": "Magic XP, target/rune consumption and coin increase, including noted stock and bank restock",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Recorded independent core cell passed; remaining supported option branches and integrated source acceptance are open. See proof_references.",
+      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references. Ordered two-item LIVE failed because host ITEM_DB only contained Rune chainbody; generated server-data/serde integration is required.",
       "fixture_id": "local-289",
       "proof_references": [
-        "docs/compat/evidence/catalog-harness/live/r289-alcher-100adccc-c933f37c.json"
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-100adccc-c933f37c.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-100adccc-41d7a1e3.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-large-batch-100adccc-41d7a1e3.json"
       ]
     },
     {
@@ -35636,7 +35643,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the opening on the west side \u2014 run out here before banking"
+          "help": "the opening on the west side — run out here before banking"
         },
         {
           "id": "bankEntrance",
@@ -35936,7 +35943,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the opening on the west side \u2014 run out here before banking"
+          "help": "the opening on the west side — run out here before banking"
         },
         {
           "id": "bankEntrance",
@@ -36213,7 +36220,7 @@
           "id": "ladderTile",
           "type": "tile",
           "default": null,
-          "label": "Ladder stand tile (x,z) \u2014 inside the house",
+          "label": "Ladder stand tile (x,z) — inside the house",
           "min": null,
           "max": null,
           "step": null,
@@ -36223,7 +36230,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "walkable tile INSIDE the wheel house beside the ladder (not the ladder tile itself \u2014 see route note); the house door is opened on the way"
+          "help": "walkable tile INSIDE the wheel house beside the ladder (not the ladder tile itself — see route note); the house door is opened on the way"
         },
         {
           "id": "wheelTile",
@@ -36239,7 +36246,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "upstairs \u2014 search centre for the wheel"
+          "help": "upstairs — search centre for the wheel"
         },
         {
           "id": "bankBooth",
@@ -36592,7 +36599,7 @@
           "id": "ladderTile",
           "type": "tile",
           "default": null,
-          "label": "Ladder stand tile (x,z) \u2014 inside the house",
+          "label": "Ladder stand tile (x,z) — inside the house",
           "min": null,
           "max": null,
           "step": null,
@@ -36602,7 +36609,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "walkable tile INSIDE the wheel house beside the ladder (not the ladder tile itself \u2014 see route note); the house door is opened on the way"
+          "help": "walkable tile INSIDE the wheel house beside the ladder (not the ladder tile itself — see route note); the house door is opened on the way"
         },
         {
           "id": "wheelTile",
@@ -36618,7 +36625,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "upstairs \u2014 search centre for the wheel"
+          "help": "upstairs — search centre for the wheel"
         },
         {
           "id": "bankBooth",
@@ -37266,7 +37273,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "check specific gems to restrict the run; leave all unchecked to cut every gem your Crafting level allows \u2014 the bot deposits everything from your pack into the bank each cycle, including non-gems, so start with nothing valuable carried"
+          "help": "check specific gems to restrict the run; leave all unchecked to cut every gem your Crafting level allows — the bot deposits everything from your pack into the bank each cycle, including non-gems, so start with nothing valuable carried"
         }
       ],
       "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
@@ -37446,7 +37453,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "check specific gems to restrict the run; leave all unchecked to cut every gem your Crafting level allows \u2014 the bot deposits everything from your pack into the bank each cycle, including non-gems, so start with nothing valuable carried"
+          "help": "check specific gems to restrict the run; leave all unchecked to cut every gem your Crafting level allows — the bot deposits everything from your pack into the bank each cycle, including non-gems, so start with nothing valuable carried"
         }
       ],
       "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
@@ -40388,7 +40395,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the shop to buy out \u2014 its trade tile and nearest bank are baked in (add more in shopPresets.ts)"
+          "help": "the shop to buy out — its trade tile and nearest bank are baked in (add more in shopPresets.ts)"
         },
         {
           "id": "budgetGp",
@@ -40404,7 +40411,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the session budget \u2014 the bot stops cleanly once roughly this much has been spent"
+          "help": "the session budget — the bot stops cleanly once roughly this much has been spent"
         },
         {
           "id": "perTripGp",
@@ -40676,7 +40683,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the shop to buy out \u2014 its trade tile and nearest bank are baked in (add more in shopPresets.ts)"
+          "help": "the shop to buy out — its trade tile and nearest bank are baked in (add more in shopPresets.ts)"
         },
         {
           "id": "budgetGp",
@@ -40692,7 +40699,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the session budget \u2014 the bot stops cleanly once roughly this much has been spent"
+          "help": "the session budget — the bot stops cleanly once roughly this much has been spent"
         },
         {
           "id": "perTripGp",
@@ -45470,7 +45477,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "melee / mage / range \u2014 same shape as AutoFighter. "
+          "help": "melee / mage / range — same shape as AutoFighter. "
         },
         {
           "id": "meleeStyle",
@@ -45524,7 +45531,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['mage'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "kept armed via autocast \u2014 a staff must be wielded"
+          "help": "kept armed via autocast — a staff must be wielded"
         },
         {
           "id": "runesWithdraw",
@@ -46021,7 +46028,7 @@
         "death detection, reacquisition and return-to-anchor behavior"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
       "observable_proof_requirement": "after Start at the chicken pen, combat XP plus supported loot/bury deltas; for banking, force depletion, bank restock, return, and renewed combat progress",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -46034,9 +46041,12 @@
           "source_evidence": "src/bot/scripts/ChickenKiller/ChickenKiller.ts constructs DeathRecovery; crates/script/src/shim/death_recovery.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing periodic bank execution",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references.",
+      "fixture_id": "local-274",
+      "proof_references": [
+        "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-8e7d965b-c933f37c.json"
+      ]
     },
     {
       "display_name": "ChickenKiller",
@@ -46161,7 +46171,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "melee / mage / range \u2014 same shape as AutoFighter. "
+          "help": "melee / mage / range — same shape as AutoFighter. "
         },
         {
           "id": "meleeStyle",
@@ -46215,7 +46225,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['mage'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "kept armed via autocast \u2014 a staff must be wielded"
+          "help": "kept armed via autocast — a staff must be wielded"
         },
         {
           "id": "runesWithdraw",
@@ -46712,7 +46722,7 @@
         "death detection, reacquisition and return-to-anchor behavior"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
       "observable_proof_requirement": "after Start at the chicken pen, combat XP plus supported loot/bury deltas; for banking, force depletion, bank restock, return, and renewed combat progress",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -46725,9 +46735,12 @@
           "source_evidence": "src/bot/scripts/ChickenKiller/ChickenKiller.ts constructs DeathRecovery; crates/script/src/shim/death_recovery.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing periodic bank execution",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references.",
+      "fixture_id": "local-289",
+      "proof_references": [
+        "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-8e7d965b-c933f37c.json"
+      ]
     },
     {
       "display_name": "Duel Arena Combat Trainer",
@@ -47272,7 +47285,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "Tower: picklock the door (46 Thieving). Yanille: Chaos druid warriors past the 40 Agility ledge \u2014 bring a slash weapon or knife for the entrance web"
+          "help": "Tower: picklock the door (46 Thieving). Yanille: Chaos druid warriors past the 40 Agility ledge — bring a slash weapon or knife for the entrance web"
         },
         {
           "id": "loadout",
@@ -47668,7 +47681,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "Tower: picklock the door (46 Thieving). Yanille: Chaos druid warriors past the 40 Agility ledge \u2014 bring a slash weapon or knife for the entrance web"
+          "help": "Tower: picklock the door (46 Thieving). Yanille: Chaos druid warriors past the 40 Agility ledge — bring a slash weapon or knife for the entrance web"
         },
         {
           "id": "loadout",
@@ -50135,7 +50148,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the moss giant drop table; ticked drops get grabbed. Everything picked up is banked \u2014 the bank keeps only food/runes/ammo/weapon."
+          "help": "the moss giant drop table; ticked drops get grabbed. Everything picked up is banked — the bank keeps only food/runes/ammo/weapon."
         },
         {
           "id": "bankCommonJunk",
@@ -50877,7 +50890,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the moss giant drop table; ticked drops get grabbed. Everything picked up is banked \u2014 the bank keeps only food/runes/ammo/weapon."
+          "help": "the moss giant drop table; ticked drops get grabbed. Everything picked up is banked — the bank keeps only food/runes/ammo/weapon."
         },
         {
           "id": "bankCommonJunk",
@@ -51393,7 +51406,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "range is unavailable \u2014 a bow blocks the anti-dragon shield slot"
+          "help": "range is unavailable — a bow blocks the anti-dragon shield slot"
         },
         {
           "id": "meleeStyle",
@@ -51430,7 +51443,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['melee'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "arms the spec bar whenever energy allows and the wielded weapon has one (dragon dagger, dragon longsword, \u2026); does nothing with a weapon that has no special"
+          "help": "arms the spec bar whenever energy allows and the wielded weapon has one (dragon dagger, dragon longsword, …); does nothing with a weapon that has no special"
         },
         {
           "id": "weapon",
@@ -51529,7 +51542,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "worn to absorb the dragonfire \u2014 required"
+          "help": "worn to absorb the dragonfire — required"
         },
         {
           "id": "usePotions",
@@ -51609,7 +51622,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "a full pack spends food to make room for loot instead of banking \u2014 never below this many"
+          "help": "a full pack spends food to make room for loot instead of banking — never below this many"
         },
         {
           "id": "solveClues",
@@ -51625,7 +51638,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "green dragons drop hard clues \u2014 the trail runs out of the wilderness and back"
+          "help": "green dragons drop hard clues — the trail runs out of the wilderness and back"
         },
         {
           "id": "escape",
@@ -52321,7 +52334,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "range is unavailable \u2014 a bow blocks the anti-dragon shield slot"
+          "help": "range is unavailable — a bow blocks the anti-dragon shield slot"
         },
         {
           "id": "meleeStyle",
@@ -52358,7 +52371,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['melee'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "arms the spec bar whenever energy allows and the wielded weapon has one (dragon dagger, dragon longsword, \u2026); does nothing with a weapon that has no special"
+          "help": "arms the spec bar whenever energy allows and the wielded weapon has one (dragon dagger, dragon longsword, …); does nothing with a weapon that has no special"
         },
         {
           "id": "weapon",
@@ -52457,7 +52470,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "worn to absorb the dragonfire \u2014 required"
+          "help": "worn to absorb the dragonfire — required"
         },
         {
           "id": "usePotions",
@@ -52537,7 +52550,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "a full pack spends food to make room for loot instead of banking \u2014 never below this many"
+          "help": "a full pack spends food to make room for loot instead of banking — never below this many"
         },
         {
           "id": "solveClues",
@@ -52553,7 +52566,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "green dragons drop hard clues \u2014 the trail runs out of the wilderness and back"
+          "help": "green dragons drop hard clues — the trail runs out of the wilderness and back"
         },
         {
           "id": "escape",
@@ -53352,7 +53365,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['mage'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "withdrawn on top of the cast budget. Looted runes (fire giants drop chaos) let the trip cast past its planned count and drain whichever rune is scarcest \u2014 if that rune is also the escape teleport's, the bot cannot leave. Runes stack, so this costs no extra slots"
+          "help": "withdrawn on top of the cast budget. Looted runes (fire giants drop chaos) let the trip cast past its planned count and drain whichever rune is scarcest — if that rune is also the escape teleport's, the bot cannot leave. Runes stack, so this costs no extra slots"
         },
         {
           "id": "bow",
@@ -53491,7 +53504,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the fire giant drop table; ticked drops get grabbed. Everything picked up is banked \u2014 the bank keeps only food/runes/ammo/weapon plus the amulet, rope, and escape runes."
+          "help": "the fire giant drop table; ticked drops get grabbed. Everything picked up is banked — the bank keeps only food/runes/ammo/weapon plus the amulet, rope, and escape runes."
         },
         {
           "id": "bankCommonJunk",
@@ -53539,7 +53552,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['mage', 'range'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "preferred spot in the west room \u2014 sees two giants. If one reaches it the bot drops to the fallback tile for a minute"
+          "help": "preferred spot in the west room — sees two giants. If one reaches it the bot drops to the fallback tile for a minute"
         },
         {
           "id": "safespotFallbackTile",
@@ -53571,7 +53584,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['melee'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "centre of the east chamber \u2014 7 giants within 6 tiles"
+          "help": "centre of the east chamber — 7 giants within 6 tiles"
         },
         {
           "id": "escapeTele",
@@ -53587,7 +53600,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "Barrel walks out through the dungeon door and rides the barrel off the ledge to 2527,3413 \u2014 free, no runes or magic level, 118 tiles from Ardougne West. A teleport only saves the walk back to the exit door"
+          "help": "Barrel walks out through the dungeon door and rides the barrel off the ledge to 2527,3413 — free, no runes or magic level, 118 tiles from Ardougne West. A teleport only saves the walk back to the exit door"
         },
         {
           "id": "teleStock",
@@ -54206,7 +54219,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['mage'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "withdrawn on top of the cast budget. Looted runes (fire giants drop chaos) let the trip cast past its planned count and drain whichever rune is scarcest \u2014 if that rune is also the escape teleport's, the bot cannot leave. Runes stack, so this costs no extra slots"
+          "help": "withdrawn on top of the cast budget. Looted runes (fire giants drop chaos) let the trip cast past its planned count and drain whichever rune is scarcest — if that rune is also the escape teleport's, the bot cannot leave. Runes stack, so this costs no extra slots"
         },
         {
           "id": "bow",
@@ -54345,7 +54358,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the fire giant drop table; ticked drops get grabbed. Everything picked up is banked \u2014 the bank keeps only food/runes/ammo/weapon plus the amulet, rope, and escape runes."
+          "help": "the fire giant drop table; ticked drops get grabbed. Everything picked up is banked — the bank keeps only food/runes/ammo/weapon plus the amulet, rope, and escape runes."
         },
         {
           "id": "bankCommonJunk",
@@ -54393,7 +54406,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['mage', 'range'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "preferred spot in the west room \u2014 sees two giants. If one reaches it the bot drops to the fallback tile for a minute"
+          "help": "preferred spot in the west room — sees two giants. If one reaches it the bot drops to the fallback tile for a minute"
         },
         {
           "id": "safespotFallbackTile",
@@ -54425,7 +54438,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['melee'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "centre of the east chamber \u2014 7 giants within 6 tiles"
+          "help": "centre of the east chamber — 7 giants within 6 tiles"
         },
         {
           "id": "escapeTele",
@@ -54441,7 +54454,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "Barrel walks out through the dungeon door and rides the barrel off the ledge to 2527,3413 \u2014 free, no runes or magic level, 118 tiles from Ardougne West. A teleport only saves the walk back to the exit door"
+          "help": "Barrel walks out through the dungeon door and rides the barrel off the ledge to 2527,3413 — free, no runes or magic level, 118 tiles from Ardougne West. A teleport only saves the walk back to the exit door"
         },
         {
           "id": "teleStock",
@@ -56858,13 +56871,16 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
       "observable_proof_requirement": "script-caused steals/Thieving XP; for food banking, force depletion, restock, return, and further steals",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references.",
+      "fixture_id": "local-274",
+      "proof_references": [
+        "docs/compat/evidence/catalog-harness/live/r274-thiever-8e7d965b-c933f37c.json"
+      ]
     },
     {
       "display_name": "Thiever",
@@ -57419,13 +57435,16 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
       "observable_proof_requirement": "script-caused steals/Thieving XP; for food banking, force depletion, restock, return, and further steals",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references.",
+      "fixture_id": "local-289",
+      "proof_references": [
+        "docs/compat/evidence/catalog-harness/live/r289-thiever-8e7d965b-c933f37c.json"
+      ]
     },
     {
       "display_name": "AutoFighter",
@@ -57555,7 +57574,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['melee', 'range'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "arms the spec bar whenever energy covers the wielded weapon's special (dragon dagger, dragon longsword, magic shortbow, \u2026); does nothing with a weapon that has no special"
+          "help": "arms the spec bar whenever energy covers the wielded weapon's special (dragon dagger, dragon longsword, magic shortbow, …); does nothing with a weapon that has no special"
         },
         {
           "id": "spell",
@@ -57588,7 +57607,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['mage'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "kept armed via autocast \u2014 a staff must be wielded"
+          "help": "kept armed via autocast — a staff must be wielded"
         },
         {
           "id": "runesWithdraw",
@@ -57704,7 +57723,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "exact item name to eat (e.g. Shark, Monkfish, Trout). Leave blank to use the loadout\u2019s food, falling back to Trout"
+          "help": "exact item name to eat (e.g. Shark, Monkfish, Trout). Leave blank to use the loadout’s food, falling back to Trout"
         },
         {
           "id": "foodWithdraw",
@@ -58506,7 +58525,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['melee', 'range'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "arms the spec bar whenever energy covers the wielded weapon's special (dragon dagger, dragon longsword, magic shortbow, \u2026); does nothing with a weapon that has no special"
+          "help": "arms the spec bar whenever energy covers the wielded weapon's special (dragon dagger, dragon longsword, magic shortbow, …); does nothing with a weapon that has no special"
         },
         {
           "id": "spell",
@@ -58539,7 +58558,7 @@
           "show_if": "{ key: 'combatStyle', anyOf: ['mage'] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "kept armed via autocast \u2014 a staff must be wielded"
+          "help": "kept armed via autocast — a staff must be wielded"
         },
         {
           "id": "runesWithdraw",
@@ -58655,7 +58674,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "exact item name to eat (e.g. Shark, Monkfish, Trout). Leave blank to use the loadout\u2019s food, falling back to Trout"
+          "help": "exact item name to eat (e.g. Shark, Monkfish, Trout). Leave blank to use the loadout’s food, falling back to Trout"
         },
         {
           "id": "foodWithdraw",
@@ -59357,7 +59376,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the bot knows each target's market spot \u2014 no anchor to place"
+          "help": "the bot knows each target's market spot — no anchor to place"
         },
         {
           "id": "guardResponse",
@@ -59991,7 +60010,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the bot knows each target's market spot \u2014 no anchor to place"
+          "help": "the bot knows each target's market spot — no anchor to place"
         },
         {
           "id": "guardResponse",
@@ -60639,7 +60658,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "Fight mode kills guards, which drop medium clues \u2014 solve them on the spot"
+          "help": "Fight mode kills guards, which drop medium clues — solve them on the spot"
         }
       ],
       "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
@@ -61005,7 +61024,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "Fight mode kills guards, which drop medium clues \u2014 solve them on the spot"
+          "help": "Fight mode kills guards, which drop medium clues — solve them on the spot"
         }
       ],
       "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
@@ -62432,7 +62451,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "which rune to craft \u2014 Air is the ruins south of Falador (Falador East bank), Earth is north-east of Varrock (Varrock East bank)"
+          "help": "which rune to craft — Air is the ruins south of Falador (Falador East bank), Earth is north-east of Varrock (Varrock East bank)"
         },
         {
           "id": "mode",
@@ -62452,7 +62471,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "Solo banks its own essence. A Runner needs its own talisman: it banks essence, enters the altar and hands the load over inside. The Mule Recipient camps next to the altar and never leaves \u2014 it takes every essence trade and crafts between them"
+          "help": "Solo banks its own essence. A Runner needs its own talisman: it banks essence, enters the altar and hands the load over inside. The Mule Recipient camps next to the altar and never leaves — it takes every essence trade and crafts between them"
         },
         {
           "id": "partner",
@@ -62721,7 +62740,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "which rune to craft \u2014 Air is the ruins south of Falador (Falador East bank), Earth is north-east of Varrock (Varrock East bank)"
+          "help": "which rune to craft — Air is the ruins south of Falador (Falador East bank), Earth is north-east of Varrock (Varrock East bank)"
         },
         {
           "id": "mode",
@@ -62741,7 +62760,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "Solo banks its own essence. A Runner needs its own talisman: it banks essence, enters the altar and hands the load over inside. The Mule Recipient camps next to the altar and never leaves \u2014 it takes every essence trade and crafts between them"
+          "help": "Solo banks its own essence. A Runner needs its own talisman: it banks essence, enters the altar and hands the load over inside. The Mule Recipient camps next to the altar and never leaves — it takes every essence trade and crafts between them"
         },
         {
           "id": "partner",
@@ -63061,7 +63080,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "Master: walks to the bank on this timer and deposits everything except the talisman \u2014 banks the runes and clears out whatever random events have left in the pack. Air banks at Falador East; the nature master's nearest bank is the quest-gated Shilo Village one, so it may not be reachable"
+          "help": "Master: walks to the bank on this timer and deposits everything except the talisman — banks the runes and clears out whatever random events have left in the pack. Air banks at Falador East; the nature master's nearest bank is the quest-gated Shilo Village one, so it may not be reachable"
         },
         {
           "id": "withdrawEss",
@@ -63479,7 +63498,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "Master: walks to the bank on this timer and deposits everything except the talisman \u2014 banks the runes and clears out whatever random events have left in the pack. Air banks at Falador East; the nature master's nearest bank is the quest-gated Shilo Village one, so it may not be reachable"
+          "help": "Master: walks to the bank on this timer and deposits everything except the talisman — banks the runes and clears out whatever random events have left in the pack. Air banks at Falador East; the nature master's nearest bank is the quest-gated Shilo Village one, so it may not be reachable"
         },
         {
           "id": "withdrawEss",
@@ -64840,7 +64859,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the exact log to withdraw and fletch \u2014 only regular Logs make Arrow shafts; every log makes a bow. Selects the unstrung wood for String short/long bow. Ignored for the arrow attach products"
+          "help": "the exact log to withdraw and fletch — only regular Logs make Arrow shafts; every log makes a bow. Selects the unstrung wood for String short/long bow. Ignored for the arrow attach products"
         },
         {
           "id": "product",
@@ -64885,7 +64904,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "preset bank to walk when no booth is nearby \u2014 a booth underfoot wins over it"
+          "help": "preset bank to walk when no booth is nearby — a booth underfoot wins over it"
         },
         {
           "id": "bankBooth",
@@ -65191,7 +65210,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the exact log to withdraw and fletch \u2014 only regular Logs make Arrow shafts; every log makes a bow. Selects the unstrung wood for String short/long bow. Ignored for the arrow attach products"
+          "help": "the exact log to withdraw and fletch — only regular Logs make Arrow shafts; every log makes a bow. Selects the unstrung wood for String short/long bow. Ignored for the arrow attach products"
         },
         {
           "id": "product",
@@ -65236,7 +65255,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "preset bank to walk when no booth is nearby \u2014 a booth underfoot wins over it"
+          "help": "preset bank to walk when no booth is nearby — a booth underfoot wins over it"
         },
         {
           "id": "bankBooth",
@@ -66812,7 +66831,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "check specific herbs to restrict the run; leave all unchecked to clean every herb your Herblore level allows \u2014 the bot deposits everything from your pack into the bank each cycle, including non-herbs, so start with nothing valuable carried"
+          "help": "check specific herbs to restrict the run; leave all unchecked to clean every herb your Herblore level allows — the bot deposits everything from your pack into the bank each cycle, including non-herbs, so start with nothing valuable carried"
         }
       ],
       "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
@@ -66996,7 +67015,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "check specific herbs to restrict the run; leave all unchecked to clean every herb your Herblore level allows \u2014 the bot deposits everything from your pack into the bank each cycle, including non-herbs, so start with nothing valuable carried"
+          "help": "check specific herbs to restrict the run; leave all unchecked to clean every herb your Herblore level allows — the bot deposits everything from your pack into the bank each cycle, including non-herbs, so start with nothing valuable carried"
         }
       ],
       "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
@@ -67196,7 +67215,7 @@
           "show_if": "{ key: 'herb', anyOf: [CUSTOM] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "Shown when Herb is Custom \u2014 a clean herb name like \"guam leaf\" or \"ranarr\"."
+          "help": "Shown when Herb is Custom — a clean herb name like \"guam leaf\" or \"ranarr\"."
         },
         {
           "id": "secondary",
@@ -67228,7 +67247,7 @@
           "show_if": "{ key: 'secondary', anyOf: [CUSTOM] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "Shown when Secondary is Custom \u2014 a secondary name like \"eye of newt\" or \"snape\"."
+          "help": "Shown when Secondary is Custom — a secondary name like \"eye of newt\" or \"snape\"."
         }
       ],
       "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
@@ -67426,7 +67445,7 @@
           "show_if": "{ key: 'herb', anyOf: [CUSTOM] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "Shown when Herb is Custom \u2014 a clean herb name like \"guam leaf\" or \"ranarr\"."
+          "help": "Shown when Herb is Custom — a clean herb name like \"guam leaf\" or \"ranarr\"."
         },
         {
           "id": "secondary",
@@ -67458,7 +67477,7 @@
           "show_if": "{ key: 'secondary', anyOf: [CUSTOM] }",
           "options_from": null,
           "csv_toggle": null,
-          "help": "Shown when Secondary is Custom \u2014 a secondary name like \"eye of newt\" or \"snape\"."
+          "help": "Shown when Secondary is Custom — a secondary name like \"eye of newt\" or \"snape\"."
         }
       ],
       "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
@@ -69199,271 +69218,278 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
-      "observable_proof_requirement": "Magic XP, target/rune consumption and coin increase, including noted stock and bank restock",
-      "source_version_difference": "identical card source in both frozen catalogs",
-      "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
-    },
-    {
-      "display_name": "Alcher",
-      "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
-      "catalog_identity": "289-updated frozen catalog",
-      "source_path": "src/bot/scripts/Alcher/Alcher.ts",
-      "source_sha256": "1a09baa1117544a2bb80da145829e69c9ced029ad5af533616afa8e7a36f2032",
-      "revision": 289,
-      "content_identity": "289",
-      "settings_and_behavior_branches": [
-        {
-          "id": "items",
-          "type": "string[]",
-          "default": null,
-          "label": "Items to alch",
-          "min": null,
-          "max": null,
-          "step": null,
-          "options": [],
-          "option_labels": [],
-          "group": null,
-          "show_if": null,
-          "options_from": null,
-          "csv_toggle": null,
-          "help": "ticked items are drained richest first: the bot withdraws one as notes, alchs it until "
-        },
-        {
-          "id": "customItem",
-          "type": "string",
-          "default": "",
-          "label": "Custom item",
-          "min": null,
-          "max": null,
-          "step": null,
-          "options": [],
-          "option_labels": [],
-          "group": null,
-          "show_if": "{ key: 'items', anyOf: [CUSTOM_ALCH_KEY] }",
-          "options_from": null,
-          "csv_toggle": null,
-          "help": "shown when Custom is ticked. Any item the database knows, by client name or obj name, "
-        },
-        {
-          "id": "alchs",
-          "type": "number",
-          "default": "27",
-          "label": "Alchs per trip",
-          "min": "1",
-          "max": "1000",
-          "step": null,
-          "options": [],
-          "option_labels": [],
-          "group": null,
-          "show_if": null,
-          "options_from": null,
-          "csv_toggle": null,
-          "help": "how many notes + nature runes to withdraw each trip; both stack in a single slot each, so even 1000 fits in 2 pack slots"
-        }
-      ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
-      "imported_api_members": [
-        {
-          "specifier": "../../api/bot/Bot.js",
-          "exported_member": "TaskBot",
-          "local_binding": "TaskBot",
-          "used_members": [
-            "TaskBot"
-          ]
-        },
-        {
-          "specifier": "../../api/bot/Bot.js",
-          "exported_member": "Task",
-          "local_binding": "Task",
-          "used_members": [
-            "Task"
-          ]
-        },
-        {
-          "specifier": "../../api/execution/Execution.js",
-          "exported_member": "Execution",
-          "local_binding": "Execution",
-          "used_members": [
-            "Execution.js",
-            "Execution.delayUntil",
-            "Execution.delayTicks",
-            "Execution.delayUntilTicks"
-          ]
-        },
-        {
-          "specifier": "../../api/game/Game.js",
-          "exported_member": "Game",
-          "local_binding": "Game",
-          "used_members": [
-            "Game.js",
-            "Game.ingame",
-            "Game.tile",
-            "Game.tick",
-            "Game.openSideTab",
-            "Game.castOnItem"
-          ]
-        },
-        {
-          "specifier": "../../api/inventory/Inventory.js",
-          "exported_member": "Inventory",
-          "local_binding": "Inventory",
-          "used_members": [
-            "Inventory.js",
-            "Inventory.countById",
-            "Inventory.items",
-            "Inventory.count",
-            "Inventory.used"
-          ]
-        },
-        {
-          "specifier": "../../api/inventory/Inventory.js",
-          "exported_member": "InvItem",
-          "local_binding": "InvItem",
-          "used_members": [
-            "InvItem"
-          ]
-        },
-        {
-          "specifier": "../../api/equipment/Equipment.js",
-          "exported_member": "Equipment",
-          "local_binding": "Equipment",
-          "used_members": [
-            "Equipment.js",
-            "Equipment.contains",
-            "Equipment.equip"
-          ]
-        },
-        {
-          "specifier": "../../api/bank/Bank.js",
-          "exported_member": "Bank",
-          "local_binding": "Bank",
-          "used_members": [
-            "Bank.js",
-            "Bank.isOpen",
-            "Bank.openNearest",
-            "Bank.depositAllMatching",
-            "Bank.withdrawX",
-            "Bank.close",
-            "Bank.setNoteMode",
-            "Bank.ready",
-            "Bank.countById",
-            "Bank.withdrawXById"
-          ]
-        },
-        {
-          "specifier": "../../api/skills/Skills.js",
-          "exported_member": "Skills",
-          "local_binding": "Skills",
-          "used_members": [
-            "Skills.js",
-            "Skills.level",
-            "Skills.xp",
-            "Skills.hpFraction"
-          ]
-        },
-        {
-          "specifier": "../../api/walking/Traversal.js",
-          "exported_member": "Traversal",
-          "local_binding": "Traversal",
-          "used_members": [
-            "Traversal.js",
-            "Traversal.walkResilient"
-          ]
-        },
-        {
-          "specifier": "../../api/bank/BankLocations.js",
-          "exported_member": "nearestBank",
-          "local_binding": "nearestBank",
-          "used_members": [
-            "nearestBank"
-          ]
-        },
-        {
-          "specifier": "../../api/market/catalog.js",
-          "exported_member": "liveCatalog",
-          "local_binding": "liveCatalog",
-          "used_members": [
-            "liveCatalog"
-          ]
-        }
-      ],
-      "foreign_implemented_helpers": [
-        {
-          "specifier": "../../paint/Paint.js",
-          "members": [
-            "Paint"
-          ]
-        },
-        {
-          "specifier": "../../runtime/ScriptRunner.js",
-          "members": [
-            "ScriptRunner"
-          ]
-        },
-        {
-          "specifier": "../../runtime/Settings.js",
-          "members": [
-            "SettingsSchema"
-          ]
-        },
-        {
-          "specifier": "../../paint/paintLogic.js",
-          "members": [
-            "fmtDuration"
-          ]
-        },
-        {
-          "specifier": "../../paint/levelProgress.js",
-          "members": [
-            "etaHours",
-            "levelProgress"
-          ]
-        },
-        {
-          "specifier": "./AlcherLogic.js",
-          "members": [
-            "ALCH_OPTIONS",
-            "ALCH_OPTION_LABELS",
-            "CUSTOM_ALCH_KEY",
-            "DEFAULT_ALCH_ITEMS",
-            "customAlchItem",
-            "fmtGp",
-            "nextAlchTarget",
-            "selectedAlchItems",
-            "AlchItem"
-          ]
-        },
-        {
-          "specifier": "../../geometry/Tile.js",
-          "members": [
-            "default as Tile"
-          ]
-        }
-      ],
-      "required_rust_capabilities": [
-        "script lifecycle, task scheduling, events and Pause/Stop ordering",
-        "tick-aware delay, settlement and cancellation",
-        "session/scene/tile/combat state snapshot",
-        "inventory snapshot, item actions, item-on-item, drop and count semantics",
-        "revision-correct bank discovery/open/close, fresh list generation, deposit and withdraw variants including Withdraw-X",
-        "equipment snapshot and wear/wield operations",
-        "skill level and XP snapshot",
-        "host-owned navigation and movement completion"
-      ],
-      "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded core cell.",
+      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
       "observable_proof_requirement": "Magic XP, target/rune consumption and coin increase, including noted stock and bank restock",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Recorded independent core cell passed; remaining supported option branches and integrated source acceptance are open. See proof_references.",
+      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references. Ordered two-item LIVE failed because host ITEM_DB only contained Rune chainbody; generated server-data/serde integration is required.",
+      "fixture_id": "local-274",
+      "proof_references": [
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-8e7d965b-c933f37c.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-8e7d965b-41d7a1e3.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-large-batch-8e7d965b-41d7a1e3.json"
+      ]
+    },
+    {
+      "display_name": "Alcher",
+      "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+      "catalog_identity": "289-updated frozen catalog",
+      "source_path": "src/bot/scripts/Alcher/Alcher.ts",
+      "source_sha256": "1a09baa1117544a2bb80da145829e69c9ced029ad5af533616afa8e7a36f2032",
+      "revision": 289,
+      "content_identity": "289",
+      "settings_and_behavior_branches": [
+        {
+          "id": "items",
+          "type": "string[]",
+          "default": null,
+          "label": "Items to alch",
+          "min": null,
+          "max": null,
+          "step": null,
+          "options": [],
+          "option_labels": [],
+          "group": null,
+          "show_if": null,
+          "options_from": null,
+          "csv_toggle": null,
+          "help": "ticked items are drained richest first: the bot withdraws one as notes, alchs it until "
+        },
+        {
+          "id": "customItem",
+          "type": "string",
+          "default": "",
+          "label": "Custom item",
+          "min": null,
+          "max": null,
+          "step": null,
+          "options": [],
+          "option_labels": [],
+          "group": null,
+          "show_if": "{ key: 'items', anyOf: [CUSTOM_ALCH_KEY] }",
+          "options_from": null,
+          "csv_toggle": null,
+          "help": "shown when Custom is ticked. Any item the database knows, by client name or obj name, "
+        },
+        {
+          "id": "alchs",
+          "type": "number",
+          "default": "27",
+          "label": "Alchs per trip",
+          "min": "1",
+          "max": "1000",
+          "step": null,
+          "options": [],
+          "option_labels": [],
+          "group": null,
+          "show_if": null,
+          "options_from": null,
+          "csv_toggle": null,
+          "help": "how many notes + nature runes to withdraw each trip; both stack in a single slot each, so even 1000 fits in 2 pack slots"
+        }
+      ],
+      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "imported_api_members": [
+        {
+          "specifier": "../../api/bot/Bot.js",
+          "exported_member": "TaskBot",
+          "local_binding": "TaskBot",
+          "used_members": [
+            "TaskBot"
+          ]
+        },
+        {
+          "specifier": "../../api/bot/Bot.js",
+          "exported_member": "Task",
+          "local_binding": "Task",
+          "used_members": [
+            "Task"
+          ]
+        },
+        {
+          "specifier": "../../api/execution/Execution.js",
+          "exported_member": "Execution",
+          "local_binding": "Execution",
+          "used_members": [
+            "Execution.js",
+            "Execution.delayUntil",
+            "Execution.delayTicks",
+            "Execution.delayUntilTicks"
+          ]
+        },
+        {
+          "specifier": "../../api/game/Game.js",
+          "exported_member": "Game",
+          "local_binding": "Game",
+          "used_members": [
+            "Game.js",
+            "Game.ingame",
+            "Game.tile",
+            "Game.tick",
+            "Game.openSideTab",
+            "Game.castOnItem"
+          ]
+        },
+        {
+          "specifier": "../../api/inventory/Inventory.js",
+          "exported_member": "Inventory",
+          "local_binding": "Inventory",
+          "used_members": [
+            "Inventory.js",
+            "Inventory.countById",
+            "Inventory.items",
+            "Inventory.count",
+            "Inventory.used"
+          ]
+        },
+        {
+          "specifier": "../../api/inventory/Inventory.js",
+          "exported_member": "InvItem",
+          "local_binding": "InvItem",
+          "used_members": [
+            "InvItem"
+          ]
+        },
+        {
+          "specifier": "../../api/equipment/Equipment.js",
+          "exported_member": "Equipment",
+          "local_binding": "Equipment",
+          "used_members": [
+            "Equipment.js",
+            "Equipment.contains",
+            "Equipment.equip"
+          ]
+        },
+        {
+          "specifier": "../../api/bank/Bank.js",
+          "exported_member": "Bank",
+          "local_binding": "Bank",
+          "used_members": [
+            "Bank.js",
+            "Bank.isOpen",
+            "Bank.openNearest",
+            "Bank.depositAllMatching",
+            "Bank.withdrawX",
+            "Bank.close",
+            "Bank.setNoteMode",
+            "Bank.ready",
+            "Bank.countById",
+            "Bank.withdrawXById"
+          ]
+        },
+        {
+          "specifier": "../../api/skills/Skills.js",
+          "exported_member": "Skills",
+          "local_binding": "Skills",
+          "used_members": [
+            "Skills.js",
+            "Skills.level",
+            "Skills.xp",
+            "Skills.hpFraction"
+          ]
+        },
+        {
+          "specifier": "../../api/walking/Traversal.js",
+          "exported_member": "Traversal",
+          "local_binding": "Traversal",
+          "used_members": [
+            "Traversal.js",
+            "Traversal.walkResilient"
+          ]
+        },
+        {
+          "specifier": "../../api/bank/BankLocations.js",
+          "exported_member": "nearestBank",
+          "local_binding": "nearestBank",
+          "used_members": [
+            "nearestBank"
+          ]
+        },
+        {
+          "specifier": "../../api/market/catalog.js",
+          "exported_member": "liveCatalog",
+          "local_binding": "liveCatalog",
+          "used_members": [
+            "liveCatalog"
+          ]
+        }
+      ],
+      "foreign_implemented_helpers": [
+        {
+          "specifier": "../../paint/Paint.js",
+          "members": [
+            "Paint"
+          ]
+        },
+        {
+          "specifier": "../../runtime/ScriptRunner.js",
+          "members": [
+            "ScriptRunner"
+          ]
+        },
+        {
+          "specifier": "../../runtime/Settings.js",
+          "members": [
+            "SettingsSchema"
+          ]
+        },
+        {
+          "specifier": "../../paint/paintLogic.js",
+          "members": [
+            "fmtDuration"
+          ]
+        },
+        {
+          "specifier": "../../paint/levelProgress.js",
+          "members": [
+            "etaHours",
+            "levelProgress"
+          ]
+        },
+        {
+          "specifier": "./AlcherLogic.js",
+          "members": [
+            "ALCH_OPTIONS",
+            "ALCH_OPTION_LABELS",
+            "CUSTOM_ALCH_KEY",
+            "DEFAULT_ALCH_ITEMS",
+            "customAlchItem",
+            "fmtGp",
+            "nextAlchTarget",
+            "selectedAlchItems",
+            "AlchItem"
+          ]
+        },
+        {
+          "specifier": "../../geometry/Tile.js",
+          "members": [
+            "default as Tile"
+          ]
+        }
+      ],
+      "required_rust_capabilities": [
+        "script lifecycle, task scheduling, events and Pause/Stop ordering",
+        "tick-aware delay, settlement and cancellation",
+        "session/scene/tile/combat state snapshot",
+        "inventory snapshot, item actions, item-on-item, drop and count semantics",
+        "revision-correct bank discovery/open/close, fresh list generation, deposit and withdraw variants including Withdraw-X",
+        "equipment snapshot and wear/wield operations",
+        "skill level and XP snapshot",
+        "host-owned navigation and movement completion"
+      ],
+      "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
+      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
+      "observable_proof_requirement": "Magic XP, target/rune consumption and coin increase, including noted stock and bank restock",
+      "source_version_difference": "identical card source in both frozen catalogs",
+      "known_gaps": [],
+      "status": "PARTIAL",
+      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references. Ordered two-item LIVE failed because host ITEM_DB only contained Rune chainbody; generated server-data/serde integration is required.",
       "fixture_id": "local-289",
       "proof_references": [
-        "docs/compat/evidence/catalog-harness/live/r289-alcher-8e7d965b-c933f37c.json"
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-8e7d965b-c933f37c.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-8e7d965b-41d7a1e3.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-large-batch-8e7d965b-41d7a1e3.json"
       ]
     },
     {
@@ -70159,7 +70185,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the opening on the west side \u2014 run out here before banking"
+          "help": "the opening on the west side — run out here before banking"
         },
         {
           "id": "bankEntrance",
@@ -70459,7 +70485,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the opening on the west side \u2014 run out here before banking"
+          "help": "the opening on the west side — run out here before banking"
         },
         {
           "id": "bankEntrance",
@@ -70736,7 +70762,7 @@
           "id": "ladderTile",
           "type": "tile",
           "default": null,
-          "label": "Ladder stand tile (x,z) \u2014 inside the house",
+          "label": "Ladder stand tile (x,z) — inside the house",
           "min": null,
           "max": null,
           "step": null,
@@ -70746,7 +70772,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "walkable tile INSIDE the wheel house beside the ladder (not the ladder tile itself \u2014 see route note); the house door is opened on the way"
+          "help": "walkable tile INSIDE the wheel house beside the ladder (not the ladder tile itself — see route note); the house door is opened on the way"
         },
         {
           "id": "wheelTile",
@@ -70762,7 +70788,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "upstairs \u2014 search centre for the wheel"
+          "help": "upstairs — search centre for the wheel"
         },
         {
           "id": "bankBooth",
@@ -71115,7 +71141,7 @@
           "id": "ladderTile",
           "type": "tile",
           "default": null,
-          "label": "Ladder stand tile (x,z) \u2014 inside the house",
+          "label": "Ladder stand tile (x,z) — inside the house",
           "min": null,
           "max": null,
           "step": null,
@@ -71125,7 +71151,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "walkable tile INSIDE the wheel house beside the ladder (not the ladder tile itself \u2014 see route note); the house door is opened on the way"
+          "help": "walkable tile INSIDE the wheel house beside the ladder (not the ladder tile itself — see route note); the house door is opened on the way"
         },
         {
           "id": "wheelTile",
@@ -71141,7 +71167,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "upstairs \u2014 search centre for the wheel"
+          "help": "upstairs — search centre for the wheel"
         },
         {
           "id": "bankBooth",
@@ -71789,7 +71815,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "check specific gems to restrict the run; leave all unchecked to cut every gem your Crafting level allows \u2014 the bot deposits everything from your pack into the bank each cycle, including non-gems, so start with nothing valuable carried"
+          "help": "check specific gems to restrict the run; leave all unchecked to cut every gem your Crafting level allows — the bot deposits everything from your pack into the bank each cycle, including non-gems, so start with nothing valuable carried"
         }
       ],
       "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
@@ -71969,7 +71995,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "check specific gems to restrict the run; leave all unchecked to cut every gem your Crafting level allows \u2014 the bot deposits everything from your pack into the bank each cycle, including non-gems, so start with nothing valuable carried"
+          "help": "check specific gems to restrict the run; leave all unchecked to cut every gem your Crafting level allows — the bot deposits everything from your pack into the bank each cycle, including non-gems, so start with nothing valuable carried"
         }
       ],
       "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
@@ -74911,7 +74937,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the shop to buy out \u2014 its trade tile and nearest bank are baked in (add more in shopPresets.ts)"
+          "help": "the shop to buy out — its trade tile and nearest bank are baked in (add more in shopPresets.ts)"
         },
         {
           "id": "budgetGp",
@@ -74927,7 +74953,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the session budget \u2014 the bot stops cleanly once roughly this much has been spent"
+          "help": "the session budget — the bot stops cleanly once roughly this much has been spent"
         },
         {
           "id": "perTripGp",
@@ -75199,7 +75225,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the shop to buy out \u2014 its trade tile and nearest bank are baked in (add more in shopPresets.ts)"
+          "help": "the shop to buy out — its trade tile and nearest bank are baked in (add more in shopPresets.ts)"
         },
         {
           "id": "budgetGp",
@@ -75215,7 +75241,7 @@
           "show_if": null,
           "options_from": null,
           "csv_toggle": null,
-          "help": "the session budget \u2014 the bot stops cleanly once roughly this much has been spent"
+          "help": "the session budget — the bot stops cleanly once roughly this much has been spent"
         },
         {
           "id": "perTripGp",

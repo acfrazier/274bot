@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-10 22:53 UTC. The full implementation plan remains authorized:
+Updated 2026-09-10 23:34 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -63,16 +63,19 @@ Catalog and frontend acceptance remain separate.
   session 20260910_180938_b537c4, approved frozen 76d61beb/client 56d8027
   with Grok 4.5 / xai-oauth, including root's count-dialog correction. The
   actual run completed at 22:17 UTC; source approval restores the gate.
-- t_90b60f12 resumed as actual Sol run 1141 after that corrective review: Rust nearest-bank routing,
-  honest withdrawal results and bounded observed deposit helpers (brief 31).
-  BankFletcher exposed duplicate-row amplification and a slot packet panic.
+- t_90b60f12 source 2f9099f7 passed actual Grok 4.5 review 1149, session
+  20260910_191646_79c933. Rust nearest-bank routing, observed withdrawal
+  results and bounded deposit helpers are implemented (brief 31). The first
+  full-loop live runs on both revisions failed at the harness bank-arrival
+  observation limit while still walking; no full-loop acceptance yet.
 - t_14db340e catalog harness completed with actual Grok 4.5 review 1133.
   Root is strengthening the BoneBurier proof after the headed observation;
   its original first-burial PASS is insufficient. 05a-catalog-live-harness.md.
 - t_887b29b5 frontend session source 5eeff8f0/c9521d2f completed actual Grok
   4.5 review 1135; six targeted lifecycle tests and host tests pass.
 - t_dde220ef Grok 4.6 integration review waits for bank routing, reviewed
-  Alcher option fixtures t_a384fe64 and panel startup t_779f58e5. It also
+  Alcher option fixtures t_a384fe64, panel startup t_779f58e5 and generated
+  item metadata integration t_f1572cf0. It also
   covers root profile/harness, script Stop and frontend/world changes.
 - Loadout t_3737503d waits for integration review, then targeted spell facts
   t_63138b8b, PeriodicBank t_51452e47 and DeathRecovery t_0c5ce97f follow.
@@ -106,8 +109,8 @@ with the UI thread spending the startup sample hashing navigation resources.
 Profile bind, template load and Play start hash the 73 MB pack and 261 MB flags
 three times. 06b-panel-startup-trace.md records the trace and source path.
 Actual Grok 4.6 run 1142/session 20260910_183241_b9252e completed the
-06c-panel-startup-design.md review. Implementation t_779f58e5 waits for bank
-source review to release the shared file. Brief 42 preserves all validation
+06c-panel-startup-design.md review. Implementation t_779f58e5 is active as actual Sol run 1151, session
+20260910_192047_a8fe0c, after bank source review released the shared file. Brief 42 preserves all validation
 with a consuming checked handoff and UI-owned session/slot setup. No startup
 fix or performance claim yet; no validation has been disabled.
 
@@ -120,12 +123,35 @@ actual same-card Grok 4.5 approval. Root refreshed all four 289 runtimes and
 verified their unchanged cache archives and all 1,213 runtime files. See
 `platform-preparation.md` and `evidence/platform-preparation/bank-fixture/`.
 
-All 289 fixture startup/HTTP/cache observations passed; remote host gameplay
-has not run yet. Windows native panel/client, Linux and Mac frontend acceptance
-remain open. Compile Linux on the Hyper-V builder; Concord is TUI-only and its
+All 289 fixture startup/HTTP/cache observations passed. Actual Linux 289
+Alcher headless passed at c933f37c; Windows 289 Alcher headless passed at
+584d05bc after a harness-only canonical path comparison fix. Both observed
+an inventory decrease, 30,000 coins and 65 Magic XP. First Windows native
+panel proof is being launched in the dedicated BotTest desktop. These are
+bounded platform cells; Linux TUI and full frontend acceptance remain open. Compile Linux on the Hyper-V builder; Concord is TUI-only and its
 old 274 system unit was stopped by the operator. Run revisions sequentially on
 Concord. Prior held SSH lifetime failures are retained; old recorded PIDs are
 not current authority. Verify process identity before stopping an owned process.
+
+## Generated game data and catalog evidence
+
+The operator requests programmatic server-derived data consumed through serde.
+Generator t_48d33ff0 has produced revisioned item JSON at c1eda4a6, with
+provenance corrections bc452cf9 and 3b53ce2c; its third same-card Grok 4.5
+review remains pending. Runtime consumer t_f1572cf0 waits for generator and
+startup approval. Briefs 26-29 and 34-40 require extending this pipeline for
+large game-fact tables; host policy stays separately owned. Quester parser
+feasibility was discussed against the existing native Quester plan; it remains
+a separate future implementation scope.
+
+Twelve basic Alcher/ChickenKiller/Thiever headless cells passed across both
+revisions and both catalog sources. Eight custom/large-batch Alcher option
+cells passed; large-batch proves the 1,000-item noted representation and one
+cast, not 1,000 sustained casts. Ordered selection fails because runtime item
+metadata lists only the chainbody; generator plus consumer addresses that
+source gap. All twelve basic matrix rows remain PARTIAL, with branch and
+frontend qualification outstanding. Raw failures and exact hashes are retained
+in 05-catalog-proof.md and its evidence, including failed BoneBurier travel.
 
 ## Remaining finish line
 

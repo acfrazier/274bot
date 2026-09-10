@@ -1,5 +1,14 @@
 # Special attack controls and observed arming
 
+Operator data direction (2026-09-10): server-derived game facts must come from
+programmatically generated, revisioned JSON assets consumed through serde,
+using the pipeline in brief 44 and runtime integration in brief 43. Extend that
+pipeline for new fact tables needed by this capability; do not hand-maintain
+large ID/value/control tables in Rust or copy foreign data modules. Reuse the
+immutable per-profile data and keep host gameplay policy separate. Audit any
+small protocol constants through the existing client definitions.
+
+
 Use configured sol defaults after the parent card completes its same-card
 review. Campaign branch codex/rs2b0t-multirevision. Read applicable AGENTS.md,
 docs/execution.md, fail-closed-dispatch and the relevant sections of plan step 6

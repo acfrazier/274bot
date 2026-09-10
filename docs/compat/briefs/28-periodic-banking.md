@@ -1,5 +1,14 @@
 # Periodic banking with observed deposit and return
 
+Operator data direction (2026-09-10): server-derived game facts must come from
+programmatically generated, revisioned JSON assets consumed through serde,
+using the pipeline in brief 44 and runtime integration in brief 43. Extend that
+pipeline for new fact tables needed by this capability; do not hand-maintain
+large ID/value/control tables in Rust or copy foreign data modules. Reuse the
+immutable per-profile data and keep host gameplay policy separate. Audit any
+small protocol constants through the existing client definitions.
+
+
 Use configured `sol` defaults after the preceding shared capability review.
 Campaign branch: codex/rs2b0t-multirevision. Read applicable instructions,
 docs/execution.md, fail-closed-dispatch, plan step 6 and the PeriodicBank section
