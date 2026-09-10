@@ -64,20 +64,24 @@ pub fn default_world_host() -> String {
 /// Mint `n` per-run usernames for a live boot (`live<token>_<i>`). The
 /// engine auto-registers unknown names, so a minted name logs into a
 /// fresh save instead of the shared `test` account. The engine enforces
-/// the classic 12-character username limit, so the token is the pid plus
-/// a per-process serial, truncated to fit `live<token>_<i>` in 12 chars.
+/// the classic 12-character username limit. A randomly seeded counter
+/// keeps consecutive runs distinct; its low base-36 digits fit the token
+/// budget without truncating away the changing part of the counter.
 /// Player saves accumulate under the engine's `player/` dir — wipe it to
 /// reset.
 pub fn mint_live_names(n: usize) -> Vec<String> {
-    static SERIAL: AtomicUsize = AtomicUsize::new(0);
-    let serial = SERIAL.fetch_add(1, Ordering::Relaxed);
-    let pid = std::process::id();
+    static NEXT: std::sync::OnceLock<std::sync::atomic::AtomicU64> = std::sync::OnceLock::new();
+    let mut nonce = NEXT
+        .get_or_init(|| std::sync::atomic::AtomicU64::new(OsRng.next_u64()))
+        .fetch_add(1, Ordering::Relaxed);
     let slot_digits = n.saturating_sub(1).max(1).to_string().len();
     let max_token = 12usize.saturating_sub(4 + 1 + slot_digits).max(1);
-    let token: String = format!("{pid:x}{serial:x}")
-        .chars()
-        .take(max_token)
-        .collect();
+    let mut token = vec![b'0'; max_token];
+    for digit in token.iter_mut().rev() {
+        *digit = b"0123456789abcdefghijklmnopqrstuvwxyz"[(nonce % 36) as usize];
+        nonce /= 36;
+    }
+    let token = String::from_utf8(token).expect("base-36 token is ASCII");
     (0..n).map(|i| format!("live{token}_{i}")).collect()
 }
 
@@ -4171,25 +4175,26 @@ mod tests {
 
     #[test]
     fn mint_live_names_are_unique_and_never_test() {
-        let a = mint_live_names(2);
-        let b = mint_live_names(2);
-        assert_eq!(a.len(), 2);
-        assert_eq!(b.len(), 2);
-        let mut all: Vec<&String> = a.iter().chain(b.iter()).collect();
-        all.sort();
-        all.dedup();
-        assert_eq!(
-            all.len(),
-            4,
-            "every minted name must be unique per invocation: {all:?}"
-        );
-        for name in all {
-            assert_ne!(name, "test", "a live boot must never log in `test`");
-            assert!(name.starts_with("live"), "minted name: {name}");
-            assert!(
-                name.len() <= 12,
-                "the engine enforces the 12-char username limit: {name}"
-            );
+        let mut all = std::collections::HashSet::new();
+        // Repeated fleet sizes catch truncation that drops the invocation
+        // serial, including its low digits after it grows past one digit.
+        for _ in 0..24 {
+            for n in [1, 2, 32, 128] {
+                let names = mint_live_names(n);
+                assert_eq!(names.len(), n);
+                for name in names {
+                    assert_ne!(name, "test", "a live boot must never log in `test`");
+                    assert!(name.starts_with("live"), "minted name: {name}");
+                    assert!(
+                        name.len() <= 12,
+                        "the engine enforces the 12-char username limit: {name}"
+                    );
+                    assert!(
+                        all.insert(name.clone()),
+                        "every minted name must be unique per invocation: {name}"
+                    );
+                }
+            }
         }
     }
 
