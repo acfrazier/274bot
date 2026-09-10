@@ -29,8 +29,9 @@ use host::{map_image_to_applet, FrameBuf, InputEv, SlotInput};
 use host_play::audio::{AudioChange, AudioGate};
 use host_play::profile::ProfileEnvironment;
 use host_play::{
-    open_vault, run_with_io, run_with_template, Play, PlayOptions, ProfileOptions, ScriptNavPaint,
-    ServerProfile, SharedClientTemplate, SlotArm, SlotStatus, WalkArm,
+    open_vault, run_prepared_template, run_with_io, run_with_template, Play, PlayOptions,
+    ProfileOptions, ScriptNavPaint, ServerProfile, SharedClientTemplate, SlotArm, SlotStatus,
+    ValidatedTemplate, WalkArm,
 };
 use nav::paint::{
     collision_at_with, hop_captions, hull_targets, reached, remaining_path_tiles, remaining_trail,
@@ -57,6 +58,29 @@ struct PendingCatalogStart {
     shape: script::LoadShape,
     bag: Option<serde_json::Map<String, serde_json::Value>>,
     siblings: Vec<(String, String)>,
+}
+
+/// Owned inputs captured on the UI thread and consumed by the sequential
+/// profile/template preparation worker.
+pub(crate) struct ProfilePreparation {
+    options: ProfileOptions,
+    environment: ProfileEnvironment,
+    saved_revision: u16,
+}
+
+impl ProfilePreparation {
+    pub(crate) fn run(self) -> Result<Arc<SharedClientTemplate>, String> {
+        self.options
+            .resolve_with_env(Some(self.saved_revision), &self.environment)?
+            .prepare_template()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProfilePreparationCompletion {
+    Installed,
+    Stale,
+    Failed,
 }
 
 /// When the runner is on [`scenario::StepKind::StartScript`], start every
@@ -792,6 +816,15 @@ pub struct Session {
     profile_options: Option<ProfileOptions>,
     /// Ambient profile inputs captured once when production CLI options arrive.
     profile_environment: Option<ProfileEnvironment>,
+    /// Monotonic identity for captured preparation work. Any pre-bind profile
+    /// selection change invalidates an older worker completion.
+    profile_generation: u64,
+    /// Plain UI status only; preparation remains owned by the app worker.
+    profile_preparing: bool,
+    /// Interactive Unlock clicked before preparation/final validation finished.
+    requested_unlock: Option<String>,
+    /// One-use final resource validation proof consumed by `start_play`.
+    validated_template: Option<ValidatedTemplate>,
     /// Multibox wall membership (chooser / latch / bulk ops). The UI reads
     /// it for the chooser and rail; [`Session`] methods drive it.
     pub wall: Wall,
@@ -1076,6 +1109,10 @@ impl Session {
             template: None,
             profile_options: None,
             profile_environment: None,
+            profile_generation: 0,
+            profile_preparing: false,
+            requested_unlock: None,
+            validated_template: None,
         }
     }
 
@@ -1087,7 +1124,103 @@ impl Session {
         }
         self.profile_options = Some(options);
         self.profile_environment = Some(ProfileEnvironment::capture());
+        self.profile_generation = self.profile_generation.wrapping_add(1);
         Ok(())
+    }
+
+    pub(crate) fn profile_generation(&self) -> u64 {
+        self.profile_generation
+    }
+
+    pub(crate) fn profile_preparation(&self) -> Result<(u64, ProfilePreparation), String> {
+        let options = self
+            .profile_options
+            .clone()
+            .ok_or_else(|| "no production server profile was configured".to_string())?;
+        let environment = self
+            .profile_environment
+            .clone()
+            .unwrap_or_else(ProfileEnvironment::capture);
+        Ok((
+            self.profile_generation,
+            ProfilePreparation {
+                options,
+                environment,
+                saved_revision: self.ui.server_revision,
+            },
+        ))
+    }
+
+    pub(crate) fn finish_profile_preparation(
+        &mut self,
+        generation: u64,
+        result: Result<Arc<SharedClientTemplate>, String>,
+    ) -> ProfilePreparationCompletion {
+        self.profile_preparing = false;
+        if generation != self.profile_generation {
+            return ProfilePreparationCompletion::Stale;
+        }
+        match result {
+            Ok(template) => {
+                self.install_prepared_template(template);
+                ProfilePreparationCompletion::Installed
+            }
+            Err(error) => {
+                self.error = Some(error);
+                ProfilePreparationCompletion::Failed
+            }
+        }
+    }
+
+    fn install_prepared_template(&mut self, template: Arc<SharedClientTemplate>) {
+        let profile = Arc::clone(template.profile());
+        crate::picker::set_navflags_path(profile.nav_flags().to_path_buf());
+        self.options = PlayOptions {
+            host: profile.client().game_host().to_string(),
+            port: profile.client().game_port(),
+            cache_dir: profile.client().cache_dir().display().to_string(),
+            lowmem: true,
+            mainland: false,
+        };
+        self.server_profile = Some(profile);
+        self.template = Some(template);
+        self.error = None;
+    }
+
+    pub(crate) fn template_for_validation(&self) -> Result<Arc<SharedClientTemplate>, String> {
+        self.template
+            .clone()
+            .ok_or_else(|| "server profile is not prepared".to_string())
+    }
+
+    pub(crate) fn install_validated_template(
+        &mut self,
+        validated: ValidatedTemplate,
+    ) -> Result<(), String> {
+        let Some(template) = self.template.as_ref() else {
+            return Err("server profile is not prepared".into());
+        };
+        if !Arc::ptr_eq(template, validated.template()) {
+            return Err("validated template does not match the active server profile".into());
+        }
+        self.validated_template = Some(validated);
+        Ok(())
+    }
+
+    pub(crate) fn set_profile_preparing(&mut self, preparing: bool) {
+        self.profile_preparing = preparing;
+    }
+
+    pub(crate) fn profile_preparing(&self) -> bool {
+        self.profile_preparing
+    }
+
+    pub(crate) fn request_unlock(&mut self, pass: String) {
+        self.requested_unlock = Some(pass);
+    }
+
+    pub(crate) fn take_requested_unlock(&mut self) -> Option<String> {
+        self.requested_unlock.take()
     }
 
     fn resolve_profile(&self) -> Result<host_play::ProfileSelection, String> {
@@ -1123,19 +1256,10 @@ impl Session {
             .profile_options
             .as_ref()
             .ok_or_else(|| "no production server profile was configured".to_string())?;
-        let selection = options.resolve_with_env(Some(self.ui.server_revision), env)?;
-        let profile = selection.bind()?;
-        let template = SharedClientTemplate::load(Arc::clone(&profile))?;
-        crate::picker::set_navflags_path(profile.nav_flags().to_path_buf());
-        self.options = PlayOptions {
-            host: profile.client().game_host().to_string(),
-            port: profile.client().game_port(),
-            cache_dir: profile.client().cache_dir().display().to_string(),
-            lowmem: true,
-            mainland: false,
-        };
-        self.server_profile = Some(profile);
-        self.template = Some(template);
+        let template = options
+            .resolve_with_env(Some(self.ui.server_revision), env)?
+            .prepare_template()?;
+        self.install_prepared_template(template);
         Ok(())
     }
 
@@ -1160,6 +1284,7 @@ impl Session {
             return Err(format!("unsupported revision {revision}; use 274 or 289"));
         }
         self.ui.server_revision = revision;
+        self.profile_generation = self.profile_generation.wrapping_add(1);
         crate::ui_state::save(&self.ui);
         Ok(())
     }
@@ -2108,15 +2233,24 @@ impl Session {
                 walk_clear.store(true, Ordering::Relaxed);
             }
         };
-        let play = match self.template.clone() {
-            Some(template) => run_with_template(
-                template,
+        let play = match self.validated_template.take() {
+            Some(validated) => run_prepared_template(
+                validated,
                 options.mainland,
                 Vec::new(),
                 |_| (None, None),
                 per_frame,
             )?,
-            None => run_with_io(&options, Vec::new(), |_| (None, None), per_frame),
+            None => match self.template.clone() {
+                Some(template) => run_with_template(
+                    template,
+                    options.mainland,
+                    Vec::new(),
+                    |_| (None, None),
+                    per_frame,
+                )?,
+                None => run_with_io(&options, Vec::new(), |_| (None, None), per_frame),
+            },
         };
         *self.script_start_handle.lock().unwrap() = Some(play.script_start_handle());
         *self.script_nav_paint.lock().unwrap() = Some(play.script_nav_paint());
@@ -3700,8 +3834,8 @@ mod tests {
         null_raster_live_entries_for_target, parse_getvar_line, publish_frontend_slot,
         publish_nav_debug, reset_frontend_slot_lifetime, script_active, script_pause_enabled,
         script_status_text, script_stop_enabled, seed_on_first_world, stream_capture,
-        stress_live_entries_for_target, temp_live_vault_from, walkto_tele_cmd, Session, SlotIo,
-        WalkArm,
+        stress_live_entries_for_target, temp_live_vault_from, walkto_tele_cmd,
+        ProfilePreparationCompletion, Session, SlotIo, WalkArm,
     };
     use crate::focus::draw_for_slot;
     use api::snapshot::{GameSnapshot, WorldTile};
@@ -3781,6 +3915,105 @@ mod tests {
         assert_eq!(session.catalog_root().unwrap(), None);
         assert!(session.set_server_revision(289).is_err());
         assert!(session.bind_profile_with_env(&env).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn stale_profile_preparation_is_dropped_without_partial_session_state() {
+        let (root, cache, manifest) = checked_profile_fixture(274);
+        let mut session = Session::new();
+        session
+            .configure_profile(ProfileOptions {
+                profile: Some("local-274".into()),
+                cache_dir: Some(cache),
+                cache_manifest: Some(manifest),
+                ..ProfileOptions::default()
+            })
+            .unwrap();
+        session.profile_environment = Some(ProfileEnvironment {
+            home: Some(root.clone()),
+            working_dir: Some(root.clone()),
+            rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
+            rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
+            ..ProfileEnvironment::default()
+        });
+        let (generation, preparation) = session.profile_preparation().unwrap();
+        let template = preparation.run().unwrap();
+
+        session
+            .configure_profile(ProfileOptions {
+                profile: Some("local-289".into()),
+                ..ProfileOptions::default()
+            })
+            .unwrap();
+        assert_eq!(
+            session.finish_profile_preparation(generation, Ok(template)),
+            ProfilePreparationCompletion::Stale
+        );
+        assert!(!session.profile_bound());
+        assert!(session.template.is_none());
+        assert!(session.play.is_none());
+        assert!(session.vault.is_none());
+        assert!(session.slots.is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn profile_preparation_failure_keeps_vault_play_and_slots_absent() {
+        let mut session = Session::new();
+        session
+            .configure_profile(ProfileOptions::default())
+            .unwrap();
+        let generation = session.profile_generation();
+
+        assert_eq!(
+            session.finish_profile_preparation(generation, Err("cache changed".into())),
+            ProfilePreparationCompletion::Failed
+        );
+        assert_eq!(session.error.as_deref(), Some("cache changed"));
+        assert!(!session.profile_bound());
+        assert!(session.template.is_none());
+        assert!(session.play.is_none());
+        assert!(session.vault.is_none());
+        assert!(session.slots.is_empty());
+    }
+
+    #[test]
+    fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
+        let (root, cache, manifest) = checked_profile_fixture(274);
+        let mut session = Session::new();
+        session
+            .configure_profile(ProfileOptions {
+                profile: Some("local-274".into()),
+                cache_dir: Some(cache.clone()),
+                cache_manifest: Some(manifest),
+                vault_path: Some(root.join("prepared.vault")),
+                ..ProfileOptions::default()
+            })
+            .unwrap();
+        session.profile_environment = Some(ProfileEnvironment {
+            home: Some(root.clone()),
+            working_dir: Some(root.clone()),
+            rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
+            rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
+            ..ProfileEnvironment::default()
+        });
+        let (generation, preparation) = session.profile_preparation().unwrap();
+        let template = preparation.run().unwrap();
+        assert_eq!(
+            session.finish_profile_preparation(generation, Ok(Arc::clone(&template))),
+            ProfilePreparationCompletion::Installed
+        );
+        session
+            .install_validated_template(template.validate_for_play().unwrap())
+            .unwrap();
+
+        std::fs::write(cache.join("config"), b"changed after validation").unwrap();
+        assert!(session.unlock("prepared-pass"));
+        assert!(session.profile_bound());
+        assert!(session.play.is_some());
+        assert!(session.vault.is_some());
+        assert!(session.slots.is_empty());
         std::fs::remove_dir_all(root).unwrap();
     }
 

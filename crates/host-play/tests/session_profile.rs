@@ -519,7 +519,7 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_validate_its_sidecar
         serde_json::to_vec(&manifest).unwrap(),
     )
     .unwrap();
-    options.nav_pack = Some(pack);
+    options.nav_pack = Some(pack.clone());
     options.nav_flags = Some(flags_path.clone());
     let profile = options
         .resolve_with_env(None, &fixture.env())
@@ -536,8 +536,52 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_validate_its_sidecar
         assert!([origin, adjacent].contains(&template.scatter_tile_for(uid)));
     }
     std::fs::write(flags_path, b"different flags").unwrap();
-    assert!(profile
-        .validate_resources()
-        .unwrap_err()
-        .contains("flags changed"));
+    let error = match template.validate_for_play() {
+        Ok(_) => panic!("changed flags must fail final validation"),
+        Err(error) => error,
+    };
+    assert!(error.contains("flags changed"));
+    std::fs::write(options.nav_flags.unwrap(), &flags).unwrap();
+    template.validate_for_play().unwrap();
+    std::fs::write(pack, b"different navigation").unwrap();
+    let error = match template.validate_for_play() {
+        Ok(_) => panic!("changed navigation must fail final validation"),
+        Err(error) => error,
+    };
+    assert!(error.contains("navigation changed"));
+}
+
+#[test]
+fn checked_play_entry_revalidates_while_a_consuming_ticket_does_not_hash_again() {
+    let fixture = Fixture::new();
+    let profile = fixture
+        .options(274)
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind()
+        .unwrap();
+    let template = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
+    let config = fixture.0.join("config");
+    let original = std::fs::read(&config).unwrap();
+
+    std::fs::write(&config, b"changed before checked play").unwrap();
+    let error = match host_play::run_with_template(
+        Arc::clone(&template),
+        false,
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    ) {
+        Ok(_) => panic!("checked play must refuse a changed cache"),
+        Err(error) => error,
+    };
+    assert!(error.contains("cache changed"));
+
+    std::fs::write(&config, &original).unwrap();
+    let ticket = template.validate_for_play().unwrap();
+    std::fs::write(&config, b"changed after the final validation").unwrap();
+    let play =
+        host_play::run_prepared_template(ticket, false, vec![], |_| (None, None), |_, _, _| {})
+            .unwrap();
+    assert!(Arc::ptr_eq(play.server_profile().unwrap(), &profile));
 }

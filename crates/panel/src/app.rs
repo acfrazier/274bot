@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -47,8 +48,8 @@ use crate::resource::{
 };
 use crate::session::{
     debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, script_active,
-    script_pause_enabled, script_status_text, script_stop_enabled, stream_capture, Session,
-    PROCESS,
+    script_pause_enabled, script_status_text, script_stop_enabled, stream_capture,
+    ProfilePreparationCompletion, Session, PROCESS,
 };
 use crate::theme::{
     applet_offset, apply_amber, apply_amber_current, fit_applet, game_window_title,
@@ -245,6 +246,39 @@ enum Boot {
     Live(LiveBoot),
 }
 
+struct ProfilePrepareJob {
+    generation: u64,
+    receiver: Receiver<Result<Arc<host_play::SharedClientTemplate>, String>>,
+}
+
+struct ProfileValidateJob {
+    generation: u64,
+    boot: Boot,
+    receiver: Receiver<Result<host_play::ValidatedTemplate, String>>,
+}
+
+struct StartupPreparation {
+    prepare: Option<ProfilePrepareJob>,
+    validate: Option<ProfileValidateJob>,
+    pending_boot: Option<Boot>,
+    failed_generation: Option<u64>,
+}
+
+impl StartupPreparation {
+    fn new(pending_boot: Option<Boot>) -> Self {
+        Self {
+            prepare: None,
+            validate: None,
+            pending_boot,
+            failed_generation: None,
+        }
+    }
+
+    fn in_flight(&self) -> bool {
+        self.prepare.is_some() || self.validate.is_some()
+    }
+}
+
 /// Which live harness the boot starts.
 #[derive(Debug)]
 enum LiveBoot {
@@ -380,6 +414,163 @@ fn boot_execute(state: &mut PanelState, boot: Boot) -> Result<(), String> {
             Ok(())
         }
         Boot::Live(live) => live.run(state),
+    }
+}
+
+fn boot_failure_is_fatal(boot: &Boot) -> bool {
+    !matches!(boot, Boot::Unlock { .. })
+}
+
+fn fail_startup(session: &mut Session, fatal: bool, error: String) {
+    session.set_profile_preparing(false);
+    session.error = Some(error.clone());
+    if fatal {
+        eprintln!("FAIL: {error}");
+        std::process::exit(1);
+    }
+}
+
+/// Poll the two sequential startup workers. Both resource-heavy phases run
+/// away from the event loop; profile/template installation and all vault,
+/// Play, GPU, JS-store and slot ownership remain on this UI thread.
+fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
+    if let Some(pass) = state.session.take_requested_unlock() {
+        if let Some(job) = startup
+            .validate
+            .as_mut()
+            .filter(|job| matches!(&job.boot, Boot::Unlock { .. }))
+        {
+            job.boot = Boot::Unlock { pass };
+        } else if startup
+            .pending_boot
+            .as_ref()
+            .is_none_or(|boot| matches!(boot, Boot::Unlock { .. }))
+        {
+            startup.pending_boot = Some(Boot::Unlock { pass });
+            startup.failed_generation = None;
+        }
+    }
+
+    let generation = state.session.profile_generation();
+    if startup
+        .prepare
+        .as_ref()
+        .is_some_and(|job| job.generation != generation)
+    {
+        startup.prepare = None;
+        startup.failed_generation = None;
+        state.session.set_profile_preparing(false);
+    }
+
+    let prepared = startup
+        .prepare
+        .as_ref()
+        .and_then(|job| match job.receiver.try_recv() {
+            Ok(result) => Some(result),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => {
+                Some(Err("profile preparation worker stopped".into()))
+            }
+        });
+    if let Some(result) = prepared {
+        let job = startup.prepare.take().expect("polled preparation job");
+        match state
+            .session
+            .finish_profile_preparation(job.generation, result)
+        {
+            ProfilePreparationCompletion::Installed | ProfilePreparationCompletion::Stale => {
+                startup.failed_generation = None;
+            }
+            ProfilePreparationCompletion::Failed => {
+                startup.failed_generation = Some(job.generation);
+                let fatal = startup
+                    .pending_boot
+                    .as_ref()
+                    .is_some_and(boot_failure_is_fatal);
+                let error = state.session.error.clone().unwrap_or_default();
+                fail_startup(&mut state.session, fatal, error);
+                if !fatal {
+                    startup.pending_boot = None;
+                }
+            }
+        }
+    }
+
+    let validated = startup
+        .validate
+        .as_ref()
+        .and_then(|job| match job.receiver.try_recv() {
+            Ok(result) => Some(result),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => {
+                Some(Err("profile validation worker stopped".into()))
+            }
+        });
+    if let Some(result) = validated {
+        let job = startup.validate.take().expect("polled validation job");
+        state.session.set_profile_preparing(false);
+        if job.generation != state.session.profile_generation() {
+            return;
+        }
+        let fatal = boot_failure_is_fatal(&job.boot);
+        match result.and_then(|ticket| state.session.install_validated_template(ticket)) {
+            Ok(()) => {
+                if let Err(error) = boot_execute(state, job.boot) {
+                    fail_startup(&mut state.session, fatal, error);
+                }
+            }
+            Err(error) => fail_startup(&mut state.session, fatal, error),
+        }
+    }
+
+    if !state.session.profile_bound()
+        && startup.prepare.is_none()
+        && startup.failed_generation != Some(generation)
+    {
+        match state.session.profile_preparation() {
+            Ok((generation, preparation)) => {
+                let (sender, receiver) = mpsc::sync_channel(1);
+                state.session.error = None;
+                state.session.set_profile_preparing(true);
+                std::thread::spawn(move || {
+                    let _ = sender.send(preparation.run());
+                });
+                startup.prepare = Some(ProfilePrepareJob {
+                    generation,
+                    receiver,
+                });
+            }
+            Err(error) => {
+                startup.failed_generation = Some(generation);
+                let fatal = startup
+                    .pending_boot
+                    .as_ref()
+                    .is_some_and(boot_failure_is_fatal);
+                fail_startup(&mut state.session, fatal, error);
+            }
+        }
+    }
+
+    if state.session.profile_bound() && startup.validate.is_none() && startup.pending_boot.is_some()
+    {
+        let boot = startup.pending_boot.take().expect("pending boot");
+        let fatal = boot_failure_is_fatal(&boot);
+        match state.session.template_for_validation() {
+            Ok(template) => {
+                let (sender, receiver) = mpsc::sync_channel(1);
+                state.session.error = None;
+                state.session.set_profile_preparing(true);
+                std::thread::spawn(move || {
+                    let _ = sender.send(template.validate_for_play());
+                });
+                startup.validate = Some(ProfileValidateJob {
+                    generation,
+                    boot,
+                    receiver,
+                });
+            }
+            Err(error) => fail_startup(&mut state.session, fatal, error),
+        }
     }
 }
 
@@ -1450,6 +1641,8 @@ fn title_row(ui: &Ui, session: &mut Session) {
 fn banner(ui: &Ui, session: &Session) {
     if let Some(err) = &session.error {
         ui.text_colored(ERROR, err);
+    } else if session.profile_preparing() {
+        ui.text_disabled("Preparing server profile…");
     }
 }
 
@@ -1566,7 +1759,7 @@ fn vault_unlock_prompt(ui: &Ui, session: &mut Session) {
     if ui.button_with_size(label, [w, 0.0]) {
         let pass = session.pass_scratch.trim().to_string();
         if !pass.is_empty() {
-            session.unlock(&pass);
+            session.request_unlock(pass);
             session.pass_scratch.clear();
         }
     }
@@ -4073,26 +4266,27 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     // renderer is built lazily at its first paint — spawning before GPU
     // init would let a slot construct its own wgpu device ahead of
     // `on_gpu_init`'s `inject_device`. The first UI frame presents an
-    // empty panel (so the OS window actually appears); boot runs on the
-    // next frame, after that present. Slot `maininit` (snapshot / maps)
-    // must not sit on the first-present path.
-    let mut boot = boot_for(&mode, std::env::var("BOT_VAULT_PASS").ok().as_deref());
+    // empty panel (so the OS window actually appears); preparation starts
+    // on the next frame, after that present. Slot `maininit` (snapshot /
+    // maps) must not sit on the first-present path.
+    let boot = boot_for(&mode, std::env::var("BOT_VAULT_PASS").ok().as_deref());
     #[cfg(feature = "memory-profile")]
-    match host_play::memory::Config::from_env() {
+    let boot = match host_play::memory::Config::from_env() {
         Ok(Some(config)) => {
             client::profiling::enable();
             if let Err(error) = host_play::memory::require_live_benchmark() {
                 eprintln!("FAIL: {error}");
                 std::process::exit(1);
             }
-            boot = Some(Boot::Memory(config));
+            Some(Boot::Memory(config))
         }
-        Ok(None) => {}
+        Ok(None) => boot,
         Err(error) => {
             eprintln!("FAIL: {error}");
             std::process::exit(1);
         }
-    }
+    };
+    let mut startup = StartupPreparation::new(boot);
     let mut presented = false;
 
     let cfg = runner_config();
@@ -4117,21 +4311,16 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
         Arc::clone(&state.shot_state),
         move |ui, gpu| {
             let _profile_draw = client::profiling::UI_DRAW.start();
-            // Frame 0 presents chrome with no slots. Frame 1+ runs boot so
-            // a blocking `maininit` cannot hide the window.
+            // Frame 0 presents chrome with no slots. Frame 1+ polls worker
+            // preparation; Play and slots remain deferred until validation.
             if presented {
-                if let Some(boot) = boot.take() {
-                    if let Err(e) = boot_execute(&mut state, boot) {
-                        eprintln!("FAIL: {e}");
-                        std::process::exit(1);
-                    }
-                }
+                drive_startup(&mut state, &mut startup);
             }
             presented = true;
             if state.os_window.is_none() {
                 state.os_window = os_window.lock().unwrap().clone();
             }
-            if boot.is_some() {
+            if startup.in_flight() {
                 if let Some(w) = state.os_window.as_ref() {
                     w.request_redraw();
                 }
@@ -4288,13 +4477,14 @@ mod tests {
     use host_play::SharedClientTemplate;
 
     use super::{
-        apply_loadouts_scratch, apply_only_render_selected, apply_ui_scale, boot_for,
-        capture_key_ch, chooser_should_open_popup, clamp_hop_label_px, debug_caption,
-        edit_parameters_enabled, game_window_flags, live_null_tick, live_script_tick,
-        live_smoke_tick, live_stress_tick, log_follow_bottom, manual_shot_label, parse_args,
-        parse_live_args, random_status_text, runner_config, smoke_settled, smoke_should_fire,
-        sync_loadouts_scratch, Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress,
-        RunMode, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, SMOKE_DEADLINE, SMOKE_SETTLE,
+        apply_loadouts_scratch, apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal,
+        boot_for, capture_key_ch, chooser_should_open_popup, clamp_hop_label_px, debug_caption,
+        drive_startup, edit_parameters_enabled, game_window_flags, live_null_tick,
+        live_script_tick, live_smoke_tick, live_stress_tick, log_follow_bottom, manual_shot_label,
+        parse_args, parse_live_args, random_status_text, runner_config, smoke_settled,
+        smoke_should_fire, sync_loadouts_scratch, Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke,
+        LiveStress, PanelState, ProfilePrepareJob, RunMode, StartupPreparation, BASE_WINDOW_H,
+        BASE_WINDOW_W, LIVE_USAGE, SMOKE_DEADLINE, SMOKE_SETTLE,
     };
     use crate::theme::{
         applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
@@ -4305,8 +4495,9 @@ mod tests {
         let fixture =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../host-play/tests/fixtures/profile");
         let root = std::env::temp_dir().join(format!(
-            "274bot-panel-profile-{revision}-{}",
-            std::process::id()
+            "274bot-panel-profile-{revision}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
         ));
         let _ = std::fs::remove_dir_all(&root);
         let cache = root.join("cache");
@@ -4400,6 +4591,84 @@ mod tests {
             boot_for(&RunMode::Interactive, None).is_none(),
             "no boot with no live arg and no pass"
         );
+        assert!(!boot_failure_is_fatal(&Boot::Unlock {
+            pass: "secret".into()
+        }));
+        assert!(boot_failure_is_fatal(&Boot::Live(LiveBoot::Smoke)));
+    }
+
+    fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, PathBuf) {
+        let (root, cache, manifest) = checked_fixture(274);
+        let options = host_play::ProfileOptions {
+            profile: Some("local-274".into()),
+            cache_dir: Some(cache),
+            cache_manifest: Some(manifest),
+            vault_path: Some(root.join("startup.vault")),
+            ..host_play::ProfileOptions::default()
+        };
+        let env = ProfileEnvironment {
+            home: Some(root.clone()),
+            working_dir: Some(root.clone()),
+            rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
+            rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
+            ..ProfileEnvironment::default()
+        };
+        let template = options
+            .resolve_with_env(None, &env)
+            .unwrap()
+            .prepare_template()
+            .unwrap();
+        let mut state = PanelState::default();
+        state.session.configure_profile(options).unwrap();
+        let generation = state.session.profile_generation();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        sender.send(Ok(template)).unwrap();
+        let startup = StartupPreparation {
+            prepare: Some(ProfilePrepareJob {
+                generation,
+                receiver,
+            }),
+            validate: None,
+            pending_boot: Some(boot),
+            failed_generation: None,
+        };
+        (state, startup, root)
+    }
+
+    #[test]
+    fn normal_unlock_waits_for_worker_validation_then_uses_prepared_profile() {
+        let (mut state, mut startup, root) = prepared_startup(Boot::Unlock {
+            pass: "prepared-pass".into(),
+        });
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while state.session.play.is_none() && Instant::now() < deadline {
+            drive_startup(&mut state, &mut startup);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(state.session.profile_bound());
+        assert!(state.session.vault.is_some());
+        assert!(state.session.play.is_some());
+        assert!(state.session.slots.is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn live_boot_stays_deferred_while_final_validation_is_in_flight() {
+        let (mut state, mut startup, root) = prepared_startup(Boot::Live(LiveBoot::Smoke));
+        drive_startup(&mut state, &mut startup);
+        assert!(state.session.profile_bound());
+        let validation = startup.validate.take().expect("final validation worker");
+        assert!(state.session.profile_preparing());
+        assert!(state.session.vault.is_none());
+        assert!(state.session.play.is_none());
+        assert!(state.session.slots.is_empty());
+        assert!(validation
+            .receiver
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .is_ok());
+        assert!(matches!(validation.boot, Boot::Live(LiveBoot::Smoke)));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
