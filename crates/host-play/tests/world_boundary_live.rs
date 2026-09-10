@@ -239,6 +239,10 @@ fn run_nav(
         scenario.companions.clear();
         scenario.settings.full_rate = false;
         prepare_door(&mut client, &mut snapshot, &mut pump);
+        // prepare_mainland already proved the exact mainland landing and
+        // logout/relogin. The runner's legacy x >= 3000 seed heuristic
+        // cannot be applied after the fixture tele to Catherby (x = 2813).
+        scenario.settings.require_mainland_base = false;
         // The first production step is only the outside tele; preparation
         // above already established that fixture, so proof starts at Follow.
         scenario.steps.remove(0);
