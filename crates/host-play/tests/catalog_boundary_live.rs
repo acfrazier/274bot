@@ -1748,7 +1748,7 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
             "south ridge stand (2998,3916,0), Agility 52, and five Lobsters 379"
         }
         CoreCase::BrimhavenAgility => {
-            "surface entrance (2804,3193,0), Agility 52, at least 200 coins, ten Lobsters 379, no ticket 2996, and unpaid varp 309"
+            "surface entrance (2809,3194,0), Agility 52, at least 200 coins, ten Lobsters 379, no ticket 2996, and unpaid varp 309"
         }
         CoreCase::FlaxPicker => "Seers flax field (2741,3444,0) with empty pack of 1779",
         CoreCase::Superheater => {
@@ -6861,7 +6861,12 @@ mod tests {
         assert!(validate_case_baseline(CoreCase::BrimhavenAgility, &underfunded).is_err());
         let mut underqualified = baseline.clone();
         underqualified.levels.insert("agility".into(), 51);
-        assert!(validate_case_baseline(CoreCase::BrimhavenAgility, &underqualified).is_err());
+        let error = validate_case_baseline(CoreCase::BrimhavenAgility, &underqualified)
+            .expect_err("Agility 51 must not qualify Brimhaven");
+        assert!(
+            error.contains("surface entrance (2809,3194,0), Agility 52"),
+            "{error}"
+        );
         let mut drained = baseline.clone();
         drained.effective_levels.insert("agility".into(), 51);
         assert!(validate_case_baseline(CoreCase::BrimhavenAgility, &drained).is_err());
