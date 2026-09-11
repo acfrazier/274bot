@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 14:56 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 15:08 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -35,14 +35,17 @@ acceptance. Bone/default Alcher/shaft/headless fletching cycles passed across
 four cells with real work. ArdyCakes214 fails after isolate termination.
 
 Fixture lane: resource125 reviewed (Grok4.5 run1361); root resource batch on exact2d589c7ba completed1 PASS/10 FAIL; nine
-newer-catalog cells remain held after old-catalog failure. Trained Brimhaven131 active -> Wildy plane135
+newer-catalog cells remain held after old-catalog failure. Trained Brimhaven131 reviewed (verified Grok4.5 run1364) -> active Wildy plane135
 -> combat observer/Coal bounded preparation136 -> mage132 -> resource
 start preparation139 -> Mule bootstrap127.
-Native lane: observation projection134 active after audit133/retaliate128 ->
-quest status transport137 -> teleport -> shop -> Make-X -> fire -> trade126.
-Existing parent gates remain. Independent bounded reachability audit138
-is running: Flax requests maxSteps400 but shim uses unrestricted flood bits.
-No foreign-controller workaround or dim decision has been made.
+Native lane: observation projection134 reviewed (verified Grok4.5 run1365) after audit133/retaliate128 ->
+quest status transport137 -> bounded reachability140 -> teleport -> shop -> Make-X -> fire -> trade126.
+Existing parent gates remain. Independent bounded reachability audit138 completed (verified Grok4.6
+run1363): Flax requests maxSteps400 but shim uses unrestricted flood bits.
+Rust flood-metadata mapping140 will honor budgets without JS BFS, preserve
+valid adjacency, and prevent entity-row budget bypass. No live fix claimed.
+Exact942 root LIVE began15:07 after both verified reviews, rechecking
+Brimhaven, ArdyCakes and four bank-dependent cases on both revisions/catalogs.
 No new main publication beyond76b2016b7 yet; stage2 needs native correction
 and reviewed/live-qualified scope.
 
