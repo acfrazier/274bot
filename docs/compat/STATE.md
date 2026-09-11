@@ -1,5 +1,10 @@
 # Compatibility campaign state
 
+**Current resume entry point: [HANDOFF.md](HANDOFF.md), prepared2026-09-11
+at the operator's request.** It supersedes older next-action paragraphs below.
+Workers127/153 were left active; re-query the Hermes board before acting.
+No new root LIVE run was launched during handoff preparation.
+
 Updated 2026-09-11 18:04 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
