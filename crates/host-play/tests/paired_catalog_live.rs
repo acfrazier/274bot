@@ -308,7 +308,19 @@ impl SlotLive {
                     SlotKind::MuleCrafter => "crafter",
                     _ => "mule",
                 },
-                "seeded_first_supplies": matches!(self.kind, SlotKind::MuleMule),
+                "counterpart": self.partner,
+                "seeded_first_supplies": matches!(
+                    self.kind,
+                    SlotKind::MuleCrafter | SlotKind::MuleMule
+                ),
+                "seeded_raw_unnoted_essence": observation.essence_unnoted,
+                "seeded_air_runes": observation.air_runes,
+                "seeded_bank_unnoted_essence": if matches!(self.kind, SlotKind::MuleMule) {
+                    BANK_SEED_ESSENCE
+                } else {
+                    0
+                },
+                "bank_seed_acknowledged": self.bank_ack_done,
                 "observation": observation,
             })
         );
@@ -432,17 +444,22 @@ impl SlotLive {
                     return Ok(());
                 }
                 let kind = match self.kind {
-                    SlotKind::AirMaster | SlotKind::MuleCrafter => {
+                    SlotKind::AirMaster => {
                         interact::cheat(client, "give air_talisman 1");
                         interact::cheat(
                             client,
                             &interact::tele_args(AIR_RUINS.2, AIR_RUINS.0, AIR_RUINS.1),
                         );
-                        if matches!(self.kind, SlotKind::MuleCrafter) {
-                            "mule_crafter_talisman_noessence_at_ruins"
-                        } else {
-                            "air_master_talisman_noessence_at_ruins"
-                        }
+                        "air_master_talisman_noessence_at_ruins"
+                    }
+                    SlotKind::MuleCrafter => {
+                        interact::cheat(client, "give air_talisman 1");
+                        interact::cheat(client, &format!("give blankrune {MULE_TRADE_CAP}"));
+                        interact::cheat(
+                            client,
+                            &interact::tele_args(AIR_RUINS.2, AIR_RUINS.0, AIR_RUINS.1),
+                        );
+                        "mule_crafter_talisman_raw_firstload27_at_ruins"
                     }
                     SlotKind::AirRunner | SlotKind::MuleMule if !self.bank_ack_done => {
                         interact::cheat(client, &format!("givebank blankrune {BANK_SEED_ESSENCE}"));
@@ -499,12 +516,19 @@ impl SlotLive {
             }
             Prep::WaitSeed => {
                 let ready = match self.kind {
-                    SlotKind::AirMaster | SlotKind::MuleCrafter => air.is_some_and(|o| {
+                    SlotKind::AirMaster => air.is_some_and(|o| {
                         o.ingame
                             && o.scene_state == 2
                             && near(o.tile, AIR_RUINS, 8)
                             && o.air_talisman >= 1
                             && o.essence_unnoted == 0
+                    }),
+                    SlotKind::MuleCrafter => air.is_some_and(|o| {
+                        o.ingame
+                            && o.scene_state == 2
+                            && near(o.tile, AIR_RUINS, 8)
+                            && o.air_talisman >= 1
+                            && o.essence_unnoted == MULE_TRADE_CAP
                     }),
                     SlotKind::AirRunner | SlotKind::MuleMule if !self.bank_ack_done => air
                         .is_some_and(|o| {
@@ -1398,7 +1422,7 @@ mod tests {
     }
 
     fn mule_pair() -> MulePairWitness {
-        let crafter_base = air_obs("alice", 0, 0, 0);
+        let crafter_base = air_obs("alice", MULE_TRADE_CAP, 0, 0);
         let mule_base = air_obs("bob", 27, 0, 0);
         let mut crafter = MuleSlotRecord::new(
             MuleRole::Crafter,
@@ -1430,16 +1454,22 @@ mod tests {
         mule.saw_confirm_with_partner = true;
         crafter.transferred_in = 27;
         mule.transferred_out = 27;
+        crafter.air_transferred_out = 27;
+        mule.air_transferred_in = 27;
+        crafter.partner_transfer_events = 1;
+        mule.partner_transfer_events = 1;
+        crafter.post_exchange_craft_events = 1;
         crafter.air_from_script = 27;
-        crafter.xp_from_script = 135;
-        crafter.craft_events = 1;
+        crafter.xp_from_script = 270;
+        crafter.craft_events = 2;
         let mut crafter_now = crafter_base;
         crafter_now.air_runes = 27;
-        crafter_now.runecraft_xp = 135;
+        crafter_now.runecraft_xp = 270;
         crafter_now.tick = 80;
         crafter.latest = Some(crafter_now);
         let mut mule_now = mule_base;
         mule_now.essence_unnoted = 0;
+        mule_now.air_runes = 27;
         mule_now.tick = 80;
         mule.latest = Some(mule_now);
         mule.min_essence_after_start = 0;
@@ -1447,7 +1477,7 @@ mod tests {
     }
 
     fn mule_fresh_pair() -> MulePairWitness {
-        let crafter_base = air_obs("alice", 0, 0, 0);
+        let crafter_base = air_obs("alice", MULE_TRADE_CAP, 0, 0);
         let mule_base = air_obs("bob", 27, 0, 0);
         MulePairWitness {
             crafter: MuleSlotRecord::new(
@@ -1487,18 +1517,63 @@ mod tests {
         observation
     }
 
+    fn without_trade_partner(mut observation: AirObservation) -> AirObservation {
+        observation.trade_partner = None;
+        observation
+    }
+
     fn observe_first_exchange(pair: &mut MulePairWitness) {
+        let mut seed_craft = air_obs("alice", 0, MULE_TRADE_CAP, 135);
+        seed_craft.tile = Some((AIR_RUINS.0, 4800, AIR_RUINS.2));
+        seed_craft.in_temple = true;
+        pair.crafter.observe(seed_craft);
         pair.crafter
-            .observe(with_trade(air_obs("alice", 0, 0, 0), "bob", true, false));
+            .observe(with_trade(air_obs("alice", 0, 27, 135), "bob", true, false));
         pair.crafter
-            .observe(with_trade(air_obs("alice", 0, 0, 0), "bob", false, true));
+            .observe(with_trade(air_obs("alice", 0, 27, 135), "bob", false, true));
         pair.mule
             .observe(with_trade(air_obs("bob", 27, 0, 0), "alice", true, false));
         pair.mule
             .observe(with_trade(air_obs("bob", 27, 0, 0), "alice", false, true));
-        pair.mule.observe(air_obs("bob", 0, 0, 0));
-        pair.crafter.observe(air_obs("alice", 27, 0, 0));
-        pair.crafter.observe(air_obs("alice", 0, 27, 135));
+        pair.mule.observe(air_obs("bob", 0, 27, 0));
+        pair.crafter.observe(air_obs("alice", 27, 0, 135));
+        let mut post_exchange_craft = air_obs("alice", 0, 27, 270);
+        post_exchange_craft.tile = Some((AIR_RUINS.0, 4800, AIR_RUINS.2));
+        post_exchange_craft.in_temple = true;
+        pair.crafter.observe(post_exchange_craft);
+    }
+
+    fn observe_second_exchange(pair: &mut MulePairWitness, finish_craft: bool) {
+        let mut deposited = air_obs("bob", 0, 0, 0);
+        deposited.tile = Some(FALADOR_EAST);
+        deposited.bank_open = true;
+        deposited.bank_loaded = true;
+        pair.mule.observe(deposited);
+
+        let mut restocked = air_obs("bob", MULE_TRADE_CAP, 0, 0);
+        restocked.tile = Some(FALADOR_EAST);
+        restocked.bank_open = true;
+        restocked.bank_loaded = true;
+        pair.mule.observe(restocked);
+        pair.mule.observe(air_obs("bob", MULE_TRADE_CAP, 0, 0));
+
+        pair.crafter
+            .observe(with_trade(air_obs("alice", 0, 27, 270), "bob", true, false));
+        pair.crafter
+            .observe(with_trade(air_obs("alice", 0, 27, 270), "bob", false, true));
+        pair.mule
+            .observe(with_trade(air_obs("bob", 27, 0, 0), "alice", true, false));
+        pair.mule
+            .observe(with_trade(air_obs("bob", 27, 0, 0), "alice", false, true));
+        pair.mule.observe(air_obs("bob", 0, 27, 0));
+        pair.crafter.observe(air_obs("alice", 27, 0, 270));
+
+        if finish_craft {
+            let mut post_exchange_craft = air_obs("alice", 0, 27, 405);
+            post_exchange_craft.tile = Some((AIR_RUINS.0, 4800, AIR_RUINS.2));
+            post_exchange_craft.in_temple = true;
+            pair.crafter.observe(post_exchange_craft);
+        }
     }
 
     fn duel_obs(player: &str, xp: i32) -> DuelObservation {
@@ -1742,6 +1817,22 @@ mod tests {
     }
 
     #[test]
+    fn mule_rejects_seeded_rune_products() {
+        let mut pair = mule_pair();
+        pair.crafter.baseline.air_runes = MULE_TRADE_CAP;
+        let error = pair.qualify_supported().unwrap_err();
+        assert!(error.contains("baseline already held Air 556"), "{error}");
+    }
+
+    #[test]
+    fn mule_rejects_essence_only_exchange_without_rune_transfer() {
+        let mut pair = mule_pair();
+        pair.mule.air_transferred_in = 0;
+        let error = pair.qualify_supported().unwrap_err();
+        assert!(error.contains("crafted Air 556"), "{error}");
+    }
+
+    #[test]
     fn mule_rejects_missing_conservation() {
         let mut pair = mule_pair();
         pair.mule.transferred_out = 0;
@@ -1817,10 +1908,170 @@ mod tests {
     }
 
     #[test]
+    fn mule_rejects_full_cycle_without_post_second_exchange_craft() {
+        let mut pair = mule_fresh_pair();
+        observe_first_exchange(&mut pair);
+        observe_second_exchange(&mut pair, false);
+        pair.qualify_supported().unwrap();
+        let error = pair.qualify_full_cycle().unwrap_err();
+        assert!(error.contains("fresh crafter craft"), "{error}");
+    }
+
+    #[test]
+    fn mule_accepts_full_cycle_after_second_transfer_and_fresh_craft() {
+        let mut pair = mule_fresh_pair();
+        observe_first_exchange(&mut pair);
+        observe_second_exchange(&mut pair, true);
+        assert_eq!(
+            pair.qualify_full_cycle().unwrap(),
+            MuleClaim::MuleBankReturnSecondCycle
+        );
+    }
+
+    #[test]
+    fn mule_rejects_trade_without_published_counterpart() {
+        let mut pair = mule_fresh_pair();
+        let mut seed_craft = air_obs("alice", 0, MULE_TRADE_CAP, 135);
+        seed_craft.tile = Some((AIR_RUINS.0, 4800, AIR_RUINS.2));
+        seed_craft.in_temple = true;
+        pair.crafter.observe(seed_craft);
+        pair.crafter.observe(without_trade_partner(with_trade(
+            air_obs("alice", 0, 27, 135),
+            "bob",
+            true,
+            false,
+        )));
+        pair.crafter.observe(without_trade_partner(with_trade(
+            air_obs("alice", 0, 27, 135),
+            "bob",
+            false,
+            true,
+        )));
+        pair.mule.observe(without_trade_partner(with_trade(
+            air_obs("bob", 27, 0, 0),
+            "alice",
+            true,
+            false,
+        )));
+        pair.mule.observe(without_trade_partner(with_trade(
+            air_obs("bob", 27, 0, 0),
+            "alice",
+            false,
+            true,
+        )));
+        pair.mule.observe(air_obs("bob", 0, 27, 0));
+        pair.crafter.observe(air_obs("alice", 27, 0, 135));
+        let mut post_exchange_craft = air_obs("alice", 0, 27, 270);
+        post_exchange_craft.tile = Some((AIR_RUINS.0, 4800, AIR_RUINS.2));
+        post_exchange_craft.in_temple = true;
+        pair.crafter.observe(post_exchange_craft);
+
+        let error = pair.qualify_supported().unwrap_err();
+        assert!(error.contains("one-sided confirmation"), "{error}");
+    }
+
+    #[test]
+    fn mule_rejects_transfer_not_adjacent_to_confirmed_trade() {
+        let mut pair = mule_fresh_pair();
+        let mut seed_craft = air_obs("alice", 0, MULE_TRADE_CAP, 135);
+        seed_craft.tile = Some((AIR_RUINS.0, 4800, AIR_RUINS.2));
+        seed_craft.in_temple = true;
+        pair.crafter.observe(seed_craft);
+        pair.crafter
+            .observe(with_trade(air_obs("alice", 0, 27, 135), "bob", true, false));
+        pair.crafter
+            .observe(with_trade(air_obs("alice", 0, 27, 135), "bob", false, true));
+        pair.mule
+            .observe(with_trade(air_obs("bob", 27, 0, 0), "alice", true, false));
+        pair.mule
+            .observe(with_trade(air_obs("bob", 27, 0, 0), "alice", false, true));
+
+        pair.crafter.observe(air_obs("alice", 0, 27, 135));
+        pair.mule.observe(air_obs("bob", 27, 0, 0));
+        pair.mule.observe(air_obs("bob", 0, 27, 0));
+        pair.crafter.observe(air_obs("alice", 27, 0, 135));
+        let mut post_exchange_craft = air_obs("alice", 0, 27, 270);
+        post_exchange_craft.tile = Some((AIR_RUINS.0, 4800, AIR_RUINS.2));
+        post_exchange_craft.in_temple = true;
+        pair.crafter.observe(post_exchange_craft);
+
+        let error = pair.qualify_supported().unwrap_err();
+        assert!(error.contains("missing conservation"), "{error}");
+    }
+
+    #[test]
+    fn mule_rejects_second_transfer_without_second_counterpart_handshake() {
+        let mut pair = mule_fresh_pair();
+        observe_first_exchange(&mut pair);
+
+        let mut deposited = air_obs("bob", 0, 0, 0);
+        deposited.tile = Some(FALADOR_EAST);
+        deposited.bank_open = true;
+        deposited.bank_loaded = true;
+        pair.mule.observe(deposited);
+        let mut restocked = air_obs("bob", MULE_TRADE_CAP, 0, 0);
+        restocked.tile = Some(FALADOR_EAST);
+        restocked.bank_open = true;
+        restocked.bank_loaded = true;
+        pair.mule.observe(restocked);
+        pair.mule.observe(air_obs("bob", MULE_TRADE_CAP, 0, 0));
+
+        pair.mule.observe(air_obs("bob", 0, 27, 0));
+        pair.crafter.observe(air_obs("alice", 27, 0, 270));
+        let mut post_exchange_craft = air_obs("alice", 0, 27, 405);
+        post_exchange_craft.tile = Some((AIR_RUINS.0, 4800, AIR_RUINS.2));
+        post_exchange_craft.in_temple = true;
+        pair.crafter.observe(post_exchange_craft);
+
+        let error = pair.qualify_full_cycle().unwrap_err();
+        assert!(error.contains("second transfer"), "{error}");
+    }
+
+    #[test]
+    fn mule_rejects_bank_cycle_observed_after_second_transfer() {
+        let mut pair = mule_fresh_pair();
+        observe_first_exchange(&mut pair);
+
+        let mut unobserved_restock = air_obs("bob", MULE_TRADE_CAP, 0, 0);
+        unobserved_restock.tile = Some(FALADOR_EAST);
+        pair.mule.observe(unobserved_restock);
+        pair.mule.observe(air_obs("bob", MULE_TRADE_CAP, 0, 0));
+        pair.crafter
+            .observe(with_trade(air_obs("alice", 0, 27, 270), "bob", true, false));
+        pair.crafter
+            .observe(with_trade(air_obs("alice", 0, 27, 270), "bob", false, true));
+        pair.mule
+            .observe(with_trade(air_obs("bob", 27, 0, 0), "alice", true, false));
+        pair.mule
+            .observe(with_trade(air_obs("bob", 27, 0, 0), "alice", false, true));
+        pair.mule.observe(air_obs("bob", 0, 27, 0));
+        pair.crafter.observe(air_obs("alice", 27, 0, 270));
+        let mut post_exchange_craft = air_obs("alice", 0, 27, 405);
+        post_exchange_craft.tile = Some((AIR_RUINS.0, 4800, AIR_RUINS.2));
+        post_exchange_craft.in_temple = true;
+        pair.crafter.observe(post_exchange_craft);
+
+        let mut deposited = air_obs("bob", 0, 0, 0);
+        deposited.tile = Some(FALADOR_EAST);
+        deposited.bank_open = true;
+        deposited.bank_loaded = true;
+        pair.mule.observe(deposited);
+        let mut restocked = air_obs("bob", MULE_TRADE_CAP, 0, 0);
+        restocked.tile = Some(FALADOR_EAST);
+        restocked.bank_open = true;
+        restocked.bank_loaded = true;
+        pair.mule.observe(restocked);
+        pair.mule.observe(air_obs("bob", MULE_TRADE_CAP, 0, 0));
+
+        let error = pair.qualify_full_cycle().unwrap_err();
+        assert!(error.contains("second transfer"), "{error}");
+    }
+
+    #[test]
     fn mule_observe_crafter_bank_deposit_keeps_first_exchange_craft() {
         let mut pair = mule_fresh_pair();
         observe_first_exchange(&mut pair);
-        let mut deposited = air_obs("alice", 0, 0, 135);
+        let mut deposited = air_obs("alice", 0, 0, 270);
         deposited.tile = Some(FALADOR_EAST);
         deposited.bank_open = true;
         deposited.bank_loaded = true;
@@ -1829,7 +2080,7 @@ mod tests {
             pair.crafter.air_from_script > 0,
             "sticky peak must survive crafter bank deposit of 556"
         );
-        assert_eq!(pair.crafter.xp_from_script, 135);
+        assert_eq!(pair.crafter.xp_from_script, 270);
         assert_eq!(pair.crafter.latest.as_ref().unwrap().air_runes, 0);
         assert_eq!(
             pair.qualify_supported().unwrap(),
@@ -1918,7 +2169,7 @@ mod tests {
     }
 
     #[test]
-    fn serializes_complete_air_and_duel_witnesses() {
+    fn serializes_complete_pair_witnesses() {
         let air = serde_json::to_value(air_pair()).unwrap();
         for key in ["baseline", "account", "settings", "partner"] {
             assert!(air["master"].get(key).is_some(), "missing master.{key}");
@@ -1929,6 +2180,14 @@ mod tests {
             assert!(mule["crafter"].get(key).is_some(), "missing crafter.{key}");
             assert!(mule["mule"].get(key).is_some(), "missing mule.{key}");
         }
+        for key in [
+            "air_transferred_out",
+            "partner_transfer_events",
+            "post_exchange_craft_events",
+        ] {
+            assert!(mule["crafter"].get(key).is_some(), "missing crafter.{key}");
+        }
+        assert!(mule["mule"].get("air_transferred_in").is_some());
         let duel = serde_json::to_value(duel_pair()).unwrap();
         for slot in ["a", "b"] {
             assert!(duel[slot].get("baseline").is_some());
@@ -2131,12 +2390,15 @@ mod tests {
     }
 
     #[test]
-    fn mule_prepared_current_rejects_crafter_essence_mule_short_load_and_talisman() {
-        let crafter = air_obs("alice", 0, 0, 0);
+    fn mule_prepared_current_requires_exact_raw_loads_and_crafter_talisman() {
+        let crafter = air_obs("alice", MULE_TRADE_CAP, 0, 0);
         mule_prepared_current(MuleRole::Crafter, "alice", &crafter).unwrap();
-        let mut with_essence = crafter.clone();
-        with_essence.essence_unnoted = 1;
-        assert!(mule_prepared_current(MuleRole::Crafter, "alice", &with_essence).is_err());
+        let mut empty = crafter.clone();
+        empty.essence_unnoted = 0;
+        assert!(mule_prepared_current(MuleRole::Crafter, "alice", &empty).is_err());
+        let mut surplus = crafter.clone();
+        surplus.essence_unnoted = MULE_TRADE_CAP + 1;
+        assert!(mule_prepared_current(MuleRole::Crafter, "alice", &surplus).is_err());
 
         let mule = air_obs("bob", 27, 0, 0);
         mule_prepared_current(MuleRole::Mule, "bob", &mule).unwrap();
@@ -2146,8 +2408,85 @@ mod tests {
         let mut with_talisman = mule.clone();
         with_talisman.air_talisman = 1;
         assert!(mule_prepared_current(MuleRole::Mule, "bob", &with_talisman).is_err());
+        let mut mule_surplus = mule.clone();
+        mule_surplus.essence_unnoted = MULE_TRADE_CAP + 1;
+        assert!(mule_prepared_current(MuleRole::Mule, "bob", &mule_surplus).is_err());
         let mut at_bank = mule;
         at_bank.tile = Some(FALADOR_EAST);
         assert!(mule_prepared_current(MuleRole::Mule, "bob", &at_bank).is_err());
+    }
+
+    #[test]
+    fn mule_rejects_seed_craft_and_empty_exchange() {
+        let mut pair = mule_fresh_pair();
+        pair.crafter
+            .observe(air_obs("alice", 0, MULE_TRADE_CAP, 135));
+        pair.crafter.observe(with_trade(
+            air_obs("alice", 0, MULE_TRADE_CAP, 135),
+            "bob",
+            true,
+            false,
+        ));
+        pair.crafter.observe(with_trade(
+            air_obs("alice", 0, MULE_TRADE_CAP, 135),
+            "bob",
+            false,
+            true,
+        ));
+        pair.mule.observe(with_trade(
+            air_obs("bob", MULE_TRADE_CAP, 0, 0),
+            "alice",
+            true,
+            false,
+        ));
+        pair.mule.observe(with_trade(
+            air_obs("bob", MULE_TRADE_CAP, 0, 0),
+            "alice",
+            false,
+            true,
+        ));
+        pair.mule.observe(air_obs("bob", 0, 0, 0));
+        pair.crafter
+            .observe(air_obs("alice", 0, MULE_TRADE_CAP, 135));
+
+        let error = pair.qualify_supported().unwrap_err();
+        assert!(error.contains("missing conservation"), "{error}");
+    }
+
+    #[test]
+    fn mule_rejects_exchange_without_fresh_post_exchange_craft() {
+        let mut pair = mule_fresh_pair();
+        pair.crafter
+            .observe(air_obs("alice", 0, MULE_TRADE_CAP, 135));
+        pair.crafter.observe(with_trade(
+            air_obs("alice", 0, MULE_TRADE_CAP, 135),
+            "bob",
+            true,
+            false,
+        ));
+        pair.crafter.observe(with_trade(
+            air_obs("alice", 0, MULE_TRADE_CAP, 135),
+            "bob",
+            false,
+            true,
+        ));
+        pair.mule.observe(with_trade(
+            air_obs("bob", MULE_TRADE_CAP, 0, 0),
+            "alice",
+            true,
+            false,
+        ));
+        pair.mule.observe(with_trade(
+            air_obs("bob", MULE_TRADE_CAP, 0, 0),
+            "alice",
+            false,
+            true,
+        ));
+        pair.crafter
+            .observe(air_obs("alice", MULE_TRADE_CAP, 0, 135));
+        pair.mule.observe(air_obs("bob", 0, MULE_TRADE_CAP, 0));
+
+        let error = pair.qualify_supported().unwrap_err();
+        assert!(error.contains("post-exchange"), "{error}");
     }
 }
