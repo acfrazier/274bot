@@ -462,3 +462,133 @@ fn result_is_never_boolean_and_classify_is_not_on_the_path() {
     );
     iso.join();
 }
+
+#[test]
+fn native_cake_owner_selects_with_api_predicate_and_posts_food_gain() {
+    let iso = LoadIsolate::spawn(
+        "export default class T extends LoopingBot { loop() {} }".to_string(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    let begin = iso
+        .probe(
+            r#"rustyscript.functions.__rs2b0t_cake_stall({
+                op: 'begin',
+                fill_to: 28,
+                locked_out_until: 0,
+                observation: {
+                    ingame: true,
+                    tick: 1,
+                    here: {x:2668,z:3312,level:0},
+                    in_combat: false,
+                    abort: false,
+                    should_eat: false,
+                    inv_size: 28,
+                    inv: [],
+                    baker_stall: {
+                        loc_id: 2561,
+                        name: "Baker's stall",
+                        op: 'Steal from',
+                        stall: {x:2667,z:3310,level:0},
+                        stand: {x:2668,z:3312,level:0},
+                        stand_alt: {x:2669,z:3310,level:0},
+                    },
+                    locs: [
+                        {id:1530,name:'Door',x:2668,z:3312,level:0,distance:0,actions:['Open']},
+                        {id:2561,name:"Baker's stall",x:2666,z:3310,level:0,actions:['Steal from']},
+                        {id:2561,name:"Baker's stall",x:2667,z:3310,level:0,distance:2,actions:['Steal from']},
+                    ],
+                },
+            })"#,
+        )
+        .unwrap();
+    let token = begin["token"].as_u64().expect("cake token");
+    assert_eq!(begin["kind"], "observe");
+    assert_eq!(begin["lockout"], true);
+
+    let steal = iso
+        .probe(&format!(
+            r#"rustyscript.functions.__rs2b0t_cake_stall({{
+                op: 'next', token: {token}, observation: {{
+                    ingame: true,
+                    tick: 1,
+                    here: {{x:2668,z:3312,level:0}},
+                    in_combat: false,
+                    abort: false,
+                    should_eat: false,
+                    locked_out_until: 0,
+                    inv_size: 28,
+                    inv: [],
+                    baker_stall: {{
+                        loc_id: 2561,
+                        name: "Baker's stall",
+                        op: 'Steal from',
+                        stall: {{x:2667,z:3310,level:0}},
+                        stand: {{x:2668,z:3312,level:0}},
+                    }},
+                    locs: [
+                        {{id:2561,name:"Baker's stall",x:2666,z:3310,level:0,actions:['Steal from']}},
+                        {{id:2561,name:"Baker's stall",x:2667,z:3310,level:0,distance:2,actions:['Steal from']}},
+                    ],
+                }},
+            }})"#
+        ))
+        .unwrap();
+    assert_eq!(steal["kind"], "loc");
+    assert_eq!(steal["id"], 2561);
+    assert_eq!(
+        steal["x"], 2667,
+        "missing distance must not win target selection"
+    );
+
+    let result_check = iso
+        .probe(&format!(
+            r#"rustyscript.functions.__rs2b0t_cake_stall({{
+                op: 'next', token: {token}, observation: {{
+                    ingame: true,
+                    tick: 2,
+                    here: {{x:2668,z:3312,level:0}},
+                    in_combat: false,
+                    abort: false,
+                    should_eat: false,
+                    inv_size: 28,
+                    inv: [{{name:'Cake',count:1}}],
+                    baker_stall: null,
+                    locs: [],
+                }},
+            }})"#
+        ))
+        .unwrap();
+    assert_eq!(result_check["kind"], "observe");
+    assert_eq!(result_check["callbacks"], true);
+    let on_steal = iso
+        .probe(&format!(
+            r#"rustyscript.functions.__rs2b0t_cake_stall({{
+                op: 'next', token: {token}, observation: {{
+                    ingame: true, tick: 2, here: {{x:2668,z:3312,level:0}},
+                    in_combat: false, abort: false, should_eat: false,
+                    inv_size: 28, inv: [{{name:'Cake',count:1}}],
+                    baker_stall: null, locs: [],
+                }},
+            }})"#
+        ))
+        .unwrap();
+    assert_eq!(on_steal["kind"], "on-steal");
+    let done = iso
+        .probe(&format!(
+            r#"rustyscript.functions.__rs2b0t_cake_stall({{
+                op: 'next', token: {token}, observation: {{
+                    ingame: true, tick: 2, here: {{x:2668,z:3312,level:0}},
+                    in_combat: false, abort: false, should_eat: false,
+                    inv_size: 28, inv: [{{name:'Cake',count:1}}],
+                    baker_stall: null, locs: [],
+                }},
+            }})"#
+        ))
+        .unwrap();
+    assert_eq!(done["kind"], "done");
+    assert_eq!(done["result"], "no-progress");
+    assert_eq!(done["stole"], true);
+    iso.join();
+}

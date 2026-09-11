@@ -2,7 +2,7 @@
 //! radius 1, then posts the same named OpenBooth identity.
 
 use script::isolate_fb::{
-    NearestBoothInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
+    BankStandInput, NearestBoothInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
 };
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
@@ -145,6 +145,33 @@ export default class T extends LoopingBot {
         if (globalThis.__did) return;
         globalThis.__did = true;
         globalThis.__ok = await Banking.open();
+    }
+}
+"#;
+
+const OPEN_BOOTH: &str = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = null;
+        globalThis.__ok = await Bank.openBooth(
+            { x: 3013, z: 3355, level: 0 },
+            'Bank booth',
+            'Use-quickly',
+        );
+    }
+}
+"#;
+
+const OPEN_WORLD: &str = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = await Bank.openNearestWorld();
     }
 }
 "#;
@@ -350,6 +377,105 @@ fn named_open_nearest_completes_on_fresh_generation_not_queued_click() {
 }
 
 #[test]
+fn supplied_stand_walks_then_delivers_fresh_bank_result() {
+    let iso = LoadIsolate::spawn(OPEN_BOOTH.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let use_quickly = ["Use-quickly".to_string()];
+    let locs = [loc_row(
+        2213,
+        Some("Bank booth"),
+        3013,
+        3354,
+        4,
+        &use_quickly,
+    )];
+    let mut snap = base_snapshot();
+    snap.locs = &locs;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::WalkNear {
+            x: 3013,
+            z: 3355,
+            level: 0,
+            radius: 1,
+            allow_teleports: false,
+        }]
+    );
+
+    snap.tick = 2;
+    snap.here = Some(tile(3013, 3355));
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::OpenBooth {
+            x: 3013,
+            z: 3354,
+            level: 0,
+            id: 2213,
+            name: Some("Bank booth".into()),
+            action: Some("Use-quickly".into()),
+        }]
+    );
+    assert!(iso.probe("__ok").unwrap().is_null());
+
+    snap.tick = 3;
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    snap.bank_generation = 1;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 3);
+    assert_eq!(iso.probe("__ok").unwrap(), true);
+    iso.join();
+}
+
+#[test]
+fn world_open_walks_with_native_verb_then_opens_observed_booth() {
+    let iso = LoadIsolate::spawn(OPEN_WORLD.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let stands = [BankStandInput {
+        name: "Bank booth",
+        x: 3011,
+        z: 3354,
+        level: 0,
+        kind: "booth",
+        op: 1,
+        choose: None,
+    }];
+    let mut snap = base_snapshot();
+    snap.here = Some(tile(3000, 3340));
+    snap.banks = &stands;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.drain_interacts(), vec![InteractReq::WalkNearestBank]);
+
+    snap.tick = 2;
+    snap.here = Some(tile(3011, 3353));
+    snap.nearest_booth = Some(NearestBoothInput {
+        x: 3011,
+        z: 3354,
+        level: 0,
+        id: 2213,
+        name: "Bank booth",
+        op: "Use-quickly",
+    });
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::OpenBooth {
+            x: 3011,
+            z: 3354,
+            level: 0,
+            id: 2213,
+            name: None,
+            action: None,
+        }]
+    );
+    iso.join();
+}
+
+#[test]
 fn open_nearest_access_non_default_still_throws_unsupported() {
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
@@ -376,5 +502,64 @@ export default class T extends LoopingBot {
         "not impl: Bank.openNearestAccess: unsupported bank access"
     );
     assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}
+
+#[test]
+fn native_bank_owner_preserves_selected_identity_across_approach() {
+    let iso = LoadIsolate::spawn(
+        "export default class T extends LoopingBot { loop() {} }".to_string(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    let begin = iso
+        .probe(
+            r#"rustyscript.functions.__rs2b0t_bank_open({
+                op: 'begin',
+                mode: 'open-nearest',
+                booth_name: 'Bank booth',
+                booth_action: 'Use-quickly',
+                observation: {
+                    ingame: true,
+                    here: {x:3010,z:3352,level:0},
+                    bank_open: false,
+                    bank_loaded: false,
+                    bank_generation: 7,
+                    locs: [
+                        {id:111,name:'Bank booth',x:3010,z:3353,level:0,distance:9,actions:['Use-quickly']},
+                        {id:2213,name:'Bank booth',x:3011,z:3354,level:0,distance:2,actions:['Examine','Use-quickly']},
+                    ],
+                    nearest_booth: null,
+                    banks: [],
+                },
+            })"#,
+        )
+        .unwrap();
+    let token = begin["token"].as_u64().expect("bank-open token");
+    assert_eq!(begin["kind"], "walk-near");
+    assert_eq!(begin["x"], 3011);
+    assert_eq!(begin["z"], 3354);
+
+    let open = iso
+        .probe(&format!(
+            r#"rustyscript.functions.__rs2b0t_bank_open({{
+                op: 'next', token: {token}, observation: {{
+                    ingame: true,
+                    here: {{x:3011,z:3353,level:0}},
+                    bank_open: false,
+                    bank_loaded: false,
+                    bank_generation: 7,
+                    locs: [{{id:2213,name:'Bank booth',x:3011,z:3354,level:0,distance:1,actions:['Examine','Use-quickly']}}],
+                    nearest_booth: null,
+                    banks: [],
+                }},
+            }})"#
+        ))
+        .unwrap();
+    assert_eq!(open["kind"], "open-booth");
+    assert_eq!(open["id"], 2213);
+    assert_eq!(open["name"], "Bank booth");
+    assert_eq!(open["action"], "Use-quickly");
     iso.join();
 }

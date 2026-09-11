@@ -1,46 +1,8 @@
-import { Inventory } from '../inventory/Inventory.js';
-import { Locs } from '../locs/Locs.js';
-import { Game } from '../game/Game.js';
-import { Traversal } from '../walking/Traversal.js';
 import { Execution } from '../execution/Execution.js';
-import { host } from '../../shim/_kernel.js';
-import { tileFromPosted } from '../../geometry/Tile.js';
-import { CAKE_ITEMS } from './cakeStallData.js';
+import { host, queue } from '../../shim/_kernel.js';
 
-const TARGET_RADIUS = 3;
-const RESOLVE_MS = 2400;
-
-function postedStall() {
-    const row = host().content && host().content.baker_stall;
-    if (!row || typeof row !== 'object') {
-        return null;
-    }
-    const stall = tileFromPosted(row.stall);
-    const stand = tileFromPosted(row.stand);
-    const name = typeof row.name === 'string' && row.name.trim() ? row.name : null;
-    const op = typeof row.op === 'string' && row.op.trim() ? row.op : null;
-    const locId = Number.isInteger(row.loc_id) ? row.loc_id : null;
-    if (!stall || !stand || !name || !op || locId == null) {
-        return null;
-    }
-    return {
-        locId,
-        name,
-        op,
-        stall,
-        stand,
-        standAlt: tileFromPosted(row.stand_alt),
-    };
-}
-
-function sameTile(a, b) {
-    return !!(
-        a &&
-        b &&
-        a.x === b.x &&
-        a.z === b.z &&
-        (a.level ?? 0) === (b.level ?? 0)
-    );
+function call(payload) {
+    return globalThis.rustyscript.functions.__rs2b0t_cake_stall(payload);
 }
 
 function called(fn) {
@@ -59,105 +21,113 @@ function lockoutTick(opts) {
     return 0;
 }
 
-function atGoal(opts) {
-    if (Inventory.isFull()) {
-        return true;
-    }
-    const n = opts && opts.fillTo;
-    return typeof n === 'number' && Number.isFinite(n) && carriedCakes() >= n;
+function observation(opts, withCallbacks, withLockout) {
+    const h = host();
+    const s = h.snapshot || {};
+    const abort = withCallbacks && called(opts?.abort);
+    const shouldEat = withCallbacks && !abort ? called(opts?.shouldEat) : false;
+    return {
+        ingame: s.ingame === true,
+        tick: Number(s.tick) || 0,
+        here: s.here ?? null,
+        in_combat: s.in_combat === true,
+        abort,
+        should_eat: shouldEat,
+        inv_size:
+            typeof h.invSize === 'number'
+                ? h.invSize
+                : typeof s.inv_size === 'number'
+                  ? s.inv_size
+                  : 0,
+        inv: Array.isArray(s.inv) ? s.inv : [],
+        baker_stall: h.content?.baker_stall ?? null,
+        locs: Array.isArray(s.locs) ? s.locs : [],
+        ...(withLockout ? { locked_out_until: lockoutTick(opts) } : {}),
+    };
 }
 
-function matchingStall(facts) {
-    return Locs.query()
-        .name(facts.name)
-        .action(facts.op)
-        .where(
-            (loc) =>
-                Number.isInteger(loc.id) &&
-                loc.id === facts.locId &&
-                loc.tile().distanceTo(facts.stall) <= TARGET_RADIUS,
-        )
-        .nearest();
+function dispatchStep(step) {
+    if (step.kind === 'walk-to') {
+        queue({ op: 'walk-to', x: step.x, z: step.z, level: step.level });
+        return true;
+    }
+    if (step.kind === 'loc') {
+        queue({
+            op: 'loc',
+            x: step.x,
+            z: step.z,
+            level: step.level,
+            action: step.action,
+            id: step.id,
+        });
+        return true;
+    }
+    return step.kind === 'wait';
 }
 
 export function carriedCakes() {
-    return CAKE_ITEMS.reduce((n, name) => n + Inventory.count(name), 0);
+    return call({ op: 'count', observation: observation({}, false, false) });
 }
 
 export function needsCakeRestock(target) {
-    const want = typeof target === 'number' && Number.isFinite(target) ? target : 1;
-    return !Inventory.isFull() && carriedCakes() < want;
+    const normalized = typeof target === 'number' && Number.isFinite(target) ? target : null;
+    return call({
+        op: 'needs_restock',
+        target: normalized,
+        observation: observation({}, false, false),
+    });
 }
 
 export async function stealCakes(opts = {}) {
-    if (called(opts.abort) || called(opts.shouldEat)) {
-        return 'aborted';
-    }
-    if (Game.inCombat()) {
-        return 'combat';
-    }
-    if (atGoal(opts)) {
-        return 'stocked';
-    }
-    if (Game.tick() < lockoutTick(opts)) {
-        return 'no-progress';
-    }
-
-    let facts = postedStall();
-    if (!facts) {
-        return 'no-progress';
-    }
-
-    const here = Game.tile();
-    const onStand = sameTile(here, facts.stand) || sameTile(here, facts.standAlt);
-    if (!onStand) {
-        const arrived = await Traversal.walkTo(facts.stand);
-        if (called(opts.abort) || called(opts.shouldEat)) {
-            return 'aborted';
+    const fillTo =
+        typeof opts.fillTo === 'number' && Number.isFinite(opts.fillTo) ? opts.fillTo : null;
+    let step = call({
+        op: 'begin',
+        fill_to: fillTo,
+        observation: observation(opts, true, false),
+    });
+    const token = step?.token;
+    while (step && step.kind !== 'done' && step.kind !== 'aborted') {
+        if (step.kind === 'observe') {
+            step = call({
+                op: 'next',
+                token,
+                observation: observation(
+                    opts,
+                    step.callbacks === true,
+                    step.lockout === true,
+                ),
+            });
+            continue;
         }
-        if (Game.inCombat()) {
-            return 'combat';
+        if (step.kind === 'on-steal') {
+            if (typeof opts.onSteal === 'function') {
+                opts.onSteal();
+            }
+            step = call({
+                op: 'next',
+                token,
+                observation: observation(opts, false, false),
+            });
+            continue;
         }
-        if (atGoal(opts) || Game.tick() < lockoutTick(opts) || !arrived) {
-            return atGoal(opts) ? 'stocked' : 'no-progress';
-        }
-        facts = postedStall();
-        if (!facts) {
+        if (!dispatchStep(step)) {
             return 'no-progress';
         }
+        const withCallbacks = step.kind === 'loc';
+        let next = null;
+        await Execution.delayUntil(() => {
+            next = call({
+                op: 'next',
+                token,
+                observation: observation(opts, withCallbacks, false),
+            });
+            return next?.kind !== 'wait';
+        }, 0);
+        step = next;
     }
-
-    const loc = matchingStall(facts);
-    if (!loc) {
-        return 'no-progress';
+    if (step?.kind === 'done') {
+        return typeof step.result === 'string' ? step.result : 'no-progress';
     }
-
-    const before = carriedCakes();
-    if (!loc.interact(facts.op)) {
-        return 'no-progress';
-    }
-
-    await Execution.delayUntil(
-        () =>
-            called(opts.abort) ||
-            called(opts.shouldEat) ||
-            Game.inCombat() ||
-            carriedCakes() > before,
-        RESOLVE_MS,
-    );
-
-    if (called(opts.abort) || called(opts.shouldEat)) {
-        return 'aborted';
-    }
-    const gained = carriedCakes() > before;
-    if (gained && typeof opts.onSteal === 'function') {
-        opts.onSteal();
-    }
-    if (Game.inCombat()) {
-        return 'combat';
-    }
-    if (atGoal(opts)) {
-        return 'stocked';
-    }
-    return 'no-progress';
+    return 'aborted';
 }

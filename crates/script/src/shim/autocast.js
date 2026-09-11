@@ -1,11 +1,9 @@
 import { actions, reader } from '../../adapter/ClientAdapter.js';
 import { Execution } from '../execution/Execution.js';
-import { Game } from '../game/Game.js';
 import { spellButtonCom } from '../combat/CombatStyleLogic.js';
 import { notImpl } from '../../shim/_kernel.js';
 
 const COMBAT_TAB = 0;
-const STEP_MS = 3000;
 
 function call(payload) {
     return globalThis.rustyscript.functions.__rs2b0t_autocast(payload);
@@ -28,12 +26,36 @@ function magicValue(index) {
     return reader.varp(index);
 }
 
-function live(c) {
-    return call({
-        op: 'observe',
+function observation(c) {
+    return {
+        ingame: globalThis.__rs2b0t_host?.snapshot?.ingame === true,
+        active_side_tab: reader.activeSideTab(),
         combat_tab_root: combatTabRoot(),
         magic_varp_value: magicValue(c.magic_varp),
+    };
+}
+
+function live(c) {
+    const obs = observation(c);
+    return call({
+        op: 'observe',
+        combat_tab_root: obs.combat_tab_root,
+        magic_varp_value: obs.magic_varp_value,
     });
+}
+
+function logFailure(reason, spellName, log) {
+    if (reason === 'staff-missing') {
+        log?.('combat tab is not the staff layout — is a staff wielded?');
+    } else if (reason === 'open-tab') {
+        log?.('could not open the combat tab');
+    } else if (reason === 'chooser') {
+        log?.('spell chooser did not open');
+    } else if (reason === 'select') {
+        log?.(`choosing '${spellName}' did not take — magic level too low?`);
+    } else if (reason === 'toggle') {
+        log?.('autocast toggle did not arm');
+    }
 }
 
 export const Autocast = {
@@ -49,7 +71,13 @@ export const Autocast = {
     },
     async arm(spellName, log) {
         const c = controls();
-        if (!c || c.available !== true || c.choose_com < 0 || c.toggle_com < 0 || c.spell_grid_base < 0) {
+        if (
+            !c ||
+            c.available !== true ||
+            c.choose_com < 0 ||
+            c.toggle_com < 0 ||
+            c.spell_grid_base < 0
+        ) {
             log?.(`not impl: Autocast.arm needs posted coms for '${spellName}'`);
             throw notImpl('Autocast.arm');
         }
@@ -58,47 +86,35 @@ export const Autocast = {
             log?.(`'${spellName}' is not an autocastable spell — see SPELL_DB (Wind Strike … Fire Wave)`);
             return false;
         }
-        if (!this.staffTabAttached()) {
-            log?.('combat tab is not the staff layout — is a staff wielded?');
+        let step = call({
+            op: 'begin',
+            spell_com: ssbCom,
+            observation: observation(c),
+        });
+        const token = step?.token;
+        while (step && step.kind !== 'done' && step.kind !== 'aborted') {
+            if (step.kind === 'side-tab') {
+                actions.clickSideTab(step.tab);
+            } else if (step.kind === 'if-button') {
+                actions.ifButton(step.component_id);
+            } else if (step.kind !== 'wait') {
+                return false;
+            }
+            let next = null;
+            await Execution.delayUntil(() => {
+                next = call({
+                    op: 'next',
+                    token,
+                    observation: observation(c),
+                });
+                return next?.kind !== 'wait';
+            }, 0);
+            step = next;
+        }
+        if (step?.kind !== 'done' || step.ok !== true) {
+            logFailure(step?.reason, spellName, log);
             return false;
         }
-        const token = call({ op: 'begin' }).token;
-        const aborted = () => call({ op: 'current_token' }) !== token;
-        if (!(await Game.openSideTab(COMBAT_TAB))) {
-            log?.('could not open the combat tab');
-            return false;
-        }
-        if (aborted()) return false;
-        actions.ifButton(c.choose_com);
-        if (
-            !(await Execution.delayUntil(
-                () => aborted() || live(c).panel_open === true,
-                STEP_MS,
-            ))
-        ) {
-            log?.('spell chooser did not open');
-            return false;
-        }
-        if (aborted()) return false;
-        actions.ifButton(ssbCom);
-        if (
-            !(await Execution.delayUntil(
-                () => aborted() || live(c).selected === true,
-                STEP_MS,
-            ))
-        ) {
-            log?.(`choosing '${spellName}' did not take — magic level too low?`);
-            return false;
-        }
-        if (aborted()) return false;
-        actions.ifButton(c.toggle_com);
-        if (
-            !(await Execution.delayUntil(() => aborted() || this.armed(), STEP_MS))
-        ) {
-            log?.('autocast toggle did not arm');
-            return false;
-        }
-        if (aborted()) return false;
         log?.(`autocast armed: ${spellName}`);
         return true;
     },
