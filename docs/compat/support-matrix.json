@@ -6,7 +6,9 @@
     "host_boundary": "map the JavaScript surface to Rust host APIs; do not clone the foreign runtime, policy, tables, routers, banking, loadout, navigation, recovery, quest, clue, gatherer, or market-maker planners",
     "missing_capability": "BLOCKED: missing <op> with source evidence; imports/startup are not functional support",
     "walk_to": "WalkTo remains native 274bot navigation and is not a JsLibrary card",
-    "script_suitability": "Script loading and starting are revision agnostic. Users determine suitability for their chosen revision and platform; host/client boundaries refuse unsupported operations. This evidence ledger is not a loading or starting allowlist."
+    "script_suitability": "Script loading and starting are revision agnostic. Users determine suitability for their chosen revision and platform; host/client boundaries refuse unsupported operations. This evidence ledger is not a loading or starting allowlist.",
+    "foreign_script_defects": "Operator clarified 2026-09-11: preserve host behavior; dim a demonstrably broken imported script with source identity, failure evidence and a clear reason. Keep the original inventory/history. Do not dim a host/shim bug or alter host semantics to accommodate foreign-script defects.",
+    "ancillary_feature_stubs": "Ancillary dependencies such as clue solving remain honest stubs for separate future native host feature projects; integrate through the shim when those host features exist. Such unavailable ancillary scope alone does not dim an otherwise working card. Preserve the deferred branch refusal policy; no imported foreign planners or fabricated completion."
   },
   "catalogs": [
     {
@@ -34701,13 +34703,15 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Core, chainbody custom, 1000-batch representation and ordered platebody-then-chainbody cells passed. Selected-data source 7852b5a0 passed independent review. Historical ordered failure is retained; arbitrary custom-item live proof and integrated/frontend acceptance remain open.",
+      "status_detail": "Core, chainbody custom, 1000-batch representation, ordered platebody-then-chainbody, and generated Adamant scimitar custom alias/display-name cells passed. Selected-data source 7852b5a0 and custom fixtures 5f86dc87/d4f1809e passed independent review. Scoped integration review t_dde220ef approved 1e17c07a; final frontend/lifecycle and whole-branch acceptance remain open. Historical failures are retained.",
       "fixture_id": "local-274",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r274-alcher-100adccc-c933f37c.json",
         "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-100adccc-41d7a1e3.json",
         "docs/compat/evidence/catalog-harness/live/r274-alcher-large-batch-100adccc-41d7a1e3.json",
-        "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-100adccc-1a2f2dcf.json"
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-100adccc-1a2f2dcf.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-alias-100adccc-d4f1809e.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-name-100adccc-d4f1809e.json"
       ]
     },
     {
@@ -34963,13 +34967,15 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Core, chainbody custom, 1000-batch representation and ordered platebody-then-chainbody cells passed. Selected-data source 7852b5a0 passed independent review. Historical ordered failure is retained; arbitrary custom-item live proof and integrated/frontend acceptance remain open.",
+      "status_detail": "Core, chainbody custom, 1000-batch representation, ordered platebody-then-chainbody, and generated Adamant scimitar custom alias/display-name cells passed. Selected-data source 7852b5a0 and custom fixtures 5f86dc87/d4f1809e passed independent review. Scoped integration review t_dde220ef approved 1e17c07a; final frontend/lifecycle and whole-branch acceptance remain open. Historical failures are retained.",
       "fixture_id": "local-289",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r289-alcher-100adccc-c933f37c.json",
         "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-100adccc-41d7a1e3.json",
         "docs/compat/evidence/catalog-harness/live/r289-alcher-large-batch-100adccc-41d7a1e3.json",
-        "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-100adccc-1a2f2dcf.json"
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-100adccc-1a2f2dcf.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-alias-100adccc-d4f1809e.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-name-100adccc-d4f1809e.json"
       ]
     },
     {
@@ -69265,13 +69271,15 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Core, chainbody custom, 1000-batch representation and ordered platebody-then-chainbody cells passed. Selected-data source 7852b5a0 passed independent review. Historical ordered failure is retained; arbitrary custom-item live proof and integrated/frontend acceptance remain open.",
+      "status_detail": "Core, chainbody custom, 1000-batch representation, ordered platebody-then-chainbody, and generated Adamant scimitar custom alias/display-name cells passed. Selected-data source 7852b5a0 and custom fixtures 5f86dc87/d4f1809e passed independent review. Scoped integration review t_dde220ef approved 1e17c07a; final frontend/lifecycle and whole-branch acceptance remain open. Historical failures are retained.",
       "fixture_id": "local-274",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r274-alcher-8e7d965b-c933f37c.json",
         "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-8e7d965b-41d7a1e3.json",
         "docs/compat/evidence/catalog-harness/live/r274-alcher-large-batch-8e7d965b-41d7a1e3.json",
-        "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-8e7d965b-1a2f2dcf.json"
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-8e7d965b-1a2f2dcf.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-alias-8e7d965b-d4f1809e.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-name-8e7d965b-d4f1809e.json"
       ]
     },
     {
@@ -69527,13 +69535,15 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Core, chainbody custom, 1000-batch representation and ordered platebody-then-chainbody cells passed. Selected-data source 7852b5a0 passed independent review. Historical ordered failure is retained; arbitrary custom-item live proof and integrated/frontend acceptance remain open.",
+      "status_detail": "Core, chainbody custom, 1000-batch representation, ordered platebody-then-chainbody, and generated Adamant scimitar custom alias/display-name cells passed. Selected-data source 7852b5a0 and custom fixtures 5f86dc87/d4f1809e passed independent review. Scoped integration review t_dde220ef approved 1e17c07a; final frontend/lifecycle and whole-branch acceptance remain open. Historical failures are retained.",
       "fixture_id": "local-289",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r289-alcher-8e7d965b-c933f37c.json",
         "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-8e7d965b-41d7a1e3.json",
         "docs/compat/evidence/catalog-harness/live/r289-alcher-large-batch-8e7d965b-41d7a1e3.json",
-        "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-8e7d965b-1a2f2dcf.json"
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-8e7d965b-1a2f2dcf.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-alias-8e7d965b-d4f1809e.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-name-8e7d965b-d4f1809e.json"
       ]
     },
     {
