@@ -1,0 +1,58 @@
+{
+  "host_commit": "8fd0f13870dbe7d207c1604726937ca36963d5aa",
+  "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "adapter_approved": true,
+  "adapter_review": {
+    "id": 1235,
+    "task_id": "t_15c05b42",
+    "profile": "reviewer",
+    "step_key": null,
+    "status": "done",
+    "claim_lock": null,
+    "claim_expires": null,
+    "worker_pid": null,
+    "max_runtime_seconds": null,
+    "last_heartbeat_at": 1789104181,
+    "started_at": 1789104052,
+    "ended_at": 1789104181,
+    "outcome": "completed",
+    "summary": "Reviewed and approved d28be9df for brief 69 ClientAdapter local walk. Round-1 cold artifact review: reader.toLocal and actions.walkTo are thin posted-reach mappings (base subtract / base+local world walk-to on reach.level); fail-closed on unavailable/zero-dim/non-int/OOB with no queue; no shared runtime edits. Independent re-run: empty-target-style CARGO_TARGET_DIR target-t_15c05b42 cargo test client_adapter_local_walk 8/8, clippy -D warnings, rustfmt check; overlay hashes match export and evidence.",
+    "metadata": {
+      "review_outcome": "approved",
+      "review_round": 1,
+      "lens": "artifact",
+      "commit": "d28be9df829f0e13573cb17c47320c248e91a5fc",
+      "reviewer_checks": [
+        "cold read brief 69 vs client_adapter.js toLocal/walkTo/sceneReach",
+        "scope: commit paths only owned overlay + 04f/evidence",
+        "parity: walk-to InteractReq decode and DirectNavigator.walk world queue shape",
+        "fail-closed: available!==true and width/height<=0 block zero-base conversion",
+        "independent cargo test -p script --test client_adapter_local_walk --test-threads=1 via target-t_15c05b42: 8 passed",
+        "clippy --no-deps -p script --test client_adapter_local_walk -D warnings",
+        "rustfmt --edition 2021 --check client_adapter_local_walk.rs",
+        "overlay sha256 match HEAD, export, verification.json",
+        "export gitless + target-t_15c05b42 present"
+      ],
+      "tests_run": [
+        "cargo test --locked --offline -p script --test client_adapter_local_walk -- --test-threads=1 (8 passed)",
+        "cargo clippy --locked --offline --no-deps -p script --test client_adapter_local_walk -- -D warnings",
+        "rustfmt --edition 2021 --check crates/script/tests/client_adapter_local_walk.rs"
+      ],
+      "live": false,
+      "caveats": [
+        "Not LIVE; 274 full-pack timeout remains root-owned out of scope"
+      ],
+      "worker_session_id": "20260911_012053_ecd99f"
+    },
+    "error": null
+  },
+  "actual_reviewer_model": "grok-4.5",
+  "root_melee_checks_passed": true,
+  "excluded_vial_potion_cases": [
+    "vial_filler",
+    "vial_filler_east",
+    "potion_maker",
+    "potion_maker_named"
+  ],
+  "scope": "Release only ChickenBank preparation correction and 289 Flax adapter follow-up. Vial review1234 requested a scenario-only pack-empty guard in different registered cases; these cases do not invoke those predicates. Vial/Potion qualification and full integrated acceptance remain gated. Native static-loc repair is not in this immutable source/client."
+}
