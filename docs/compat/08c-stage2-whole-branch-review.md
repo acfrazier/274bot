@@ -1,7 +1,7 @@
 # Stage-2 whole-branch review
 
 Reviewer: Hermes profile `branchreviewer`, model `grok-4.6`, provider `xai-oauth`.
-Date: 2026-09-11. Kanban card `t_482a30d9`.
+Date: 2026-09-11. Kanban card `t_482a30d9` (second run after validation-ready).
 Kind: required independent Grok 4.6 whole-branch review of the second
 incremental integration batch. Not a same-card task review, not
 publication, not a release, not full catalog compatibility, not a
@@ -11,26 +11,33 @@ Read once: `AGENTS.md`, `docs/execution.md`, brief
 `docs/compat/briefs/146-stage2-whole-branch-review.md`,
 `08b-stage2-preflight.md`, `09-shim-ownership-audit.md`,
 `09a-native-shim-sequencing.md`, `06am-brimhaven-source-dim.md`,
-`06an-combat-evidence-serialization.md`. Historical next-actions were
+`06an-combat-evidence-serialization.md`,
+`06ap-headed-core-and-dragon-diagnosis.md`. Historical next-actions were
 not used as current directions. Branch checked first:
 `codex/rs2b0t-multirevision` (not `main`). Work was read-only except
 this report and `docs/compat/evidence/stage-2-review/`. No product/test
 edits, remotes, `LIVE`, compile-cache mutation, merge, or push. Working
-fixture139/native144 files were not inspected as part of this review.
+fixture139/native144/152/153 files and campaign HEAD after `df2` were
+not inspected as part of the product review.
 
 ## Verdict
 
-**SOURCE REVIEW COMPLETE. APPROVAL WITHHELD.** Root has not written
-`docs/compat/evidence/stage-2-preflight-324/validation-ready.json`.
-The operator now requires headed LIVE for remaining cells; orch
-withholds that file until then.
+**APPROVE bounded incremental integration of frozen host `df2ba846a` /
+client `aef3952d` versus published main `76b2016b7`.** Independently
+verified native mage/Flax cores, headed mage watches, retained failures,
+and the unchanged-on-main TaskBot disposition in
+`evidence/stage-2-preflight-324/validation-ready.json`
+(`ready_for_final_review` true).
+
+This is **not** GreenDragon core acceptance, **not** whole-campaign
+acceptance, **not** a release or tag, **not** approval of campaign HEAD
+(`bbe1742cd` and 144/139/152/153), and **not** a performance claim.
 
 No material host/API/script/frontend/scenario correctness, 274
 preservation, identity, protocol, ownership, or accidental
 foreign-JS-policy defect was found in the frozen product range. The
 mandatory two-line follow-up `df2ba846a` is a justified scenario-send
-correction, not a host workaround and not a concealed npcBox. This is
-**not** publication and **not** complete catalog support.
+correction, not a host workaround and not a concealed npcBox.
 
 ## Inspected refs
 
@@ -40,16 +47,18 @@ correction, not a host workaround and not a concealed npcBox. This is
 | Host base | `76b2016b7dafe9aae7b0c33dd591d8a9907380cb` |
 | Code-equivalent tested pin | `324d7b5946534db28305942d9bfba75fdd2e5dc8` |
 | Frozen docs candidate (brief) | `9b3dc71c0486490bd6429faab39ee5dbf8c138ad` |
-| Current product candidate | `df2ba846a51e5010fe8dc8aa104222955b3b0cba` |
+| Product candidate | `df2ba846a51e5010fe8dc8aa104222955b3b0cba` |
 | Client gitlink | `aef3952d1cd7bb3b93d39c497f0f476b68021c59` |
 | Ordinary-history commits base..df2 | 265 |
+| Campaign HEAD at this write-up (excluded) | `bbe1742cd8c31e33edb4b95d6dd3babf9610d705` |
 | Reviewer model/provider | `grok-4.6` / `xai-oauth` |
-| validation-ready | **absent** at source-review write-up |
+| validation-ready | present; `ready_for_final_review` true; `whole_campaign_acceptance` false; `green_dragon_core_acceptance` false; `release_or_tag_authorized` false |
 
 Confirmed: `git branch --show-current` = `codex/rs2b0t-multirevision`.
 `git ls-tree df2ba846a vendor/fr-client-rust` = client `aef3952d`.
-`324d7b594..9b3dc71c0` is documentation/evidence only (crates/vendor
-empty). `9b3dc71c0..df2ba846a` is exactly two `StepKind::Repeat` →
+Same gitlink at base `76b2016b7`. `324d7b594..9b3dc71c0` is
+documentation/evidence only (crates/vendor empty).
+`9b3dc71c0..df2ba846a` is exactly two `StepKind::Repeat` →
 `StepKind::Perform` replacements in `crates/scenario/src/lib.rs`.
 Vendor client is unchanged. `Cargo.lock` adds `serde_json` on `api`.
 
@@ -61,13 +70,11 @@ Vendor client is unchanged. `Cargo.lock` adds `serde_json` on `api`.
 
 Runner semantics: `Repeat` re-sends every tick until `wait.arm`;
 `Perform` sends once. `Interactions::wear` refuses `StaleTarget` once
-the item has left the pack. Exact 324 mage logs:
-`r274-auto-fighter-mage-100adccc-stage2324` and the 289 twin fail at
-step 9 `driver rejected the send` with `has_item_id(1387)<=0`,
-`core={"error":"no Start baseline"}`, pack showing Trout/runes and no
-staff. That is repeated wear after a successful first wield, same class
-as Green. Original 324 failures are retained. Fresh df2 mage/gear cells
-are required in validation-ready; this review does not infer them.
+the item has left the pack.
+
+Product after `df2` (`a1434ae20` npcBox, `e05ecafb8` isolate gate,
+`bbe1742cd` resource starts, plus uncommitted 152 shim) is **out of
+scope**. Integrate/publish only the frozen pair.
 
 ## Scope
 
@@ -75,12 +82,14 @@ In: native capability/transport ownership; generated data provenance
 and revision binding; stale/full/delta/lifecycle; banking, loadout,
 recovery, combat, UI, query; preservation of native navigation, last-FBO
 freeze, and no per-read world copy; native123 after audit09; source-
-specific Brimhaven dim.
+specific Brimhaven dim; bounded live mapping of mage/Flax/headed/Green
+on the frozen pair.
 
 Out: fixture139 Gnome/Herblore/Ardy/Wildy/Rock/Green/Coal preparation;
 native144 `reader.npcBox`; teleport/shop/Make-X/fire/trade/paired Mule;
-corrected145 extra combat/utility scenarios; complete support
-advertising; Alpha 2; performance.
+corrected145 extra combat/utility scenarios; TaskBot await-validate 152;
+headed CoreWitness 153; complete support advertising; Alpha 2;
+performance.
 
 ## Source findings
 
@@ -157,7 +166,7 @@ enabled / 10 dim); changed-card and changed-helper controls are
 enabled (45 / 9). This does not conceal a host route defect and does
 not inherit across version changes.
 
-## Evidence independently checked (not live acceptance)
+## Independent live mapping (not process-exit)
 
 Workspace pin `324d7b594` / client `aef3952d` in
 `evidence/stage-2-preflight-324/checks.json`: fmt exit 0; all-target
@@ -170,25 +179,62 @@ and Green Repeat-wear remain recorded in `06an`. N1/N32 Thiever Auto
 is historical qualified behavior, not this milestone's performance
 comparison.
 
-Headless root cells were read from logs, not inferred from process
-exit. They are **not** validation-ready and were not used to approve.
+df2 export `source-geardf2.json`: 5111 files; `crates/scenario/src/lib.rs`
+SHA-256 `0040a6ad1e3856be3b8425d11581e813a73eef9797fc2af253f09a4b628bc276`
+matches `git cat-file` of `df2ba846a`. 324 export remains 5030 files
+with scenario SHA `f515da8a…`. Extra df2-export files are evidence, not
+a second product delta.
+
+Headless logs (exact `catalog_boundary_live`, not inferred from exit):
 
 324 binary `fe7a3223…` / host `324d7b594`: both 100adccc mage cells
-FAIL at step 9 `driver rejected the send` / `no Start baseline` after
-Repeat wear (staff 1387 already gone). Four Flax reach cells PASS with
+FAIL at step 9 `driver rejected the send` / `has_item_id(1387)<=0`
+after Repeat wear (staff already gone). Four Flax reach cells PASS with
 chat `You pick some flax.` and `has_item_id(1779)>=1`
 (274/289 × 100adccc/8e7d965b).
 
-df2 binary `76cc4040…` / host `df2ba846a`: four mage cells PASS with
-Start, `autocast armed: Fire Strike`, Guard attack, and
-`stat_xp_gain(6)>=1` (magic). Two 100adccc Green Dragon cells FAIL
+df2 binary `76cc4040…` / host `df2ba846a` / client `aef3952d`: four mage
+cells PASS with `autocast armed: Fire Strike` and runner
+`stat_xp_gain(6)>=1` at `[2661,3306,0]`. Log SHA of r274 100adccc mage
+`53edc1bf…` matches the receipt. Two 100adccc Green Dragon cells FAIL
 after Start on `stat_xp_gain(2)>=1` within 150 ticks at Lumbridge
-tiles, not wear refusal. That remaining Green miss stays fixture139;
-df2 only removed the Repeat-wear refusal. Harvest ledger 457 is
-orch-owned. Future cells are headed native UI.
+`[3222,3217,0]` / `[3219,3219,0]`, not wear refusal. Log SHA of r274
+Green `5aca7297…` matches the receipt and 06ap. Newer-catalog Green
+cells were held after the older-catalog FAIL; not promoted to PASS.
+Original 324 mage failures are retained.
 
-## Residuals (non-blocking for source; not silent exclusions)
+Headed panel watches (scenario-only; **not** extra CoreWitness passes):
+both native 274/289 `catalog_watch` processes exit 0 on host `df2ba846a`
+/ client `aef3952d` / catalog `100adccc`. Independent screenshot read:
 
+- 274: title `274bot`, `alpha 1 - df2ba84`, `state ingame scene 2`,
+  tile `2661 3306`, weapon `Staff of fire`, `Attack with Fire Strike`,
+  AutoFighter attacking Guard, log `script: autocast armed: Fire Strike`.
+- 289: title `289bot`, same host rail, `Staff of fire`, Fire Strike,
+  AutoFighter attacking Guard, `ingame scene 2`.
+
+72–75 ms observe hitch after capture request remains diagnostic only.
+
+## Unchanged-base TaskBot disposition
+
+Prelude `TaskBot.loop` lines 91–107 at `76b2016b7` and `df2ba846a` are
+byte-identical. SHA-256 of that block:
+`df612f35c83636078313e4f49fd814f8b93c7e687c91aa22623c43c58d78ebb4`
+(matches validation-ready). The rest of `shim/mod.rs` differs for
+unrelated stage-2 content (`tileFromPosted`, Traversal module order,
+generated `content_json`) — not this stall.
+
+Mechanism (06ap, independently re-read): frozen `Bot.ts` awaits
+`task.validate()`; host prelude does `if (task.validate())`. GreenDragon
+`Traced.validate` is async, so a Promise is always truthy and
+`ContinueDialog` wins every loop. That is a host ABI miss **already on
+published main**, not a df2 regression, not a catalog defect, and not
+in this candidate's 152 correction. Bounded milestone may integrate
+without claiming Green support and without folding 152 into the pin.
+
+## Residuals (non-blocking for this milestone; not silent exclusions)
+
+- Host TaskBot does not await `validate()`; 152 owns the fix; excluded.
 - `Bank.openNearestAccess` still JS-composes a 60 s adjacent wait then
   `openBooth`. Inherited on published main `76b2016b7`, not the audit
   F1 120 s leak, not in native123 scope.
@@ -200,14 +246,17 @@ orch-owned. Future cells are headed native UI.
   (`snapshot load skipped`); not a GPU/performance claim.
 - Catalog completeness, teleport/shop/Make-X/fire/trade/mule, and
   fixture139 preparation remain later work.
+- BankSorter remains `UNAVAILABLE_BY_OPERATOR_DECISION` pending a
+  separate native sorter; four rows, no value/ID substitute, not a
+  foreign-defect classification. Documentation-only; no df2 runtime
+  change.
 
-## Gate for approval
+## Gate result
 
-Read `evidence/stage-2-preflight-324/validation-ready.json` only after
-root writes it following headed LIVE. Require: exact df2 (or a later
-code-identical pin) mapped to mage/gear cells that show Start and
-script/host-caused progress, not process exit; Flax reach cells mapped
-with original 324 mage failures retained; `ready_for_final_review`
-true; `approved_for_publication` false. Native regression remains a
-blocker. Incomplete later cards, including Green Strength-XP miss
-after Start, are not automatic pass or reject.
+`validation-ready.json` maps exact df2 mage/gear cells with Start and
+script/host-caused magic XP; Flax 324 cores with original 324 mage
+Repeat-wear failures retained; `ready_for_final_review` true;
+publication/release flags false. Native regression versus `76b2016b7`
+was not found. Green Strength-XP miss after Start is an honest
+pre-existing host bug, not an automatic reject of the verified native
+batch.
