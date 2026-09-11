@@ -1,6 +1,6 @@
-//! Catalog identity, observations, and paired witnesses for NatureCrafter Air
-//! and Duel Arena Combat Trainer. Unique to this fixture; not a shared
-//! scenario or isolation harness.
+//! Catalog identity, observations, and paired witnesses for NatureCrafter Air,
+//! MuleCrafter Air, and Duel Arena Combat Trainer. Unique to this fixture; not
+//! a shared scenario or isolation harness.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -17,13 +17,18 @@ pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 
 pub const NATURECRAFTER: &str = "NatureCrafter";
+pub const MULECRAFTER: &str = "MuleCrafter";
 pub const DUEL_ARENA: &str = "Duel Arena Combat Trainer";
 pub const NATURECRAFTER_SHA256: &str =
     "025ac395b25d64ef818cc0321478f0a2c84a051b79f99decbbfec5a9a2f0812a";
+pub const MULECRAFTER_SHA256: &str =
+    "bf745db4c0a3df22406b49c8a8b716b10e0594302853d80ca6f38862d05dc1f9";
 pub const DUEL_ARENA_SHA256: &str =
     "5656dabb30a47aac590fa1afadba19e689dd792d70da8dc4851e18d62e52d090";
 pub const NATURE_RUNNER_LOGIC_SHA256: &str =
     "7a81b75a4cc4fde41d12565f5fe999de7931d88f2529da6d2d5e6a31f82d82f0";
+pub const MULECRAFTER_LOGIC_SHA256: &str =
+    "d9cc408c1857a02332e3338e1ae1e956dea51c7c191d4a66af81be6e5108251a";
 pub const DUEL_ARENA_LOGIC_SHA256: &str =
     "325ce631a7a3f246ab0bc51e9b09945aaa018d7c8971b334994384f62cd1d8f2";
 pub const DUEL_INTERFACE_SHA256: &str =
@@ -34,6 +39,7 @@ pub const ESSENCE_NOTED_ID: i32 = 1437;
 pub const AIR_RUNE_ID: i32 = 556;
 pub const AIR_TALISMAN_ID: i32 = 1438;
 pub const TRADE_CAP: i32 = 25;
+pub const MULE_TRADE_CAP: i32 = 27;
 pub const BANK_SEED_ESSENCE: i32 = 200;
 pub const TEMPLE_Z: i32 = 4000;
 pub const AIR_RUINS: (i32, i32, i32) = (2983, 3288, 0);
@@ -67,6 +73,7 @@ pub const EXPECTED_DUEL_CONTROLS: DuelControls = DuelControls {
 #[serde(rename_all = "snake_case")]
 pub enum PairCase {
     Air,
+    Mule,
     Duel,
 }
 
@@ -74,6 +81,7 @@ impl PairCase {
     pub fn card_name(self) -> &'static str {
         match self {
             Self::Air => NATURECRAFTER,
+            Self::Mule => MULECRAFTER,
             Self::Duel => DUEL_ARENA,
         }
     }
@@ -81,6 +89,7 @@ impl PairCase {
     pub fn source_sha256(self) -> &'static str {
         match self {
             Self::Air => NATURECRAFTER_SHA256,
+            Self::Mule => MULECRAFTER_SHA256,
             Self::Duel => DUEL_ARENA_SHA256,
         }
     }
@@ -91,6 +100,13 @@ impl PairCase {
 pub enum AirRole {
     Master,
     Runner,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MuleRole {
+    Crafter,
+    Mule,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -175,6 +191,81 @@ pub fn air_operation_gates() -> &'static [OperationGate] {
             host_shape: "host content.named_banks",
             kind: GateKind::UnusedByCase,
             owner: "named-bank t_bced5c76; Air uses hardcoded Tile(3013,3355,0)",
+        },
+    ]
+}
+
+pub fn mule_operation_gates() -> &'static [OperationGate] {
+    &[
+        OperationGate {
+            source: "MuleCrafter.ts MuleTradeWithCrafter/CrafterRequestTrade",
+            call: "Trade.request(playerName)",
+            host_shape: "{ op: 'player', name, action: 'Trade' }",
+            kind: GateKind::Mapped,
+            owner: "this fixture observes; runtime already maps player Trade",
+        },
+        OperationGate {
+            source: "MuleCrafter.ts MuleTradeExecute",
+            call: "Trade.offerAll('Rune essence', i => i.id === 1436)",
+            host_shape: "shim Trade.offerAll(name) ignores id filter; press trade_side name rows",
+            kind: GateKind::ArityLimited,
+            owner: "Mule TRADE_CAP 27 uses name-only offerAll of unnoted 1436; seed unnoted-only so ignored id-filter cannot offer 1437",
+        },
+        OperationGate {
+            source: "MuleCrafter.ts CrafterTradeAtRuins",
+            call: "Trade.offerAll(non-talisman names) when classifyMuleState sees essence",
+            host_shape: "name-only offerAll of crafted Air rune after mule essence is on the window",
+            kind: GateKind::Mapped,
+            owner: "this fixture; crafter keeps Air talisman 1438",
+        },
+        OperationGate {
+            source: "MuleCrafter.ts MuleTradeExecute/CrafterTradeAtRuins",
+            call: "Trade.accept() / Trade.decline()",
+            host_shape: "if-button trade_accept_id / trade_decline_id; throws notImpl when id < 0",
+            kind: GateKind::Mapped,
+            owner: "this fixture requires both offer and confirm accepts with posted ids",
+        },
+        OperationGate {
+            source: "MuleCrafter.ts MuleGoBank",
+            call: "Bank.openBooth(bankTile('Falador East'), 'Bank booth', 'Use-quickly')",
+            host_shape: "named-bank already posted; walk-near stand then open-booth exact name/op",
+            kind: GateKind::Mapped,
+            owner: "this fixture; mule deposits received Air 556 then withdraws a new unnoted 1436 load",
+        },
+        OperationGate {
+            source: "MuleCrafter.ts MuleGoBank",
+            call: "Bank.deposit('Air rune', 'Deposit-All') then Bank.withdrawX('Rune essence', 27)",
+            host_shape: "existing Bank.deposit / withdrawX + count-dialog",
+            kind: GateKind::Mapped,
+            owner: "this fixture; first 27 is seed, not restock",
+        },
+        OperationGate {
+            source: "MuleCrafter.ts EnterAltar / CraftRunes",
+            call: "talisman.useOn(Mysterious ruins) / Altar.interact('Craft-rune')",
+            host_shape: "existing item-on-loc and loc interact",
+            kind: GateKind::Mapped,
+            owner: "this fixture; RC XP and Air 556 must come from script craft",
+        },
+        OperationGate {
+            source: "MuleCrafter.ts essCount",
+            call: "reader.inventory() filtered by id 1436",
+            host_shape: "posted inventory reader",
+            kind: GateKind::Mapped,
+            owner: "solo Air PASS already used this reader; pair still needs Trade",
+        },
+        OperationGate {
+            source: "MuleCrafter.ts bankFill=false / non-Air runes / Nature",
+            call: "mules bring all essence; Mind/Nature tiles",
+            host_shape: "n/a",
+            kind: GateKind::UnusedByCase,
+            owner: "genuine extra gameplay after Air pair; NatureCrafter owns ship/Jiminua",
+        },
+        OperationGate {
+            source: "MuleCrafter.ts walkTo",
+            call: "Traversal.walkResilient(ruins|Falador East)",
+            host_shape: "existing walk-near / resilient walk; not Game.teleport",
+            kind: GateKind::Mapped,
+            owner: "teleport unused; prep tele is pre-Start seed only",
         },
     ]
 }
@@ -409,6 +500,79 @@ pub fn air_prepared_current(
         AirRole::Runner => {
             if observation.essence_unnoted < TRADE_CAP {
                 return Err("runner baseline has no seeded unnoted 1436 first load of 25".into());
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn mule_mode_requires_partner(role: MuleRole, partner: &str) -> Result<(), String> {
+    if role == MuleRole::Mule && partner.trim().is_empty() {
+        return Err(
+            "fixture miss: Mule mode throws without a crafter name; empty mule partner is not a LIVE cell"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+pub fn mule_prepared_current(
+    role: MuleRole,
+    expected_player: &str,
+    observation: &AirObservation,
+) -> Result<(), String> {
+    if !observation.ingame || observation.scene_state != 2 {
+        return Err(format!(
+            "Start baseline is not attached ingame scene2: {observation:?}"
+        ));
+    }
+    if !observation.inventory_tab_available {
+        return Err("Start baseline inventory tab is not bound after relog".into());
+    }
+    let player = observation
+        .player
+        .as_deref()
+        .ok_or_else(|| "Start baseline has no local player".to_string())?;
+    if !player.eq_ignore_ascii_case(expected_player) {
+        return Err(format!(
+            "Start baseline player {player:?} is not fresh account {expected_player:?}"
+        ));
+    }
+    if !near(observation.tile, AIR_RUINS, 8) {
+        return Err(format!(
+            "Start baseline is not at Air ruins: {:?}",
+            observation.tile
+        ));
+    }
+    if observation.air_runes > 0 {
+        return Err("Start baseline already has Air 556".into());
+    }
+    if observation.essence_noted > 0 {
+        return Err(
+            "Start baseline has noted essence 1437; Mule Air does not accept noting".into(),
+        );
+    }
+    if observation.trade_active() {
+        return Err("Start baseline already has a trade window".into());
+    }
+    if observation.bank_open {
+        return Err("Start baseline still has an open bank".into());
+    }
+    match role {
+        MuleRole::Crafter => {
+            if observation.air_talisman <= 0 {
+                return Err("crafter baseline has no Air talisman".into());
+            }
+            if observation.essence_unnoted > 0 {
+                return Err("crafter baseline already holds unnoted essence".into());
+            }
+        }
+        MuleRole::Mule => {
+            if observation.air_talisman > 0 {
+                return Err("Air talisman is only on the crafter; mule baseline holds 1438".into());
+            }
+            if observation.essence_unnoted < MULE_TRADE_CAP {
+                return Err("mule baseline has no seeded unnoted 1436 first load of 27".into());
             }
         }
     }
@@ -685,6 +849,13 @@ pub enum AirClaim {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
+pub enum MuleClaim {
+    FirstExchangeCraft,
+    MuleBankReturnSecondCycle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum DuelClaim {
     FirstCombat,
     ResetAndFurther,
@@ -930,6 +1101,298 @@ impl AirPairWitness {
         }
         if self.master.baseline.essence_noted > 0 || self.runner.baseline.essence_noted > 0 {
             return Err("seed-only inventory/XP: noted essence 1437 is not accepted on Air".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MuleSlotRecord {
+    pub role: MuleRole,
+    pub account: String,
+    pub expected_player: String,
+    pub partner: String,
+    pub settings: Map<String, Value>,
+    pub baseline: AirObservation,
+    pub latest: Option<AirObservation>,
+    pub post_start: u32,
+    pub mixed_identity: bool,
+    pub saw_offer_with_partner: bool,
+    pub saw_confirm_with_partner: bool,
+    pub saw_wrong_partner: bool,
+    pub peak_essence: i32,
+    pub min_essence_after_start: i32,
+    pub peak_air: i32,
+    pub transferred_out: i32,
+    pub transferred_in: i32,
+    pub saw_bank_open_loaded: bool,
+    pub saw_bank_at_falador: bool,
+    pub restock_withdraw: bool,
+    pub deposited_received_air: bool,
+    pub returned_to_ruins: bool,
+    pub craft_events: u32,
+    pub air_from_script: i32,
+    pub xp_from_script: i32,
+}
+
+impl MuleSlotRecord {
+    pub fn new(
+        role: MuleRole,
+        account: String,
+        expected_player: String,
+        partner: String,
+        settings: Map<String, Value>,
+        baseline: AirObservation,
+    ) -> Self {
+        Self {
+            peak_essence: baseline.essence_unnoted,
+            min_essence_after_start: baseline.essence_unnoted,
+            peak_air: baseline.air_runes,
+            role,
+            account,
+            expected_player,
+            partner,
+            settings,
+            baseline,
+            latest: None,
+            post_start: 0,
+            mixed_identity: false,
+            saw_offer_with_partner: false,
+            saw_confirm_with_partner: false,
+            saw_wrong_partner: false,
+            transferred_out: 0,
+            transferred_in: 0,
+            saw_bank_open_loaded: false,
+            saw_bank_at_falador: false,
+            restock_withdraw: false,
+            deposited_received_air: false,
+            returned_to_ruins: false,
+            craft_events: 0,
+            air_from_script: 0,
+            xp_from_script: 0,
+        }
+    }
+
+    pub fn observe(&mut self, observation: AirObservation) {
+        self.post_start = self.post_start.saturating_add(1);
+        if observation
+            .player
+            .as_deref()
+            .is_some_and(|player| !player.eq_ignore_ascii_case(&self.expected_player))
+        {
+            self.mixed_identity = true;
+        }
+        if observation.trade_active() {
+            if let Some(partner) = observation.trade_partner.as_deref() {
+                if !partner.is_empty() && !partner.eq_ignore_ascii_case(&self.partner) {
+                    self.saw_wrong_partner = true;
+                }
+                if partner.eq_ignore_ascii_case(&self.partner) {
+                    if observation.trade_offer_open {
+                        self.saw_offer_with_partner = true;
+                    }
+                    if observation.trade_confirm_open {
+                        self.saw_confirm_with_partner = true;
+                    }
+                }
+            } else if observation.trade_offer_open {
+                self.saw_offer_with_partner = true;
+            } else if observation.trade_confirm_open {
+                self.saw_confirm_with_partner = true;
+            }
+        }
+        let prev_ess = self
+            .latest
+            .as_ref()
+            .map(|row| row.essence_unnoted)
+            .unwrap_or(self.baseline.essence_unnoted);
+        let prev_air = self
+            .latest
+            .as_ref()
+            .map(|row| row.air_runes)
+            .unwrap_or(self.baseline.air_runes);
+        let prev_xp = self
+            .latest
+            .as_ref()
+            .map(|row| row.runecraft_xp)
+            .unwrap_or(self.baseline.runecraft_xp);
+        if observation.essence_unnoted < prev_ess {
+            self.transferred_out += prev_ess - observation.essence_unnoted;
+        }
+        if observation.essence_unnoted > prev_ess {
+            self.transferred_in += observation.essence_unnoted - prev_ess;
+        }
+        if observation.essence_unnoted < prev_ess && observation.runecraft_xp > prev_xp {
+            self.craft_events = self.craft_events.saturating_add(1);
+        }
+        self.peak_essence = self.peak_essence.max(observation.essence_unnoted);
+        self.peak_air = self.peak_air.max(observation.air_runes);
+        self.min_essence_after_start = self
+            .min_essence_after_start
+            .min(observation.essence_unnoted);
+        if observation.bank_open && observation.bank_loaded {
+            self.saw_bank_open_loaded = true;
+            if near(observation.tile, FALADOR_EAST, 8) {
+                self.saw_bank_at_falador = true;
+            }
+        }
+        if self.transferred_out > 0
+            && observation.bank_open
+            && observation.bank_loaded
+            && near(observation.tile, FALADOR_EAST, 8)
+            && observation.essence_unnoted > 0
+            && observation.essence_unnoted > self.min_essence_after_start
+        {
+            self.restock_withdraw = true;
+        }
+        if self.role == MuleRole::Mule
+            && self.transferred_out > 0
+            && self.peak_air > self.baseline.air_runes
+            && observation.bank_open
+            && observation.bank_loaded
+            && near(observation.tile, FALADOR_EAST, 8)
+            && observation.air_runes < prev_air
+        {
+            self.deposited_received_air = true;
+        }
+        if self.restock_withdraw && near(observation.tile, AIR_RUINS, 8) {
+            self.returned_to_ruins = true;
+        }
+        self.air_from_script = (observation.air_runes - self.baseline.air_runes).max(0);
+        self.xp_from_script = (observation.runecraft_xp - self.baseline.runecraft_xp).max(0);
+        self.latest = Some(observation);
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MulePairWitness {
+    pub crafter: MuleSlotRecord,
+    pub mule: MuleSlotRecord,
+}
+
+impl MulePairWitness {
+    pub fn qualify_supported(&self) -> Result<MuleClaim, String> {
+        self.qualify_common()?;
+        if !self.crafter.saw_offer_with_partner || !self.mule.saw_offer_with_partner {
+            return Err("one-sided confirmation: both actors never observed the offer phase with the partner".into());
+        }
+        if !self.crafter.saw_confirm_with_partner || !self.mule.saw_confirm_with_partner {
+            return Err("one-sided confirmation: both actors never observed the confirm phase with the partner".into());
+        }
+        if self.mule.transferred_out <= 0 {
+            return Err(
+                "missing conservation: mule unnoted essence 1436 did not leave the pack".into(),
+            );
+        }
+        if self.crafter.transferred_in <= 0 && self.crafter.air_from_script <= 0 {
+            return Err(
+                "missing conservation: crafter did not receive unnoted 1436 and did not craft Air 556"
+                    .into(),
+            );
+        }
+        if self.crafter.transferred_in > 0
+            && self.crafter.transferred_in != self.mule.transferred_out
+            && self.crafter.air_from_script <= 0
+        {
+            return Err(format!(
+                "missing conservation: mule sent {} unnoted 1436, crafter received {}",
+                self.mule.transferred_out, self.crafter.transferred_in
+            ));
+        }
+        if self.crafter.air_from_script <= 0 {
+            return Err(
+                "seed-only inventory/XP: crafter Air 556 did not increase after Start".into(),
+            );
+        }
+        if self.crafter.xp_from_script <= 0 {
+            return Err(
+                "seed-only inventory/XP: crafter Runecraft XP did not increase after Start".into(),
+            );
+        }
+        if self.crafter.baseline.air_runes > 0 || self.mule.baseline.air_runes > 0 {
+            return Err("seed-only inventory/XP: baseline already held Air 556".into());
+        }
+        if let Some(latest) = self.crafter.latest.as_ref() {
+            if latest.trade_active() && latest.air_runes > self.crafter.baseline.air_runes {
+                return Err(
+                    "stale trade/duel state: crafter still has an open trade after claimed craft"
+                        .into(),
+                );
+            }
+        }
+        Ok(MuleClaim::FirstExchangeCraft)
+    }
+
+    pub fn qualify_full_cycle(&self) -> Result<MuleClaim, String> {
+        self.qualify_supported()?;
+        if self.mule.air_from_script <= 0 {
+            return Err(
+                "no mule bank deposit of received runes: mule never held script Air 556".into(),
+            );
+        }
+        if !self.mule.deposited_received_air {
+            return Err(
+                "no mule bank deposit of received runes: mule did not deposit received 556 at Falador East"
+                    .into(),
+            );
+        }
+        if !self.mule.saw_bank_open_loaded || !self.mule.saw_bank_at_falador {
+            return Err("no actual bank restock: mule never opened a loaded Falador East bank after the first exchange".into());
+        }
+        if !self.mule.restock_withdraw {
+            return Err("no actual bank restock: mule pack 1436 did not refill from the bank after delivering the seed load".into());
+        }
+        if !self.mule.returned_to_ruins {
+            return Err("no further work for full-cycle claims: mule did not return to the Air ruins after restock".into());
+        }
+        if self.mule.transferred_out <= self.mule.baseline.essence_unnoted {
+            return Err("no further work for full-cycle claims: only the seeded first load left the mule; no second transfer".into());
+        }
+        if self.crafter.craft_events < 2 {
+            return Err(
+                "no further work for full-cycle claims: no second crafter craft after restock"
+                    .into(),
+            );
+        }
+        Ok(MuleClaim::MuleBankReturnSecondCycle)
+    }
+
+    fn qualify_common(&self) -> Result<(), String> {
+        mule_mode_requires_partner(self.mule.role, &self.mule.partner)?;
+        if self.crafter.role != MuleRole::Crafter || self.mule.role != MuleRole::Mule {
+            return Err("fixture miss: both Crafter is not a Crafter+Mule pair".into());
+        }
+        if self
+            .crafter
+            .account
+            .eq_ignore_ascii_case(&self.mule.account)
+        {
+            return Err("mixed identities: crafter and mule share one account".into());
+        }
+        if self.crafter.mixed_identity || self.mule.mixed_identity {
+            return Err("mixed identities: published player did not match the minted slot".into());
+        }
+        if self.crafter.post_start == 0 || self.mule.post_start == 0 {
+            return Err("queued-only success: no post-Start observations".into());
+        }
+        if self.crafter.saw_wrong_partner || self.mule.saw_wrong_partner {
+            return Err("wrong partner: trade header was not the minted counterpart".into());
+        }
+        if !self
+            .crafter
+            .partner
+            .eq_ignore_ascii_case(&self.mule.expected_player)
+            || !self
+                .mule
+                .partner
+                .eq_ignore_ascii_case(&self.crafter.expected_player)
+        {
+            return Err("wrong partner: configured partner is not the minted counterpart".into());
+        }
+        if self.crafter.baseline.essence_noted > 0 || self.mule.baseline.essence_noted > 0 {
+            return Err(
+                "seed-only inventory/XP: noted essence 1437 is not accepted on Mule Air".into(),
+            );
         }
         Ok(())
     }
@@ -1331,6 +1794,25 @@ pub fn air_settings(
         }),
     );
     bag.insert("partner".into(), json!(partner));
+    script::merge_bag(schema, &bag, None)
+}
+
+pub fn mule_settings(
+    schema: &[script::SettingDef],
+    role: MuleRole,
+    partner: &str,
+) -> Map<String, Value> {
+    let mut bag = Map::new();
+    bag.insert("rune".into(), json!("Air rune"));
+    bag.insert(
+        "mode".into(),
+        json!(match role {
+            MuleRole::Crafter => "Crafter",
+            MuleRole::Mule => "Mule",
+        }),
+    );
+    bag.insert("partner".into(), json!(partner));
+    bag.insert("bankFill".into(), json!(true));
     script::merge_bag(schema, &bag, None)
 }
 

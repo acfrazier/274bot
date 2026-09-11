@@ -1,0 +1,54 @@
+{
+  "task": "t_aba60704",
+  "brief": "docs/compat/briefs/114-mule-paired-core.md",
+  "brief_sha256": "27409049306087f8c1b5038ff2ba8a0d017ee3c590ee5470abcded8a73da0b47",
+  "report": "docs/compat/05x-mule-paired-core.md",
+  "export_host_commit": "96ff5ff12f33470f731b03ba13ac0a4ca7837ec6",
+  "campaign_head_at_verify": "96ff5ff12f33470f731b03ba13ac0a4ca7837ec6",
+  "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "isolated_build": true,
+  "empty_started": true,
+  "export": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/mule-paired-core-t_aba60704",
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/mule-paired-core-t_aba60704-target",
+  "export_method": "docs/compat/evidence/build-isolation/export_git_files.py regular Git blobs",
+  "shared_campaign_target": false,
+  "live": false,
+  "gold_bounds": {
+    "SCRIPT_GOLD_DEADLINE_secs": 180,
+    "SCRIPT_GOLD_WATCH_TICKS": 150,
+    "PREP_DEADLINE_secs": 180,
+    "unchanged": true
+  },
+  "mule_trade_cap": 27,
+  "air_trade_cap_preserved": 25,
+  "roles": ["Crafter", "Mule"],
+  "rune": "Air rune",
+  "bankFill": true,
+  "source_sha256": {
+    "MuleCrafter.ts": "bf745db4c0a3df22406b49c8a8b716b10e0594302853d80ca6f38862d05dc1f9",
+    "MuleCrafterLogic.ts": "d9cc408c1857a02332e3338e1ae1e956dea51c7c191d4a66af81be6e5108251a"
+  },
+  "overlay_sha256": {
+    "crates/host-play/tests/paired_catalog_live.rs": "2a1e58c7254d0b5fac2ea3045dad1b1b51d4b4e676496cda265154cbfbed4053",
+    "crates/host-play/tests/support/paired_catalog.rs": "fd1463b29b2a0149fbe53833d246c8b8d5e8603d383ec8e91be06403b5e516a6",
+    "docs/compat/05x-mule-paired-core.md": "d94646eb2625df8e90fe938dfbabea9610323dd3246642805f6e888de3e94180"
+  },
+  "design_error": "4B crafter-at-ruins-no-essence makes the first trade essence-only; after craft CrafterGoBank fires because hasAllMulesTraded, mule stuck at ruins with 0 ess 0 runes so cannot deposit received 556. Full witness still requires mule deposit of received 556; crafter own-bank is not mule deposit; crafter essence was not seeded.",
+  "who_deposits_received_runes": "mule",
+  "who_carries_runes_to_bank": "mule",
+  "checks": [
+    "isolated rustfmt --check --edition 2021 paired_catalog_live.rs paired_catalog.rs: pass",
+    "isolated cargo test -p host-play --test paired_catalog_live: 37 passed, 3 ignored",
+    "isolated cargo clippy -p host-play --test paired_catalog_live --no-deps -- -D warnings: pass",
+    "isolated cargo test -p host-play --test paired_catalog_live paired_catalog_mule_live -- --exact: 0 passed, 1 ignored"
+  ],
+  "limits": [
+    "no live client run",
+    "SCRIPT_GOLD_DEADLINE and SCRIPT_GOLD_WATCH_TICKS unchanged",
+    "Air and Duel preserved",
+    "did not edit runtime API scenario catalog_boundary_live engine imported catalog ledger STATE",
+    "Paint.buttons remains brief113",
+    "solo Mule Air PASS does not qualify this pair",
+    "exclusive target mule-paired-core-t_aba60704-target reused for reviewer"
+  ]
+}

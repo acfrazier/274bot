@@ -1,4 +1,5 @@
-//! Paired NatureCrafter Air and Duel Arena fixtures through shared Play.
+//! Paired NatureCrafter Air, MuleCrafter Air, and Duel Arena fixtures through
+//! shared Play.
 //!
 //! Actual frozen catalog scripts. Root owns LIVE launches. This crate only
 //! prepares the harness and offline witnesses.
@@ -22,13 +23,16 @@ use vault::{Profile, ProfileSettings};
 use paired_catalog::{
     air_operation_gates, air_prepared_current, air_settings, bank_ack_target_absence,
     bank_seed_acknowledged, card_row, catalog_ledger, duel_operation_gates, duel_prepared_current,
-    duel_settings, frozen_card_hashes_match, hash_file, near, prepare_card, relog_admission,
-    shared_start_barrier, verify_generated_duel_controls, verify_registry_identity, AirClaim,
-    AirObservation, AirPairWitness, AirRole, AirSlotRecord, DuelClaim, DuelObservation,
-    DuelPairWitness, DuelSlotRecord, GateKind, PairCase, PreparedCard, RelogAdmission,
+    duel_settings, frozen_card_hashes_match, hash_file, mule_mode_requires_partner,
+    mule_operation_gates, mule_prepared_current, mule_settings, near, prepare_card,
+    relog_admission, shared_start_barrier, verify_generated_duel_controls,
+    verify_registry_identity, AirClaim, AirObservation, AirPairWitness, AirRole, AirSlotRecord,
+    DuelClaim, DuelObservation, DuelPairWitness, DuelSlotRecord, GateKind, MuleClaim,
+    MulePairWitness, MuleRole, MuleSlotRecord, PairCase, PreparedCard, RelogAdmission,
     StartBarrier, StartBarrierInput, AIR_RUINS, BANK_SEED_ESSENCE, CATALOG_COMMIT_A,
     CATALOG_COMMIT_B, DUEL_ARENA, DUEL_ARENA_LOGIC_SHA256, DUEL_ARENA_SHA256,
-    DUEL_CHALLENGE_ANCHOR, DUEL_INTERFACE_SHA256, FALADOR_EAST, NATURECRAFTER,
+    DUEL_CHALLENGE_ANCHOR, DUEL_INTERFACE_SHA256, FALADOR_EAST, MULECRAFTER,
+    MULECRAFTER_LOGIC_SHA256, MULECRAFTER_SHA256, MULE_TRADE_CAP, NATURECRAFTER,
     NATURECRAFTER_SHA256, NATURE_RUNNER_LOGIC_SHA256, PREP_DEADLINE_SECS,
     SCRIPT_GOLD_DEADLINE_SECS, SCRIPT_GOLD_WATCH_TICKS, TRADE_CAP,
 };
@@ -55,6 +59,8 @@ enum Prep {
 enum SlotKind {
     AirMaster,
     AirRunner,
+    MuleCrafter,
+    MuleMule,
     Duel,
 }
 
@@ -75,6 +81,7 @@ struct SlotLive {
     start_error: Option<String>,
     last_action: Instant,
     air: Option<AirSlotRecord>,
+    mule: Option<MuleSlotRecord>,
     duel: Option<DuelSlotRecord>,
     latest_air: Option<AirObservation>,
     latest_duel: Option<DuelObservation>,
@@ -116,9 +123,17 @@ impl SlotLive {
         }
     }
 
+    fn mule_role(&self) -> MuleRole {
+        match self.kind {
+            SlotKind::MuleCrafter => MuleRole::Crafter,
+            _ => MuleRole::Mule,
+        }
+    }
+
     fn has_baseline(&self) -> bool {
         match self.kind {
             SlotKind::AirMaster | SlotKind::AirRunner => self.air.is_some(),
+            SlotKind::MuleCrafter | SlotKind::MuleMule => self.mule.is_some(),
             SlotKind::Duel => self.duel.is_some(),
         }
     }
@@ -132,6 +147,12 @@ impl SlotLive {
             SlotKind::AirMaster | SlotKind::AirRunner => {
                 self.latest_air.as_ref().is_some_and(|observation| {
                     air_prepared_current(self.air_role(), &self.expected_player, observation)
+                        .is_ok()
+                })
+            }
+            SlotKind::MuleCrafter | SlotKind::MuleMule => {
+                self.latest_air.as_ref().is_some_and(|observation| {
+                    mule_prepared_current(self.mule_role(), &self.expected_player, observation)
                         .is_ok()
                 })
             }
@@ -188,6 +209,8 @@ impl SlotLive {
                 "kind": match self.kind {
                     SlotKind::AirMaster => "air_master",
                     SlotKind::AirRunner => "air_runner",
+                    SlotKind::MuleCrafter => "mule_crafter",
+                    SlotKind::MuleMule => "mule_mule",
                     SlotKind::Duel => "duel",
                 },
                 "settings": self.settings,
@@ -201,6 +224,9 @@ impl SlotLive {
         self.latest_air = Some(observation.clone());
         if self.started {
             if let Some(record) = self.air.as_mut() {
+                record.observe(observation.clone());
+            }
+            if let Some(record) = self.mule.as_mut() {
                 record.observe(observation);
             }
             return;
@@ -252,6 +278,37 @@ impl SlotLive {
                     _ => "runner",
                 },
                 "seeded_first_supplies": matches!(self.kind, SlotKind::AirRunner),
+                "observation": observation,
+            })
+        );
+        Ok(())
+    }
+
+    fn capture_mule_baseline(&mut self, observation: &AirObservation) -> Result<(), String> {
+        mule_mode_requires_partner(self.mule_role(), &self.partner)?;
+        mule_prepared_current(self.mule_role(), &self.expected_player, observation)?;
+        let modals = self.snapshot.modals();
+        if modals.main != -1 || modals.chat != -1 {
+            return Err("Start baseline still has an open modal".into());
+        }
+        self.mule = Some(MuleSlotRecord::new(
+            self.mule_role(),
+            self.account.clone(),
+            self.expected_player.clone(),
+            self.partner.clone(),
+            self.settings.clone(),
+            observation.clone(),
+        ));
+        println!(
+            "{}",
+            json!({
+                "phase": "baseline-after-preparation",
+                "account": self.account,
+                "role": match self.kind {
+                    SlotKind::MuleCrafter => "crafter",
+                    _ => "mule",
+                },
+                "seeded_first_supplies": matches!(self.kind, SlotKind::MuleMule),
                 "observation": observation,
             })
         );
@@ -375,21 +432,29 @@ impl SlotLive {
                     return Ok(());
                 }
                 let kind = match self.kind {
-                    SlotKind::AirMaster => {
+                    SlotKind::AirMaster | SlotKind::MuleCrafter => {
                         interact::cheat(client, "give air_talisman 1");
                         interact::cheat(
                             client,
                             &interact::tele_args(AIR_RUINS.2, AIR_RUINS.0, AIR_RUINS.1),
                         );
-                        "air_master_talisman_noessence_at_ruins"
+                        if matches!(self.kind, SlotKind::MuleCrafter) {
+                            "mule_crafter_talisman_noessence_at_ruins"
+                        } else {
+                            "air_master_talisman_noessence_at_ruins"
+                        }
                     }
-                    SlotKind::AirRunner if !self.bank_ack_done => {
+                    SlotKind::AirRunner | SlotKind::MuleMule if !self.bank_ack_done => {
                         interact::cheat(client, &format!("givebank blankrune {BANK_SEED_ESSENCE}"));
                         interact::cheat(
                             client,
                             &interact::tele_args(FALADOR_EAST.2, FALADOR_EAST.0, FALADOR_EAST.1),
                         );
-                        "air_runner_bank200_at_falador_east"
+                        if matches!(self.kind, SlotKind::MuleMule) {
+                            "mule_mule_bank200_at_falador_east"
+                        } else {
+                            "air_runner_bank200_at_falador_east"
+                        }
                     }
                     SlotKind::AirRunner => {
                         interact::cheat(client, &format!("give blankrune {TRADE_CAP}"));
@@ -398,6 +463,14 @@ impl SlotLive {
                             &interact::tele_args(AIR_RUINS.2, AIR_RUINS.0, AIR_RUINS.1),
                         );
                         "air_runner_firstload25_at_ruins"
+                    }
+                    SlotKind::MuleMule => {
+                        interact::cheat(client, &format!("give blankrune {MULE_TRADE_CAP}"));
+                        interact::cheat(
+                            client,
+                            &interact::tele_args(AIR_RUINS.2, AIR_RUINS.0, AIR_RUINS.1),
+                        );
+                        "mule_mule_firstload27_at_ruins"
                     }
                     SlotKind::Duel => {
                         interact::cheat(client, "give bronze_scimitar 1");
@@ -426,21 +499,28 @@ impl SlotLive {
             }
             Prep::WaitSeed => {
                 let ready = match self.kind {
-                    SlotKind::AirMaster => air.is_some_and(|o| {
+                    SlotKind::AirMaster | SlotKind::MuleCrafter => air.is_some_and(|o| {
                         o.ingame
                             && o.scene_state == 2
                             && near(o.tile, AIR_RUINS, 8)
                             && o.air_talisman >= 1
                             && o.essence_unnoted == 0
                     }),
-                    SlotKind::AirRunner if !self.bank_ack_done => air.is_some_and(|o| {
-                        o.ingame && o.scene_state == 2 && near(o.tile, FALADOR_EAST, 8)
-                    }),
+                    SlotKind::AirRunner | SlotKind::MuleMule if !self.bank_ack_done => air
+                        .is_some_and(|o| {
+                            o.ingame && o.scene_state == 2 && near(o.tile, FALADOR_EAST, 8)
+                        }),
                     SlotKind::AirRunner => air.is_some_and(|o| {
                         o.ingame
                             && o.scene_state == 2
                             && near(o.tile, AIR_RUINS, 8)
                             && o.essence_unnoted >= TRADE_CAP
+                    }),
+                    SlotKind::MuleMule => air.is_some_and(|o| {
+                        o.ingame
+                            && o.scene_state == 2
+                            && near(o.tile, AIR_RUINS, 8)
+                            && o.essence_unnoted >= MULE_TRADE_CAP
                     }),
                     SlotKind::Duel => duel.is_some_and(|o| {
                         o.ingame && o.scene_state == 2 && near(o.tile, DUEL_CHALLENGE_ANCHOR, 8)
@@ -462,9 +542,14 @@ impl SlotLive {
                 let modals = self.snapshot.modals();
                 if modals.main == -1 && modals.chat == -1 {
                     self.prep = match self.kind {
-                        SlotKind::AirRunner if !self.bank_ack_done => Prep::AckBank,
+                        SlotKind::AirRunner | SlotKind::MuleMule if !self.bank_ack_done => {
+                            Prep::AckBank
+                        }
                         SlotKind::Duel => Prep::Wear,
-                        SlotKind::AirMaster | SlotKind::AirRunner => Prep::Ready,
+                        SlotKind::AirMaster
+                        | SlotKind::AirRunner
+                        | SlotKind::MuleCrafter
+                        | SlotKind::MuleMule => Prep::Ready,
                     };
                 } else if Self::send_ok(hold) {
                     let _ = interact::close_modal(client);
@@ -685,6 +770,26 @@ impl SlotLive {
                         );
                     }
                 }
+                SlotKind::MuleCrafter | SlotKind::MuleMule => {
+                    if self.mule.is_none() {
+                        let Some(observation) = air else {
+                            return Ok(());
+                        };
+                        self.capture_mule_baseline(observation)?;
+                        println!(
+                            "{}",
+                            json!({
+                                "phase": "prepared",
+                                "account": self.account,
+                                "role": match self.mule_role() {
+                                    MuleRole::Crafter => "crafter",
+                                    MuleRole::Mule => "mule",
+                                },
+                                "note": "waiting for shared start barrier; not Start",
+                            })
+                        );
+                    }
+                }
                 SlotKind::Duel => {
                     if self.duel.is_none() {
                         let Some(observation) = duel else {
@@ -812,6 +917,8 @@ fn new_slot(
     let settings = match kind {
         SlotKind::AirMaster => air_settings(&card.schema, AirRole::Master, &partner),
         SlotKind::AirRunner => air_settings(&card.schema, AirRole::Runner, &partner),
+        SlotKind::MuleCrafter => mule_settings(&card.schema, MuleRole::Crafter, &partner),
+        SlotKind::MuleMule => mule_settings(&card.schema, MuleRole::Mule, &partner),
         SlotKind::Duel => duel_settings(&card.schema),
     };
     Ok(SlotLive {
@@ -831,6 +938,7 @@ fn new_slot(
         start_error: None,
         last_action: Instant::now(),
         air: None,
+        mule: None,
         duel: None,
         latest_air: None,
         latest_duel: None,
@@ -893,6 +1001,13 @@ fn run_cell(case: PairCase) -> Result<(), String> {
             &card,
             weapon,
         )?,
+        PairCase::Mule => new_slot(
+            SlotKind::MuleCrafter,
+            names[0].clone(),
+            screen_b.clone(),
+            &card,
+            weapon,
+        )?,
         PairCase::Duel => new_slot(
             SlotKind::Duel,
             names[0].clone(),
@@ -904,6 +1019,13 @@ fn run_cell(case: PairCase) -> Result<(), String> {
     let slot_b = match case {
         PairCase::Air => new_slot(
             SlotKind::AirRunner,
+            names[1].clone(),
+            screen_a.clone(),
+            &card,
+            weapon,
+        )?,
+        PairCase::Mule => new_slot(
+            SlotKind::MuleMule,
             names[1].clone(),
             screen_a.clone(),
             &card,
@@ -928,12 +1050,12 @@ fn run_cell(case: PairCase) -> Result<(), String> {
             let mut pair = frame_state.lock().unwrap();
             if username == pair.0.account {
                 match case {
-                    PairCase::Air => pair.0.frame_air(client, hold),
+                    PairCase::Air | PairCase::Mule => pair.0.frame_air(client, hold),
                     PairCase::Duel => pair.0.frame_duel(client, hold),
                 }
             } else if username == pair.1.account {
                 match case {
-                    PairCase::Air => pair.1.frame_air(client, hold),
+                    PairCase::Air | PairCase::Mule => pair.1.frame_air(client, hold),
                     PairCase::Duel => pair.1.frame_duel(client, hold),
                 }
             }
@@ -1079,6 +1201,33 @@ fn run_cell(case: PairCase) -> Result<(), String> {
                         break Err("idle/non-progress: missing Air records after Start".into());
                     }
                 }
+                PairCase::Mule => {
+                    if let (Some(crafter), Some(mule)) = (pair.0.mule.clone(), pair.1.mule.clone())
+                    {
+                        let witness = MulePairWitness { crafter, mule };
+                        if witness.qualify_full_cycle().is_ok() {
+                            break Ok(json!({
+                                "claim": MuleClaim::MuleBankReturnSecondCycle,
+                                "witness": witness,
+                            }));
+                        }
+                        if timed_out {
+                            match witness.qualify_supported() {
+                                Ok(claim) => {
+                                    break Ok(json!({
+                                        "claim": claim,
+                                        "full_cycle": false,
+                                        "limit": "mule bank deposit/restock/second transfer/craft did not finish inside unchanged SCRIPT_GOLD_DEADLINE 180s",
+                                        "witness": witness,
+                                    }));
+                                }
+                                Err(error) => break Err(error),
+                            }
+                        }
+                    } else if timed_out {
+                        break Err("idle/non-progress: missing Mule records after Start".into());
+                    }
+                }
                 PairCase::Duel => {
                     if let (Some(a), Some(b)) = (pair.0.duel.clone(), pair.1.duel.clone()) {
                         let witness = DuelPairWitness { a, b };
@@ -1118,6 +1267,8 @@ fn run_cell(case: PairCase) -> Result<(), String> {
                 "phase": "witness",
                 "air_a": pair.0.air,
                 "air_b": pair.1.air,
+                "mule_a": pair.0.mule,
+                "mule_b": pair.1.mule,
                 "duel_a": pair.0.duel,
                 "duel_b": pair.1.duel,
             })
@@ -1157,6 +1308,12 @@ fn paired_catalog_air_live() {
 #[ignore = "requires LIVE=1, PAIRED_CATALOG_REVISION/NAV_PACK/ROOT/COMMIT, and local engine"]
 fn paired_catalog_duel_live() {
     fail_live("paired_catalog_duel_live", PairCase::Duel);
+}
+
+#[test]
+#[ignore = "requires LIVE=1, PAIRED_CATALOG_REVISION/NAV_PACK/ROOT/COMMIT, and local engine"]
+fn paired_catalog_mule_live() {
+    fail_live("paired_catalog_mule_live", PairCase::Mule);
 }
 
 #[cfg(test)]
@@ -1240,6 +1397,55 @@ mod tests {
         AirPairWitness { master, runner }
     }
 
+    fn mule_pair() -> MulePairWitness {
+        let crafter_base = air_obs("alice", 0, 0, 0);
+        let mule_base = air_obs("bob", 27, 0, 0);
+        let mut crafter = MuleSlotRecord::new(
+            MuleRole::Crafter,
+            "alice".into(),
+            "alice".into(),
+            "bob".into(),
+            json!({"mode":"Crafter","partner":"bob","rune":"Air rune","bankFill":true})
+                .as_object()
+                .cloned()
+                .unwrap(),
+            crafter_base.clone(),
+        );
+        let mut mule = MuleSlotRecord::new(
+            MuleRole::Mule,
+            "bob".into(),
+            "bob".into(),
+            "alice".into(),
+            json!({"mode":"Mule","partner":"alice","rune":"Air rune","bankFill":true})
+                .as_object()
+                .cloned()
+                .unwrap(),
+            mule_base.clone(),
+        );
+        crafter.post_start = 8;
+        mule.post_start = 8;
+        crafter.saw_offer_with_partner = true;
+        crafter.saw_confirm_with_partner = true;
+        mule.saw_offer_with_partner = true;
+        mule.saw_confirm_with_partner = true;
+        crafter.transferred_in = 27;
+        mule.transferred_out = 27;
+        crafter.air_from_script = 27;
+        crafter.xp_from_script = 135;
+        crafter.craft_events = 1;
+        let mut crafter_now = crafter_base;
+        crafter_now.air_runes = 27;
+        crafter_now.runecraft_xp = 135;
+        crafter_now.tick = 80;
+        crafter.latest = Some(crafter_now);
+        let mut mule_now = mule_base;
+        mule_now.essence_unnoted = 0;
+        mule_now.tick = 80;
+        mule.latest = Some(mule_now);
+        mule.min_essence_after_start = 0;
+        MulePairWitness { crafter, mule }
+    }
+
     fn duel_obs(player: &str, xp: i32) -> DuelObservation {
         DuelObservation {
             ingame: true,
@@ -1301,12 +1507,18 @@ mod tests {
     #[test]
     fn frozen_catalog_hashes_match_both_revisions() {
         frozen_card_hashes_match(PairCase::Air).unwrap();
+        frozen_card_hashes_match(PairCase::Mule).unwrap();
         frozen_card_hashes_match(PairCase::Duel).unwrap();
         assert_eq!(NATURECRAFTER, "NatureCrafter");
+        assert_eq!(MULECRAFTER, "MuleCrafter");
         assert_eq!(DUEL_ARENA, "Duel Arena Combat Trainer");
         assert_eq!(
             NATURECRAFTER_SHA256,
             "025ac395b25d64ef818cc0321478f0a2c84a051b79f99decbbfec5a9a2f0812a"
+        );
+        assert_eq!(
+            MULECRAFTER_SHA256,
+            "bf745db4c0a3df22406b49c8a8b716b10e0594302853d80ca6f38862d05dc1f9"
         );
         assert_eq!(
             DUEL_ARENA_SHA256,
@@ -1315,6 +1527,10 @@ mod tests {
         assert_eq!(
             NATURE_RUNNER_LOGIC_SHA256,
             "7a81b75a4cc4fde41d12565f5fe999de7931d88f2529da6d2d5e6a31f82d82f0"
+        );
+        assert_eq!(
+            MULECRAFTER_LOGIC_SHA256,
+            "d9cc408c1857a02332e3338e1ae1e956dea51c7c191d4a66af81be6e5108251a"
         );
         assert_eq!(
             DUEL_ARENA_LOGIC_SHA256,
@@ -1327,7 +1543,9 @@ mod tests {
         for commit in [CATALOG_COMMIT_A, CATALOG_COMMIT_B] {
             catalog_ledger(commit).unwrap();
             card_row(commit, 274, NATURECRAFTER).unwrap();
+            card_row(commit, 274, MULECRAFTER).unwrap();
             card_row(commit, 289, DUEL_ARENA).unwrap();
+            card_row(commit, 289, MULECRAFTER).unwrap();
         }
     }
 
@@ -1355,6 +1573,13 @@ mod tests {
         assert!(air_operation_gates()
             .iter()
             .any(|gate| gate.kind == GateKind::UnusedByCase && gate.owner.contains("t_bced5c76")));
+        assert!(mule_operation_gates().iter().any(
+            |gate| gate.kind == GateKind::ArityLimited && gate.call.contains("Trade.offerAll")
+        ));
+        assert!(mule_operation_gates()
+            .iter()
+            .any(|gate| gate.kind == GateKind::UnusedByCase
+                && gate.source.contains("bankFill=false")));
         assert!(duel_operation_gates().iter().any(|gate| {
             gate.kind == GateKind::CatalogLiteralMatchesGenerated && gate.call.contains("ifButton")
         }));
@@ -1366,6 +1591,7 @@ mod tests {
         assert_eq!(PREP_DEADLINE_SECS, 180);
         assert_eq!(BANK_SEED_ESSENCE, 200);
         assert_eq!(TRADE_CAP, 25);
+        assert_eq!(MULE_TRADE_CAP, 27);
     }
 
     #[test]
@@ -1437,6 +1663,105 @@ mod tests {
     }
 
     #[test]
+    fn mule_rejects_wrong_partner() {
+        let mut pair = mule_pair();
+        pair.crafter.saw_wrong_partner = true;
+        let error = pair.qualify_supported().unwrap_err();
+        assert!(error.contains("wrong partner"), "{error}");
+    }
+
+    #[test]
+    fn mule_rejects_one_sided_confirmation() {
+        let mut pair = mule_pair();
+        pair.mule.saw_confirm_with_partner = false;
+        let error = pair.qualify_supported().unwrap_err();
+        assert!(error.contains("one-sided confirmation"), "{error}");
+    }
+
+    #[test]
+    fn mule_rejects_seed_only_inventory() {
+        let mut pair = mule_pair();
+        pair.crafter.air_from_script = 0;
+        let error = pair.qualify_supported().unwrap_err();
+        assert!(error.contains("seed-only"), "{error}");
+    }
+
+    #[test]
+    fn mule_rejects_missing_conservation() {
+        let mut pair = mule_pair();
+        pair.mule.transferred_out = 0;
+        let error = pair.qualify_supported().unwrap_err();
+        assert!(error.contains("missing conservation"), "{error}");
+    }
+
+    #[test]
+    fn mule_rejects_stale_trade() {
+        let mut pair = mule_pair();
+        pair.crafter.latest.as_mut().unwrap().trade_offer_open = true;
+        let error = pair.qualify_supported().unwrap_err();
+        assert!(error.contains("stale trade"), "{error}");
+    }
+
+    #[test]
+    fn mule_rejects_empty_partner() {
+        assert!(mule_mode_requires_partner(MuleRole::Mule, "").is_err());
+        assert!(mule_mode_requires_partner(MuleRole::Crafter, "").is_ok());
+        let mut pair = mule_pair();
+        pair.mule.partner.clear();
+        let error = pair.qualify_supported().unwrap_err();
+        assert!(error.contains("fixture miss"), "{error}");
+    }
+
+    #[test]
+    fn mule_rejects_both_crafter() {
+        let mut pair = mule_pair();
+        pair.mule.role = MuleRole::Crafter;
+        let error = pair.qualify_supported().unwrap_err();
+        assert!(error.contains("both Crafter"), "{error}");
+    }
+
+    #[test]
+    fn mule_rejects_full_cycle_without_mule_bank_deposit() {
+        let pair = mule_pair();
+        pair.qualify_supported().unwrap();
+        let error = pair.qualify_full_cycle().unwrap_err();
+        assert!(error.contains("no mule bank deposit"), "{error}");
+    }
+
+    #[test]
+    fn mule_rejects_full_cycle_without_restock() {
+        let mut pair = mule_pair();
+        pair.mule.air_from_script = 27;
+        pair.mule.deposited_received_air = true;
+        pair.mule.saw_bank_open_loaded = true;
+        pair.mule.saw_bank_at_falador = true;
+        let error = pair.qualify_full_cycle().unwrap_err();
+        assert!(error.contains("no actual bank restock"), "{error}");
+    }
+
+    #[test]
+    fn mule_rejects_full_cycle_without_second_cycle() {
+        let mut pair = mule_pair();
+        pair.mule.air_from_script = 27;
+        pair.mule.deposited_received_air = true;
+        pair.mule.saw_bank_open_loaded = true;
+        pair.mule.saw_bank_at_falador = true;
+        pair.mule.restock_withdraw = true;
+        pair.mule.returned_to_ruins = true;
+        let error = pair.qualify_full_cycle().unwrap_err();
+        assert!(error.contains("no further work"), "{error}");
+    }
+
+    #[test]
+    fn mule_accepts_first_exchange_craft() {
+        let pair = mule_pair();
+        assert_eq!(
+            pair.qualify_supported().unwrap(),
+            MuleClaim::FirstExchangeCraft
+        );
+    }
+
+    #[test]
     fn duel_rejects_wrong_partner() {
         let mut pair = duel_pair();
         pair.a.saw_wrong_partner = true;
@@ -1498,6 +1823,11 @@ mod tests {
         for key in ["baseline", "account", "settings", "partner"] {
             assert!(air["master"].get(key).is_some(), "missing master.{key}");
             assert!(air["runner"].get(key).is_some(), "missing runner.{key}");
+        }
+        let mule = serde_json::to_value(mule_pair()).unwrap();
+        for key in ["baseline", "account", "settings", "partner"] {
+            assert!(mule["crafter"].get(key).is_some(), "missing crafter.{key}");
+            assert!(mule["mule"].get(key).is_some(), "missing mule.{key}");
         }
         let duel = serde_json::to_value(duel_pair()).unwrap();
         for slot in ["a", "b"] {
@@ -1698,5 +2028,26 @@ mod tests {
         let mut at_bank = runner;
         at_bank.tile = Some(FALADOR_EAST);
         assert!(air_prepared_current(AirRole::Runner, "bob", &at_bank).is_err());
+    }
+
+    #[test]
+    fn mule_prepared_current_rejects_crafter_essence_mule_short_load_and_talisman() {
+        let crafter = air_obs("alice", 0, 0, 0);
+        mule_prepared_current(MuleRole::Crafter, "alice", &crafter).unwrap();
+        let mut with_essence = crafter.clone();
+        with_essence.essence_unnoted = 1;
+        assert!(mule_prepared_current(MuleRole::Crafter, "alice", &with_essence).is_err());
+
+        let mule = air_obs("bob", 27, 0, 0);
+        mule_prepared_current(MuleRole::Mule, "bob", &mule).unwrap();
+        let mut short = mule.clone();
+        short.essence_unnoted = 1;
+        assert!(mule_prepared_current(MuleRole::Mule, "bob", &short).is_err());
+        let mut with_talisman = mule.clone();
+        with_talisman.air_talisman = 1;
+        assert!(mule_prepared_current(MuleRole::Mule, "bob", &with_talisman).is_err());
+        let mut at_bank = mule;
+        at_bank.tile = Some(FALADOR_EAST);
+        assert!(mule_prepared_current(MuleRole::Mule, "bob", &at_bank).is_err());
     }
 }
