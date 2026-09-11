@@ -1,0 +1,60 @@
+{
+  "cell": "r274-rune-crafter-8e7d965b-6750713b",
+  "no_missing_op": true,
+  "no_could_not_open": true,
+  "no_not_impl": true,
+  "core_witness_in_fail_line": false,
+  "harness_failed_arm_dumps_evidence_only": true,
+  "harness_timeout_arm_dumps_core": true,
+  "script_log": {
+    "heading_to_bank_lines": [20, 189, 534],
+    "set_note_mode_lines": [24, 364],
+    "withdrew_talisman_line": 31,
+    "trip1_essence_line": 33,
+    "first_craft_rune_line": 168,
+    "first_return_openbooth_lines": [330, 354],
+    "deposited_27_air_line": 373,
+    "trip2_essence_line": 379,
+    "second_craft_rune_line": 516,
+    "second_return_walknear_r3_line": 535,
+    "second_return_walknear_r1_line": 646,
+    "second_return_openbooth_lines": [694, 718],
+    "no_second_set_note_mode": true,
+    "no_second_deposit_log": true
+  },
+  "deadline_evidence": {
+    "predicate": "has_item_id(556)<=0",
+    "meaning": "serial watch 'watch the pack empty of runes after deposit' (Proof::ItemIdAtMost 556 0)",
+    "prior_watch_that_must_have_passed": "fresh_bank_item_id(556)>=1",
+    "fresh_bank_requires": "ingame && scene_state==2 && bank_component_id>=0 && bank_loaded",
+    "ticks": 334,
+    "elapsed_ms": 180010,
+    "tile": [3011, 3355, 0],
+    "inv": [{"id": 1438, "count": 1}, {"id": 556, "count": 27}],
+    "runenergy": 1,
+    "scene": 2
+  },
+  "chat_newest_first_craft_markers": [
+    "You step through the portal...",
+    "Congratulations, you just advanced a runecraft level.",
+    "You bind the temple's power into Air Runes.",
+    "You feel a powerful force take hold of you...",
+    "You hold the Air Talisman towards the mysterious ruins.",
+    "You don't have enough inventory space to withdraw that many.",
+    "You step through the portal...",
+    "Congratulations, you just advanced a runecraft level.",
+    "You bind the temple's power into Air Runes.",
+    "You feel a powerful force take hold of you...",
+    "You hold the Air Talisman towards the mysterious ruins.",
+    "You don't have enough inventory space to withdraw that many."
+  ],
+  "withdraw_space_chat_also_on_pass": true,
+  "second_return_overlap": {
+    "player_at_openbooth": [3012, 3355, 0],
+    "openbooth_target": [3011, 3354, 0],
+    "remaining_nav_walk_aim": [3013, 3355, 0],
+    "remaining_radius": 0,
+    "same_overlap_on_first_return_which_did_setnotemode_and_deposit": true
+  },
+  "no_invented_fail_item_snapshots": true
+}
