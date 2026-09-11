@@ -1,0 +1,98 @@
+[
+  {
+    "id": 1213,
+    "profile": "grok46",
+    "status": "review",
+    "outcome": "review_requested",
+    "started_at": 1789097573,
+    "ended_at": 1789098708,
+    "summary": "Added standalone ignored LIVE loadout provision proof through production Play and public shim APIs. Isolated empty-target checks: 5 witness tests pass, Clippy -D warnings pass, live cell ignored. No LIVE launch.",
+    "error": null,
+    "metadata": {
+      "commit": "064de2cfcd7f09db1a5f30e91f269efaf6e0c7af",
+      "branch": "codex/rs2b0t-multirevision",
+      "brief": "docs/compat/briefs/63-loadout-provision-proof.md",
+      "brief_sha256": "cd46953da15394aa6abf1c99dd29b681d0e0c09186536310a645a9ee207c0cc2",
+      "report": "docs/compat/05h-loadout-provision-proof.md",
+      "evidence": "docs/compat/evidence/loadout-provision/verification.json",
+      "export": "/Users/acfrazier/experiments/274bot/.worktrees/t_3d333b56-src-20260910234748",
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/t_3d333b56-target-20260910234748",
+      "isolated_build": true,
+      "host_export_base": "c19e3170efe62bd38a39ea64f7ce62bef63780c8",
+      "client": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+      "changed_files": [
+        "crates/host-play/tests/loadout_provision_live.rs",
+        "crates/host-play/tests/fixtures/loadout_provision/provision.js",
+        "docs/compat/05h-loadout-provision-proof.md",
+        "docs/compat/evidence/loadout-provision/verification.json"
+      ],
+      "tests_run": [
+        "cargo test -p host-play --test loadout_provision_live -- --skip loadout_provision_live: 5 passed",
+        "cargo clippy -p host-play --test loadout_provision_live --no-deps -- -D warnings: pass",
+        "cargo test -p host-play --test loadout_provision_live loadout_provision_live: 1 ignored"
+      ],
+      "live_launch_performed": false,
+      "limits": [
+        "no live client run",
+        "component proof preparation only",
+        "not catalog or frontend acceptance"
+      ],
+      "worker_session_id": "20260910_233255_ce3577"
+    },
+    "worker_pid": null,
+    "step_key": null
+  },
+  {
+    "id": 1218,
+    "profile": "reviewer",
+    "status": "done",
+    "outcome": "completed",
+    "started_at": 1789098721,
+    "ended_at": 1789098915,
+    "summary": "Reviewed and approved 064de2cf for brief 63 loadout provision proof. Round-1 cold artifact review plus independent empty-target re-runs confirm standalone ignored LIVE cell through production Play/public shim APIs, private preset isolation, qty-17 Withdraw-X witness contract, and scoped docs/evidence only. No LIVE launch.",
+    "error": null,
+    "metadata": {
+      "review_outcome": "approved",
+      "reviewer_profile": "reviewer",
+      "reviewer_model": "grok-4.5",
+      "branch": "codex/rs2b0t-multirevision",
+      "commit": "064de2cfcd7f09db1a5f30e91f269efaf6e0c7af",
+      "brief": "docs/compat/briefs/63-loadout-provision-proof.md",
+      "brief_sha256": "cd46953da15394aa6abf1c99dd29b681d0e0c09186536310a645a9ee207c0cc2",
+      "report": "docs/compat/05h-loadout-provision-proof.md",
+      "evidence": "docs/compat/evidence/loadout-provision/verification.json",
+      "host_export_base": "c19e3170efe62bd38a39ea64f7ce62bef63780c8",
+      "client": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+      "export": "/Users/acfrazier/experiments/274bot/.worktrees/t_3d333b56-src-20260910234748",
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/t_3d333b56-target-20260910234748",
+      "changed_files": [
+        "crates/host-play/tests/loadout_provision_live.rs",
+        "crates/host-play/tests/fixtures/loadout_provision/provision.js",
+        "docs/compat/05h-loadout-provision-proof.md",
+        "docs/compat/evidence/loadout-provision/verification.json"
+      ],
+      "blocking_defects": [],
+      "limits": [
+        "no live client run",
+        "component proof preparation only",
+        "not catalog or frontend acceptance",
+        "root owns actual LIVE"
+      ],
+      "reviewer_checks": [
+        "cold read of commit 064de2cf vs brief 63 (standalone host-play LIVE cell, provision.js public shim composition, private IsolatedEnv/temp vault, qty 17, witness rejects seeded/stale/queued/missing decrement)",
+        "scope: only 4 allowed paths; no scenario/api/script-runtime/client/panel/TUI edits",
+        "hashes match verification.json for brief/harness/fixture/report",
+        "export harness/fixture cmp equal HEAD; host-play lib matches c19e3170/064de2cf; client pin 56d80272; loadout source 89767527 ancestor",
+        "cargo test -p host-play --test loadout_provision_live -- --skip loadout_provision_live in export+empty target: 5 passed",
+        "cargo clippy -p host-play --test loadout_provision_live --no-deps -D warnings: pass",
+        "cargo test loadout_provision_live exact: 1 ignored",
+        "rustfmt --check harness: pass",
+        "nested IsolatedEnv save-then-start_load posts loadouts before drop (operator home not touched)",
+        "live_launch_performed false acknowledged"
+      ],
+      "worker_session_id": "20260910_235201_5cc73e"
+    },
+    "worker_pid": null,
+    "step_key": null
+  }
+]

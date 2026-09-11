@@ -70,3 +70,17 @@ target:
 
 No LIVE client or engine was launched. These checks are fixture/build
 evidence, not gameplay acceptance and not catalog/frontend acceptance.
+
+## Root isolated LIVE follow-up
+
+Actual Grok 4.5 review 1218 approved 064de2cf, with independent empty-target
+checks. Root froze that exact host/client source (2,172 files) and built in a
+new empty target. Both revisions failed before Start at WaitLoggedOut: the
+fixture returned on production hold, which is true while disconnected, and
+therefore never observed the off-world transition. Both failure receipts and
+logs remain under evidence/loadout-provision/r{274,289}-064de2cf/. No provision
+or card/frontend acceptance is claimed.
+
+The bounded fixture correction lets WaitLoggedOut/WaitRelog observe during
+hold; those states issue no game actions. Other preparation and gameplay gates
+are unchanged. Root will repeat the two cells on a new isolated candidate.
