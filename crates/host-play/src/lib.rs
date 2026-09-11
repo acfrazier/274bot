@@ -4,6 +4,7 @@
 
 pub mod audio;
 pub mod profile;
+pub mod progress;
 pub use profile::{
     parse_profile_args, parse_revision, ProfileOptions, ProfileSelection, ServerProfile,
 };
@@ -233,16 +234,44 @@ impl ValidatedTemplate {
 
 impl SharedClientTemplate {
     pub fn load(profile: Arc<ServerProfile>) -> Result<Arc<Self>, String> {
-        profile.validate_resources()?;
-        let (cache, ifaces, ifaces_mut) = load_template_checked(profile.client().cache_dir())?;
+        Self::load_with_progress(profile, &progress::ProfileProgressObserver::default())
+    }
+
+    pub fn load_with_progress(
+        profile: Arc<ServerProfile>,
+        observer: &progress::ProfileProgressObserver,
+    ) -> Result<Arc<Self>, String> {
+        profile.validate_resources_with_progress(observer)?;
+        observer.report(progress::ProfileProgress::steps(
+            progress::ProfileProgressStage::LoadingGameData,
+            0,
+            4,
+        ));
+        let (cache, ifaces, ifaces_mut) =
+            load_template_checked(profile.client().cache_dir(), observer)?;
         let game_data =
             api::game_data::for_optional_profile(profile.revision(), profile.cache_id())?;
+        observer.report(progress::ProfileProgress::steps(
+            progress::ProfileProgressStage::LoadingGameData,
+            4,
+            4,
+        ));
         let world = match profile.nav_availability() {
             profile::NavAvailability::Unavailable(_) => None,
             profile::NavAvailability::Legacy274 | profile::NavAvailability::Bound => {
-                Some(Arc::new(NavWorld::load_pack(profile.nav_pack()).map_err(
-                    |e| format!("navigation {}: {e}", profile.nav_pack().display()),
-                )?))
+                observer.report(progress::ProfileProgress::steps(
+                    progress::ProfileProgressStage::PreparingNavigation,
+                    0,
+                    1,
+                ));
+                let world = NavWorld::load_pack(profile.nav_pack())
+                    .map_err(|e| format!("navigation {}: {e}", profile.nav_pack().display()))?;
+                observer.report(progress::ProfileProgress::steps(
+                    progress::ProfileProgressStage::PreparingNavigation,
+                    1,
+                    1,
+                ));
+                Some(Arc::new(world))
             }
         };
         Ok(Arc::new(Self {
@@ -269,7 +298,19 @@ impl SharedClientTemplate {
     /// Revalidate the selected cache and navigation bytes and return the
     /// consuming handoff required by [`run_prepared_template`].
     pub fn validate_for_play(self: &Arc<Self>) -> Result<ValidatedTemplate, String> {
-        self.profile.validate_resources()?;
+        self.validate_for_play_with_progress(&progress::ProfileProgressObserver::default())
+    }
+
+    pub fn validate_for_play_with_progress(
+        self: &Arc<Self>,
+        observer: &progress::ProfileProgressObserver,
+    ) -> Result<ValidatedTemplate, String> {
+        self.profile.validate_resources_with_progress(observer)?;
+        observer.report(progress::ProfileProgress::steps(
+            progress::ProfileProgressStage::FinalChecks,
+            1,
+            1,
+        ));
         Ok(ValidatedTemplate {
             template: Arc::clone(self),
         })
@@ -4973,14 +5014,32 @@ pub fn open_vault(path: &Path, passphrase: &str) -> Result<Vault, VaultError> {
 /// (the client's `load_cache` is private; this mirrors it with the same
 /// public `Cache::unpack` / `IfType::unpack` entry points).
 type IfaceTables = (Cache, Vec<Option<Box<IfType>>>, Vec<Option<Arc<IfTypeMut>>>);
-fn load_template_checked(cache_dir: &Path) -> Result<IfaceTables, String> {
+fn load_template_checked(
+    cache_dir: &Path,
+    observer: &progress::ProfileProgressObserver,
+) -> Result<IfaceTables, String> {
     let config =
         std::fs::read(cache_dir.join("config")).map_err(|e| format!("config archive: {e}"))?;
     let interface = std::fs::read(cache_dir.join("interface"))
         .map_err(|e| format!("interface archive: {e}"))?;
+    observer.report(progress::ProfileProgress::steps(
+        progress::ProfileProgressStage::LoadingGameData,
+        1,
+        4,
+    ));
     std::panic::catch_unwind(AssertUnwindSafe(|| {
         let cache = Cache::unpack(&JagFile::new(config));
+        observer.report(progress::ProfileProgress::steps(
+            progress::ProfileProgressStage::LoadingGameData,
+            2,
+            4,
+        ));
         let (ifaces, mutable) = IfType::unpack(&JagFile::new(interface));
+        observer.report(progress::ProfileProgress::steps(
+            progress::ProfileProgressStage::LoadingGameData,
+            3,
+            4,
+        ));
         if cache.objs.is_empty()
             || cache.npcs.is_empty()
             || cache.locs.is_empty()

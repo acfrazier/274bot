@@ -11,8 +11,10 @@ use client::client::ClientConfig;
 use client::io::{ClientRevision, Packet};
 use client::session::{ClientSessionConfig, ClientSessionProfile};
 use client::BotTarget;
-use nav::manifest::hash_file;
+use nav::manifest::hash_file_with_progress;
 pub use nav::manifest::{nav_manifest_path, CacheManifest, NavManifest};
+
+use crate::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
 
 const JAGS: [&str; 8] = CacheManifest::ARCHIVES;
 
@@ -490,7 +492,24 @@ impl ProfileSelection {
 
     /// Validate and freeze identities without network traffic or filesystem writes.
     pub fn bind(&self) -> Result<Arc<ServerProfile>, String> {
-        let actual = CacheManifest::capture(self.revision().as_i32() as u16, &self.cache_dir)?;
+        self.bind_with_progress(&ProfileProgressObserver::default())
+    }
+
+    pub fn bind_with_progress(
+        &self,
+        observer: &ProfileProgressObserver,
+    ) -> Result<Arc<ServerProfile>, String> {
+        let actual = CacheManifest::capture_with_progress(
+            self.revision().as_i32() as u16,
+            &self.cache_dir,
+            |completed, total| {
+                observer.report(ProfileProgress::files(
+                    ProfileProgressStage::CheckingGameFiles,
+                    completed,
+                    total,
+                ));
+            },
+        )?;
         let declared = if let Some(path) = &self.cache_manifest {
             let bytes = std::fs::read(path)
                 .map_err(|e| format!("cache manifest {}: {e}", path.display()))?;
@@ -511,7 +530,7 @@ impl ProfileSelection {
             ));
         }
         let cache_id = actual.identity();
-        let (nav, nav_hash, flags_hash) = self.validate_nav(&cache_id)?;
+        let (nav, nav_hash, flags_hash) = self.validate_nav(&cache_id, observer)?;
         let (rsa_modulus, rsa_exponent) = if self.target() == BotTarget::Prod {
             (
                 client::PROD_LOGIN_RSAN.into(),
@@ -536,10 +555,20 @@ impl ProfileSelection {
             })?
         };
         let mut crcs = [0; 9];
+        observer.report(ProfileProgress::files(
+            ProfileProgressStage::LoadingGameData,
+            0,
+            JAGS.len() as u64,
+        ));
         for (i, name) in JAGS.iter().enumerate() {
             let bytes = std::fs::read(self.cache_dir.join(name))
                 .map_err(|e| format!("cache {name}: {e}"))?;
             crcs[i + 1] = Packet::getcrc(&bytes, 0, bytes.len());
+            observer.report(ProfileProgress::files(
+                ProfileProgressStage::LoadingGameData,
+                i as u64 + 1,
+                JAGS.len() as u64,
+            ));
         }
         let binding = Arc::new(ClientSessionProfile::new(ClientSessionConfig {
             revision: self.revision(),
@@ -573,12 +602,23 @@ impl ProfileSelection {
     /// Bind the immutable profile, preserve the template loader's second
     /// resource validation, and decode the shared process resources once.
     pub fn prepare_template(&self) -> Result<Arc<crate::SharedClientTemplate>, String> {
-        crate::SharedClientTemplate::load(self.bind()?)
+        self.prepare_template_with_progress(&ProfileProgressObserver::default())
+    }
+
+    pub fn prepare_template_with_progress(
+        &self,
+        observer: &ProfileProgressObserver,
+    ) -> Result<Arc<crate::SharedClientTemplate>, String> {
+        crate::SharedClientTemplate::load_with_progress(
+            self.bind_with_progress(observer)?,
+            observer,
+        )
     }
 
     fn validate_nav(
         &self,
         cache_id: &str,
+        observer: &ProfileProgressObserver,
     ) -> Result<(NavAvailability, Option<String>, Option<String>), String> {
         if !self.nav_pack.exists() {
             return Ok((
@@ -590,11 +630,11 @@ impl ProfileSelection {
                 None,
             ));
         }
-        let nav_hash = hash_file(&self.nav_pack)?;
+        let nav_hash = hash_navigation_file(&self.nav_pack, observer)?;
         let flags_hash = self
             .nav_flags
             .is_file()
-            .then(|| hash_file(&self.nav_flags))
+            .then(|| hash_navigation_file(&self.nav_flags, observer))
             .transpose()?;
         let manifest_path = nav_manifest_path(&self.nav_pack);
         if !manifest_path.exists() {
@@ -673,20 +713,36 @@ impl ServerProfile {
     }
 
     pub fn validate_resources(&self) -> Result<(), String> {
-        if CacheManifest::capture(self.revision().as_i32() as u16, self.client.cache_dir())?
-            != self.cache_manifest
-        {
+        self.validate_resources_with_progress(&ProfileProgressObserver::default())
+    }
+
+    pub fn validate_resources_with_progress(
+        &self,
+        observer: &ProfileProgressObserver,
+    ) -> Result<(), String> {
+        let actual = CacheManifest::capture_with_progress(
+            self.revision().as_i32() as u16,
+            self.client.cache_dir(),
+            |completed, total| {
+                observer.report(ProfileProgress::files(
+                    ProfileProgressStage::CheckingGameFiles,
+                    completed,
+                    total,
+                ));
+            },
+        )?;
+        if actual != self.cache_manifest {
             return Err(
                 "cache changed after profile binding; restart with the prepared profile".into(),
             );
         }
         if let Some(hash) = &self.nav_hash {
-            if hash_file(&self.nav_pack)? != *hash {
+            if hash_navigation_file(&self.nav_pack, observer)? != *hash {
                 return Err("navigation changed after profile binding; restart required".into());
             }
         }
         if let Some(hash) = &self.flags_hash {
-            if hash_file(&self.nav_flags)? != *hash {
+            if hash_navigation_file(&self.nav_flags, observer)? != *hash {
                 return Err(
                     "navigation flags changed after profile binding; restart required".into(),
                 );
@@ -694,6 +750,16 @@ impl ServerProfile {
         }
         Ok(())
     }
+}
+
+fn hash_navigation_file(path: &Path, observer: &ProfileProgressObserver) -> Result<String, String> {
+    hash_file_with_progress(path, |completed, total| {
+        observer.report(ProfileProgress::bytes(
+            ProfileProgressStage::CheckingNavigationFiles,
+            completed,
+            total,
+        ));
+    })
 }
 
 fn require_bot_operation(revision: ClientRevision) -> Result<(), String> {

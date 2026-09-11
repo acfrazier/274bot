@@ -42,6 +42,9 @@ use crate::script_picker::{
     GLYPH_FOLDER, SCRIPTS_FIRST_H, SCRIPTS_FIRST_W,
 };
 use host::debug_enabled;
+use host_play::progress::{
+    ProfileProgress, ProfileProgressObserver, ProfileProgressStage, ProfileProgressUnit,
+};
 
 use crate::resource::{
     cpu_from_delta, format_bots, format_rss_caption, sample_process, traffic_from_samples, Metric,
@@ -249,12 +252,39 @@ enum Boot {
 struct ProfilePrepareJob {
     generation: u64,
     receiver: Receiver<Result<Arc<host_play::SharedClientTemplate>, String>>,
+    progress: LatestProgress,
 }
 
 struct ProfileValidateJob {
     generation: u64,
     boot: Boot,
     receiver: Receiver<Result<host_play::ValidatedTemplate, String>>,
+    progress: LatestProgress,
+}
+
+type LatestProgress = Arc<Mutex<Option<ProfileProgress>>>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProgressPhase {
+    Preparing,
+    FinalChecks,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct StartupProgressView {
+    phase: ProgressPhase,
+    progress: ProfileProgress,
+}
+
+fn progress_channel(initial: ProfileProgress) -> (ProfileProgressObserver, LatestProgress) {
+    let latest = Arc::new(Mutex::new(Some(initial)));
+    let worker_latest = Arc::clone(&latest);
+    let observer = ProfileProgressObserver::new(move |progress| {
+        if let Ok(mut latest) = worker_latest.try_lock() {
+            *latest = Some(progress);
+        }
+    });
+    (observer, latest)
 }
 
 struct StartupPreparation {
@@ -277,6 +307,26 @@ impl StartupPreparation {
     fn in_flight(&self) -> bool {
         self.prepare.is_some() || self.validate.is_some()
     }
+}
+
+fn startup_progress(startup: &StartupPreparation, generation: u64) -> Option<StartupProgressView> {
+    let (phase, latest) = if let Some(job) = startup
+        .validate
+        .as_ref()
+        .filter(|job| job.generation == generation)
+    {
+        (ProgressPhase::FinalChecks, &job.progress)
+    } else if let Some(job) = startup
+        .prepare
+        .as_ref()
+        .filter(|job| job.generation == generation)
+    {
+        (ProgressPhase::Preparing, &job.progress)
+    } else {
+        return None;
+    };
+    let progress = latest.lock().ok()?.as_ref().copied()?;
+    Some(StartupProgressView { phase, progress })
 }
 
 /// Which live harness the boot starts.
@@ -530,14 +580,20 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
         match state.session.profile_preparation() {
             Ok((generation, preparation)) => {
                 let (sender, receiver) = mpsc::sync_channel(1);
+                let (observer, progress) = progress_channel(ProfileProgress::steps(
+                    ProfileProgressStage::SelectingServerProfile,
+                    0,
+                    1,
+                ));
                 state.session.error = None;
                 state.session.set_profile_preparing(true);
                 std::thread::spawn(move || {
-                    let _ = sender.send(preparation.run());
+                    let _ = sender.send(preparation.run_with_progress(&observer));
                 });
                 startup.prepare = Some(ProfilePrepareJob {
                     generation,
                     receiver,
+                    progress,
                 });
             }
             Err(error) => {
@@ -558,15 +614,21 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
         match state.session.template_for_validation() {
             Ok(template) => {
                 let (sender, receiver) = mpsc::sync_channel(1);
+                let (observer, progress) = progress_channel(ProfileProgress::steps(
+                    ProfileProgressStage::FinalChecks,
+                    0,
+                    1,
+                ));
                 state.session.error = None;
                 state.session.set_profile_preparing(true);
                 std::thread::spawn(move || {
-                    let _ = sender.send(template.validate_for_play());
+                    let _ = sender.send(template.validate_for_play_with_progress(&observer));
                 });
                 startup.validate = Some(ProfileValidateJob {
                     generation,
                     boot,
                     receiver,
+                    progress,
                 });
             }
             Err(error) => fail_startup(&mut state.session, fatal, error),
@@ -1573,7 +1635,7 @@ fn capture_keys(ui: &Ui) -> Vec<(bool, i32)> {
 
 /// Right panel: rs2b0t chrome squished into the 330px strip. Vertical scroll
 /// only — wrap/clip, never a horizontal bar.
-fn panel_window(ui: &Ui, session: &mut Session) {
+fn panel_window(ui: &Ui, session: &mut Session, progress: Option<StartupProgressView>) {
     ui.window(PANEL_WINDOW)
         .flags(WindowFlags::NO_RESIZE | WindowFlags::NO_COLLAPSE)
         .build(|| {
@@ -1582,7 +1644,7 @@ fn panel_window(ui: &Ui, session: &mut Session) {
             title_row(ui, session);
             ui.text_colored(TEXT_DIM, crate::build_info::build_line());
             ui.set_item_tooltip(crate::build_info::build_tooltip());
-            banner(ui, session);
+            banner(ui, session, progress);
             login_logout_row(ui, session);
             walkto_button(ui, session);
             slot_config_row(ui, session);
@@ -1638,11 +1700,76 @@ fn title_row(ui: &Ui, session: &mut Session) {
     });
 }
 
-fn banner(ui: &Ui, session: &Session) {
+#[derive(Debug, PartialEq, Eq)]
+struct LoadingText {
+    description: String,
+    filled: String,
+    empty: String,
+    percent: u8,
+    caption: String,
+}
+
+fn loading_text(phase: ProgressPhase, progress: &ProfileProgress) -> LoadingText {
+    const CELLS: u64 = 20;
+    let completed = progress.completed.min(progress.total);
+    let percent = if progress.total == 0 {
+        100
+    } else {
+        ((u128::from(completed) * 100) / u128::from(progress.total)) as u8
+    };
+    let filled = (u64::from(percent) * CELLS / 100) as usize;
+    let description = match (phase, progress.stage) {
+        (ProgressPhase::FinalChecks, ProfileProgressStage::FinalChecks) => {
+            ProfileProgressStage::FinalChecks.description().to_string()
+        }
+        (ProgressPhase::FinalChecks, stage) => {
+            format!("Final checks: {}", stage.description())
+        }
+        (ProgressPhase::Preparing, stage) => stage.description().to_string(),
+    };
+    let caption = match progress.unit {
+        ProfileProgressUnit::Bytes => {
+            format!("{} of {} bytes checked", progress.completed, progress.total)
+        }
+        ProfileProgressUnit::Files => {
+            format!("{} of {} files checked", progress.completed, progress.total)
+        }
+        ProfileProgressUnit::Steps => format!(
+            "{} of {} steps complete",
+            progress.completed, progress.total
+        ),
+    };
+    LoadingText {
+        description,
+        filled: "#".repeat(filled),
+        empty: "-".repeat(CELLS as usize - filled),
+        percent,
+        caption,
+    }
+}
+
+fn loading_banner(ui: &Ui, phase: ProgressPhase, progress: &ProfileProgress) {
+    let text = loading_text(phase, progress);
+    ui.text_colored(ACCENT, &text.description);
+    ui.text_colored(ACCENT, format!("[{}", text.filled));
+    ui.same_line_with_spacing(0.0, 0.0);
+    ui.text_disabled(format!("{}] {:>3}%", text.empty, text.percent));
+    ui.text_disabled(text.caption);
+}
+
+fn banner(ui: &Ui, session: &Session, progress: Option<StartupProgressView>) {
     if let Some(err) = &session.error {
         ui.text_colored(ERROR, err);
     } else if session.profile_preparing() {
-        ui.text_disabled("Preparing server profile…");
+        if let Some(progress) = progress {
+            loading_banner(ui, progress.phase, &progress.progress);
+        } else {
+            loading_banner(
+                ui,
+                ProgressPhase::Preparing,
+                &ProfileProgress::steps(ProfileProgressStage::SelectingServerProfile, 0, 1),
+            );
+        }
     }
 }
 
@@ -4345,7 +4472,8 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
                 }
             }
             let _scale = f32::from_bits(frame_scale.load(Ordering::Relaxed));
-            ui_frame(ui, gpu, &mut state);
+            let progress = startup_progress(&startup, state.session.profile_generation());
+            ui_frame(ui, gpu, &mut state, progress);
         },
     )
 }
@@ -4409,7 +4537,7 @@ fn pump_shots(state: &mut PanelState) -> usize {
 
 /// The per-frame UI body: session pump, live harness ticks, dock host,
 /// chrome, game pane, rail.
-fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
+fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<StartupProgressView>) {
     apply_amber_current(&state.session.ui.chrome);
     let wrote_shots = pump_shots(state);
     state.session.pump_status();
@@ -4467,7 +4595,7 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     let game_class = game_window_class();
     let panel_class = panel_window_class();
     ui.set_next_window_class(&panel_class);
-    panel_window(ui, &mut state.session);
+    panel_window(ui, &mut state.session, progress);
     ui.set_next_window_class(&game_class);
     game_window(ui, gpu, state, &title);
     if state.session.multibox && !state.session.wall.grid {
@@ -4499,11 +4627,12 @@ mod tests {
         apply_loadouts_scratch, apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal,
         boot_for, capture_key_ch, chooser_should_open_popup, clamp_hop_label_px, debug_caption,
         drive_startup, edit_parameters_enabled, game_window_flags, live_null_tick,
-        live_script_tick, live_smoke_tick, live_stress_tick, log_follow_bottom, manual_shot_label,
-        parse_args, parse_live_args, random_status_text, runner_config, smoke_settled,
-        smoke_should_fire, sync_loadouts_scratch, Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke,
-        LiveStress, PanelState, ProfilePrepareJob, RunMode, StartupPreparation, BASE_WINDOW_H,
-        BASE_WINDOW_W, LIVE_USAGE, SMOKE_DEADLINE, SMOKE_SETTLE,
+        live_script_tick, live_smoke_tick, live_stress_tick, loading_text, log_follow_bottom,
+        manual_shot_label, parse_args, parse_live_args, progress_channel, random_status_text,
+        runner_config, smoke_settled, smoke_should_fire, startup_progress, sync_loadouts_scratch,
+        Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState, ProfilePrepareJob,
+        ProgressPhase, RunMode, StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE,
+        SMOKE_DEADLINE, SMOKE_SETTLE,
     };
     use crate::theme::{
         applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
@@ -4642,10 +4771,16 @@ mod tests {
         let generation = state.session.profile_generation();
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         sender.send(Ok(template)).unwrap();
+        let (_, progress) = progress_channel(host_play::progress::ProfileProgress::steps(
+            host_play::progress::ProfileProgressStage::LoadingGameData,
+            4,
+            4,
+        ));
         let startup = StartupPreparation {
             prepare: Some(ProfilePrepareJob {
                 generation,
                 receiver,
+                progress,
             }),
             validate: None,
             pending_boot: Some(boot),
@@ -4668,6 +4803,7 @@ mod tests {
         assert!(state.session.vault.is_some());
         assert!(state.session.play.is_some());
         assert!(state.session.slots.is_empty());
+        assert!(startup_progress(&startup, state.session.profile_generation()).is_none());
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -4688,6 +4824,116 @@ mod tests {
             .is_ok());
         assert!(matches!(validation.boot, Boot::Live(LiveBoot::Smoke)));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn startup_progress_is_latest_only_and_generation_scoped() {
+        use host_play::progress::{ProfileProgress, ProfileProgressStage};
+
+        let (observer, progress) = progress_channel(ProfileProgress::steps(
+            ProfileProgressStage::CheckingGameFiles,
+            0,
+            8,
+        ));
+        observer.report(ProfileProgress::steps(
+            ProfileProgressStage::CheckingGameFiles,
+            3,
+            8,
+        ));
+        observer.report(ProfileProgress::bytes(
+            ProfileProgressStage::CheckingNavigationFiles,
+            1024,
+            4096,
+        ));
+        let (_sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let mut startup = StartupPreparation::new(None);
+        startup.prepare = Some(ProfilePrepareJob {
+            generation: 7,
+            receiver,
+            progress,
+        });
+
+        let current = startup_progress(&startup, 7).expect("matching generation progress");
+        assert_eq!(current.phase, ProgressPhase::Preparing);
+        assert_eq!(current.progress.completed, 1024);
+        assert_eq!(current.progress.total, 4096);
+        assert!(
+            startup_progress(&startup, 8).is_none(),
+            "stale work is hidden"
+        );
+        startup.prepare = None;
+        assert!(
+            startup_progress(&startup, 7).is_none(),
+            "completion clears it"
+        );
+    }
+
+    #[test]
+    fn preparation_failure_clears_progress_with_partial_session_state_absent() {
+        use host_play::progress::{ProfileProgress, ProfileProgressStage};
+
+        let (root, cache, manifest) = checked_fixture(274);
+        let mut state = PanelState::default();
+        state
+            .session
+            .configure_profile(host_play::ProfileOptions {
+                profile: Some("local-274".into()),
+                cache_dir: Some(cache),
+                cache_manifest: Some(manifest),
+                ..host_play::ProfileOptions::default()
+            })
+            .unwrap();
+        let generation = state.session.profile_generation();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        sender
+            .send(Err("fixture preparation failed".into()))
+            .unwrap();
+        let (_, progress) = progress_channel(ProfileProgress::steps(
+            ProfileProgressStage::CheckingGameFiles,
+            3,
+            8,
+        ));
+        let mut startup = StartupPreparation {
+            prepare: Some(ProfilePrepareJob {
+                generation,
+                receiver,
+                progress,
+            }),
+            validate: None,
+            pending_boot: Some(Boot::Unlock {
+                pass: "not-used".into(),
+            }),
+            failed_generation: None,
+        };
+
+        drive_startup(&mut state, &mut startup);
+
+        assert!(startup_progress(&startup, generation).is_none());
+        assert!(!state.session.profile_preparing());
+        assert!(!state.session.profile_bound());
+        assert!(state.session.vault.is_none());
+        assert!(state.session.play.is_none());
+        assert!(state.session.slots.is_empty());
+        assert_eq!(
+            state.session.error.as_deref(),
+            Some("fixture preparation failed")
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn loading_text_fits_the_rail_and_never_rounds_partial_work_to_complete() {
+        use host_play::progress::{ProfileProgress, ProfileProgressStage};
+
+        let partial = loading_text(
+            ProgressPhase::FinalChecks,
+            &ProfileProgress::bytes(ProfileProgressStage::CheckingNavigationFiles, 999, 1000),
+        );
+
+        assert!(partial.description.starts_with("Final checks"));
+        assert_eq!(partial.filled.len() + partial.empty.len(), 20);
+        assert_eq!(partial.percent, 99);
+        assert!(partial.caption.contains("bytes checked"));
     }
 
     #[test]

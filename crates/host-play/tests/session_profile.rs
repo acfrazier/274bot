@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use client::{io::ClientRevision, BotTarget};
 use host_play::profile::{CacheManifest, NavAvailability, NavManifest, ProfileEnvironment};
+use host_play::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
 use host_play::{parse_profile_args, ProfileOptions, SharedClientTemplate};
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -313,6 +314,54 @@ fn invalid_explicit_rsa_fails_without_fallback_and_binding_detects_resource_chan
         .unwrap_err()
         .contains("cache changed"));
     assert!(!profile.vault_path().exists());
+}
+
+#[test]
+fn observed_preparation_reports_only_completed_game_file_steps() {
+    let fixture = Fixture::new();
+    let updates = Arc::new(Mutex::new(Vec::<ProfileProgress>::new()));
+    let worker_updates = Arc::clone(&updates);
+    let observer = ProfileProgressObserver::new(move |progress| {
+        worker_updates.lock().unwrap().push(progress);
+    });
+    let selection = fixture
+        .options(274)
+        .resolve_with_env(None, &fixture.env())
+        .unwrap();
+
+    let profile = selection.bind_with_progress(&observer).unwrap();
+    let template = SharedClientTemplate::load_with_progress(profile, &observer).unwrap();
+    template.validate_for_play_with_progress(&observer).unwrap();
+
+    let updates = updates.lock().unwrap();
+    let game_checks: Vec<_> = updates
+        .iter()
+        .filter(|progress| progress.stage == ProfileProgressStage::CheckingGameFiles)
+        .collect();
+    assert!(game_checks.len() > CacheManifest::ARCHIVES.len());
+    assert_eq!(game_checks.first().unwrap().completed, 0);
+    assert_eq!(
+        game_checks.first().unwrap().total,
+        CacheManifest::ARCHIVES.len() as u64
+    );
+    assert!(game_checks
+        .windows(2)
+        .all(|pair| pair[1].completed == 0 || pair[1].completed >= pair[0].completed));
+    assert!(
+        game_checks
+            .iter()
+            .filter(|progress| progress.completed == progress.total)
+            .count()
+            >= 2
+    );
+    assert_eq!(
+        updates.last(),
+        Some(&ProfileProgress::steps(
+            ProfileProgressStage::FinalChecks,
+            1,
+            1
+        ))
+    );
 }
 
 #[test]
