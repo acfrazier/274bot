@@ -1,0 +1,8 @@
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/t_701d17f4-bc0f05c6/crates/script)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.17s
+     Running tests/settings_bag.rs (.superpowers/task-exports/t_701d17f4-bc0f05c6/target-t_701d17f4-native/debug/deps/settings_bag-25edbfbdffcece32)
+
+running 1 test
+test tile_and_list_schema_defaults_round_trip_through_prelude ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.08s

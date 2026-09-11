@@ -101,11 +101,54 @@ fn settings_store_round_trips_overrides_at_private_mode() {
 }
 
 const TILE_LIST_PROBE: &str = r#"
+import Tile from '../../geometry/Tile.js';
+import { Game } from '../../api/game/Game.js';
+import { SettingsBag } from '../../runtime/Settings.js';
+
+const FALLBACK = new Tile(3000, 3001, 3);
+
 export default class T extends LoopingBot {
     loop() {
+        globalThis.__rs2b0t_host.snapshot = {
+            here: { x: 3209, z: 3214, level: 2 },
+        };
+        const tile = this.settings.tile('startTile', FALLBACK);
+        const translated = tile.translate(2, -1);
+        const explicit = new SettingsBag({
+            startTile: { x: 3210, z: 3210, level: 1 },
+        }).tile('startTile', FALLBACK);
         globalThis.__probe = {
-            tile: this.settings.tile('startTile'),
+            tile,
+            tileIdentity: tile instanceof Tile,
+            distanceToGameTile: tile.distanceTo(Game.tile()),
+            crossPlaneDistance: tile.distanceTo(new Tile(3211, 3215, 1)),
+            directNativeDistance: globalThis.rustyscript.functions.__rs2b0t_tile_distance(
+                { x: 3208, z: 3212, level: 2 },
+                { x: 3209, z: 3214, level: 2 },
+            ),
+            invalidDistanceRejected: (() => {
+                try {
+                    tile.distanceTo({ x: Number.MAX_SAFE_INTEGER, z: 3212, level: 2 });
+                    return false;
+                } catch (error) {
+                    return String(error).includes('invalid tile distance');
+                }
+            })(),
+            translated,
+            translatedIdentity: translated instanceof Tile,
+            translatedEquals: translated.equals(new Tile(3210, 3211, 2)),
+            missingUsesFallback: this.settings.tile('missingTile', FALLBACK) === FALLBACK,
+            invalidUsesFallback: this.settings.tile('invalidTile', FALLBACK) === FALLBACK,
+            outOfWorldUsesFallback:
+                this.settings.tile('outOfWorldTile', FALLBACK) === FALLBACK,
+            fractionalUsesFallback:
+                this.settings.tile('fractionalTile', FALLBACK) === FALLBACK,
+            explicitIdentity: explicit instanceof Tile,
+            explicitDistance: explicit.distanceTo(new Tile(3212, 3211, 1)),
             list: this.settings.list('targets'),
+            leash: this.settings.num('leashRadius', 0),
+            bury: this.settings.bool('buryBones', false),
+            style: this.settings.str('combatStyle', ''),
         };
     }
 }
@@ -147,20 +190,68 @@ fn tile_and_list_schema_defaults_round_trip_through_prelude() {
             help: None,
         },
     ];
-    let bag = script::merge_bag(&schema, &serde_json::Map::new(), None);
+    let mut bag = script::merge_bag(&schema, &serde_json::Map::new(), None);
+    bag.insert(
+        "startTile".into(),
+        serde_json::json!({ "x": 3208, "z": 3212, "level": 2 }),
+    );
+    bag.insert(
+        "invalidTile".into(),
+        serde_json::json!({ "x": 3208, "z": "bad", "level": 2 }),
+    );
+    bag.insert(
+        "outOfWorldTile".into(),
+        serde_json::json!({ "x": 16_384, "z": 3212, "level": 2 }),
+    );
+    bag.insert(
+        "fractionalTile".into(),
+        serde_json::json!({ "x": 3208.5, "z": 3212, "level": 2 }),
+    );
+    bag.insert("leashRadius".into(), serde_json::json!(8));
+    bag.insert("buryBones".into(), serde_json::json!(true));
+    bag.insert("combatStyle".into(), serde_json::json!("mage"));
     let iso = LoadIsolate::spawn(TILE_LIST_PROBE.to_string(), LoadShape::CompatClass, vec![])
         .expect("spawn tile/list probe");
     iso.post_settings_bag(&bag);
     iso.on_game_tick(1);
     let value = iso.probe("__probe").expect("tile/list probe readable");
-    assert_eq!(value["tile"]["x"], 3200, "settings.tile must not fall back");
-    assert_eq!(value["tile"]["z"], 3200);
-    assert_eq!(value["tile"]["level"], 0);
+    assert_eq!(value["tile"]["x"], 3208, "settings.tile must not fall back");
+    assert_eq!(value["tile"]["z"], 3212);
+    assert_eq!(value["tile"]["level"], 2);
+    assert_eq!(
+        value["tileIdentity"], true,
+        "posted tile uses imported Tile"
+    );
+    assert_eq!(value["distanceToGameTile"], 2);
+    assert_eq!(value["crossPlaneDistance"], 1_000_003);
+    assert_eq!(
+        value["directNativeDistance"], 2,
+        "the synchronous Rust geometry callback must be registered"
+    );
+    assert_eq!(
+        value["invalidDistanceRejected"], true,
+        "out-of-world coordinates must fail without truncation or overflow"
+    );
+    assert_eq!(
+        value["translated"],
+        serde_json::json!({ "x": 3210, "z": 3211, "level": 2 })
+    );
+    assert_eq!(value["translatedIdentity"], true);
+    assert_eq!(value["translatedEquals"], true);
+    assert_eq!(value["missingUsesFallback"], true);
+    assert_eq!(value["invalidUsesFallback"], true);
+    assert_eq!(value["outOfWorldUsesFallback"], true);
+    assert_eq!(value["fractionalUsesFallback"], true);
+    assert_eq!(value["explicitIdentity"], true);
+    assert_eq!(value["explicitDistance"], 2);
     assert_eq!(
         value["list"],
         serde_json::json!(["bones", "shells"]),
         "settings.list must not fall back"
     );
+    assert_eq!(value["leash"], 8);
+    assert_eq!(value["bury"], true);
+    assert_eq!(value["style"], "mage");
     iso.join();
 }
 

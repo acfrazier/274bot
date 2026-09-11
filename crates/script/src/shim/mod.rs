@@ -78,8 +78,8 @@ globalThis.LoopingBot = class LoopingBot {
             },
             tile(name, fallback = null) {
                 const v = bag[name];
-                if (v && typeof v === 'object' && typeof v.x === 'number') return v;
-                return fallback;
+                const fromPosted = globalThis.__rs2b0t_tileFromPosted;
+                return typeof fromPosted === 'function' ? (fromPosted(v) ?? fallback) : fallback;
             },
             list(name, fallback = []) {
                 const v = bag[name];

@@ -1,0 +1,31 @@
+{
+  "task": "t_701d17f4",
+  "frozen_export": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/t_701d17f4-bc0f05c6",
+  "cargo_target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/t_701d17f4-bc0f05c6/target-t_701d17f4-native",
+  "host_ref": "bc0f05c6867493559fd321fd3708baf3af2ab4a6",
+  "client_ref": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "overlay_sha256": {
+    "crates/api/src/query.rs": "1e2292b22a4d8ad344c325258358b2fe1c80da1e5f38cc8c143e82fa02804cf3",
+    "crates/script/src/load.rs": "242bf46d7fc8ada657292ab11ad9cce8aa941db7f34709dce57d36fd94967cd8",
+    "crates/script/src/shim/mod.rs": "a40ab0a02bfef6b426f2f8b1d17a40d13ebf4dca3d64151e876df7191d99cbc6",
+    "crates/script/src/shim/settings.js": "dde9428e64be986d92efe2b532f226f488d15fd06db7b16bfa5198dd1bb11517",
+    "crates/script/src/shim/tile.js": "9fe1442fdb0144b0d5a5d9d9082eba66269a91e54d5652d44fc8a7440bd7a46a",
+    "crates/script/tests/settings_bag.rs": "4da9d99b3e63faf92322cbc4177f735afa48d8c3f7cc4ff374a3b244c228df35"
+  },
+  "evidence_sha256": {
+    "red-settings-tile.log": "b298842a16de49e9c6506f572a54726e7b1ccf74ea8b975c41b3dd4fe282b702",
+    "red-native-distance.log": "507db5b828eb8047b771b200a7853893a56ebcc013e9f6e8f6fd7ed2cab277b1",
+    "green-settings-tile.log": "e5debada262aeb8b249a5bf7a4cdd1c7079f6b6ac919b912e7c74e112626c8c6",
+    "settings-bag-tests.log": "0947952fa4592d7fa05decd9d856ff47a71a9bb5e04272854500743b55dd8475",
+    "settings-bag-clippy.log": "529e88b5bb14d5929855836ab66e300957283af52a257c6b3d41111b5c4da689",
+    "cargo-fmt-check.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "results": {
+    "shape_red": "exit 101: the raw posted object had no Tile methods",
+    "native_red": "exit 101: the isolate had no registered native tile-distance callback",
+    "focused_green": "1 passed, 0 failed",
+    "settings_bag_suite": "5 passed, 0 failed",
+    "clippy": "passed with -D warnings",
+    "fmt_check": "passed"
+  }
+}
