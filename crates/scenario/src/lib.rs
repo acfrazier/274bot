@@ -2484,8 +2484,7 @@ fn bank_fletcher_open_seed_bank(name: &'static str, arm: Proof) -> Step {
                     level: VARROCK_WEST_BANK.level,
                 };
                 matches!(
-                    Interactions::new(snapshot, c)
-                        .open_booth_at(booth, VARROCK_WEST_BANK_BOOTH_ID),
+                    Interactions::new(snapshot, c).open_booth_at(booth, VARROCK_WEST_BANK_BOOTH_ID),
                     SendResult::Sent { .. }
                 )
             }),
