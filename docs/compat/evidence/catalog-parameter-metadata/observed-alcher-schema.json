@@ -1,0 +1,40 @@
+{
+  "source": "docs/compat/evidence/catalog-inputs/{100adccc,8e7d965b}.json",
+  "loader": "JsLibrary::register_rs2b0t -> parse_registry_with_sources + settings_blob(Alcher.ts + same-dir AlcherLogic.ts) -> parse_settings_export(ALCHER_SETTINGS)",
+  "not_file_load": "settings_schema_from_source looks for export const SETTINGS; Alcher catalog export is ALCHER_SETTINGS. Concord/Mac TUI evidence is Catalog Browse, not File Load.",
+  "both_catalogs": {
+    "display_name": "Alcher",
+    "source_path": "src/bot/scripts/Alcher/Alcher.ts",
+    "source_sha256": "1a09baa1117544a2bb80da145829e69c9ced029ad5af533616afa8e7a36f2032",
+    "settings": [
+      {
+        "id": "items",
+        "type": "string[]",
+        "default": null,
+        "label": "Items to alch",
+        "options": [],
+        "option_labels": [],
+        "show_if": null
+      },
+      {
+        "id": "customItem",
+        "type": "string",
+        "default": "",
+        "label": "Custom item",
+        "options": [],
+        "option_labels": [],
+        "show_if": "{ key: 'items', anyOf: [CUSTOM_ALCH_KEY] }"
+      },
+      {
+        "id": "alchs",
+        "type": "number",
+        "default": "27",
+        "label": "Alchs per trip",
+        "min": "1",
+        "max": "1000",
+        "options": [],
+        "show_if": null
+      }
+    ]
+  }
+}

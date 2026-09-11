@@ -41839,19 +41839,22 @@
         "shop snapshot, buy/sell and stock-settlement operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Isolated2f old-catalog soft/hard bothrevisions fail after Start at missing Input.invButton. t_af045121 maps existing native item operation; no Tanner gameplay support claim yet. buyThread separately awaits Shop.",
+      "fixture_readiness": "Isolated060: tanner_bot=FAIL, tanner_bot_hard=FAIL. Vial passes verify fill28/deposit28/restock28/return/further fill; Tanner missing count-dialog mapping remains explicit. Full branches/frontends separate.",
       "observable_proof_requirement": "after Start, script-caused Crafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "BLOCKED",
-      "status_detail": "Isolated2f old-catalog soft/hard bothrevisions fail after Start at missing Input.invButton. t_af045121 maps existing native item operation; no Tanner gameplay support claim yet. buyThread separately awaits Shop.",
+      "status": "PARTIAL",
+      "status_detail": "Isolated060: tanner_bot=FAIL, tanner_bot_hard=FAIL. Vial passes verify fill28/deposit28/restock28/return/further fill; Tanner missing count-dialog mapping remains explicit. Full branches/frontends separate.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-100adccc-2f1bd9cf.json",
         "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-100adccc-2f1bd9cf.log",
         "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-hard-100adccc-2f1bd9cf.json",
         "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-hard-100adccc-2f1bd9cf.log",
-        "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json"
+        "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json",
+        "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-100adccc-060e15a0.json",
+        "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-hard-100adccc-060e15a0.json",
+        "docs/compat/evidence/catalog-harness/banking-060e15a0.json"
       ]
     },
     {
@@ -42092,19 +42095,22 @@
         "shop snapshot, buy/sell and stock-settlement operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Isolated2f old-catalog soft/hard bothrevisions fail after Start at missing Input.invButton. t_af045121 maps existing native item operation; no Tanner gameplay support claim yet. buyThread separately awaits Shop.",
+      "fixture_readiness": "Isolated060: tanner_bot=FAIL, tanner_bot_hard=FAIL. Vial passes verify fill28/deposit28/restock28/return/further fill; Tanner missing count-dialog mapping remains explicit. Full branches/frontends separate.",
       "observable_proof_requirement": "after Start, script-caused Crafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "BLOCKED",
-      "status_detail": "Isolated2f old-catalog soft/hard bothrevisions fail after Start at missing Input.invButton. t_af045121 maps existing native item operation; no Tanner gameplay support claim yet. buyThread separately awaits Shop.",
+      "status": "PARTIAL",
+      "status_detail": "Isolated060: tanner_bot=FAIL, tanner_bot_hard=FAIL. Vial passes verify fill28/deposit28/restock28/return/further fill; Tanner missing count-dialog mapping remains explicit. Full branches/frontends separate.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-100adccc-2f1bd9cf.json",
         "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-100adccc-2f1bd9cf.log",
         "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-hard-100adccc-2f1bd9cf.json",
         "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-hard-100adccc-2f1bd9cf.log",
-        "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json"
+        "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json",
+        "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-100adccc-060e15a0.json",
+        "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-hard-100adccc-060e15a0.json",
+        "docs/compat/evidence/catalog-harness/banking-060e15a0.json"
       ]
     },
     {
@@ -43292,12 +43298,12 @@
         "shop snapshot, buy/sell and stock-settlement operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Isolated2f West fill/deposit28/empty-vial restock/return/further fill passes allfourcatalog/revisioncells after adjacent pre-Start preparation. East bank-return audit t_715971a2 and shop branch remain pending.",
+      "fixture_readiness": "Isolated060: vial_filler=PASS, vial_filler_east=PASS. Vial passes verify fill28/deposit28/restock28/return/further fill; Tanner missing count-dialog mapping remains explicit. Full branches/frontends separate.",
       "observable_proof_requirement": "after Start, script-caused Herblore progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated2f West fill/deposit28/empty-vial restock/return/further fill passes allfourcatalog/revisioncells after adjacent pre-Start preparation. East bank-return audit t_715971a2 and shop branch remain pending.",
+      "status_detail": "Isolated060: vial_filler=PASS, vial_filler_east=PASS. Vial passes verify fill28/deposit28/restock28/return/further fill; Tanner missing count-dialog mapping remains explicit. Full branches/frontends separate.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-vial-filler-100adccc-b1cff8a7.json",
@@ -43307,7 +43313,10 @@
         "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json",
         "docs/compat/evidence/catalog-harness/live/r274-vial-filler-100adccc-2f1bd9cf.json",
         "docs/compat/evidence/catalog-harness/live/r274-vial-filler-100adccc-2f1bd9cf.log",
-        "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json"
+        "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json",
+        "docs/compat/evidence/catalog-harness/live/r274-vial-filler-100adccc-060e15a0.json",
+        "docs/compat/evidence/catalog-harness/live/r274-vial-filler-east-100adccc-060e15a0.json",
+        "docs/compat/evidence/catalog-harness/banking-060e15a0.json"
       ]
     },
     {
@@ -43543,12 +43552,12 @@
         "shop snapshot, buy/sell and stock-settlement operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Isolated2f West fill/deposit28/empty-vial restock/return/further fill passes allfourcatalog/revisioncells after adjacent pre-Start preparation. East bank-return audit t_715971a2 and shop branch remain pending.",
+      "fixture_readiness": "Isolated060: vial_filler=PASS, vial_filler_east=PASS. Vial passes verify fill28/deposit28/restock28/return/further fill; Tanner missing count-dialog mapping remains explicit. Full branches/frontends separate.",
       "observable_proof_requirement": "after Start, script-caused Herblore progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated2f West fill/deposit28/empty-vial restock/return/further fill passes allfourcatalog/revisioncells after adjacent pre-Start preparation. East bank-return audit t_715971a2 and shop branch remain pending.",
+      "status_detail": "Isolated060: vial_filler=PASS, vial_filler_east=PASS. Vial passes verify fill28/deposit28/restock28/return/further fill; Tanner missing count-dialog mapping remains explicit. Full branches/frontends separate.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-vial-filler-100adccc-b1cff8a7.json",
@@ -43558,7 +43567,10 @@
         "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json",
         "docs/compat/evidence/catalog-harness/live/r289-vial-filler-100adccc-2f1bd9cf.json",
         "docs/compat/evidence/catalog-harness/live/r289-vial-filler-100adccc-2f1bd9cf.log",
-        "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json"
+        "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json",
+        "docs/compat/evidence/catalog-harness/live/r289-vial-filler-100adccc-060e15a0.json",
+        "docs/compat/evidence/catalog-harness/live/r289-vial-filler-east-100adccc-060e15a0.json",
+        "docs/compat/evidence/catalog-harness/banking-060e15a0.json"
       ]
     },
     {
@@ -78131,17 +78143,20 @@
         "shop snapshot, buy/sell and stock-settlement operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Isolated2f West fill/deposit28/empty-vial restock/return/further fill passes allfourcatalog/revisioncells after adjacent pre-Start preparation. East bank-return audit t_715971a2 and shop branch remain pending.",
+      "fixture_readiness": "Isolated060: vial_filler=PASS, vial_filler_east=PASS. Vial passes verify fill28/deposit28/restock28/return/further fill; Tanner missing count-dialog mapping remains explicit. Full branches/frontends separate.",
       "observable_proof_requirement": "after Start, script-caused Herblore progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated2f West fill/deposit28/empty-vial restock/return/further fill passes allfourcatalog/revisioncells after adjacent pre-Start preparation. East bank-return audit t_715971a2 and shop branch remain pending.",
+      "status_detail": "Isolated060: vial_filler=PASS, vial_filler_east=PASS. Vial passes verify fill28/deposit28/restock28/return/further fill; Tanner missing count-dialog mapping remains explicit. Full branches/frontends separate.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-vial-filler-8e7d965b-2f1bd9cf.json",
         "docs/compat/evidence/catalog-harness/live/r274-vial-filler-8e7d965b-2f1bd9cf.log",
-        "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json"
+        "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json",
+        "docs/compat/evidence/catalog-harness/live/r274-vial-filler-8e7d965b-060e15a0.json",
+        "docs/compat/evidence/catalog-harness/live/r274-vial-filler-east-8e7d965b-060e15a0.json",
+        "docs/compat/evidence/catalog-harness/banking-060e15a0.json"
       ]
     },
     {
@@ -78377,17 +78392,20 @@
         "shop snapshot, buy/sell and stock-settlement operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Isolated2f West fill/deposit28/empty-vial restock/return/further fill passes allfourcatalog/revisioncells after adjacent pre-Start preparation. East bank-return audit t_715971a2 and shop branch remain pending.",
+      "fixture_readiness": "Isolated060: vial_filler=PASS, vial_filler_east=PASS. Vial passes verify fill28/deposit28/restock28/return/further fill; Tanner missing count-dialog mapping remains explicit. Full branches/frontends separate.",
       "observable_proof_requirement": "after Start, script-caused Herblore progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated2f West fill/deposit28/empty-vial restock/return/further fill passes allfourcatalog/revisioncells after adjacent pre-Start preparation. East bank-return audit t_715971a2 and shop branch remain pending.",
+      "status_detail": "Isolated060: vial_filler=PASS, vial_filler_east=PASS. Vial passes verify fill28/deposit28/restock28/return/further fill; Tanner missing count-dialog mapping remains explicit. Full branches/frontends separate.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-vial-filler-8e7d965b-2f1bd9cf.json",
         "docs/compat/evidence/catalog-harness/live/r289-vial-filler-8e7d965b-2f1bd9cf.log",
-        "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json"
+        "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json",
+        "docs/compat/evidence/catalog-harness/live/r289-vial-filler-8e7d965b-060e15a0.json",
+        "docs/compat/evidence/catalog-harness/live/r289-vial-filler-east-8e7d965b-060e15a0.json",
+        "docs/compat/evidence/catalog-harness/banking-060e15a0.json"
       ]
     },
     {

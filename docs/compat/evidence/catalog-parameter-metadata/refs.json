@@ -1,0 +1,45 @@
+{
+  "task": "t_10ea7213",
+  "brief": "docs/compat/briefs/88-catalog-parameter-metadata.md",
+  "kind": "bounded-read-only-design",
+  "branch": "codex/rs2b0t-multirevision",
+  "host_head": "d49dccbdb533622101e67736a4ada5b7e2354078",
+  "client_gitlink": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "tui_params_commit": "e72cfb39ef086a89313961be8ca54d1d555e01f4",
+  "written_utc": "2026-09-11 08:43 UTC",
+  "sha256": {
+    "own04p": "3acb0197e7e7851516b16221fb2c4db3aca94444156e540b9a2f573d3b27dfb3",
+    "brief_88": "b9215778dd552fd9fa7a41f8c2d2542c5f538b3776452f01aff3c79eeee564bc",
+    "rs2b0t_registry_rs": "8c58f819a7f955e48ac9b604edb14ec6349d2eccad1cecb0835f51bddba045d1",
+    "settings_store_rs": "d1589ae5dea5c62d6b8cb92519d14c7e16736aefd258aa32a52a478c7b6c1b45",
+    "load_rs": "b429e803b58d952ebfcf0c0667cdc418436276ff97da3a03ff6367adb00b437b",
+    "script_params_rs": "5181bf5a4bbc39b847cdd20f9a4f98865a3a8e9ae58112682528e286512bf9b1",
+    "panel_app_rs": "c25e4dad903e32e9f2c25fde3280a8330efdd5d0b05ff1ab7c4bb0f2d874a4a4",
+    "itemdb_js": "8b8f427242754f0366c7cbedb47044cc580d565dc3b616004c52f5abfd5c2a16",
+    "shim_mod_rs": "4acd8fdc5e7250d7cbdcd8dbf298883ab7113114b3339b5e6208220fe300acc8",
+    "catalog_inputs_100adccc": "d54335c20ec8fdc128a512fff76e74db5340a58461443286b71b2c3b34a0a5d0",
+    "catalog_inputs_8e7d965b": "1943208150463ecf51400566e4b231a29ec93d2bc887da1a8144ee9837cb4a3f",
+    "param_controls_ts": "ed1efe067fef0ff445f7876cbf577bd53d0f248ab3e195c7eb2f939e87badb8f",
+    "param_controls_test_ts": "1c7ac132cbdb31f8d9bcf9d424d7a984bb4357fa8880f2fa3cb4879588c539a8",
+    "index_ts_100adccc": "b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2"
+  },
+  "catalog": {
+    "old": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "newer": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "Alcher_ts": "1a09baa1117544a2bb80da145829e69c9ced029ad5af533616afa8e7a36f2032",
+    "AlcherLogic_ts": "90431043aa900332b3f269cc26c0a1c92bc6a743c5da9adf4fa85102871d4367",
+    "catalog_files_byte_identical_across_frozen_trees": [
+      "Alcher.ts",
+      "AlcherLogic.ts"
+    ]
+  },
+  "tui_screens_sha256": {
+    "concord_r289_choices_txt": "55826fb34d6177b5cad1282ef9613f17388b907e3b3ae387cf1f37c7975e6c8a",
+    "concord_r289_custom_saved_txt": "e035bf5ad7ee06c68225e87d2a476ab6b98667a72cf5ff6ee8c44532ed2abc2a",
+    "concord_r289_form_txt": "bf4df4069fc596908140d2410749bc2d71dc64e431cb9263f2b9041b063519a0",
+    "concord_r289_persisted_txt": "602610106c6a6efa500a3d7a9e322c6a29e81b2db59f15f349951cf4efef8e20",
+    "concord_r289_cancelled_txt": "24859b048e3794ba5ed55e801cbe73adb1ed1c5849e5023eee24e4e9f55906f1",
+    "concord_r289_invalid_number_txt": "958e6649829771026ba07078a4e424480707c7cfb648c7afd03848d12030e30c",
+    "mac_r274_editor_open_txt": "6291d64a1d41f20d5436d0a22d4fc1bc4d40867909acc5ba56fd7346836a356e"
+  }
+}

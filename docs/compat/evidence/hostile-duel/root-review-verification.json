@@ -1,0 +1,102 @@
+{
+  "verified_at": "2026-09-11T08:47:11.256816+00:00",
+  "session_id": "20260911_043554_ed3bd2",
+  "actual_model": "grok-4.5",
+  "actual_provider": "xai-oauth",
+  "actual_api_calls": 12,
+  "first_api_call": "2026-09-11 04:36:00,544 INFO [20260911_043554_ed3bd2] agent.conversation_loop: API call #1: model=grok-4.5 provider=xai-oauth in=23287 out=88 total=23375 latency=3.7s cache=384/23287 (2%) id=7ef98a80-b565-96a5-8c27-09cd46beb94a",
+  "last_api_call": "2026-09-11 04:43:28,721 INFO [20260911_043554_ed3bd2] agent.conversation_loop: API call #12: model=grok-4.5 provider=xai-oauth in=90621 out=2228 total=92849 latency=28.2s cache=88576/90621 (98%) id=6c1e3909-894f-9f29-a7b6-d1e8047a02e4",
+  "turn_end": "2026-09-11 04:43:28,824 INFO [20260911_043554_ed3bd2] agent.conversation_loop: Turn ended: reason=kanban_run_ended model=grok-4.5 api_calls=12/150 budget=12/150 tool_turns=12 last_msg_role=assistant response_len=57 session=20260911_043554_ed3bd2",
+  "verification_source": "Per-session API call log; SQLite transcript absent after disk I/O error. Kanban lifecycle receipt retained independently.",
+  "run": {
+    "id": 1274,
+    "profile": "reviewer",
+    "step_key": null,
+    "status": "done",
+    "outcome": "completed",
+    "summary": "Reviewed and approved c6b52affb (+ evidence d49dccbdb) for brief 35 hostile/duel observations. Round-1 artifact + independent empty-target execution on export hostile-duel-t_eeea20f0 (client 9d090ed): Game.attackedByPlayer from local face\u226532768, isHostileAttacker Rust predicate (HOSTILE_NAMES=[]), reader.ifText over posted widgets, generated duel controls both caches; api game_data 4, lib hostile_attacker 1, hostile_duel 6, gold_stubs 12/1 ignored, host_js 2/1 ignored, host-play script_snapshot 7, clippy api/script/host-play -D warnings all pass. Not LIVE.",
+    "error": null,
+    "metadata": {
+      "review_outcome": "approved",
+      "review_round": 1,
+      "lens": "artifact",
+      "blocking_defects": [],
+      "branch": "codex/rs2b0t-multirevision",
+      "brief": "docs/compat/briefs/35-hostile-duel-facts.md",
+      "brief_sha256": "0e3655f8cffee7fbaa1a6e5aede6f04ee9a7c25249803ceb82a4e51250efc54a",
+      "source_commit": "c6b52affbafe17275a5860eaef2ec632554f4ca7",
+      "evidence_commit": "d49dccbdb533622101e67736a4ada5b7e2354078",
+      "head_at_review": "d49dccbdb533622101e67736a4ada5b7e2354078",
+      "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+      "export": ".superpowers/review-exports/hostile-duel-t_eeea20f0",
+      "cargo_target_dir": ".superpowers/review-exports/hostile-duel-review-t_eeea20f0-r1274-1789115839-target",
+      "manifest": ".superpowers/review-exports/hostile-duel-t_eeea20f0-manifest.json",
+      "isolated_build": true,
+      "live": false,
+      "report": "docs/compat/04-capabilities-hostile-duel.md",
+      "evidence": "docs/compat/evidence/hostile-duel/",
+      "json_sha256": {
+        "274": "d310498c02aff231d4bd3a45095c9bb5d89007f899ada70f7b02863410b322c1",
+        "289": "9e7336807bd8756d86dc52568eb009520696b1b3ba4ac7066b9c997c6ad8f380"
+      },
+      "overlay_sha256": {
+        "crates/api/src/content.rs": "81856de206c3e944b21b9afe1e2042e6ef9e7467ead78193b1deb64d1c585ccc",
+        "crates/api/src/game_data.rs": "308ac8a02d342201d1f915a1323bfb541a3781b8bad62d1e9c99da47fb303c27",
+        "crates/api/src/snapshot.rs": "f2a63a290a8fb3904abfbbe8c9088ae17da20a73ada0dc165864b5ef6d178270",
+        "crates/host-play/src/lib.rs": "826a920437f1ae5953755f15601fbeb48c3f61773174bfd3018a8642435a2612",
+        "crates/script/src/isolate_fb.rs": "e2afb5d2e9887ebdd3d3c00890e7d539df9ed9e551d8e848b38559c0c7720fef",
+        "crates/script/src/load.rs": "b429e803b58d952ebfcf0c0667cdc418436276ff97da3a03ff6367adb00b437b",
+        "crates/script/src/shim/client_adapter.js": "ef3179c69b442102b1842fbd795ba50c22848ee7df6019397488ab4add71aa5e",
+        "crates/script/src/shim/game.js": "97a0b9e4cff34f032190aab52532a9d951f05767e39660ff4f0023877ef29a05",
+        "crates/script/src/shim/thieving_targets.js": "ed24d7a83ab883a3f8ee836e0d515b1b9f58ba947fce4a80fdedd5ed7fd99772",
+        "crates/script/tests/hostile_duel.rs": "3d0b57afdf0707c28d044e024810128267eeab9737f7c2a21afed189c8e343d7",
+        "crates/script/src/shim/mod.rs": "4acd8fdc5e7250d7cbdcd8dbf298883ab7113114b3339b5e6208220fe300acc8",
+        "crates/script/schema/isolate.fbs": "f7d689ace573a1d4eb343bb831b9a14711e6529bfe0d0ed608a126ff17ed6548",
+        "crates/api/tests/game_data.rs": "fcb5244c56c46801d11bfbc83d1256e71a22eef18dc01279fba0e2afd26be8a4",
+        "docs/compat/04-capabilities-hostile-duel.md": "2a64bf546894814763441034d5bdfa2b72d099aa33478db131b465d930182637"
+      },
+      "hotspot": "crates/host-play/src/lib.rs \u2014 attacked_by_player/widget posting and face decode test in the same runtime file as loc/inv-button/autocast interact arms; crates/script/src/load.rs \u2014 composition only: __rs2b0t_is_hostile_attacker register plus snapshot apply; crates/script/src/isolate_fb.rs \u2014 Snapshot append of attacked_by_player and widgets",
+      "limits": [
+        "not LIVE acceptance",
+        "queued Challenge is not a duel",
+        "seeded modal is not a duel",
+        "HOSTILE_NAMES stays empty",
+        "special and teleport remain later cards",
+        "root owns GreenDragon/Ardy Fight/Duel Arena LIVE"
+      ],
+      "releases_children": [
+        "t_68de6f48"
+      ],
+      "tests_run": [
+        "cargo test -p api --lib content::tests::hostile_attacker: 1 passed",
+        "cargo test -p api --test game_data: 4 passed",
+        "cargo test -p script --test hostile_duel: 6 passed",
+        "cargo test -p script --test gold_stubs: 12 passed, 1 ignored",
+        "cargo test -p script --test host_js: 2 passed, 1 ignored",
+        "cargo test -p host-play --lib script_snapshot: 7 passed",
+        "cargo clippy -p api --no-deps --all-targets -- -D warnings: pass",
+        "cargo clippy -p script --no-deps --all-targets -- -D warnings: pass",
+        "cargo clippy -p host-play --no-deps -- -D warnings: pass"
+      ],
+      "reviewer_checks": [
+        "cold read of c6b52affb vs brief 35 before handoff narrative",
+        "brief sha256 0e3655f8cffe matches handoff and verification.json",
+        "overlay hashes match workspace, export, and c6b52affb for owned paths",
+        "274.json/289.json sha256 d310498c / 9e733680 match report and verification.json; duel IDs 6575/6412/6733/6674/6520/6671/6684/6571 both revs",
+        "manifest host c6b52affb client 9d090ed 3184 files; client Cargo.toml blob 3b1ed32eda matches live vendor at 9d090ed",
+        "generator extractDuelControls from interface.pack; schema_version 3 serde default DuelControls; content HOSTILE_ATTACKER_NAMES host-owned not generated",
+        "Game.attackedByPlayer thin snap.attacked_by_player; host-play posts from local face_entity via api::snapshot::attacked_by_player (>=32768); no latch on later NPC face",
+        "isHostileAttacker thin shim -> __rs2b0t_is_hostile_attacker; exact name Guard/Knight of Ardougne/Paladin/Hero + inCombat + !targetsAnotherPlayer + distance<=max + Attack; HOSTILE_NAMES=[]; missing distance/max false",
+        "reader.ifText looks up posted widgets by component_id; closed modal empty list does not keep partner label; absent id null",
+        "content_json posts duel block; load.rs composition-only register + snapshot apply attacked_by_player/widgets; isolate.fbs append WidgetText + Snapshot fields",
+        "sibling base_snapshot literals only gained new defaults; no client/frontend/fixture/engine edits",
+        "independent empty CARGO_TARGET_DIR hostile-duel-review-t_eeea20f0-r1274-1789115839-target on frozen export; concurrent WIP outside owned paths (host-play catalog_boundary_live dirty only)",
+        "not LIVE; root owns GreenDragon/Ardy Fight/Duel Arena requalification"
+      ],
+      "worker_session_id": "20260911_043554_ed3bd2"
+    },
+    "worker_pid": null,
+    "started_at": 1789115754,
+    "ended_at": 1789116208
+  }
+}

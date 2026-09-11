@@ -1,0 +1,14 @@
+{
+  "verified_at": "2026-09-11T08:51:48.362467+00:00",
+  "receipt": "docs/compat/evidence/catalog-headed/r289-vial-filler-east-8e7d965b-060e15a0-gpu.json",
+  "outcome": "PASS",
+  "snapshot": "docs/compat/evidence/catalog-headed/r289-vial-filler-east-8e7d965b-060e15a0-gpu/shots/2026-09-11T08-47-15_88683/2026-09-11T08-49-23_vial_filler_east.json",
+  "snapshot_sha256": "eeabcb2bf653f6d9c784878f4ee3ba8d96a1b8473a1c0f6e4b90243b47db8f69",
+  "png": "docs/compat/evidence/catalog-headed/r289-vial-filler-east-8e7d965b-060e15a0-gpu/shots/2026-09-11T08-47-15_88683/2026-09-11T08-49-23_vial_filler_east.png",
+  "png_sha256": "c2a4eaee82f028094d60a32b037aa5cf90318e9d286288547cf2308a55d26d5f",
+  "visual_read": true,
+  "observed": "Scene2 at2950,3380, one fresh water vial and27empties, paintTrips1/Filled28. Native Mac panel snapshot read.",
+  "renderer_qualification": "GPU requested; BOT_CPU absent; Metal adapter logged. Presentation counters were not enabled; this run alone does not qualify texture-vs-pixmap routing.",
+  "performance_measurement": false,
+  "final_integrated_acceptance": false
+}

@@ -1,0 +1,40 @@
+01: [livetl6zsw_0]  focused: livetl6zsw_0   tui-play --live script_alcher · local-274 · 127.0.0.1:43594 · revision 274   q quit · o options · l 
+02: .. .........  ...........       ..........   ...........     ...  ....   ..  ..  .....     .....    .......       ...............  ..       
+03:  ..........................   ............  ..............   ...  ....    .  ......  ..     ....    ......            ....  .....  ....     
+04:  .....   .........  ..  ..........          ..............   ...  ....   ..  ......  ...     ..      ....              ...  .  ..  . .......
+05: ......   .........  ..  .....  ..             ............   ...  ....    .  ..  .....  .     .      ...        ...    ......  .. .  .......
+06: .............................  ..  .  ..  ..   ...........   ...  ....@  ..  ..  .....  ..                  .   .....  ..  .....  .  .     .
+07: ......  ...    ..........  ......      .  ...   ..........   ...  ....    .  ..............                ..   .....  ..  ...... .         
+08: ......  ...   ...  ...  .  ......      .  ....   ....  ...     .  ....   .   .........    ..              ...   ...... .......... .     ..  
+09: ...........   ...  ...  ....  ...  .  ..  .....   ...  ...     .  ....       ........      ...........    ....   ....  ....  ...  ..   .....
+10: ┌script paint──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+11: │Alcher — Rune chainbody                                                                                                                   │
+12: │Runtime 9s | Alchs 3 | Alch/hr —                                                                                                          │
+13: │Profit 90k | gp/hr — | Trips 0                                                                                                            │
+14: │Notes 21 | Runes 21 | Fuel —                                                                                                              │
+15: └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+16: ┌status──────────────────────────────────────────────────────────────┐┌inv/stats/locs──────────────────────────────────────────────────────┐
+17: │state: ingame scene 2                                               ││inv: Rune chainbody x21, Nature rune x21, Coins x180000             │
+18: │player: Livetl6zsw 0                                                ││stats: attack 1  defence 1  strength 1  hitpoints 10  ranged 1      │
+19: │tile: 3185 3440                                                     ││prayer 1                                                            │
+20: │walk: —                                                             ││locs: Bank booth (1)  Bank booth (2)  Bank booth (2)                │
+21: │queue: —                                                            ││                                                                    │
+22: └────────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────────────────────────┘
+23: ┌script — browse───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+24: │script: running   sel: Alcher                                                                                                             │
+25: │[Browse] [Start] [Pause] [Stop] [Load]                                                                                                    │
+26: │— Magic —                                                                                                                                 │
+27: │  AIO Teleport  [Compat] [Catalog]                                                                                                        │
+28: │    Automated teleportation with intelligent banking and safety features                                                                  │
+29: │    category: Magic                                                                                                                       │
+30: │    tags: teleport, magic, banking, aio                                                                                                   │
+31: │> Alcher  [Compat] [Catalog]                                                                                                              │
+32: │    High alchemy loop — tick the items to alch and the bot drains them richest first, withdrawing each as notes and casting High Level    │
+33: │Alchemy (fire staff + nature runes) until the bank is out, then moving to the next                                                        │
+34: │    category: Magic                                                                                                                       │
+35: │    tags: magic, high alchemy, alchemy, banking, noted                                                                                    │
+36: │— Quest —                                                                                                                                 │
+37: │  AIOQuester  [Compat] [Catalog]                                                                                                          │
+38: │    All-in-one quest completer — queues the implemented quests (empty selection = all), provisions items bank-first, runs each to         │
+39: │journal-complete                                                                                                                          │
+40: └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
