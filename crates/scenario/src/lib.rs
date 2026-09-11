@@ -4824,7 +4824,8 @@ fn vial_filler_east_scenario() -> Scenario {
 
 /// Empty pack at the selected Falador bank. Banked empty vials, no water.
 /// Script withdraws, fills at the west fountain, deposits produced water
-/// vials, restocks empties, returns and fills again. Shop-buy stays pending.
+/// vials, empties the pack of water, restocks empties, returns and fills
+/// again. Shop-buy stays pending.
 fn vial_filler_variant(
     name: &'static str,
     inject: &'static [ScriptSettingInject],
@@ -4918,6 +4919,13 @@ fn vial_filler_variant(
             Proof::BankItemId {
                 id: VIAL_OF_WATER_ID,
                 count: 1,
+            },
+        ),
+        (
+            "watch the pack empty of water vials after deposit",
+            Proof::ItemIdAtMost {
+                id: VIAL_OF_WATER_ID,
+                count: 0,
             },
         ),
         (
@@ -7203,35 +7211,63 @@ mod tests {
             .iter()
             .map(|step| step.wait.arm)
             .collect::<Vec<_>>();
-        assert_eq!(
-            watch[0],
-            Proof::ArrivedNear {
-                x: 2949,
-                z: 3381,
-                level: 0,
-                radius: 4,
-            }
-        );
-        assert!(watch.contains(&Proof::ItemId {
+        let fountain = Proof::ArrivedNear {
+            x: 2949,
+            z: 3381,
+            level: 0,
+            radius: 4,
+        };
+        let water = Proof::ItemId {
             id: VIAL_OF_WATER_ID,
             count: 1,
-        }));
-        assert!(watch.contains(&Proof::BankItemId {
+        };
+        let pack_empty_water = Proof::ItemIdAtMost {
             id: VIAL_OF_WATER_ID,
-            count: 1,
-        }));
-        assert!(watch.contains(&Proof::ItemId {
-            id: EMPTY_VIAL_ID,
-            count: 1,
-        }));
-        assert!(watch.contains(&Proof::BankClosed));
+            count: 0,
+        };
         assert_eq!(
-            west.proof,
-            Proof::ItemId {
-                id: VIAL_OF_WATER_ID,
-                count: 1,
-            }
+            watch,
+            vec![
+                fountain,
+                water,
+                Proof::ItemIdAtMost {
+                    id: EMPTY_VIAL_ID,
+                    count: 0,
+                },
+                Proof::BankItemId {
+                    id: VIAL_OF_WATER_ID,
+                    count: 1,
+                },
+                pack_empty_water,
+                Proof::ItemId {
+                    id: EMPTY_VIAL_ID,
+                    count: 1,
+                },
+                Proof::BankClosed,
+                fountain,
+                water,
+            ]
         );
+        let first_water = watch.iter().position(|arm| *arm == water).unwrap();
+        let bank_water = watch
+            .iter()
+            .position(|arm| {
+                *arm == Proof::BankItemId {
+                    id: VIAL_OF_WATER_ID,
+                    count: 1,
+                }
+            })
+            .unwrap();
+        let pack_empty = watch
+            .iter()
+            .position(|arm| *arm == pack_empty_water)
+            .unwrap();
+        let further_water = watch.iter().rposition(|arm| *arm == water).unwrap();
+        assert!(first_water < bank_water);
+        assert!(bank_water < pack_empty);
+        assert!(pack_empty < further_water);
+        assert_ne!(first_water, further_water);
+        assert_eq!(west.proof, water);
 
         let east = get("vial_filler_east").expect("vial_filler_east");
         let inject = settings_inject_map(east.settings.script_settings_inject).unwrap();
@@ -7259,12 +7295,7 @@ mod tests {
             .iter()
             .map(|step| step.wait.arm)
             .collect::<Vec<_>>();
-        assert!(east_watch.contains(&Proof::ArrivedNear {
-            x: 2949,
-            z: 3381,
-            level: 0,
-            radius: 4,
-        }));
+        assert_eq!(east_watch, watch);
 
         for name in ["vial_filler", "vial_filler_east"] {
             assert!(names().contains(&name));
