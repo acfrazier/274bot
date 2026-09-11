@@ -593,7 +593,10 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         }
         CoreCase::ChickenKiller => near(baseline.tile, (3235, 3295, 0), 8),
         CoreCase::ChickenKillerBank => {
-            near(baseline.tile, FALADOR_CHICKENS, 8) && baseline.item_id(FEATHER_ID) == 0
+            near(baseline.tile, FALADOR_CHICKENS, 8)
+                && baseline.level("attack") >= 30
+                && baseline.level("strength") >= 30
+                && baseline.item_id(FEATHER_ID) == 0
         }
         CoreCase::Thiever => {
             near(baseline.tile, (2661, 3306, 0), 10)
@@ -764,7 +767,7 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         CoreCase::BoneBurier => "Lumbridge mainland and five Bones",
         CoreCase::ChickenKiller => "Lumbridge chicken pen",
         CoreCase::ChickenKillerBank => {
-            "Falador south chickens (3029,3294,0) and empty pack of Feather 314"
+            "Falador south chickens (3029,3294,0), Attack/Strength 30 and no Feather 314"
         }
         CoreCase::Thiever => "Ardougne guard stand, ten Lobsters, and prepared stats",
         CoreCase::Alcher
@@ -2792,7 +2795,10 @@ mod tests {
 
     #[test]
     fn chicken_killer_bank_requires_combat_loot_fresh_deposit_return_and_further_work() {
-        let baseline = chicken_bank_obs(FALADOR_CHICKENS, &[], &[], 100);
+        let mut baseline = chicken_bank_obs(FALADOR_CHICKENS, &[], &[], 100);
+        assert!(validate_case_baseline(CoreCase::ChickenKillerBank, &baseline).is_err());
+        baseline.levels.insert("attack".into(), 30);
+        baseline.levels.insert("strength".into(), 30);
         validate_case_baseline(CoreCase::ChickenKillerBank, &baseline).unwrap();
 
         let looted = chicken_bank_obs(FALADOR_CHICKENS, &[(FEATHER_ID, 5)], &[], 104);

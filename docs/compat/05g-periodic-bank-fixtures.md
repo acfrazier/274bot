@@ -63,3 +63,20 @@ export/target remain diagnostics only.
 
 No LIVE or fixture process was launched. Root owns the catalog × revision
 cells after review. Source review does not grant live acceptance.
+
+## Root LIVE correction, 2026-09-11
+
+Exact isolated 3be68eaf old-catalog runs on both revisions complete the bank
+trip and request combat again, but fail the unchanged 180-second scenario
+while waiting for a fresh Feather314. Prepared Attack/Strength were both 1;
+the first loot takes many attacks and banking consumes most of the remainder.
+These failures remain in catalog-harness/live and core-results.json.
+
+The controlled banking fixture now prepares and separately acknowledges
+Attack30 and Strength30 before Start, alongside the existing empty-feather
+check. Start validation requires those stats. No items, loot or bank contents
+are seeded as successful work; combat XP still compares against the actual
+post-preparation baseline. The route, bank policy, script settings, product
+bounds, 180-second scenario deadline and fresh post-return Feather314 witness
+are unchanged. This isolates the banking behavior from slow novice combat;
+LIVE qualification of this correction remains pending.
