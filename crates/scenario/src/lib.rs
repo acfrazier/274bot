@@ -4395,6 +4395,11 @@ fn superheater_variant(
                 cheat(c, "~clearinv");
                 cheat(c, &format!("setstat magic {SUPERHEAT_MAGIC}"));
                 cheat(c, &format!("setstat smithing {smithing}"));
+                if matches!(staff, SuperheaterStaff::FireBattlestaff) {
+                    // Both selected content revisions require Attack 30 to
+                    // wield a Fire battlestaff (Magic 43 is seeded above).
+                    cheat(c, "setstat attack 30");
+                }
                 cheat(c, &format!("givebank {staff_alias} 1"));
                 cheat(
                     c,
@@ -4483,6 +4488,10 @@ fn superheater_variant(
         ),
     ];
     if matches!(staff, SuperheaterStaff::FireBattlestaff) {
+        before_start.push((
+            "confirm Attack 30 for Fire battlestaff before Start",
+            Proof::Stat { id: 0, min: 30 },
+        ));
         before_start.push((
             "confirm default Staff of fire is absent from pack",
             Proof::ItemIdAtMost {

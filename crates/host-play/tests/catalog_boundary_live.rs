@@ -697,6 +697,7 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
                 1,
             ) && baseline.item_id(STAFF_OF_FIRE_ID) == 0
                 && baseline.equipment_id(STAFF_OF_FIRE_ID) == 0
+                && baseline.level("attack") >= 30
         }
     };
     if ready {
@@ -758,7 +759,7 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
             "Varrock West bank, Magic 43, Smithing 30, empty pack of 440/453/2353/561/1387"
         }
         CoreCase::SuperheaterFireBattlestaff => {
-            "Varrock West bank, Magic 43, empty pack of 1393 and no 1387"
+            "Varrock West bank, Magic 43, Attack 30, empty pack of 1393 and no 1387"
         }
     };
     Err(format!(
@@ -3560,7 +3561,11 @@ mod tests {
                 1,
             ),
         ] {
-            let baseline = superheater_obs(&[], &[], &[], 10_000, 1_000, smithing);
+            let mut baseline = superheater_obs(&[], &[], &[], 10_000, 1_000, smithing);
+            if case == CoreCase::SuperheaterFireBattlestaff {
+                assert!(validate_case_baseline(case, &baseline).is_err());
+                baseline.levels.insert("attack".into(), 30);
+            }
             validate_case_baseline(case, &baseline).unwrap();
 
             let primary_n = 9;
