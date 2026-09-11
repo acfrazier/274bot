@@ -1,0 +1,19 @@
+   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/combat-json-fix/source/crates/host-play)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.34s
+     Running tests/catalog_boundary_live.rs (.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/catalog_boundary_live-cf42836446c7a751)
+
+running 11 tests
+test tests::combat_observer_does_not_turn_unknown_zero_health_into_a_sticky_death ... ok
+test tests::combat_observer_rejects_other_actors_combat_and_stale_global_loot ... ok
+test tests::combat_observer_does_not_count_disappearance_reappearance_as_a_new_life ... ok
+test tests::combat_observer_requires_a_fresh_matching_drop_for_disappearance ... ok
+test tests::coal_trucks_requires_the_documented_native_combat_level ... ok
+test tests::chicken_killer_requires_combat_xp_and_a_post_start_loot_bury_cycle ... ok
+test tests::combat_observer_clears_death_on_respawn_and_needs_a_later_work_frame ... ok
+test tests::combat_failure_receipt_preserves_nonempty_ground_counts ... ok
+test tests::combat_success_receipt_preserves_nonempty_ground_counts ... ok
+test tests::chicken_killer_bank_requires_combat_loot_fresh_deposit_return_and_further_work ... ok
+test tests::combat_cores_require_two_engagements_verified_defeat_style_xp_and_exact_loot ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 38 filtered out; finished in 0.01s
+
