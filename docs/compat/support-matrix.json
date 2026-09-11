@@ -14508,10 +14508,20 @@
           "source_evidence": "src/bot/scripts/RockCrab/RockCrab.ts constructs SolveClue; crates/script/src/shim/solve_clue.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing periodic bank execution",
+      "status": "PARTIAL",
+      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
       "fixture_id": "local-274",
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "current_requalification_21446414": [
+        {
+          "case": "rock_crab",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-rock-crab-100adccc-21446414.json"
+        }
+      ],
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-rock-crab-100adccc-21446414.json"
+      ]
     },
     {
       "display_name": "RockCrab",
@@ -15430,10 +15440,20 @@
           "source_evidence": "src/bot/scripts/RockCrab/RockCrab.ts constructs SolveClue; crates/script/src/shim/solve_clue.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing periodic bank execution",
+      "status": "PARTIAL",
+      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
       "fixture_id": "local-289",
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "current_requalification_21446414": [
+        {
+          "case": "rock_crab",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-rock-crab-100adccc-21446414.json"
+        }
+      ],
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-rock-crab-100adccc-21446414.json"
+      ]
     },
     {
       "display_name": "MossGiant",
@@ -16179,9 +16199,17 @@
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-moss-giant-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r274-moss-giant-100adccc-04d7b1f4.log",
-        "docs/compat/06x-station-platform-and-remaining.md"
+        "docs/compat/06x-station-platform-and-remaining.md",
+        "docs/compat/evidence/catalog-harness/live/r274-moss-giant-100adccc-21446414.json"
       ],
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "current_requalification_21446414": [
+        {
+          "case": "moss_giant",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-moss-giant-100adccc-21446414.json"
+        }
+      ]
     },
     {
       "display_name": "MossGiant",
@@ -16922,14 +16950,22 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Latest isolated 04d7b1f4 moss_giant FAIL: FAIL: catalog_boundary_live: script error: tick 34: not impl: ranged.rangeLoadoutOf. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-moss-giant-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r289-moss-giant-100adccc-04d7b1f4.log",
-        "docs/compat/06x-station-platform-and-remaining.md"
+        "docs/compat/06x-station-platform-and-remaining.md",
+        "docs/compat/evidence/catalog-harness/live/r289-moss-giant-100adccc-21446414.json"
       ],
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "current_requalification_21446414": [
+        {
+          "case": "moss_giant",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-moss-giant-100adccc-21446414.json"
+        }
+      ]
     },
     {
       "display_name": "GreenDragon",
@@ -17855,10 +17891,20 @@
           "source_evidence": "src/bot/scripts/GreenDragon/GreenDragon.ts constructs SolveClue; crates/script/src/shim/solve_clue.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing death recovery execution",
+      "status": "PARTIAL",
+      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
       "fixture_id": "local-274",
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "current_requalification_21446414": [
+        {
+          "case": "green_dragon",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-green-dragon-100adccc-21446414.json"
+        }
+      ],
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-green-dragon-100adccc-21446414.json"
+      ]
     },
     {
       "display_name": "GreenDragon",
@@ -18784,10 +18830,20 @@
           "source_evidence": "src/bot/scripts/GreenDragon/GreenDragon.ts constructs SolveClue; crates/script/src/shim/solve_clue.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing death recovery execution",
+      "status": "PARTIAL",
+      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
       "fixture_id": "local-289",
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "current_requalification_21446414": [
+        {
+          "case": "green_dragon",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-green-dragon-100adccc-21446414.json"
+        }
+      ],
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-green-dragon-100adccc-21446414.json"
+      ]
     },
     {
       "display_name": "FireGiant",
@@ -19639,10 +19695,20 @@
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
+      "status": "PARTIAL",
+      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
       "fixture_id": "local-274",
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "current_requalification_21446414": [
+        {
+          "case": "fire_giant",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-fire-giant-100adccc-21446414.json"
+        }
+      ],
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-fire-giant-100adccc-21446414.json"
+      ]
     },
     {
       "display_name": "FireGiant",
@@ -20494,10 +20560,20 @@
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
+      "status": "PARTIAL",
+      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
       "fixture_id": "local-289",
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "current_requalification_21446414": [
+        {
+          "case": "fire_giant",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-fire-giant-100adccc-21446414.json"
+        }
+      ],
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-fire-giant-100adccc-21446414.json"
+      ]
     },
     {
       "display_name": "ArdyFighter",
@@ -21182,10 +21258,20 @@
           "source_evidence": "src/bot/scripts/ArdyFighter/ArdyFighter.ts constructs SolveClue; crates/script/src/shim/solve_clue.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing periodic bank execution",
+      "status": "PARTIAL",
+      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
       "fixture_id": "local-274",
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "current_requalification_21446414": [
+        {
+          "case": "ardy_fighter",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-ardy-fighter-100adccc-21446414.json"
+        }
+      ],
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-ardy-fighter-100adccc-21446414.json"
+      ]
     },
     {
       "display_name": "ArdyFighter",
@@ -21870,10 +21956,20 @@
           "source_evidence": "src/bot/scripts/ArdyFighter/ArdyFighter.ts constructs SolveClue; crates/script/src/shim/solve_clue.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing periodic bank execution",
+      "status": "PARTIAL",
+      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
       "fixture_id": "local-289",
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "current_requalification_21446414": [
+        {
+          "case": "ardy_fighter",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-ardy-fighter-100adccc-21446414.json"
+        }
+      ],
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-ardy-fighter-100adccc-21446414.json"
+      ]
     },
     {
       "display_name": "Thiever",
@@ -23961,14 +24057,22 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Latest isolated 04d7b1f4 auto_fighter FAIL: FAIL: catalog_boundary_live: script error: tick 34: SettingsStore.displayString is not a function. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-100adccc-04d7b1f4.log",
-        "docs/compat/06x-station-platform-and-remaining.md"
+        "docs/compat/06x-station-platform-and-remaining.md",
+        "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-100adccc-21446414.json"
       ],
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "current_requalification_21446414": [
+        {
+          "case": "auto_fighter",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-auto-fighter-100adccc-21446414.json"
+        }
+      ]
     },
     {
       "display_name": "AutoFighter",
@@ -24918,14 +25022,22 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Latest isolated 04d7b1f4 auto_fighter FAIL: FAIL: catalog_boundary_live: script error: tick 36: SettingsStore.displayString is not a function. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-100adccc-04d7b1f4.log",
-        "docs/compat/06x-station-platform-and-remaining.md"
+        "docs/compat/06x-station-platform-and-remaining.md",
+        "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-100adccc-21446414.json"
       ],
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "current_requalification_21446414": [
+        {
+          "case": "auto_fighter",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-auto-fighter-100adccc-21446414.json"
+        }
+      ]
     },
     {
       "display_name": "ArdyThiever",
@@ -26574,7 +26686,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Current214 ArdyCakes fails after slow ticks and execution termination. Native observation repair134 pending; original failures retained; no current acceptance.",
+      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-ardy-cakes-100adccc-4cc6cc27.json",
@@ -26954,7 +27066,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Current214 ArdyCakes fails after slow ticks and execution termination. Native observation repair134 pending; original failures retained; no current acceptance.",
+      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-ardy-cakes-100adccc-4cc6cc27.json",
@@ -27824,14 +27936,22 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Latest isolated 04d7b1f4 coal_trucks FAIL: FAIL: catalog_boundary_live: scenario failed: step 11 (watch arrival at the mine coal truck after the pack fill): arrived_near(2575,3486,0,4) not seen within 150 ticks. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-coal-trucks-100adccc-28d97f38.json",
         "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json",
         "docs/compat/evidence/catalog-harness/live/r274-coal-trucks-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r274-coal-trucks-100adccc-04d7b1f4.log",
-        "docs/compat/06x-station-platform-and-remaining.md"
+        "docs/compat/06x-station-platform-and-remaining.md",
+        "docs/compat/evidence/catalog-harness/live/r274-coal-trucks-100adccc-21446414.json"
+      ],
+      "current_requalification_21446414": [
+        {
+          "case": "coal_trucks",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-coal-trucks-100adccc-21446414.json"
+        }
       ]
     },
     {
@@ -28073,14 +28193,22 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Latest isolated 04d7b1f4 coal_trucks FAIL: FAIL: catalog_boundary_live: scenario failed: step 9 (watch Mining XP from coal rocks after Start): stat_xp_gain(14)>=1 not seen within 150 ticks. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-coal-trucks-100adccc-28d97f38.json",
         "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json",
         "docs/compat/evidence/catalog-harness/live/r289-coal-trucks-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r289-coal-trucks-100adccc-04d7b1f4.log",
-        "docs/compat/06x-station-platform-and-remaining.md"
+        "docs/compat/06x-station-platform-and-remaining.md",
+        "docs/compat/evidence/catalog-harness/live/r289-coal-trucks-100adccc-21446414.json"
+      ],
+      "current_requalification_21446414": [
+        {
+          "case": "coal_trucks",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-coal-trucks-100adccc-21446414.json"
+        }
       ]
     },
     {
@@ -42890,14 +43018,22 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Latest isolated 04d7b1f4 hill_giant FAIL: FAIL: catalog_boundary_live: script error: tick 38: not impl: foodCount. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-hill-giant-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r274-hill-giant-100adccc-04d7b1f4.log",
-        "docs/compat/06x-station-platform-and-remaining.md"
+        "docs/compat/06x-station-platform-and-remaining.md",
+        "docs/compat/evidence/catalog-harness/live/r274-hill-giant-100adccc-21446414.json"
       ],
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "current_requalification_21446414": [
+        {
+          "case": "hill_giant",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-hill-giant-100adccc-21446414.json"
+        }
+      ]
     },
     {
       "display_name": "HillGiant",
@@ -43372,14 +43508,22 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Latest isolated 04d7b1f4 hill_giant FAIL: FAIL: catalog_boundary_live: script error: tick 37: not impl: foodCount. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-hill-giant-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r289-hill-giant-100adccc-04d7b1f4.log",
-        "docs/compat/06x-station-platform-and-remaining.md"
+        "docs/compat/06x-station-platform-and-remaining.md",
+        "docs/compat/evidence/catalog-harness/live/r289-hill-giant-100adccc-21446414.json"
       ],
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "current_requalification_21446414": [
+        {
+          "case": "hill_giant",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-hill-giant-100adccc-21446414.json"
+        }
+      ]
     },
     {
       "display_name": "VialFiller",
@@ -51301,10 +51445,20 @@
           "source_evidence": "src/bot/scripts/MossGiant/MossGiant.ts constructs DeathRecovery; crates/script/src/shim/death_recovery.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing death recovery execution",
+      "status": "PARTIAL",
+      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
       "fixture_id": "local-274",
-      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk."
+      "combat_requalification": "Required after observer136: prior raw outcomes retained but not final acceptance due sticky death/respawn counting and stale loot risk.",
+      "current_requalification_21446414": [
+        {
+          "case": "moss_giant",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-moss-giant-8e7d965b-21446414.json"
+        }
+      ],
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-moss-giant-8e7d965b-21446414.json"
+      ]
     },
     {
       "display_name": "MossGiant",

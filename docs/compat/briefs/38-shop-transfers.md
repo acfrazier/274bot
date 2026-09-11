@@ -46,3 +46,15 @@ Pause/Guardian freeze/Stop/session abort where operations wait. Use meaningful
 selected-world fixtures and affected existing tests/Clippy, without broad
 repetition. Commit scoped files in new commits; request review on this same
 card with profile reviewer and then stop. No agents or complete-before-review.
+
+
+Current ownership clarification (2026-09-11): audit133 and correction134 forbid
+bulk snapshot roundtrips for native polling. Reuse the compact Rust-owned
+observation seam introduced by134 or borrow existing host observations; do not
+send complete loc/NPC/inventory/bank/widget arrays V8-to-JSON-to-Rust on each
+poll, retain a world clone, or move candidate selection back into JavaScript.
+JS sends caller arguments/callback projections and dispatches returned verbs.
+Preserve delta/reset/session/hold behavior and native deadlines. This applies
+to the new capability's implementation and same-card review. Exact frozen
+source with one exclusive reusable Cargo cache is permitted by current
+execution policy; no shared-target or empty-started claim if reused.
