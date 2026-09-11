@@ -27,7 +27,8 @@ results and failed cells; this state identifies current work.
   audit until native distance freshness is requalified.
 - N2 correction3383b099 passed actualGrok4.5 review1237/session
   20260911_012856_3456a0. New isolated2473-file build is complete; both revision
-  LIVE cells are running with actual Stop-boundary witnesses. Earlier587 passes
+  LIVE cells pass with actual Stop-boundary witnesses: B gains65XP/1536coins
+  and consumes one rune/item after Stop, while A stays stable. Earlier587 passes
   remain explicitly unqualified for post-Stop peer work.
 - Concord274 private TUI6c completed actual post-Start combat XP under PTY.
   This older scenario has no exact loot/bank witness; qualify only its recorded
@@ -36,15 +37,19 @@ results and failed cells; this state identifies current work.
   engine136636 was stopped and verified absent. Concord289 TUI and Windows289
   native Alcher core are already recorded. Actual GPU/backend and frontend
   controls remain separate acceptance work.
-- DeathRecovery actualGrok4.6 run1233 and Vial correction1236 continue toward
-  same-card review; Tanner and solo Runecrafter/Mule remain dependency-gated.
-  Root owns the stale generic scenario pre-Start index assertion introduced by
-  melee preparation and will repair it when the Vial owner releases that file.
+- DeathRecovery1101a237 and Vial correctione4f5352a are in actual
+  Grok4.5 reviews1240/1239; Tanner and solo Runecrafter/Mule remain dependency-gated.
+  Root repaired the stale generic scenario pre-Start index assertion introduced
+  by melee preparation; all89 scenario tests pass on an isolated source.
   Grok Usage at05:38 is69%used, reset07:40 local. No auth/config changes.
 - Root safely exported source via verified regular Git blobs (no archive
   extraction), preserving reviewer execution restrictions. Five completed Cargo
   target caches were cleaned after no-open-file checks and binary revalidation;
   all source exports, copied binaries and raw evidence remain.
+- Bounded native adapter diagnostic t_d1671c3c is assigned to grok46 while
+  capability reviews run. It adds only actual selected-adapter identity under
+  BOT_DEBUG; existing frame-routing counters and scene2 capture remain required
+  to distinguish client GPU from CPU presentation.
 
 ## Imported-script ownership (operator clarification, 01:41 UTC)
 

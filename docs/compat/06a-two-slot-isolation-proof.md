@@ -100,3 +100,23 @@ target:
 
 No LIVE client or engine was launched. These checks are fixture/build
 evidence, not gameplay acceptance and not catalog/frontend acceptance.
+
+
+## Root LIVE requalification (2026-09-11 05:45 UTC)
+
+Actual Grok4.5 run1237 approved correction3383b099. Root built its exact2473
+host/client files in a separate empty target (client56d80272), then ran both
+revisions against private controlled accounts. Both pass (27447.731s,
+28949.069s); these elapsed times are not performance measurements.
+
+`evidence/two-slot-isolation/qualification-3383b099.json` and its reproducible
+harvester verify full raw boundaries. Slots have distinct settings/accounts and
+chainbody versus scimitar stock, with no foreign-item/identity observations.
+A is stable after the pause drain while B makes fresh progress; A makes fresh
+progress after Resume. At actual Stop, A is Idle and B remains Running. A's
+XP, coins, runes and stock remain unchanged across the later observation;
+B then gains65 Magic XP and1536 coins and consumes one nature rune and one
+own noted item,4 ticks later on274 and3 on289. Earlier587 receipts remain
+unqualified for post-Stop progress. This proves the controlled host-play N2
+component; native/TUI controls, recovery, N32 and final integrated-source
+acceptance remain separate.
