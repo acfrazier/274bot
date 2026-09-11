@@ -163,10 +163,16 @@ const VT_SNAP_HINT_TILE_X: VOffsetT = 142;
 const VT_SNAP_HINT_TILE_Z: VOffsetT = 144;
 const VT_SNAP_RETALIATE_ON_COM_ID: VOffsetT = 146;
 const VT_SNAP_RETALIATE_OFF_COM_ID: VOffsetT = 148;
+const VT_SNAP_QUEST_STATUSES: VOffsetT = 150;
+const VT_SNAP_QUEST_STATUSES_AVAILABLE: VOffsetT = 152;
 
 // WidgetText: { component_id, text }
 const VT_WT_COMPONENT: VOffsetT = 4;
 const VT_WT_TEXT: VOffsetT = 6;
+
+// QuestStatus: { name, status }
+const VT_QUEST_NAME: VOffsetT = 4;
+const VT_QUEST_STATUS: VOffsetT = 6;
 
 // Reach: { available, base_x, base_z, level, width, height, walkable, reachable, reachable_adj, step }
 const VT_REACH_AVAILABLE: VOffsetT = 4;
@@ -536,6 +542,14 @@ pub struct NativeFactsInput<'a> {
     pub self_chat: Option<&'a str>,
     pub hint_tile: Option<(i32, i32)>,
     pub retaliate_controls: Option<(i32, i32)>,
+    pub quest_statuses: Option<&'a [QuestStatusInput<'a>]>,
+}
+
+/// One quest-tab row after Rust resolves the native display colour.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct QuestStatusInput<'a> {
+    pub name: &'a str,
+    pub status: &'a str,
 }
 
 /// One currently posted widget text row (`reader.ifText`).
@@ -1072,6 +1086,16 @@ impl Verifiable for SnapshotReader<'_> {
             .visit_field::<i32>("hint_tile_z", VT_SNAP_HINT_TILE_Z, false)?
             .visit_field::<i32>("retaliate_on_com_id", VT_SNAP_RETALIATE_ON_COM_ID, false)?
             .visit_field::<i32>("retaliate_off_com_id", VT_SNAP_RETALIATE_OFF_COM_ID, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<QuestStatusReader>>>>(
+                "quest_statuses",
+                VT_SNAP_QUEST_STATUSES,
+                false,
+            )?
+            .visit_field::<bool>(
+                "quest_statuses_available",
+                VT_SNAP_QUEST_STATUSES_AVAILABLE,
+                false,
+            )?
             .finish();
         Ok(())
     }
@@ -1434,6 +1458,26 @@ impl SnapshotReader<'_> {
         let on = unsafe { self.tab.get::<i32>(VT_SNAP_RETALIATE_ON_COM_ID, None) }.unwrap_or(-1);
         let off = unsafe { self.tab.get::<i32>(VT_SNAP_RETALIATE_OFF_COM_ID, None) }.unwrap_or(-1);
         (on >= 0 && off >= 0).then_some((on, off))
+    }
+    pub fn has_quest_statuses(&self) -> bool {
+        rows_present::<QuestStatusReader>(&self.tab, VT_SNAP_QUEST_STATUSES)
+    }
+    pub fn quest_statuses(&self) -> Vec<QuestStatusReader<'_>> {
+        rows::<QuestStatusReader>(&self.tab, VT_SNAP_QUEST_STATUSES)
+    }
+    pub fn has_quest_statuses_update(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<bool>(VT_SNAP_QUEST_STATUSES_AVAILABLE, None)
+                .is_some()
+        }
+    }
+    pub fn quest_statuses_available(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<bool>(VT_SNAP_QUEST_STATUSES_AVAILABLE, Some(false))
+        }
+        .unwrap_or(false)
     }
     pub fn has_hold(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_HOLD, None).is_some() }
@@ -1851,6 +1895,7 @@ pub struct SnapshotFingerprint {
     pub self_chat: Option<String>,
     pub hint_tile: Option<(i32, i32)>,
     pub retaliate_controls: Option<(i32, i32)>,
+    pub quest_statuses: Option<Vec<(String, String)>>,
 }
 
 impl SnapshotFingerprint {
@@ -2044,6 +2089,11 @@ impl SnapshotFingerprint {
             self_chat: native.self_chat.map(str::to_string),
             hint_tile: native.hint_tile,
             retaliate_controls: native.retaliate_controls,
+            quest_statuses: native.quest_statuses.map(|rows| {
+                rows.iter()
+                    .map(|q| (q.name.to_string(), q.status.to_string()))
+                    .collect()
+            }),
         }
     }
 }
@@ -2125,6 +2175,7 @@ pub struct DeltaMask {
     pub self_chat: bool,
     pub hint_tile: bool,
     pub retaliate_controls: bool,
+    pub quest_statuses: bool,
 }
 
 impl DeltaMask {
@@ -2201,6 +2252,7 @@ impl DeltaMask {
             self_chat: true,
             hint_tile: true,
             retaliate_controls: true,
+            quest_statuses: true,
         }
     }
 
@@ -2287,6 +2339,7 @@ impl DeltaMask {
             self_chat: next.self_chat != last.self_chat,
             hint_tile: next.hint_tile != last.hint_tile,
             retaliate_controls: next.retaliate_controls != last.retaliate_controls,
+            quest_statuses: next.quest_statuses != last.quest_statuses,
         }
     }
 }
@@ -2684,6 +2737,17 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let quest_statuses_off = if mask.quest_statuses {
+        native.quest_statuses.map(|rows| {
+            let offs = rows
+                .iter()
+                .map(|q| quest_status_off(b, q))
+                .collect::<Vec<_>>();
+            b.create_vector(&offs)
+        })
+    } else {
+        None
+    };
     let tab = b.start_table();
     b.push_slot_always(VT_SNAP_TICK, input.tick);
     if mask.here {
@@ -2928,6 +2992,15 @@ fn encode_snapshot_masked_into(
         b.push_slot_always(VT_SNAP_RETALIATE_ON_COM_ID, on);
         b.push_slot_always(VT_SNAP_RETALIATE_OFF_COM_ID, off);
     }
+    if mask.quest_statuses {
+        b.push_slot_always(
+            VT_SNAP_QUEST_STATUSES_AVAILABLE,
+            native.quest_statuses.is_some(),
+        );
+        if let Some(off) = quest_statuses_off {
+            b.push_slot_always(VT_SNAP_QUEST_STATUSES, off);
+        }
+    }
     let root = b.end_table(tab);
     b.finish(root, None);
 }
@@ -3052,6 +3125,18 @@ fn widget_text_off<'b>(
     let tab = b.start_table();
     b.push_slot_always(VT_WT_COMPONENT, w.component_id);
     b.push_slot_always(VT_WT_TEXT, text_off);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+fn quest_status_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    q: &QuestStatusInput<'_>,
+) -> WIPOffset<QuestStatusReader<'b>> {
+    let name_off = b.create_string(q.name);
+    let status_off = b.create_string(q.status);
+    let tab = b.start_table();
+    b.push_slot_always(VT_QUEST_NAME, name_off);
+    b.push_slot_always(VT_QUEST_STATUS, status_off);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -3379,6 +3464,39 @@ impl Verifiable for WidgetTextReader<'_> {
         v.visit_table(pos)?
             .visit_field::<i32>("component_id", VT_WT_COMPONENT, false)?
             .visit_field::<ForwardsUOffset<&str>>("text", VT_WT_TEXT, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct QuestStatusReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for QuestStatusReader<'a> {
+    type Inner = QuestStatusReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl QuestStatusReader<'_> {
+    pub fn name(&self) -> &str {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_QUEST_NAME, None) }.unwrap_or("")
+    }
+    pub fn status(&self) -> &str {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_QUEST_STATUS, None) }.unwrap_or("unknown")
+    }
+}
+
+impl Verifiable for QuestStatusReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<ForwardsUOffset<&str>>("name", VT_QUEST_NAME, false)?
+            .visit_field::<ForwardsUOffset<&str>>("status", VT_QUEST_STATUS, false)?
             .finish();
         Ok(())
     }

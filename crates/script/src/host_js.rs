@@ -585,6 +585,24 @@ const SUPPORTING_INTERFACES: &[TsInterface] = &[
         ],
     },
     TsInterface {
+        name: "QuestStatusRow",
+        doc: Some("One native quest-tab row with its Rust-resolved coarse status."),
+        fields: &[
+            TsField {
+                name: "name",
+                ty: "string",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "status",
+                ty: "'notStarted' | 'inProgress' | 'complete' | 'unknown'",
+                optional: false,
+                doc: None,
+            },
+        ],
+    },
+    TsInterface {
         name: "VarpRow",
         doc: None,
         fields: &[
@@ -1046,6 +1064,12 @@ const SNAPSHOT_FIELDS: &[TsField] = &[
     TsField {
         name: "retaliate_controls",
         ty: "ToggleControls | null",
+        optional: false,
+        doc: None,
+    },
+    TsField {
+        name: "quest_statuses",
+        ty: "QuestStatusRow[] | null",
         optional: false,
         doc: None,
     },

@@ -2373,9 +2373,9 @@ fn with_script_snapshot_input<R>(
 ) -> R {
     use script::isolate_fb::{
         BankStandInput, ChatLineInput, ChatOptionInput, CombatStyleInput, ItemRowInput,
-        MakeButtonInput, MakeProductInput, NativeFactsInput, NearestBoothInput, ReachViewInput,
-        SceneEntityInput, SideTabIfaceInput, SnapshotInput, StatInput, TileInput, VarpInput,
-        WidgetTextInput,
+        MakeButtonInput, MakeProductInput, NativeFactsInput, NearestBoothInput, QuestStatusInput,
+        ReachViewInput, SceneEntityInput, SideTabIfaceInput, SnapshotInput, StatInput, TileInput,
+        VarpInput, WidgetTextInput,
     };
 
     let flood = snapshot.and_then(|s| {
@@ -3126,6 +3126,20 @@ fn with_script_snapshot_input<R>(
             text,
         })
         .collect();
+    let quest_statuses: Vec<QuestStatusInput<'_>> = snapshot
+        .map(|s| {
+            s.quest_statuses()
+                .iter()
+                .map(|quest| QuestStatusInput {
+                    name: quest.name.as_str(),
+                    status: quest.status().as_str(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let quest_statuses = snapshot
+        .filter(|s| s.quest_statuses_available())
+        .map(|_| quest_statuses.as_slice());
     let input = SnapshotInput {
         tick,
         here,
@@ -3221,6 +3235,7 @@ fn with_script_snapshot_input<R>(
         retaliate_controls: snapshot
             .and_then(GameSnapshot::retaliate_controls)
             .map(|controls| (controls.on_component_id, controls.off_component_id)),
+        quest_statuses,
     };
     f(&input, native)
 }
@@ -10903,6 +10918,119 @@ export default class T extends LoopingBot {
             !off.retaliate_enabled(),
             "varp(172)!=0 is auto-retaliate off"
         );
+    }
+
+    #[test]
+    fn script_snapshot_posts_native_quest_rows_and_clears_them_without_a_snapshot() {
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        c.ingame = true;
+        c.set_iface(
+            2200,
+            IfType {
+                id: 2200,
+                layer_id: 2200,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![2201, 2202, 2203, 2204]),
+                ..Default::default()
+            },
+        );
+        for id in 2201..=2204 {
+            c.set_iface(
+                id,
+                IfType {
+                    id: id as i32,
+                    layer_id: 2200,
+                    r#type: ComponentType::TYPE_TEXT,
+                    ..Default::default()
+                },
+            );
+        }
+        for (id, text, colour) in [
+            (2201, "Quest Journal", 0xFFFF00),
+            (2202, "Waterfall Quest", 0xF80000),
+            (2203, "Lost City", 0xF8F800),
+            (2204, "Dragon Slayer", 0x00F800),
+        ] {
+            c.set_iface_mut(
+                id,
+                IfTypeMut {
+                    text: text.into(),
+                    colour,
+                    ..Default::default()
+                },
+            );
+        }
+        c.side_icon[2] = 2200;
+        c.bump_gens(ServerProt::IF_SETTEXT);
+
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let (bytes, fingerprint) = script_snapshot_fb(
+            None,
+            false,
+            1,
+            None,
+            true,
+            None,
+            Some(&snap),
+            None,
+            None,
+            false,
+            false,
+            false,
+        );
+        let posted = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
+        assert!(posted.has_quest_statuses_update());
+        assert!(posted.quest_statuses_available());
+        let rows = posted.quest_statuses();
+        let got = rows
+            .iter()
+            .map(|row| (row.name(), row.status()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            got,
+            vec![
+                ("Quest Journal", "unknown"),
+                ("Waterfall Quest", "notStarted"),
+                ("Lost City", "inProgress"),
+                ("Dragon Slayer", "complete"),
+            ]
+        );
+
+        let (clear_bytes, _) = script_snapshot_fb(
+            Some(&fingerprint),
+            false,
+            2,
+            None,
+            false,
+            None,
+            None,
+            None,
+            None,
+            false,
+            false,
+            false,
+        );
+        let clear = script::isolate_fb::decode_snapshot(&clear_bytes).expect("clear decodes");
+        assert!(
+            clear.has_quest_statuses_update(),
+            "clear update must be present"
+        );
+        assert!(!clear.quest_statuses_available());
+        assert!(!clear.has_quest_statuses());
+        assert!(clear.quest_statuses().is_empty());
     }
 
     #[test]

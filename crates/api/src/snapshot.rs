@@ -416,6 +416,39 @@ pub struct QuestStatusView {
     pub colour: i32,
 }
 
+/// Coarse quest state represented by the quest-list display colour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum QuestListStatus {
+    NotStarted,
+    InProgress,
+    Complete,
+    Unknown,
+}
+
+impl QuestListStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotStarted => "notStarted",
+            Self::InProgress => "inProgress",
+            Self::Complete => "complete",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl QuestStatusView {
+    /// Resolve only the three display colours documented by the script API.
+    pub const fn status(&self) -> QuestListStatus {
+        match self.colour {
+            0xF80000 => QuestListStatus::NotStarted,
+            0xF8F800 => QuestListStatus::InProgress,
+            0x00F800 => QuestListStatus::Complete,
+            _ => QuestListStatus::Unknown,
+        }
+    }
+}
+
 /// The on/off toggle pair of the player-controls overlay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ToggleControlsView {
@@ -654,6 +687,7 @@ pub struct GameSnapshot {
     chat_continue_component_id: i32,
     make_products: Vec<MakeProductView>,
     quest_statuses: Vec<QuestStatusView>,
+    quest_statuses_available: bool,
     run_controls: Option<ToggleControlsView>,
     retaliate_controls: Option<ToggleControlsView>,
     /// The Note/Item toggle pair on the open bank main modal; None while
@@ -760,6 +794,7 @@ impl Default for GameSnapshot {
             chat_continue_component_id: -1,
             make_products: Vec::new(),
             quest_statuses: Vec::new(),
+            quest_statuses_available: false,
             run_controls: None,
             retaliate_controls: None,
             bank_note_controls: None,
@@ -1217,6 +1252,11 @@ impl GameSnapshot {
     /// Quest-journal entries from the last quest-statuses rebuild.
     pub fn quest_statuses(&self) -> &[QuestStatusView] {
         &self.quest_statuses
+    }
+
+    /// Whether the native quest-tab root was loaded for the last rebuild.
+    pub fn quest_statuses_available(&self) -> bool {
+        self.quest_statuses_available
     }
 
     /// The run-toggle pair from the last controls rebuild.
@@ -1862,12 +1902,17 @@ impl GameSnapshot {
             return false;
         }
         self.quest_statuses.clear();
+        self.quest_statuses_available = false;
         let Some(root) = client.side_icon.get(2).copied() else {
             return true;
         };
         if root == -1 {
             return true;
         }
+        if client.if_(root as usize).is_none() {
+            return true;
+        }
+        self.quest_statuses_available = true;
         let mut queue = vec![root];
         let mut head = 0;
         while head < queue.len() {

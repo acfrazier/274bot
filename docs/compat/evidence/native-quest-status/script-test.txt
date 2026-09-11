@@ -1,0 +1,11 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running tests/native_quest_status.rs (target-t_95823e19/debug/deps/native_quest_status-aac92ab32f3c3cd9)
+
+running 5 tests
+test buffer_without_quest_rows_keeps_the_query_explicitly_unavailable ... ok
+test changed_snapshot_clears_a_missing_quest_tab_to_unavailable ... ok
+test loaded_empty_quest_tab_remains_available ... ok
+test quests_preserve_rows_and_frozen_status_strings_with_first_duplicate_winning ... ok
+test separate_isolates_do_not_share_quest_rows ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
