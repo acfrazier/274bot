@@ -1936,9 +1936,11 @@ fn chicken_killer_bank_scenario() -> Scenario {
     };
     let mut steps = script_live_seed_steps();
     steps.push(Step {
-        name: "clear the pack and tele to Falador south chickens before Start",
+        name: "prepare melee stats, empty pack and Falador chicken anchor before Start",
         kind: StepKind::Perform {
             send: Box::new(move |c, _| {
+                cheat(c, "setstat attack 30");
+                cheat(c, "setstat strength 30");
                 cheat(c, "~clearinv");
                 cheat(c, &tele_args(tele.level, tele.x, tele.z));
                 true
@@ -1954,6 +1956,12 @@ fn chicken_killer_bank_scenario() -> Scenario {
             budget_ticks: 200,
         },
     });
+    for (name, id) in [
+        ("acknowledge prepared Attack 30", 0),
+        ("acknowledge prepared Strength 30", STRENGTH_STAT),
+    ] {
+        steps.push(bank_fletcher_watch(name, Proof::Stat { id, min: 30 }));
+    }
     steps.push(bank_fletcher_watch(
         "confirm no seeded feathers in pack before Start",
         Proof::ItemIdAtMost {
