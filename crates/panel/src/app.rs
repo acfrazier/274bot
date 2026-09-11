@@ -4235,7 +4235,7 @@ fn arm_scenario_shots(state: &mut PanelState) {
         });
     let shots = Arc::clone(&state.shot_state);
     if let Some(runner) = state.session.scenario.lock().unwrap().as_mut() {
-        if std::env::var_os("BOT_DEBUG").is_some() {
+        if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
             eprintln!(
                 "[panel] scenario capture armed: {:?}",
                 runner.terminal_shot()
@@ -4243,7 +4243,7 @@ fn arm_scenario_shots(state: &mut PanelState) {
         }
         runner.set_shot_sink(Box::new(
             move |label: &str, snap: &api::snapshot::GameSnapshot| {
-                if std::env::var_os("BOT_DEBUG").is_some() {
+                if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
                     eprintln!("[panel] scenario capture requested: {label}");
                 }
                 let json = serde_json::to_string_pretty(snap).unwrap_or_default();
