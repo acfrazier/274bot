@@ -16,22 +16,8 @@ function bankOpenCall(payload) {
     return globalThis.rustyscript.functions.__rs2b0t_bank_open(payload);
 }
 
-function bankOpenObservation() {
-    const s = snap();
-    return {
-        ingame: s.ingame === true,
-        here: s.here ?? null,
-        bank_open: s.bank_open === true,
-        bank_loaded: s.bank_loaded === true,
-        bank_generation: Number(s.bank_generation) || 0,
-        nearest_booth: s.nearest_booth ?? null,
-        locs: Array.isArray(s.locs) ? s.locs : [],
-        banks: Array.isArray(s.banks) ? s.banks : [],
-    };
-}
-
 async function driveBankOpen(input) {
-    let step = bankOpenCall({ op: 'begin', ...input, observation: bankOpenObservation() });
+    let step = bankOpenCall({ op: 'begin', ...input });
     const token = step?.token;
     while (step && step.kind !== 'done' && step.kind !== 'aborted') {
         if (step.kind === 'walk-near') {
@@ -63,7 +49,6 @@ async function driveBankOpen(input) {
             next = bankOpenCall({
                 op: 'next',
                 token,
-                observation: bankOpenObservation(),
             });
             return next?.kind !== 'wait';
         }, 0);

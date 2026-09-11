@@ -1,9 +1,7 @@
-import { actions, reader } from '../../adapter/ClientAdapter.js';
+import { actions } from '../../adapter/ClientAdapter.js';
 import { Execution } from '../execution/Execution.js';
 import { spellButtonCom } from '../combat/CombatStyleLogic.js';
 import { notImpl } from '../../shim/_kernel.js';
-
-const COMBAT_TAB = 0;
 
 function call(payload) {
     return globalThis.rustyscript.functions.__rs2b0t_autocast(payload);
@@ -13,35 +11,8 @@ function controls() {
     return call({ op: 'controls' });
 }
 
-function combatTabRoot() {
-    try {
-        const id = reader.sideTabInterface(COMBAT_TAB);
-        return typeof id === 'number' ? id : -1;
-    } catch (_) {
-        return -1;
-    }
-}
-
-function magicValue(index) {
-    return reader.varp(index);
-}
-
-function observation(c) {
-    return {
-        ingame: globalThis.__rs2b0t_host?.snapshot?.ingame === true,
-        active_side_tab: reader.activeSideTab(),
-        combat_tab_root: combatTabRoot(),
-        magic_varp_value: magicValue(c.magic_varp),
-    };
-}
-
-function live(c) {
-    const obs = observation(c);
-    return call({
-        op: 'observe',
-        combat_tab_root: obs.combat_tab_root,
-        magic_varp_value: obs.magic_varp_value,
-    });
+function live() {
+    return call({ op: 'observe' });
 }
 
 function logFailure(reason, spellName, log) {
@@ -62,12 +33,12 @@ export const Autocast = {
     armed() {
         const c = controls();
         if (!c || c.available !== true) return false;
-        return live(c).armed === true;
+        return live().armed === true;
     },
     staffTabAttached() {
         const c = controls();
         if (!c || c.available !== true) return false;
-        return live(c).staff_attached === true;
+        return live().staff_attached === true;
     },
     async arm(spellName, log) {
         const c = controls();
@@ -89,7 +60,6 @@ export const Autocast = {
         let step = call({
             op: 'begin',
             spell_com: ssbCom,
-            observation: observation(c),
         });
         const token = step?.token;
         while (step && step.kind !== 'done' && step.kind !== 'aborted') {
@@ -105,7 +75,6 @@ export const Autocast = {
                 next = call({
                     op: 'next',
                     token,
-                    observation: observation(c),
                 });
                 return next?.kind !== 'wait';
             }, 0);

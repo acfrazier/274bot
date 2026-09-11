@@ -1795,6 +1795,7 @@ mod isolate {
                 },
             )
             .map_err(|e| format!("register spell button: {e}"))?;
+        crate::autocast::configure(game_data.as_deref());
         let selected_autocast = game_data.clone();
         runtime
             .register_function("__rs2b0t_autocast", move |args: &[serde_json::Value]| {
@@ -3140,6 +3141,9 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     // malformed blob is logged, never fatal.
                     match crate::isolate_fb::SnapshotReader::from_bytes(&bytes.bytes) {
                         Ok(snap) => {
+                            crate::bank_open::on_snapshot(&snap);
+                            crate::cake_stall::on_snapshot(&snap);
+                            crate::autocast::on_snapshot(&snap);
                             if snap.has_hold() {
                                 host_hold = snap.hold();
                                 crate::periodic_bank::on_hold(host_hold);
