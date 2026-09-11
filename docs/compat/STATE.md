@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 00:36 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 00:54 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -82,7 +82,8 @@ Catalog and frontend acceptance remain separate.
   4.5 review 1135; six targeted lifecycle tests and host tests pass.
 - t_dde220ef Grok 4.6 integration review waits for bank routing, reviewed
   Alcher option fixtures t_a384fe64, panel startup t_779f58e5 and generated
-  item metadata integration t_f1572cf0. It also
+  item metadata integration t_f1572cf0, its corrective review t_e6ec9679,
+  and loading progress t_42263bfd. It also
   covers root profile/harness, script Stop and frontend/world changes.
 - BankFletcher option harness t_ac56c0b5 is active in actual Sol run 1171
   (session 20260910_202755_cb370a). Brief 48 adds ID-preserving stringing and
@@ -172,9 +173,12 @@ verifying source/output hashes and byte-identical regeneration. Consumption/pick
 then corrected NPC provenance, parser fixtures and mismatch inventory at
 bba5179c after actual Grok 4.5 run 1156 requested changes. Final Grok 4.5 review session
 20260910_195952_932c09 approved source bba5179c/report 2530891b.
-Runtime consumer t_f1572cf0 is active in Sol run 1169 after both approvals.
-It will publish shared, immutable, selected-
-revision item metadata, fixed food heals and pickpocket requirements through serde. Briefs 26-29 and 34-40 require extending this pipeline for
+Runtime consumer t_f1572cf0 committed 7852b5a0 in Sol run 1169, then
+incorrectly completed without same-card review. Root restored corrective gate
+t_e6ec9679 because the board refuses review from done. Actual Grok 4.5 run 1175,
+session 20260910_204657_d5690f, is reviewing it. This source publishes shared,
+immutable, selected-revision item metadata, fixed food heals and pickpocket
+requirements through serde; ordered Alcher LIVE waits for review. Briefs 26-29 and 34-40 require extending this pipeline for
 large game-fact tables; host policy stays separately owned. Quester parser
 feasibility was discussed against the existing native Quester plan; it remains
 a separate future implementation scope.
@@ -184,7 +188,8 @@ revisions and both catalog sources. Eight custom/large-batch Alcher option
 cells passed; large-batch proves the 1,000-item noted representation and one
 cast, not 1,000 sustained casts. Ordered selection fails because runtime item
 metadata lists only the chainbody; generator plus consumer addresses that
-source gap. All twelve basic matrix rows remain PARTIAL, with branch and
+source gap; source commit 7852b5a0 is awaiting independent review.
+All twelve basic matrix rows remain PARTIAL, with branch and
 frontend qualification outstanding. Raw failures and exact hashes are retained
 in 05-catalog-proof.md and its evidence, including failed BoneBurier travel.
 
@@ -218,4 +223,28 @@ The repo owns reusable tools; machines own their setup and backups. P0-P12 are
 proposed construction work, not implemented features or measured size savings.
 This design work runs alongside the authorized compatibility campaign and does
 not restart memory optimization. Signing accounts were discussed for release
-planning; no purchase or distribution occurred.
+planning; the operator reports renewing Apple Developer membership and
+prefers a signed/notarized .app with a drag-to-Applications DMG. Root will guide
+the signing, notarization and clean-Mac installation check at packaging time.
+No certificate creation, signing upload, package publication or backup job has
+been performed by this campaign.
+
+## Current UI follow-ups and remaining fixtures
+
+The operator requested a classic text loading bar with plain stage descriptions
+and the existing bright text accent, `theme::ACCENT` / #FFB000. Brief 50 is being
+implemented in Sol run 1174, session 20260910_204357_6fa300. It preserves all
+resource checks and reports actual processed work through bounded per-generation
+state. Native proof and same-card review remain required.
+
+Root fixed the newly reported first-run Browse picker at 1a2f2dcf: correct
+window order, clear purpose text, and working Cancel/Not now dismissal. Three
+focused existing tests and a native Mac first-run/reopen/dismissal check pass;
+all three internal F12 captures were read. `evidence/browse-ux/README.md` records
+the exact source/private entry and UI-only limits. Its source review is grouped
+with t_42263bfd and integration.
+
+Two source-grounded Grok 4.6 fixture designs cover the remaining 40 cards:
+t_a88cd22e / run 1172 / session 20260910_203957_1e123e and
+t_c8c317d0 / run 1173 / session 20260910_203957_c7b349. Brief 49 supplements
+the accepted capability architecture; reports are design, not LIVE acceptance.
