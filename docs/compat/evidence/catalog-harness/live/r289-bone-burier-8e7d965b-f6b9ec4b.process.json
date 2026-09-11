@@ -1,0 +1,31 @@
+{
+  "command": [
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-f6b9ec4b",
+    "catalog_boundary_live",
+    "--ignored",
+    "--exact",
+    "--nocapture"
+  ],
+  "started_at": "2026-09-11T03:14:27.913109+00:00",
+  "host_commit": "f6b9ec4b2e7afe22f4a5bb58a837f3b9a992cb5f",
+  "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "binary_sha256": "42a76e004e20eb3eb047862b9c5de1741b273d3ffd1074a4d81f5287928d0a2d",
+  "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+  "revision": "289",
+  "case": "bone_burier",
+  "environment": {
+    "LIVE": "1",
+    "BOT_CPU": "1",
+    "BOT_DEBUG": "1",
+    "RUST_BACKTRACE": "1",
+    "CATALOG_REVISION": "289",
+    "CATALOG_SCENARIO": "bone_burier",
+    "CATALOG_COMMIT": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "CATALOG_ROOT": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a",
+    "CATALOG_NAV_PACK": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack",
+    "CATALOG_NAV_FLAGS": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navflags",
+    "CATALOG_ENGINE_DIR": "/Users/acfrazier/experiments/lostcity-289/engine"
+  },
+  "elapsed_is_not_performance_measurement": true,
+  "pid": 67437
+}

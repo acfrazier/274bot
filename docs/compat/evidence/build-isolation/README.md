@@ -42,3 +42,14 @@ Actual Grok 4.5 useOn review 1194 also used an independent empty target.
 The subsequent 50f2be8a native layout check and navigation variants use their
 own separately isolated exports and targets. Shared-target historical results
 are retained separately from these newly qualified checks.
+
+The f6b9ec4b export now passes all forty core/selected Alcher-option cells:
+ten cases times two catalogs times revisions 274 and 289. Root independently
+checked all log and binary hashes, 1,606 frozen source files, attached scene-2
+baselines, later observations, exact input/output identities, XP and the relevant
+bank/order witnesses. `harvest_core_f6.py` records these checks and appends the
+receipts without replacing historical failures. `core-results-f6b9ec4b.json`
+contains the forty bounded results. The full catalog matrix remains PARTIAL;
+this proof does not establish every supported setting, native frontend behavior
+or a performance result. The two revision batches overlapped each other and
+independent agent checks.

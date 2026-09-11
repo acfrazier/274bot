@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 03:20 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 03:32 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -57,6 +57,12 @@ not a product behavior change.
 
 ## Latest isolated acceptance (02:34 UTC)
 
+- All forty f6b9ec4b core/selected Alcher-option cells pass across both catalogs
+  and revisions. Root verified every log/binary hash, 1,606 source files and the
+  relevant XP/item/bank/order witnesses with `evidence/build-isolation/harvest_core_f6.py`.
+  `core-results.json` now retains 145 historical and current cells; full supported
+  branch and frontend acceptance remains separate. No failures were overwritten.
+
 - Navigation d2372fe0 passed same-card Grok 4.5 review 1191 and all four isolated
   274/289 external/bundled probes. One read/decode each; external hashes once,
   bundled hashes zero times; same Arc across template/Play, old Arc survives
@@ -94,21 +100,25 @@ not a product behavior change.
 
 - Spell facts/casting f6b9ec4b passed actual Grok 4.5 review 1196/session
   20260910_223536_ceec05 with an empty target. Root LIVE qualification remains
-  separate. PeriodicBank t_51452e47 is running as Grok 4.6; reviewed completion, plus coordinate-query review to serialize the shared
-  publication files, releases DeathRecovery t_0c5ce97f.
-- Settings Tile t_701d17f4 completed Sol source at 6401d3a4 and is in actual
-  Grok 4.5 review 1209. PeriodicBank 41cf8eac accidentally captured its shared
+  separate. PeriodicBank t_51452e47 passed corrective Grok 4.5 review 1211 at
+  exact 922dac24 with independent empty-target checks. Coordinate-query review
+  still gates DeathRecovery t_0c5ce97f to serialize shared publication files.
+- Settings Tile t_701d17f4 completed Sol source at 6401d3a4 and passed actual
+  Grok 4.5 review 1209/session 20260910_231344_40f47c. PeriodicBank 41cf8eac accidentally captured its shared
   load.rs hunks; root separated that composition at 922dac24 using a private
   index without removing working source. PeriodicBank corrective Grok 4.5
-  review 1211 evaluates exact 922dac24. Interrupted/default-profile runs and
+  review 1211 approved exact 922dac24. Interrupted/default-profile runs and
   old log hash mismatches are retained under evidence/shared-file-ownership
-  and settings-tile-shape. Neither family is LIVE-approved before its review.
+  and settings-tile-shape. Root built exact 6401d3a4 in a new empty target and
+  started DoorOpener/gate/FlaxPicker batches after Tile review; results pending.
 - Coordinate reachability design t_d49b087b completed as actual Grok 4.6 run
   1199, commit cc57adca. It recommends posting compact bits from the existing
   native flood, with no JS collision algorithm or per-read world copies.
   Coordinate query implementation t_246e320b is active in actual Grok 4.6
-  run 1203. Superheater fixtures t_10f975b7 run independently as Grok 4.6
-  run 1204. DirectNavigator mapping t_f7fd9f55 follows query review. The separate
+  run 1203. Superheater fixtures t_10f975b7 committed 6d750e65 and entered actual
+  Grok 4.5 review 1212/session 20260910_232854_63c926. PeriodicBank fixture
+  t_63524882 follows that review with grok46 defaults, preserving single ownership
+  of scenario/harness files. DirectNavigator mapping t_f7fd9f55 follows query review. The separate
   missing DirectNavigator.walkTo must also map to existing native walking;
   foreign radius-8 re-sync remains a distinct source finding, not a pass.
 - Operator requested four more Grok implementation assignments and periodic

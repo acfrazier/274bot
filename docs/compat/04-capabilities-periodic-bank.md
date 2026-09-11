@@ -34,7 +34,7 @@ ChickenKiller (`parseBankStrategy` + `depositAllExcept` keep list + `afterDeposi
 
 ## Verification
 
-First-round service checks used `target-t_51452e47`; the first Grok 4.5 review confirmed the results below but requested source-ownership correction. The interrupted `target-t_51452e47-corrective` attempt did not complete qualification. A new empty-target review of exact `922dac24` is required. Raw logs and the interrupted verification record remain in `docs/compat/evidence/periodic-bank-capabilities/`; original committed logs remain at `41cf8eac`.
+First-round service checks used `target-t_51452e47`; the first Grok 4.5 review confirmed the results below but requested source-ownership correction. The interrupted `target-t_51452e47-corrective` attempt did not complete qualification. Corrective review 1211/session `20260910_231549_6a11a1` subsequently approved exact `922dac24` and repeated the checks in new empty `target-review-t_51452e47-r1789096618`. The completed review receipt is `evidence/periodic-bank-capabilities/review-round2.json`. Raw logs and the interrupted verification record remain preserved; original committed logs remain at `41cf8eac`.
 
 - `cargo test -p script --lib periodic_bank`: 6 passed (label/token mapping, shouldBankNow, combat/Off, backoff + Pause freeze, dest no-fallback, npcAccess).
 - `cargo test -p script --test periodic_bank`: 8 passed (Off zero sends, combat suppress, ChickenKiller loot-count deposit/afterDeposit/close/return, Either+shim `loot` token, exact destination, commonJunk true/false, missing-access backoff, Pause/session abort).

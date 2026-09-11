@@ -1,0 +1,39 @@
+{
+  "id": 1209,
+  "task_id": "t_701d17f4",
+  "profile": "reviewer",
+  "step_key": null,
+  "status": "done",
+  "claim_lock": null,
+  "claim_expires": null,
+  "worker_pid": null,
+  "max_runtime_seconds": 2400,
+  "last_heartbeat_at": 1789097357,
+  "started_at": 1789096424,
+  "ended_at": 1789097410,
+  "outcome": "completed",
+  "summary": "Reviewed and approved 6401d3a4 for brief 57 settings Tile shape. Round-1 cold artifact review plus independent empty-target re-run on composed HEAD archive + frozen client confirm settings_bag 5/5 and clippy -D warnings; native distance delegates to unchanged chebyshev_to (cross-plane i32::MAX mapped only in the adapter to 1_000_000+planar); PRELUDE/SettingsBag share tileFromPosted; fallback/level validation and list/scalar accessors preserved. Root owns LIVE.",
+  "metadata": {
+    "review_outcome": "approved",
+    "review_round": 1,
+    "commit": "6401d3a4a0fd983d90691a472c23000845bdea4b",
+    "parent_commit": "922dac2481dfa42619c3edf74f36e06d93e908a4",
+    "reviewer_checks": [
+      "cold read of 6401d3a4 diff vs brief 57",
+      "HEAD overlay hashes: query/mod/settings/tile/settings_bag match frozen overlay; load.rs composed hash 15acab07 (tile_distance + periodic_bank)",
+      "fresh empty target .review-export-t701-r1c/target-review-fresh from git archive HEAD + frozen export vendor",
+      "cargo test --locked -p script --test settings_bag: 5 passed",
+      "cargo clippy --locked -p script --test settings_bag --no-deps -- -D warnings: passed",
+      "chebyshev_to policy body unchanged (pub only); nav::chebyshev unchanged",
+      "no foreign script/fixture/LIVE/host-policy edits in commit"
+    ],
+    "findings": [],
+    "caveats": [
+      "worktree has unrelated dirty reachability WIP on load.rs/query.rs beyond 6401d3a4 \u2014 reviewed committed tree only",
+      "Game.tile still returns plain snap.here (pre-existing); distanceTo accepts Tile-like objects via Rust",
+      "Root owns LIVE DoorOpener proof"
+    ],
+    "worker_session_id": "20260910_231344_40f47c"
+  },
+  "error": null
+}
