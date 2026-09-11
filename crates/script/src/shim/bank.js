@@ -136,6 +136,8 @@ export const Bank = new Proxy(
                 name: row?.name ?? null,
                 count: row?.count ?? 0,
                 id: row?.id ?? 0,
+                slot: typeof row?.slot === 'number' ? row.slot : -1,
+                comId: typeof row?.component_id === 'number' ? row.component_id : -1,
                 ops: Array.isArray(row?.ops) ? row.ops.slice() : [],
                 noted: row?.noted === true,
                 cert: row?.cert ?? -1,

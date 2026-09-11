@@ -741,6 +741,19 @@ pub enum InteractReq {
     /// and dispatches the item's menu op (rs2b0t `Item.interact`).
     #[serde(rename = "held")]
     Held { name: String, action: String },
+    /// Selected component-item operation (`Input.invButton`). Host
+    /// dispatch re-resolves the exact current bank row by id/slot/
+    /// component and sends `ActionSpec::Operation`. It does not answer
+    /// the later count dialog.
+    #[serde(rename = "inv-button")]
+    InvButton {
+        id: i32,
+        slot: i32,
+        component: i32,
+        operation: i32,
+        #[serde(default)]
+        bank_generation: u64,
+    },
     /// Close the open bank modal.
     #[serde(rename = "close")]
     Close,

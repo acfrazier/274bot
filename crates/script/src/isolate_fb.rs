@@ -3629,6 +3629,21 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                     .ok_or_else(|| "held has no action".to_string())?
                     .to_string(),
             }),
+            "inv-button" => out.push(crate::shim::InteractReq::InvButton {
+                id: row
+                    .bank_item_id()
+                    .ok_or_else(|| "inv-button has no id".to_string())?,
+                slot: row
+                    .source_item_slot()
+                    .ok_or_else(|| "inv-button has no slot".to_string())?,
+                component: row
+                    .component_id()
+                    .ok_or_else(|| "inv-button has no component".to_string())?,
+                operation: row
+                    .stand_op()
+                    .ok_or_else(|| "inv-button has no operation".to_string())?,
+                bank_generation: row.bank_generation().unwrap_or(0),
+            }),
             "close" => out.push(crate::shim::InteractReq::Close),
             "npc" => out.push(crate::shim::InteractReq::Npc {
                 name: row
@@ -3755,6 +3770,7 @@ fn interact_off<'b>(
         InteractReq::WithdrawX { .. } => "withdraw-x",
         InteractReq::WithdrawLoad { .. } => "withdraw-load",
         InteractReq::Held { .. } => "held",
+        InteractReq::InvButton { .. } => "inv-button",
         InteractReq::Close => "close",
         InteractReq::Npc { .. } => "npc",
         InteractReq::Loc { .. } => "loc",
@@ -3919,6 +3935,19 @@ fn interact_off<'b>(
         InteractReq::Held { .. } => {
             b.push_slot_always(VT_IN_NAME, name_off.unwrap());
             b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+        }
+        InteractReq::InvButton {
+            id,
+            slot,
+            component,
+            operation,
+            bank_generation,
+        } => {
+            b.push_slot_always(VT_IN_BANK_ITEM_ID, *id);
+            b.push_slot_always(VT_IN_SOURCE_ITEM_SLOT, *slot);
+            b.push_slot_always(VT_IN_COMPONENT_ID, *component);
+            b.push_slot_always(VT_IN_STAND_OP, *operation);
+            b.push_slot_always(VT_IN_BANK_GENERATION, *bank_generation);
         }
         InteractReq::Close => {}
         InteractReq::Npc { index, .. } => {

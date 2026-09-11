@@ -82,4 +82,42 @@ export const Input = proxy('Input', {
         queue({ op: 'held', name: row.name ?? '', action: String(action) });
         return true;
     },
+    invButton(objId, slot, comId, op) {
+        const id = Number(objId);
+        const itemSlot = Number(slot);
+        const component = Number(comId);
+        const operation = Number(op);
+        if (
+            ![id, itemSlot, component, operation].every((n) => Number.isInteger(n)) ||
+            itemSlot < 0 ||
+            component < 0 ||
+            operation < 1
+        ) {
+            return false;
+        }
+        const s = snap();
+        if (s.bank_open !== true || s.bank_loaded !== true) return false;
+        const row = (s.bank || []).find(
+            (r) =>
+                r &&
+                r.id === id &&
+                r.slot === itemSlot &&
+                r.component_id === component,
+        );
+        if (!row) return false;
+        const ops = Array.isArray(row.ops) ? row.ops : [];
+        const action = ops[operation - 1];
+        if (!action || String(action).toLowerCase() === 'hidden') return false;
+        const generation = Number(s.bank_generation);
+        queue({
+            op: 'inv-button',
+            id,
+            slot: itemSlot,
+            component,
+            operation,
+            bank_generation:
+                Number.isFinite(generation) && generation >= 0 ? generation : 0,
+        });
+        return true;
+    },
 });

@@ -1307,6 +1307,41 @@ const INTERACT_VARIANTS: &[InteractVariant] = &[
         ],
     },
     InteractVariant {
+        op: "inv-button",
+        fields: &[
+            TsField {
+                name: "id",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "slot",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "component",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "operation",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "bank_generation",
+                ty: "number",
+                optional: true,
+                doc: None,
+            },
+        ],
+    },
+    InteractVariant {
         op: "close",
         fields: &[],
     },
