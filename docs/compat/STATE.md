@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 02:34 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 03:03 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -77,11 +77,44 @@ not a product behavior change.
   Keep those exit-1 receipts; do not classify them as gameplay/card defects.
 - Inventory-production source 58b7e6f7 passed Grok 4.5 review 1189. Its twenty
   earlier runtime passes are historical shared-target diagnostics. The isolated
-  a4157243 24-cell darts/herbs/gems requalification is underway.
+  a4157243 24-cell darts/herbs/gems requalification now passes: Bronze/Iron
+  darts, default/named herbs and gems, with exact IDs, positive XP and further
+  output; herbs/gems also deposit/restock. Core rows are PARTIAL pending full
+  supported branches and frontend acceptance.
 - Location/world fixtures 58ec089e passed same-card Grok 4.5 review 1195 with
-  independent empty-target checks. Root has frozen and built 50f2be8a (same
-  fixtures plus the layout correction) for the twenty live cells. Gnome plane
-  facts and radius-8 behavior remain explicit uncertainties to diagnose.
+  independent empty-target checks. Root froze and built 50f2be8a (same
+  fixtures plus the layout correction). All four default GnomeCourse cells
+  pass ordered log/ground-return/pipe and next-lap XP. DoorOpener fails on
+  settings.tile losing Tile methods; radius-8 old-catalog Gnome on both
+  revisions fails on missing Reachability.walkable. These are our mappings
+  to repair. Existing body-plane facts remain a documented limitation.
+
+## Current implementation and overnight routing (03:03 UTC)
+
+- Spell facts/casting f6b9ec4b passed actual Grok 4.5 review 1196/session
+  20260910_223536_ceec05 with an empty target. Root LIVE qualification remains
+  separate. PeriodicBank t_51452e47 is running as Grok 4.6; reviewed completion
+  releases DeathRecovery t_0c5ce97f.
+- Settings Tile t_701d17f4 is active as Sol after the operator clarified that
+  distanceTo must delegate Rust geometry. Root preserved and reclaimed the
+  earlier shape-only run, revised brief 57, then verified resumed run 1201
+  uses gpt-5.6-sol. Do not alter native distance policy for imported scripts.
+- Coordinate reachability design t_d49b087b completed as actual Grok 4.6 run
+  1199, commit cc57adca. It recommends posting compact bits from the existing
+  native flood, with no JS collision algorithm or per-read world copies.
+  Coordinate query implementation and same-card review are next. The separate
+  missing DirectNavigator.walkTo must also map to existing native walking;
+  foreign radius-8 re-sync remains a distinct source finding, not a pass.
+- Operator requested four more Grok implementation assignments and periodic
+  dispatch/usage checks for about eight hours. Queued t_79dfc132 autocast,
+  t_eeea20f0 hostile/duel facts, t_68de6f48 special controls and t_1bf9a22e
+  spellbook teleport now use profile grok46 defaults, with their existing
+  dependencies and same-card Grok 4.5 review unchanged. Briefs 34-37 are current.
+- The task heartbeat checks every 15 minutes until 2026-09-11 10:56 UTC
+  (06:56 Eastern). Hermes currently has no xai-oauth account-usage fetcher:
+  its quota result is unavailable, not zero. Track actual runs/token activity
+  and rate-limit failures honestly; the operator supplied the 35% estimate.
+  Continue useful authorized work as gates clear, not filler to consume quota.
 
 ## Accepted milestones
 

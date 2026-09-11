@@ -1,0 +1,84 @@
+
+running 1 test
+{"phase":"identity","revision":274,"profile":"local-274 · 127.0.0.1:43594 · revision 274","cache_id":"4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navpack","nav_sha256":"05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4","catalog_commit":"100adccc037d9f6898080e1cad58fcfc43364775","catalog_identity":"pre-289 frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"GnomeCourse","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/AgilityBot/AgilityBot.ts","source_sha256":"dee7c8885685724b0453097a0cf6a66d36a4d081e24157f29d35c742c518028f","compiled_sha256":"362ade4092203b516513739a42132b75695f8f8b336f63bae601a7ce64660c24","siblings":[],"settings":{"obstacles":"Log balance,Obstacle net,Tree branch,Balancing rope,Tree branch,Obstacle net,Obstacle pipe","searchRadius":8.0}},"account":"liverbc20a_0","engine_speed_ms":null}
+[host-play] slot liverbc20a_0: thread up
+274bot: loaded snapshot (4556 models, 336 anim records)
+[host-play] slot liverbc20a_0: handshake begin reconnect=false
+[host-play] slot liverbc20a_0: handshake ok
+[host-play] slot liverbc20a_0: queued mainland tele+setvar (scene 2)
+[host] slot liverbc20a_0: d_loop_us=11576 d_raster_us=0 d_observe_us=40836 max_observe_us=5200 d_paints=0 d_skips=50 d_ticks=5 window_ms=0
+[host-play] slot liverbc20a_0: handshake begin reconnect=true
+[host-play] slot liverbc20a_0: handshake ok
+[host] slot liverbc20a_0: d_loop_us=811 d_raster_us=0 d_observe_us=37262 max_observe_us=3326 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot liverbc20a_0: queued mainland tele+setvar (scene 2)
+{"phase":"baseline-after-preparation","scenario":"gnome_course_radius","account":"liverbc20a_0","observation":{"ingame":true,"scene_state":2,"player":"Liverbc20a 0","tile":[2474,3436,0],"tick":14,"items":{},"item_ids":{},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[]}}
+[script liverbc20a_0] start load
+{"phase":"start","account":"liverbc20a_0","count":1}
+[host] hitch liverbc20a_0: observe_us=76277 paints=0 skips=85 ticks=14
+[host] slot liverbc20a_0: d_loop_us=23192 d_raster_us=0 d_observe_us=165341 max_observe_us=76277 d_paints=0 d_skips=50 d_ticks=14 window_ms=8719
+[script liverbc20a_0] running agility course: [log balance -> obstacle net -> tree branch -> balancing rope -> tree branch -> obstacle net -> obstacle pipe] within 8 tiles
+[script liverbc20a_0] interact Loc { x: 2474, z: 3435, level: 0, action: "Walk-across" }
+[host] slot liverbc20a_0: d_loop_us=1697 d_raster_us=0 d_observe_us=70995 max_observe_us=7930 d_paints=0 d_skips=50 d_ticks=2 window_ms=1205
+[host] slot liverbc20a_0: d_loop_us=2143 d_raster_us=0 d_observe_us=72685 max_observe_us=9831 d_paints=0 d_skips=50 d_ticks=2 window_ms=1192
+[host] slot liverbc20a_0: d_loop_us=1985 d_raster_us=0 d_observe_us=68953 max_observe_us=9574 d_paints=0 d_skips=50 d_ticks=2 window_ms=1203
+[host] slot liverbc20a_0: d_loop_us=2099 d_raster_us=0 d_observe_us=89676 max_observe_us=15388 d_paints=0 d_skips=50 d_ticks=2 window_ms=1194
+[host] slot liverbc20a_0: d_loop_us=2378 d_raster_us=0 d_observe_us=97053 max_observe_us=9067 d_paints=0 d_skips=50 d_ticks=2 window_ms=1192
+[script liverbc20a_0] interact Loc { x: 2471, z: 3425, level: 0, action: "Climb-over" }
+[host] slot liverbc20a_0: d_loop_us=2286 d_raster_us=0 d_observe_us=78535 max_observe_us=7929 d_paints=0 d_skips=50 d_ticks=2 window_ms=1185
+[host] slot liverbc20a_0: d_loop_us=2099 d_raster_us=0 d_observe_us=79704 max_observe_us=8395 d_paints=0 d_skips=50 d_ticks=2 window_ms=1207
+[host] slot liverbc20a_0: d_loop_us=2423 d_raster_us=0 d_observe_us=85943 max_observe_us=8098 d_paints=0 d_skips=50 d_ticks=2 window_ms=1186
+[host] slot liverbc20a_0: d_loop_us=9167 d_raster_us=0 d_observe_us=85423 max_observe_us=8263 d_paints=0 d_skips=50 d_ticks=2 window_ms=1190
+[script liverbc20a_0] interact Loc { x: 2473, z: 3422, level: 1, action: "Climb" }
+[host] slot liverbc20a_0: d_loop_us=1751 d_raster_us=0 d_observe_us=41383 max_observe_us=1721 d_paints=0 d_skips=50 d_ticks=2 window_ms=1213
+[host] slot liverbc20a_0: d_loop_us=1754 d_raster_us=0 d_observe_us=62863 max_observe_us=9606 d_paints=0 d_skips=50 d_ticks=2 window_ms=1172
+[host] slot liverbc20a_0: d_loop_us=3067 d_raster_us=0 d_observe_us=42546 max_observe_us=2765 d_paints=0 d_skips=50 d_ticks=2 window_ms=1220
+[host] slot liverbc20a_0: d_loop_us=1699 d_raster_us=0 d_observe_us=43228 max_observe_us=2063 d_paints=0 d_skips=50 d_ticks=2 window_ms=1214
+[script liverbc20a_0] interact Loc { x: 2478, z: 3420, level: 2, action: "Walk-on" }
+[host] slot liverbc20a_0: d_loop_us=1150 d_raster_us=0 d_observe_us=29378 max_observe_us=1144 d_paints=0 d_skips=50 d_ticks=2 window_ms=1202
+[host] slot liverbc20a_0: d_loop_us=651 d_raster_us=0 d_observe_us=20194 max_observe_us=654 d_paints=0 d_skips=50 d_ticks=2 window_ms=1214
+[host] slot liverbc20a_0: d_loop_us=1728 d_raster_us=0 d_observe_us=58171 max_observe_us=4077 d_paints=0 d_skips=50 d_ticks=2 window_ms=1197
+[host] slot liverbc20a_0: d_loop_us=2493 d_raster_us=0 d_observe_us=62919 max_observe_us=5582 d_paints=0 d_skips=50 d_ticks=2 window_ms=1203
+[host] slot liverbc20a_0: d_loop_us=1917 d_raster_us=0 d_observe_us=61220 max_observe_us=5907 d_paints=0 d_skips=50 d_ticks=2 window_ms=1180
+[host] slot liverbc20a_0: d_loop_us=1876 d_raster_us=0 d_observe_us=68673 max_observe_us=3555 d_paints=0 d_skips=50 d_ticks=2 window_ms=1187
+[script liverbc20a_0] interact Loc { x: 2486, z: 3419, level: 2, action: "Climb-down" }
+[host] slot liverbc20a_0: d_loop_us=1729 d_raster_us=0 d_observe_us=46765 max_observe_us=1889 d_paints=0 d_skips=50 d_ticks=2 window_ms=1204
+[host] slot liverbc20a_0: d_loop_us=1667 d_raster_us=0 d_observe_us=49605 max_observe_us=4359 d_paints=0 d_skips=50 d_ticks=2 window_ms=1200
+[host] slot liverbc20a_0: d_loop_us=11102 d_raster_us=0 d_observe_us=87380 max_observe_us=15051 d_paints=0 d_skips=50 d_ticks=2 window_ms=1182
+[host] slot liverbc20a_0: d_loop_us=2270 d_raster_us=0 d_observe_us=89718 max_observe_us=8446 d_paints=0 d_skips=50 d_ticks=2 window_ms=1190
+[script liverbc20a_0] interact Loc { x: 2483, z: 3426, level: 0, action: "Climb-over" }
+[host] slot liverbc20a_0: d_loop_us=1944 d_raster_us=0 d_observe_us=78612 max_observe_us=8355 d_paints=0 d_skips=50 d_ticks=2 window_ms=1184
+[host] hitch liverbc20a_0: observe_us=16481 paints=0 skips=1313 ticks=64
+[host] slot liverbc20a_0: d_loop_us=1663 d_raster_us=0 d_observe_us=84361 max_observe_us=16481 d_paints=0 d_skips=50 d_ticks=2 window_ms=1190
+[host] slot liverbc20a_0: d_loop_us=2457 d_raster_us=0 d_observe_us=88462 max_observe_us=8162 d_paints=0 d_skips=50 d_ticks=2 window_ms=1187
+[host] slot liverbc20a_0: d_loop_us=1492 d_raster_us=0 d_observe_us=58799 max_observe_us=7906 d_paints=0 d_skips=50 d_ticks=2 window_ms=1184
+[script liverbc20a_0] interact Loc { x: 2484, z: 3431, level: 0, action: "Squeeze-through" }
+[host] slot liverbc20a_0: d_loop_us=1348 d_raster_us=0 d_observe_us=48272 max_observe_us=5039 d_paints=0 d_skips=50 d_ticks=2 window_ms=1192
+[host] slot liverbc20a_0: d_loop_us=1785 d_raster_us=0 d_observe_us=69355 max_observe_us=7700 d_paints=0 d_skips=50 d_ticks=2 window_ms=1203
+[host] slot liverbc20a_0: d_loop_us=2114 d_raster_us=0 d_observe_us=73721 max_observe_us=10796 d_paints=0 d_skips=50 d_ticks=2 window_ms=1209
+test catalog_boundary_live has been running for over 60 seconds
+[host] slot liverbc20a_0: d_loop_us=1971 d_raster_us=0 d_observe_us=67223 max_observe_us=3777 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+[host] slot liverbc20a_0: d_loop_us=2392 d_raster_us=0 d_observe_us=79069 max_observe_us=2928 d_paints=0 d_skips=50 d_ticks=2 window_ms=1183
+[host] slot liverbc20a_0: d_loop_us=1717 d_raster_us=0 d_observe_us=55624 max_observe_us=3983 d_paints=0 d_skips=50 d_ticks=2 window_ms=1203
+[host] slot liverbc20a_0: d_loop_us=1402 d_raster_us=0 d_observe_us=56157 max_observe_us=10502 d_paints=0 d_skips=50 d_ticks=2 window_ms=1178
+[host] slot liverbc20a_0: d_loop_us=2363 d_raster_us=0 d_observe_us=91316 max_observe_us=8009 d_paints=0 d_skips=50 d_ticks=2 window_ms=1184
+[host] slot liverbc20a_0: d_loop_us=2015 d_raster_us=0 d_observe_us=91894 max_observe_us=12762 d_paints=0 d_skips=50 d_ticks=2 window_ms=1205
+[script liverbc20a_0] lap 1 complete
+[script liverbc20a_0] interact ContinueDialog
+[host] slot liverbc20a_0: d_loop_us=1793 d_raster_us=0 d_observe_us=62049 max_observe_us=7090 d_paints=0 d_skips=50 d_ticks=2 window_ms=1193
+[script liverbc20a_0] course re-sync: step 0 (log balance) -> 6 (obstacle pipe)
+[script liverbc20a_0] interact Loc { x: 2484, z: 3435, level: 0, action: "Squeeze-through" }
+[host] slot liverbc20a_0: d_loop_us=1786 d_raster_us=0 d_observe_us=84958 max_observe_us=12447 d_paints=0 d_skips=50 d_ticks=2 window_ms=1192
+[host] slot liverbc20a_0: d_loop_us=1892 d_raster_us=0 d_observe_us=68142 max_observe_us=7116 d_paints=0 d_skips=50 d_ticks=2 window_ms=1206
+[host] slot liverbc20a_0: d_loop_us=2145 d_raster_us=0 d_observe_us=94098 max_observe_us=8161 d_paints=0 d_skips=50 d_ticks=2 window_ms=1194
+[host] slot liverbc20a_0: d_loop_us=2360 d_raster_us=0 d_observe_us=100942 max_observe_us=8237 d_paints=0 d_skips=50 d_ticks=2 window_ms=1179
+[host] slot liverbc20a_0: d_loop_us=1557 d_raster_us=0 d_observe_us=75088 max_observe_us=7791 d_paints=0 d_skips=50 d_ticks=2 window_ms=1189
+[host] slot liverbc20a_0: d_loop_us=1931 d_raster_us=0 d_observe_us=66725 max_observe_us=5935 d_paints=0 d_skips=50 d_ticks=2 window_ms=1182
+[host] slot liverbc20a_0: d_loop_us=2342 d_raster_us=0 d_observe_us=80366 max_observe_us=7559 d_paints=0 d_skips=50 d_ticks=2 window_ms=1198
+[host] slot liverbc20a_0: d_loop_us=1907 d_raster_us=0 d_observe_us=78212 max_observe_us=7980 d_paints=0 d_skips=50 d_ticks=2 window_ms=1193
+[host] slot liverbc20a_0: d_loop_us=2163 d_raster_us=0 d_observe_us=108300 max_observe_us=8537 d_paints=0 d_skips=50 d_ticks=2 window_ms=1201
+[host] slot liverbc20a_0: d_loop_us=2189 d_raster_us=0 d_observe_us=97778 max_observe_us=7264 d_paints=0 d_skips=50 d_ticks=2 window_ms=1189
+[host] slot liverbc20a_0: d_loop_us=2058 d_raster_us=0 d_observe_us=87080 max_observe_us=7680 d_paints=0 d_skips=50 d_ticks=2 window_ms=1196
+[host] slot liverbc20a_0: d_loop_us=2128 d_raster_us=0 d_observe_us=103003 max_observe_us=10690 d_paints=0 d_skips=50 d_ticks=2 window_ms=1171
+[host] slot liverbc20a_0: d_loop_us=2395 d_raster_us=0 d_observe_us=101244 max_observe_us=8212 d_paints=0 d_skips=50 d_ticks=2 window_ms=1190
+[script liverbc20a_0] tick 130: not impl: Reachability.walkable
+FAIL: catalog_boundary_live: script error: tick 130: not impl: Reachability.walkable
