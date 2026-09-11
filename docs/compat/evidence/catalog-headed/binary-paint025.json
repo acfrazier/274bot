@@ -1,0 +1,28 @@
+{
+  "mode": "native",
+  "command": [
+    "cargo",
+    "build",
+    "-p",
+    "panel",
+    "--example",
+    "catalog_watch",
+    "--message-format=json"
+  ],
+  "started_at": "2026-09-11T14:15:13.701493+00:00",
+  "elapsed_seconds": 11.287,
+  "exit_code": 0,
+  "isolated_build": true,
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target",
+  "target_started_empty": false,
+  "cache_reuse": "Completed exclusive root combat99 cache reused for exact cd49 source; no empty-started claim",
+  "host_commit": "025e31281aae64a3ec944bef532b42eabfd8dbd2",
+  "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "source_root": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/paint-ui-paint025",
+  "binary": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-watch-paint025",
+  "binary_sha256": "21f5d2a2b4fa116217b98259affc85bae3f04ec4f23905d276164d319acfc911",
+  "binary_bytes": 190296128,
+  "source_files_verified": 4515,
+  "elapsed_is_not_performance_measurement": true,
+  "cache_reuse_clarification": "Exact025e31281 source plus declared UI overlay. Historical cache label mentions cd49; no cd49 source claim. Source hashes were verified before and after build."
+}

@@ -1,0 +1,1530 @@
+{
+  "r274-bone-burier-100adccc-21446414.log": {
+    "path": "docs/compat/evidence/catalog-harness/live/r274-bone-burier-100adccc-21446414.log",
+    "slow_n": 84,
+    "slow_ticks": [
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63,
+      64,
+      66,
+      67,
+      68,
+      69,
+      70,
+      71,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82,
+      83,
+      84,
+      85,
+      86,
+      87,
+      88,
+      174,
+      175,
+      176,
+      177,
+      178,
+      179,
+      180,
+      181,
+      182,
+      183,
+      184,
+      185,
+      186,
+      187,
+      188,
+      189,
+      190,
+      191,
+      192,
+      194,
+      195,
+      196,
+      197,
+      198,
+      199,
+      200,
+      201,
+      202,
+      203,
+      204,
+      205,
+      206,
+      208
+    ],
+    "slow_ms": [
+      65.328791,
+      59.949917,
+      60.153041,
+      72.686792,
+      60.870792,
+      62.374041,
+      59.444208,
+      59.775708,
+      61.089417,
+      60.220667,
+      60.207792,
+      60.393292,
+      59.603084,
+      59.491917,
+      58.597542,
+      58.340834,
+      60.278042,
+      60.166542,
+      60.108417,
+      61.165542,
+      59.48325,
+      60.988792,
+      60.563208,
+      60.688167,
+      60.375375,
+      60.67275,
+      58.613375,
+      60.497541,
+      55.068708,
+      55.255916,
+      56.337375,
+      55.73725,
+      55.431667,
+      54.627333,
+      54.764584,
+      55.385167,
+      55.005834,
+      54.380542,
+      56.255416,
+      54.474875,
+      55.009667,
+      55.964708,
+      57.096709,
+      55.426292,
+      55.833084,
+      55.383042,
+      54.7415,
+      55.761916,
+      55.431833,
+      55.583583,
+      55.24125,
+      58.489458,
+      58.488209,
+      58.653833,
+      58.822542,
+      59.69775,
+      61.587792,
+      59.71275,
+      59.136208,
+      58.243833,
+      56.985,
+      60.141167,
+      58.056667,
+      58.9425,
+      59.928375,
+      57.223708,
+      60.140125,
+      59.7585,
+      59.006459,
+      59.27625,
+      51.979,
+      52.60825,
+      54.035208,
+      50.209375,
+      50.141375,
+      52.398125,
+      51.715125,
+      52.030291,
+      51.605333,
+      54.049459,
+      50.496833,
+      52.275,
+      53.436084,
+      63.403291
+    ],
+    "slow_min": 50.141375,
+    "slow_max": 72.686792,
+    "slow_median": 58.489458,
+    "slow_ge50": 84,
+    "slow_ge40_lt50": 0,
+    "first_slow": {
+      "line": 39,
+      "tick": 37,
+      "ms": 65.328791,
+      "text": "[script liverew0zc_0] slow tick 37: 65.328791ms"
+    },
+    "last_slow": {
+      "line": 662,
+      "tick": 208,
+      "ms": 63.403291,
+      "text": "[script liverew0zc_0] slow tick 208: 63.403291ms"
+    },
+    "nav_n": 153,
+    "nav_first": {
+      "line": 47,
+      "here": [
+        3222,
+        3219,
+        0
+      ],
+      "aim": [
+        3235,
+        3222,
+        0
+      ],
+      "radius": 2
+    },
+    "nav_last": {
+      "line": 654,
+      "here": [
+        3269,
+        3170,
+        0
+      ],
+      "aim": [
+        3269,
+        3170,
+        0
+      ],
+      "radius": 0
+    },
+    "nav_radii": [
+      0,
+      2
+    ],
+    "nav_last_radius0": {
+      "line": 654,
+      "here": [
+        3269,
+        3170,
+        0
+      ],
+      "aim": [
+        3269,
+        3170,
+        0
+      ],
+      "radius": 0
+    },
+    "follow_first": {
+      "line": 44,
+      "here": [
+        3220,
+        3220,
+        0
+      ]
+    },
+    "follow_last": {
+      "line": 655,
+      "here": [
+        3269,
+        3170,
+        0
+      ]
+    },
+    "interacts": [
+      {
+        "line": 19,
+        "kind": "Held",
+        "text": "[script liverew0zc_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 23,
+        "kind": "Held",
+        "text": "[script liverew0zc_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 26,
+        "kind": "Held",
+        "text": "[script liverew0zc_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 31,
+        "kind": "Held",
+        "text": "[script liverew0zc_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 36,
+        "kind": "Held",
+        "text": "[script liverew0zc_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 40,
+        "kind": "WalkNearestBank",
+        "text": "[script liverew0zc_0] interact WalkNearestBank"
+      },
+      {
+        "line": 413,
+        "kind": "WalkNearestBank",
+        "text": "[script liverew0zc_0] interact WalkNearestBank"
+      },
+      {
+        "line": 659,
+        "kind": "OpenBooth",
+        "text": "[script liverew0zc_0] interact OpenBooth { x: 3268, z: 3169, level: 0, id: 2213, name: None, action: None }"
+      },
+      {
+        "line": 671,
+        "kind": "Held",
+        "text": "[script liverew0zc_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      }
+    ],
+    "notes": [
+      {
+        "line": 14,
+        "text": "{\"phase\":\"baseline-after-preparation\",\"scenario\":\"bone_burier\",\"account\":\"liverew0zc_0\",\"observation\":{\"ingame\":true,\"scene_state\":2,\"player\":\"Liverew0zc 0\",\"tile\":[3220,3220,0],\"combat_level\":3,\"tick\":7,\"items\":{\"Bones\":5},\"item_ids\":{\"526\":5},\"bank\":{},\"bank_ids\":{},\"bank_open\":false,\"bank_loaded\""
+      },
+      {
+        "line": 18,
+        "text": "[script liverew0zc_0] BoneBurier \u2014 withdrawing and burying exact item 'Bones'"
+      },
+      {
+        "line": 19,
+        "text": "[script liverew0zc_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 20,
+        "text": "[shim-held] Bones Bury slot=0 -> sent"
+      },
+      {
+        "line": 23,
+        "text": "[script liverew0zc_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 24,
+        "text": "[shim-held] Bones Bury slot=1 -> sent"
+      },
+      {
+        "line": 26,
+        "text": "[script liverew0zc_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 27,
+        "text": "[shim-held] Bones Bury slot=2 -> sent"
+      },
+      {
+        "line": 31,
+        "text": "[script liverew0zc_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 32,
+        "text": "[shim-held] Bones Bury slot=3 -> sent"
+      },
+      {
+        "line": 36,
+        "text": "[script liverew0zc_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 37,
+        "text": "[shim-held] Bones Bury slot=4 -> sent"
+      },
+      {
+        "line": 40,
+        "text": "[script liverew0zc_0] interact WalkNearestBank"
+      },
+      {
+        "line": 410,
+        "text": "[script liverew0zc_0] could not open a bank \u2014 retrying"
+      },
+      {
+        "line": 413,
+        "text": "[script liverew0zc_0] interact WalkNearestBank"
+      },
+      {
+        "line": 666,
+        "text": "[shim-note] on=false sent"
+      },
+      {
+        "line": 671,
+        "text": "[script liverew0zc_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 672,
+        "text": "[shim-held] Bones Bury slot=0 -> sent"
+      },
+      {
+        "line": 676,
+        "text": "PASS: catalog_boundary_live: {\"scenario\":\"bone_burier\",\"runner\":\"Some(Evidence { scenario: \\\"bone_burier\\\", outcome: \\\"PASS\\\", predicate: \\\"stat_xp_gain(5)>=27\\\", ticks: 244, elapsed_ms: 135583, message: None, tile: Some([3269, 3169, 0]), inv: [InvRow { id: 526, name: Some(\\\"Bones\\\"), count: 1 }, In"
+      }
+    ]
+  },
+  "r274-bone-burier-8e7d965b-21446414.log": {
+    "path": "docs/compat/evidence/catalog-harness/live/r274-bone-burier-8e7d965b-21446414.log",
+    "slow_n": 87,
+    "slow_ticks": [
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63,
+      65,
+      66,
+      67,
+      68,
+      69,
+      70,
+      71,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82,
+      83,
+      84,
+      85,
+      86,
+      87,
+      173,
+      174,
+      175,
+      176,
+      177,
+      178,
+      179,
+      180,
+      181,
+      182,
+      183,
+      184,
+      185,
+      186,
+      187,
+      188,
+      189,
+      190,
+      191,
+      192,
+      194,
+      195,
+      196,
+      197,
+      198,
+      199,
+      200,
+      201,
+      202,
+      203,
+      204,
+      205,
+      206,
+      207,
+      208,
+      209
+    ],
+    "slow_ms": [
+      71.901084,
+      59.205167,
+      59.466375,
+      69.774209,
+      62.079875,
+      60.998625,
+      61.938958,
+      62.403292,
+      60.033041,
+      60.021083,
+      58.568917,
+      61.026,
+      60.569417,
+      62.79575,
+      59.050417,
+      61.44175,
+      59.451708,
+      61.025334,
+      60.108375,
+      61.467583,
+      61.228541,
+      62.758041,
+      58.995709,
+      60.398791,
+      58.775291,
+      59.695625,
+      60.261958,
+      60.280708,
+      55.097042,
+      54.386458,
+      55.434292,
+      55.538541,
+      55.676125,
+      56.693834,
+      55.136125,
+      55.6705,
+      55.388,
+      55.441834,
+      55.787709,
+      55.106584,
+      54.839375,
+      57.945375,
+      58.777708,
+      54.805416,
+      55.21575,
+      55.673417,
+      55.155458,
+      56.125042,
+      56.14225,
+      56.334583,
+      58.384083,
+      60.05825,
+      58.945333,
+      59.920875,
+      58.542417,
+      59.060042,
+      60.277333,
+      61.598166,
+      59.57425,
+      59.266959,
+      59.628375,
+      61.43775,
+      60.73975,
+      60.245083,
+      59.7385,
+      59.63175,
+      59.402625,
+      60.933583,
+      59.598,
+      60.269292,
+      60.6055,
+      53.115667,
+      54.180791,
+      54.1565,
+      50.22225,
+      54.228583,
+      53.584041,
+      51.716667,
+      50.529292,
+      53.954458,
+      51.219542,
+      52.182875,
+      53.305,
+      53.806916,
+      50.589042,
+      56.519167,
+      63.008834
+    ],
+    "slow_min": 50.22225,
+    "slow_max": 71.901084,
+    "slow_median": 59.050417,
+    "slow_ge50": 87,
+    "slow_ge40_lt50": 0,
+    "first_slow": {
+      "line": 44,
+      "tick": 36,
+      "ms": 71.901084,
+      "text": "[script livefkh0ft_0] slow tick 36: 71.901084ms"
+    },
+    "last_slow": {
+      "line": 670,
+      "tick": 209,
+      "ms": 63.008834,
+      "text": "[script livefkh0ft_0] slow tick 209: 63.008834ms"
+    },
+    "nav_n": 155,
+    "nav_first": {
+      "line": 51,
+      "here": [
+        3222,
+        3219,
+        0
+      ],
+      "aim": [
+        3235,
+        3222,
+        0
+      ],
+      "radius": 2
+    },
+    "nav_last": {
+      "line": 661,
+      "here": [
+        3269,
+        3170,
+        0
+      ],
+      "aim": [
+        3269,
+        3170,
+        0
+      ],
+      "radius": 0
+    },
+    "nav_radii": [
+      0,
+      2
+    ],
+    "nav_last_radius0": {
+      "line": 661,
+      "here": [
+        3269,
+        3170,
+        0
+      ],
+      "aim": [
+        3269,
+        3170,
+        0
+      ],
+      "radius": 0
+    },
+    "follow_first": {
+      "line": 49,
+      "here": [
+        3220,
+        3220,
+        0
+      ]
+    },
+    "follow_last": {
+      "line": 662,
+      "here": [
+        3269,
+        3170,
+        0
+      ]
+    },
+    "interacts": [
+      {
+        "line": 19,
+        "kind": "Held",
+        "text": "[script livefkh0ft_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 22,
+        "kind": "Held",
+        "text": "[script livefkh0ft_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 27,
+        "kind": "Held",
+        "text": "[script livefkh0ft_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 34,
+        "kind": "Held",
+        "text": "[script livefkh0ft_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 39,
+        "kind": "Held",
+        "text": "[script livefkh0ft_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 45,
+        "kind": "WalkNearestBank",
+        "text": "[script livefkh0ft_0] interact WalkNearestBank"
+      },
+      {
+        "line": 413,
+        "kind": "WalkNearestBank",
+        "text": "[script livefkh0ft_0] interact WalkNearestBank"
+      },
+      {
+        "line": 665,
+        "kind": "OpenBooth",
+        "text": "[script livefkh0ft_0] interact OpenBooth { x: 3268, z: 3169, level: 0, id: 2213, name: None, action: None }"
+      },
+      {
+        "line": 683,
+        "kind": "Held",
+        "text": "[script livefkh0ft_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      }
+    ],
+    "notes": [
+      {
+        "line": 14,
+        "text": "{\"phase\":\"baseline-after-preparation\",\"scenario\":\"bone_burier\",\"account\":\"livefkh0ft_0\",\"observation\":{\"ingame\":true,\"scene_state\":2,\"player\":\"Livefkh0ft 0\",\"tile\":[3220,3220,0],\"combat_level\":3,\"tick\":7,\"items\":{\"Bones\":5},\"item_ids\":{\"526\":5},\"bank\":{},\"bank_ids\":{},\"bank_open\":false,\"bank_loaded\""
+      },
+      {
+        "line": 18,
+        "text": "[script livefkh0ft_0] BoneBurier \u2014 withdrawing and burying exact item 'Bones'"
+      },
+      {
+        "line": 19,
+        "text": "[script livefkh0ft_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 20,
+        "text": "[shim-held] Bones Bury slot=0 -> sent"
+      },
+      {
+        "line": 22,
+        "text": "[script livefkh0ft_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 23,
+        "text": "[shim-held] Bones Bury slot=1 -> sent"
+      },
+      {
+        "line": 27,
+        "text": "[script livefkh0ft_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 28,
+        "text": "[shim-held] Bones Bury slot=2 -> sent"
+      },
+      {
+        "line": 34,
+        "text": "[script livefkh0ft_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 35,
+        "text": "[shim-held] Bones Bury slot=3 -> sent"
+      },
+      {
+        "line": 39,
+        "text": "[script livefkh0ft_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 40,
+        "text": "[shim-held] Bones Bury slot=4 -> sent"
+      },
+      {
+        "line": 45,
+        "text": "[script livefkh0ft_0] interact WalkNearestBank"
+      },
+      {
+        "line": 409,
+        "text": "[script livefkh0ft_0] could not open a bank \u2014 retrying"
+      },
+      {
+        "line": 413,
+        "text": "[script livefkh0ft_0] interact WalkNearestBank"
+      },
+      {
+        "line": 676,
+        "text": "[shim-note] on=false sent"
+      },
+      {
+        "line": 683,
+        "text": "[script livefkh0ft_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 684,
+        "text": "[shim-held] Bones Bury slot=0 -> sent"
+      },
+      {
+        "line": 687,
+        "text": "PASS: catalog_boundary_live: {\"scenario\":\"bone_burier\",\"runner\":\"Some(Evidence { scenario: \\\"bone_burier\\\", outcome: \\\"PASS\\\", predicate: \\\"stat_xp_gain(5)>=27\\\", ticks: 245, elapsed_ms: 135899, message: None, tile: Some([3269, 3169, 0]), inv: [InvRow { id: 526, name: Some(\\\"Bones\\\"), count: 1 }, In"
+      }
+    ]
+  },
+  "r289-bone-burier-100adccc-21446414.log": {
+    "path": "docs/compat/evidence/catalog-harness/live/r289-bone-burier-100adccc-21446414.log",
+    "slow_n": 80,
+    "slow_ticks": [
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63,
+      64,
+      65,
+      67,
+      68,
+      69,
+      70,
+      71,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82,
+      83,
+      84,
+      85,
+      86,
+      87,
+      88,
+      89,
+      175,
+      176,
+      177,
+      178,
+      179,
+      180,
+      181,
+      182,
+      183,
+      184,
+      185,
+      186,
+      187,
+      188,
+      189,
+      190,
+      191,
+      192,
+      193,
+      195,
+      197,
+      198,
+      199,
+      203,
+      204,
+      205,
+      206,
+      208,
+      209
+    ],
+    "slow_ms": [
+      63.906167,
+      59.231875,
+      60.143625,
+      62.633541,
+      58.404708,
+      58.215,
+      58.115916,
+      58.134041,
+      60.212583,
+      60.393083,
+      58.916667,
+      58.763291,
+      57.868208,
+      57.949208,
+      58.75375,
+      58.274291,
+      58.147583,
+      59.7565,
+      58.417084,
+      60.032792,
+      60.304959,
+      66.59825,
+      58.624917,
+      58.566125,
+      58.506833,
+      57.6765,
+      59.388041,
+      58.498417,
+      57.32975,
+      52.894334,
+      54.660125,
+      53.503834,
+      54.4915,
+      53.864708,
+      53.848792,
+      53.853833,
+      53.218875,
+      53.569333,
+      53.608708,
+      53.431167,
+      54.289875,
+      53.60225,
+      54.417875,
+      53.825625,
+      53.409917,
+      54.542333,
+      54.051375,
+      53.944,
+      53.487375,
+      53.950625,
+      54.263291,
+      57.759583,
+      57.612208,
+      57.340709,
+      58.930125,
+      57.028833,
+      57.156375,
+      57.776958,
+      56.863292,
+      58.421125,
+      57.984125,
+      58.127125,
+      56.997666,
+      57.056959,
+      56.675458,
+      58.282084,
+      56.758417,
+      57.687084,
+      57.836709,
+      58.806583,
+      50.131708,
+      50.878083,
+      50.027041,
+      52.356875,
+      50.924709,
+      50.345292,
+      50.750667,
+      51.809042,
+      60.74125,
+      61.228875
+    ],
+    "slow_min": 50.027041,
+    "slow_max": 66.59825,
+    "slow_median": 57.6765,
+    "slow_ge50": 80,
+    "slow_ge40_lt50": 0,
+    "first_slow": {
+      "line": 40,
+      "tick": 38,
+      "ms": 63.906167,
+      "text": "[script live8sl3gx_0] slow tick 38: 63.906167ms"
+    },
+    "last_slow": {
+      "line": 641,
+      "tick": 209,
+      "ms": 61.228875,
+      "text": "[script live8sl3gx_0] slow tick 209: 61.228875ms"
+    },
+    "nav_n": 153,
+    "nav_first": {
+      "line": 47,
+      "here": [
+        3222,
+        3219,
+        0
+      ],
+      "aim": [
+        3235,
+        3222,
+        0
+      ],
+      "radius": 2
+    },
+    "nav_last": {
+      "line": 632,
+      "here": [
+        3269,
+        3170,
+        0
+      ],
+      "aim": [
+        3269,
+        3170,
+        0
+      ],
+      "radius": 0
+    },
+    "nav_radii": [
+      0,
+      2
+    ],
+    "nav_last_radius0": {
+      "line": 632,
+      "here": [
+        3269,
+        3170,
+        0
+      ],
+      "aim": [
+        3269,
+        3170,
+        0
+      ],
+      "radius": 0
+    },
+    "follow_first": {
+      "line": 45,
+      "here": [
+        3220,
+        3220,
+        0
+      ]
+    },
+    "follow_last": {
+      "line": 633,
+      "here": [
+        3269,
+        3170,
+        0
+      ]
+    },
+    "interacts": [
+      {
+        "line": 19,
+        "kind": "Held",
+        "text": "[script live8sl3gx_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 24,
+        "kind": "Held",
+        "text": "[script live8sl3gx_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 28,
+        "kind": "Held",
+        "text": "[script live8sl3gx_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 33,
+        "kind": "Held",
+        "text": "[script live8sl3gx_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 36,
+        "kind": "Held",
+        "text": "[script live8sl3gx_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 41,
+        "kind": "WalkNearestBank",
+        "text": "[script live8sl3gx_0] interact WalkNearestBank"
+      },
+      {
+        "line": 408,
+        "kind": "WalkNearestBank",
+        "text": "[script live8sl3gx_0] interact WalkNearestBank"
+      },
+      {
+        "line": 636,
+        "kind": "OpenBooth",
+        "text": "[script live8sl3gx_0] interact OpenBooth { x: 3268, z: 3169, level: 0, id: 2213, name: None, action: None }"
+      },
+      {
+        "line": 650,
+        "kind": "Held",
+        "text": "[script live8sl3gx_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      }
+    ],
+    "notes": [
+      {
+        "line": 14,
+        "text": "{\"phase\":\"baseline-after-preparation\",\"scenario\":\"bone_burier\",\"account\":\"live8sl3gx_0\",\"observation\":{\"ingame\":true,\"scene_state\":2,\"player\":\"Live8sl3gx 0\",\"tile\":[3220,3220,0],\"combat_level\":3,\"tick\":6,\"items\":{\"Bones\":5},\"item_ids\":{\"526\":5},\"bank\":{},\"bank_ids\":{},\"bank_open\":false,\"bank_loaded\""
+      },
+      {
+        "line": 18,
+        "text": "[script live8sl3gx_0] BoneBurier \u2014 withdrawing and burying exact item 'Bones'"
+      },
+      {
+        "line": 19,
+        "text": "[script live8sl3gx_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 20,
+        "text": "[shim-held] Bones Bury slot=0 -> sent"
+      },
+      {
+        "line": 24,
+        "text": "[script live8sl3gx_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 25,
+        "text": "[shim-held] Bones Bury slot=1 -> sent"
+      },
+      {
+        "line": 28,
+        "text": "[script live8sl3gx_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 29,
+        "text": "[shim-held] Bones Bury slot=2 -> sent"
+      },
+      {
+        "line": 33,
+        "text": "[script live8sl3gx_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 34,
+        "text": "[shim-held] Bones Bury slot=3 -> sent"
+      },
+      {
+        "line": 36,
+        "text": "[script live8sl3gx_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 37,
+        "text": "[shim-held] Bones Bury slot=4 -> sent"
+      },
+      {
+        "line": 41,
+        "text": "[script live8sl3gx_0] interact WalkNearestBank"
+      },
+      {
+        "line": 405,
+        "text": "[script live8sl3gx_0] could not open a bank \u2014 retrying"
+      },
+      {
+        "line": 408,
+        "text": "[script live8sl3gx_0] interact WalkNearestBank"
+      },
+      {
+        "line": 645,
+        "text": "[shim-note] on=false sent"
+      },
+      {
+        "line": 650,
+        "text": "[script live8sl3gx_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 651,
+        "text": "[shim-held] Bones Bury slot=0 -> sent"
+      },
+      {
+        "line": 653,
+        "text": "PASS: catalog_boundary_live: {\"scenario\":\"bone_burier\",\"runner\":\"Some(Evidence { scenario: \\\"bone_burier\\\", outcome: \\\"PASS\\\", predicate: \\\"stat_xp_gain(5)>=27\\\", ticks: 240, elapsed_ms: 137661, message: None, tile: Some([3269, 3169, 0]), inv: [InvRow { id: 526, name: Some(\\\"Bones\\\"), count: 1 }, In"
+      }
+    ]
+  },
+  "r289-bone-burier-8e7d965b-21446414.log": {
+    "path": "docs/compat/evidence/catalog-harness/live/r289-bone-burier-8e7d965b-21446414.log",
+    "slow_n": 87,
+    "slow_ticks": [
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63,
+      65,
+      66,
+      67,
+      68,
+      69,
+      70,
+      71,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82,
+      83,
+      84,
+      85,
+      86,
+      87,
+      173,
+      174,
+      175,
+      176,
+      177,
+      178,
+      179,
+      180,
+      181,
+      182,
+      183,
+      184,
+      185,
+      186,
+      187,
+      188,
+      189,
+      190,
+      191,
+      192,
+      194,
+      195,
+      196,
+      197,
+      198,
+      199,
+      200,
+      201,
+      202,
+      203,
+      204,
+      205,
+      206,
+      207,
+      208,
+      209
+    ],
+    "slow_ms": [
+      60.124667,
+      61.910917,
+      59.575708,
+      64.378917,
+      59.656333,
+      58.996917,
+      59.301125,
+      58.692709,
+      63.030084,
+      61.433417,
+      61.340041,
+      58.781792,
+      59.038125,
+      58.840291,
+      58.409041,
+      59.366542,
+      59.176959,
+      59.470417,
+      58.678125,
+      59.325792,
+      58.414708,
+      58.75125,
+      58.371583,
+      58.517542,
+      58.659333,
+      58.422292,
+      58.433625,
+      58.270666,
+      55.134,
+      54.105,
+      56.3285,
+      55.4385,
+      54.840792,
+      55.79925,
+      54.468292,
+      54.0865,
+      54.107292,
+      54.561458,
+      54.085583,
+      54.513792,
+      54.694083,
+      56.916625,
+      57.860417,
+      57.294833,
+      54.958,
+      58.104,
+      54.331166,
+      54.958166,
+      55.431208,
+      56.852458,
+      55.328584,
+      58.733375,
+      58.736792,
+      58.83,
+      58.378792,
+      60.093958,
+      59.525459,
+      58.665125,
+      58.38275,
+      60.562833,
+      59.072084,
+      59.447375,
+      58.636792,
+      60.270834,
+      58.679208,
+      58.79875,
+      58.610375,
+      58.763917,
+      59.596625,
+      58.892375,
+      59.50975,
+      52.013667,
+      50.9555,
+      50.699208,
+      50.265292,
+      52.672959,
+      50.787042,
+      53.102834,
+      50.321083,
+      52.897875,
+      53.816958,
+      53.289916,
+      53.612792,
+      54.127375,
+      53.76575,
+      59.16225,
+      59.650458
+    ],
+    "slow_min": 50.265292,
+    "slow_max": 64.378917,
+    "slow_median": 58.422292,
+    "slow_ge50": 87,
+    "slow_ge40_lt50": 0,
+    "first_slow": {
+      "line": 40,
+      "tick": 36,
+      "ms": 60.124667,
+      "text": "[script livehrm041_0] slow tick 36: 60.124667ms"
+    },
+    "last_slow": {
+      "line": 641,
+      "tick": 209,
+      "ms": 59.650458,
+      "text": "[script livehrm041_0] slow tick 209: 59.650458ms"
+    },
+    "nav_n": 155,
+    "nav_first": {
+      "line": 47,
+      "here": [
+        3222,
+        3219,
+        0
+      ],
+      "aim": [
+        3235,
+        3222,
+        0
+      ],
+      "radius": 2
+    },
+    "nav_last": {
+      "line": 630,
+      "here": [
+        3269,
+        3170,
+        0
+      ],
+      "aim": [
+        3269,
+        3170,
+        0
+      ],
+      "radius": 0
+    },
+    "nav_radii": [
+      0,
+      2
+    ],
+    "nav_last_radius0": {
+      "line": 630,
+      "here": [
+        3269,
+        3170,
+        0
+      ],
+      "aim": [
+        3269,
+        3170,
+        0
+      ],
+      "radius": 0
+    },
+    "follow_first": {
+      "line": 45,
+      "here": [
+        3220,
+        3220,
+        0
+      ]
+    },
+    "follow_last": {
+      "line": 631,
+      "here": [
+        3269,
+        3170,
+        0
+      ]
+    },
+    "interacts": [
+      {
+        "line": 19,
+        "kind": "Held",
+        "text": "[script livehrm041_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 25,
+        "kind": "Held",
+        "text": "[script livehrm041_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 30,
+        "kind": "Held",
+        "text": "[script livehrm041_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 33,
+        "kind": "Held",
+        "text": "[script livehrm041_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 36,
+        "kind": "Held",
+        "text": "[script livehrm041_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 41,
+        "kind": "WalkNearestBank",
+        "text": "[script livehrm041_0] interact WalkNearestBank"
+      },
+      {
+        "line": 398,
+        "kind": "WalkNearestBank",
+        "text": "[script livehrm041_0] interact WalkNearestBank"
+      },
+      {
+        "line": 634,
+        "kind": "OpenBooth",
+        "text": "[script livehrm041_0] interact OpenBooth { x: 3268, z: 3169, level: 0, id: 2213, name: None, action: None }"
+      },
+      {
+        "line": 651,
+        "kind": "Held",
+        "text": "[script livehrm041_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      }
+    ],
+    "notes": [
+      {
+        "line": 14,
+        "text": "{\"phase\":\"baseline-after-preparation\",\"scenario\":\"bone_burier\",\"account\":\"livehrm041_0\",\"observation\":{\"ingame\":true,\"scene_state\":2,\"player\":\"Livehrm041 0\",\"tile\":[3220,3220,0],\"combat_level\":3,\"tick\":7,\"items\":{\"Bones\":5},\"item_ids\":{\"526\":5},\"bank\":{},\"bank_ids\":{},\"bank_open\":false,\"bank_loaded\""
+      },
+      {
+        "line": 18,
+        "text": "[script livehrm041_0] BoneBurier \u2014 withdrawing and burying exact item 'Bones'"
+      },
+      {
+        "line": 19,
+        "text": "[script livehrm041_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 20,
+        "text": "[shim-held] Bones Bury slot=0 -> sent"
+      },
+      {
+        "line": 25,
+        "text": "[script livehrm041_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 26,
+        "text": "[shim-held] Bones Bury slot=1 -> sent"
+      },
+      {
+        "line": 30,
+        "text": "[script livehrm041_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 31,
+        "text": "[shim-held] Bones Bury slot=2 -> sent"
+      },
+      {
+        "line": 33,
+        "text": "[script livehrm041_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 34,
+        "text": "[shim-held] Bones Bury slot=3 -> sent"
+      },
+      {
+        "line": 36,
+        "text": "[script livehrm041_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 37,
+        "text": "[shim-held] Bones Bury slot=4 -> sent"
+      },
+      {
+        "line": 41,
+        "text": "[script livehrm041_0] interact WalkNearestBank"
+      },
+      {
+        "line": 393,
+        "text": "[script livehrm041_0] could not open a bank \u2014 retrying"
+      },
+      {
+        "line": 398,
+        "text": "[script livehrm041_0] interact WalkNearestBank"
+      },
+      {
+        "line": 646,
+        "text": "[shim-note] on=false sent"
+      },
+      {
+        "line": 651,
+        "text": "[script livehrm041_0] interact Held { name: \"Bones\", action: \"Bury\" }"
+      },
+      {
+        "line": 652,
+        "text": "[shim-held] Bones Bury slot=0 -> sent"
+      },
+      {
+        "line": 654,
+        "text": "PASS: catalog_boundary_live: {\"scenario\":\"bone_burier\",\"runner\":\"Some(Evidence { scenario: \\\"bone_burier\\\", outcome: \\\"PASS\\\", predicate: \\\"stat_xp_gain(5)>=27\\\", ticks: 245, elapsed_ms: 137691, message: None, tile: Some([3269, 3169, 0]), inv: [InvRow { id: 526, name: Some(\\\"Bones\\\"), count: 1 }, In"
+      }
+    ]
+  }
+}

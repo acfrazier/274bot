@@ -1,0 +1,265 @@
+
+running 1 test
+{"phase":"identity","revision":274,"profile":"local-274 · 127.0.0.1:43594 · revision 274","cache_id":"4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navpack","nav_sha256":"05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4","catalog_commit":"8e7d965be2071d6ec65c3265e12af797082d720a","catalog_identity":"289-updated frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"MossGiant","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a/src/bot/scripts/MossGiant/MossGiant.ts","source_sha256":"202ee1216b46a1c5eca0206772b4b3c78c9baf1205aad36f360e677efc0d22b5","compiled_sha256":"e9305f115f7ab1d11391cf4224b229c0936118717f700d0a30b0074edf245010","siblings":[],"settings":{"combatStyle":"melee","meleeStyle":"strength","staff":"Staff of air","spell":"Wind Strike","runesWithdraw":150.0,"bow":"Maple shortbow","rangeStyle":"rapid","ammo":"Iron arrow","ammoWithdraw":500.0,"foodWithdraw":20.0,"panicHp":25.0,"bankCommonJunk":true,"buryBones":false}},"account":"live3rkhxl_0","engine_speed_ms":null}
+[host-play] slot live3rkhxl_0: thread up
+274bot: loaded snapshot (4556 models, 336 anim records)
+[host-play] slot live3rkhxl_0: handshake begin reconnect=false
+[host-play] slot live3rkhxl_0: handshake ok
+[host-play] slot live3rkhxl_0: queued mainland tele+setvar (scene 2)
+[host] slot live3rkhxl_0: d_loop_us=15472 d_raster_us=0 d_observe_us=54553 max_observe_us=6355 d_paints=0 d_skips=50 d_ticks=5 window_ms=0
+[host-play] slot live3rkhxl_0: handshake begin reconnect=true
+[host-play] slot live3rkhxl_0: handshake ok
+[host] slot live3rkhxl_0: d_loop_us=1064 d_raster_us=0 d_observe_us=46216 max_observe_us=4603 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot live3rkhxl_0: queued mainland tele+setvar (scene 2)
+{"phase":"baseline-after-preparation","scenario":"moss_giant","account":"live3rkhxl_0","observation":{"ingame":true,"scene_state":2,"player":"Live3rkhxl 0","tile":[2553,3406,0],"combat_level":36,"tick":22,"items":{"Adamant scimitar":1,"Lobster":10},"item_ids":{"379":10,"1331":1},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":40,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":40,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":40,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":37224,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":37224,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":37224,"thieving":0,"woodcutting":0},"varps":{"309":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[],"npc_facts":[{"index":5155,"name":"Moss giant","health":0,"total_health":0,"animation":-1,"in_combat":false,"targeting_local":false,"tile":[2550,3408,0],"distance":3},{"index":5156,"name":"Moss giant","health":0,"total_health":0,"animation":-1,"in_combat":false,"targeting_local":false,"tile":[2553,3400,0],"distance":6},{"index":5157,"name":"Moss giant","health":0,"total_health":0,"animation":-1,"in_combat":false,"targeting_local":false,"tile":[2554,3408,0],"distance":2}],"ground_loot":[],"local_in_combat":false,"local_target_npc":null,"local_health":0,"local_animation":-1,"equipment_ids":{},"main_modal":-1,"widget_ids":[3213,3214]}}
+[script live3rkhxl_0] start load
+{"phase":"start","account":"live3rkhxl_0","count":1}
+[host] hitch live3rkhxl_0: observe_us=87906 paints=0 skips=94 ticks=22
+[host] slot live3rkhxl_0: d_loop_us=26808 d_raster_us=0 d_observe_us=198792 max_observe_us=87906 d_paints=0 d_skips=50 d_ticks=22 window_ms=13312
+[host] hitch live3rkhxl_0: observe_us=17086 paints=0 skips=118 ticks=24
+[script live3rkhxl_0] MossGiant — style melee (strength), food 'Lobster' (smart-eat, panic<25%), safespot (2553, 3406, 0), bank (2615, 3332, 0)
+[script live3rkhxl_0] interact IfButton { component_id: 5862 }
+[host] hitch live3rkhxl_0: observe_us=16147 paints=0 skips=143 ticks=25
+[host] slot live3rkhxl_0: d_loop_us=1549 d_raster_us=0 d_observe_us=94914 max_observe_us=17086 d_paints=0 d_skips=50 d_ticks=2 window_ms=1189
+[script live3rkhxl_0] interact Npc { name: "Moss giant", action: "Attack", index: Some(5155) }
+[host] slot live3rkhxl_0: d_loop_us=1347 d_raster_us=0 d_observe_us=76477 max_observe_us=14001 d_paints=0 d_skips=50 d_ticks=2 window_ms=1180
+[host] hitch live3rkhxl_0: observe_us=26421 paints=0 skips=219 ticks=28
+[host] slot live3rkhxl_0: d_loop_us=1636 d_raster_us=0 d_observe_us=97124 max_observe_us=26421 d_paints=0 d_skips=50 d_ticks=2 window_ms=1186
+[script live3rkhxl_0] interact Npc { name: "Moss giant", action: "Attack", index: Some(5155) }
+[host] slot live3rkhxl_0: d_loop_us=1553 d_raster_us=0 d_observe_us=79897 max_observe_us=14621 d_paints=0 d_skips=50 d_ticks=2 window_ms=1186
+[host] slot live3rkhxl_0: d_loop_us=1848 d_raster_us=0 d_observe_us=85631 max_observe_us=12877 d_paints=0 d_skips=50 d_ticks=2 window_ms=1183
+[host] hitch live3rkhxl_0: observe_us=17081 paints=0 skips=372 ticks=34
+[host] hitch live3rkhxl_0: observe_us=16103 paints=0 skips=397 ticks=35
+[host] slot live3rkhxl_0: d_loop_us=1878 d_raster_us=0 d_observe_us=89024 max_observe_us=17081 d_paints=0 d_skips=50 d_ticks=2 window_ms=1178
+[host] slot live3rkhxl_0: d_loop_us=1618 d_raster_us=0 d_observe_us=79820 max_observe_us=15408 d_paints=0 d_skips=50 d_ticks=2 window_ms=1187
+[host] hitch live3rkhxl_0: observe_us=18125 paints=0 skips=472 ticks=38
+[host] slot live3rkhxl_0: d_loop_us=1414 d_raster_us=0 d_observe_us=83554 max_observe_us=18125 d_paints=0 d_skips=50 d_ticks=2 window_ms=1199
+[host] slot live3rkhxl_0: d_loop_us=1347 d_raster_us=0 d_observe_us=66205 max_observe_us=12684 d_paints=0 d_skips=50 d_ticks=2 window_ms=1182
+[host] hitch live3rkhxl_0: observe_us=16119 paints=0 skips=599 ticks=43
+[host] slot live3rkhxl_0: d_loop_us=1428 d_raster_us=0 d_observe_us=84373 max_observe_us=16119 d_paints=0 d_skips=50 d_ticks=2 window_ms=1206
+[host] slot live3rkhxl_0: d_loop_us=1859 d_raster_us=0 d_observe_us=78290 max_observe_us=14677 d_paints=0 d_skips=50 d_ticks=2 window_ms=1195
+[host] hitch live3rkhxl_0: observe_us=18720 paints=0 skips=673 ticks=46
+[host] slot live3rkhxl_0: d_loop_us=1303 d_raster_us=0 d_observe_us=76205 max_observe_us=18720 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+[host] slot live3rkhxl_0: d_loop_us=1395 d_raster_us=0 d_observe_us=73830 max_observe_us=15276 d_paints=0 d_skips=50 d_ticks=2 window_ms=1202
+[host] hitch live3rkhxl_0: observe_us=16441 paints=0 skips=773 ticks=50
+[host] slot live3rkhxl_0: d_loop_us=1731 d_raster_us=0 d_observe_us=90564 max_observe_us=16441 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+[host] hitch live3rkhxl_0: observe_us=16585 paints=0 skips=825 ticks=52
+[host] slot live3rkhxl_0: d_loop_us=1777 d_raster_us=0 d_observe_us=76168 max_observe_us=16585 d_paints=0 d_skips=50 d_ticks=1 window_ms=1146
+[host] hitch live3rkhxl_0: observe_us=16727 paints=0 skips=851 ticks=53
+[host] slot live3rkhxl_0: d_loop_us=1824 d_raster_us=0 d_observe_us=75052 max_observe_us=16727 d_paints=0 d_skips=50 d_ticks=2 window_ms=1169
+[host] hitch live3rkhxl_0: observe_us=18727 paints=0 skips=902 ticks=55
+[host] hitch live3rkhxl_0: observe_us=17438 paints=0 skips=927 ticks=56
+[host] slot live3rkhxl_0: d_loop_us=1441 d_raster_us=0 d_observe_us=98608 max_observe_us=18727 d_paints=0 d_skips=50 d_ticks=2 window_ms=1177
+[host] hitch live3rkhxl_0: observe_us=18213 paints=0 skips=978 ticks=58
+[host] slot live3rkhxl_0: d_loop_us=1670 d_raster_us=0 d_observe_us=108526 max_observe_us=18213 d_paints=0 d_skips=50 d_ticks=2 window_ms=1199
+[host] slot live3rkhxl_0: d_loop_us=1872 d_raster_us=0 d_observe_us=79847 max_observe_us=15721 d_paints=0 d_skips=50 d_ticks=2 window_ms=1184
+[host] slot live3rkhxl_0: d_loop_us=1949 d_raster_us=0 d_observe_us=77595 max_observe_us=12511 d_paints=0 d_skips=50 d_ticks=2 window_ms=1195
+[host] hitch live3rkhxl_0: observe_us=18157 paints=0 skips=1104 ticks=63
+[host] slot live3rkhxl_0: d_loop_us=1509 d_raster_us=0 d_observe_us=80891 max_observe_us=18157 d_paints=0 d_skips=50 d_ticks=2 window_ms=1207
+[host] hitch live3rkhxl_0: observe_us=16781 paints=0 skips=1154 ticks=65
+[host] slot live3rkhxl_0: d_loop_us=1622 d_raster_us=0 d_observe_us=90997 max_observe_us=16781 d_paints=0 d_skips=50 d_ticks=2 window_ms=1193
+[script live3rkhxl_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=1 -> sent
+[host] slot live3rkhxl_0: d_loop_us=1492 d_raster_us=0 d_observe_us=77961 max_observe_us=15559 d_paints=0 d_skips=50 d_ticks=2 window_ms=1179
+[host] hitch live3rkhxl_0: observe_us=19539 paints=0 skips=1255 ticks=69
+[host] slot live3rkhxl_0: d_loop_us=1494 d_raster_us=0 d_observe_us=81658 max_observe_us=19539 d_paints=0 d_skips=50 d_ticks=2 window_ms=1192
+[host] hitch live3rkhxl_0: observe_us=16455 paints=0 skips=1330 ticks=72
+[host] slot live3rkhxl_0: d_loop_us=1680 d_raster_us=0 d_observe_us=84839 max_observe_us=16455 d_paints=0 d_skips=50 d_ticks=2 window_ms=1180
+[host] hitch live3rkhxl_0: observe_us=17621 paints=0 skips=1356 ticks=73
+[host] slot live3rkhxl_0: d_loop_us=1656 d_raster_us=0 d_observe_us=96024 max_observe_us=17621 d_paints=0 d_skips=50 d_ticks=2 window_ms=1194
+test catalog_boundary_live has been running for over 60 seconds
+[host] slot live3rkhxl_0: d_loop_us=1950 d_raster_us=0 d_observe_us=83030 max_observe_us=14830 d_paints=0 d_skips=50 d_ticks=2 window_ms=1193
+[host] hitch live3rkhxl_0: observe_us=16337 paints=0 skips=1481 ticks=78
+[host] slot live3rkhxl_0: d_loop_us=1449 d_raster_us=0 d_observe_us=86400 max_observe_us=16337 d_paints=0 d_skips=50 d_ticks=2 window_ms=1202
+[host] hitch live3rkhxl_0: observe_us=16308 paints=0 skips=1531 ticks=80
+[host] slot live3rkhxl_0: d_loop_us=1538 d_raster_us=0 d_observe_us=74622 max_observe_us=16308 d_paints=0 d_skips=50 d_ticks=2 window_ms=1207
+[host] hitch live3rkhxl_0: observe_us=16080 paints=0 skips=1556 ticks=81
+[script live3rkhxl_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=2 -> sent
+[host] slot live3rkhxl_0: d_loop_us=1569 d_raster_us=0 d_observe_us=85456 max_observe_us=16080 d_paints=0 d_skips=50 d_ticks=2 window_ms=1202
+[host] slot live3rkhxl_0: d_loop_us=1529 d_raster_us=0 d_observe_us=82335 max_observe_us=15564 d_paints=0 d_skips=50 d_ticks=2 window_ms=1194
+[host] hitch live3rkhxl_0: observe_us=19166 paints=0 skips=1681 ticks=86
+[host] slot live3rkhxl_0: d_loop_us=1961 d_raster_us=0 d_observe_us=96769 max_observe_us=19166 d_paints=0 d_skips=50 d_ticks=2 window_ms=1196
+[host] slot live3rkhxl_0: d_loop_us=1500 d_raster_us=0 d_observe_us=86216 max_observe_us=15079 d_paints=0 d_skips=50 d_ticks=2 window_ms=1171
+[host] slot live3rkhxl_0: d_loop_us=1355 d_raster_us=0 d_observe_us=64754 max_observe_us=13331 d_paints=0 d_skips=50 d_ticks=2 window_ms=1207
+[host] hitch live3rkhxl_0: observe_us=16342 paints=0 skips=1832 ticks=92
+[host] slot live3rkhxl_0: d_loop_us=1640 d_raster_us=0 d_observe_us=97546 max_observe_us=16342 d_paints=0 d_skips=50 d_ticks=2 window_ms=1180
+[host] hitch live3rkhxl_0: observe_us=16894 paints=0 skips=1884 ticks=94
+[host] slot live3rkhxl_0: d_loop_us=1984 d_raster_us=0 d_observe_us=94660 max_observe_us=16894 d_paints=0 d_skips=50 d_ticks=2 window_ms=1168
+[host] slot live3rkhxl_0: d_loop_us=1575 d_raster_us=0 d_observe_us=79071 max_observe_us=15545 d_paints=0 d_skips=50 d_ticks=2 window_ms=1193
+[host] hitch live3rkhxl_0: observe_us=18280 paints=0 skips=1959 ticks=97
+[host] slot live3rkhxl_0: d_loop_us=1411 d_raster_us=0 d_observe_us=84878 max_observe_us=18280 d_paints=0 d_skips=50 d_ticks=2 window_ms=1197
+[host] hitch live3rkhxl_0: observe_us=16324 paints=0 skips=2009 ticks=99
+[host] slot live3rkhxl_0: d_loop_us=1415 d_raster_us=0 d_observe_us=90376 max_observe_us=16324 d_paints=0 d_skips=50 d_ticks=2 window_ms=1197
+[host] slot live3rkhxl_0: d_loop_us=1428 d_raster_us=0 d_observe_us=80317 max_observe_us=15566 d_paints=0 d_skips=50 d_ticks=2 window_ms=1176
+[host] hitch live3rkhxl_0: observe_us=16888 paints=0 skips=2136 ticks=104
+[host] slot live3rkhxl_0: d_loop_us=1738 d_raster_us=0 d_observe_us=91934 max_observe_us=16888 d_paints=0 d_skips=50 d_ticks=2 window_ms=1168
+[host] hitch live3rkhxl_0: observe_us=16009 paints=0 skips=2187 ticks=106
+[host] slot live3rkhxl_0: d_loop_us=1294 d_raster_us=0 d_observe_us=84290 max_observe_us=16009 d_paints=0 d_skips=50 d_ticks=2 window_ms=1192
+[host] hitch live3rkhxl_0: observe_us=16129 paints=0 skips=2237 ticks=108
+[host] slot live3rkhxl_0: d_loop_us=1370 d_raster_us=0 d_observe_us=83306 max_observe_us=16129 d_paints=0 d_skips=50 d_ticks=2 window_ms=1204
+[script live3rkhxl_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=3 -> sent
+[host] slot live3rkhxl_0: d_loop_us=1603 d_raster_us=0 d_observe_us=75580 max_observe_us=15887 d_paints=0 d_skips=50 d_ticks=2 window_ms=1210
+[host] hitch live3rkhxl_0: observe_us=18958 paints=0 skips=2312 ticks=111
+[host] slot live3rkhxl_0: d_loop_us=2018 d_raster_us=0 d_observe_us=105608 max_observe_us=18958 d_paints=0 d_skips=50 d_ticks=2 window_ms=1183
+[host] hitch live3rkhxl_0: observe_us=16367 paints=0 skips=2362 ticks=113
+[host] hitch live3rkhxl_0: observe_us=17759 paints=0 skips=2387 ticks=114
+[host] slot live3rkhxl_0: d_loop_us=1320 d_raster_us=0 d_observe_us=98224 max_observe_us=17759 d_paints=0 d_skips=50 d_ticks=2 window_ms=1199
+[host] slot live3rkhxl_0: d_loop_us=1464 d_raster_us=0 d_observe_us=77809 max_observe_us=14851 d_paints=0 d_skips=50 d_ticks=2 window_ms=1199
+[host] slot live3rkhxl_0: d_loop_us=1271 d_raster_us=0 d_observe_us=98486 max_observe_us=15694 d_paints=0 d_skips=50 d_ticks=2 window_ms=1197
+[host] slot live3rkhxl_0: d_loop_us=2123 d_raster_us=0 d_observe_us=99989 max_observe_us=15539 d_paints=0 d_skips=50 d_ticks=2 window_ms=1185
+[host] hitch live3rkhxl_0: observe_us=16176 paints=0 skips=2588 ticks=122
+[host] slot live3rkhxl_0: d_loop_us=1329 d_raster_us=0 d_observe_us=92855 max_observe_us=16176 d_paints=0 d_skips=50 d_ticks=2 window_ms=1185
+[host] slot live3rkhxl_0: d_loop_us=1162 d_raster_us=0 d_observe_us=58496 max_observe_us=14661 d_paints=0 d_skips=50 d_ticks=2 window_ms=1214
+[host] slot live3rkhxl_0: d_loop_us=667 d_raster_us=0 d_observe_us=33881 max_observe_us=7096 d_paints=0 d_skips=50 d_ticks=2 window_ms=1225
+[host] slot live3rkhxl_0: d_loop_us=653 d_raster_us=0 d_observe_us=35205 max_observe_us=7546 d_paints=0 d_skips=50 d_ticks=2 window_ms=1224
+[host] slot live3rkhxl_0: d_loop_us=635 d_raster_us=0 d_observe_us=34707 max_observe_us=7215 d_paints=0 d_skips=50 d_ticks=2 window_ms=1232
+[host] slot live3rkhxl_0: d_loop_us=682 d_raster_us=0 d_observe_us=35388 max_observe_us=7471 d_paints=0 d_skips=50 d_ticks=2 window_ms=1232
+[host] slot live3rkhxl_0: d_loop_us=701 d_raster_us=0 d_observe_us=39350 max_observe_us=8575 d_paints=0 d_skips=50 d_ticks=2 window_ms=1216
+[script live3rkhxl_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=4 -> sent
+[host] slot live3rkhxl_0: d_loop_us=1033 d_raster_us=0 d_observe_us=50435 max_observe_us=7377 d_paints=0 d_skips=50 d_ticks=2 window_ms=1211
+[host] slot live3rkhxl_0: d_loop_us=1765 d_raster_us=0 d_observe_us=77299 max_observe_us=13611 d_paints=0 d_skips=50 d_ticks=2 window_ms=1189
+[host] hitch live3rkhxl_0: observe_us=16087 paints=0 skips=3007 ticks=139
+[host] hitch live3rkhxl_0: observe_us=16240 paints=0 skips=3033 ticks=140
+[host] slot live3rkhxl_0: d_loop_us=1854 d_raster_us=0 d_observe_us=92909 max_observe_us=16240 d_paints=0 d_skips=50 d_ticks=2 window_ms=1189
+[host] hitch live3rkhxl_0: observe_us=18110 paints=0 skips=3083 ticks=142
+[host] slot live3rkhxl_0: d_loop_us=2809 d_raster_us=0 d_observe_us=103900 max_observe_us=18110 d_paints=0 d_skips=50 d_ticks=2 window_ms=1184
+[host] hitch live3rkhxl_0: observe_us=16413 paints=0 skips=3109 ticks=143
+[host] hitch live3rkhxl_0: observe_us=18356 paints=0 skips=3134 ticks=144
+[host] slot live3rkhxl_0: d_loop_us=2284 d_raster_us=0 d_observe_us=106511 max_observe_us=18356 d_paints=0 d_skips=50 d_ticks=2 window_ms=1171
+[host] slot live3rkhxl_0: d_loop_us=1812 d_raster_us=0 d_observe_us=95910 max_observe_us=15846 d_paints=0 d_skips=50 d_ticks=2 window_ms=1181
+[host] slot live3rkhxl_0: d_loop_us=1716 d_raster_us=0 d_observe_us=102464 max_observe_us=15862 d_paints=0 d_skips=50 d_ticks=2 window_ms=1194
+[host] slot live3rkhxl_0: d_loop_us=1789 d_raster_us=0 d_observe_us=99228 max_observe_us=14501 d_paints=0 d_skips=50 d_ticks=2 window_ms=1188
+[host] hitch live3rkhxl_0: observe_us=18098 paints=0 skips=3337 ticks=152
+[host] slot live3rkhxl_0: d_loop_us=1110 d_raster_us=0 d_observe_us=68923 max_observe_us=18098 d_paints=0 d_skips=50 d_ticks=2 window_ms=1181
+[script live3rkhxl_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=5 -> sent
+[host] hitch live3rkhxl_0: observe_us=18188 paints=0 skips=3387 ticks=154
+[host] slot live3rkhxl_0: d_loop_us=1928 d_raster_us=0 d_observe_us=101600 max_observe_us=18188 d_paints=0 d_skips=50 d_ticks=2 window_ms=1199
+[host] hitch live3rkhxl_0: observe_us=16017 paints=0 skips=3437 ticks=156
+[host] slot live3rkhxl_0: d_loop_us=1651 d_raster_us=0 d_observe_us=96981 max_observe_us=16017 d_paints=0 d_skips=50 d_ticks=2 window_ms=1195
+[host] hitch live3rkhxl_0: observe_us=16218 paints=0 skips=3462 ticks=157
+[host] slot live3rkhxl_0: d_loop_us=1749 d_raster_us=0 d_observe_us=118770 max_observe_us=16218 d_paints=0 d_skips=50 d_ticks=2 window_ms=1164
+[host] slot live3rkhxl_0: d_loop_us=1384 d_raster_us=0 d_observe_us=77374 max_observe_us=7668 d_paints=0 d_skips=50 d_ticks=2 window_ms=1151
+[host] hitch live3rkhxl_0: observe_us=16799 paints=0 skips=3592 ticks=162
+[host] slot live3rkhxl_0: d_loop_us=2031 d_raster_us=0 d_observe_us=97626 max_observe_us=16799 d_paints=0 d_skips=50 d_ticks=2 window_ms=1147
+[host] slot live3rkhxl_0: d_loop_us=2170 d_raster_us=0 d_observe_us=104369 max_observe_us=15291 d_paints=0 d_skips=50 d_ticks=2 window_ms=1182
+[host] slot live3rkhxl_0: d_loop_us=1870 d_raster_us=0 d_observe_us=96068 max_observe_us=13275 d_paints=0 d_skips=50 d_ticks=2 window_ms=1189
+[host] slot live3rkhxl_0: d_loop_us=2270 d_raster_us=0 d_observe_us=89776 max_observe_us=14673 d_paints=0 d_skips=50 d_ticks=2 window_ms=1177
+[host] hitch live3rkhxl_0: observe_us=17939 paints=0 skips=3770 ticks=169
+[host] slot live3rkhxl_0: d_loop_us=1759 d_raster_us=0 d_observe_us=75614 max_observe_us=17939 d_paints=0 d_skips=50 d_ticks=2 window_ms=1184
+[host] slot live3rkhxl_0: d_loop_us=1914 d_raster_us=0 d_observe_us=76692 max_observe_us=12029 d_paints=0 d_skips=50 d_ticks=2 window_ms=1180
+[host] slot live3rkhxl_0: d_loop_us=2134 d_raster_us=0 d_observe_us=87521 max_observe_us=15489 d_paints=0 d_skips=50 d_ticks=2 window_ms=1178
+[host] slot live3rkhxl_0: d_loop_us=1803 d_raster_us=0 d_observe_us=78129 max_observe_us=15176 d_paints=0 d_skips=50 d_ticks=2 window_ms=1178
+[host] slot live3rkhxl_0: d_loop_us=1996 d_raster_us=0 d_observe_us=74326 max_observe_us=14050 d_paints=0 d_skips=50 d_ticks=2 window_ms=1181
+[host] slot live3rkhxl_0: d_loop_us=1742 d_raster_us=0 d_observe_us=62086 max_observe_us=11569 d_paints=0 d_skips=50 d_ticks=2 window_ms=1173
+[host] slot live3rkhxl_0: d_loop_us=2069 d_raster_us=0 d_observe_us=78618 max_observe_us=15287 d_paints=0 d_skips=50 d_ticks=1 window_ms=1164
+[host] slot live3rkhxl_0: d_loop_us=2018 d_raster_us=0 d_observe_us=87730 max_observe_us=14840 d_paints=0 d_skips=50 d_ticks=2 window_ms=1167
+[host] slot live3rkhxl_0: d_loop_us=1876 d_raster_us=0 d_observe_us=80826 max_observe_us=14759 d_paints=0 d_skips=50 d_ticks=2 window_ms=1150
+[host] slot live3rkhxl_0: d_loop_us=1520 d_raster_us=0 d_observe_us=68866 max_observe_us=11378 d_paints=0 d_skips=50 d_ticks=2 window_ms=1162
+[host] hitch live3rkhxl_0: observe_us=17235 paints=0 skips=4256 ticks=188
+[host] slot live3rkhxl_0: d_loop_us=1763 d_raster_us=0 d_observe_us=86110 max_observe_us=17235 d_paints=0 d_skips=50 d_ticks=2 window_ms=1157
+[host] slot live3rkhxl_0: d_loop_us=1585 d_raster_us=0 d_observe_us=81750 max_observe_us=14403 d_paints=0 d_skips=50 d_ticks=2 window_ms=1176
+[host] slot live3rkhxl_0: d_loop_us=1580 d_raster_us=0 d_observe_us=73249 max_observe_us=13397 d_paints=0 d_skips=50 d_ticks=2 window_ms=1169
+[script live3rkhxl_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=6 -> sent
+[script live3rkhxl_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=7 -> sent
+[host] slot live3rkhxl_0: d_loop_us=1632 d_raster_us=0 d_observe_us=76345 max_observe_us=13882 d_paints=0 d_skips=50 d_ticks=2 window_ms=1159
+[host] hitch live3rkhxl_0: observe_us=16363 paints=0 skips=4488 ticks=197
+[host] slot live3rkhxl_0: d_loop_us=2061 d_raster_us=0 d_observe_us=81170 max_observe_us=16363 d_paints=0 d_skips=50 d_ticks=2 window_ms=1178
+[host] slot live3rkhxl_0: d_loop_us=1487 d_raster_us=0 d_observe_us=64812 max_observe_us=14328 d_paints=0 d_skips=50 d_ticks=2 window_ms=1152
+[host] slot live3rkhxl_0: d_loop_us=1205 d_raster_us=0 d_observe_us=71660 max_observe_us=12368 d_paints=0 d_skips=50 d_ticks=2 window_ms=1194
+[host] slot live3rkhxl_0: d_loop_us=1450 d_raster_us=0 d_observe_us=69214 max_observe_us=7456 d_paints=0 d_skips=50 d_ticks=2 window_ms=1174
+[host] slot live3rkhxl_0: d_loop_us=2116 d_raster_us=0 d_observe_us=83390 max_observe_us=14906 d_paints=0 d_skips=50 d_ticks=2 window_ms=1178
+[host] slot live3rkhxl_0: d_loop_us=1616 d_raster_us=0 d_observe_us=72072 max_observe_us=12273 d_paints=0 d_skips=50 d_ticks=2 window_ms=1163
+[host] slot live3rkhxl_0: d_loop_us=2210 d_raster_us=0 d_observe_us=88352 max_observe_us=14095 d_paints=0 d_skips=50 d_ticks=2 window_ms=1173
+[host] slot live3rkhxl_0: d_loop_us=1777 d_raster_us=0 d_observe_us=78976 max_observe_us=15314 d_paints=0 d_skips=50 d_ticks=2 window_ms=1175
+[host] slot live3rkhxl_0: d_loop_us=1968 d_raster_us=0 d_observe_us=78768 max_observe_us=14766 d_paints=0 d_skips=50 d_ticks=2 window_ms=1157
+[host] hitch live3rkhxl_0: observe_us=16761 paints=0 skips=4923 ticks=214
+[host] slot live3rkhxl_0: d_loop_us=2002 d_raster_us=0 d_observe_us=79891 max_observe_us=16761 d_paints=0 d_skips=50 d_ticks=2 window_ms=1170
+[host] slot live3rkhxl_0: d_loop_us=2267 d_raster_us=0 d_observe_us=74989 max_observe_us=14252 d_paints=0 d_skips=50 d_ticks=2 window_ms=1152
+[host] slot live3rkhxl_0: d_loop_us=1912 d_raster_us=0 d_observe_us=92583 max_observe_us=15500 d_paints=0 d_skips=50 d_ticks=1 window_ms=1157
+[script live3rkhxl_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=7 -> sent
+[host] slot live3rkhxl_0: d_loop_us=1761 d_raster_us=0 d_observe_us=71645 max_observe_us=12866 d_paints=0 d_skips=50 d_ticks=2 window_ms=1163
+[host] hitch live3rkhxl_0: observe_us=17772 paints=0 skips=5104 ticks=221
+[script live3rkhxl_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=8 -> sent
+[host] slot live3rkhxl_0: d_loop_us=2088 d_raster_us=0 d_observe_us=93539 max_observe_us=17772 d_paints=0 d_skips=50 d_ticks=2 window_ms=1152
+[host] slot live3rkhxl_0: d_loop_us=2217 d_raster_us=0 d_observe_us=89495 max_observe_us=15706 d_paints=0 d_skips=50 d_ticks=2 window_ms=1161
+[host] hitch live3rkhxl_0: observe_us=19110 paints=0 skips=5208 ticks=225
+[host] slot live3rkhxl_0: d_loop_us=1974 d_raster_us=0 d_observe_us=84013 max_observe_us=19110 d_paints=0 d_skips=50 d_ticks=2 window_ms=1163
+[host] slot live3rkhxl_0: d_loop_us=2001 d_raster_us=0 d_observe_us=80845 max_observe_us=11423 d_paints=0 d_skips=50 d_ticks=2 window_ms=1176
+[host] hitch live3rkhxl_0: observe_us=16115 paints=0 skips=5310 ticks=229
+[host] slot live3rkhxl_0: d_loop_us=2300 d_raster_us=0 d_observe_us=91496 max_observe_us=16115 d_paints=0 d_skips=50 d_ticks=2 window_ms=1158
+[host] slot live3rkhxl_0: d_loop_us=1853 d_raster_us=0 d_observe_us=87451 max_observe_us=15065 d_paints=0 d_skips=50 d_ticks=2 window_ms=1166
+[host] slot live3rkhxl_0: d_loop_us=1825 d_raster_us=0 d_observe_us=77229 max_observe_us=13905 d_paints=0 d_skips=50 d_ticks=2 window_ms=1181
+[host] hitch live3rkhxl_0: observe_us=16201 paints=0 skips=5464 ticks=235
+[host] hitch live3rkhxl_0: observe_us=16975 paints=0 skips=5489 ticks=236
+[host] slot live3rkhxl_0: d_loop_us=1786 d_raster_us=0 d_observe_us=98836 max_observe_us=16975 d_paints=0 d_skips=50 d_ticks=2 window_ms=1182
+[host] hitch live3rkhxl_0: observe_us=16344 paints=0 skips=5515 ticks=237
+[host] hitch live3rkhxl_0: observe_us=16910 paints=0 skips=5540 ticks=238
+[host] slot live3rkhxl_0: d_loop_us=2121 d_raster_us=0 d_observe_us=100043 max_observe_us=16910 d_paints=0 d_skips=50 d_ticks=2 window_ms=1183
+[host] slot live3rkhxl_0: d_loop_us=1933 d_raster_us=0 d_observe_us=80040 max_observe_us=12607 d_paints=0 d_skips=50 d_ticks=2 window_ms=1184
+[host] slot live3rkhxl_0: d_loop_us=1814 d_raster_us=0 d_observe_us=80954 max_observe_us=14869 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+[script live3rkhxl_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=8 -> sent
+[host] hitch live3rkhxl_0: observe_us=19696 paints=0 skips=5692 ticks=244
+[host] slot live3rkhxl_0: d_loop_us=2135 d_raster_us=0 d_observe_us=94658 max_observe_us=19696 d_paints=0 d_skips=50 d_ticks=2 window_ms=1190
+[host] slot live3rkhxl_0: d_loop_us=1581 d_raster_us=0 d_observe_us=56926 max_observe_us=8869 d_paints=0 d_skips=50 d_ticks=2 window_ms=1193
+[host] hitch live3rkhxl_0: observe_us=16647 paints=0 skips=5793 ticks=248
+[host] slot live3rkhxl_0: d_loop_us=1951 d_raster_us=0 d_observe_us=81446 max_observe_us=16647 d_paints=0 d_skips=50 d_ticks=2 window_ms=1183
+[host] slot live3rkhxl_0: d_loop_us=2007 d_raster_us=0 d_observe_us=96256 max_observe_us=15293 d_paints=0 d_skips=50 d_ticks=2 window_ms=1168
+[host] hitch live3rkhxl_0: observe_us=16811 paints=0 skips=5894 ticks=252
+[script live3rkhxl_0] moss giant down — 1 kills
+[script live3rkhxl_0] interact Obj { x: 2547, z: 3408, level: 0, name: Some("Uncut sapphire"), action: "Take" }
+[host] slot live3rkhxl_0: d_loop_us=2039 d_raster_us=0 d_observe_us=87823 max_observe_us=16811 d_paints=0 d_skips=50 d_ticks=2 window_ms=1188
+[host] hitch live3rkhxl_0: observe_us=18115 paints=0 skips=5920 ticks=253
+[host] hitch live3rkhxl_0: observe_us=18061 paints=0 skips=5945 ticks=254
+[script live3rkhxl_0] looted Uncut sapphire
+[script live3rkhxl_0] interact Obj { x: 2547, z: 3408, level: 0, name: Some("Big bones"), action: "Take" }
+[host] slot live3rkhxl_0: d_loop_us=1635 d_raster_us=0 d_observe_us=83317 max_observe_us=18115 d_paints=0 d_skips=50 d_ticks=2 window_ms=1176
+[host] hitch live3rkhxl_0: observe_us=20854 paints=0 skips=5971 ticks=255
+[script live3rkhxl_0] looted Big bones
+[host] slot live3rkhxl_0: d_loop_us=1634 d_raster_us=0 d_observe_us=90648 max_observe_us=20854 d_paints=0 d_skips=50 d_ticks=2 window_ms=1181
+[host] hitch live3rkhxl_0: observe_us=16385 paints=0 skips=6022 ticks=257
+[host] slot live3rkhxl_0: d_loop_us=1973 d_raster_us=0 d_observe_us=89048 max_observe_us=16385 d_paints=0 d_skips=50 d_ticks=2 window_ms=1168
+[host] slot live3rkhxl_0: d_loop_us=1241 d_raster_us=0 d_observe_us=54993 max_observe_us=11799 d_paints=0 d_skips=50 d_ticks=2 window_ms=1188
+[host] slot live3rkhxl_0: d_loop_us=1939 d_raster_us=0 d_observe_us=83243 max_observe_us=15997 d_paints=0 d_skips=50 d_ticks=2 window_ms=1193
+[host] hitch live3rkhxl_0: observe_us=16169 paints=0 skips=6199 ticks=264
+[host] slot live3rkhxl_0: d_loop_us=2021 d_raster_us=0 d_observe_us=87746 max_observe_us=16169 d_paints=0 d_skips=50 d_ticks=2 window_ms=1194
+[script live3rkhxl_0] interact Npc { name: "Moss giant", action: "Attack", index: Some(5156) }
+[host] slot live3rkhxl_0: d_loop_us=1719 d_raster_us=0 d_observe_us=77207 max_observe_us=15254 d_paints=0 d_skips=50 d_ticks=2 window_ms=1175
+[host] slot live3rkhxl_0: d_loop_us=1261 d_raster_us=0 d_observe_us=60025 max_observe_us=12811 d_paints=0 d_skips=50 d_ticks=1 window_ms=1170
+[host] hitch live3rkhxl_0: observe_us=20275 paints=0 skips=6301 ticks=268
+[host] hitch live3rkhxl_0: observe_us=23451 paints=0 skips=6325 ticks=269
+[host] slot live3rkhxl_0: d_loop_us=1797 d_raster_us=0 d_observe_us=91831 max_observe_us=23451 d_paints=0 d_skips=50 d_ticks=2 window_ms=1200
+[host] hitch live3rkhxl_0: observe_us=22476 paints=0 skips=6351 ticks=270
+[script live3rkhxl_0] interact Npc { name: "Moss giant", action: "Attack", index: Some(5156) }
+[host] hitch live3rkhxl_0: observe_us=24430 paints=0 skips=6376 ticks=271
+[host] slot live3rkhxl_0: d_loop_us=1878 d_raster_us=0 d_observe_us=98637 max_observe_us=24430 d_paints=0 d_skips=50 d_ticks=2 window_ms=1198
+[script live3rkhxl_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=9 -> sent
+[host] hitch live3rkhxl_0: observe_us=18236 paints=0 skips=6426 ticks=273
+[script live3rkhxl_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=10 -> sent
+[host] slot live3rkhxl_0: d_loop_us=2132 d_raster_us=0 d_observe_us=92299 max_observe_us=18236 d_paints=0 d_skips=50 d_ticks=2 window_ms=1187
+[host] slot live3rkhxl_0: d_loop_us=1692 d_raster_us=0 d_observe_us=76040 max_observe_us=12752 d_paints=0 d_skips=50 d_ticks=2 window_ms=1183
+[host] hitch live3rkhxl_0: observe_us=16532 paints=0 skips=6502 ticks=276
+[host] hitch live3rkhxl_0: observe_us=16346 paints=0 skips=6527 ticks=277
+[host] slot live3rkhxl_0: d_loop_us=1810 d_raster_us=0 d_observe_us=88531 max_observe_us=16532 d_paints=0 d_skips=50 d_ticks=2 window_ms=1187
+[host] hitch live3rkhxl_0: observe_us=16045 paints=0 skips=6553 ticks=278
+[host] slot live3rkhxl_0: d_loop_us=1766 d_raster_us=0 d_observe_us=81886 max_observe_us=16045 d_paints=0 d_skips=50 d_ticks=2 window_ms=1187
+[host] slot live3rkhxl_0: d_loop_us=1210 d_raster_us=0 d_observe_us=69800 max_observe_us=13541 d_paints=0 d_skips=50 d_ticks=2 window_ms=1180
+[host] slot live3rkhxl_0: d_loop_us=1329 d_raster_us=0 d_observe_us=55733 max_observe_us=13689 d_paints=0 d_skips=50 d_ticks=2 window_ms=1206
+[host] slot live3rkhxl_0: d_loop_us=796 d_raster_us=0 d_observe_us=35714 max_observe_us=7140 d_paints=0 d_skips=50 d_ticks=2 window_ms=1210
+[host] slot live3rkhxl_0: d_loop_us=780 d_raster_us=0 d_observe_us=36623 max_observe_us=7365 d_paints=0 d_skips=50 d_ticks=2 window_ms=1224
+[host] slot live3rkhxl_0: d_loop_us=745 d_raster_us=0 d_observe_us=36969 max_observe_us=7376 d_paints=0 d_skips=50 d_ticks=2 window_ms=1207
+[script live3rkhxl_0] interact Held { name: "Lobster", action: "Eat" }
+[shim-held] Lobster Eat slot=10 -> sent
+[host] slot live3rkhxl_0: d_loop_us=750 d_raster_us=0 d_observe_us=37267 max_observe_us=8773 d_paints=0 d_skips=50 d_ticks=3 window_ms=1232
+[host] slot live3rkhxl_0: d_loop_us=1084 d_raster_us=0 d_observe_us=47795 max_observe_us=11589 d_paints=0 d_skips=50 d_ticks=2 window_ms=1211
+FAIL: catalog_boundary_live: bounded timeout; runner=Passed; core={"error":"moss_giant core post-Start delta incomplete","witness":{"case":"moss_giant","baseline":{"ingame":true,"scene_state":2,"player":"Live3rkhxl 0","tile":[2553,3406,0],"combat_level":36,"tick":22,"items":{"Adamant scimitar":1,"Lobster":10},"item_ids":{"379":10,"1331":1},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":40,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":40,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":40,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":37224,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":37224,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":37224,"thieving":0,"woodcutting":0},"varps":{"309":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[],"npc_facts":[{"index":5155,"name":"Moss giant","health":0,"total_health":0,"animation":-1,"in_combat":false,"targeting_local":false,"tile":[2550,3408,0],"distance":3},{"index":5156,"name":"Moss giant","health":0,"total_health":0,"animation":-1,"in_combat":false,"targeting_local":false,"tile":[2553,3400,0],"distance":6},{"index":5157,"name":"Moss giant","health":0,"total_health":0,"animation":-1,"in_combat":false,"targeting_local":false,"tile":[2554,3408,0],"distance":2}],"ground_loot":[],"local_in_combat":false,"local_target_npc":null,"local_health":0,"local_animation":-1,"equipment_ids":{},"main_modal":-1,"widget_ids":[3213,3214]},"latest":{"ingame":true,"scene_state":2,"player":"Live3rkhxl 0","tile":[2554,3402,0],"combat_level":36,"tick":294,"items":{"Adamant scimitar":1,"Big bones":1,"Uncut sapphire":1},"item_ids":{"532":1,"1331":1,"1623":1},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":40,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":40,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":40,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":37224,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":37306,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":37476,"thieving":0,"woodcutting":0},"varps":{"309":0},"chat":[[27,"It heals some health."],[26,"You eat the lobster."],[25,"It heals some health."],[24,"You eat the lobster."],[23,"It heals some health."],[22,"You eat the lobster."],[21,"It heals some health."],[20,"You eat the lobster."],[19,"It heals some health."],[18,"You eat the lobster."],[17,"It heals some health."],[16,"You eat the lobster."],[15,"It heals some health."],[14,"You eat the lobster."],[13,"It heals some health."],[12,"You eat the lobster."],[11,"It heals some health."],[10,"You eat the lobster."],[9,"It heals some health."],[8,"You eat the lobster."],[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[],"npc_facts":[{"index":5156,"name":"Moss giant","health":59,"total_health":60,"animation":-1,"in_combat":true,"targeting_local":true,"tile":[2552,3401,0],"distance":2},{"index":5158,"name":"Moss giant","health":0,"total_health":0,"animation":-1,"in_combat":false,"targeting_local":false,"tile":[2558,3407,0],"distance":5}],"ground_loot":[],"local_in_combat":true,"local_target_npc":null,"local_health":27,"local_animation":-1,"equipment_ids":{},"main_modal":-1,"widget_ids":[3213,3214]},"max_items":{"Adamant scimitar":1,"Big bones":1,"Lobster":10,"Uncut sapphire":1},"max_xp":{"-unused-":0,"agility":0,"attack":37224,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":37306,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":37476,"thieving":0,"woodcutting":0},"saw_bury_chat":false,"post_start_observations":6863,"bone_bank_cycle":{"first_batch_buried":false,"opened":null,"withdrawn":null,"buried_after_withdrawal":false},"bank_fletcher_cycle":{"first_pack_created":false,"deposited":null,"withdrawn":null,"crafted_after_withdrawal":false},"bank_fletcher_option_cycle":{"first":null,"deposited":null,"restocked":null,"further":false},"bank_fletcher_string_cycle":{"initial_pairs_strung":false,"deposited":null,"withdrawn":null,"strung_after_withdrawal":false},"bank_fletcher_cut_string_cycle":{"cut_pair_created":false,"deposited":null,"withdrawn":null,"string_pair_created":false},"alcher_defaults_cycle":{"withdrawn":null,"consumed":false},"alcher_generated_custom_cycle":{"withdrawn":null,"consumed":false},"dart_fletcher_cycle":{"first":null,"further":false,"wrong_tier":false},"herb_cleaner_cycle":{"first_pack":false,"deposited":null,"withdrawn":null,"cleaned_after_withdrawal":false,"filter_violated":false},"gem_cutter_cycle":{"first_pack":false,"deposited":null,"withdrawn":null,"cut_after_withdrawal":false,"filter_violated":false},"door_opener_cycle":{"selected":null,"opened":false},"gnome_course_cycle":{"log":null,"ground_return":null,"pipe":null,"second_lap":false},"wildy_agility_cycle":{"ridge":null,"pipe":null,"rope":null,"stone":null,"log":null,"rocks":null,"further_pipe":false},"brimhaven_agility_cycle":{"paid":false,"entered":null,"moved":null,"first_tag":false,"ticket":null,"subsequent_work":false},"flax_picker_cycle":{"first_pack":false,"deposited":null,"returned":false,"further":false},"superheater_cycle":{"first_bars":false,"deposited":null,"withdrawn":null,"produced_after_withdrawal":false,"wrong_product":false,"wrong_staff":false},"chicken_killer_bank_cycle":{"combat_loot":false,"deposited":null,"returned":false,"further":false},"vial_filler_cycle":{"filled":null,"deposited":null,"withdrawn":null,"returned":false,"further":false},"potion_maker_cycle":{"unfinished":null,"finished":null,"deposited":null,"withdrawn":null,"further":false,"wrong_product":false,"filter_violated":false},"tanner_bot_cycle":{"widget":null,"tanned":null,"deposited":null,"withdrawn":null,"returned":false,"further":false,"wrong_product":false,"shop":false},"rune_crafter_cycle":{"withdrawn":null,"entered":null,"crafted":null,"exited":null,"deposited":null,"restocked":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"ardy_cakes_cycle":{"stolen":null,"deposited":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"ardy_thiever_cycle":{"pickpocketed":null,"deposited":null,"returned":false,"further":false},"gnome_chop_cycle":{"chopped":null,"deposited":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"gnome_fletch_cycle":{"chopped":null,"fletched":null,"deposited":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"coal_trucks_cycle":{"mined":null,"trucked":null,"further":false,"noted":false,"banked":false},"station_production_cycle":{"withdrawn":null,"produced":null,"deposited":null,"restocked":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"flax_aio_cycle":{"picked":null,"produced":null,"deposited":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"flax_aio_pick_cycle":{"first_pack":false,"deposited":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"herblore_eggs_cycle":{"taken":false,"deposited":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"herblore_newt_cycle":{"bought":false,"deposited":null,"returned":false,"further":false,"coins_spent":false,"coins_peak":0,"wrong_product":false,"noted":false},"combat_core_cycle":{"engagements":6107,"defeats":0,"style_xp":true,"looted":true,"noted":false,"activated":false,"shield_worn":false,"stolen_food":false,"wrong_item":false,"dormant_indexes":[],"dormant_tiles":{},"last":{"5155":{"name":"Moss giant","health":0,"animation":131,"tile":[2547,3408,0],"engaged":true,"defeated":true},"5156":{"name":"Moss giant","health":59,"animation":-1,"tile":[2552,3401,0],"engaged":true,"defeated":true},"5157":{"name":"Moss giant","health":0,"animation":-1,"tile":[2554,3411,0],"engaged":false,"defeated":true},"5158":{"name":"Moss giant","health":0,"animation":-1,"tile":[2558,3407,0],"engaged":false,"defeated":true}},"currently_engaged":[5155,5156],"facts":[{"kind":"engage","index":5155,"name":"Moss giant","health":59,"animation":129,"loot_id":null,"zero_health":false},{"kind":"engage","index":5155,"name":"Moss giant","health":59,"animation":129,"loot_id":null,"zero_health":false},{"kind":"engage","index":5155,"name":"Moss giant","health":59,"animation":129,"loot_id":null,"zero_health":false},{"kind":"engage","index":5155,"name":"Moss giant","health":59,"animation":129,"loot_id":null,"zero_health":false},{"kind":"engage","index":5155,"name":"Moss giant","health":59,"animation":129,"loot_id":null,"zero_health":false},{"kind":"engage","index":5155,"name":"Moss giant","health":59,"animation":129,"loot_id":null,"zero_health":false},{"kind":"engage","index":5155,"name":"Moss giant","health":59,"animation":129,"loot_id":null,"zero_health":false},{"kind":"engage","index":5155,"name":"Moss giant","health":59,"animation":129,"loot_id":null,"zero_health":false},{"kind":"engage","index":5155,"name":"Moss giant","health":59,"animation":129,"loot_id":null,"zero_health":false},{"kind":"engage","index":5155,"name":"Moss giant","health":59,"animation":129,"loot_id":null,"zero_health":false},{"kind":"engage","index":5155,"name":"Moss giant","health":59,"animation":129,"loot_id":null,"zero_health":false},{"kind":"engage","index":5155,"name":"Moss giant","health":59,"animation":129,"loot_id":null,"zero_health":false},{"kind":"engage","index":5155,"name":"Moss giant","health":59,"animation":129,"loot_id":null,"zero_health":false},{"kind":"engage","index":5155,"name":"Moss giant","health":59,"animation":129,"loot_id":null,"zero_health":false},{"kind":"engage","index":5155,"name":"Moss giant","health":59,"animation":129,"loot_id":null,"zero_health":false},{"kind":"engage","index":5155,"name":"Moss giant","health":59,"animation":129,"loot_id":null,"zero_health":false}]},"ordered_first_exhausted":false}}

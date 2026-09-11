@@ -1,0 +1,361 @@
+
+running 1 test
+{"phase":"identity","revision":289,"profile":"local-289 · 127.0.0.1:44594 · revision 289","cache_id":"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack","nav_sha256":"131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924","catalog_commit":"100adccc037d9f6898080e1cad58fcfc43364775","catalog_identity":"pre-289 frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"ArdyCakes","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/ArdyCakes/ArdyCakes.ts","source_sha256":"f19ce19422c16e337fdc30678b93772054ee907a35297a1cd4a8f6fb062943d7","compiled_sha256":"5d93138a60f7176c0af7241018d5a83d5ea11951edd85e7827140df3bfafd529","siblings":[],"settings":{"guardResponse":"Flee","solveClues":false}},"account":"live480kp2_0","engine_speed_ms":null}
+[host-play] slot live480kp2_0: thread up
+289bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+[host-play] slot live480kp2_0: handshake begin reconnect=false
+[host-play] slot live480kp2_0: handshake ok
+[host] slot live480kp2_0: d_loop_us=2582 d_raster_us=0 d_observe_us=31619 max_observe_us=5604 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot live480kp2_0: queued mainland tele+setvar (scene 2)
+[host-play] slot live480kp2_0: handshake begin reconnect=true
+[host-play] slot live480kp2_0: handshake ok
+[host] slot live480kp2_0: d_loop_us=2633 d_raster_us=0 d_observe_us=45864 max_observe_us=4984 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot live480kp2_0: queued mainland tele+setvar (scene 2)
+{"phase":"baseline-after-preparation","scenario":"ardy_cakes","account":"live480kp2_0","observation":{"ingame":true,"scene_state":2,"player":"Live480kp2 0","tile":[2668,3312,0],"combat_level":10,"tick":18,"items":{},"item_ids":{},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":40,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":5,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":37224,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":388,"woodcutting":0},"varps":{"309":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[{"id":1530,"x":2669,"z":3316,"level":0,"name":"Door","open":true},{"id":1530,"x":2670,"z":3320,"level":0,"name":"Door","open":true},{"id":2551,"x":2674,"z":3304,"level":0,"name":"Door","open":true},{"id":2550,"x":2674,"z":3305,"level":0,"name":"Door","open":true}],"npc_facts":[{"index":3564,"name":"Guard","health":0,"total_health":0,"animation":-1,"in_combat":false,"targeting_local":false,"tile":[2662,3306,0],"distance":6},{"index":3565,"name":"Guard","health":0,"total_health":0,"animation":-1,"in_combat":false,"targeting_local":false,"tile":[2661,3308,0],"distance":7},{"index":3566,"name":"Guard","health":0,"total_health":0,"animation":-1,"in_combat":false,"targeting_local":false,"tile":[2664,3304,0],"distance":8},{"index":3567,"name":"Guard","health":0,"total_health":0,"animation":-1,"in_combat":false,"targeting_local":false,"tile":[2666,3318,0],"distance":6}],"ground_loot":[],"local_in_combat":false,"local_target_npc":null,"local_health":0,"local_animation":-1,"equipment_ids":{},"main_modal":-1,"widget_ids":[3213,3214]}}
+[script live480kp2_0] start load
+{"phase":"start","account":"live480kp2_0","count":1}
+[host] hitch live480kp2_0: observe_us=84748 paints=0 skips=90 ticks=18
+[host] slot live480kp2_0: d_loop_us=16577 d_raster_us=0 d_observe_us=151316 max_observe_us=84748 d_paints=0 d_skips=50 d_ticks=18 window_ms=11015
+[script live480kp2_0] interrupted slow tick 29 (559.104667ms)
+[script live480kp2_0] ArdyCakes starting — stand (2668, 3312, 0), bank (2655, 3286, 0), flee mode
+[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: "Steal from", id: Some(2561) }
+[script live480kp2_0] slow tick 29: 465.088583ms
+[script live480kp2_0] slow tick 30: 235.444458ms
+[script live480kp2_0] slow tick 31: 234.914208ms
+[host] slot live480kp2_0: d_loop_us=987 d_raster_us=0 d_observe_us=45267 max_observe_us=8019 d_paints=0 d_skips=50 d_ticks=2 window_ms=1321
+[script live480kp2_0] slow tick 32: 232.004583ms
+[script live480kp2_0] slow tick 33: 231.656542ms
+[host] slot live480kp2_0: d_loop_us=821 d_raster_us=0 d_observe_us=45971 max_observe_us=7768 d_paints=0 d_skips=50 d_ticks=2 window_ms=1274
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 34: 382.326959ms
+[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: "Steal from", id: Some(2561) }
+[script live480kp2_0] slow tick 35: 388.97825ms
+[host] slot live480kp2_0: d_loop_us=860 d_raster_us=0 d_observe_us=46624 max_observe_us=8695 d_paints=0 d_skips=50 d_ticks=2 window_ms=1295
+[script live480kp2_0] slow tick 36: 230.881042ms
+[script live480kp2_0] slow tick 37: 233.328958ms
+[host] slot live480kp2_0: d_loop_us=972 d_raster_us=0 d_observe_us=52236 max_observe_us=7915 d_paints=0 d_skips=50 d_ticks=3 window_ms=1315
+[script live480kp2_0] slow tick 38: 232.61925ms
+[script live480kp2_0] slow tick 39: 234.946625ms
+[host] slot live480kp2_0: d_loop_us=935 d_raster_us=0 d_observe_us=45228 max_observe_us=7935 d_paints=0 d_skips=50 d_ticks=2 window_ms=1331
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 40: 401.181791ms
+[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: "Steal from", id: Some(2561) }
+[script live480kp2_0] slow tick 41: 384.843542ms
+[host] slot live480kp2_0: d_loop_us=843 d_raster_us=0 d_observe_us=43903 max_observe_us=7770 d_paints=0 d_skips=50 d_ticks=2 window_ms=1320
+[script live480kp2_0] slow tick 42: 234.071208ms
+[script live480kp2_0] slow tick 43: 237.938459ms
+[script live480kp2_0] slow tick 44: 232.086583ms
+[host] slot live480kp2_0: d_loop_us=961 d_raster_us=0 d_observe_us=49336 max_observe_us=8405 d_paints=0 d_skips=50 d_ticks=2 window_ms=1307
+[script live480kp2_0] slow tick 45: 235.355333ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 46: 383.871584ms
+[host] slot live480kp2_0: d_loop_us=941 d_raster_us=0 d_observe_us=46814 max_observe_us=7825 d_paints=0 d_skips=50 d_ticks=3 window_ms=1333
+[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: "Steal from", id: Some(2561) }
+[script live480kp2_0] slow tick 47: 387.617333ms
+[script live480kp2_0] slow tick 48: 234.0685ms
+[host] slot live480kp2_0: d_loop_us=973 d_raster_us=0 d_observe_us=53228 max_observe_us=8019 d_paints=0 d_skips=50 d_ticks=2 window_ms=1324
+[script live480kp2_0] slow tick 49: 232.299209ms
+[script live480kp2_0] slow tick 50: 230.227291ms
+[host] slot live480kp2_0: d_loop_us=878 d_raster_us=0 d_observe_us=45336 max_observe_us=7799 d_paints=0 d_skips=50 d_ticks=2 window_ms=1308
+[script live480kp2_0] slow tick 51: 230.003833ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 52: 380.769083ms
+[host] slot live480kp2_0: d_loop_us=912 d_raster_us=0 d_observe_us=46295 max_observe_us=9137 d_paints=0 d_skips=50 d_ticks=2 window_ms=1329
+[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: "Steal from", id: Some(2561) }
+[script live480kp2_0] slow tick 53: 386.86075ms
+[script live480kp2_0] slow tick 54: 233.529125ms
+[script live480kp2_0] slow tick 55: 242.266125ms
+[host] slot live480kp2_0: d_loop_us=901 d_raster_us=0 d_observe_us=46638 max_observe_us=7973 d_paints=0 d_skips=50 d_ticks=2 window_ms=1362
+[script live480kp2_0] slow tick 56: 231.261625ms
+[script live480kp2_0] slow tick 57: 230.530333ms
+[host] slot live480kp2_0: d_loop_us=902 d_raster_us=0 d_observe_us=51224 max_observe_us=7888 d_paints=0 d_skips=50 d_ticks=3 window_ms=1350
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 58: 389.899542ms
+[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: "Steal from", id: Some(2561) }
+[script live480kp2_0] slow tick 59: 383.701708ms
+[host] slot live480kp2_0: d_loop_us=876 d_raster_us=0 d_observe_us=44048 max_observe_us=7781 d_paints=0 d_skips=50 d_ticks=2 window_ms=1302
+[script live480kp2_0] slow tick 60: 231.846583ms
+[script live480kp2_0] slow tick 61: 230.034166ms
+[host] slot live480kp2_0: d_loop_us=898 d_raster_us=0 d_observe_us=43818 max_observe_us=7798 d_paints=0 d_skips=50 d_ticks=2 window_ms=1338
+[script live480kp2_0] slow tick 62: 233.6555ms
+[script live480kp2_0] slow tick 63: 229.992709ms
+[script live480kp2_0] guard caught the steal — handling per guardResponse
+[host] slot live480kp2_0: d_loop_us=894 d_raster_us=0 d_observe_us=44266 max_observe_us=7786 d_paints=0 d_skips=50 d_ticks=2 window_ms=1349
+[script live480kp2_0] slow tick 64: 383.903833ms
+[script live480kp2_0] combat — kiting the guard to 2655,3298
+[script live480kp2_0] interact Walk { x: 2655, z: 3298, level: 0, allow_teleports: false }
+[script live480kp2_0] slow tick 65: 78.879416ms
+[nav-follow] here=WorldTile { x: 2668, z: 3312, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[script live480kp2_0] slow tick 66: 77.02425ms
+[host] slot live480kp2_0: d_loop_us=936 d_raster_us=0 d_observe_us=44604 max_observe_us=7998 d_paints=0 d_skips=50 d_ticks=3 window_ms=1354
+[nav-walk] here=WorldTile { x: 2666, z: 3312, level: 0 } aim=WorldTile { x: 2655, z: 3298, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2668, z: 3312, level: 0 })
+[nav-follow] here=WorldTile { x: 2666, z: 3312, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[script live480kp2_0] slow tick 67: 77.321625ms
+[nav-walk] here=WorldTile { x: 2666, z: 3310, level: 0 } aim=WorldTile { x: 2655, z: 3298, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2668, z: 3312, level: 0 })
+[nav-follow] here=WorldTile { x: 2666, z: 3310, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch live480kp2_0: observe_us=18860 paints=0 skips=972 ticks=58
+[script live480kp2_0] slow tick 68: 76.9345ms
+[nav-walk] here=WorldTile { x: 2665, z: 3308, level: 0 } aim=WorldTile { x: 2655, z: 3298, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2668, z: 3312, level: 0 })
+[nav-follow] here=WorldTile { x: 2665, z: 3308, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch live480kp2_0: observe_us=16362 paints=0 skips=994 ticks=59
+[host] slot live480kp2_0: d_loop_us=1009 d_raster_us=0 d_observe_us=82770 max_observe_us=18860 d_paints=0 d_skips=50 d_ticks=2 window_ms=1333
+[script live480kp2_0] slow tick 69: 77.970708ms
+[nav-walk] here=WorldTile { x: 2663, z: 3306, level: 0 } aim=WorldTile { x: 2655, z: 3298, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 2668, z: 3312, level: 0 })
+[nav-follow] here=WorldTile { x: 2663, z: 3306, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch live480kp2_0: observe_us=18942 paints=0 skips=1017 ticks=60
+[script live480kp2_0] slow tick 70: 76.680709ms
+[nav-walk] here=WorldTile { x: 2661, z: 3304, level: 0 } aim=WorldTile { x: 2655, z: 3298, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 2668, z: 3312, level: 0 })
+[nav-follow] here=WorldTile { x: 2661, z: 3304, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch live480kp2_0: observe_us=16673 paints=0 skips=1040 ticks=61
+[script live480kp2_0] slow tick 71: 76.675584ms
+[host] slot live480kp2_0: d_loop_us=966 d_raster_us=0 d_observe_us=69418 max_observe_us=18942 d_paints=0 d_skips=50 d_ticks=2 window_ms=1309
+[nav-walk] here=WorldTile { x: 2659, z: 3302, level: 0 } aim=WorldTile { x: 2655, z: 3298, level: 0 } radius=0 ticks_waited=5 sent_tile=Some(WorldTile { x: 2668, z: 3312, level: 0 })
+[nav-follow] here=WorldTile { x: 2659, z: 3302, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch live480kp2_0: observe_us=18777 paints=0 skips=1063 ticks=62
+[script live480kp2_0] slow tick 72: 76.192041ms
+[nav-walk] here=WorldTile { x: 2657, z: 3300, level: 0 } aim=WorldTile { x: 2655, z: 3298, level: 0 } radius=0 ticks_waited=6 sent_tile=Some(WorldTile { x: 2668, z: 3312, level: 0 })
+[nav-follow] here=WorldTile { x: 2657, z: 3300, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch live480kp2_0: observe_us=16359 paints=0 skips=1086 ticks=63
+[script live480kp2_0] slow tick 73: 76.803375ms
+[host] slot live480kp2_0: d_loop_us=1040 d_raster_us=0 d_observe_us=68887 max_observe_us=18777 d_paints=0 d_skips=50 d_ticks=2 window_ms=1311
+[nav-walk] here=WorldTile { x: 2655, z: 3298, level: 0 } aim=WorldTile { x: 2655, z: 3298, level: 0 } radius=0 ticks_waited=7 sent_tile=Some(WorldTile { x: 2668, z: 3312, level: 0 })
+[nav-follow] here=WorldTile { x: 2655, z: 3298, level: 0 } walk=false transport=false leg=1 hops=1 outcome=Some(Arrived { at: WorldTile { x: 2655, z: 3298, level: 0 } })
+[host] hitch live480kp2_0: observe_us=18774 paints=0 skips=1108 ticks=64
+[script live480kp2_0] slow tick 74: 79.318209ms
+[script live480kp2_0] slow tick 75: 78.610375ms
+[host] slot live480kp2_0: d_loop_us=1058 d_raster_us=0 d_observe_us=59783 max_observe_us=18774 d_paints=0 d_skips=50 d_ticks=2 window_ms=1308
+[script live480kp2_0] slow tick 76: 76.219791ms
+[script live480kp2_0] slow tick 77: 76.386375ms
+[host] slot live480kp2_0: d_loop_us=991 d_raster_us=0 d_observe_us=47444 max_observe_us=9438 d_paints=0 d_skips=50 d_ticks=3 window_ms=1322
+[script live480kp2_0] slow tick 78: 77.034958ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 79: 387.756125ms
+[host] slot live480kp2_0: d_loop_us=996 d_raster_us=0 d_observe_us=51154 max_observe_us=7880 d_paints=0 d_skips=50 d_ticks=2 window_ms=1324
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 80: 385.993583ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 81: 387.648ms
+[host] slot live480kp2_0: d_loop_us=1063 d_raster_us=0 d_observe_us=45384 max_observe_us=8158 d_paints=0 d_skips=50 d_ticks=2 window_ms=1290
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 82: 386.962417ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 83: 385.919375ms
+[host] slot live480kp2_0: d_loop_us=1026 d_raster_us=0 d_observe_us=45481 max_observe_us=8641 d_paints=0 d_skips=50 d_ticks=2 window_ms=1320
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 84: 384.833417ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 85: 386.755833ms
+test catalog_boundary_live has been running for over 60 seconds
+[script live480kp2_0] steal pass made no progress — re-entering
+[host] slot live480kp2_0: d_loop_us=967 d_raster_us=0 d_observe_us=43727 max_observe_us=7800 d_paints=0 d_skips=50 d_ticks=2 window_ms=1321
+[script live480kp2_0] slow tick 86: 385.465709ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 87: 385.441375ms
+[script live480kp2_0] interact WalkTo { x: 2668, z: 3312, level: 0 }
+[script live480kp2_0] slow tick 88: 386.623958ms
+[host] slot live480kp2_0: d_loop_us=1023 d_raster_us=0 d_observe_us=43824 max_observe_us=7701 d_paints=0 d_skips=50 d_ticks=2 window_ms=1324
+[host] hitch live480kp2_0: observe_us=18189 paints=0 skips=1451 ticks=79
+[script live480kp2_0] slow tick 89: 158.13875ms
+[host] hitch live480kp2_0: observe_us=16418 paints=0 skips=1473 ticks=80
+[script live480kp2_0] slow tick 90: 156.688792ms
+[host] hitch live480kp2_0: observe_us=18956 paints=0 skips=1496 ticks=81
+[host] slot live480kp2_0: d_loop_us=1049 d_raster_us=0 d_observe_us=88385 max_observe_us=18956 d_paints=0 d_skips=50 d_ticks=3 window_ms=1312
+[script live480kp2_0] slow tick 91: 153.0285ms
+[host] hitch live480kp2_0: observe_us=16322 paints=0 skips=1518 ticks=82
+[script live480kp2_0] slow tick 92: 153.796417ms
+[host] hitch live480kp2_0: observe_us=17487 paints=0 skips=1542 ticks=83
+[host] slot live480kp2_0: d_loop_us=1028 d_raster_us=0 d_observe_us=64626 max_observe_us=17487 d_paints=0 d_skips=50 d_ticks=2 window_ms=1316
+[script live480kp2_0] slow tick 93: 152.934292ms
+[host] hitch live480kp2_0: observe_us=18920 paints=0 skips=1565 ticks=84
+[script live480kp2_0] slow tick 94: 153.363458ms
+[host] hitch live480kp2_0: observe_us=18719 paints=0 skips=1587 ticks=85
+[script live480kp2_0] slow tick 95: 154.809166ms
+[host] slot live480kp2_0: d_loop_us=983 d_raster_us=0 d_observe_us=71656 max_observe_us=18920 d_paints=0 d_skips=50 d_ticks=2 window_ms=1337
+[host] hitch live480kp2_0: observe_us=16147 paints=0 skips=1609 ticks=86
+[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: "Steal from", id: Some(2561) }
+[script live480kp2_0] slow tick 96: 387.565166ms
+[script live480kp2_0] slow tick 97: 231.862791ms
+[host] slot live480kp2_0: d_loop_us=945 d_raster_us=0 d_observe_us=53713 max_observe_us=16147 d_paints=0 d_skips=50 d_ticks=2 window_ms=1337
+[script live480kp2_0] slow tick 98: 227.780917ms
+[host] hitch live480kp2_0: observe_us=17956 paints=0 skips=1678 ticks=89
+[script live480kp2_0] slow tick 99: 231.986875ms
+[host] slot live480kp2_0: d_loop_us=1023 d_raster_us=0 d_observe_us=57371 max_observe_us=17956 d_paints=0 d_skips=50 d_ticks=2 window_ms=1295
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 100: 461.782958ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 101: 387.713875ms
+[host] slot live480kp2_0: d_loop_us=956 d_raster_us=0 d_observe_us=53918 max_observe_us=9890 d_paints=0 d_skips=50 d_ticks=3 window_ms=1300
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 102: 379.822333ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 103: 384.577333ms
+[host] slot live480kp2_0: d_loop_us=910 d_raster_us=0 d_observe_us=43915 max_observe_us=7773 d_paints=0 d_skips=50 d_ticks=2 window_ms=1344
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 104: 382.740542ms
+[host] hitch live480kp2_0: observe_us=18934 paints=0 skips=1814 ticks=95
+[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: "Steal from", id: Some(2561) }
+[script live480kp2_0] slow tick 105: 391.956083ms
+[host] slot live480kp2_0: d_loop_us=944 d_raster_us=0 d_observe_us=59520 max_observe_us=18934 d_paints=0 d_skips=50 d_ticks=2 window_ms=1299
+[script live480kp2_0] slow tick 106: 229.104125ms
+[script live480kp2_0] slow tick 107: 227.79175ms
+[script live480kp2_0] slow tick 108: 229.530042ms
+[host] slot live480kp2_0: d_loop_us=892 d_raster_us=0 d_observe_us=44574 max_observe_us=7873 d_paints=0 d_skips=50 d_ticks=2 window_ms=1297
+[script live480kp2_0] guard caught the steal — handling per guardResponse
+[script live480kp2_0] slow tick 109: 388.26575ms
+[script live480kp2_0] combat — kiting the guard to 2655,3298
+[script live480kp2_0] interact Walk { x: 2655, z: 3298, level: 0, allow_teleports: false }
+[script live480kp2_0] slow tick 110: 77.6885ms
+[host] slot live480kp2_0: d_loop_us=981 d_raster_us=0 d_observe_us=47869 max_observe_us=8761 d_paints=0 d_skips=50 d_ticks=2 window_ms=1327
+[nav-follow] here=WorldTile { x: 2668, z: 3312, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[script live480kp2_0] slow tick 111: 76.029708ms
+[nav-walk] here=WorldTile { x: 2666, z: 3312, level: 0 } aim=WorldTile { x: 2655, z: 3298, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2668, z: 3312, level: 0 })
+[nav-follow] here=WorldTile { x: 2666, z: 3312, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[script live480kp2_0] slow tick 112: 75.422ms
+[nav-walk] here=WorldTile { x: 2666, z: 3310, level: 0 } aim=WorldTile { x: 2655, z: 3298, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2668, z: 3312, level: 0 })
+[nav-follow] here=WorldTile { x: 2666, z: 3310, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch live480kp2_0: observe_us=19335 paints=0 skips=1998 ticks=103
+[host] slot live480kp2_0: d_loop_us=976 d_raster_us=0 d_observe_us=77601 max_observe_us=19335 d_paints=0 d_skips=50 d_ticks=3 window_ms=1305
+[script live480kp2_0] slow tick 113: 75.9605ms
+[nav-walk] here=WorldTile { x: 2665, z: 3308, level: 0 } aim=WorldTile { x: 2655, z: 3298, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2668, z: 3312, level: 0 })
+[nav-follow] here=WorldTile { x: 2665, z: 3308, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch live480kp2_0: observe_us=16803 paints=0 skips=2021 ticks=104
+[script live480kp2_0] slow tick 114: 76.029584ms
+[nav-walk] here=WorldTile { x: 2663, z: 3306, level: 0 } aim=WorldTile { x: 2655, z: 3298, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 2668, z: 3312, level: 0 })
+[nav-follow] here=WorldTile { x: 2663, z: 3306, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch live480kp2_0: observe_us=18830 paints=0 skips=2043 ticks=105
+[host] slot live480kp2_0: d_loop_us=1049 d_raster_us=0 d_observe_us=71930 max_observe_us=18830 d_paints=0 d_skips=50 d_ticks=2 window_ms=1331
+[script live480kp2_0] slow tick 115: 75.99775ms
+[nav-walk] here=WorldTile { x: 2661, z: 3304, level: 0 } aim=WorldTile { x: 2655, z: 3298, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 2668, z: 3312, level: 0 })
+[nav-follow] here=WorldTile { x: 2661, z: 3304, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch live480kp2_0: observe_us=17294 paints=0 skips=2066 ticks=106
+[script live480kp2_0] slow tick 116: 77.359375ms
+[nav-walk] here=WorldTile { x: 2659, z: 3302, level: 0 } aim=WorldTile { x: 2655, z: 3298, level: 0 } radius=0 ticks_waited=5 sent_tile=Some(WorldTile { x: 2668, z: 3312, level: 0 })
+[nav-follow] here=WorldTile { x: 2659, z: 3302, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch live480kp2_0: observe_us=19676 paints=0 skips=2088 ticks=107
+[script live480kp2_0] slow tick 117: 76.629792ms
+[host] slot live480kp2_0: d_loop_us=1058 d_raster_us=0 d_observe_us=70538 max_observe_us=19676 d_paints=0 d_skips=50 d_ticks=2 window_ms=1351
+[nav-walk] here=WorldTile { x: 2657, z: 3300, level: 0 } aim=WorldTile { x: 2655, z: 3298, level: 0 } radius=0 ticks_waited=6 sent_tile=Some(WorldTile { x: 2668, z: 3312, level: 0 })
+[nav-follow] here=WorldTile { x: 2657, z: 3300, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch live480kp2_0: observe_us=16479 paints=0 skips=2110 ticks=108
+[script live480kp2_0] slow tick 118: 76.606167ms
+[nav-walk] here=WorldTile { x: 2655, z: 3298, level: 0 } aim=WorldTile { x: 2655, z: 3298, level: 0 } radius=0 ticks_waited=7 sent_tile=Some(WorldTile { x: 2668, z: 3312, level: 0 })
+[nav-follow] here=WorldTile { x: 2655, z: 3298, level: 0 } walk=false transport=false leg=1 hops=1 outcome=Some(Arrived { at: WorldTile { x: 2655, z: 3298, level: 0 } })
+[host] hitch live480kp2_0: observe_us=19328 paints=0 skips=2133 ticks=109
+[script live480kp2_0] slow tick 119: 76.179667ms
+[host] slot live480kp2_0: d_loop_us=1068 d_raster_us=0 d_observe_us=68968 max_observe_us=19328 d_paints=0 d_skips=50 d_ticks=2 window_ms=1302
+[script live480kp2_0] slow tick 120: 76.42025ms
+[script live480kp2_0] slow tick 121: 76.410833ms
+[host] slot live480kp2_0: d_loop_us=977 d_raster_us=0 d_observe_us=46948 max_observe_us=8177 d_paints=0 d_skips=50 d_ticks=2 window_ms=1333
+[script live480kp2_0] slow tick 122: 76.929875ms
+[script live480kp2_0] slow tick 123: 77.134667ms
+[host] slot live480kp2_0: d_loop_us=946 d_raster_us=0 d_observe_us=53239 max_observe_us=7808 d_paints=0 d_skips=50 d_ticks=3 window_ms=1283
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 124: 383.079541ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 125: 385.663875ms
+[host] slot live480kp2_0: d_loop_us=918 d_raster_us=0 d_observe_us=44071 max_observe_us=7961 d_paints=0 d_skips=50 d_ticks=2 window_ms=1311
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 126: 385.485458ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 127: 389.186916ms
+[host] slot live480kp2_0: d_loop_us=895 d_raster_us=0 d_observe_us=45069 max_observe_us=7937 d_paints=0 d_skips=50 d_ticks=2 window_ms=1313
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 128: 380.939541ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 129: 387.12225ms
+[host] slot live480kp2_0: d_loop_us=942 d_raster_us=0 d_observe_us=44772 max_observe_us=7819 d_paints=0 d_skips=50 d_ticks=2 window_ms=1299
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 130: 386.900375ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 131: 386.100791ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[host] slot live480kp2_0: d_loop_us=918 d_raster_us=0 d_observe_us=44890 max_observe_us=7766 d_paints=0 d_skips=50 d_ticks=2 window_ms=1312
+[script live480kp2_0] slow tick 132: 385.627333ms
+[script live480kp2_0] interact WalkTo { x: 2668, z: 3312, level: 0 }
+[script live480kp2_0] slow tick 133: 382.131459ms
+[host] hitch live480kp2_0: observe_us=18084 paints=0 skips=2477 ticks=124
+[script live480kp2_0] slow tick 134: 152.981208ms
+[host] slot live480kp2_0: d_loop_us=1023 d_raster_us=0 d_observe_us=60084 max_observe_us=18084 d_paints=0 d_skips=50 d_ticks=3 window_ms=1303
+[host] hitch live480kp2_0: observe_us=16162 paints=0 skips=2500 ticks=125
+[script live480kp2_0] slow tick 135: 155.533292ms
+[host] hitch live480kp2_0: observe_us=18606 paints=0 skips=2524 ticks=126
+[script live480kp2_0] slow tick 136: 153.622709ms
+[host] hitch live480kp2_0: observe_us=16338 paints=0 skips=2546 ticks=127
+[host] slot live480kp2_0: d_loop_us=1054 d_raster_us=0 d_observe_us=82329 max_observe_us=18606 d_paints=0 d_skips=50 d_ticks=2 window_ms=1312
+[script live480kp2_0] slow tick 137: 153.341375ms
+[host] hitch live480kp2_0: observe_us=16473 paints=0 skips=2568 ticks=128
+[script live480kp2_0] slow tick 138: 152.781584ms
+[host] hitch live480kp2_0: observe_us=18696 paints=0 skips=2591 ticks=129
+[host] slot live480kp2_0: d_loop_us=1074 d_raster_us=0 d_observe_us=67355 max_observe_us=18696 d_paints=0 d_skips=50 d_ticks=2 window_ms=1320
+[script live480kp2_0] slow tick 139: 155.089833ms
+[host] hitch live480kp2_0: observe_us=18560 paints=0 skips=2614 ticks=130
+[script live480kp2_0] slow tick 140: 154.09625ms
+[host] hitch live480kp2_0: observe_us=16601 paints=0 skips=2636 ticks=131
+[host] slot live480kp2_0: d_loop_us=951 d_raster_us=0 d_observe_us=66500 max_observe_us=18560 d_paints=0 d_skips=50 d_ticks=2 window_ms=1352
+[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: "Steal from", id: Some(2561) }
+[script live480kp2_0] slow tick 141: 386.708541ms
+[script live480kp2_0] slow tick 142: 231.504625ms
+[script live480kp2_0] slow tick 143: 234.470209ms
+[host] slot live480kp2_0: d_loop_us=994 d_raster_us=0 d_observe_us=47157 max_observe_us=8203 d_paints=0 d_skips=50 d_ticks=2 window_ms=1297
+[host] hitch live480kp2_0: observe_us=18295 paints=0 skips=2704 ticks=134
+[script live480kp2_0] slow tick 144: 234.412291ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[host] slot live480kp2_0: d_loop_us=907 d_raster_us=0 d_observe_us=59988 max_observe_us=18295 d_paints=0 d_skips=50 d_ticks=2 window_ms=1283
+[script live480kp2_0] slow tick 145: 462.527167ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 146: 385.378625ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 147: 387.2665ms
+[host] slot live480kp2_0: d_loop_us=920 d_raster_us=0 d_observe_us=53869 max_observe_us=7991 d_paints=0 d_skips=50 d_ticks=3 window_ms=1284
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 148: 385.248292ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 149: 384.03425ms
+[host] hitch live480kp2_0: observe_us=18327 paints=0 skips=2845 ticks=140
+[host] slot live480kp2_0: d_loop_us=878 d_raster_us=0 d_observe_us=55159 max_observe_us=18327 d_paints=0 d_skips=50 d_ticks=2 window_ms=1304
+[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: "Steal from", id: Some(2561) }
+[script live480kp2_0] slow tick 150: 385.12975ms
+[script live480kp2_0] slow tick 151: 232.111792ms
+[host] hitch live480kp2_0: observe_us=18263 paints=0 skips=2890 ticks=142
+[host] slot live480kp2_0: d_loop_us=820 d_raster_us=0 d_observe_us=57709 max_observe_us=18263 d_paints=0 d_skips=50 d_ticks=2 window_ms=1307
+[script live480kp2_0] slow tick 152: 231.066375ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 153: 472.184041ms
+[host] slot live480kp2_0: d_loop_us=899 d_raster_us=0 d_observe_us=45444 max_observe_us=8444 d_paints=0 d_skips=50 d_ticks=2 window_ms=1344
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 154: 388.248291ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 155: 390.372625ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 156: 389.2395ms
+[host] slot live480kp2_0: d_loop_us=959 d_raster_us=0 d_observe_us=45917 max_observe_us=7894 d_paints=0 d_skips=50 d_ticks=2 window_ms=1349
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 157: 388.89575ms
+[host] hitch live480kp2_0: observe_us=18189 paints=0 skips=3024 ticks=148
+[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: "Steal from", id: Some(2561) }
+[script live480kp2_0] slow tick 158: 391.061458ms
+[host] slot live480kp2_0: d_loop_us=987 d_raster_us=0 d_observe_us=62232 max_observe_us=18189 d_paints=0 d_skips=50 d_ticks=3 window_ms=1354
+[script live480kp2_0] slow tick 159: 233.304334ms
+[host] hitch live480kp2_0: observe_us=21753 paints=0 skips=3069 ticks=150
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 160: 467.771458ms
+[host] slot live480kp2_0: d_loop_us=1074 d_raster_us=0 d_observe_us=60140 max_observe_us=21753 d_paints=0 d_skips=50 d_ticks=2 window_ms=1285
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 161: 390.123292ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 162: 389.689458ms
+[host] slot live480kp2_0: d_loop_us=1060 d_raster_us=0 d_observe_us=48530 max_observe_us=7896 d_paints=0 d_skips=50 d_ticks=2 window_ms=1335
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 163: 389.940458ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[script live480kp2_0] slow tick 164: 431.977459ms
+[script live480kp2_0] steal pass made no progress — re-entering
+[host] slot live480kp2_0: d_loop_us=1325 d_raster_us=0 d_observe_us=71208 max_observe_us=8108 d_paints=0 d_skips=50 d_ticks=2 window_ms=1373
+[script live480kp2_0] slow tick 165: 430.054875ms
+[host] hitch live480kp2_0: observe_us=19763 paints=0 skips=3204 ticks=156
+[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: "Steal from", id: Some(2561) }
+[script live480kp2_0] interrupted slow tick 166 (562.930209ms)
+[script live480kp2_0] paint eval: Uncaught Error: execution terminated
+[script live480kp2_0] slow tick 166: 435.963417ms
+[script live480kp2_0] tick 167: Unknown error
+FAIL: catalog_boundary_live: script error: tick 167: Unknown error

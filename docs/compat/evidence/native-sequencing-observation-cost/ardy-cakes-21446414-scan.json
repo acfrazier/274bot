@@ -1,0 +1,2582 @@
+{
+  "receipts": {
+    "r274-ardy-cakes-100adccc-21446414.json": {
+      "host_commit": "21446414d21b50088aabf100df4392c3674b89fa",
+      "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+      "binary_sha256": "65b25315a3d0b049e37582fe42ca8b4cc3926d7c46979c8cb433b7b1edd18b4b",
+      "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+      "revision": "274",
+      "case": "ardy_cakes",
+      "elapsed_seconds": 112.602,
+      "elapsed_is_not_performance_measurement": true,
+      "exit_code": 1,
+      "log_sha256": "ea0b9d97792311b080207ff8e4def5b0ae6cd9da79090d484ce88618a433d492",
+      "started_at": "2026-09-11T14:13:19.112741+00:00",
+      "finished_at": "2026-09-11T14:15:11.716667+00:00",
+      "pid": 10467
+    },
+    "r289-ardy-cakes-100adccc-21446414.json": {
+      "host_commit": "21446414d21b50088aabf100df4392c3674b89fa",
+      "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+      "binary_sha256": "65b25315a3d0b049e37582fe42ca8b4cc3926d7c46979c8cb433b7b1edd18b4b",
+      "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+      "revision": "289",
+      "case": "ardy_cakes",
+      "elapsed_seconds": 108.448,
+      "elapsed_is_not_performance_measurement": true,
+      "exit_code": 1,
+      "log_sha256": "f3fed565edf73c53eda750de30a8ea9081d9f218d449da96595589982b72e363",
+      "started_at": "2026-09-11T14:13:30.746717+00:00",
+      "finished_at": "2026-09-11T14:15:19.196106+00:00",
+      "pid": 10560
+    }
+  },
+  "logs": {
+    "r274-ardy-cakes-100adccc-21446414.log": {
+      "path": "docs/compat/evidence/catalog-harness/live/r274-ardy-cakes-100adccc-21446414.log",
+      "size": 35084,
+      "slow_n": 143,
+      "slow_ms": [
+        460.22575,
+        231.655916,
+        237.873084,
+        241.064209,
+        242.113209,
+        388.763375,
+        79.801292,
+        90.02425,
+        79.61125,
+        76.079208,
+        77.212125,
+        76.591041,
+        76.508541,
+        77.784792,
+        78.457167,
+        80.198042,
+        80.777917,
+        77.091667,
+        78.299083,
+        77.544375,
+        78.705542,
+        77.713417,
+        76.467,
+        76.877833,
+        385.504375,
+        387.413542,
+        386.986417,
+        392.963708,
+        400.803292,
+        387.439916,
+        388.754417,
+        399.918375,
+        384.449041,
+        388.987375,
+        157.240166,
+        156.378542,
+        153.911083,
+        153.908,
+        152.824833,
+        153.107625,
+        154.996042,
+        383.440416,
+        228.5705,
+        233.8595,
+        232.537791,
+        463.296833,
+        384.519875,
+        384.15775,
+        387.390958,
+        383.723375,
+        387.608875,
+        232.904916,
+        228.938542,
+        461.349375,
+        383.882416,
+        389.124875,
+        387.535916,
+        387.210958,
+        384.895,
+        238.013041,
+        230.127417,
+        470.133959,
+        386.802542,
+        390.125666,
+        384.980292,
+        390.317542,
+        384.473708,
+        235.351709,
+        234.973292,
+        471.803833,
+        386.66825,
+        387.851,
+        386.754958,
+        387.861292,
+        383.994583,
+        229.432458,
+        464.752625,
+        382.36125,
+        387.157875,
+        383.668541,
+        388.3915,
+        387.617917,
+        382.923416,
+        231.172583,
+        234.238375,
+        230.087209,
+        233.28075,
+        385.501875,
+        77.130833,
+        76.74775,
+        80.647417,
+        75.941125,
+        76.971666,
+        75.890625,
+        76.373,
+        75.853458,
+        76.668833,
+        76.57325,
+        78.657334,
+        88.183417,
+        90.740667,
+        85.5065,
+        87.602291,
+        87.411083,
+        84.77975,
+        84.373709,
+        387.523166,
+        388.238042,
+        387.272083,
+        389.650959,
+        389.103459,
+        387.892333,
+        388.245708,
+        383.496791,
+        382.218542,
+        384.238416,
+        152.21,
+        154.479375,
+        153.661417,
+        153.583709,
+        152.90075,
+        153.6035,
+        153.100417,
+        383.74925,
+        230.16525,
+        233.967667,
+        231.273208,
+        465.888375,
+        384.931541,
+        387.576125,
+        383.733084,
+        386.971417,
+        388.192833,
+        233.851125,
+        230.367958,
+        464.696333,
+        386.683292,
+        383.960834,
+        383.928208,
+        383.35875,
+        384.1365,
+        231.286084,
+        465.574708
+      ],
+      "slow_ticks": [
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        87,
+        88,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+        109,
+        110,
+        111,
+        112,
+        113,
+        114,
+        115,
+        116,
+        117,
+        118,
+        119,
+        120,
+        121,
+        122,
+        123,
+        124,
+        125,
+        126,
+        127,
+        128,
+        129,
+        130,
+        131,
+        132,
+        133,
+        134,
+        135,
+        136,
+        137,
+        138,
+        139,
+        140,
+        141,
+        142,
+        143,
+        144,
+        145,
+        146,
+        147,
+        148,
+        149,
+        150,
+        151,
+        152,
+        153,
+        154,
+        155,
+        156,
+        157,
+        158,
+        159,
+        160,
+        161,
+        162,
+        163,
+        164,
+        165,
+        166,
+        167,
+        168,
+        169,
+        170,
+        171,
+        172,
+        173,
+        174,
+        175,
+        176
+      ],
+      "slow_min": 75.853458,
+      "slow_max": 471.803833,
+      "slow_median": 238.013041,
+      "slow_ge50": 143,
+      "slow_ge200": 93,
+      "slow_ge230": 90,
+      "first_slow": {
+        "line": 22,
+        "tick": 34,
+        "ms": 460.22575
+      },
+      "last_slow": {
+        "line": 385,
+        "tick": 176,
+        "ms": 465.574708
+      },
+      "interacts": [
+        {
+          "line": 21,
+          "text": "[script liveumr57a_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 33,
+          "text": "[script liveumr57a_0] interact Walk { x: 2655, z: 3298, level: 0, allow_teleports: false }"
+        },
+        {
+          "line": 109,
+          "text": "[script liveumr57a_0] interact WalkTo { x: 2668, z: 3312, level: 0 }"
+        },
+        {
+          "line": 129,
+          "text": "[script liveumr57a_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 150,
+          "text": "[script liveumr57a_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 171,
+          "text": "[script liveumr57a_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 191,
+          "text": "[script liveumr57a_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 210,
+          "text": "[script liveumr57a_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 231,
+          "text": "[script liveumr57a_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 242,
+          "text": "[script liveumr57a_0] interact Walk { x: 2655, z: 3298, level: 0, allow_teleports: false }"
+        },
+        {
+          "line": 316,
+          "text": "[script liveumr57a_0] interact WalkTo { x: 2668, z: 3312, level: 0 }"
+        },
+        {
+          "line": 337,
+          "text": "[script liveumr57a_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 358,
+          "text": "[script liveumr57a_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 377,
+          "text": "[script liveumr57a_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        }
+      ],
+      "errors": [
+        {
+          "line": 384,
+          "text": "[script liveumr57a_0] paint eval: Uncaught Error: execution terminated"
+        },
+        {
+          "line": 386,
+          "text": "[script liveumr57a_0] tick 177: Unknown error"
+        },
+        {
+          "line": 387,
+          "text": "FAIL: catalog_boundary_live: script error: tick 177: Unknown error"
+        }
+      ],
+      "notes": [
+        {
+          "line": 3,
+          "text": "{\"phase\":\"identity\",\"revision\":274,\"profile\":\"local-274 \u00b7 127.0.0.1:43594 \u00b7 revision 274\",\"cache_id\":\"4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c\",\"nav_pack\":\"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navpack\",\"nav_sha256\":\"05db24"
+        },
+        {
+          "line": 14,
+          "text": "{\"phase\":\"baseline-after-preparation\",\"scenario\":\"ardy_cakes\",\"account\":\"liveumr57a_0\",\"observation\":{\"ingame\":true,\"scene_state\":2,\"player\":\"Liveumr57a 0\",\"tile\":[2668,3312,0],\"combat_level\":10,\"tick\":19,\"items\":{},\"item_ids\":{},\"bank\":{},\"bank_ids\":{},\"bank_open\":false,\"bank_loaded\":false,\"bank_generation\":0,\"levels\""
+        },
+        {
+          "line": 19,
+          "text": "[script liveumr57a_0] interrupted slow tick 34 (519.856375ms)"
+        },
+        {
+          "line": 20,
+          "text": "[script liveumr57a_0] ArdyCakes starting \u2014 stand (2668, 3312, 0), bank (2655, 3286, 0), flee mode"
+        },
+        {
+          "line": 21,
+          "text": "[script liveumr57a_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 22,
+          "text": "[script liveumr57a_0] slow tick 34: 460.22575ms"
+        },
+        {
+          "line": 23,
+          "text": "[script liveumr57a_0] slow tick 35: 231.655916ms"
+        },
+        {
+          "line": 24,
+          "text": "[script liveumr57a_0] slow tick 36: 237.873084ms"
+        },
+        {
+          "line": 26,
+          "text": "[script liveumr57a_0] slow tick 37: 241.064209ms"
+        },
+        {
+          "line": 28,
+          "text": "[script liveumr57a_0] slow tick 38: 242.113209ms"
+        },
+        {
+          "line": 30,
+          "text": "[script liveumr57a_0] guard caught the steal \u2014 handling per guardResponse"
+        },
+        {
+          "line": 31,
+          "text": "[script liveumr57a_0] slow tick 39: 388.763375ms"
+        },
+        {
+          "line": 32,
+          "text": "[script liveumr57a_0] combat \u2014 kiting the guard to 2655,3298"
+        },
+        {
+          "line": 33,
+          "text": "[script liveumr57a_0] interact Walk { x: 2655, z: 3298, level: 0, allow_teleports: false }"
+        },
+        {
+          "line": 34,
+          "text": "[script liveumr57a_0] slow tick 40: 79.801292ms"
+        },
+        {
+          "line": 38,
+          "text": "[script liveumr57a_0] slow tick 41: 90.02425ms"
+        },
+        {
+          "line": 42,
+          "text": "[script liveumr57a_0] slow tick 42: 79.61125ms"
+        },
+        {
+          "line": 47,
+          "text": "[script liveumr57a_0] slow tick 43: 76.079208ms"
+        },
+        {
+          "line": 51,
+          "text": "[script liveumr57a_0] slow tick 44: 77.212125ms"
+        },
+        {
+          "line": 55,
+          "text": "[script liveumr57a_0] slow tick 45: 76.591041ms"
+        },
+        {
+          "line": 60,
+          "text": "[script liveumr57a_0] slow tick 46: 76.508541ms"
+        },
+        {
+          "line": 64,
+          "text": "[script liveumr57a_0] slow tick 47: 77.784792ms"
+        },
+        {
+          "line": 69,
+          "text": "[script liveumr57a_0] slow tick 48: 78.457167ms"
+        },
+        {
+          "line": 73,
+          "text": "[script liveumr57a_0] slow tick 49: 80.198042ms"
+        },
+        {
+          "line": 75,
+          "text": "[script liveumr57a_0] slow tick 50: 80.777917ms"
+        },
+        {
+          "line": 76,
+          "text": "[script liveumr57a_0] slow tick 51: 77.091667ms"
+        },
+        {
+          "line": 77,
+          "text": "[script liveumr57a_0] slow tick 52: 78.299083ms"
+        },
+        {
+          "line": 79,
+          "text": "[script liveumr57a_0] slow tick 53: 77.544375ms"
+        },
+        {
+          "line": 80,
+          "text": "[script liveumr57a_0] slow tick 54: 78.705542ms"
+        },
+        {
+          "line": 82,
+          "text": "[script liveumr57a_0] slow tick 55: 77.713417ms"
+        },
+        {
+          "line": 83,
+          "text": "[script liveumr57a_0] slow tick 56: 76.467ms"
+        },
+        {
+          "line": 85,
+          "text": "[script liveumr57a_0] slow tick 57: 76.877833ms"
+        },
+        {
+          "line": 86,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 87,
+          "text": "[script liveumr57a_0] slow tick 58: 385.504375ms"
+        },
+        {
+          "line": 89,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 90,
+          "text": "[script liveumr57a_0] slow tick 59: 387.413542ms"
+        },
+        {
+          "line": 91,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 92,
+          "text": "[script liveumr57a_0] slow tick 60: 386.986417ms"
+        },
+        {
+          "line": 94,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 95,
+          "text": "[script liveumr57a_0] slow tick 61: 392.963708ms"
+        },
+        {
+          "line": 96,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 97,
+          "text": "[script liveumr57a_0] slow tick 62: 400.803292ms"
+        },
+        {
+          "line": 99,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 100,
+          "text": "[script liveumr57a_0] slow tick 63: 387.439916ms"
+        },
+        {
+          "line": 101,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 102,
+          "text": "[script liveumr57a_0] slow tick 64: 388.754417ms"
+        },
+        {
+          "line": 104,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 105,
+          "text": "[script liveumr57a_0] slow tick 65: 399.918375ms"
+        },
+        {
+          "line": 106,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 107,
+          "text": "[script liveumr57a_0] slow tick 66: 384.449041ms"
+        },
+        {
+          "line": 109,
+          "text": "[script liveumr57a_0] interact WalkTo { x: 2668, z: 3312, level: 0 }"
+        },
+        {
+          "line": 110,
+          "text": "[script liveumr57a_0] slow tick 67: 388.987375ms"
+        },
+        {
+          "line": 112,
+          "text": "[script liveumr57a_0] slow tick 68: 157.240166ms"
+        },
+        {
+          "line": 114,
+          "text": "[script liveumr57a_0] slow tick 69: 156.378542ms"
+        },
+        {
+          "line": 117,
+          "text": "[script liveumr57a_0] slow tick 70: 153.911083ms"
+        },
+        {
+          "line": 119,
+          "text": "[script liveumr57a_0] slow tick 71: 153.908ms"
+        },
+        {
+          "line": 122,
+          "text": "[script liveumr57a_0] slow tick 72: 152.824833ms"
+        },
+        {
+          "line": 124,
+          "text": "[script liveumr57a_0] slow tick 73: 153.107625ms"
+        },
+        {
+          "line": 127,
+          "text": "[script liveumr57a_0] slow tick 74: 154.996042ms"
+        },
+        {
+          "line": 129,
+          "text": "[script liveumr57a_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 130,
+          "text": "[script liveumr57a_0] slow tick 75: 383.440416ms"
+        },
+        {
+          "line": 132,
+          "text": "[script liveumr57a_0] slow tick 76: 228.5705ms"
+        },
+        {
+          "line": 133,
+          "text": "[script liveumr57a_0] slow tick 77: 233.8595ms"
+        },
+        {
+          "line": 135,
+          "text": "[script liveumr57a_0] slow tick 78: 232.537791ms"
+        },
+        {
+          "line": 137,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 138,
+          "text": "[script liveumr57a_0] slow tick 79: 463.296833ms"
+        },
+        {
+          "line": 139,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 140,
+          "text": "[script liveumr57a_0] slow tick 80: 384.519875ms"
+        },
+        {
+          "line": 142,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 143,
+          "text": "[script liveumr57a_0] slow tick 81: 384.15775ms"
+        },
+        {
+          "line": 144,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 145,
+          "text": "[script liveumr57a_0] slow tick 82: 387.390958ms"
+        },
+        {
+          "line": 147,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 148,
+          "text": "[script liveumr57a_0] slow tick 83: 383.723375ms"
+        },
+        {
+          "line": 150,
+          "text": "[script liveumr57a_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 151,
+          "text": "[script liveumr57a_0] slow tick 84: 387.608875ms"
+        },
+        {
+          "line": 153,
+          "text": "[script liveumr57a_0] slow tick 85: 232.904916ms"
+        },
+        {
+          "line": 155,
+          "text": "[script liveumr57a_0] slow tick 86: 228.938542ms"
+        },
+        {
+          "line": 157,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 158,
+          "text": "[script liveumr57a_0] slow tick 87: 461.349375ms"
+        },
+        {
+          "line": 159,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 160,
+          "text": "[script liveumr57a_0] slow tick 88: 383.882416ms"
+        },
+        {
+          "line": 163,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 164,
+          "text": "[script liveumr57a_0] slow tick 89: 389.124875ms"
+        },
+        {
+          "line": 165,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 166,
+          "text": "[script liveumr57a_0] slow tick 90: 387.535916ms"
+        },
+        {
+          "line": 167,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 168,
+          "text": "[script liveumr57a_0] slow tick 91: 387.210958ms"
+        },
+        {
+          "line": 171,
+          "text": "[script liveumr57a_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 172,
+          "text": "[script liveumr57a_0] slow tick 92: 384.895ms"
+        },
+        {
+          "line": 173,
+          "text": "[script liveumr57a_0] slow tick 93: 238.013041ms"
+        },
+        {
+          "line": 176,
+          "text": "[script liveumr57a_0] slow tick 94: 230.127417ms"
+        },
+        {
+          "line": 177,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 178,
+          "text": "[script liveumr57a_0] slow tick 95: 470.133959ms"
+        },
+        {
+          "line": 180,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 181,
+          "text": "[script liveumr57a_0] slow tick 96: 386.802542ms"
+        },
+        {
+          "line": 182,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 183,
+          "text": "[script liveumr57a_0] slow tick 97: 390.125666ms"
+        },
+        {
+          "line": 185,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 186,
+          "text": "[script liveumr57a_0] slow tick 98: 384.980292ms"
+        },
+        {
+          "line": 187,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 188,
+          "text": "[script liveumr57a_0] slow tick 99: 390.317542ms"
+        },
+        {
+          "line": 191,
+          "text": "[script liveumr57a_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 192,
+          "text": "[script liveumr57a_0] slow tick 100: 384.473708ms"
+        },
+        {
+          "line": 193,
+          "text": "[script liveumr57a_0] slow tick 101: 235.351709ms"
+        },
+        {
+          "line": 195,
+          "text": "[script liveumr57a_0] slow tick 102: 234.973292ms"
+        },
+        {
+          "line": 197,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 198,
+          "text": "[script liveumr57a_0] slow tick 103: 471.803833ms"
+        },
+        {
+          "line": 199,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 200,
+          "text": "[script liveumr57a_0] slow tick 104: 386.66825ms"
+        },
+        {
+          "line": 202,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 203,
+          "text": "[script liveumr57a_0] slow tick 105: 387.851ms"
+        },
+        {
+          "line": 204,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 205,
+          "text": "[script liveumr57a_0] slow tick 106: 386.754958ms"
+        },
+        {
+          "line": 207,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 208,
+          "text": "[script liveumr57a_0] slow tick 107: 387.861292ms"
+        },
+        {
+          "line": 210,
+          "text": "[script liveumr57a_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 211,
+          "text": "[script liveumr57a_0] slow tick 108: 383.994583ms"
+        },
+        {
+          "line": 212,
+          "text": "[script liveumr57a_0] slow tick 109: 229.432458ms"
+        },
+        {
+          "line": 215,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 216,
+          "text": "[script liveumr57a_0] slow tick 110: 464.752625ms"
+        },
+        {
+          "line": 217,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 219,
+          "text": "[script liveumr57a_0] slow tick 111: 382.36125ms"
+        },
+        {
+          "line": 220,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 221,
+          "text": "[script liveumr57a_0] slow tick 112: 387.157875ms"
+        },
+        {
+          "line": 222,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 223,
+          "text": "[script liveumr57a_0] slow tick 113: 383.668541ms"
+        },
+        {
+          "line": 225,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 226,
+          "text": "[script liveumr57a_0] slow tick 114: 388.3915ms"
+        },
+        {
+          "line": 227,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 228,
+          "text": "[script liveumr57a_0] slow tick 115: 387.617917ms"
+        },
+        {
+          "line": 231,
+          "text": "[script liveumr57a_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 232,
+          "text": "[script liveumr57a_0] slow tick 116: 382.923416ms"
+        },
+        {
+          "line": 233,
+          "text": "[script liveumr57a_0] slow tick 117: 231.172583ms"
+        },
+        {
+          "line": 235,
+          "text": "[script liveumr57a_0] slow tick 118: 234.238375ms"
+        },
+        {
+          "line": 236,
+          "text": "[script liveumr57a_0] slow tick 119: 230.087209ms"
+        },
+        {
+          "line": 238,
+          "text": "[script liveumr57a_0] slow tick 120: 233.28075ms"
+        },
+        {
+          "line": 239,
+          "text": "[script liveumr57a_0] guard caught the steal \u2014 handling per guardResponse"
+        },
+        {
+          "line": 240,
+          "text": "[script liveumr57a_0] slow tick 121: 385.501875ms"
+        },
+        {
+          "line": 241,
+          "text": "[script liveumr57a_0] combat \u2014 kiting the guard to 2655,3298"
+        },
+        {
+          "line": 242,
+          "text": "[script liveumr57a_0] interact Walk { x: 2655, z: 3298, level: 0, allow_teleports: false }"
+        },
+        {
+          "line": 243,
+          "text": "[script liveumr57a_0] slow tick 122: 77.130833ms"
+        },
+        {
+          "line": 246,
+          "text": "[script liveumr57a_0] slow tick 123: 76.74775ms"
+        },
+        {
+          "line": 249,
+          "text": "[script liveumr57a_0] slow tick 124: 80.647417ms"
+        },
+        {
+          "line": 254,
+          "text": "[script liveumr57a_0] slow tick 125: 75.941125ms"
+        },
+        {
+          "line": 258,
+          "text": "[script liveumr57a_0] slow tick 126: 76.971666ms"
+        },
+        {
+          "line": 263,
+          "text": "[script liveumr57a_0] slow tick 127: 75.890625ms"
+        },
+        {
+          "line": 267,
+          "text": "[script liveumr57a_0] slow tick 128: 76.373ms"
+        },
+        {
+          "line": 272,
+          "text": "[script liveumr57a_0] slow tick 129: 75.853458ms"
+        },
+        {
+          "line": 276,
+          "text": "[script liveumr57a_0] slow tick 130: 76.668833ms"
+        },
+        {
+          "line": 280,
+          "text": "[script liveumr57a_0] slow tick 131: 76.57325ms"
+        },
+        {
+          "line": 282,
+          "text": "[script liveumr57a_0] slow tick 132: 78.657334ms"
+        },
+        {
+          "line": 283,
+          "text": "[script liveumr57a_0] slow tick 133: 88.183417ms"
+        },
+        {
+          "line": 285,
+          "text": "[script liveumr57a_0] slow tick 134: 90.740667ms"
+        },
+        {
+          "line": 286,
+          "text": "[script liveumr57a_0] slow tick 135: 85.5065ms"
+        },
+        {
+          "line": 288,
+          "text": "[script liveumr57a_0] slow tick 136: 87.602291ms"
+        },
+        {
+          "line": 289,
+          "text": "[script liveumr57a_0] slow tick 137: 87.411083ms"
+        },
+        {
+          "line": 291,
+          "text": "[script liveumr57a_0] slow tick 138: 84.77975ms"
+        },
+        {
+          "line": 292,
+          "text": "[script liveumr57a_0] slow tick 139: 84.373709ms"
+        },
+        {
+          "line": 294,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 295,
+          "text": "[script liveumr57a_0] slow tick 140: 387.523166ms"
+        },
+        {
+          "line": 296,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 297,
+          "text": "[script liveumr57a_0] slow tick 141: 388.238042ms"
+        },
+        {
+          "line": 299,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 300,
+          "text": "[script liveumr57a_0] slow tick 142: 387.272083ms"
+        },
+        {
+          "line": 301,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 302,
+          "text": "[script liveumr57a_0] slow tick 143: 389.650959ms"
+        },
+        {
+          "line": 304,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 305,
+          "text": "[script liveumr57a_0] slow tick 144: 389.103459ms"
+        },
+        {
+          "line": 306,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 307,
+          "text": "[script liveumr57a_0] slow tick 145: 387.892333ms"
+        },
+        {
+          "line": 308,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 310,
+          "text": "[script liveumr57a_0] slow tick 146: 388.245708ms"
+        },
+        {
+          "line": 311,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 312,
+          "text": "[script liveumr57a_0] slow tick 147: 383.496791ms"
+        },
+        {
+          "line": 313,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 314,
+          "text": "[script liveumr57a_0] slow tick 148: 382.218542ms"
+        },
+        {
+          "line": 316,
+          "text": "[script liveumr57a_0] interact WalkTo { x: 2668, z: 3312, level: 0 }"
+        },
+        {
+          "line": 317,
+          "text": "[script liveumr57a_0] slow tick 149: 384.238416ms"
+        },
+        {
+          "line": 319,
+          "text": "[script liveumr57a_0] slow tick 150: 152.21ms"
+        },
+        {
+          "line": 322,
+          "text": "[script liveumr57a_0] slow tick 151: 154.479375ms"
+        },
+        {
+          "line": 324,
+          "text": "[script liveumr57a_0] slow tick 152: 153.661417ms"
+        },
+        {
+          "line": 327,
+          "text": "[script liveumr57a_0] slow tick 153: 153.583709ms"
+        },
+        {
+          "line": 329,
+          "text": "[script liveumr57a_0] slow tick 154: 152.90075ms"
+        },
+        {
+          "line": 332,
+          "text": "[script liveumr57a_0] slow tick 155: 153.6035ms"
+        },
+        {
+          "line": 334,
+          "text": "[script liveumr57a_0] slow tick 156: 153.100417ms"
+        },
+        {
+          "line": 337,
+          "text": "[script liveumr57a_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 338,
+          "text": "[script liveumr57a_0] slow tick 157: 383.74925ms"
+        },
+        {
+          "line": 339,
+          "text": "[script liveumr57a_0] slow tick 158: 230.16525ms"
+        },
+        {
+          "line": 340,
+          "text": "[script liveumr57a_0] slow tick 159: 233.967667ms"
+        },
+        {
+          "line": 343,
+          "text": "[script liveumr57a_0] slow tick 160: 231.273208ms"
+        },
+        {
+          "line": 344,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 345,
+          "text": "[script liveumr57a_0] slow tick 161: 465.888375ms"
+        },
+        {
+          "line": 347,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 348,
+          "text": "[script liveumr57a_0] slow tick 162: 384.931541ms"
+        },
+        {
+          "line": 349,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 350,
+          "text": "[script liveumr57a_0] slow tick 163: 387.576125ms"
+        },
+        {
+          "line": 352,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 353,
+          "text": "[script liveumr57a_0] slow tick 164: 383.733084ms"
+        },
+        {
+          "line": 354,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 355,
+          "text": "[script liveumr57a_0] slow tick 165: 386.971417ms"
+        },
+        {
+          "line": 358,
+          "text": "[script liveumr57a_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 359,
+          "text": "[script liveumr57a_0] slow tick 166: 388.192833ms"
+        },
+        {
+          "line": 360,
+          "text": "[script liveumr57a_0] slow tick 167: 233.851125ms"
+        },
+        {
+          "line": 363,
+          "text": "[script liveumr57a_0] slow tick 168: 230.367958ms"
+        },
+        {
+          "line": 364,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 365,
+          "text": "[script liveumr57a_0] slow tick 169: 464.696333ms"
+        },
+        {
+          "line": 367,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 368,
+          "text": "[script liveumr57a_0] slow tick 170: 386.683292ms"
+        },
+        {
+          "line": 369,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 370,
+          "text": "[script liveumr57a_0] slow tick 171: 383.960834ms"
+        },
+        {
+          "line": 371,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 373,
+          "text": "[script liveumr57a_0] slow tick 172: 383.928208ms"
+        },
+        {
+          "line": 374,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 375,
+          "text": "[script liveumr57a_0] slow tick 173: 383.35875ms"
+        },
+        {
+          "line": 377,
+          "text": "[script liveumr57a_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 378,
+          "text": "[script liveumr57a_0] slow tick 174: 384.1365ms"
+        },
+        {
+          "line": 380,
+          "text": "[script liveumr57a_0] slow tick 175: 231.286084ms"
+        },
+        {
+          "line": 382,
+          "text": "[script liveumr57a_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 383,
+          "text": "[script liveumr57a_0] interrupted slow tick 176 (556.684542ms)"
+        },
+        {
+          "line": 384,
+          "text": "[script liveumr57a_0] paint eval: Uncaught Error: execution terminated"
+        },
+        {
+          "line": 385,
+          "text": "[script liveumr57a_0] slow tick 176: 465.574708ms"
+        },
+        {
+          "line": 386,
+          "text": "[script liveumr57a_0] tick 177: Unknown error"
+        },
+        {
+          "line": 387,
+          "text": "FAIL: catalog_boundary_live: script error: tick 177: Unknown error"
+        }
+      ],
+      "tail": [
+        "[script liveumr57a_0] slow tick 172: 383.928208ms",
+        "[script liveumr57a_0] steal pass made no progress \u2014 re-entering",
+        "[script liveumr57a_0] slow tick 173: 383.35875ms",
+        "[host] hitch liveumr57a_0: observe_us=22962 paints=0 skips=3278 ticks=160",
+        "[script liveumr57a_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }",
+        "[script liveumr57a_0] slow tick 174: 384.1365ms",
+        "[host] slot liveumr57a_0: d_loop_us=813 d_raster_us=0 d_observe_us=58977 max_observe_us=22962 d_paints=0 d_skips=50 d_ticks=3 window_ms=1330",
+        "[script liveumr57a_0] slow tick 175: 231.286084ms",
+        "[host] hitch liveumr57a_0: observe_us=20808 paints=0 skips=3324 ticks=162",
+        "[script liveumr57a_0] steal pass made no progress \u2014 re-entering",
+        "[script liveumr57a_0] interrupted slow tick 176 (556.684542ms)",
+        "[script liveumr57a_0] paint eval: Uncaught Error: execution terminated",
+        "[script liveumr57a_0] slow tick 176: 465.574708ms",
+        "[script liveumr57a_0] tick 177: Unknown error",
+        "FAIL: catalog_boundary_live: script error: tick 177: Unknown error"
+      ]
+    },
+    "r289-ardy-cakes-100adccc-21446414.log": {
+      "path": "docs/compat/evidence/catalog-harness/live/r289-ardy-cakes-100adccc-21446414.log",
+      "size": 33200,
+      "slow_n": 138,
+      "slow_ms": [
+        465.088583,
+        235.444458,
+        234.914208,
+        232.004583,
+        231.656542,
+        382.326959,
+        388.97825,
+        230.881042,
+        233.328958,
+        232.61925,
+        234.946625,
+        401.181791,
+        384.843542,
+        234.071208,
+        237.938459,
+        232.086583,
+        235.355333,
+        383.871584,
+        387.617333,
+        234.0685,
+        232.299209,
+        230.227291,
+        230.003833,
+        380.769083,
+        386.86075,
+        233.529125,
+        242.266125,
+        231.261625,
+        230.530333,
+        389.899542,
+        383.701708,
+        231.846583,
+        230.034166,
+        233.6555,
+        229.992709,
+        383.903833,
+        78.879416,
+        77.02425,
+        77.321625,
+        76.9345,
+        77.970708,
+        76.680709,
+        76.675584,
+        76.192041,
+        76.803375,
+        79.318209,
+        78.610375,
+        76.219791,
+        76.386375,
+        77.034958,
+        387.756125,
+        385.993583,
+        387.648,
+        386.962417,
+        385.919375,
+        384.833417,
+        386.755833,
+        385.465709,
+        385.441375,
+        386.623958,
+        158.13875,
+        156.688792,
+        153.0285,
+        153.796417,
+        152.934292,
+        153.363458,
+        154.809166,
+        387.565166,
+        231.862791,
+        227.780917,
+        231.986875,
+        461.782958,
+        387.713875,
+        379.822333,
+        384.577333,
+        382.740542,
+        391.956083,
+        229.104125,
+        227.79175,
+        229.530042,
+        388.26575,
+        77.6885,
+        76.029708,
+        75.422,
+        75.9605,
+        76.029584,
+        75.99775,
+        77.359375,
+        76.629792,
+        76.606167,
+        76.179667,
+        76.42025,
+        76.410833,
+        76.929875,
+        77.134667,
+        383.079541,
+        385.663875,
+        385.485458,
+        389.186916,
+        380.939541,
+        387.12225,
+        386.900375,
+        386.100791,
+        385.627333,
+        382.131459,
+        152.981208,
+        155.533292,
+        153.622709,
+        153.341375,
+        152.781584,
+        155.089833,
+        154.09625,
+        386.708541,
+        231.504625,
+        234.470209,
+        234.412291,
+        462.527167,
+        385.378625,
+        387.2665,
+        385.248292,
+        384.03425,
+        385.12975,
+        232.111792,
+        231.066375,
+        472.184041,
+        388.248291,
+        390.372625,
+        389.2395,
+        388.89575,
+        391.061458,
+        233.304334,
+        467.771458,
+        390.123292,
+        389.689458,
+        389.940458,
+        431.977459,
+        430.054875,
+        435.963417
+      ],
+      "slow_ticks": [
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        87,
+        88,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+        109,
+        110,
+        111,
+        112,
+        113,
+        114,
+        115,
+        116,
+        117,
+        118,
+        119,
+        120,
+        121,
+        122,
+        123,
+        124,
+        125,
+        126,
+        127,
+        128,
+        129,
+        130,
+        131,
+        132,
+        133,
+        134,
+        135,
+        136,
+        137,
+        138,
+        139,
+        140,
+        141,
+        142,
+        143,
+        144,
+        145,
+        146,
+        147,
+        148,
+        149,
+        150,
+        151,
+        152,
+        153,
+        154,
+        155,
+        156,
+        157,
+        158,
+        159,
+        160,
+        161,
+        162,
+        163,
+        164,
+        165,
+        166
+      ],
+      "slow_min": 75.422,
+      "slow_max": 472.184041,
+      "slow_median": 234.071208,
+      "slow_ge50": 138,
+      "slow_ge200": 96,
+      "slow_ge230": 91,
+      "first_slow": {
+        "line": 22,
+        "tick": 29,
+        "ms": 465.088583
+      },
+      "last_slow": {
+        "line": 359,
+        "tick": 166,
+        "ms": 435.963417
+      },
+      "interacts": [
+        {
+          "line": 21,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 31,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 42,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 53,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 64,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 74,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 86,
+          "text": "[script live480kp2_0] interact Walk { x: 2655, z: 3298, level: 0, allow_teleports: false }"
+        },
+        {
+          "line": 154,
+          "text": "[script live480kp2_0] interact WalkTo { x: 2668, z: 3312, level: 0 }"
+        },
+        {
+          "line": 175,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 196,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 206,
+          "text": "[script live480kp2_0] interact Walk { x: 2655, z: 3298, level: 0, allow_teleports: false }"
+        },
+        {
+          "line": 274,
+          "text": "[script live480kp2_0] interact WalkTo { x: 2668, z: 3312, level: 0 }"
+        },
+        {
+          "line": 295,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 316,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 335,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 356,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        }
+      ],
+      "errors": [
+        {
+          "line": 5,
+          "text": "289bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)"
+        },
+        {
+          "line": 358,
+          "text": "[script live480kp2_0] paint eval: Uncaught Error: execution terminated"
+        },
+        {
+          "line": 360,
+          "text": "[script live480kp2_0] tick 167: Unknown error"
+        },
+        {
+          "line": 361,
+          "text": "FAIL: catalog_boundary_live: script error: tick 167: Unknown error"
+        }
+      ],
+      "notes": [
+        {
+          "line": 3,
+          "text": "{\"phase\":\"identity\",\"revision\":289,\"profile\":\"local-289 \u00b7 127.0.0.1:44594 \u00b7 revision 289\",\"cache_id\":\"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09\",\"nav_pack\":\"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack\",\"nav_sha256\":\"131db9"
+        },
+        {
+          "line": 5,
+          "text": "289bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)"
+        },
+        {
+          "line": 14,
+          "text": "{\"phase\":\"baseline-after-preparation\",\"scenario\":\"ardy_cakes\",\"account\":\"live480kp2_0\",\"observation\":{\"ingame\":true,\"scene_state\":2,\"player\":\"Live480kp2 0\",\"tile\":[2668,3312,0],\"combat_level\":10,\"tick\":18,\"items\":{},\"item_ids\":{},\"bank\":{},\"bank_ids\":{},\"bank_open\":false,\"bank_loaded\":false,\"bank_generation\":0,\"levels\""
+        },
+        {
+          "line": 19,
+          "text": "[script live480kp2_0] interrupted slow tick 29 (559.104667ms)"
+        },
+        {
+          "line": 20,
+          "text": "[script live480kp2_0] ArdyCakes starting \u2014 stand (2668, 3312, 0), bank (2655, 3286, 0), flee mode"
+        },
+        {
+          "line": 21,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 22,
+          "text": "[script live480kp2_0] slow tick 29: 465.088583ms"
+        },
+        {
+          "line": 23,
+          "text": "[script live480kp2_0] slow tick 30: 235.444458ms"
+        },
+        {
+          "line": 24,
+          "text": "[script live480kp2_0] slow tick 31: 234.914208ms"
+        },
+        {
+          "line": 26,
+          "text": "[script live480kp2_0] slow tick 32: 232.004583ms"
+        },
+        {
+          "line": 27,
+          "text": "[script live480kp2_0] slow tick 33: 231.656542ms"
+        },
+        {
+          "line": 29,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 30,
+          "text": "[script live480kp2_0] slow tick 34: 382.326959ms"
+        },
+        {
+          "line": 31,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 32,
+          "text": "[script live480kp2_0] slow tick 35: 388.97825ms"
+        },
+        {
+          "line": 34,
+          "text": "[script live480kp2_0] slow tick 36: 230.881042ms"
+        },
+        {
+          "line": 35,
+          "text": "[script live480kp2_0] slow tick 37: 233.328958ms"
+        },
+        {
+          "line": 37,
+          "text": "[script live480kp2_0] slow tick 38: 232.61925ms"
+        },
+        {
+          "line": 38,
+          "text": "[script live480kp2_0] slow tick 39: 234.946625ms"
+        },
+        {
+          "line": 40,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 41,
+          "text": "[script live480kp2_0] slow tick 40: 401.181791ms"
+        },
+        {
+          "line": 42,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 43,
+          "text": "[script live480kp2_0] slow tick 41: 384.843542ms"
+        },
+        {
+          "line": 45,
+          "text": "[script live480kp2_0] slow tick 42: 234.071208ms"
+        },
+        {
+          "line": 46,
+          "text": "[script live480kp2_0] slow tick 43: 237.938459ms"
+        },
+        {
+          "line": 47,
+          "text": "[script live480kp2_0] slow tick 44: 232.086583ms"
+        },
+        {
+          "line": 49,
+          "text": "[script live480kp2_0] slow tick 45: 235.355333ms"
+        },
+        {
+          "line": 50,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 51,
+          "text": "[script live480kp2_0] slow tick 46: 383.871584ms"
+        },
+        {
+          "line": 53,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 54,
+          "text": "[script live480kp2_0] slow tick 47: 387.617333ms"
+        },
+        {
+          "line": 55,
+          "text": "[script live480kp2_0] slow tick 48: 234.0685ms"
+        },
+        {
+          "line": 57,
+          "text": "[script live480kp2_0] slow tick 49: 232.299209ms"
+        },
+        {
+          "line": 58,
+          "text": "[script live480kp2_0] slow tick 50: 230.227291ms"
+        },
+        {
+          "line": 60,
+          "text": "[script live480kp2_0] slow tick 51: 230.003833ms"
+        },
+        {
+          "line": 61,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 62,
+          "text": "[script live480kp2_0] slow tick 52: 380.769083ms"
+        },
+        {
+          "line": 64,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 65,
+          "text": "[script live480kp2_0] slow tick 53: 386.86075ms"
+        },
+        {
+          "line": 66,
+          "text": "[script live480kp2_0] slow tick 54: 233.529125ms"
+        },
+        {
+          "line": 67,
+          "text": "[script live480kp2_0] slow tick 55: 242.266125ms"
+        },
+        {
+          "line": 69,
+          "text": "[script live480kp2_0] slow tick 56: 231.261625ms"
+        },
+        {
+          "line": 70,
+          "text": "[script live480kp2_0] slow tick 57: 230.530333ms"
+        },
+        {
+          "line": 72,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 73,
+          "text": "[script live480kp2_0] slow tick 58: 389.899542ms"
+        },
+        {
+          "line": 74,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 75,
+          "text": "[script live480kp2_0] slow tick 59: 383.701708ms"
+        },
+        {
+          "line": 77,
+          "text": "[script live480kp2_0] slow tick 60: 231.846583ms"
+        },
+        {
+          "line": 78,
+          "text": "[script live480kp2_0] slow tick 61: 230.034166ms"
+        },
+        {
+          "line": 80,
+          "text": "[script live480kp2_0] slow tick 62: 233.6555ms"
+        },
+        {
+          "line": 81,
+          "text": "[script live480kp2_0] slow tick 63: 229.992709ms"
+        },
+        {
+          "line": 82,
+          "text": "[script live480kp2_0] guard caught the steal \u2014 handling per guardResponse"
+        },
+        {
+          "line": 84,
+          "text": "[script live480kp2_0] slow tick 64: 383.903833ms"
+        },
+        {
+          "line": 85,
+          "text": "[script live480kp2_0] combat \u2014 kiting the guard to 2655,3298"
+        },
+        {
+          "line": 86,
+          "text": "[script live480kp2_0] interact Walk { x: 2655, z: 3298, level: 0, allow_teleports: false }"
+        },
+        {
+          "line": 87,
+          "text": "[script live480kp2_0] slow tick 65: 78.879416ms"
+        },
+        {
+          "line": 89,
+          "text": "[script live480kp2_0] slow tick 66: 77.02425ms"
+        },
+        {
+          "line": 93,
+          "text": "[script live480kp2_0] slow tick 67: 77.321625ms"
+        },
+        {
+          "line": 97,
+          "text": "[script live480kp2_0] slow tick 68: 76.9345ms"
+        },
+        {
+          "line": 102,
+          "text": "[script live480kp2_0] slow tick 69: 77.970708ms"
+        },
+        {
+          "line": 106,
+          "text": "[script live480kp2_0] slow tick 70: 76.680709ms"
+        },
+        {
+          "line": 110,
+          "text": "[script live480kp2_0] slow tick 71: 76.675584ms"
+        },
+        {
+          "line": 115,
+          "text": "[script live480kp2_0] slow tick 72: 76.192041ms"
+        },
+        {
+          "line": 119,
+          "text": "[script live480kp2_0] slow tick 73: 76.803375ms"
+        },
+        {
+          "line": 124,
+          "text": "[script live480kp2_0] slow tick 74: 79.318209ms"
+        },
+        {
+          "line": 125,
+          "text": "[script live480kp2_0] slow tick 75: 78.610375ms"
+        },
+        {
+          "line": 127,
+          "text": "[script live480kp2_0] slow tick 76: 76.219791ms"
+        },
+        {
+          "line": 128,
+          "text": "[script live480kp2_0] slow tick 77: 76.386375ms"
+        },
+        {
+          "line": 130,
+          "text": "[script live480kp2_0] slow tick 78: 77.034958ms"
+        },
+        {
+          "line": 131,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 132,
+          "text": "[script live480kp2_0] slow tick 79: 387.756125ms"
+        },
+        {
+          "line": 134,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 135,
+          "text": "[script live480kp2_0] slow tick 80: 385.993583ms"
+        },
+        {
+          "line": 136,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 137,
+          "text": "[script live480kp2_0] slow tick 81: 387.648ms"
+        },
+        {
+          "line": 139,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 140,
+          "text": "[script live480kp2_0] slow tick 82: 386.962417ms"
+        },
+        {
+          "line": 141,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 142,
+          "text": "[script live480kp2_0] slow tick 83: 385.919375ms"
+        },
+        {
+          "line": 144,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 145,
+          "text": "[script live480kp2_0] slow tick 84: 384.833417ms"
+        },
+        {
+          "line": 146,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 147,
+          "text": "[script live480kp2_0] slow tick 85: 386.755833ms"
+        },
+        {
+          "line": 149,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 151,
+          "text": "[script live480kp2_0] slow tick 86: 385.465709ms"
+        },
+        {
+          "line": 152,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 153,
+          "text": "[script live480kp2_0] slow tick 87: 385.441375ms"
+        },
+        {
+          "line": 154,
+          "text": "[script live480kp2_0] interact WalkTo { x: 2668, z: 3312, level: 0 }"
+        },
+        {
+          "line": 155,
+          "text": "[script live480kp2_0] slow tick 88: 386.623958ms"
+        },
+        {
+          "line": 158,
+          "text": "[script live480kp2_0] slow tick 89: 158.13875ms"
+        },
+        {
+          "line": 160,
+          "text": "[script live480kp2_0] slow tick 90: 156.688792ms"
+        },
+        {
+          "line": 163,
+          "text": "[script live480kp2_0] slow tick 91: 153.0285ms"
+        },
+        {
+          "line": 165,
+          "text": "[script live480kp2_0] slow tick 92: 153.796417ms"
+        },
+        {
+          "line": 168,
+          "text": "[script live480kp2_0] slow tick 93: 152.934292ms"
+        },
+        {
+          "line": 170,
+          "text": "[script live480kp2_0] slow tick 94: 153.363458ms"
+        },
+        {
+          "line": 172,
+          "text": "[script live480kp2_0] slow tick 95: 154.809166ms"
+        },
+        {
+          "line": 175,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 176,
+          "text": "[script live480kp2_0] slow tick 96: 387.565166ms"
+        },
+        {
+          "line": 177,
+          "text": "[script live480kp2_0] slow tick 97: 231.862791ms"
+        },
+        {
+          "line": 179,
+          "text": "[script live480kp2_0] slow tick 98: 227.780917ms"
+        },
+        {
+          "line": 181,
+          "text": "[script live480kp2_0] slow tick 99: 231.986875ms"
+        },
+        {
+          "line": 183,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 184,
+          "text": "[script live480kp2_0] slow tick 100: 461.782958ms"
+        },
+        {
+          "line": 185,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 186,
+          "text": "[script live480kp2_0] slow tick 101: 387.713875ms"
+        },
+        {
+          "line": 188,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 189,
+          "text": "[script live480kp2_0] slow tick 102: 379.822333ms"
+        },
+        {
+          "line": 190,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 191,
+          "text": "[script live480kp2_0] slow tick 103: 384.577333ms"
+        },
+        {
+          "line": 193,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 194,
+          "text": "[script live480kp2_0] slow tick 104: 382.740542ms"
+        },
+        {
+          "line": 196,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 197,
+          "text": "[script live480kp2_0] slow tick 105: 391.956083ms"
+        },
+        {
+          "line": 199,
+          "text": "[script live480kp2_0] slow tick 106: 229.104125ms"
+        },
+        {
+          "line": 200,
+          "text": "[script live480kp2_0] slow tick 107: 227.79175ms"
+        },
+        {
+          "line": 201,
+          "text": "[script live480kp2_0] slow tick 108: 229.530042ms"
+        },
+        {
+          "line": 203,
+          "text": "[script live480kp2_0] guard caught the steal \u2014 handling per guardResponse"
+        },
+        {
+          "line": 204,
+          "text": "[script live480kp2_0] slow tick 109: 388.26575ms"
+        },
+        {
+          "line": 205,
+          "text": "[script live480kp2_0] combat \u2014 kiting the guard to 2655,3298"
+        },
+        {
+          "line": 206,
+          "text": "[script live480kp2_0] interact Walk { x: 2655, z: 3298, level: 0, allow_teleports: false }"
+        },
+        {
+          "line": 207,
+          "text": "[script live480kp2_0] slow tick 110: 77.6885ms"
+        },
+        {
+          "line": 210,
+          "text": "[script live480kp2_0] slow tick 111: 76.029708ms"
+        },
+        {
+          "line": 213,
+          "text": "[script live480kp2_0] slow tick 112: 75.422ms"
+        },
+        {
+          "line": 218,
+          "text": "[script live480kp2_0] slow tick 113: 75.9605ms"
+        },
+        {
+          "line": 222,
+          "text": "[script live480kp2_0] slow tick 114: 76.029584ms"
+        },
+        {
+          "line": 227,
+          "text": "[script live480kp2_0] slow tick 115: 75.99775ms"
+        },
+        {
+          "line": 231,
+          "text": "[script live480kp2_0] slow tick 116: 77.359375ms"
+        },
+        {
+          "line": 235,
+          "text": "[script live480kp2_0] slow tick 117: 76.629792ms"
+        },
+        {
+          "line": 240,
+          "text": "[script live480kp2_0] slow tick 118: 76.606167ms"
+        },
+        {
+          "line": 244,
+          "text": "[script live480kp2_0] slow tick 119: 76.179667ms"
+        },
+        {
+          "line": 246,
+          "text": "[script live480kp2_0] slow tick 120: 76.42025ms"
+        },
+        {
+          "line": 247,
+          "text": "[script live480kp2_0] slow tick 121: 76.410833ms"
+        },
+        {
+          "line": 249,
+          "text": "[script live480kp2_0] slow tick 122: 76.929875ms"
+        },
+        {
+          "line": 250,
+          "text": "[script live480kp2_0] slow tick 123: 77.134667ms"
+        },
+        {
+          "line": 252,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 253,
+          "text": "[script live480kp2_0] slow tick 124: 383.079541ms"
+        },
+        {
+          "line": 254,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 255,
+          "text": "[script live480kp2_0] slow tick 125: 385.663875ms"
+        },
+        {
+          "line": 257,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 258,
+          "text": "[script live480kp2_0] slow tick 126: 385.485458ms"
+        },
+        {
+          "line": 259,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 260,
+          "text": "[script live480kp2_0] slow tick 127: 389.186916ms"
+        },
+        {
+          "line": 262,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 263,
+          "text": "[script live480kp2_0] slow tick 128: 380.939541ms"
+        },
+        {
+          "line": 264,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 265,
+          "text": "[script live480kp2_0] slow tick 129: 387.12225ms"
+        },
+        {
+          "line": 267,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 268,
+          "text": "[script live480kp2_0] slow tick 130: 386.900375ms"
+        },
+        {
+          "line": 269,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 270,
+          "text": "[script live480kp2_0] slow tick 131: 386.100791ms"
+        },
+        {
+          "line": 271,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 273,
+          "text": "[script live480kp2_0] slow tick 132: 385.627333ms"
+        },
+        {
+          "line": 274,
+          "text": "[script live480kp2_0] interact WalkTo { x: 2668, z: 3312, level: 0 }"
+        },
+        {
+          "line": 275,
+          "text": "[script live480kp2_0] slow tick 133: 382.131459ms"
+        },
+        {
+          "line": 277,
+          "text": "[script live480kp2_0] slow tick 134: 152.981208ms"
+        },
+        {
+          "line": 280,
+          "text": "[script live480kp2_0] slow tick 135: 155.533292ms"
+        },
+        {
+          "line": 282,
+          "text": "[script live480kp2_0] slow tick 136: 153.622709ms"
+        },
+        {
+          "line": 285,
+          "text": "[script live480kp2_0] slow tick 137: 153.341375ms"
+        },
+        {
+          "line": 287,
+          "text": "[script live480kp2_0] slow tick 138: 152.781584ms"
+        },
+        {
+          "line": 290,
+          "text": "[script live480kp2_0] slow tick 139: 155.089833ms"
+        },
+        {
+          "line": 292,
+          "text": "[script live480kp2_0] slow tick 140: 154.09625ms"
+        },
+        {
+          "line": 295,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 296,
+          "text": "[script live480kp2_0] slow tick 141: 386.708541ms"
+        },
+        {
+          "line": 297,
+          "text": "[script live480kp2_0] slow tick 142: 231.504625ms"
+        },
+        {
+          "line": 298,
+          "text": "[script live480kp2_0] slow tick 143: 234.470209ms"
+        },
+        {
+          "line": 301,
+          "text": "[script live480kp2_0] slow tick 144: 234.412291ms"
+        },
+        {
+          "line": 302,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 304,
+          "text": "[script live480kp2_0] slow tick 145: 462.527167ms"
+        },
+        {
+          "line": 305,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 306,
+          "text": "[script live480kp2_0] slow tick 146: 385.378625ms"
+        },
+        {
+          "line": 307,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 308,
+          "text": "[script live480kp2_0] slow tick 147: 387.2665ms"
+        },
+        {
+          "line": 310,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 311,
+          "text": "[script live480kp2_0] slow tick 148: 385.248292ms"
+        },
+        {
+          "line": 312,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 313,
+          "text": "[script live480kp2_0] slow tick 149: 384.03425ms"
+        },
+        {
+          "line": 316,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 317,
+          "text": "[script live480kp2_0] slow tick 150: 385.12975ms"
+        },
+        {
+          "line": 318,
+          "text": "[script live480kp2_0] slow tick 151: 232.111792ms"
+        },
+        {
+          "line": 321,
+          "text": "[script live480kp2_0] slow tick 152: 231.066375ms"
+        },
+        {
+          "line": 322,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 323,
+          "text": "[script live480kp2_0] slow tick 153: 472.184041ms"
+        },
+        {
+          "line": 325,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 326,
+          "text": "[script live480kp2_0] slow tick 154: 388.248291ms"
+        },
+        {
+          "line": 327,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 328,
+          "text": "[script live480kp2_0] slow tick 155: 390.372625ms"
+        },
+        {
+          "line": 329,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 330,
+          "text": "[script live480kp2_0] slow tick 156: 389.2395ms"
+        },
+        {
+          "line": 332,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 333,
+          "text": "[script live480kp2_0] slow tick 157: 388.89575ms"
+        },
+        {
+          "line": 335,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 336,
+          "text": "[script live480kp2_0] slow tick 158: 391.061458ms"
+        },
+        {
+          "line": 338,
+          "text": "[script live480kp2_0] slow tick 159: 233.304334ms"
+        },
+        {
+          "line": 340,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 341,
+          "text": "[script live480kp2_0] slow tick 160: 467.771458ms"
+        },
+        {
+          "line": 343,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 344,
+          "text": "[script live480kp2_0] slow tick 161: 390.123292ms"
+        },
+        {
+          "line": 345,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 346,
+          "text": "[script live480kp2_0] slow tick 162: 389.689458ms"
+        },
+        {
+          "line": 348,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 349,
+          "text": "[script live480kp2_0] slow tick 163: 389.940458ms"
+        },
+        {
+          "line": 350,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 351,
+          "text": "[script live480kp2_0] slow tick 164: 431.977459ms"
+        },
+        {
+          "line": 352,
+          "text": "[script live480kp2_0] steal pass made no progress \u2014 re-entering"
+        },
+        {
+          "line": 354,
+          "text": "[script live480kp2_0] slow tick 165: 430.054875ms"
+        },
+        {
+          "line": 356,
+          "text": "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }"
+        },
+        {
+          "line": 357,
+          "text": "[script live480kp2_0] interrupted slow tick 166 (562.930209ms)"
+        },
+        {
+          "line": 358,
+          "text": "[script live480kp2_0] paint eval: Uncaught Error: execution terminated"
+        },
+        {
+          "line": 359,
+          "text": "[script live480kp2_0] slow tick 166: 435.963417ms"
+        },
+        {
+          "line": 360,
+          "text": "[script live480kp2_0] tick 167: Unknown error"
+        },
+        {
+          "line": 361,
+          "text": "FAIL: catalog_boundary_live: script error: tick 167: Unknown error"
+        }
+      ],
+      "tail": [
+        "[host] slot live480kp2_0: d_loop_us=1060 d_raster_us=0 d_observe_us=48530 max_observe_us=7896 d_paints=0 d_skips=50 d_ticks=2 window_ms=1335",
+        "[script live480kp2_0] steal pass made no progress \u2014 re-entering",
+        "[script live480kp2_0] slow tick 163: 389.940458ms",
+        "[script live480kp2_0] steal pass made no progress \u2014 re-entering",
+        "[script live480kp2_0] slow tick 164: 431.977459ms",
+        "[script live480kp2_0] steal pass made no progress \u2014 re-entering",
+        "[host] slot live480kp2_0: d_loop_us=1325 d_raster_us=0 d_observe_us=71208 max_observe_us=8108 d_paints=0 d_skips=50 d_ticks=2 window_ms=1373",
+        "[script live480kp2_0] slow tick 165: 430.054875ms",
+        "[host] hitch live480kp2_0: observe_us=19763 paints=0 skips=3204 ticks=156",
+        "[script live480kp2_0] interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }",
+        "[script live480kp2_0] interrupted slow tick 166 (562.930209ms)",
+        "[script live480kp2_0] paint eval: Uncaught Error: execution terminated",
+        "[script live480kp2_0] slow tick 166: 435.963417ms",
+        "[script live480kp2_0] tick 167: Unknown error",
+        "FAIL: catalog_boundary_live: script error: tick 167: Unknown error"
+      ]
+    }
+  }
+}
