@@ -1,0 +1,18 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.18s
+     Running tests/catalog_boundary_live.rs (.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/catalog_boundary_live-cf42836446c7a751)
+
+running 1 test
+
+thread 'tests::combat_failure_receipt_preserves_nonempty_ground_counts' (10910202) panicked at crates/host-play/tests/catalog_boundary_live.rs:5312:41:
+called `Result::unwrap()` on an `Err` value: Error("key must be a string", line: 0, column: 0)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tests::combat_failure_receipt_preserves_nonempty_ground_counts ... FAILED
+
+failures:
+
+failures:
+    tests::combat_failure_receipt_preserves_nonempty_ground_counts
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 48 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p host-play --test catalog_boundary_live`

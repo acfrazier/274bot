@@ -1,0 +1,133 @@
+--- a/crates/host-play/tests/catalog_boundary_live.rs
++++ b/crates/host-play/tests/catalog_boundary_live.rs
+@@ -3186,6 +3186,33 @@
+     zero_health: bool,
+ }
+ 
++// JSON objects cannot encode tuple keys. Retain each ground-count fact as a
++// named row while keeping the observer's keyed map unchanged.
++fn serialize_ground_counts<S: serde::Serializer>(
++    counts: &BTreeMap<(i32, i32, i32, i32), i32>,
++    serializer: S,
++) -> Result<S::Ok, S::Error> {
++    #[derive(Serialize)]
++    struct GroundCount {
++        id: i32,
++        x: i32,
++        z: i32,
++        level: i32,
++        count: i32,
++    }
++    serializer.collect_seq(
++        counts
++            .iter()
++            .map(|(&(id, x, z, level), &count)| GroundCount {
++                id,
++                x,
++                z,
++                level,
++                count,
++            }),
++    )
++}
++
+ /// Sustained selected-target combat: two engagements, a verified defeat
+ /// that is not mere despawn, fresh selected work after that defeat,
+ /// selected-style XP, and exact loot where required.
+@@ -3205,6 +3232,7 @@
+     dormant_tiles: BTreeMap<usize, (i32, i32, i32)>,
+     last: BTreeMap<usize, CombatNpcLast>,
+     currently_engaged: BTreeSet<usize>,
++    #[serde(serialize_with = "serialize_ground_counts")]
+     previous_ground: BTreeMap<(i32, i32, i32, i32), i32>,
+     facts: Vec<CombatFact>,
+ }
+@@ -10416,6 +10444,88 @@
+         assert!(!cycle.last.get(&5).expect("respawned guard").defeated);
+     }
+ 
++    fn combat_witness_with_ground_drop(qualified: bool) -> CoreWitness {
++        let levels = [("attack", 40), ("strength", 40), ("hitpoints", 40)];
++        let chaos_base = combat_obs(
++            CHAOS_DRUID_FIELD,
++            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
++            &[("strength", 50)],
++            &levels,
++            &[],
++            false,
++            None,
++        );
++        validate_case_baseline(CoreCase::ChaosDruid, &chaos_base).unwrap();
++        let mut chaos_first = combat_obs(
++            CHAOS_DRUID_FIELD,
++            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
++            &[("strength", 50)],
++            &levels,
++            &[combat_npc(1, "Chaos druid", 20, true, CHAOS_DRUID_FIELD)],
++            true,
++            Some(1),
++        );
++        let mut chaos_second = combat_obs(
++            CHAOS_DRUID_FIELD,
++            &[(LOBSTER_ID, CHAOS_DRUID_FOOD), (UNIDENTIFIED_GUAM_ID, 1)],
++            &[("strength", 54)],
++            &levels,
++            &[
++                combat_npc(1, "Chaos druid", 0, false, CHAOS_DRUID_FIELD),
++                combat_npc(8, "Chaos druid", 18, true, CHAOS_DRUID_FIELD),
++            ],
++            true,
++            Some(8),
++        );
++        let drop = BoundedGround {
++            id: UNIDENTIFIED_GUAM_ID,
++            count: 2,
++            tile: CHAOS_DRUID_FIELD,
++            distance: 1,
++        };
++        chaos_first.ground_loot = vec![drop.clone()];
++        chaos_second.ground_loot = vec![drop];
++        witness(
++            CoreCase::ChaosDruid,
++            &chaos_base,
++            if qualified {
++                vec![&chaos_first, &chaos_second, &chaos_second]
++            } else {
++                vec![&chaos_first]
++            },
++        )
++    }
++
++    #[test]
++    fn combat_success_receipt_preserves_nonempty_ground_counts() {
++        let witness = combat_witness_with_ground_drop(true);
++        let receipt = witness
++            .qualify()
++            .expect("qualified combat with ground drop");
++        assert_eq!(
++            receipt["combat_core_cycle"]["previous_ground"],
++            json!([{
++                "id": UNIDENTIFIED_GUAM_ID, "x": CHAOS_DRUID_FIELD.0,
++                "z": CHAOS_DRUID_FIELD.1, "level": CHAOS_DRUID_FIELD.2, "count": 2
++            }])
++        );
++    }
++
++    #[test]
++    fn combat_failure_receipt_preserves_nonempty_ground_counts() {
++        let witness = combat_witness_with_ground_drop(false);
++        assert!(witness.qualify().is_err());
++        let receipt = accumulated_core(Some(&witness));
++        assert!(receipt["error"].as_str().unwrap().contains("incomplete"));
++        assert_eq!(
++            receipt["witness"]["combat_core_cycle"]["previous_ground"],
++            json!([{
++                "id": UNIDENTIFIED_GUAM_ID, "x": CHAOS_DRUID_FIELD.0,
++                "z": CHAOS_DRUID_FIELD.1, "level": CHAOS_DRUID_FIELD.2, "count": 2
++            }])
++        );
++    }
++
+     #[test]
+     fn combat_cores_require_two_engagements_verified_defeat_style_xp_and_exact_loot() {
+         let levels = [

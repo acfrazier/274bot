@@ -1,0 +1,13 @@
+{
+  "base_commit": "fadba2b7ec910fc59bcc102239966f0a87f1706e",
+  "source_root": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/combat-json-fix/source",
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target",
+  "isolated_source": true,
+  "cache_reused": true,
+  "before_success_exit": 101,
+  "before_failure_exit": 101,
+  "after_combat_tests_exit": 0,
+  "after_combat_tests_passed": 11,
+  "source_sha256": "a77fcdec430400aff633dcb6fcdea85270d0a419171c7a14608f0c4fc8a72ade",
+  "scope": "Evidence serialization only; observer and qualification semantics unchanged"
+}
