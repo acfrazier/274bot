@@ -1,0 +1,493 @@
+
+running 1 test
+{"phase":"identity","revision":289,"profile":"local-289 · 127.0.0.1:44594 · revision 289","cache_id":"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack","nav_sha256":"131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924","catalog_commit":"100adccc037d9f6898080e1cad58fcfc43364775","catalog_identity":"pre-289 frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"BoneBurier","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/BoneBurier/BoneBurier.ts","source_sha256":"3ef1a82250d39258972bf5aef243c42c289d32634f8fcee31185d9a06aacf1e7","compiled_sha256":"f85ba9aa3f44b08c7322690dac57fd12678fb3bf5dfeabe2b5100e42891e4cb4","siblings":[],"settings":{"boneName":"Bones"}},"account":"live36ap5l_0","engine_speed_ms":null}
+[host-play] slot live36ap5l_0: thread up
+274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+[host-play] slot live36ap5l_0: handshake begin reconnect=false
+[host-play] slot live36ap5l_0: handshake ok
+[host] slot live36ap5l_0: d_loop_us=3899 d_raster_us=0 d_observe_us=39911 max_observe_us=3698 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot live36ap5l_0: queued mainland tele+setvar (scene 2)
+[host-play] slot live36ap5l_0: handshake begin reconnect=true
+[host-play] slot live36ap5l_0: handshake ok
+[host] slot live36ap5l_0: d_loop_us=730 d_raster_us=0 d_observe_us=29017 max_observe_us=1591 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot live36ap5l_0: queued mainland tele+setvar (scene 2)
+{"phase":"baseline-after-preparation","scenario":"bone_burier","account":"live36ap5l_0","observation":{"ingame":true,"scene_state":2,"player":"Live36ap5l 0","tile":[3220,3220,0],"tick":6,"items":{"Bones":5},"item_ids":{"526":5},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[{"id":1516,"x":3213,"z":3220,"level":0,"name":"Large door","open":true},{"id":1519,"x":3213,"z":3221,"level":0,"name":"Large door","open":true},{"id":1536,"x":3215,"z":3225,"level":0,"name":"Door","open":true},{"id":1516,"x":3217,"z":3218,"level":0,"name":"Large door","open":true},{"id":1519,"x":3217,"z":3219,"level":0,"name":"Large door","open":true},{"id":1530,"x":3226,"z":3214,"level":0,"name":"Door","open":true},{"id":1530,"x":3226,"z":3223,"level":0,"name":"Door","open":true}]}}
+[script live36ap5l_0] start load
+{"phase":"start","account":"live36ap5l_0","count":1}
+[host] hitch live36ap5l_0: observe_us=87960 paints=0 skips=65 ticks=6
+[script live36ap5l_0] BoneBurier — withdrawing and burying exact item 'Bones'
+[script live36ap5l_0] interact Held { name: "Bones", action: "Bury" }
+[shim-held] Bones Bury slot=0 -> sent
+[host] slot live36ap5l_0: d_loop_us=15046 d_raster_us=0 d_observe_us=167092 max_observe_us=87960 d_paints=0 d_skips=50 d_ticks=7 window_ms=4422
+[host] slot live36ap5l_0: d_loop_us=1402 d_raster_us=0 d_observe_us=82633 max_observe_us=11030 d_paints=0 d_skips=50 d_ticks=2 window_ms=1175
+[script live36ap5l_0] interact Held { name: "Bones", action: "Bury" }
+[shim-held] Bones Bury slot=1 -> sent
+[host] slot live36ap5l_0: d_loop_us=1476 d_raster_us=0 d_observe_us=67568 max_observe_us=6907 d_paints=0 d_skips=50 d_ticks=2 window_ms=1189
+[script live36ap5l_0] interact Held { name: "Bones", action: "Bury" }
+[shim-held] Bones Bury slot=2 -> sent
+[host] slot live36ap5l_0: d_loop_us=1430 d_raster_us=0 d_observe_us=75770 max_observe_us=8721 d_paints=0 d_skips=50 d_ticks=2 window_ms=1168
+[host] slot live36ap5l_0: d_loop_us=1427 d_raster_us=0 d_observe_us=82824 max_observe_us=12518 d_paints=0 d_skips=50 d_ticks=2 window_ms=1185
+[script live36ap5l_0] interact Held { name: "Bones", action: "Bury" }
+[shim-held] Bones Bury slot=3 -> sent
+[host] slot live36ap5l_0: d_loop_us=1251 d_raster_us=0 d_observe_us=80612 max_observe_us=8171 d_paints=0 d_skips=50 d_ticks=2 window_ms=1185
+[host] slot live36ap5l_0: d_loop_us=1187 d_raster_us=0 d_observe_us=68564 max_observe_us=7693 d_paints=0 d_skips=50 d_ticks=2 window_ms=1171
+[script live36ap5l_0] interact Held { name: "Bones", action: "Bury" }
+[shim-held] Bones Bury slot=4 -> sent
+[host] slot live36ap5l_0: d_loop_us=1259 d_raster_us=0 d_observe_us=65761 max_observe_us=7172 d_paints=0 d_skips=50 d_ticks=2 window_ms=1184
+[script live36ap5l_0] interact WalkNearestBank
+[host] slot live36ap5l_0: d_loop_us=1457 d_raster_us=0 d_observe_us=74215 max_observe_us=11277 d_paints=0 d_skips=50 d_ticks=2 window_ms=1188
+[host] slot live36ap5l_0: d_loop_us=920 d_raster_us=0 d_observe_us=34307 max_observe_us=3232 d_paints=0 d_skips=50 d_ticks=2 window_ms=1216
+[nav-follow] here=WorldTile { x: 3220, z: 3220, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 3222, z: 3219, level: 0 } aim=WorldTile { x: 3235, z: 3222, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3220, z: 3220, level: 0 })
+[nav-follow] here=WorldTile { x: 3222, z: 3219, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch live36ap5l_0: observe_us=17724 paints=0 skips=594 ticks=28
+[host] slot live36ap5l_0: d_loop_us=1046 d_raster_us=0 d_observe_us=62722 max_observe_us=17724 d_paints=0 d_skips=50 d_ticks=2 window_ms=1202
+[nav-walk] here=WorldTile { x: 3224, z: 3219, level: 0 } aim=WorldTile { x: 3235, z: 3222, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3220, z: 3220, level: 0 })
+[nav-follow] here=WorldTile { x: 3224, z: 3219, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch live36ap5l_0: observe_us=21731 paints=0 skips=620 ticks=29
+[nav-walk] here=WorldTile { x: 3226, z: 3219, level: 0 } aim=WorldTile { x: 3235, z: 3222, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3220, z: 3220, level: 0 })
+[nav-follow] here=WorldTile { x: 3226, z: 3219, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1465 d_raster_us=0 d_observe_us=91199 max_observe_us=21731 d_paints=0 d_skips=50 d_ticks=2 window_ms=1166
+[nav-walk] here=WorldTile { x: 3228, z: 3219, level: 0 } aim=WorldTile { x: 3235, z: 3222, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3220, z: 3220, level: 0 })
+[nav-follow] here=WorldTile { x: 3228, z: 3219, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 3230, z: 3219, level: 0 } aim=WorldTile { x: 3235, z: 3222, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3220, z: 3220, level: 0 })
+[nav-follow] here=WorldTile { x: 3230, z: 3219, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1655 d_raster_us=0 d_observe_us=71853 max_observe_us=7526 d_paints=0 d_skips=50 d_ticks=2 window_ms=1192
+[nav-walk] here=WorldTile { x: 3232, z: 3219, level: 0 } aim=WorldTile { x: 3235, z: 3222, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3220, z: 3220, level: 0 })
+[nav-follow] here=WorldTile { x: 3232, z: 3219, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch live36ap5l_0: observe_us=19128 paints=0 skips=721 ticks=33
+[nav-walk] here=WorldTile { x: 3234, z: 3221, level: 0 } aim=WorldTile { x: 3235, z: 3222, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3220, z: 3220, level: 0 })
+[nav-follow] here=WorldTile { x: 3234, z: 3221, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1764 d_raster_us=0 d_observe_us=84017 max_observe_us=19128 d_paints=0 d_skips=50 d_ticks=2 window_ms=1200
+[nav-walk] here=WorldTile { x: 3234, z: 3223, level: 0 } aim=WorldTile { x: 3233, z: 3238, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3234, z: 3221, level: 0 })
+[nav-follow] here=WorldTile { x: 3234, z: 3223, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None
+[nav-walk] here=WorldTile { x: 3234, z: 3225, level: 0 } aim=WorldTile { x: 3233, z: 3238, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3234, z: 3221, level: 0 })
+[nav-follow] here=WorldTile { x: 3234, z: 3225, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None
+[host] hitch live36ap5l_0: observe_us=22662 paints=0 skips=797 ticks=36
+[host] slot live36ap5l_0: d_loop_us=1564 d_raster_us=0 d_observe_us=87287 max_observe_us=22662 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+[nav-walk] here=WorldTile { x: 3234, z: 3227, level: 0 } aim=WorldTile { x: 3233, z: 3238, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3234, z: 3221, level: 0 })
+[nav-follow] here=WorldTile { x: 3234, z: 3227, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None
+[nav-walk] here=WorldTile { x: 3234, z: 3229, level: 0 } aim=WorldTile { x: 3233, z: 3238, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3234, z: 3221, level: 0 })
+[nav-follow] here=WorldTile { x: 3234, z: 3229, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1542 d_raster_us=0 d_observe_us=61087 max_observe_us=8822 d_paints=0 d_skips=50 d_ticks=2 window_ms=1181
+[nav-walk] here=WorldTile { x: 3234, z: 3231, level: 0 } aim=WorldTile { x: 3233, z: 3238, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3234, z: 3221, level: 0 })
+[nav-follow] here=WorldTile { x: 3234, z: 3231, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None
+[nav-walk] here=WorldTile { x: 3234, z: 3233, level: 0 } aim=WorldTile { x: 3233, z: 3238, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3234, z: 3221, level: 0 })
+[nav-follow] here=WorldTile { x: 3234, z: 3233, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None
+[host] hitch live36ap5l_0: observe_us=24875 paints=0 skips=898 ticks=40
+[host] slot live36ap5l_0: d_loop_us=1498 d_raster_us=0 d_observe_us=82949 max_observe_us=24875 d_paints=0 d_skips=50 d_ticks=2 window_ms=1197
+[nav-walk] here=WorldTile { x: 3234, z: 3235, level: 0 } aim=WorldTile { x: 3233, z: 3238, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3234, z: 3221, level: 0 })
+[nav-follow] here=WorldTile { x: 3234, z: 3235, level: 0 } walk=true transport=false leg=0 hops=2 outcome=None
+[nav-walk] here=WorldTile { x: 3233, z: 3237, level: 0 } aim=WorldTile { x: 3233, z: 3238, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3234, z: 3221, level: 0 })
+[nav-follow] here=WorldTile { x: 3233, z: 3237, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1717 d_raster_us=0 d_observe_us=64809 max_observe_us=9655 d_paints=0 d_skips=50 d_ticks=2 window_ms=1187
+[nav-walk] here=WorldTile { x: 3233, z: 3239, level: 0 } aim=WorldTile { x: 3231, z: 3254, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3233, z: 3237, level: 0 })
+[nav-follow] here=WorldTile { x: 3233, z: 3239, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1868 d_raster_us=0 d_observe_us=75129 max_observe_us=8791 d_paints=0 d_skips=50 d_ticks=2 window_ms=1149
+[nav-walk] here=WorldTile { x: 3233, z: 3241, level: 0 } aim=WorldTile { x: 3231, z: 3254, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3233, z: 3237, level: 0 })
+[nav-follow] here=WorldTile { x: 3233, z: 3241, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None
+[host] hitch live36ap5l_0: observe_us=21597 paints=0 skips=1000 ticks=44
+[nav-walk] here=WorldTile { x: 3232, z: 3243, level: 0 } aim=WorldTile { x: 3231, z: 3254, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3233, z: 3237, level: 0 })
+[nav-follow] here=WorldTile { x: 3232, z: 3243, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1768 d_raster_us=0 d_observe_us=98770 max_observe_us=21597 d_paints=0 d_skips=50 d_ticks=1 window_ms=1187
+[nav-walk] here=WorldTile { x: 3232, z: 3245, level: 0 } aim=WorldTile { x: 3231, z: 3254, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3233, z: 3237, level: 0 })
+[nav-follow] here=WorldTile { x: 3232, z: 3245, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None
+[nav-walk] here=WorldTile { x: 3232, z: 3247, level: 0 } aim=WorldTile { x: 3231, z: 3254, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3233, z: 3237, level: 0 })
+[nav-follow] here=WorldTile { x: 3232, z: 3247, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1915 d_raster_us=0 d_observe_us=68405 max_observe_us=8340 d_paints=0 d_skips=50 d_ticks=2 window_ms=1201
+[nav-walk] here=WorldTile { x: 3232, z: 3249, level: 0 } aim=WorldTile { x: 3231, z: 3254, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3233, z: 3237, level: 0 })
+[nav-follow] here=WorldTile { x: 3232, z: 3249, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None
+[nav-walk] here=WorldTile { x: 3232, z: 3251, level: 0 } aim=WorldTile { x: 3231, z: 3254, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3233, z: 3237, level: 0 })
+[nav-follow] here=WorldTile { x: 3232, z: 3251, level: 0 } walk=true transport=false leg=0 hops=3 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1455 d_raster_us=0 d_observe_us=69188 max_observe_us=7650 d_paints=0 d_skips=50 d_ticks=2 window_ms=1193
+[nav-walk] here=WorldTile { x: 3231, z: 3253, level: 0 } aim=WorldTile { x: 3231, z: 3254, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3233, z: 3237, level: 0 })
+[nav-follow] here=WorldTile { x: 3231, z: 3253, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None
+[host] hitch live36ap5l_0: observe_us=18149 paints=0 skips=1151 ticks=50
+[nav-walk] here=WorldTile { x: 3231, z: 3255, level: 0 } aim=WorldTile { x: 3239, z: 3262, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3231, z: 3253, level: 0 })
+[nav-follow] here=WorldTile { x: 3231, z: 3255, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1336 d_raster_us=0 d_observe_us=71937 max_observe_us=18149 d_paints=0 d_skips=50 d_ticks=2 window_ms=1182
+[nav-walk] here=WorldTile { x: 3231, z: 3259, level: 0 } aim=WorldTile { x: 3239, z: 3262, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3231, z: 3253, level: 0 })
+[nav-follow] here=WorldTile { x: 3231, z: 3259, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None
+[host] slot live36ap5l_0: d_loop_us=10196 d_raster_us=0 d_observe_us=90084 max_observe_us=13082 d_paints=0 d_skips=50 d_ticks=2 window_ms=1182
+[nav-walk] here=WorldTile { x: 3230, z: 3261, level: 0 } aim=WorldTile { x: 3239, z: 3262, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3231, z: 3253, level: 0 })
+[nav-follow] here=WorldTile { x: 3230, z: 3261, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None
+[nav-walk] here=WorldTile { x: 3232, z: 3261, level: 0 } aim=WorldTile { x: 3239, z: 3262, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3231, z: 3253, level: 0 })
+[nav-follow] here=WorldTile { x: 3232, z: 3261, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None
+[host] hitch live36ap5l_0: observe_us=20498 paints=0 skips=1278 ticks=55
+[host] slot live36ap5l_0: d_loop_us=1367 d_raster_us=0 d_observe_us=81635 max_observe_us=20498 d_paints=0 d_skips=50 d_ticks=2 window_ms=1184
+[nav-walk] here=WorldTile { x: 3234, z: 3261, level: 0 } aim=WorldTile { x: 3239, z: 3262, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3231, z: 3253, level: 0 })
+[nav-follow] here=WorldTile { x: 3234, z: 3261, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None
+[nav-walk] here=WorldTile { x: 3236, z: 3261, level: 0 } aim=WorldTile { x: 3239, z: 3262, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3231, z: 3253, level: 0 })
+[nav-follow] here=WorldTile { x: 3236, z: 3261, level: 0 } walk=true transport=false leg=0 hops=4 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1701 d_raster_us=0 d_observe_us=74676 max_observe_us=9524 d_paints=0 d_skips=50 d_ticks=2 window_ms=1174
+[nav-walk] here=WorldTile { x: 3238, z: 3261, level: 0 } aim=WorldTile { x: 3239, z: 3262, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3231, z: 3253, level: 0 })
+[nav-follow] here=WorldTile { x: 3238, z: 3261, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None
+[nav-walk] here=WorldTile { x: 3240, z: 3262, level: 0 } aim=WorldTile { x: 3245, z: 3277, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3238, z: 3261, level: 0 })
+[nav-follow] here=WorldTile { x: 3240, z: 3262, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None
+[host] hitch live36ap5l_0: observe_us=21613 paints=0 skips=1379 ticks=59
+[host] slot live36ap5l_0: d_loop_us=1565 d_raster_us=0 d_observe_us=87624 max_observe_us=21613 d_paints=0 d_skips=50 d_ticks=2 window_ms=1188
+[nav-walk] here=WorldTile { x: 3240, z: 3264, level: 0 } aim=WorldTile { x: 3245, z: 3277, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3238, z: 3261, level: 0 })
+[nav-follow] here=WorldTile { x: 3240, z: 3264, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None
+[host] hitch live36ap5l_0: observe_us=21911 paints=0 skips=1405 ticks=60
+[nav-walk] here=WorldTile { x: 3240, z: 3266, level: 0 } aim=WorldTile { x: 3245, z: 3277, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3238, z: 3261, level: 0 })
+[nav-follow] here=WorldTile { x: 3240, z: 3266, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1542 d_raster_us=0 d_observe_us=81527 max_observe_us=21911 d_paints=0 d_skips=50 d_ticks=2 window_ms=1168
+[nav-walk] here=WorldTile { x: 3240, z: 3268, level: 0 } aim=WorldTile { x: 3245, z: 3277, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3238, z: 3261, level: 0 })
+[nav-follow] here=WorldTile { x: 3240, z: 3268, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None
+[nav-walk] here=WorldTile { x: 3240, z: 3270, level: 0 } aim=WorldTile { x: 3245, z: 3277, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3238, z: 3261, level: 0 })
+[nav-follow] here=WorldTile { x: 3240, z: 3270, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1210 d_raster_us=0 d_observe_us=61117 max_observe_us=6572 d_paints=0 d_skips=50 d_ticks=2 window_ms=1167
+[nav-walk] here=WorldTile { x: 3240, z: 3272, level: 0 } aim=WorldTile { x: 3245, z: 3277, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3238, z: 3261, level: 0 })
+[nav-follow] here=WorldTile { x: 3240, z: 3272, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None
+[nav-walk] here=WorldTile { x: 3242, z: 3274, level: 0 } aim=WorldTile { x: 3245, z: 3277, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3238, z: 3261, level: 0 })
+[nav-follow] here=WorldTile { x: 3242, z: 3274, level: 0 } walk=true transport=false leg=0 hops=5 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1237 d_raster_us=0 d_observe_us=76812 max_observe_us=15730 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+[nav-walk] here=WorldTile { x: 3244, z: 3276, level: 0 } aim=WorldTile { x: 3245, z: 3277, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3238, z: 3261, level: 0 })
+[nav-follow] here=WorldTile { x: 3244, z: 3276, level: 0 } walk=true transport=false leg=0 hops=6 outcome=None
+[nav-walk] here=WorldTile { x: 3244, z: 3278, level: 0 } aim=WorldTile { x: 3240, z: 3293, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3244, z: 3276, level: 0 })
+[nav-follow] here=WorldTile { x: 3244, z: 3278, level: 0 } walk=true transport=false leg=0 hops=6 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1316 d_raster_us=0 d_observe_us=64008 max_observe_us=7786 d_paints=0 d_skips=50 d_ticks=2 window_ms=1166
+[nav-walk] here=WorldTile { x: 3242, z: 3280, level: 0 } aim=WorldTile { x: 3240, z: 3293, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3244, z: 3276, level: 0 })
+[nav-follow] here=WorldTile { x: 3242, z: 3280, level: 0 } walk=true transport=false leg=0 hops=6 outcome=None
+[host] hitch live36ap5l_0: observe_us=21959 paints=0 skips=1609 ticks=68
+[nav-walk] here=WorldTile { x: 3240, z: 3282, level: 0 } aim=WorldTile { x: 3240, z: 3293, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3244, z: 3276, level: 0 })
+[nav-follow] here=WorldTile { x: 3240, z: 3282, level: 0 } walk=true transport=false leg=0 hops=6 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1460 d_raster_us=0 d_observe_us=90129 max_observe_us=21959 d_paints=0 d_skips=50 d_ticks=2 window_ms=1178
+[nav-walk] here=WorldTile { x: 3240, z: 3284, level: 0 } aim=WorldTile { x: 3240, z: 3293, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3244, z: 3276, level: 0 })
+[nav-follow] here=WorldTile { x: 3240, z: 3284, level: 0 } walk=true transport=false leg=0 hops=6 outcome=None
+[nav-walk] here=WorldTile { x: 3240, z: 3286, level: 0 } aim=WorldTile { x: 3240, z: 3293, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3244, z: 3276, level: 0 })
+[nav-follow] here=WorldTile { x: 3240, z: 3286, level: 0 } walk=true transport=false leg=0 hops=6 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1355 d_raster_us=0 d_observe_us=68332 max_observe_us=7863 d_paints=0 d_skips=50 d_ticks=2 window_ms=1192
+[nav-walk] here=WorldTile { x: 3240, z: 3288, level: 0 } aim=WorldTile { x: 3240, z: 3293, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3244, z: 3276, level: 0 })
+[nav-follow] here=WorldTile { x: 3240, z: 3288, level: 0 } walk=true transport=false leg=0 hops=6 outcome=None
+[nav-walk] here=WorldTile { x: 3240, z: 3290, level: 0 } aim=WorldTile { x: 3240, z: 3293, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3244, z: 3276, level: 0 })
+[nav-follow] here=WorldTile { x: 3240, z: 3290, level: 0 } walk=true transport=false leg=0 hops=6 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1592 d_raster_us=0 d_observe_us=80094 max_observe_us=7906 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+[nav-walk] here=WorldTile { x: 3240, z: 3292, level: 0 } aim=WorldTile { x: 3240, z: 3293, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3244, z: 3276, level: 0 })
+[nav-follow] here=WorldTile { x: 3240, z: 3292, level: 0 } walk=true transport=false leg=0 hops=7 outcome=None
+test catalog_boundary_live has been running for over 60 seconds
+[nav-walk] here=WorldTile { x: 3240, z: 3294, level: 0 } aim=WorldTile { x: 3240, z: 3300, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 3240, z: 3292, level: 0 })
+[nav-follow] here=WorldTile { x: 3240, z: 3294, level: 0 } walk=true transport=false leg=0 hops=7 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1447 d_raster_us=0 d_observe_us=74306 max_observe_us=7360 d_paints=0 d_skips=50 d_ticks=2 window_ms=1187
+[nav-walk] here=WorldTile { x: 3240, z: 3298, level: 0 } aim=WorldTile { x: 3240, z: 3300, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 3240, z: 3292, level: 0 })
+[nav-follow] here=WorldTile { x: 3240, z: 3298, level: 0 } walk=true transport=false leg=0 hops=7 outcome=None
+[host] slot live36ap5l_0: d_loop_us=12888 d_raster_us=0 d_observe_us=100147 max_observe_us=13293 d_paints=0 d_skips=50 d_ticks=2 window_ms=1173
+[nav-walk] here=WorldTile { x: 3240, z: 3300, level: 0 } aim=WorldTile { x: 3240, z: 3300, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 3240, z: 3292, level: 0 })
+[nav-follow] here=WorldTile { x: 3240, z: 3300, level: 0 } walk=false transport=true leg=1 hops=7 outcome=None
+[nav-transport] here=WorldTile { x: 3240, z: 3301, level: 0 } to=WorldTile { x: 3242, z: 3301, level: 0 } troll=false ticks_waited=0 loc_id=1551 open=false
+[nav-follow] here=WorldTile { x: 3240, z: 3301, level: 0 } walk=false transport=true leg=1 hops=7 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1361 d_raster_us=0 d_observe_us=56044 max_observe_us=8420 d_paints=0 d_skips=50 d_ticks=2 window_ms=1194
+[nav-transport] cheap hop walk-through to WorldTile { x: 3242, z: 3301, level: 0 }
+[nav-follow] here=WorldTile { x: 3240, z: 3301, level: 0 } walk=false transport=true leg=1 hops=7 outcome=None
+[host] hitch live36ap5l_0: observe_us=16819 paints=0 skips=1912 ticks=80
+[nav-transport] here=WorldTile { x: 3242, z: 3301, level: 0 } to=WorldTile { x: 3242, z: 3301, level: 0 } troll=false ticks_waited=1 loc_id=1551 open=true
+[nav-follow] here=WorldTile { x: 3242, z: 3301, level: 0 } walk=true transport=false leg=2 hops=8 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1294 d_raster_us=0 d_observe_us=76476 max_observe_us=16819 d_paints=0 d_skips=50 d_ticks=2 window_ms=1193
+[nav-walk] here=WorldTile { x: 3242, z: 3303, level: 0 } aim=WorldTile { x: 3260, z: 3321, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 3242, z: 3301, level: 0 })
+[nav-follow] here=WorldTile { x: 3242, z: 3303, level: 0 } walk=true transport=false leg=2 hops=8 outcome=None
+[nav-walk] here=WorldTile { x: 3244, z: 3305, level: 0 } aim=WorldTile { x: 3260, z: 3321, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 3242, z: 3301, level: 0 })
+[nav-follow] here=WorldTile { x: 3244, z: 3305, level: 0 } walk=true transport=false leg=2 hops=8 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1232 d_raster_us=0 d_observe_us=77104 max_observe_us=15296 d_paints=0 d_skips=50 d_ticks=2 window_ms=1202
+[nav-walk] here=WorldTile { x: 3246, z: 3307, level: 0 } aim=WorldTile { x: 3260, z: 3321, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 3242, z: 3301, level: 0 })
+[nav-follow] here=WorldTile { x: 3246, z: 3307, level: 0 } walk=true transport=false leg=2 hops=8 outcome=None
+[nav-walk] here=WorldTile { x: 3248, z: 3309, level: 0 } aim=WorldTile { x: 3260, z: 3321, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 3242, z: 3301, level: 0 })
+[nav-follow] here=WorldTile { x: 3248, z: 3309, level: 0 } walk=true transport=false leg=2 hops=8 outcome=None
+[host] hitch live36ap5l_0: observe_us=18259 paints=0 skips=2038 ticks=85
+[host] slot live36ap5l_0: d_loop_us=1114 d_raster_us=0 d_observe_us=89519 max_observe_us=18259 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+[nav-walk] here=WorldTile { x: 3250, z: 3311, level: 0 } aim=WorldTile { x: 3260, z: 3321, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 3242, z: 3301, level: 0 })
+[nav-follow] here=WorldTile { x: 3250, z: 3311, level: 0 } walk=true transport=false leg=2 hops=8 outcome=None
+[nav-walk] here=WorldTile { x: 3252, z: 3313, level: 0 } aim=WorldTile { x: 3260, z: 3321, level: 0 } radius=0 ticks_waited=5 sent_tile=Some(WorldTile { x: 3242, z: 3301, level: 0 })
+[nav-follow] here=WorldTile { x: 3252, z: 3313, level: 0 } walk=true transport=false leg=2 hops=8 outcome=None
+[host] hitch live36ap5l_0: observe_us=19603 paints=0 skips=2088 ticks=87
+[host] slot live36ap5l_0: d_loop_us=1060 d_raster_us=0 d_observe_us=83412 max_observe_us=19603 d_paints=0 d_skips=50 d_ticks=2 window_ms=1192
+[nav-walk] here=WorldTile { x: 3254, z: 3315, level: 0 } aim=WorldTile { x: 3260, z: 3321, level: 0 } radius=0 ticks_waited=6 sent_tile=Some(WorldTile { x: 3242, z: 3301, level: 0 })
+[nav-follow] here=WorldTile { x: 3254, z: 3315, level: 0 } walk=true transport=false leg=2 hops=8 outcome=None
+[nav-walk] here=WorldTile { x: 3256, z: 3317, level: 0 } aim=WorldTile { x: 3260, z: 3321, level: 0 } radius=0 ticks_waited=7 sent_tile=Some(WorldTile { x: 3242, z: 3301, level: 0 })
+[nav-follow] here=WorldTile { x: 3256, z: 3317, level: 0 } walk=true transport=false leg=2 hops=8 outcome=None
+[host] hitch live36ap5l_0: observe_us=18327 paints=0 skips=2138 ticks=89
+[host] slot live36ap5l_0: d_loop_us=954 d_raster_us=0 d_observe_us=81625 max_observe_us=18327 d_paints=0 d_skips=50 d_ticks=2 window_ms=1187
+[nav-walk] here=WorldTile { x: 3258, z: 3319, level: 0 } aim=WorldTile { x: 3260, z: 3321, level: 0 } radius=0 ticks_waited=8 sent_tile=Some(WorldTile { x: 3242, z: 3301, level: 0 })
+[nav-follow] here=WorldTile { x: 3258, z: 3319, level: 0 } walk=true transport=false leg=2 hops=8 outcome=None
+[nav-walk] here=WorldTile { x: 3260, z: 3321, level: 0 } aim=WorldTile { x: 3260, z: 3321, level: 0 } radius=0 ticks_waited=9 sent_tile=Some(WorldTile { x: 3242, z: 3301, level: 0 })
+[nav-follow] here=WorldTile { x: 3260, z: 3321, level: 0 } walk=false transport=true leg=3 hops=8 outcome=None
+[host] hitch live36ap5l_0: observe_us=18325 paints=0 skips=2190 ticks=91
+[host] slot live36ap5l_0: d_loop_us=969 d_raster_us=0 d_observe_us=81131 max_observe_us=18325 d_paints=0 d_skips=50 d_ticks=2 window_ms=1145
+[nav-transport] cheap hop walk-through to WorldTile { x: 3261, z: 3322, level: 0 }
+[nav-follow] here=WorldTile { x: 3260, z: 3321, level: 0 } walk=false transport=true leg=3 hops=8 outcome=None
+[nav-transport] here=WorldTile { x: 3261, z: 3322, level: 0 } to=WorldTile { x: 3261, z: 3322, level: 0 } troll=false ticks_waited=0 loc_id=1551 open=true
+[nav-follow] here=WorldTile { x: 3261, z: 3322, level: 0 } walk=true transport=false leg=4 hops=9 outcome=None
+[host] slot live36ap5l_0: d_loop_us=838 d_raster_us=0 d_observe_us=59880 max_observe_us=10933 d_paints=0 d_skips=50 d_ticks=2 window_ms=1161
+[nav-walk] here=WorldTile { x: 3263, z: 3323, level: 0 } aim=WorldTile { x: 3276, z: 3333, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3261, z: 3322, level: 0 })
+[nav-follow] here=WorldTile { x: 3263, z: 3323, level: 0 } walk=true transport=false leg=4 hops=9 outcome=None
+[nav-walk] here=WorldTile { x: 3265, z: 3325, level: 0 } aim=WorldTile { x: 3276, z: 3333, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3261, z: 3322, level: 0 })
+[nav-follow] here=WorldTile { x: 3265, z: 3325, level: 0 } walk=true transport=false leg=4 hops=9 outcome=None
+[host] hitch live36ap5l_0: observe_us=18406 paints=0 skips=2292 ticks=95
+[host] slot live36ap5l_0: d_loop_us=882 d_raster_us=0 d_observe_us=88916 max_observe_us=18406 d_paints=0 d_skips=50 d_ticks=2 window_ms=1194
+[nav-walk] here=WorldTile { x: 3267, z: 3327, level: 0 } aim=WorldTile { x: 3276, z: 3333, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3261, z: 3322, level: 0 })
+[nav-follow] here=WorldTile { x: 3267, z: 3327, level: 0 } walk=true transport=false leg=4 hops=9 outcome=None
+[nav-walk] here=WorldTile { x: 3269, z: 3329, level: 0 } aim=WorldTile { x: 3276, z: 3333, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3261, z: 3322, level: 0 })
+[nav-follow] here=WorldTile { x: 3269, z: 3329, level: 0 } walk=true transport=false leg=4 hops=9 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1036 d_raster_us=0 d_observe_us=70599 max_observe_us=8992 d_paints=0 d_skips=50 d_ticks=2 window_ms=1192
+[nav-walk] here=WorldTile { x: 3271, z: 3330, level: 0 } aim=WorldTile { x: 3276, z: 3333, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3261, z: 3322, level: 0 })
+[nav-follow] here=WorldTile { x: 3271, z: 3330, level: 0 } walk=true transport=false leg=4 hops=9 outcome=None
+[nav-walk] here=WorldTile { x: 3273, z: 3330, level: 0 } aim=WorldTile { x: 3276, z: 3333, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3261, z: 3322, level: 0 })
+[nav-follow] here=WorldTile { x: 3273, z: 3330, level: 0 } walk=true transport=false leg=4 hops=9 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1052 d_raster_us=0 d_observe_us=83447 max_observe_us=7810 d_paints=0 d_skips=50 d_ticks=2 window_ms=1185
+[nav-walk] here=WorldTile { x: 3275, z: 3332, level: 0 } aim=WorldTile { x: 3276, z: 3333, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3261, z: 3322, level: 0 })
+[nav-follow] here=WorldTile { x: 3275, z: 3332, level: 0 } walk=true transport=false leg=4 hops=10 outcome=None
+[nav-walk] here=WorldTile { x: 3277, z: 3332, level: 0 } aim=WorldTile { x: 3288, z: 3317, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3275, z: 3332, level: 0 })
+[nav-follow] here=WorldTile { x: 3277, z: 3332, level: 0 } walk=true transport=false leg=4 hops=10 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1110 d_raster_us=0 d_observe_us=71247 max_observe_us=8865 d_paints=0 d_skips=50 d_ticks=2 window_ms=1197
+[nav-walk] here=WorldTile { x: 3279, z: 3330, level: 0 } aim=WorldTile { x: 3288, z: 3317, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3275, z: 3332, level: 0 })
+[nav-follow] here=WorldTile { x: 3279, z: 3330, level: 0 } walk=true transport=false leg=4 hops=10 outcome=None
+[host] slot live36ap5l_0: d_loop_us=10300 d_raster_us=0 d_observe_us=92382 max_observe_us=11397 d_paints=0 d_skips=50 d_ticks=2 window_ms=1181
+[nav-walk] here=WorldTile { x: 3283, z: 3326, level: 0 } aim=WorldTile { x: 3288, z: 3317, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3275, z: 3332, level: 0 })
+[nav-follow] here=WorldTile { x: 3283, z: 3326, level: 0 } walk=true transport=false leg=4 hops=10 outcome=None
+[host] hitch live36ap5l_0: observe_us=17475 paints=0 skips=2520 ticks=104
+[nav-walk] here=WorldTile { x: 3285, z: 3324, level: 0 } aim=WorldTile { x: 3288, z: 3317, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3275, z: 3332, level: 0 })
+[nav-follow] here=WorldTile { x: 3285, z: 3324, level: 0 } walk=true transport=false leg=4 hops=10 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1072 d_raster_us=0 d_observe_us=91201 max_observe_us=17475 d_paints=0 d_skips=50 d_ticks=2 window_ms=1179
+[nav-walk] here=WorldTile { x: 3287, z: 3322, level: 0 } aim=WorldTile { x: 3288, z: 3317, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3275, z: 3332, level: 0 })
+[nav-follow] here=WorldTile { x: 3287, z: 3322, level: 0 } walk=true transport=false leg=4 hops=10 outcome=None
+[nav-walk] here=WorldTile { x: 3288, z: 3320, level: 0 } aim=WorldTile { x: 3288, z: 3317, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3275, z: 3332, level: 0 })
+[nav-follow] here=WorldTile { x: 3288, z: 3320, level: 0 } walk=true transport=false leg=4 hops=10 outcome=None
+[host] hitch live36ap5l_0: observe_us=17572 paints=0 skips=2596 ticks=107
+[host] slot live36ap5l_0: d_loop_us=1265 d_raster_us=0 d_observe_us=85823 max_observe_us=17572 d_paints=0 d_skips=50 d_ticks=2 window_ms=1181
+[nav-walk] here=WorldTile { x: 3288, z: 3318, level: 0 } aim=WorldTile { x: 3288, z: 3317, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3275, z: 3332, level: 0 })
+[nav-follow] here=WorldTile { x: 3288, z: 3318, level: 0 } walk=true transport=false leg=4 hops=11 outcome=None
+[host] hitch live36ap5l_0: observe_us=16087 paints=0 skips=2621 ticks=108
+[nav-walk] here=WorldTile { x: 3288, z: 3316, level: 0 } aim=WorldTile { x: 3289, z: 3301, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3288, z: 3318, level: 0 })
+[nav-follow] here=WorldTile { x: 3288, z: 3316, level: 0 } walk=true transport=false leg=4 hops=11 outcome=None
+[host] slot live36ap5l_0: d_loop_us=926 d_raster_us=0 d_observe_us=78278 max_observe_us=16087 d_paints=0 d_skips=50 d_ticks=2 window_ms=1186
+[nav-walk] here=WorldTile { x: 3287, z: 3314, level: 0 } aim=WorldTile { x: 3289, z: 3301, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3288, z: 3318, level: 0 })
+[nav-follow] here=WorldTile { x: 3287, z: 3314, level: 0 } walk=true transport=false leg=4 hops=11 outcome=None
+[host] hitch live36ap5l_0: observe_us=18684 paints=0 skips=2672 ticks=110
+[nav-walk] here=WorldTile { x: 3287, z: 3312, level: 0 } aim=WorldTile { x: 3289, z: 3301, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3288, z: 3318, level: 0 })
+[nav-follow] here=WorldTile { x: 3287, z: 3312, level: 0 } walk=true transport=false leg=4 hops=11 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1021 d_raster_us=0 d_observe_us=72297 max_observe_us=18684 d_paints=0 d_skips=50 d_ticks=2 window_ms=1180
+[nav-walk] here=WorldTile { x: 3287, z: 3310, level: 0 } aim=WorldTile { x: 3289, z: 3301, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3288, z: 3318, level: 0 })
+[nav-follow] here=WorldTile { x: 3287, z: 3310, level: 0 } walk=true transport=false leg=4 hops=11 outcome=None
+[nav-walk] here=WorldTile { x: 3287, z: 3308, level: 0 } aim=WorldTile { x: 3289, z: 3301, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3288, z: 3318, level: 0 })
+[nav-follow] here=WorldTile { x: 3287, z: 3308, level: 0 } walk=true transport=false leg=4 hops=11 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1408 d_raster_us=0 d_observe_us=85993 max_observe_us=8401 d_paints=0 d_skips=50 d_ticks=2 window_ms=1185
+[nav-walk] here=WorldTile { x: 3287, z: 3306, level: 0 } aim=WorldTile { x: 3289, z: 3301, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3288, z: 3318, level: 0 })
+[nav-follow] here=WorldTile { x: 3287, z: 3306, level: 0 } walk=true transport=false leg=4 hops=11 outcome=None
+[nav-walk] here=WorldTile { x: 3287, z: 3304, level: 0 } aim=WorldTile { x: 3289, z: 3301, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3288, z: 3318, level: 0 })
+[nav-follow] here=WorldTile { x: 3287, z: 3304, level: 0 } walk=true transport=false leg=4 hops=11 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1156 d_raster_us=0 d_observe_us=80329 max_observe_us=8436 d_paints=0 d_skips=50 d_ticks=2 window_ms=1196
+[nav-walk] here=WorldTile { x: 3288, z: 3302, level: 0 } aim=WorldTile { x: 3289, z: 3301, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3288, z: 3318, level: 0 })
+[nav-follow] here=WorldTile { x: 3288, z: 3302, level: 0 } walk=true transport=false leg=4 hops=12 outcome=None
+[host] hitch live36ap5l_0: observe_us=18625 paints=0 skips=2823 ticks=116
+[nav-walk] here=WorldTile { x: 3288, z: 3300, level: 0 } aim=WorldTile { x: 3289, z: 3285, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3288, z: 3302, level: 0 })
+[nav-follow] here=WorldTile { x: 3288, z: 3300, level: 0 } walk=true transport=false leg=4 hops=12 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1266 d_raster_us=0 d_observe_us=79133 max_observe_us=18625 d_paints=0 d_skips=50 d_ticks=2 window_ms=1188
+[nav-walk] here=WorldTile { x: 3288, z: 3298, level: 0 } aim=WorldTile { x: 3289, z: 3285, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3288, z: 3302, level: 0 })
+[nav-follow] here=WorldTile { x: 3288, z: 3298, level: 0 } walk=true transport=false leg=4 hops=12 outcome=None
+[nav-walk] here=WorldTile { x: 3288, z: 3296, level: 0 } aim=WorldTile { x: 3289, z: 3285, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3288, z: 3302, level: 0 })
+[nav-follow] here=WorldTile { x: 3288, z: 3296, level: 0 } walk=true transport=false leg=4 hops=12 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1055 d_raster_us=0 d_observe_us=44268 max_observe_us=4351 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+[host] slot live36ap5l_0: d_loop_us=14474 d_raster_us=0 d_observe_us=83389 max_observe_us=9580 d_paints=0 d_skips=50 d_ticks=1 window_ms=1166
+[nav-walk] here=WorldTile { x: 3288, z: 3292, level: 0 } aim=WorldTile { x: 3289, z: 3285, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3288, z: 3302, level: 0 })
+[nav-follow] here=WorldTile { x: 3288, z: 3292, level: 0 } walk=true transport=false leg=4 hops=12 outcome=None
+[nav-walk] here=WorldTile { x: 3288, z: 3290, level: 0 } aim=WorldTile { x: 3289, z: 3285, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3288, z: 3302, level: 0 })
+[nav-follow] here=WorldTile { x: 3288, z: 3290, level: 0 } walk=true transport=false leg=4 hops=12 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1078 d_raster_us=0 d_observe_us=79374 max_observe_us=15560 d_paints=0 d_skips=50 d_ticks=2 window_ms=1186
+[nav-walk] here=WorldTile { x: 3288, z: 3288, level: 0 } aim=WorldTile { x: 3289, z: 3285, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3288, z: 3302, level: 0 })
+[nav-follow] here=WorldTile { x: 3288, z: 3288, level: 0 } walk=true transport=false leg=4 hops=12 outcome=None
+[nav-walk] here=WorldTile { x: 3288, z: 3286, level: 0 } aim=WorldTile { x: 3289, z: 3285, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3288, z: 3302, level: 0 })
+[nav-follow] here=WorldTile { x: 3288, z: 3286, level: 0 } walk=true transport=false leg=4 hops=13 outcome=None
+[host] hitch live36ap5l_0: observe_us=16778 paints=0 skips=3026 ticks=124
+[host] slot live36ap5l_0: d_loop_us=1191 d_raster_us=0 d_observe_us=75734 max_observe_us=16778 d_paints=0 d_skips=50 d_ticks=2 window_ms=1188
+[nav-walk] here=WorldTile { x: 3288, z: 3284, level: 0 } aim=WorldTile { x: 3295, z: 3269, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3288, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 3288, z: 3284, level: 0 } walk=true transport=false leg=4 hops=13 outcome=None
+[nav-walk] here=WorldTile { x: 3288, z: 3282, level: 0 } aim=WorldTile { x: 3295, z: 3269, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3288, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 3288, z: 3282, level: 0 } walk=true transport=false leg=4 hops=13 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1221 d_raster_us=0 d_observe_us=72226 max_observe_us=8560 d_paints=0 d_skips=50 d_ticks=2 window_ms=1172
+[nav-walk] here=WorldTile { x: 3288, z: 3280, level: 0 } aim=WorldTile { x: 3295, z: 3269, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3288, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 3288, z: 3280, level: 0 } walk=true transport=false leg=4 hops=13 outcome=None
+[nav-walk] here=WorldTile { x: 3288, z: 3278, level: 0 } aim=WorldTile { x: 3295, z: 3269, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3288, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 3288, z: 3278, level: 0 } walk=true transport=false leg=4 hops=13 outcome=None
+[host] hitch live36ap5l_0: observe_us=17278 paints=0 skips=3128 ticks=128
+[host] slot live36ap5l_0: d_loop_us=1124 d_raster_us=0 d_observe_us=83409 max_observe_us=17278 d_paints=0 d_skips=50 d_ticks=2 window_ms=1181
+[nav-walk] here=WorldTile { x: 3288, z: 3276, level: 0 } aim=WorldTile { x: 3295, z: 3269, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3288, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 3288, z: 3276, level: 0 } walk=true transport=false leg=4 hops=13 outcome=None
+[nav-walk] here=WorldTile { x: 3290, z: 3274, level: 0 } aim=WorldTile { x: 3295, z: 3269, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3288, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 3290, z: 3274, level: 0 } walk=true transport=false leg=4 hops=13 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1159 d_raster_us=0 d_observe_us=98686 max_observe_us=8856 d_paints=0 d_skips=50 d_ticks=2 window_ms=1175
+[nav-walk] here=WorldTile { x: 3292, z: 3272, level: 0 } aim=WorldTile { x: 3295, z: 3269, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3288, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 3292, z: 3272, level: 0 } walk=true transport=false leg=4 hops=13 outcome=None
+[nav-walk] here=WorldTile { x: 3294, z: 3270, level: 0 } aim=WorldTile { x: 3295, z: 3269, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3288, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 3294, z: 3270, level: 0 } walk=true transport=false leg=4 hops=14 outcome=None
+[host] hitch live36ap5l_0: observe_us=16526 paints=0 skips=3230 ticks=132
+[host] slot live36ap5l_0: d_loop_us=1109 d_raster_us=0 d_observe_us=94691 max_observe_us=16526 d_paints=0 d_skips=50 d_ticks=2 window_ms=1168
+[nav-walk] here=WorldTile { x: 3294, z: 3268, level: 0 } aim=WorldTile { x: 3303, z: 3253, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3294, z: 3270, level: 0 })
+[nav-follow] here=WorldTile { x: 3294, z: 3268, level: 0 } walk=true transport=false leg=4 hops=14 outcome=None
+[nav-walk] here=WorldTile { x: 3296, z: 3266, level: 0 } aim=WorldTile { x: 3303, z: 3253, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3294, z: 3270, level: 0 })
+[nav-follow] here=WorldTile { x: 3296, z: 3266, level: 0 } walk=true transport=false leg=4 hops=14 outcome=None
+[host] slot live36ap5l_0: d_loop_us=966 d_raster_us=0 d_observe_us=78145 max_observe_us=11595 d_paints=0 d_skips=50 d_ticks=2 window_ms=1186
+[nav-walk] here=WorldTile { x: 3298, z: 3264, level: 0 } aim=WorldTile { x: 3303, z: 3253, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3294, z: 3270, level: 0 })
+[nav-follow] here=WorldTile { x: 3298, z: 3264, level: 0 } walk=true transport=false leg=4 hops=14 outcome=None
+[nav-walk] here=WorldTile { x: 3300, z: 3262, level: 0 } aim=WorldTile { x: 3303, z: 3253, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3294, z: 3270, level: 0 })
+[nav-follow] here=WorldTile { x: 3300, z: 3262, level: 0 } walk=true transport=false leg=4 hops=14 outcome=None
+[host] slot live36ap5l_0: d_loop_us=914 d_raster_us=0 d_observe_us=42618 max_observe_us=5314 d_paints=0 d_skips=50 d_ticks=2 window_ms=1205
+[nav-walk] here=WorldTile { x: 3302, z: 3260, level: 0 } aim=WorldTile { x: 3303, z: 3253, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3294, z: 3270, level: 0 })
+[nav-follow] here=WorldTile { x: 3302, z: 3260, level: 0 } walk=true transport=false leg=4 hops=14 outcome=None
+[nav-walk] here=WorldTile { x: 3302, z: 3258, level: 0 } aim=WorldTile { x: 3303, z: 3253, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3294, z: 3270, level: 0 })
+[nav-follow] here=WorldTile { x: 3302, z: 3258, level: 0 } walk=true transport=false leg=4 hops=14 outcome=None
+[host] slot live36ap5l_0: d_loop_us=906 d_raster_us=0 d_observe_us=70989 max_observe_us=8144 d_paints=0 d_skips=50 d_ticks=2 window_ms=1174
+[nav-walk] here=WorldTile { x: 3303, z: 3256, level: 0 } aim=WorldTile { x: 3303, z: 3253, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3294, z: 3270, level: 0 })
+[nav-follow] here=WorldTile { x: 3303, z: 3256, level: 0 } walk=true transport=false leg=4 hops=14 outcome=None
+[host] slot live36ap5l_0: d_loop_us=13776 d_raster_us=0 d_observe_us=99682 max_observe_us=9126 d_paints=0 d_skips=50 d_ticks=2 window_ms=1183
+[nav-walk] here=WorldTile { x: 3303, z: 3253, level: 0 } aim=WorldTile { x: 3303, z: 3253, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3294, z: 3270, level: 0 })
+[nav-follow] here=WorldTile { x: 3303, z: 3253, level: 0 } walk=true transport=false leg=4 hops=15 outcome=None
+[nav-walk] here=WorldTile { x: 3303, z: 3251, level: 0 } aim=WorldTile { x: 3308, z: 3237, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3303, z: 3253, level: 0 })
+[nav-follow] here=WorldTile { x: 3303, z: 3251, level: 0 } walk=true transport=false leg=4 hops=15 outcome=None
+[host] slot live36ap5l_0: d_loop_us=974 d_raster_us=0 d_observe_us=77684 max_observe_us=13375 d_paints=0 d_skips=50 d_ticks=2 window_ms=1178
+[nav-walk] here=WorldTile { x: 3303, z: 3249, level: 0 } aim=WorldTile { x: 3308, z: 3237, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3303, z: 3253, level: 0 })
+[nav-follow] here=WorldTile { x: 3303, z: 3249, level: 0 } walk=true transport=false leg=4 hops=15 outcome=None
+[nav-walk] here=WorldTile { x: 3303, z: 3247, level: 0 } aim=WorldTile { x: 3308, z: 3237, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3303, z: 3253, level: 0 })
+[nav-follow] here=WorldTile { x: 3303, z: 3247, level: 0 } walk=true transport=false leg=4 hops=15 outcome=None
+[host] hitch live36ap5l_0: observe_us=18888 paints=0 skips=3533 ticks=144
+[host] slot live36ap5l_0: d_loop_us=891 d_raster_us=0 d_observe_us=70209 max_observe_us=18888 d_paints=0 d_skips=50 d_ticks=2 window_ms=1198
+[nav-walk] here=WorldTile { x: 3303, z: 3245, level: 0 } aim=WorldTile { x: 3308, z: 3237, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3303, z: 3253, level: 0 })
+[nav-follow] here=WorldTile { x: 3303, z: 3245, level: 0 } walk=true transport=false leg=4 hops=15 outcome=None
+[nav-walk] here=WorldTile { x: 3304, z: 3243, level: 0 } aim=WorldTile { x: 3308, z: 3237, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3303, z: 3253, level: 0 })
+[nav-follow] here=WorldTile { x: 3304, z: 3243, level: 0 } walk=true transport=false leg=4 hops=15 outcome=None
+[host] hitch live36ap5l_0: observe_us=18228 paints=0 skips=3584 ticks=146
+[host] slot live36ap5l_0: d_loop_us=878 d_raster_us=0 d_observe_us=74900 max_observe_us=18228 d_paints=0 d_skips=50 d_ticks=2 window_ms=1202
+[nav-walk] here=WorldTile { x: 3304, z: 3241, level: 0 } aim=WorldTile { x: 3308, z: 3237, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3303, z: 3253, level: 0 })
+[nav-follow] here=WorldTile { x: 3304, z: 3241, level: 0 } walk=true transport=false leg=4 hops=15 outcome=None
+[nav-walk] here=WorldTile { x: 3306, z: 3239, level: 0 } aim=WorldTile { x: 3308, z: 3237, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3303, z: 3253, level: 0 })
+[nav-follow] here=WorldTile { x: 3306, z: 3239, level: 0 } walk=true transport=false leg=4 hops=16 outcome=None
+[host] hitch live36ap5l_0: observe_us=18487 paints=0 skips=3633 ticks=148
+[host] slot live36ap5l_0: d_loop_us=1011 d_raster_us=0 d_observe_us=79688 max_observe_us=18487 d_paints=0 d_skips=50 d_ticks=2 window_ms=1190
+[nav-walk] here=WorldTile { x: 3306, z: 3237, level: 0 } aim=WorldTile { x: 3298, z: 3221, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3306, z: 3239, level: 0 })
+[nav-follow] here=WorldTile { x: 3306, z: 3237, level: 0 } walk=true transport=false leg=4 hops=16 outcome=None
+[nav-walk] here=WorldTile { x: 3306, z: 3235, level: 0 } aim=WorldTile { x: 3298, z: 3221, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3306, z: 3239, level: 0 })
+[nav-follow] here=WorldTile { x: 3306, z: 3235, level: 0 } walk=true transport=false leg=4 hops=16 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1027 d_raster_us=0 d_observe_us=71641 max_observe_us=7352 d_paints=0 d_skips=50 d_ticks=2 window_ms=1189
+[nav-walk] here=WorldTile { x: 3304, z: 3233, level: 0 } aim=WorldTile { x: 3298, z: 3221, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3306, z: 3239, level: 0 })
+[nav-follow] here=WorldTile { x: 3304, z: 3233, level: 0 } walk=true transport=false leg=4 hops=16 outcome=None
+[nav-walk] here=WorldTile { x: 3302, z: 3231, level: 0 } aim=WorldTile { x: 3298, z: 3221, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3306, z: 3239, level: 0 })
+[nav-follow] here=WorldTile { x: 3302, z: 3231, level: 0 } walk=true transport=false leg=4 hops=16 outcome=None
+[host] hitch live36ap5l_0: observe_us=18221 paints=0 skips=3735 ticks=152
+[host] slot live36ap5l_0: d_loop_us=1132 d_raster_us=0 d_observe_us=83796 max_observe_us=18221 d_paints=0 d_skips=50 d_ticks=2 window_ms=1188
+[nav-walk] here=WorldTile { x: 3300, z: 3229, level: 0 } aim=WorldTile { x: 3298, z: 3221, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3306, z: 3239, level: 0 })
+[nav-follow] here=WorldTile { x: 3300, z: 3229, level: 0 } walk=true transport=false leg=4 hops=16 outcome=None
+[nav-walk] here=WorldTile { x: 3298, z: 3227, level: 0 } aim=WorldTile { x: 3298, z: 3221, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3306, z: 3239, level: 0 })
+[nav-follow] here=WorldTile { x: 3298, z: 3227, level: 0 } walk=true transport=false leg=4 hops=16 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1098 d_raster_us=0 d_observe_us=66830 max_observe_us=6844 d_paints=0 d_skips=50 d_ticks=2 window_ms=1193
+[nav-walk] here=WorldTile { x: 3297, z: 3225, level: 0 } aim=WorldTile { x: 3298, z: 3221, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3306, z: 3239, level: 0 })
+[nav-follow] here=WorldTile { x: 3297, z: 3225, level: 0 } walk=true transport=false leg=4 hops=16 outcome=None
+[nav-walk] here=WorldTile { x: 3297, z: 3223, level: 0 } aim=WorldTile { x: 3298, z: 3221, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3306, z: 3239, level: 0 })
+[nav-follow] here=WorldTile { x: 3297, z: 3223, level: 0 } walk=true transport=false leg=4 hops=17 outcome=None
+[host] slot live36ap5l_0: d_loop_us=965 d_raster_us=0 d_observe_us=54585 max_observe_us=4924 d_paints=0 d_skips=50 d_ticks=2 window_ms=1188
+[nav-walk] here=WorldTile { x: 3297, z: 3221, level: 0 } aim=WorldTile { x: 3284, z: 3205, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3297, z: 3223, level: 0 })
+[nav-follow] here=WorldTile { x: 3297, z: 3221, level: 0 } walk=true transport=false leg=4 hops=17 outcome=None
+[nav-walk] here=WorldTile { x: 3296, z: 3219, level: 0 } aim=WorldTile { x: 3284, z: 3205, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3297, z: 3223, level: 0 })
+[nav-follow] here=WorldTile { x: 3296, z: 3219, level: 0 } walk=true transport=false leg=4 hops=17 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1149 d_raster_us=0 d_observe_us=78944 max_observe_us=7850 d_paints=0 d_skips=50 d_ticks=2 window_ms=1192
+[nav-walk] here=WorldTile { x: 3294, z: 3217, level: 0 } aim=WorldTile { x: 3284, z: 3205, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3297, z: 3223, level: 0 })
+[nav-follow] here=WorldTile { x: 3294, z: 3217, level: 0 } walk=true transport=false leg=4 hops=17 outcome=None
+[host] hitch live36ap5l_0: observe_us=17081 paints=0 skips=3911 ticks=159
+[host] slot live36ap5l_0: d_loop_us=12582 d_raster_us=0 d_observe_us=104807 max_observe_us=17081 d_paints=0 d_skips=50 d_ticks=2 window_ms=1165
+[nav-walk] here=WorldTile { x: 3291, z: 3213, level: 0 } aim=WorldTile { x: 3284, z: 3205, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3297, z: 3223, level: 0 })
+[nav-follow] here=WorldTile { x: 3291, z: 3213, level: 0 } walk=true transport=false leg=4 hops=17 outcome=None
+[nav-walk] here=WorldTile { x: 3290, z: 3211, level: 0 } aim=WorldTile { x: 3284, z: 3205, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3297, z: 3223, level: 0 })
+[nav-follow] here=WorldTile { x: 3290, z: 3211, level: 0 } walk=true transport=false leg=4 hops=17 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1273 d_raster_us=0 d_observe_us=75450 max_observe_us=13054 d_paints=0 d_skips=50 d_ticks=2 window_ms=1174
+[nav-walk] here=WorldTile { x: 3288, z: 3209, level: 0 } aim=WorldTile { x: 3284, z: 3205, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3297, z: 3223, level: 0 })
+[nav-follow] here=WorldTile { x: 3288, z: 3209, level: 0 } walk=true transport=false leg=4 hops=17 outcome=None
+[nav-walk] here=WorldTile { x: 3286, z: 3207, level: 0 } aim=WorldTile { x: 3284, z: 3205, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3297, z: 3223, level: 0 })
+[nav-follow] here=WorldTile { x: 3286, z: 3207, level: 0 } walk=true transport=false leg=4 hops=18 outcome=None
+[host] hitch live36ap5l_0: observe_us=20774 paints=0 skips=4039 ticks=164
+[host] slot live36ap5l_0: d_loop_us=1173 d_raster_us=0 d_observe_us=80284 max_observe_us=20774 d_paints=0 d_skips=50 d_ticks=2 window_ms=1177
+[nav-walk] here=WorldTile { x: 3284, z: 3205, level: 0 } aim=WorldTile { x: 3284, z: 3189, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3286, z: 3207, level: 0 })
+[nav-follow] here=WorldTile { x: 3284, z: 3205, level: 0 } walk=true transport=false leg=4 hops=18 outcome=None
+[nav-walk] here=WorldTile { x: 3282, z: 3203, level: 0 } aim=WorldTile { x: 3284, z: 3189, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3286, z: 3207, level: 0 })
+[nav-follow] here=WorldTile { x: 3282, z: 3203, level: 0 } walk=true transport=false leg=4 hops=18 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1365 d_raster_us=0 d_observe_us=72934 max_observe_us=10462 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+[nav-walk] here=WorldTile { x: 3282, z: 3201, level: 0 } aim=WorldTile { x: 3284, z: 3189, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3286, z: 3207, level: 0 })
+[nav-follow] here=WorldTile { x: 3282, z: 3201, level: 0 } walk=true transport=false leg=4 hops=18 outcome=None
+[nav-walk] here=WorldTile { x: 3282, z: 3199, level: 0 } aim=WorldTile { x: 3284, z: 3189, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3286, z: 3207, level: 0 })
+[nav-follow] here=WorldTile { x: 3282, z: 3199, level: 0 } walk=true transport=false leg=4 hops=18 outcome=None
+[host] hitch live36ap5l_0: observe_us=21386 paints=0 skips=4139 ticks=168
+[host] slot live36ap5l_0: d_loop_us=1245 d_raster_us=0 d_observe_us=90954 max_observe_us=21386 d_paints=0 d_skips=50 d_ticks=2 window_ms=1198
+[nav-walk] here=WorldTile { x: 3282, z: 3197, level: 0 } aim=WorldTile { x: 3284, z: 3189, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3286, z: 3207, level: 0 })
+[nav-follow] here=WorldTile { x: 3282, z: 3197, level: 0 } walk=true transport=false leg=4 hops=18 outcome=None
+[nav-walk] here=WorldTile { x: 3282, z: 3195, level: 0 } aim=WorldTile { x: 3284, z: 3189, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3286, z: 3207, level: 0 })
+[nav-follow] here=WorldTile { x: 3282, z: 3195, level: 0 } walk=true transport=false leg=4 hops=18 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1325 d_raster_us=0 d_observe_us=73447 max_observe_us=12297 d_paints=0 d_skips=50 d_ticks=2 window_ms=1174
+[nav-walk] here=WorldTile { x: 3282, z: 3193, level: 0 } aim=WorldTile { x: 3284, z: 3189, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3286, z: 3207, level: 0 })
+[nav-follow] here=WorldTile { x: 3282, z: 3193, level: 0 } walk=true transport=false leg=4 hops=18 outcome=None
+[nav-walk] here=WorldTile { x: 3282, z: 3191, level: 0 } aim=WorldTile { x: 3284, z: 3189, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3286, z: 3207, level: 0 })
+[nav-follow] here=WorldTile { x: 3282, z: 3191, level: 0 } walk=true transport=false leg=4 hops=19 outcome=None
+[host] hitch live36ap5l_0: observe_us=21099 paints=0 skips=4241 ticks=172
+[host] slot live36ap5l_0: d_loop_us=1345 d_raster_us=0 d_observe_us=87477 max_observe_us=21099 d_paints=0 d_skips=50 d_ticks=2 window_ms=1200
+[nav-walk] here=WorldTile { x: 3282, z: 3189, level: 0 } aim=WorldTile { x: 3277, z: 3173, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 3282, z: 3191, level: 0 })
+[nav-follow] here=WorldTile { x: 3282, z: 3189, level: 0 } walk=true transport=false leg=4 hops=19 outcome=None
+[nav-walk] here=WorldTile { x: 3282, z: 3187, level: 0 } aim=WorldTile { x: 3277, z: 3173, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 3282, z: 3191, level: 0 })
+[nav-follow] here=WorldTile { x: 3282, z: 3187, level: 0 } walk=true transport=false leg=4 hops=19 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1335 d_raster_us=0 d_observe_us=79221 max_observe_us=8855 d_paints=0 d_skips=50 d_ticks=2 window_ms=1198
+[nav-walk] here=WorldTile { x: 3282, z: 3185, level: 0 } aim=WorldTile { x: 3277, z: 3173, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 3282, z: 3191, level: 0 })
+[nav-follow] here=WorldTile { x: 3282, z: 3185, level: 0 } walk=true transport=false leg=4 hops=19 outcome=None
+[nav-walk] here=WorldTile { x: 3282, z: 3183, level: 0 } aim=WorldTile { x: 3277, z: 3173, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 3282, z: 3191, level: 0 })
+[nav-follow] here=WorldTile { x: 3282, z: 3183, level: 0 } walk=true transport=false leg=4 hops=19 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1255 d_raster_us=0 d_observe_us=74536 max_observe_us=9789 d_paints=0 d_skips=50 d_ticks=2 window_ms=1186
+[nav-walk] here=WorldTile { x: 3282, z: 3181, level: 0 } aim=WorldTile { x: 3277, z: 3173, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 3282, z: 3191, level: 0 })
+[nav-follow] here=WorldTile { x: 3282, z: 3181, level: 0 } walk=true transport=false leg=4 hops=19 outcome=None
+[nav-walk] here=WorldTile { x: 3280, z: 3179, level: 0 } aim=WorldTile { x: 3277, z: 3173, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 3282, z: 3191, level: 0 })
+[nav-follow] here=WorldTile { x: 3280, z: 3179, level: 0 } walk=true transport=false leg=4 hops=19 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1038 d_raster_us=0 d_observe_us=59177 max_observe_us=5885 d_paints=0 d_skips=50 d_ticks=2 window_ms=1155
+[nav-walk] here=WorldTile { x: 3280, z: 3177, level: 0 } aim=WorldTile { x: 3277, z: 3173, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 3282, z: 3191, level: 0 })
+[nav-follow] here=WorldTile { x: 3280, z: 3177, level: 0 } walk=true transport=false leg=4 hops=19 outcome=None
+[host] slot live36ap5l_0: d_loop_us=8402 d_raster_us=0 d_observe_us=74025 max_observe_us=6958 d_paints=0 d_skips=50 d_ticks=2 window_ms=1186
+[nav-walk] here=WorldTile { x: 3277, z: 3173, level: 0 } aim=WorldTile { x: 3277, z: 3173, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 3282, z: 3191, level: 0 })
+[nav-follow] here=WorldTile { x: 3277, z: 3173, level: 0 } walk=true transport=false leg=4 hops=20 outcome=None
+[nav-walk] here=WorldTile { x: 3276, z: 3172, level: 0 } aim=WorldTile { x: 3269, z: 3170, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 3277, z: 3173, level: 0 })
+[nav-follow] here=WorldTile { x: 3276, z: 3172, level: 0 } walk=true transport=false leg=4 hops=20 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1223 d_raster_us=0 d_observe_us=73232 max_observe_us=8330 d_paints=0 d_skips=50 d_ticks=2 window_ms=1190
+[nav-walk] here=WorldTile { x: 3276, z: 3171, level: 0 } aim=WorldTile { x: 3269, z: 3170, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 3277, z: 3173, level: 0 })
+[nav-follow] here=WorldTile { x: 3276, z: 3171, level: 0 } walk=true transport=false leg=4 hops=20 outcome=None
+[nav-walk] here=WorldTile { x: 3276, z: 3170, level: 0 } aim=WorldTile { x: 3269, z: 3170, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 3277, z: 3173, level: 0 })
+[nav-follow] here=WorldTile { x: 3276, z: 3170, level: 0 } walk=true transport=false leg=4 hops=20 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1051 d_raster_us=0 d_observe_us=37567 max_observe_us=3421 d_paints=0 d_skips=50 d_ticks=2 window_ms=1186
+[nav-walk] here=WorldTile { x: 3275, z: 3169, level: 0 } aim=WorldTile { x: 3269, z: 3170, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 3277, z: 3173, level: 0 })
+[nav-follow] here=WorldTile { x: 3275, z: 3169, level: 0 } walk=true transport=false leg=4 hops=20 outcome=None
+[nav-walk] here=WorldTile { x: 3274, z: 3168, level: 0 } aim=WorldTile { x: 3269, z: 3170, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 3277, z: 3173, level: 0 })
+[nav-follow] here=WorldTile { x: 3274, z: 3168, level: 0 } walk=true transport=false leg=4 hops=20 outcome=None
+[host] slot live36ap5l_0: d_loop_us=925 d_raster_us=0 d_observe_us=34582 max_observe_us=3210 d_paints=0 d_skips=50 d_ticks=2 window_ms=1202
+[nav-walk] here=WorldTile { x: 3273, z: 3167, level: 0 } aim=WorldTile { x: 3269, z: 3170, level: 0 } radius=0 ticks_waited=5 sent_tile=Some(WorldTile { x: 3277, z: 3173, level: 0 })
+[nav-follow] here=WorldTile { x: 3273, z: 3167, level: 0 } walk=true transport=false leg=4 hops=20 outcome=None
+[nav-walk] here=WorldTile { x: 3272, z: 3167, level: 0 } aim=WorldTile { x: 3269, z: 3170, level: 0 } radius=0 ticks_waited=6 sent_tile=Some(WorldTile { x: 3277, z: 3173, level: 0 })
+[nav-follow] here=WorldTile { x: 3272, z: 3167, level: 0 } walk=true transport=false leg=4 hops=20 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1084 d_raster_us=0 d_observe_us=43508 max_observe_us=9763 d_paints=0 d_skips=50 d_ticks=2 window_ms=1199
+[nav-walk] here=WorldTile { x: 3271, z: 3167, level: 0 } aim=WorldTile { x: 3269, z: 3170, level: 0 } radius=0 ticks_waited=7 sent_tile=Some(WorldTile { x: 3277, z: 3173, level: 0 })
+[nav-follow] here=WorldTile { x: 3271, z: 3167, level: 0 } walk=true transport=false leg=4 hops=20 outcome=None
+[nav-walk] here=WorldTile { x: 3271, z: 3168, level: 0 } aim=WorldTile { x: 3269, z: 3170, level: 0 } radius=0 ticks_waited=8 sent_tile=Some(WorldTile { x: 3277, z: 3173, level: 0 })
+[nav-follow] here=WorldTile { x: 3271, z: 3168, level: 0 } walk=true transport=false leg=4 hops=20 outcome=None
+[host] slot live36ap5l_0: d_loop_us=1010 d_raster_us=0 d_observe_us=54475 max_observe_us=10288 d_paints=0 d_skips=50 d_ticks=2 window_ms=1174
+[nav-walk] here=WorldTile { x: 3270, z: 3169, level: 0 } aim=WorldTile { x: 3269, z: 3170, level: 0 } radius=0 ticks_waited=9 sent_tile=Some(WorldTile { x: 3277, z: 3173, level: 0 })
+[nav-follow] here=WorldTile { x: 3270, z: 3169, level: 0 } walk=true transport=false leg=4 hops=20 outcome=None
+[nav-walk] here=WorldTile { x: 3269, z: 3170, level: 0 } aim=WorldTile { x: 3269, z: 3170, level: 0 } radius=0 ticks_waited=10 sent_tile=Some(WorldTile { x: 3277, z: 3173, level: 0 })
+[nav-follow] here=WorldTile { x: 3269, z: 3170, level: 0 } walk=false transport=false leg=5 hops=20 outcome=Some(Arrived { at: WorldTile { x: 3269, z: 3170, level: 0 } })
+[script live36ap5l_0] interact OpenBooth { x: 3268, z: 3169, level: 0, id: 2213, name: None, action: None }
+[host] slot live36ap5l_0: d_loop_us=1001 d_raster_us=0 d_observe_us=36457 max_observe_us=3381 d_paints=0 d_skips=50 d_ticks=2 window_ms=1189
+[host] slot live36ap5l_0: d_loop_us=1144 d_raster_us=0 d_observe_us=63489 max_observe_us=7238 d_paints=0 d_skips=50 d_ticks=2 window_ms=1188
+[host] slot live36ap5l_0: d_loop_us=1421 d_raster_us=0 d_observe_us=75388 max_observe_us=6808 d_paints=0 d_skips=50 d_ticks=2 window_ms=1184
+[host] slot live36ap5l_0: d_loop_us=1361 d_raster_us=0 d_observe_us=74136 max_observe_us=7520 d_paints=0 d_skips=50 d_ticks=2 window_ms=1186
+[script live36ap5l_0] interact SetNoteMode { on: false }
+[shim-note] on=false sent
+[host] slot live36ap5l_0: d_loop_us=1624 d_raster_us=0 d_observe_us=79896 max_observe_us=7264 d_paints=0 d_skips=50 d_ticks=2 window_ms=1184
+[host] slot live36ap5l_0: d_loop_us=1404 d_raster_us=0 d_observe_us=82766 max_observe_us=10676 d_paints=0 d_skips=50 d_ticks=2 window_ms=1185
+[script live36ap5l_0] bank trip 1: withdrew 28 Bones
+[script live36ap5l_0] interact CloseModal
+[host] slot live36ap5l_0: d_loop_us=1511 d_raster_us=0 d_observe_us=74584 max_observe_us=7183 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+[script live36ap5l_0] interact Held { name: "Bones", action: "Bury" }
+[shim-held] Bones Bury slot=0 -> sent
+[host] slot live36ap5l_0: d_loop_us=1473 d_raster_us=0 d_observe_us=84014 max_observe_us=8288 d_paints=0 d_skips=50 d_ticks=1 window_ms=1167
+PASS: catalog_boundary_live: {"scenario":"bone_burier","runner":"Some(Evidence { scenario: \"bone_burier\", outcome: \"PASS\", predicate: \"stat_xp_gain(5)>=27\", ticks: 247, elapsed_ms: 135954, message: None, tile: Some([3269, 3169, 0]), inv: [InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }, InvRow { id: 526, name: Some(\"Bones\"), count: 1 }], stat: Some(StatRow { runenergy: 1 }), chat: [ChatRow { text: \"You bury the bones.\", username: None }, ChatRow { text: \"You dig a hole in the ground...\", username: None }, ChatRow { text: \"You bury the bones.\", username: None }, ChatRow { text: \"You dig a hole in the ground...\", username: None }, ChatRow { text: \"You bury the bones.\", username: None }, ChatRow { text: \"You dig a hole in the ground...\", username: None }, ChatRow { text: \"You bury the bones.\", username: None }, ChatRow { text: \"You dig a hole in the ground...\", username: None }, ChatRow { text: \"You bury the bones.\", username: None }, ChatRow { text: \"You dig a hole in the ground...\", username: None }, ChatRow { text: \"You bury the bones.\", username: None }, ChatRow { text: \"You dig a hole in the ground...\", username: None }, ChatRow { text: \"set tutorial: to 1000\", username: None }, ChatRow { text: \"Welcome to RuneScape.\", username: None }], scene: 2 })","core":{"case":"bone_burier","baseline":{"ingame":true,"scene_state":2,"player":"Live36ap5l 0","tile":[3220,3220,0],"tick":6,"items":{"Bones":5},"item_ids":{"526":5},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[{"id":1516,"x":3213,"z":3220,"level":0,"name":"Large door","open":true},{"id":1519,"x":3213,"z":3221,"level":0,"name":"Large door","open":true},{"id":1536,"x":3215,"z":3225,"level":0,"name":"Door","open":true},{"id":1516,"x":3217,"z":3218,"level":0,"name":"Large door","open":true},{"id":1519,"x":3217,"z":3219,"level":0,"name":"Large door","open":true},{"id":1530,"x":3226,"z":3214,"level":0,"name":"Door","open":true},{"id":1530,"x":3226,"z":3223,"level":0,"name":"Door","open":true}]},"latest":{"ingame":true,"scene_state":2,"player":"Live36ap5l 0","tile":[3269,3169,0],"tick":206,"items":{"Bones":27},"item_ids":{"526":27},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":2,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":27,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[18,"You bury the bones."],[17,"You dig a hole in the ground..."],[16,"You bury the bones."],[15,"You dig a hole in the ground..."],[14,"You bury the bones."],[13,"You dig a hole in the ground..."],[12,"You bury the bones."],[11,"You dig a hole in the ground..."],[10,"You bury the bones."],[9,"You dig a hole in the ground..."],[8,"You bury the bones."],[7,"You dig a hole in the ground..."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[]},"max_items":{"Bones":28},"max_xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":27,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"saw_bury_chat":true,"post_start_observations":4999,"bone_bank_cycle":{"first_batch_buried":true,"opened":{"ingame":true,"scene_state":2,"player":"Live36ap5l 0","tile":[3269,3169,0],"tick":194,"items":{},"item_ids":{},"bank":{"Bones":28},"bank_ids":{"526":28},"bank_open":true,"bank_loaded":true,"bank_generation":1,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":22,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[16,"You bury the bones."],[15,"You dig a hole in the ground..."],[14,"You bury the bones."],[13,"You dig a hole in the ground..."],[12,"You bury the bones."],[11,"You dig a hole in the ground..."],[10,"You bury the bones."],[9,"You dig a hole in the ground..."],[8,"You bury the bones."],[7,"You dig a hole in the ground..."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[]},"withdrawn":{"ingame":true,"scene_state":2,"player":"Live36ap5l 0","tile":[3269,3169,0],"tick":201,"items":{"Bones":28},"item_ids":{"526":28},"bank":{},"bank_ids":{},"bank_open":true,"bank_loaded":true,"bank_generation":1,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":22,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[16,"You bury the bones."],[15,"You dig a hole in the ground..."],[14,"You bury the bones."],[13,"You dig a hole in the ground..."],[12,"You bury the bones."],[11,"You dig a hole in the ground..."],[10,"You bury the bones."],[9,"You dig a hole in the ground..."],[8,"You bury the bones."],[7,"You dig a hole in the ground..."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[]},"buried_after_withdrawal":true},"bank_fletcher_cycle":{"first_pack_created":false,"deposited":null,"withdrawn":null,"crafted_after_withdrawal":false},"bank_fletcher_string_cycle":{"initial_pairs_strung":false,"deposited":null,"withdrawn":null,"strung_after_withdrawal":false},"bank_fletcher_cut_string_cycle":{"cut_pair_created":false,"deposited":null,"withdrawn":null,"string_pair_created":false},"alcher_generated_custom_cycle":{"withdrawn":null,"consumed":false},"dart_fletcher_cycle":{"first":null,"further":false,"wrong_tier":false},"herb_cleaner_cycle":{"first_pack":false,"deposited":null,"withdrawn":null,"cleaned_after_withdrawal":false,"filter_violated":false},"gem_cutter_cycle":{"first_pack":false,"deposited":null,"withdrawn":null,"cut_after_withdrawal":false,"filter_violated":false},"door_opener_cycle":{"selected":null,"opened":false},"gnome_course_cycle":{"log":null,"ground_return":null,"pipe":null,"second_lap":false},"flax_picker_cycle":{"first_pack":false,"deposited":null,"returned":false,"further":false},"ordered_first_exhausted":false}}
+test catalog_boundary_live ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 19 filtered out; finished in 139.09s
+

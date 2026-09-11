@@ -11519,7 +11519,7 @@
         "death detection, reacquisition and return-to-anchor behavior"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
+      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
       "observable_proof_requirement": "after Start at the chicken pen, combat XP plus supported loot/bury deltas; for banking, force depletion, bank restock, return, and renewed combat progress",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -11533,10 +11533,15 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references.",
+      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
       "fixture_id": "local-274",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-100adccc-c933f37c.json"
+      ],
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-100adccc-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-100adccc-f6b9ec4b.log",
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
       ]
     },
     {
@@ -12213,7 +12218,7 @@
         "death detection, reacquisition and return-to-anchor behavior"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
+      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
       "observable_proof_requirement": "after Start at the chicken pen, combat XP plus supported loot/bury deltas; for banking, force depletion, bank restock, return, and renewed combat progress",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -12227,10 +12232,15 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references.",
+      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
       "fixture_id": "local-289",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-100adccc-c933f37c.json"
+      ],
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-100adccc-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-100adccc-f6b9ec4b.log",
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
       ]
     },
     {
@@ -22362,15 +22372,20 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
+      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
       "observable_proof_requirement": "script-caused steals/Thieving XP; for food banking, force depletion, restock, return, and further steals",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references.",
+      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
       "fixture_id": "local-274",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r274-thiever-100adccc-c933f37c.json"
+      ],
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-thiever-100adccc-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-thiever-100adccc-f6b9ec4b.log",
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
       ]
     },
     {
@@ -22926,15 +22941,20 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
+      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
       "observable_proof_requirement": "script-caused steals/Thieving XP; for food banking, force depletion, restock, return, and further steals",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references.",
+      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
       "fixture_id": "local-289",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r289-thiever-100adccc-c933f37c.json"
+      ],
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-thiever-100adccc-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-thiever-100adccc-f6b9ec4b.log",
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
       ]
     },
     {
@@ -30628,12 +30648,12 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Controlled local fixture qualified for this core bank cycle; exact identities and observations are in the linked receipt.",
+      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
       "observable_proof_requirement": "Fletching XP and exact input-to-product transitions with bank depletion/restock; cover cut, string, attach and, in 8e7d965b, cut+string modes",
       "source_version_difference": "baseline modes are selected by product; direct Bank.openBooth/openNearest; leashRadius setting present",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Reviewed a4157243 isolated build passes the full string-only bank/restock/further-output loop on both catalogs and cut-and-string on the newer catalog. Earlier core-cut evidence retains its shared-target provenance qualification. Other supported product/material options and integrated/frontend qualification remain outstanding.",
+      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-100adccc-6c6bb2d5.json",
@@ -30641,7 +30661,10 @@
         "docs/compat/05-catalog-proof.md",
         "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-string-100adccc-a4157243.json",
         "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-string-100adccc-a4157243.log",
-        "docs/compat/evidence/inventory-use-on/review.json"
+        "docs/compat/evidence/inventory-use-on/review.json",
+        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-100adccc-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-100adccc-f6b9ec4b.log",
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
       ]
     },
     {
@@ -30973,12 +30996,12 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Controlled local fixture qualified for this core bank cycle; exact identities and observations are in the linked receipt.",
+      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
       "observable_proof_requirement": "Fletching XP and exact input-to-product transitions with bank depletion/restock; cover cut, string, attach and, in 8e7d965b, cut+string modes",
       "source_version_difference": "baseline modes are selected by product; direct Bank.openBooth/openNearest; leashRadius setting present",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Reviewed a4157243 isolated build passes the full string-only bank/restock/further-output loop on both catalogs and cut-and-string on the newer catalog. Earlier core-cut evidence retains its shared-target provenance qualification. Other supported product/material options and integrated/frontend qualification remain outstanding.",
+      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-100adccc-6c6bb2d5.json",
@@ -30986,7 +31009,10 @@
         "docs/compat/05-catalog-proof.md",
         "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-string-100adccc-a4157243.json",
         "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-string-100adccc-a4157243.log",
-        "docs/compat/evidence/inventory-use-on/review.json"
+        "docs/compat/evidence/inventory-use-on/review.json",
+        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-100adccc-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-100adccc-f6b9ec4b.log",
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
       ]
     },
     {
@@ -33292,17 +33318,20 @@
         "skill level and XP snapshot"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Controlled local fixture qualified for this core bank cycle; exact identities and observations are in the linked receipt.",
+      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
       "observable_proof_requirement": "after Start, inventory bone consumption and Prayer XP gain; bank withdrawal must precede the observed script-caused delta",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Full core bank cycle passed on a frozen build; supported option branches and integrated/frontend qualification remain outstanding.",
+      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-bone-burier-100adccc-bc499cbc.json",
         "docs/compat/evidence/catalog-harness/live/r274-bone-burier-100adccc-bc499cbc.log",
-        "docs/compat/05-catalog-proof.md"
+        "docs/compat/05-catalog-proof.md",
+        "docs/compat/evidence/catalog-harness/live/r274-bone-burier-100adccc-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-bone-burier-100adccc-f6b9ec4b.log",
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
       ]
     },
     {
@@ -33454,17 +33483,20 @@
         "skill level and XP snapshot"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Controlled local fixture qualified for this core bank cycle; exact identities and observations are in the linked receipt.",
+      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
       "observable_proof_requirement": "after Start, inventory bone consumption and Prayer XP gain; bank withdrawal must precede the observed script-caused delta",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Full core bank cycle passed on a frozen build; supported option branches and integrated/frontend qualification remain outstanding.",
+      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-bone-burier-100adccc-bc499cbc.json",
         "docs/compat/evidence/catalog-harness/live/r289-bone-burier-100adccc-bc499cbc.log",
-        "docs/compat/05-catalog-proof.md"
+        "docs/compat/05-catalog-proof.md",
+        "docs/compat/evidence/catalog-harness/live/r289-bone-burier-100adccc-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-bone-burier-100adccc-f6b9ec4b.log",
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
       ]
     },
     {
@@ -34733,12 +34765,12 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
+      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
       "observable_proof_requirement": "Magic XP, target/rune consumption and coin increase, including noted stock and bank restock",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Core, chainbody custom, 1000-batch representation, ordered platebody-then-chainbody, and generated Adamant scimitar custom alias/display-name cells passed. Selected-data source 7852b5a0 and custom fixtures 5f86dc87/d4f1809e passed independent review. Scoped integration review t_dde220ef approved 1e17c07a; final frontend/lifecycle and whole-branch acceptance remain open. Historical failures are retained.",
+      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
       "fixture_id": "local-274",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r274-alcher-100adccc-c933f37c.json",
@@ -34747,6 +34779,21 @@
         "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-100adccc-1a2f2dcf.json",
         "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-alias-100adccc-d4f1809e.json",
         "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-name-100adccc-d4f1809e.json"
+      ],
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-100adccc-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-100adccc-f6b9ec4b.log",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-100adccc-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-100adccc-f6b9ec4b.log",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-alias-100adccc-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-alias-100adccc-f6b9ec4b.log",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-name-100adccc-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-name-100adccc-f6b9ec4b.log",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-large-batch-100adccc-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-large-batch-100adccc-f6b9ec4b.log",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-100adccc-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-100adccc-f6b9ec4b.log",
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
       ]
     },
     {
@@ -34997,12 +35044,12 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
+      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
       "observable_proof_requirement": "Magic XP, target/rune consumption and coin increase, including noted stock and bank restock",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Core, chainbody custom, 1000-batch representation, ordered platebody-then-chainbody, and generated Adamant scimitar custom alias/display-name cells passed. Selected-data source 7852b5a0 and custom fixtures 5f86dc87/d4f1809e passed independent review. Scoped integration review t_dde220ef approved 1e17c07a; final frontend/lifecycle and whole-branch acceptance remain open. Historical failures are retained.",
+      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
       "fixture_id": "local-289",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r289-alcher-100adccc-c933f37c.json",
@@ -35011,6 +35058,21 @@
         "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-100adccc-1a2f2dcf.json",
         "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-alias-100adccc-d4f1809e.json",
         "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-name-100adccc-d4f1809e.json"
+      ],
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-100adccc-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-100adccc-f6b9ec4b.log",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-100adccc-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-100adccc-f6b9ec4b.log",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-alias-100adccc-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-alias-100adccc-f6b9ec4b.log",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-name-100adccc-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-name-100adccc-f6b9ec4b.log",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-large-batch-100adccc-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-large-batch-100adccc-f6b9ec4b.log",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-100adccc-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-100adccc-f6b9ec4b.log",
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
       ]
     },
     {
@@ -46115,7 +46177,7 @@
         "death detection, reacquisition and return-to-anchor behavior"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
+      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
       "observable_proof_requirement": "after Start at the chicken pen, combat XP plus supported loot/bury deltas; for banking, force depletion, bank restock, return, and renewed combat progress",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -46129,10 +46191,15 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references.",
+      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
       "fixture_id": "local-274",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-8e7d965b-c933f37c.json"
+      ],
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-8e7d965b-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-8e7d965b-f6b9ec4b.log",
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
       ]
     },
     {
@@ -46809,7 +46876,7 @@
         "death detection, reacquisition and return-to-anchor behavior"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
+      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
       "observable_proof_requirement": "after Start at the chicken pen, combat XP plus supported loot/bury deltas; for banking, force depletion, bank restock, return, and renewed combat progress",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -46823,10 +46890,15 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references.",
+      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
       "fixture_id": "local-289",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-8e7d965b-c933f37c.json"
+      ],
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-8e7d965b-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-8e7d965b-f6b9ec4b.log",
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
       ]
     },
     {
@@ -56958,15 +57030,20 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
+      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
       "observable_proof_requirement": "script-caused steals/Thieving XP; for food banking, force depletion, restock, return, and further steals",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references.",
+      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
       "fixture_id": "local-274",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r274-thiever-8e7d965b-c933f37c.json"
+      ],
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-thiever-8e7d965b-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-thiever-8e7d965b-f6b9ec4b.log",
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
       ]
     },
     {
@@ -57522,15 +57599,20 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
+      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
       "observable_proof_requirement": "script-caused steals/Thieving XP; for food banking, force depletion, restock, return, and further steals",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Recorded independent core and named option cells passed; remaining supported option branches and integrated source acceptance are open. See proof_references.",
+      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
       "fixture_id": "local-289",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r289-thiever-8e7d965b-c933f37c.json"
+      ],
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-thiever-8e7d965b-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-thiever-8e7d965b-f6b9ec4b.log",
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
       ]
     },
     {
@@ -65238,12 +65320,12 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Controlled local fixture qualified for this core bank cycle; exact identities and observations are in the linked receipt.",
+      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
       "observable_proof_requirement": "Fletching XP and exact input-to-product transitions with bank depletion/restock; cover cut, string, attach and, in 8e7d965b, cut+string modes",
       "source_version_difference": "adds mode=auto|cut|string|cut+string, uses Banking.open({stand,boothName,boothOp}), removes leashRadius, and adds combined cut-then-string behavior",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Reviewed a4157243 isolated build passes the full string-only bank/restock/further-output loop on both catalogs and cut-and-string on the newer catalog. Earlier core-cut evidence retains its shared-target provenance qualification. Other supported product/material options and integrated/frontend qualification remain outstanding.",
+      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-8e7d965b-6c6bb2d5.json",
@@ -65253,7 +65335,10 @@
         "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-string-8e7d965b-a4157243.log",
         "docs/compat/evidence/inventory-use-on/review.json",
         "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-cut-string-8e7d965b-a4157243.json",
-        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-cut-string-8e7d965b-a4157243.log"
+        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-cut-string-8e7d965b-a4157243.log",
+        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-8e7d965b-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-8e7d965b-f6b9ec4b.log",
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
       ]
     },
     {
@@ -65599,12 +65684,12 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Controlled local fixture qualified for this core bank cycle; exact identities and observations are in the linked receipt.",
+      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
       "observable_proof_requirement": "Fletching XP and exact input-to-product transitions with bank depletion/restock; cover cut, string, attach and, in 8e7d965b, cut+string modes",
       "source_version_difference": "adds mode=auto|cut|string|cut+string, uses Banking.open({stand,boothName,boothOp}), removes leashRadius, and adds combined cut-then-string behavior",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Reviewed a4157243 isolated build passes the full string-only bank/restock/further-output loop on both catalogs and cut-and-string on the newer catalog. Earlier core-cut evidence retains its shared-target provenance qualification. Other supported product/material options and integrated/frontend qualification remain outstanding.",
+      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-8e7d965b-6c6bb2d5.json",
@@ -65614,7 +65699,10 @@
         "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-string-8e7d965b-a4157243.log",
         "docs/compat/evidence/inventory-use-on/review.json",
         "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-cut-string-8e7d965b-a4157243.json",
-        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-cut-string-8e7d965b-a4157243.log"
+        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-cut-string-8e7d965b-a4157243.log",
+        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-8e7d965b-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-8e7d965b-f6b9ec4b.log",
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
       ]
     },
     {
@@ -67920,17 +68008,20 @@
         "skill level and XP snapshot"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Controlled local fixture qualified for this core bank cycle; exact identities and observations are in the linked receipt.",
+      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
       "observable_proof_requirement": "after Start, inventory bone consumption and Prayer XP gain; bank withdrawal must precede the observed script-caused delta",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Full core bank cycle passed on a frozen build; supported option branches and integrated/frontend qualification remain outstanding.",
+      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-bone-burier-8e7d965b-bc499cbc.json",
         "docs/compat/evidence/catalog-harness/live/r274-bone-burier-8e7d965b-bc499cbc.log",
-        "docs/compat/05-catalog-proof.md"
+        "docs/compat/05-catalog-proof.md",
+        "docs/compat/evidence/catalog-harness/live/r274-bone-burier-8e7d965b-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-bone-burier-8e7d965b-f6b9ec4b.log",
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
       ]
     },
     {
@@ -68082,17 +68173,20 @@
         "skill level and XP snapshot"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Controlled local fixture qualified for this core bank cycle; exact identities and observations are in the linked receipt.",
+      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
       "observable_proof_requirement": "after Start, inventory bone consumption and Prayer XP gain; bank withdrawal must precede the observed script-caused delta",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Full core bank cycle passed on a frozen build; supported option branches and integrated/frontend qualification remain outstanding.",
+      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-bone-burier-8e7d965b-bc499cbc.json",
         "docs/compat/evidence/catalog-harness/live/r289-bone-burier-8e7d965b-bc499cbc.log",
-        "docs/compat/05-catalog-proof.md"
+        "docs/compat/05-catalog-proof.md",
+        "docs/compat/evidence/catalog-harness/live/r289-bone-burier-8e7d965b-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-bone-burier-8e7d965b-f6b9ec4b.log",
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
       ]
     },
     {
@@ -69363,12 +69457,12 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
+      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
       "observable_proof_requirement": "Magic XP, target/rune consumption and coin increase, including noted stock and bank restock",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Core, chainbody custom, 1000-batch representation, ordered platebody-then-chainbody, and generated Adamant scimitar custom alias/display-name cells passed. Selected-data source 7852b5a0 and custom fixtures 5f86dc87/d4f1809e passed independent review. Scoped integration review t_dde220ef approved 1e17c07a; final frontend/lifecycle and whole-branch acceptance remain open. Historical failures are retained.",
+      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
       "fixture_id": "local-274",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r274-alcher-8e7d965b-c933f37c.json",
@@ -69377,6 +69471,21 @@
         "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-8e7d965b-1a2f2dcf.json",
         "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-alias-8e7d965b-d4f1809e.json",
         "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-name-8e7d965b-d4f1809e.json"
+      ],
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-8e7d965b-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-8e7d965b-f6b9ec4b.log",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-8e7d965b-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-8e7d965b-f6b9ec4b.log",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-alias-8e7d965b-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-alias-8e7d965b-f6b9ec4b.log",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-name-8e7d965b-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-name-8e7d965b-f6b9ec4b.log",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-large-batch-8e7d965b-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-large-batch-8e7d965b-f6b9ec4b.log",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-8e7d965b-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-8e7d965b-f6b9ec4b.log",
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
       ]
     },
     {
@@ -69627,12 +69736,12 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Selected local fixture completed confirmed preparation and scene2 baseline for the recorded cells.",
+      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
       "observable_proof_requirement": "Magic XP, target/rune consumption and coin increase, including noted stock and bank restock",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Core, chainbody custom, 1000-batch representation, ordered platebody-then-chainbody, and generated Adamant scimitar custom alias/display-name cells passed. Selected-data source 7852b5a0 and custom fixtures 5f86dc87/d4f1809e passed independent review. Scoped integration review t_dde220ef approved 1e17c07a; final frontend/lifecycle and whole-branch acceptance remain open. Historical failures are retained.",
+      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
       "fixture_id": "local-289",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r289-alcher-8e7d965b-c933f37c.json",
@@ -69641,6 +69750,21 @@
         "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-8e7d965b-1a2f2dcf.json",
         "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-alias-8e7d965b-d4f1809e.json",
         "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-name-8e7d965b-d4f1809e.json"
+      ],
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-8e7d965b-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-8e7d965b-f6b9ec4b.log",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-8e7d965b-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-8e7d965b-f6b9ec4b.log",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-alias-8e7d965b-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-alias-8e7d965b-f6b9ec4b.log",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-name-8e7d965b-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-name-8e7d965b-f6b9ec4b.log",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-large-batch-8e7d965b-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-large-batch-8e7d965b-f6b9ec4b.log",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-8e7d965b-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-8e7d965b-f6b9ec4b.log",
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
       ]
     },
     {
