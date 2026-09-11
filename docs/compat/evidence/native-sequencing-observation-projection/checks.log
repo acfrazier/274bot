@@ -1,0 +1,172 @@
+host_commit=0e7ba119b93f4e55a1c69c6fb09493f7826b3bf6f
+host_commit_correction=0e7ba119b86d74cc04818c3f621d7835ddb4dbb4
+host_commit_note=the preceding host_commit label was a transcription error; git rev-parse 0e7ba119b^{commit} verified the correction
+client_commit=aef3952d1cd7bb3b93d39c497f0f476b68021c59
+export=/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/native-sequencing-observation-projection-t_11ec797b-0e7ba119b
+target=/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/native-sequencing-observation-projection-t_11ec797b-0e7ba119b/.superpowers/review-targets/native-sequencing-observation-projection-t_11ec797b-exact
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running unittests src/lib.rs (.superpowers/review-targets/native-sequencing-observation-projection-t_11ec797b-exact/debug/deps/api-386f1453e56ad78b)
+
+running 5 tests
+test cake_stall::tests::closer_door_does_not_beat_farther_qualifying_stall ... ok
+test cake_stall::tests::depleted_or_wrong_op_or_missing_facts_select_nothing ... ok
+test cake_stall::tests::other_same_id_stall_is_not_the_selected_target ... ok
+test cake_stall::tests::restock_honors_capacity_and_requested_count ... ok
+test cake_stall::tests::selected_pins_match_headed_274_289_loc_and_live_stand ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (.superpowers/review-targets/native-sequencing-observation-projection-t_11ec797b-exact/debug/deps/script-3c6f978d22f78410)
+
+running 83 tests
+test autocast::tests::both_selected_caches_post_the_audited_staff_spell_controls ... ok
+test autocast::tests::missing_arm_observation_fails_closed ... ok
+test autocast::tests::native_arm_next_owns_choose_spell_toggle_order ... ok
+test autocast::tests::observe_tracks_staff_panel_and_armed_without_faking_missing_controls ... ok
+test bank_open::tests::out_of_range_stand_fails_closed ... ok
+test bank_open::tests::timeout_and_reset_fail_closed_without_another_command ... ok
+test bank_open::tests::walk_and_ready_bounds_are_native ... ok
+test bank_withdraw::tests::no_progress_and_full_inventory_stop ... ok
+test bank_withdraw::tests::x_then_fallback_then_exact_remainder ... ok
+test cake_stall::tests::api_predicates_own_count_and_restock ... ok
+test cake_stall::tests::native_bounds_timeout_and_reset_are_fail_closed ... ok
+test ctx::tests::bank_loaded_uses_packet_freshness_and_allows_empty_full ... ok
+test ctx::tests::chat_open_and_options_read_the_chat_modal ... ok
+test ctx::tests::find_options_default_bank_fetch_off ... ok
+test ctx::tests::has_item_resolves_inventory_by_name ... ok
+test ctx::tests::quest_status_reads_the_journal_colour ... ok
+test ctx::tests::stat_level_16_is_run_energy_other_ids_read_effective ... ok
+test ctx::tests::varp_reads_transmitted_values_and_fails_closed ... ok
+test death_recovery::tests::bounds_match_frozen_contract ... ok
+test death_recovery::tests::pause_freezes_sends_and_reset_drops_stale_token ... ok
+test death_recovery::tests::respawn_timeout_still_advances_to_ticks ... ok
+test death_recovery::tests::seeded_duplicate_and_old_chat_do_not_latch ... ok
+test death_recovery::tests::validate_false_until_new_death_and_recovers_once_at_anchor ... ok
+test death_recovery::tests::walk_back_is_invoked_instead_of_default_walk ... ok
+test host_js::tests::render_excludes_game_teleport ... ok
+test host_js::tests::render_includes_find_options_wilderness_jsdoc ... ok
+test isolate_fb::tests::encode_decode_interact_npc_pick_round_trips ... ok
+test isolate_fb::tests::encode_decode_npc_view_round_trips ... ok
+test isolate_fb::tests::encode_decode_reach_view_round_trips ... ok
+test isolate_fb::tests::encode_decode_stat_base_and_effective ... ok
+test isolate_fb::tests::omitted_npc_table_is_absent_not_empty ... ok
+test isolate_fb::tests::omitted_reach_is_absent_when_unchanged ... ok
+test isolate_fb::tests::one_isolate_buf_encodes_snapshot_then_paint_then_interact ... ok
+test isolate_fb::tests::optional_string_delta_clears_chat_text ... ok
+test isolate_fb::tests::optional_string_delta_clears_my_name ... ok
+test isolate_fb::tests::reused_isolate_buf_second_snapshot_does_not_keep_first_tick ... ok
+test isolate_fb::tests::truncated_paint_and_interact_buffers_return_err ... ok
+test isolate_fb::tests::unavailable_reach_is_posted_when_cleared ... ok
+test isolated_env::tests::ensure_thread_does_not_use_operator_home ... ok
+test isolated_env::tests::ensure_thread_survives_isolated_env_drop ... ok
+test isolated_env::tests::enter_then_ensure_thread_drop_keeps_the_thread_pin ... ok
+test isolated_env::tests::isolated_env_does_not_mutate_process_home ... ok
+test isolated_env::tests::isolated_env_is_thread_local ... ok
+test isolated_env::tests::isolated_env_restores_bot_home_and_deletes_scratch ... ok
+test isolated_env::tests::operator_home_never_queries_profile_for_explicit_home ... ok
+test isolated_env::tests::operator_home_selector_matches_client_rules ... ok
+test load::isolate::tests::reset_rejects_a_tick_queued_with_the_previous_session_generation ... ok
+test load::isolate::tests::shim_prelude_defines_globals_for_compat_fixture ... ok
+test loadouts_store::compatibility_tests::accessors_read_righthand_qty_and_unassigned_gear ... ok
+test loadouts_store::compatibility_tests::selected_loadout_matches_case_and_falls_back_to_first ... ok
+test loadouts_store::tests::copy_equipment_keeps_supplies_and_unknown_gear ... ok
+test loadouts_store::tests::explicit_slots_and_quantities_survive_file_round_trip ... ok
+test loadouts_store::tests::failed_save_can_restore_the_previous_file_image ... ok
+test loadouts_store::tests::legacy_array_worn_and_carry_are_preserved_without_guessing_slots ... ok
+test loadouts_store::tests::replace_at_renames_without_duplicating ... ok
+test loadouts_store::tests::resolve_item_options_drops_missing_alias_and_keeps_sort ... ok
+test loadouts_store::tests::resolve_item_options_leaves_literals_and_loadouts ... ok
+test loadouts_store::tests::resolve_item_options_matches_both_pinned_revisions ... ok
+test loadouts_store::tests::resolve_item_options_none_facts_prefix_only ... ok
+test loadouts_store::tests::resolve_item_options_rebounds_without_mutating_schema ... ok
+test loadouts_store::tests::resolve_item_options_tie_order_and_identity_labels ... ok
+test loadouts_store::tests::resolve_setting_options_lists_loadout_names ... ok
+test loadouts_store::tests::store_round_trips_at_private_mode ... ok
+test loadouts_store::tests::unique_loadout_name_avoids_collisions ... ok
+test params::tests::every_compiled_id_defaults_to_no_rows_yet ... ok
+test periodic_bank::tests::combat_and_off_never_due ... ok
+test periodic_bank::tests::failure_backoff_blocks_retry_and_pause_freezes_elapsed ... ok
+test periodic_bank::tests::frozen_should_bank_now_contract ... ok
+test periodic_bank::tests::labels_and_tokens_map_to_items_without_equating_loot_and_items_strings ... ok
+test periodic_bank::tests::npc_access_is_explicit_missing_access ... ok
+test periodic_bank::tests::supplied_destination_does_not_fall_back_and_reset_drops_callback_phase ... ok
+test registry::tests::factory_counter_is_some_and_ticks ... ok
+test settings_store::tests::merge_bag_applies_defaults_then_overrides_then_inject ... ok
+test settings_store::tests::show_if_any_of_hides_when_value_mismatch ... ok
+test settings_store::tests::show_if_array_membership_is_case_sensitive_scalar ... ok
+test slot::tests::on_random_defaults_to_host_and_override_claims_handle ... ok
+test slot::tests::pending_bank_op_pause_freezes_while_stop_and_reconnect_abort ... ok
+test slot::tests::pending_withdraw_x_pause_freezes_while_stop_and_reconnect_abort ... ok
+test slot::tests::script_requested_stop_cleans_slot_work_and_allows_fresh_restart ... ok
+test slot::tests::stop_releases_snapshot_storage_and_restart_emits_keyframe ... ok
+test slot::tests::ticks_counts_dispatched_ticks_since_start ... ok
+test special::tests::both_selected_caches_post_the_audited_special_controls ... ok
+test special::tests::missing_controls_do_not_invent_costs_or_bars ... ok
+
+test result: ok. 83 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.83s
+
+     Running tests/autocast.rs (.superpowers/review-targets/native-sequencing-observation-projection-t_11ec797b-exact/debug/deps/autocast-8a28870624020e06)
+
+running 9 tests
+test arm_three_presses_across_delta_omissions_then_posted_armed_state ... ok
+test initially_armed_reads_posted_varp_on_both_selected_caches ... ok
+test melee_resolution_shape_is_unchanged ... ok
+test missing_controls_throw_and_do_not_send ... ok
+test native_autocast_does_not_roundtrip_js_snapshot_observations ... ok
+test pause_and_hold_freeze_mid_arm_without_late_press ... ok
+test staff_not_attached_refuses_without_send ... ok
+test stale_chooser_times_out_after_choose ... ok
+test unknown_spell_refuses_without_send ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.81s
+
+     Running tests/cake_stall_native_mapping.rs (.superpowers/review-targets/native-sequencing-observation-projection-t_11ec797b-exact/debug/deps/cake_stall_native_mapping-a5a0613a14e81089)
+
+running 8 tests
+test closer_door_still_selects_qualifying_stall_id ... ok
+test food_delta_calls_onsteal_once_and_partial_is_not_stocked ... ok
+test gates_skip_dispatch_and_walk_revalidates ... ok
+test native_cake_owner_selects_with_api_predicate_and_posts_food_gain ... ok
+test native_cake_stall_does_not_roundtrip_js_snapshot_collections ... ok
+test other_stall_depleted_wrong_op_and_missing_facts_queue_nothing ... ok
+test posted_pins_match_selected_274_289_stall_and_live_stand ... ok
+test result_is_never_boolean_and_classify_is_not_on_the_path ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.94s
+
+     Running tests/named_bank_approach.rs (.superpowers/review-targets/native-sequencing-observation-projection-t_11ec797b-exact/debug/deps/named_bank_approach-fe23d03d7207e74b)
+
+running 12 tests
+test named_open_nearest_completes_on_fresh_generation_not_queued_click ... ok
+test named_open_nearest_from_chebyshev_1_queues_named_open_booth_only ... ok
+test named_open_nearest_from_chebyshev_2_queues_walk_near_then_same_named_open_booth ... ok
+test named_open_nearest_missing_loc_after_approach_sends_no_click ... ok
+test named_open_nearest_replaced_loc_after_approach_sends_no_click ... ok
+test native_bank_open_does_not_roundtrip_js_snapshot_collections ... ok
+test native_bank_owner_preserves_selected_identity_across_omitted_locs_delta ... ok
+test open_nearest_access_non_default_still_throws_unsupported ... ok
+test session_reset_clears_native_bank_observation ... ok
+test supplied_stand_walks_then_delivers_fresh_bank_result ... ok
+test unnamed_banking_open_from_distance_queues_open_booth_without_walk ... ok
+test world_open_walks_with_native_verb_then_opens_observed_booth ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.65s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.22s
+     Running unittests src/lib.rs (.superpowers/review-targets/native-sequencing-observation-projection-t_11ec797b-exact/debug/deps/host_play-e209afcb78bbd8cb)
+
+running 9 tests
+test tests::script_snapshot_fb_carries_observed_fields_only ... ok
+test tests::script_snapshot_fb_posts_only_changed_tables ... ok
+test tests::script_snapshot_fb_posts_tab0_aggressive_combat_style ... ok
+test tests::script_snapshot_loc_behind_wall_posts_reachable_false ... ok
+test tests::script_snapshot_npc_behind_wall_posts_reachable_false ... ok
+test tests::script_snapshot_posts_attacked_by_player_from_local_face ... ok
+test tests::script_snapshot_posts_current_local_overhead_and_coordinate_hint ... ok
+test tests::script_snapshot_posts_native_retaliate_control_identity ... ok
+test tests::script_snapshot_retaliate_enabled_is_varp_172_zero ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 134 filtered out; finished in 0.02s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.20s
