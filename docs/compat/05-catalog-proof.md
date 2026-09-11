@@ -85,3 +85,62 @@ observed 27 to 26 items/natures, 30,000 coins and 65 Magic XP. Native Windows
 is a separate pending run. Build receipts and the original missing-NASM build
 failure and Windows path-comparison live failure are retained under
 `evidence/platform-preparation/catalog-smoke/`.
+
+
+### 23:55 UTC full-loop and platform follow-up
+
+At frozen bc499cbc/client 56d8027, Mac headless 274 and native 289 BoneBurier
+both completed real banking, withdrew 28 bones, closed the bank, and buried
+another bone. The native run continued to 33 total burials/one bank trip. All
+receipt log hashes were reverified. The other catalog/revision combinations
+and supported settings still need qualification.
+
+BankFletcher native 289 at 2f9099f7 made and deposited 27 willow shortbows
+without a panic, then stopped on empty bank stock. Its first-craft scenario
+PASS does not qualify restocking. Root source 6c6bb2d5 seeds 54 bank logs before
+Start, requires first-pack deposit and same-generation withdrawal, then requires
+crafting a withdrawn log with XP progress. The scenario requires at least 900
+XP, beyond the maximum 899 integer XP from the 27 carried logs. Nine harness
+witness regressions and strict Clippy pass; fresh full-loop LIVE is pending.
+
+The same source enables existing internal terminal captures for BoneBurier,
+ChickenKiller, Alcher/variants and BankFletcher. Previous empty screenshot
+directories reflected unarmed milestones. Subsequent native proofs will read
+the application's complete frame and snapshot sidecar.
+
+Windows native 289 Alcher at 584d05bc completed its scenario, continued through
+30 casts, deposited 900000 coins and stopped cleanly (198.079-second outer
+run, zero runtime errors). Its log hash is verified and both root-owned
+scheduled tasks were removed. The binary predates startup source 814e5293, so
+the Windows startup stall has not yet been qualified as fixed. The retained OS
+captures are DPI-cropped and do not establish whole-frame visual acceptance.
+
+
+### 2026-09-11 00:25 UTC complete core bank-cycle follow-up
+
+BoneBurier at bc499cbc and BankFletcher at 6c6bb2d5 now each pass the headless
+core bank cycle on both revisions and both frozen catalogs (eight new qualified
+cells). Their exact binary, source, catalog, nav, baseline and fresh-bank
+observations are retained in core-results.json and the raw receipt/log pairs.
+The earlier first-action BankFletcher result remains PARTIAL and the failed
+BoneBurier travel attempt remains FAIL. Every completed log hash was reverified.
+
+| Card | 274 / 100adccc | 274 / 8e7d965b | 289 / 100adccc | 289 / 8e7d965b |
+|---|---|---|---|---|
+| BoneBurier | PASS | PASS | PASS | PASS |
+| BankFletcher | PASS | PASS | PASS | PASS |
+
+BoneBurier witnesses initial burials, fresh bank stock, withdrawal of 28 bones,
+bank closure and another burial. BankFletcher witnesses 27 initial products,
+deposit of those products, same-generation withdrawal of 27 banked logs,
+bank closure and crafting from the new pack (+932 fletching XP overall).
+The eight support-matrix rows move to PARTIAL; unexercised settings remain open.
+
+Native 289 BankFletcher at 6c6bb2d5 also completed the full scenario, then the
+41cfc85e diagnostic build reproduced it with a read internal full-window PNG
+and actual scene-2 sidecar. Earlier armed but unpresented captures are retained
+as capture diagnostics. The owned app bundle contained the exact frozen binary.
+Native Windows 6c6bb2d5 Alcher completed 30 casts and banking and supplied an
+internal full-window PNG. Startup samples, responsiveness probe limits, copied-
+resource refusal and exact capture paths are in 06f-panel-startup-native-proof.md.
+These results do not qualify every option or the remaining frontend/fleet gates.

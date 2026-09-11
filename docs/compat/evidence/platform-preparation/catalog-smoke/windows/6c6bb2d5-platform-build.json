@@ -1,0 +1,49 @@
+{
+  "host_commit": "6c6bb2d5c25d51f5b339d6bb5f73d68b3b7296cb",
+  "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "platform": "win32",
+  "source_files_verified": 5010,
+  "target_dir": "C:\\Users\\Austen\\274bot-campaign\\target-native",
+  "jobs": [
+    {
+      "name": "catalog_boundary_live",
+      "command": [
+        "C:\\Users\\Austen\\.cargo\\bin\\cargo.exe",
+        "test",
+        "-p",
+        "host-play",
+        "--test",
+        "catalog_boundary_live",
+        "--features",
+        "memory-profile",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "started_at": "2026-09-10T23:57:58.367159+00:00",
+      "elapsed_seconds": 29.266,
+      "exit_code": 0,
+      "binary": "C:\\Users\\Austen\\274bot-campaign\\multirevision-20260910\\catalog-6c6bb2d5\\bin\\catalog_boundary_live-6c6bb2d5.exe",
+      "binary_sha256": "31383221d2b1c5c37c428d96f711b6c4e9074ede55451fa5847416ffc198a88b",
+      "binary_bytes": 102242304
+    },
+    {
+      "name": "catalog_watch",
+      "command": [
+        "C:\\Users\\Austen\\.cargo\\bin\\cargo.exe",
+        "build",
+        "-p",
+        "panel",
+        "--example",
+        "catalog_watch",
+        "--message-format=json"
+      ],
+      "started_at": "2026-09-10T23:58:28.860942+00:00",
+      "elapsed_seconds": 31.3,
+      "exit_code": 0,
+      "binary": "C:\\Users\\Austen\\274bot-campaign\\multirevision-20260910\\catalog-6c6bb2d5\\bin\\catalog_watch-6c6bb2d5.exe",
+      "binary_sha256": "4da087aa258b7ed9452c9dccb05538a85cc2d7e6b85e99e161355e161846edd0",
+      "binary_bytes": 107425280
+    }
+  ],
+  "elapsed_is_not_performance_measurement": true
+}
