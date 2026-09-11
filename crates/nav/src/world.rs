@@ -17,7 +17,7 @@ use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
 use crate::grid::StepGrid;
-use crate::pack::{decode, decode_grid, BankStand, PackError};
+use crate::pack::{decode, decode_grid, BankAccess, BankStand, PackError};
 use crate::transport::{TransportEdge, TransportGraph, TransportKind};
 
 /// A fully-blocked stamp: every directional `PL_WALK_*` mask, so the
@@ -38,6 +38,20 @@ impl NavWorld {
     /// and opens, ordered by tile.
     pub fn banks(&self) -> &[BankStand] {
         &self.banks
+    }
+
+    /// Resolve the five catalog bank aliases against this bound world's
+    /// packed booth tiles and walk surface. Missing booths, wrong plane,
+    /// or a blocked stand with no adjacent replacement omit that alias.
+    /// The packed stand table is not copied into the published facts.
+    pub fn named_bank_facts(&self) -> api::named_banks::NamedBankFacts {
+        let packed: Vec<WorldTile> = self
+            .banks
+            .iter()
+            .filter(|stand| matches!(stand.access, BankAccess::Booth { .. }))
+            .map(|stand| stand.tile)
+            .collect();
+        api::named_banks::resolve(&packed, |tile| self.collision.walkable(tile))
     }
 
     /// Decode already-read pack bytes into the router's world. Whole-world

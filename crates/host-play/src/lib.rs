@@ -3930,6 +3930,8 @@ pub struct Play {
     connection: PlayConnection,
     /// Generated facts only when the profile cache matches a checked-in asset.
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
+    /// Bound-world named bank aliases, resolved once with the nav world.
+    named_banks: Arc<api::named_banks::NamedBankFacts>,
     cache: Arc<Cache>,
     /// The shared obj-id → name table every script ctx resolves `has_item`
     /// against (built once from `cache.objs`).
@@ -3979,6 +3981,7 @@ pub struct Play {
 pub struct ScriptStartHandle {
     scripts: ScriptWall,
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
+    named_banks: Arc<api::named_banks::NamedBankFacts>,
 }
 
 impl ScriptStartHandle {
@@ -4005,6 +4008,7 @@ impl ScriptStartHandle {
                 settings_bag.as_ref(),
                 siblings,
                 self.game_data.clone(),
+                Arc::clone(&self.named_banks),
             );
         if let Err(e) = &result {
             eprintln!("[script {name}] start failed: {e}");
@@ -4054,11 +4058,18 @@ impl Play {
         world: Option<Arc<NavWorld>>,
     ) -> Play {
         let obj_names = Arc::new(api::obj_names::ObjNames::from_objs(&cache.objs));
+        let named_banks = Arc::new(
+            world
+                .as_deref()
+                .map(NavWorld::named_bank_facts)
+                .unwrap_or_default(),
+        );
         Play {
             statuses: Arc::new(Mutex::new(Vec::new())),
             handles: HashMap::new(),
             connection,
             game_data,
+            named_banks,
             cache,
             obj_names,
             ifaces,
@@ -4114,6 +4125,10 @@ impl Play {
 
     pub fn game_data(&self) -> Option<Arc<api::game_data::SelectedGameData>> {
         self.game_data.clone()
+    }
+
+    pub fn named_banks(&self) -> Arc<api::named_banks::NamedBankFacts> {
+        Arc::clone(&self.named_banks)
     }
 
     /// Overlay handle for catalog `walk` / `ctx.walk` Traveller (Play's
@@ -4247,6 +4262,7 @@ impl Play {
                 settings_bag.as_ref(),
                 siblings,
                 self.game_data.clone(),
+                Arc::clone(&self.named_banks),
             );
         if let Err(e) = &result {
             eprintln!("[script {name}] start failed: {e}");
@@ -4262,6 +4278,7 @@ impl Play {
         ScriptStartHandle {
             scripts: Arc::clone(&self.scripts),
             game_data: self.game_data.clone(),
+            named_banks: Arc::clone(&self.named_banks),
         }
     }
 

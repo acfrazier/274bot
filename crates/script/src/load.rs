@@ -1023,7 +1023,13 @@ mod isolate {
             shape: LoadShape,
             siblings: Vec<(String, String)>,
         ) -> Result<Self, String> {
-            Self::spawn_inner(js, shape, siblings, None)
+            Self::spawn_inner(
+                js,
+                shape,
+                siblings,
+                None,
+                std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            )
         }
 
         /// Spawn with immutable selected-revision facts. The Arc is shared
@@ -1034,7 +1040,25 @@ mod isolate {
             siblings: Vec<(String, String)>,
             game_data: std::sync::Arc<api::game_data::SelectedGameData>,
         ) -> Result<Self, String> {
-            Self::spawn_inner(js, shape, siblings, Some(game_data))
+            Self::spawn_inner(
+                js,
+                shape,
+                siblings,
+                Some(game_data),
+                std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            )
+        }
+
+        /// Spawn with selected-revision facts and already-resolved named
+        /// bank aliases. Existing constructors post empty aliases.
+        pub fn spawn_with_content(
+            js: String,
+            shape: LoadShape,
+            siblings: Vec<(String, String)>,
+            game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
+            named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+        ) -> Result<Self, String> {
+            Self::spawn_inner(js, shape, siblings, game_data, named_banks)
         }
 
         fn spawn_inner(
@@ -1042,6 +1066,7 @@ mod isolate {
             shape: LoadShape,
             siblings: Vec<(String, String)>,
             game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
+            named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
         ) -> Result<Self, String> {
             ensure_platform();
             let (tx, rx) = mpsc::channel::<IsolateCmd>();
@@ -1061,6 +1086,7 @@ mod isolate {
                         shape,
                         siblings,
                         game_data,
+                        named_banks,
                         rx,
                         msg_tx,
                         setup_tx,
@@ -1414,6 +1440,7 @@ mod isolate {
         shape: LoadShape,
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
+        named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
         cmds: Receiver<IsolateCmd>,
         out: Sender<ThreadMsg>,
         setup: Sender<Result<v8::IsolateHandle, String>>,
@@ -1439,7 +1466,14 @@ mod isolate {
         counters
             .heap_live
             .store(1, std::sync::atomic::Ordering::Relaxed);
-        if let Err(e) = wire_runtime(&mut runtime, &source, shape, &siblings, game_data) {
+        if let Err(e) = wire_runtime(
+            &mut runtime,
+            &source,
+            shape,
+            &siblings,
+            game_data,
+            named_banks,
+        ) {
             let _ = setup.send(Err(e));
             return;
         }
@@ -1543,6 +1577,7 @@ mod isolate {
         shape: LoadShape,
         siblings: &[(String, String)],
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
+        named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
     ) -> Result<(), String> {
         if shape == LoadShape::Reject {
             return Err("not a bot shape".to_string());
@@ -1763,7 +1798,7 @@ mod isolate {
             .map_err(|e| format!("shim: {e}"))?;
         let content = format!(
             "globalThis.__rs2b0t_host.content = {};",
-            crate::shim::content_json(game_data.as_deref())
+            crate::shim::content_json(game_data.as_deref(), named_banks.as_ref())
         );
         runtime
             .eval::<()>(content.as_str())

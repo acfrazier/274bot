@@ -606,6 +606,7 @@ impl Run {
                 siblings.clone(),
                 &[script::Loadout::new("Memory food").with_carry("Lobster", 1)],
                 play.game_data(),
+                play.named_banks(),
             )?;
             slot.post_settings_bag(&bag);
             drop(slot);
@@ -621,6 +622,7 @@ impl Run {
             siblings.clone(),
             &[],
             play.game_data(),
+            play.named_banks(),
         )?;
         slot.post_settings_bag(bag);
         drop(slot);

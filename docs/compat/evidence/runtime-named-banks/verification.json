@@ -1,0 +1,105 @@
+{
+  "task": "t_bced5c76",
+  "brief": "docs/compat/briefs/89-runtime-named-bank-aliases.md",
+  "brief_sha256": "cfb8d5df709f0108e554453eaa74f18f6f94ab7d9ef97583527e3196288a73f1",
+  "source_commit": "8bd34675b61c94707e6c5ed07a943102bf06cac5",
+  "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "isolated_build": true,
+  "retry": "after-disk-full-run-1281",
+  "export": ".superpowers/review-exports/runtime-named-banks-t_bced5c76",
+  "cargo_target_dir": ".superpowers/review-exports/runtime-named-banks-t_bced5c76-target",
+  "manifest": ".superpowers/review-exports/runtime-named-banks-t_bced5c76-manifest.json",
+  "files": 3371,
+  "live": false,
+  "navpacks": {
+    "274": "05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4",
+    "289": "131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924"
+  },
+  "resolved_stands": {
+    "Falador East": [3013, 3355, 0],
+    "Varrock East": [3253, 3420, 0],
+    "Edgeville": [3094, 3491, 0],
+    "Draynor": [3092, 3242, 0],
+    "Al Kharid": [3269, 3167, 0]
+  },
+  "overlay": [
+    "crates/api/src/lib.rs",
+    "crates/api/src/named_banks.rs",
+    "crates/nav/src/world.rs",
+    "crates/nav/tests/named_bank_aliases.rs",
+    "crates/script/src/load.rs",
+    "crates/script/src/slot.rs",
+    "crates/script/src/shim/mod.rs",
+    "crates/script/src/shim/bank_locations.js",
+    "crates/script/tests/named_bank_locations.rs",
+    "crates/host-play/src/lib.rs",
+    "crates/host-play/src/memory.rs"
+  ],
+  "overlay_sha256": {
+    "crates/api/src/lib.rs": "b64e66e7bd8cbb3197d8dc20ab701553431064d11b8e4ee1bafda762f08e16ec",
+    "crates/api/src/named_banks.rs": "e17959012fc1af3eb728e60d17f25253988865fd2503052ba5db21dfd7d7d59f",
+    "crates/nav/src/world.rs": "8897aea24b0d0de1e1ed679f62faf7276c90fc56dd0f972383e859919d92502a",
+    "crates/nav/tests/named_bank_aliases.rs": "3cbfc3546dc8be3a6af00128ef2c6aff903cda4e43ad55a49993680a3c11148e",
+    "crates/script/src/load.rs": "3f6b8f87c8797c8cf56411cb53ed929dc9531ab9d804319938ca0d656095fdb6",
+    "crates/script/src/slot.rs": "1593826ffe821e7a3cd0d4706b7778bbfcf15db8bc8560563d81222700d0d2c4",
+    "crates/script/src/shim/mod.rs": "f6b60bc857b96b8280f3f48d9b3cb3eafcde995636ed522b8d4037b165e733b8",
+    "crates/script/src/shim/bank_locations.js": "aa6995236596e27fb0bd154b4dab2601bfe2accd736839ef52f13c3614b67859",
+    "crates/script/tests/named_bank_locations.rs": "bc748c9abc25b59dceec1a4af53a803ca1e12f72ce904e798d56a57ee3f5d10c",
+    "crates/host-play/src/lib.rs": "dd4e1b91ddb1cc02b5b2d43899b6a02d86c183ed069c98391701c4627d16fdd3",
+    "crates/host-play/src/memory.rs": "80ec3880d29911cef30328fc80d15d1441f65b95c6e1a7dd26efa2609fe723a5"
+  },
+  "commands": [
+    {
+      "name": "api-named-banks",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/runtime-named-banks-t_bced5c76",
+      "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/runtime-named-banks-t_bced5c76-target",
+      "cmd": "cargo test --locked --offline -p api named_banks -- --test-threads=1",
+      "exit": 0,
+      "result": "6 passed"
+    },
+    {
+      "name": "nav-named-bank-aliases",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/runtime-named-banks-t_bced5c76",
+      "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/runtime-named-banks-t_bced5c76-target",
+      "cmd": "cargo test --locked --offline -p nav --test named_bank_aliases -- --test-threads=1",
+      "exit": 0,
+      "result": "3 passed; Falador East (3013,3355,0) Varrock East (3253,3420,0) Edgeville (3094,3491,0) Draynor (3092,3242,0) Al Kharid (3269,3167,0) on both packs"
+    },
+    {
+      "name": "script-named-bank-locations",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/runtime-named-banks-t_bced5c76",
+      "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/runtime-named-banks-t_bced5c76-target",
+      "cmd": "cargo test --locked --offline -p script --test named_bank_locations -- --test-threads=1",
+      "exit": 0,
+      "result": "4 passed"
+    },
+    {
+      "name": "api-clippy-lib",
+      "cmd": "cargo clippy --locked --offline --no-deps -p api --lib -- -D warnings",
+      "exit": 0
+    },
+    {
+      "name": "nav-clippy-named-bank-aliases",
+      "cmd": "cargo clippy --locked --offline --no-deps -p nav --test named_bank_aliases -- -D warnings",
+      "exit": 0
+    },
+    {
+      "name": "script-clippy-named-bank-locations",
+      "cmd": "cargo clippy --locked --offline --no-deps -p script --test named_bank_locations -- -D warnings",
+      "exit": 0
+    },
+    {
+      "name": "fmt-check",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision",
+      "cmd": "rustfmt --edition 2021 --check crates/api/src/named_banks.rs crates/nav/tests/named_bank_aliases.rs crates/script/tests/named_bank_locations.rs",
+      "exit": 0
+    }
+  ],
+  "notes": [
+    "Named banks are immutable per-profile facts resolved against the bound NavWorld before module eval.",
+    "Draft Edgeville 3094,3493 and Draynor 3093,3243 are not published; derived adjacent stands are.",
+    "nearestBank stays live nearest_booth. COOK_LOCATIONS stays Catherby.",
+    "Not LIVE. Root owns Mule acceptance and further cache cleanup.",
+    "Empty-target cache: .superpowers/review-exports/runtime-named-banks-t_bced5c76-target (4.7G)."
+  ]
+}
