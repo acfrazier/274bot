@@ -1805,6 +1805,28 @@ fn dispatch_script_interact(
                     wrote |= matches!(res, SendResult::Sent { .. });
                 }
             }
+            InteractReq::InvButton {
+                id,
+                slot,
+                component,
+                operation,
+                bank_generation,
+            } => {
+                // Selected bank identity only. Do not fall back to another
+                // same-name row or answer the later count dialog.
+                if snapshot.bank_component_id() >= 0
+                    && snapshot.bank_session_generation() == bank_generation
+                {
+                    if let Some(item) = snapshot.bank().iter().find(|item| {
+                        item.def.id == id && item.slot == slot && item.component_id == component
+                    }) {
+                        wrote |= matches!(
+                            ix.interact(OpTarget::Item(item), ActionSpec::Operation(operation)),
+                            SendResult::Sent { .. }
+                        );
+                    }
+                }
+            }
             InteractReq::Close => {
                 let res = ix.close_modal();
                 if host::debug_enabled() {
@@ -2490,7 +2512,7 @@ fn with_script_snapshot_input<R>(
                 ops: &bank_ops_store[i],
                 noted: it.def.noted,
                 cert: posted_cert(obj_names, &it.def),
-                component_id: -1,
+                component_id: it.component_id,
                 slot: it.slot,
             })
             .collect()
@@ -8597,6 +8619,260 @@ export default class T extends LoopingBot {
             rec.menus,
             vec![(0, MiniMenuAction::OP_LOC2, flax_typecode(&snap), 5, 6)]
         );
+    }
+
+    fn same_name_bank_client() -> Client {
+        use client::config::ObjType;
+        let mut c = bank_client();
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            cache.objs.resize(12, ObjType::default());
+            cache.objs[10].id = 10;
+            cache.objs[10].name = "Dragonhide".into();
+            cache.objs[11].id = 11;
+            cache.objs[11].name = "Dragonhide".into();
+        }
+        c.set_iface_mut(
+            601,
+            IfTypeMut {
+                link_obj_type: Some(vec![11, 12]),
+                link_obj_number: Some(vec![5, 7]),
+                ..Default::default()
+            },
+        );
+        c.bump_gens(ServerProt::UPDATE_INV_FULL);
+        c
+    }
+
+    fn inv_button_req(
+        id: i32,
+        slot: i32,
+        component: i32,
+        operation: i32,
+        bank_generation: u64,
+    ) -> script::shim::InteractReq {
+        script::shim::InteractReq::InvButton {
+            id,
+            slot,
+            component,
+            operation,
+            bank_generation,
+        }
+    }
+
+    fn dispatch_inv_button(snap: &GameSnapshot, req: script::shim::InteractReq) -> GuardRec {
+        let (navs, world) = empty_nav();
+        let mut rec = GuardRec::default();
+        dispatch_script_interact(
+            &mut rec,
+            snap,
+            None,
+            Some((3205, 3205, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![req],
+        );
+        rec
+    }
+
+    #[test]
+    fn dispatch_inv_button_preserves_selected_same_name_bank_id() {
+        let mut c = same_name_bank_client();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let ids: Vec<i32> = snap.bank().iter().map(|item| item.def.id).collect();
+        assert_eq!(ids, vec![10, 11], "two same-name bank rows");
+        assert!(snap
+            .bank()
+            .iter()
+            .all(|item| item.def.name.as_deref() == Some("Dragonhide")));
+        let selected = snap
+            .bank()
+            .iter()
+            .find(|item| item.def.id == 11)
+            .expect("id 11");
+        let rec = dispatch_inv_button(
+            &snap,
+            inv_button_req(
+                selected.def.id,
+                selected.slot,
+                selected.component_id,
+                5,
+                snap.bank_session_generation(),
+            ),
+        );
+        assert_eq!(
+            rec.menus,
+            vec![(
+                0,
+                MiniMenuAction::INV_BUTTON5,
+                11,
+                selected.slot,
+                selected.component_id
+            )],
+            "selected id 11 must not fall back to same-name id 10"
+        );
+        assert_eq!(rec.actions, vec![0], "queued op is not a count answer");
+        let first = snap
+            .bank()
+            .iter()
+            .find(|item| item.def.id == 10)
+            .expect("id 10");
+        let first_rec = dispatch_inv_button(
+            &snap,
+            inv_button_req(
+                first.def.id,
+                first.slot,
+                first.component_id,
+                5,
+                snap.bank_session_generation(),
+            ),
+        );
+        assert_eq!(
+            first_rec.menus,
+            vec![(
+                0,
+                MiniMenuAction::INV_BUTTON5,
+                10,
+                first.slot,
+                first.component_id
+            )]
+        );
+        let _ = &mut c;
+    }
+
+    #[test]
+    fn dispatch_inv_button_refuses_stale_closed_missing_forged_and_invalid_op() {
+        let mut c = same_name_bank_client();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let selected = snap
+            .bank()
+            .iter()
+            .find(|item| item.def.id == 11)
+            .expect("id 11");
+        let gen = snap.bank_session_generation();
+        let invalid = dispatch_inv_button(
+            &snap,
+            inv_button_req(11, selected.slot, selected.component_id, 9, gen),
+        );
+        assert!(invalid.menus.is_empty(), "invalid op sends nothing");
+
+        let forged = dispatch_inv_button(
+            &snap,
+            inv_button_req(9999, selected.slot, selected.component_id, 5, gen),
+        );
+        assert!(forged.menus.is_empty(), "forged id sends nothing");
+
+        let stale = dispatch_inv_button(
+            &snap,
+            inv_button_req(
+                11,
+                selected.slot,
+                selected.component_id,
+                5,
+                gen.wrapping_add(1),
+            ),
+        );
+        assert!(
+            stale.menus.is_empty(),
+            "stale bank generation sends nothing"
+        );
+
+        let wrong_slot = dispatch_inv_button(
+            &snap,
+            inv_button_req(
+                11,
+                selected.slot.wrapping_add(1),
+                selected.component_id,
+                5,
+                gen,
+            ),
+        );
+        assert!(
+            wrong_slot.menus.is_empty(),
+            "same id on another slot is not a fallback"
+        );
+
+        c.set_iface_mut(
+            601,
+            IfTypeMut {
+                link_obj_type: Some(vec![11, 11]),
+                link_obj_number: Some(vec![5, 7]),
+                ..Default::default()
+            },
+        );
+        c.bump_gens(ServerProt::UPDATE_INV_FULL);
+        let mut replaced = GameSnapshot::new();
+        replaced.rebuild(&c);
+        assert!(replaced.bank().iter().all(|item| item.def.id == 10));
+        let missing = dispatch_inv_button(
+            &replaced,
+            inv_button_req(
+                11,
+                selected.slot,
+                selected.component_id,
+                5,
+                replaced.bank_session_generation(),
+            ),
+        );
+        assert!(
+            missing.menus.is_empty(),
+            "replaced identity must not send the old id"
+        );
+
+        c.main_modal_id = -1;
+        c.bump_gens(ServerProt::IF_OPENMAIN);
+        let mut closed = GameSnapshot::new();
+        closed.rebuild(&c);
+        assert!(closed.bank_component_id() < 0 || closed.bank().is_empty());
+        let shut = dispatch_inv_button(
+            &closed,
+            inv_button_req(
+                11,
+                selected.slot,
+                selected.component_id,
+                5,
+                closed.bank_session_generation(),
+            ),
+        );
+        assert!(shut.menus.is_empty(), "closed bank sends nothing");
+    }
+
+    #[test]
+    fn dispatch_inv_button_survives_flatbuffer_round_trip() {
+        let mut c = same_name_bank_client();
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let selected = snap
+            .bank()
+            .iter()
+            .find(|item| item.def.id == 11)
+            .expect("id 11");
+        let reqs = vec![inv_button_req(
+            selected.def.id,
+            selected.slot,
+            selected.component_id,
+            5,
+            snap.bank_session_generation(),
+        )];
+        let bytes = script::isolate_fb::encode_interact_batch(&reqs);
+        let decoded = script::isolate_fb::decode_interact_batch(&bytes).expect("inv-button batch");
+        assert_eq!(decoded, reqs);
+        let rec = dispatch_inv_button(&snap, decoded.into_iter().next().unwrap());
+        assert_eq!(
+            rec.menus,
+            vec![(
+                0,
+                MiniMenuAction::INV_BUTTON5,
+                11,
+                selected.slot,
+                selected.component_id
+            )]
+        );
+        let _ = &mut c;
     }
 
     #[test]

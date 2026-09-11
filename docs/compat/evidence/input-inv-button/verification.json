@@ -1,0 +1,40 @@
+{
+  "task": "t_af045121",
+  "brief": "docs/compat/briefs/77-input-inv-button.md",
+  "brief_sha256": "2b5a5650e139f8bad549539d9ff258c85f433276250fab7fcdfd122854f40b75",
+  "host_commit": "c49fc7515e575d9dd91e3a57091e2f3af2896524",
+  "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "isolated_build": true,
+  "export": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/inv-button-t_af045121",
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/inv-button-t_af045121-target",
+  "export_method": "docs/compat/evidence/build-isolation/export_git_files.py regular Git blobs",
+  "manifest": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/inv-button-t_af045121-manifest.json",
+  "manifest_files": 2828,
+  "shared_campaign_target": false,
+  "live": false,
+  "overlay_sha256": {
+    "crates/script/src/shim/input.js": "29e9532361b45019f78e2a94b907d79c1c0f297492abacff7e6c2c8eb7ff4a11",
+    "crates/script/src/shim/bank.js": "8dfb9bbceb451d556c095bfccd3ae696b361959c5ff64d1b3ec57bdbe9357b81",
+    "crates/script/src/shim/mod.rs": "29997d821878a3309a964abed9d7e899fa6500c60562390386ca0dc57c3c0fef",
+    "crates/script/src/isolate_fb.rs": "6551dfd4be29afd20137f97dc39d201f9b76d364e5ae1ca29fb69a045ffa3b6f",
+    "crates/script/src/host_js.rs": "d33931a615b695784dec87436fff55af0cf269508425673d2e04cad4768968ab",
+    "crates/script/host-js/index.d.ts": "a2e9ac440fd7f152a4996b1e303c52ed5dc97331a4bce4acf2bfb0c07c708011",
+    "crates/script/tests/input_inv_button.rs": "b1d5abf054e4906b5a50ca60da08566559e2484364fe81f67c7eb44c071c63ba",
+    "crates/host-play/src/lib.rs": "767dbb909999e9b7a21f20609f6660624e14a0204aabc5a0e037e0575b06a95d",
+    "docs/compat/04j-input-inv-button.md": "20f8f62ff57d62a19f224476cfe7ce12e3e0cfc729413b233834c62b00c12414"
+  },
+  "checks": [
+    "cargo test -p script --test input_inv_button: 5 passed",
+    "cargo test -p script --test host_js: 2 passed, 1 ignored",
+    "cargo test -p host-play --lib dispatch_inv_button: 3 passed",
+    "cargo clippy -p script --no-deps --all-targets -- -D warnings: pass",
+    "cargo clippy -p host-play --no-deps -- -D warnings: pass"
+  ],
+  "limits": [
+    "no live client run",
+    "root owns TannerBot 274/289 LIVE requalification",
+    "queued inv-button is not a completed withdrawal; catalog owns count-dialog answer",
+    "inv-button reuses Interact bank_item_id/source_item_slot/component_id/stand_op/bank_generation; isolate.fbs unchanged",
+    "host-play remains shared runtime hotspot"
+  ]
+}
