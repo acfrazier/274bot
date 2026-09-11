@@ -149,6 +149,30 @@ pub struct SpecialWeapon {
     pub cost: i32,
 }
 
+/// Packed non-target spellbook teleport from selected cache metadata.
+/// Distinguished from target combat/enchant spells by a `tele_coord` row.
+#[derive(Debug, Deserialize, Clone)]
+pub struct TeleportSpell {
+    pub name: String,
+    pub source_row: String,
+    pub spell: String,
+    pub component_id: i32,
+    pub members: bool,
+    pub level: i32,
+    pub runes: Vec<SpellRune>,
+    pub experience: i32,
+    pub tele_coord: String,
+    pub x: i32,
+    pub z: i32,
+    pub plane: i32,
+}
+
+impl TeleportSpell {
+    pub fn available(&self) -> bool {
+        self.component_id >= 0 && self.level > 0 && !self.name.is_empty()
+    }
+}
+
 /// Packed special-attack varps, bars and weapon costs from the selected cache.
 #[derive(Debug, Deserialize, Clone)]
 pub struct SpecialControls {
@@ -252,6 +276,8 @@ pub struct SelectedGameData {
     duel: Option<DuelControls>,
     #[serde(default)]
     special: Option<SpecialControls>,
+    #[serde(default)]
+    teleports: Vec<TeleportSpell>,
 }
 
 impl SelectedGameData {
@@ -364,6 +390,26 @@ impl SelectedGameData {
         self.special_controls()
             .map(|controls| controls.bar_for_root(combat_tab_root))
             .unwrap_or(-1)
+    }
+
+    pub fn teleports(&self) -> &[TeleportSpell] {
+        &self.teleports
+    }
+
+    pub fn teleport(&self, name: &str) -> Option<&TeleportSpell> {
+        let wanted = teleport_key(name);
+        if wanted.is_empty() {
+            return None;
+        }
+        self.teleports.iter().find(|spell| {
+            spell.available()
+                && (teleport_key(&spell.name) == wanted
+                    || spell.spell.eq_ignore_ascii_case(&wanted)
+                    || spell
+                        .spell
+                        .strip_suffix("_teleport")
+                        .is_some_and(|dest| dest.eq_ignore_ascii_case(&wanted)))
+        })
     }
 
     pub fn spell(&self, name: &str) -> Option<&SpellFact> {
@@ -544,6 +590,37 @@ pub fn wearpos_for_loadout_slot(slot: &str) -> Option<i32> {
         "quiver" => Some(WEARPOS_QUIVER),
         _ => None,
     }
+}
+
+fn teleport_key(value: &str) -> String {
+    let stripped = strip_color_tags(value);
+    let joined = stripped.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut lower = joined.trim().to_ascii_lowercase();
+    if let Some(rest) = lower.strip_prefix("cast ") {
+        lower = rest.trim().to_string();
+    }
+    if let Some(rest) = lower.strip_suffix(" teleport") {
+        lower = rest.trim().to_string();
+    }
+    lower
+}
+
+fn strip_color_tags(value: &str) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    let mut out = String::with_capacity(value.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '@' {
+            if let Some(rel) = chars[i + 1..].iter().position(|&c| c == '@') {
+                i += rel + 2;
+                out.push(' ');
+                continue;
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
 }
 
 fn search_items<'a, I>(items: I, query: &str, limit: usize) -> Vec<ItemSearchHit>

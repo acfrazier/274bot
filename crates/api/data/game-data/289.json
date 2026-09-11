@@ -63,6 +63,11 @@
         "sha256": "508d6911af3763713d3030ee16218b8879a0bef2933e4abe50246d9b35781a77"
       },
       {
+        "path": "scripts/skill_magic/configs/magic_spells.dbrow",
+        "bytes": 7265,
+        "sha256": "c8ff8a90cd8303c75615981fda33bf2c01c2459a0e64118dbe647e0bd8040f9d"
+      },
+      {
         "path": "scripts/skill_magic/configs/magic_staff.dbrow",
         "bytes": 698,
         "sha256": "76bc70a53a37f2ccceb1a745f732407a86337f35c5055237d386b1b5cb5c646f"
@@ -60792,5 +60797,214 @@
         "cost": 300
       }
     ]
-  }
+  },
+  "teleports": [
+    {
+      "name": "Varrock",
+      "source_row": "magic_spell_teleport_varrock",
+      "spell": "varrock_teleport",
+      "component_id": 1164,
+      "members": false,
+      "level": 25,
+      "runes": [
+        {
+          "alias": "firerune",
+          "id": 554,
+          "name": "Fire rune",
+          "count": 1
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 3
+        },
+        {
+          "alias": "lawrune",
+          "id": 563,
+          "name": "Law rune",
+          "count": 1
+        }
+      ],
+      "experience": 350,
+      "tele_coord": "0_50_53_13_32",
+      "x": 3213,
+      "z": 3424,
+      "plane": 0
+    },
+    {
+      "name": "Lumbridge",
+      "source_row": "magic_spell_teleport_lumbridge",
+      "spell": "lumbridge_teleport",
+      "component_id": 1167,
+      "members": false,
+      "level": 31,
+      "runes": [
+        {
+          "alias": "earthrune",
+          "id": 557,
+          "name": "Earth rune",
+          "count": 1
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 3
+        },
+        {
+          "alias": "lawrune",
+          "id": 563,
+          "name": "Law rune",
+          "count": 1
+        }
+      ],
+      "experience": 410,
+      "tele_coord": "0_50_50_21_18",
+      "x": 3221,
+      "z": 3218,
+      "plane": 0
+    },
+    {
+      "name": "Falador",
+      "source_row": "magic_spell_teleport_falador",
+      "spell": "falador_teleport",
+      "component_id": 1170,
+      "members": false,
+      "level": 37,
+      "runes": [
+        {
+          "alias": "waterrune",
+          "id": 555,
+          "name": "Water rune",
+          "count": 1
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 3
+        },
+        {
+          "alias": "lawrune",
+          "id": 563,
+          "name": "Law rune",
+          "count": 1
+        }
+      ],
+      "experience": 480,
+      "tele_coord": "0_46_52_21_50",
+      "x": 2965,
+      "z": 3378,
+      "plane": 0
+    },
+    {
+      "name": "Camelot",
+      "source_row": "magic_spell_teleport_camelot",
+      "spell": "camelot_teleport",
+      "component_id": 1174,
+      "members": true,
+      "level": 45,
+      "runes": [
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 5
+        },
+        {
+          "alias": "lawrune",
+          "id": 563,
+          "name": "Law rune",
+          "count": 1
+        }
+      ],
+      "experience": 555,
+      "tele_coord": "0_43_54_5_22",
+      "x": 2757,
+      "z": 3478,
+      "plane": 0
+    },
+    {
+      "name": "Ardougne",
+      "source_row": "magic_spell_teleport_ardougne",
+      "spell": "ardougne_teleport",
+      "component_id": 1540,
+      "members": true,
+      "level": 51,
+      "runes": [
+        {
+          "alias": "waterrune",
+          "id": 555,
+          "name": "Water rune",
+          "count": 2
+        },
+        {
+          "alias": "lawrune",
+          "id": 563,
+          "name": "Law rune",
+          "count": 2
+        }
+      ],
+      "experience": 610,
+      "tele_coord": "0_41_51_37_37",
+      "x": 2661,
+      "z": 3301,
+      "plane": 0
+    },
+    {
+      "name": "Watchtower",
+      "source_row": "magic_spell_teleport_watchtower",
+      "spell": "watchtower_teleport",
+      "component_id": 1541,
+      "members": true,
+      "level": 58,
+      "runes": [
+        {
+          "alias": "earthrune",
+          "id": 557,
+          "name": "Earth rune",
+          "count": 2
+        },
+        {
+          "alias": "lawrune",
+          "id": 563,
+          "name": "Law rune",
+          "count": 2
+        }
+      ],
+      "experience": 680,
+      "tele_coord": "2_45_73_53_41",
+      "x": 2933,
+      "z": 4713,
+      "plane": 2
+    },
+    {
+      "name": "Trollheim",
+      "source_row": "magic_spell_teleport_trollheim",
+      "spell": "trollheim_teleport",
+      "component_id": 7455,
+      "members": true,
+      "level": 61,
+      "runes": [
+        {
+          "alias": "firerune",
+          "id": 554,
+          "name": "Fire rune",
+          "count": 2
+        },
+        {
+          "alias": "lawrune",
+          "id": 563,
+          "name": "Law rune",
+          "count": 2
+        }
+      ],
+      "experience": 680,
+      "tele_coord": "0_45_57_10_31",
+      "x": 2890,
+      "z": 3679,
+      "plane": 0
+    }
+  ]
 }

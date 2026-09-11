@@ -44,6 +44,7 @@
         "bars": 14,
         "weapons": 12
       },
+      "teleports": 7,
       "fixed_food_heals": {
         "chocolaty_milk": 4,
         "cabbage": 1,
@@ -153,7 +154,7 @@
         "seaturtle": 21,
         "mantaray": 22
       },
-      "output_sha256": "6ca4c04acd7f12f635b99c044009d24d0af09d1d23afb709e8f0e6ca5a634232",
+      "output_sha256": "6bee1e16c2949cc41b873143c240eb60196b4d2467a5b322174e75836056f2bf",
       "input_hashes": true,
       "content_hashes": true,
       "source_pins": true,
@@ -205,6 +206,7 @@
         "bars": 14,
         "weapons": 12
       },
+      "teleports": 7,
       "fixed_food_heals": {
         "chocolaty_milk": 4,
         "cabbage": 1,
@@ -314,7 +316,7 @@
         "seaturtle": 21,
         "mantaray": 22
       },
-      "output_sha256": "f7c78bf2ac32b29c618cc5690c555495abd29f101d1e1eba7e382dc4b8f0422b",
+      "output_sha256": "1a4f8bd9a091c7a9d896bee801388889af6b082088c05984d1e5e8ba2df3dc89",
       "input_hashes": true,
       "content_hashes": true,
       "source_pins": true,

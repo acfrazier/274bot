@@ -140,6 +140,13 @@ fn generated_spell_and_staff_facts_match_selected_content() {
         assert_eq!(data.special_cost("Dragon battleaxe"), None);
         assert_eq!(data.special_bar(425), 7462);
         assert_eq!(data.special_bar(328), -1);
+        let varrock = data.teleport("Varrock").expect("Varrock teleport");
+        assert_eq!(varrock.component_id, 1164);
+        assert_eq!(varrock.level, 25);
+        assert_eq!(varrock.x, 3213);
+        assert_eq!(varrock.z, 3424);
+        assert!(data.teleport("wind strike").is_none());
+        assert_eq!(data.teleports().len(), 7);
     }
 }
 

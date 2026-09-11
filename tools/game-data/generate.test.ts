@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { extractFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractSpecialControls, parsePack, parseRows } from './generate.ts';
+import { extractFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractSpecialControls, extractTeleportSpells, parsePack, parseRows } from './generate.ts';
 
 const rows = parseRows(`
 // repeated aliases and typed tuples
@@ -140,4 +140,46 @@ assert.equal(special.weapons.length, 1);
 assert.equal(special.weapons[0].name, 'Dragon dagger');
 assert.equal(special.weapons[0].cost, 250);
 assert.equal(special.weapons.some((weapon) => weapon.name === 'Dragon battleaxe'), false);
+fs.appendFileSync(
+    path.join(content, 'pack/interface.pack'),
+    '1164=magic:varrock_teleport\n1167=magic:lumbridge_teleport\n1922=magic:highlvl_alchemy\n',
+);
+fs.writeFileSync(path.join(content, 'scripts/skill_magic/configs/magic_spells.dbrow'), `[magic_spell_teleport_varrock]
+data=spell,^varrock_teleport
+data=members,false
+data=levelrequired,25
+data=runesrequired,firerune,1,airrune,3,lawrune,1
+data=experience,350
+data=tele_coord,0_50_53_13_32
+[magic_spell_high_alch]
+data=spell,^highlvl_alchemy
+data=members,false
+data=levelrequired,55
+data=runesrequired,naturerune,1,firerune,5,null,null
+data=experience,650
+[magic_spell_teleport_lumbridge]
+data=spell,^lumbridge_teleport
+data=members,false
+data=levelrequired,31
+data=runesrequired,earthrune,1,airrune,3,lawrune,1
+data=experience,410
+data=tele_coord,0_50_50_21_18
+`);
+const teleportItems = [
+    ...magicItems,
+    { id: 9, debugname: 'lawrune', name: 'Law rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
+    { id: 10, debugname: 'naturerune', name: 'Nature rune', cost: 0, stackable: true, members: false, certlink: -1, certtemplate: -1, wearpos: -1, wearpos2: -1, wearpos3: -1 },
+];
+const teleports = extractTeleportSpells(content, teleportItems);
+assert.equal(teleports.length, 2, 'only tele_coord rows are teleports');
+assert.equal(teleports[0].name, 'Varrock');
+assert.equal(teleports[0].component_id, 1164);
+assert.equal(teleports[0].level, 25);
+assert.equal(teleports[0].x, 3213);
+assert.equal(teleports[0].z, 3424);
+assert.equal(teleports[0].plane, 0);
+assert.deepEqual(teleports[0].runes.map((rune) => [rune.name, rune.count]), [['Fire rune', 1], ['Air rune', 3], ['Law rune', 1]]);
+assert.equal(teleports[1].name, 'Lumbridge');
+assert.equal(teleports[1].component_id, 1167);
+assert.equal(teleports.some((row) => row.spell === 'highlvl_alchemy'), false);
 console.log('generate fixture passed');

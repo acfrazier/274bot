@@ -37,8 +37,9 @@
         "bars": 14,
         "weapons": 12
       },
-      "bytes": 1388949,
-      "sha256": "6ca4c04acd7f12f635b99c044009d24d0af09d1d23afb709e8f0e6ca5a634232",
+      "teleports": 7,
+      "bytes": 1393629,
+      "sha256": "6bee1e16c2949cc41b873143c240eb60196b4d2467a5b322174e75836056f2bf",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -98,6 +99,11 @@
           "path": "scripts/skill_magic/configs/magic.dbtable",
           "bytes": 868,
           "sha256": "508d6911af3763713d3030ee16218b8879a0bef2933e4abe50246d9b35781a77"
+        },
+        {
+          "path": "scripts/skill_magic/configs/magic_spells.dbrow",
+          "bytes": 7265,
+          "sha256": "c8ff8a90cd8303c75615981fda33bf2c01c2459a0e64118dbe647e0bd8040f9d"
         },
         {
           "path": "scripts/skill_magic/configs/magic_staff.dbrow",
@@ -248,8 +254,9 @@
         "bars": 14,
         "weapons": 12
       },
-      "bytes": 1451445,
-      "sha256": "f7c78bf2ac32b29c618cc5690c555495abd29f101d1e1eba7e382dc4b8f0422b",
+      "teleports": 7,
+      "bytes": 1456125,
+      "sha256": "1a4f8bd9a091c7a9d896bee801388889af6b082088c05984d1e5e8ba2df3dc89",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
@@ -309,6 +316,11 @@
           "path": "scripts/skill_magic/configs/magic.dbtable",
           "bytes": 868,
           "sha256": "508d6911af3763713d3030ee16218b8879a0bef2933e4abe50246d9b35781a77"
+        },
+        {
+          "path": "scripts/skill_magic/configs/magic_spells.dbrow",
+          "bytes": 7265,
+          "sha256": "c8ff8a90cd8303c75615981fda33bf2c01c2459a0e64118dbe647e0bd8040f9d"
         },
         {
           "path": "scripts/skill_magic/configs/magic_staff.dbrow",

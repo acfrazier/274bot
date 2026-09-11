@@ -43,6 +43,16 @@ function selectCombatMode(mode) {
     return btn !== -1 && actions.ifButton(btn);
 }
 
+function callTeleport(payload) {
+    const fn = globalThis.rustyscript && globalThis.rustyscript.functions
+        ? globalThis.rustyscript.functions.__rs2b0t_teleport
+        : undefined;
+    if (typeof fn !== 'function') {
+        throw notImpl('Game.teleport');
+    }
+    return fn(payload);
+}
+
 export const Game = new Proxy(
     {
         ingame() {
@@ -171,8 +181,36 @@ export const Game = new Proxy(
             });
             return true;
         },
-        teleport() {
-            throw notImpl('Game.teleport');
+        teleport(name) {
+            const step = callTeleport({ op: 'begin', name: String(name ?? '') });
+            if (!step || step.kind === 'unknown') return false;
+            if (step.kind === 'notImpl') {
+                throw notImpl('Game.teleport', step.reason);
+            }
+            if (step.kind === 'done') {
+                return step.result === true;
+            }
+            const token = step.token;
+            let current = step;
+            return (async () => {
+                while (current && current.kind !== 'done' && current.kind !== 'aborted') {
+                    if (current.kind === 'if-button') {
+                        actions.ifButton(current.component_id);
+                    } else if (current.kind !== 'wait') {
+                        return false;
+                    }
+                    let next = null;
+                    await Execution.delayUntil(() => {
+                        next = callTeleport({ op: 'next', token });
+                        return next?.kind !== 'wait';
+                    }, 0);
+                    current = next;
+                }
+                if (current && current.kind === 'done') {
+                    return current.result === true;
+                }
+                return false;
+            })();
         },
         energy() {
             return typeof snap().run_energy === 'number' ? snap().run_energy : 0;
