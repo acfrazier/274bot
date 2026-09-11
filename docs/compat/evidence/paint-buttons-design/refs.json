@@ -1,0 +1,85 @@
+{
+  "task": "t_edbe327d",
+  "brief": "docs/compat/briefs/108-paint-button-host-design.md",
+  "report": "docs/compat/04ad-paint-buttons-design.md",
+  "kind": "bounded-read-only-design",
+  "branch": "codex/rs2b0t-multirevision",
+  "campaign_head_at_writeup": "04d7b1f48180ab9b93bbd6fec45a655df4385233",
+  "client_gitlink": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "sha256": {
+    "brief_108": "6e62dc913836c7e00682a56017d552d4e259bbc58d741e960f80daec5a8ef915",
+    "04ad": "ed5fbde8acae32789df7f068b3d36f0ae4b9d69cb7dd9cfc54aa5ae6b85f6a98",
+    "Paint_ts_both_catalogs": "cfef244e3627db88ff20abb501bcfb4f86e973227e769d0c931e65594dc3d7a6",
+    "NatureCrafter_ts_both": "025ac395b25d64ef818cc0321478f0a2c84a051b79f99decbbfec5a9a2f0812a",
+    "ScriptRunner_ts_both": "f3bb6124bfade9fe976a7ae8f288aae7638e02d79a265d002882d521d555d37b",
+    "AIOQuester_ts_both_dimmed": "ec839021a129d8efca7f9ad4a15ecbd74586d28b5a040bdaacc983b7a6454e27",
+    "paintLogic_ts": "a719037d59345b6daf6b299a1e8fc0ceafa347e0ec273651779060cda97e5585",
+    "paint_js": "25956ff0d3f675261eda453f40db32db4e23e559ec07b015691ede4c71401653",
+    "script_runner_js": "b9038704ae62a0c6c1278a797503a13e7d09c608a33d1a360322d3dbf8f7d95f",
+    "shim_mod_rs": "3abe3a49c807ea14d78ee3b949aa3c02d652ff8b5313684ec1a345014e8e44b5",
+    "load_rs": "9a15d4b5591ad59ee8d66eb33d0c185411ec7ef583104edbacbd9bd297e552fa",
+    "slot_rs": "1593826ffe821e7a3cd0d4706b7778bbfcf15db8bc8560563d81222700d0d2c4",
+    "isolate_fbs": "f7d689ace573a1d4eb343bb831b9a14711e6529bfe0d0ed608a126ff17ed6548",
+    "isolate_fb_rs": "e2afb5d2e9887ebdd3d3c00890e7d539df9ed9e551d8e848b38559c0c7720fef",
+    "panel_paint_rs": "aa1fc7960e804e1cc9c5f252ecb974e4ccb64e6997d40e960a026e090e15b9cf",
+    "tui_chat_rs": "364161f710a791798419da6cce5f0054c5e1fe86ae17ce7c8276b1a221ffd739",
+    "host_play_lib_rs": "dd4e1b91ddb1cc02b5b2d43899b6a02d86c183ed069c98391701c4627d16fdd3",
+    "r289_air_91289e9b_log": "d8646933d4e6165fee74b7baee3047daf8558106a3ea034158819cd05991ce1a"
+  },
+  "catalog": {
+    "old": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "newer": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "Paint_ts_byte_identical": true,
+    "NatureCrafter_ts_byte_identical": true,
+    "ScriptRunner_ts_byte_identical": true
+  },
+  "live_fail": {
+    "r289_air_root912": {
+      "account": "live7i68fk_1",
+      "role": "runner",
+      "tick": 27,
+      "error": "not impl: Paint.buttons",
+      "preparation": "both-started",
+      "evidence": "docs/compat/evidence/paired-catalog-fixtures/live/r289-air-100adccc-91289e9b.log"
+    }
+  },
+  "enabled_caller": {
+    "card": "NatureCrafter",
+    "mode": "Runner",
+    "id": "gobank",
+    "labels": ["Go bank", "Resume"],
+    "script_local_flag": "goBank",
+    "task": "GoBankPark"
+  },
+  "not_this_mapping": [
+    "foreign ScriptRunner.paintControls pause/stop overlay (native is host-owned hint row)",
+    "dimmed AIOQuester pause/skip/stop overlay",
+    "Paint.stepper/list/fill/grid/wrap/cols",
+    "existing tabs/select display stubs"
+  ],
+  "owned_implementation_files": [
+    "crates/script/src/shim/paint.js",
+    "crates/script/src/shim/mod.rs",
+    "crates/script/schema/isolate.fbs",
+    "crates/script/src/isolate_fb.rs",
+    "crates/script/src/load.rs",
+    "crates/script/src/slot.rs",
+    "crates/host-play/src/lib.rs",
+    "crates/panel/src/paint.rs",
+    "crates/tui/src/chat.rs",
+    "crates/tui/src/app.rs",
+    "crates/tui/src/bin.rs"
+  ],
+  "hotspots": [
+    "crates/script/src/load.rs — PaintClick cmd + pause/reset/leftover clear only; death-recovery/periodic-bank/autocast already share this file",
+    "crates/script/src/isolate_fb.rs — Paint table buttons field only",
+    "crates/host-play/src/lib.rs — Play::script_paint_click only"
+  ],
+  "do_not_touch": [
+    "crates/script/src/shim/client_adapter.js",
+    "crates/script/src/shim/script_runner.js paintControls",
+    "catalog NatureCrafter sources",
+    "paired catalog test sources",
+    "panel/TUI Pause/Stop chrome"
+  ]
+}

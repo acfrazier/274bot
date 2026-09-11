@@ -1,0 +1,77 @@
+{
+  "preserve": {
+    "host_owns_pause_stop": true,
+    "pause_skips_tick_and_paint": true,
+    "hold_paint_only": true,
+    "parked_pump_still_paints": true,
+    "no_foreign_canvas_paintState": true,
+    "no_fabricated_click": true,
+    "no_label_implies_gameplay": true,
+    "no_wirecmd_for_script_buttons": true,
+    "no_world_deepcopy": true,
+    "headless_returns_null": true
+  },
+  "accepted_mapping": "ScriptPaint.buttons descriptors + IsolateCmd::PaintClick one-shot on current actor/generation/advertised id; headless null; panel/TUI real widgets required for support",
+  "hypotheses": [
+    {
+      "id": 1,
+      "claim": "imported Runner is broken; dim the card",
+      "status": "rejected",
+      "falsifier": "Root912 r289 Air both-started then live7i68fk_1 tick 27 not impl: Paint.buttons. Frozen NatureCrafter.onPaint is the documented caller. Shim Proxy throws. Brief forbids dimming this failure."
+    },
+    {
+      "id": 2,
+      "claim": "append a Go bank paint line and return null",
+      "status": "rejected",
+      "falsifier": "Brief: rendering an unavailable label and returning null cannot qualify button support; never fabricate a click. Frontends must make required controls reachable with real input."
+    },
+    {
+      "id": 3,
+      "claim": "port foreign paintState / canvas regions / pointerDown",
+      "status": "rejected",
+      "falsifier": "Brief forbids foreign canvas UI, controller/runtime or input policy copy. Native paintLogic.js is fmtDuration/fmtXpHr/paintSkillShort only. Panel overlay is already ImGui over the chatbox rect."
+    },
+    {
+      "id": 4,
+      "claim": "reuse host Pause/Stop or WireCmd",
+      "status": "rejected",
+      "falsifier": "goBank is script-local GoBankPark, not isolate pause. WireCmd is game Continue/Answer/Walk. A label must not imply a packet. Existing Pause/Stop remain host-owned (native paintControls is a hint row)."
+    },
+    {
+      "id": 5,
+      "claim": "reuse existing tabs/select stubs",
+      "status": "rejected",
+      "falsifier": "tabs/select already exist, return first/current, and are dropped at end(). They are not the throwing member. Expanding them is a different widget, out of scope."
+    },
+    {
+      "id": 6,
+      "claim": "host descriptor plus IsolateCmd::PaintClick plus real frontend widgets; headless no-click returns null",
+      "status": "accepted",
+      "note": "No existing click channel on the isolate. Pause/Settings already eval onto the host handle from IsolateCmd. Click is one-shot, generation-scoped, advertised-id only."
+    }
+  ],
+  "unsupported": [
+    "Paint.stepper",
+    "Paint.list",
+    "Paint.fill",
+    "Paint.grid",
+    "Paint.wrap",
+    "Paint.cols",
+    "foreign paintState/canvas hit-testing",
+    "AIOQuester skip (dimmed)",
+    "ScriptRunner overlay Pause/Stop",
+    "harness auto-click gobank"
+  ],
+  "implementation_falsifiers": [
+    "Paint.buttons still throws or returns a fabricated id",
+    "headless/no click returns gobank",
+    "descriptors only stuffed into lines with no real panel/TUI control",
+    "click delivered after Pause, after Stop, on stale generation, to the other actor, or for an unadvertised id",
+    "label interpreted as walk/pause/WireCmd",
+    "host Pause/Stop chrome driven by paintControls calling p.buttons",
+    "foreign paintState or second UI runtime copied",
+    "hold stops painting or Pause starts painting to make clicks work",
+    "client_adapter.js, catalog NatureCrafter, or paired-test sources edited",
+    "world snapshot deep-copied for this seam"
+  ]
+}
