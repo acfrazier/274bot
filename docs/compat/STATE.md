@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 03:32 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 03:40 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -62,6 +62,13 @@ not a product behavior change.
   relevant XP/item/bank/order witnesses with `evidence/build-isolation/harvest_core_f6.py`.
   `core-results.json` now retains 145 historical and current cells; full supported
   branch and frontend acceptance remains separate. No failures were overwritten.
+- Isolated 6401d3a4 now passes all eight door/gate cells. Both old-catalog Flax
+  cells fail before collecting any flax at the existing deadline: coordinate
+  canReach only checks NPC/ground rows, so it cannot select a flax loc. Both
+  batches stopped; t_246e320b plus later canStep mapping t_1a213450 gate further
+  Flax qualification. The ledger now retains 155 rows. Native GPU 289/newer
+  Gnome completes multiple laps, including elevated loc operations and return
+  to ground, with a read terminal screenshot and no runtime errors.
 
 - Navigation d2372fe0 passed same-card Grok 4.5 review 1191 and all four isolated
   274/289 external/bundled probes. One read/decode each; external hashes once,
@@ -102,7 +109,8 @@ not a product behavior change.
   20260910_223536_ceec05 with an empty target. Root LIVE qualification remains
   separate. PeriodicBank t_51452e47 passed corrective Grok 4.5 review 1211 at
   exact 922dac24 with independent empty-target checks. Coordinate-query review
-  still gates DeathRecovery t_0c5ce97f to serialize shared publication files.
+  and subsequent canStep t_1a213450 review still gate DeathRecovery t_0c5ce97f
+  to serialize shared publication files.
 - Settings Tile t_701d17f4 completed Sol source at 6401d3a4 and passed actual
   Grok 4.5 review 1209/session 20260910_231344_40f47c. PeriodicBank 41cf8eac accidentally captured its shared
   load.rs hunks; root separated that composition at 922dac24 using a private
@@ -110,15 +118,19 @@ not a product behavior change.
   review 1211 approved exact 922dac24. Interrupted/default-profile runs and
   old log hash mismatches are retained under evidence/shared-file-ownership
   and settings-tile-shape. Root built exact 6401d3a4 in a new empty target and
-  started DoorOpener/gate/FlaxPicker batches after Tile review; results pending.
+  completed DoorOpener/gate/FlaxPicker batches after Tile review; results above.
 - Coordinate reachability design t_d49b087b completed as actual Grok 4.6 run
   1199, commit cc57adca. It recommends posting compact bits from the existing
   native flood, with no JS collision algorithm or per-read world copies.
   Coordinate query implementation t_246e320b is active in actual Grok 4.6
   run 1203. Superheater fixtures t_10f975b7 committed 6d750e65 and entered actual
-  Grok 4.5 review 1212/session 20260910_232854_63c926. PeriodicBank fixture
-  t_63524882 follows that review with grok46 defaults, preserving single ownership
-  of scenario/harness files. DirectNavigator mapping t_f7fd9f55 follows query review. The separate
+  Grok 4.5 review 1212/session 20260910_232854_63c926, now approved. Root's new
+  empty-target 6d750e65 binaries are built and ten Superheater LIVE cells have
+  started. PeriodicBank fixture t_63524882 is actual Grok 4.6 run 1214/session
+  20260910_233959_9ec089, preserving one owner for scenario/harness files.
+  Independent loadout provisioning proof t_3d333b56 is actual Grok 4.6 run
+  1213/session 20260910_233255_ce3577, owning a standalone host-play test.
+  DirectNavigator mapping t_f7fd9f55 follows query review. The separate
   missing DirectNavigator.walkTo must also map to existing native walking;
   foreign radius-8 re-sync remains a distinct source finding, not a pass.
 - Operator requested four more Grok implementation assignments and periodic
@@ -129,7 +141,7 @@ not a product behavior change.
 - The task heartbeat checks every 15 minutes until the observed Grok reset,
   2026-09-11 11:40 UTC (07:40 Eastern). Hermes has no xai-oauth account-usage
   fetcher, but the operator provided the authenticated Grok Usage tab in the
-  Codex in-app browser. Root read 65% used / 35% remaining and September 11
+  Codex in-app browser. Root refreshed at 03:39 UTC: 66% used / 34% remaining and September 11
   7:40 AM reset there. Use that browser tab for actual quota checks; token
   activity and rate-limit failures remain a fallback if it is unavailable.
   Continue useful authorized work as gates clear, not filler to consume quota.

@@ -1,0 +1,229 @@
+[host-play] slot liveyj6b5f_0: thread up
+274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+[panel] scenario capture armed: Some("gnome_course")
+[panel] liveyj6b5f_0: liveyj6b5f_0: slot up
+[host-play] slot liveyj6b5f_0: handshake begin reconnect=false
+[host-play] slot liveyj6b5f_0: handshake ok
+[host] hitch liveyj6b5f_0: frame_us=73687 paints=1 skips=0 ticks=0
+[panel] liveyj6b5f_0: liveyj6b5f_0: scene 1
+[host] hitch liveyj6b5f_0: frame_us=65763 paints=43 skips=0 ticks=1
+[panel] liveyj6b5f_0: liveyj6b5f_0: mainland hop queued
+[panel] liveyj6b5f_0: liveyj6b5f_0: ingame
+[panel] liveyj6b5f_0: liveyj6b5f_0: scene 2
+live script_gnome_course: running step 1/10
+[host] slot liveyj6b5f_0: d_loop_us=10368 d_raster_us=233504 d_observe_us=50818 max_observe_us=2948 d_paints=50 d_skips=0 d_ticks=1 window_ms=0
+[panel] liveyj6b5f_0: liveyj6b5f_0: scene 1
+[panel] liveyj6b5f_0: liveyj6b5f_0: ingame
+[panel] liveyj6b5f_0: liveyj6b5f_0: scene 2
+[host] slot liveyj6b5f_0: d_loop_us=11711 d_raster_us=203245 d_observe_us=71868 max_observe_us=5596 d_paints=50 d_skips=0 d_ticks=3 window_ms=1153
+[host] slot liveyj6b5f_0: d_loop_us=1298 d_raster_us=223823 d_observe_us=30534 max_observe_us=916 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162
+live script_gnome_course: running step 2/10
+[host-play] slot liveyj6b5f_0: handshake begin reconnect=true
+[panel] liveyj6b5f_0: liveyj6b5f_0: scene 0
+[host-play] slot liveyj6b5f_0: handshake ok
+[panel] liveyj6b5f_0: liveyj6b5f_0: scene 1
+[panel] liveyj6b5f_0: liveyj6b5f_0: ingame
+[panel] liveyj6b5f_0: liveyj6b5f_0: scene 2
+[host] slot liveyj6b5f_0: d_loop_us=14697 d_raster_us=162725 d_observe_us=70087 max_observe_us=5579 d_paints=50 d_skips=0 d_ticks=1 window_ms=0
+[host] slot liveyj6b5f_0: d_loop_us=1287 d_raster_us=166717 d_observe_us=41127 max_observe_us=4219 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154
+live script_gnome_course: running step 3/10
+[host] slot liveyj6b5f_0: d_loop_us=1204 d_raster_us=167363 d_observe_us=31137 max_observe_us=915 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159
+[panel] liveyj6b5f_0: liveyj6b5f_0: scene 1
+[panel] liveyj6b5f_0: liveyj6b5f_0: ingame
+[panel] liveyj6b5f_0: liveyj6b5f_0: scene 2
+[host] slot liveyj6b5f_0: d_loop_us=14004 d_raster_us=157702 d_observe_us=62243 max_observe_us=6906 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163
+live script_gnome_course: running step 4/10
+[script liveyj6b5f_0] start load
+live script_gnome_course: running step 5/10
+[host] hitch liveyj6b5f_0: observe_us=74219 paints=248 skips=0 ticks=9
+[host] slot liveyj6b5f_0: d_loop_us=1218 d_raster_us=163987 d_observe_us=104261 max_observe_us=74219 d_paints=50 d_skips=0 d_ticks=2 window_ms=1229
+[script liveyj6b5f_0] running agility course: [log balance -> obstacle net -> tree branch -> balancing rope -> tree branch -> obstacle net -> obstacle pipe] within 20 tiles
+[script liveyj6b5f_0] interact Loc { x: 2474, z: 3435, level: 0, action: "Walk-across" }
+[panel] liveyj6b5f_0: script: running agility course: [log balance -> obstacle net -> tree branch -> balancing rope -> tree branch -> obstacle net -> obstacle pipe] within 20 tiles
+[host] slot liveyj6b5f_0: d_loop_us=1097 d_raster_us=170131 d_observe_us=47531 max_observe_us=8953 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166
+[host] slot liveyj6b5f_0: d_loop_us=1095 d_raster_us=188304 d_observe_us=46501 max_observe_us=7902 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151
+[host] slot liveyj6b5f_0: d_loop_us=1104 d_raster_us=190387 d_observe_us=38483 max_observe_us=1911 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157
+[host] slot liveyj6b5f_0: d_loop_us=1153 d_raster_us=164273 d_observe_us=53324 max_observe_us=8919 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151
+live script_gnome_course: running step 6/10
+live script_gnome_course: running step 7/10
+[host] slot liveyj6b5f_0: d_loop_us=1161 d_raster_us=171794 d_observe_us=47815 max_observe_us=9454 d_paints=50 d_skips=0 d_ticks=2 window_ms=1172
+[host] slot liveyj6b5f_0: d_loop_us=1040 d_raster_us=164488 d_observe_us=40127 max_observe_us=4456 d_paints=50 d_skips=0 d_ticks=2 window_ms=1169
+[script liveyj6b5f_0] interact Loc { x: 2471, z: 3425, level: 0, action: "Climb-over" }
+[host] slot liveyj6b5f_0: d_loop_us=1207 d_raster_us=182099 d_observe_us=43436 max_observe_us=4758 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154
+[host] slot liveyj6b5f_0: d_loop_us=1184 d_raster_us=169208 d_observe_us=41546 max_observe_us=4507 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165
+[host] slot liveyj6b5f_0: d_loop_us=5625 d_raster_us=190711 d_observe_us=49775 max_observe_us=4893 d_paints=50 d_skips=0 d_ticks=2 window_ms=1142
+[host] slot liveyj6b5f_0: d_loop_us=1072 d_raster_us=124567 d_observe_us=37198 max_observe_us=2488 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173
+[script liveyj6b5f_0] interact Loc { x: 2473, z: 3422, level: 1, action: "Climb" }
+[host] slot liveyj6b5f_0: d_loop_us=1108 d_raster_us=126618 d_observe_us=36331 max_observe_us=5602 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161
+[host] slot liveyj6b5f_0: d_loop_us=917 d_raster_us=137491 d_observe_us=27147 max_observe_us=1188 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157
+[host] slot liveyj6b5f_0: d_loop_us=3134 d_raster_us=121789 d_observe_us=35549 max_observe_us=2269 d_paints=50 d_skips=0 d_ticks=1 window_ms=1163
+[host] slot liveyj6b5f_0: d_loop_us=750 d_raster_us=107303 d_observe_us=23048 max_observe_us=906 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160
+[script liveyj6b5f_0] interact Loc { x: 2478, z: 3420, level: 2, action: "Walk-on" }
+[host] slot liveyj6b5f_0: d_loop_us=767 d_raster_us=105986 d_observe_us=22934 max_observe_us=819 d_paints=50 d_skips=0 d_ticks=2 window_ms=1183
+[host] slot liveyj6b5f_0: d_loop_us=766 d_raster_us=107515 d_observe_us=20877 max_observe_us=947 d_paints=50 d_skips=0 d_ticks=2 window_ms=1199
+[host] slot liveyj6b5f_0: d_loop_us=1150 d_raster_us=243609 d_observe_us=51767 max_observe_us=6047 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160
+[host] slot liveyj6b5f_0: d_loop_us=1153 d_raster_us=186642 d_observe_us=42569 max_observe_us=4625 d_paints=50 d_skips=0 d_ticks=2 window_ms=1196
+[host] slot liveyj6b5f_0: d_loop_us=1389 d_raster_us=198694 d_observe_us=41365 max_observe_us=3456 d_paints=50 d_skips=0 d_ticks=2 window_ms=1187
+[host] slot liveyj6b5f_0: d_loop_us=1784 d_raster_us=240876 d_observe_us=53129 max_observe_us=4766 d_paints=50 d_skips=0 d_ticks=2 window_ms=1190
+[script liveyj6b5f_0] interact Loc { x: 2486, z: 3419, level: 2, action: "Climb-down" }
+[host] slot liveyj6b5f_0: d_loop_us=1558 d_raster_us=223973 d_observe_us=44164 max_observe_us=1929 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166
+[host] slot liveyj6b5f_0: d_loop_us=1137 d_raster_us=192816 d_observe_us=41725 max_observe_us=1977 d_paints=50 d_skips=0 d_ticks=2 window_ms=1172
+live script_gnome_course: running step 8/10
+[host] slot liveyj6b5f_0: d_loop_us=7518 d_raster_us=251246 d_observe_us=90004 max_observe_us=12332 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157
+[host] slot liveyj6b5f_0: d_loop_us=1439 d_raster_us=273202 d_observe_us=99065 max_observe_us=7380 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144
+[script liveyj6b5f_0] interact Loc { x: 2483, z: 3426, level: 0, action: "Climb-over" }
+[host] slot liveyj6b5f_0: d_loop_us=1413 d_raster_us=282475 d_observe_us=88197 max_observe_us=4658 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154
+live script_gnome_course: running step 9/10
+live script_gnome_course: running step 10/10
+[host] slot liveyj6b5f_0: d_loop_us=1270 d_raster_us=206442 d_observe_us=76342 max_observe_us=11888 d_paints=50 d_skips=0 d_ticks=2 window_ms=1176
+[host] slot liveyj6b5f_0: d_loop_us=1381 d_raster_us=223878 d_observe_us=61219 max_observe_us=6254 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157
+[host] slot liveyj6b5f_0: d_loop_us=1698 d_raster_us=245796 d_observe_us=58495 max_observe_us=4354 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152
+[script liveyj6b5f_0] interact Loc { x: 2484, z: 3431, level: 0, action: "Squeeze-through" }
+[host] slot liveyj6b5f_0: d_loop_us=1352 d_raster_us=242161 d_observe_us=67394 max_observe_us=4765 d_paints=50 d_skips=0 d_ticks=2 window_ms=1140
+[host] slot liveyj6b5f_0: d_loop_us=1469 d_raster_us=299175 d_observe_us=74886 max_observe_us=4637 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166
+[host] slot liveyj6b5f_0: d_loop_us=1368 d_raster_us=246238 d_observe_us=79769 max_observe_us=9554 d_paints=50 d_skips=0 d_ticks=1 window_ms=1117
+[host] slot liveyj6b5f_0: d_loop_us=1328 d_raster_us=175886 d_observe_us=44098 max_observe_us=2196 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168
+[host] slot liveyj6b5f_0: d_loop_us=1085 d_raster_us=139806 d_observe_us=37598 max_observe_us=1578 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163
+[host] slot liveyj6b5f_0: d_loop_us=1121 d_raster_us=159843 d_observe_us=41830 max_observe_us=1845 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170
+[host] slot liveyj6b5f_0: d_loop_us=1484 d_raster_us=286084 d_observe_us=92711 max_observe_us=9908 d_paints=50 d_skips=0 d_ticks=2 window_ms=1143
+[host] slot liveyj6b5f_0: d_loop_us=1336 d_raster_us=225184 d_observe_us=65563 max_observe_us=4709 d_paints=50 d_skips=0 d_ticks=2 window_ms=1181
+[host] slot liveyj6b5f_0: d_loop_us=1556 d_raster_us=289298 d_observe_us=100138 max_observe_us=9647 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160
+[script liveyj6b5f_0] lap 1 complete
+[panel] liveyj6b5f_0: script: lap 1 complete
+[host] slot liveyj6b5f_0: d_loop_us=1296 d_raster_us=333359 d_observe_us=76257 max_observe_us=6730 d_paints=50 d_skips=0 d_ticks=2 window_ms=1131
+[script liveyj6b5f_0] interact ContinueDialog
+[host] slot liveyj6b5f_0: d_loop_us=1158 d_raster_us=180236 d_observe_us=44295 max_observe_us=6249 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161
+[script liveyj6b5f_0] interact Loc { x: 2474, z: 3435, level: 0, action: "Walk-across" }
+[panel] scenario capture requested: gnome_course
+[host] hitch liveyj6b5f_0: observe_us=52850 paints=2241 skips=0 ticks=87
+[panel] capture readback requested: 1
+[host] slot liveyj6b5f_0: d_loop_us=1113 d_raster_us=142507 d_observe_us=89172 max_observe_us=52850 d_paints=50 d_skips=0 d_ticks=2 window_ms=1197
+[panel] shot gnome_course -> /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/catalog-headed/r289-gnome-course-8e7d965b-6401d3a4/shots/2026-09-11T03-33-46_12953/2026-09-11T03-34-45_gnome_course.png
+PASS: live script_gnome_course {"scenario":"gnome_course","outcome":"PASS","predicate":"stat_xp_gain(16)>=1","ticks":126,"elapsed_ms":58971,"tile":[2482,3437,0],"stat":{"runenergy":96},"chat":[{"text":"Congratulations, you just advanced an agility level."},{"text":"You climb the netting..."},{"text":"You land on the ground."},{"text":"You climb down the tree..."},{"text":"You carefully cross the tightrope."},{"text":"...To the platform above."},{"text":"You climb the tree.."},{"text":"You climb the netting..."},{"text":"...You make it safely to the other side."},{"text":"You walk carefully across the slippery log..."},{"text":"Welcome to RuneScape."}],"scene":2}
+[host] slot liveyj6b5f_0: d_loop_us=2106 d_raster_us=233171 d_observe_us=79193 max_observe_us=8873 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144
+[host] slot liveyj6b5f_0: d_loop_us=1856 d_raster_us=300004 d_observe_us=69560 max_observe_us=5171 d_paints=50 d_skips=0 d_ticks=2 window_ms=1193
+[host] hitch liveyj6b5f_0: observe_us=17899 paints=2361 skips=0 ticks=91
+[host] slot liveyj6b5f_0: d_loop_us=1657 d_raster_us=277133 d_observe_us=82925 max_observe_us=17899 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150
+[host] slot liveyj6b5f_0: d_loop_us=1476 d_raster_us=209986 d_observe_us=49963 max_observe_us=9462 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149
+[host] slot liveyj6b5f_0: d_loop_us=2542 d_raster_us=259853 d_observe_us=63902 max_observe_us=10400 d_paints=50 d_skips=0 d_ticks=2 window_ms=1175
+[host] slot liveyj6b5f_0: d_loop_us=1272 d_raster_us=194768 d_observe_us=51720 max_observe_us=8778 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148
+[host] slot liveyj6b5f_0: d_loop_us=1187 d_raster_us=170517 d_observe_us=41200 max_observe_us=7835 d_paints=50 d_skips=0 d_ticks=1 window_ms=1160
+[host] slot liveyj6b5f_0: d_loop_us=1430 d_raster_us=263031 d_observe_us=59750 max_observe_us=5877 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160
+[script liveyj6b5f_0] interact Loc { x: 2471, z: 3425, level: 0, action: "Climb-over" }
+[host] slot liveyj6b5f_0: d_loop_us=1448 d_raster_us=273244 d_observe_us=67372 max_observe_us=6694 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153
+[host] slot liveyj6b5f_0: d_loop_us=1227 d_raster_us=196005 d_observe_us=41197 max_observe_us=4369 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153
+[host] slot liveyj6b5f_0: d_loop_us=5468 d_raster_us=178886 d_observe_us=43646 max_observe_us=4521 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157
+[host] slot liveyj6b5f_0: d_loop_us=1011 d_raster_us=122127 d_observe_us=23363 max_observe_us=1409 d_paints=50 d_skips=0 d_ticks=2 window_ms=1182
+[script liveyj6b5f_0] interact Loc { x: 2473, z: 3422, level: 1, action: "Climb" }
+[host] slot liveyj6b5f_0: d_loop_us=1179 d_raster_us=224605 d_observe_us=36946 max_observe_us=4431 d_paints=50 d_skips=0 d_ticks=2 window_ms=1174
+[host] slot liveyj6b5f_0: d_loop_us=1263 d_raster_us=250711 d_observe_us=39266 max_observe_us=3211 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167
+[host] slot liveyj6b5f_0: d_loop_us=14586 d_raster_us=273543 d_observe_us=55112 max_observe_us=4840 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170
+[script liveyj6b5f_0] interact Loc { x: 2478, z: 3420, level: 2, action: "Walk-on" }
+[host] slot liveyj6b5f_0: d_loop_us=1026 d_raster_us=213354 d_observe_us=32895 max_observe_us=2443 d_paints=50 d_skips=0 d_ticks=2 window_ms=1171
+[host] slot liveyj6b5f_0: d_loop_us=935 d_raster_us=119116 d_observe_us=21243 max_observe_us=963 d_paints=50 d_skips=0 d_ticks=2 window_ms=1172
+[host] slot liveyj6b5f_0: d_loop_us=818 d_raster_us=116717 d_observe_us=19408 max_observe_us=1382 d_paints=50 d_skips=0 d_ticks=2 window_ms=1180
+[host] slot liveyj6b5f_0: d_loop_us=895 d_raster_us=134026 d_observe_us=22513 max_observe_us=2525 d_paints=50 d_skips=0 d_ticks=2 window_ms=1171
+[host] slot liveyj6b5f_0: d_loop_us=974 d_raster_us=156546 d_observe_us=26364 max_observe_us=1334 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162
+[host] slot liveyj6b5f_0: d_loop_us=915 d_raster_us=144388 d_observe_us=27835 max_observe_us=2263 d_paints=50 d_skips=0 d_ticks=2 window_ms=1175
+[host] slot liveyj6b5f_0: d_loop_us=902 d_raster_us=135126 d_observe_us=24149 max_observe_us=1048 d_paints=50 d_skips=0 d_ticks=2 window_ms=1186
+[script liveyj6b5f_0] interact Loc { x: 2486, z: 3419, level: 2, action: "Climb-down" }
+[host] slot liveyj6b5f_0: d_loop_us=948 d_raster_us=147207 d_observe_us=27175 max_observe_us=1192 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164
+[host] slot liveyj6b5f_0: d_loop_us=925 d_raster_us=141309 d_observe_us=25640 max_observe_us=1126 d_paints=50 d_skips=0 d_ticks=2 window_ms=1171
+[host] slot liveyj6b5f_0: d_loop_us=7457 d_raster_us=156303 d_observe_us=51281 max_observe_us=9581 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166
+[host] slot liveyj6b5f_0: d_loop_us=1071 d_raster_us=159471 d_observe_us=42593 max_observe_us=4908 d_paints=50 d_skips=0 d_ticks=1 window_ms=1171
+[script liveyj6b5f_0] interact Loc { x: 2483, z: 3426, level: 0, action: "Climb-over" }
+[host] slot liveyj6b5f_0: d_loop_us=1145 d_raster_us=167764 d_observe_us=42814 max_observe_us=4939 d_paints=50 d_skips=0 d_ticks=2 window_ms=1169
+[host] slot liveyj6b5f_0: d_loop_us=1237 d_raster_us=163405 d_observe_us=48907 max_observe_us=10321 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168
+[host] slot liveyj6b5f_0: d_loop_us=1290 d_raster_us=206380 d_observe_us=42548 max_observe_us=5079 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163
+[host] slot liveyj6b5f_0: d_loop_us=1148 d_raster_us=200017 d_observe_us=41941 max_observe_us=4607 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158
+[script liveyj6b5f_0] interact Loc { x: 2484, z: 3431, level: 0, action: "Squeeze-through" }
+[host] slot liveyj6b5f_0: d_loop_us=1147 d_raster_us=175489 d_observe_us=43316 max_observe_us=4774 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159
+[host] slot liveyj6b5f_0: d_loop_us=1089 d_raster_us=168263 d_observe_us=41832 max_observe_us=5565 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161
+[host] slot liveyj6b5f_0: d_loop_us=1168 d_raster_us=164163 d_observe_us=46604 max_observe_us=8579 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151
+[host] slot liveyj6b5f_0: d_loop_us=1158 d_raster_us=160694 d_observe_us=35134 max_observe_us=1571 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166
+[host] slot liveyj6b5f_0: d_loop_us=1169 d_raster_us=162044 d_observe_us=35985 max_observe_us=2546 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162
+[host] slot liveyj6b5f_0: d_loop_us=1185 d_raster_us=177816 d_observe_us=37516 max_observe_us=1928 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165
+[host] slot liveyj6b5f_0: d_loop_us=1136 d_raster_us=158832 d_observe_us=47725 max_observe_us=10553 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159
+[host] slot liveyj6b5f_0: d_loop_us=1140 d_raster_us=192633 d_observe_us=41604 max_observe_us=4814 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156
+[script liveyj6b5f_0] lap 2 complete
+[panel] liveyj6b5f_0: script: lap 2 complete
+[host] slot liveyj6b5f_0: d_loop_us=1155 d_raster_us=161038 d_observe_us=41281 max_observe_us=4612 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164
+[script liveyj6b5f_0] interact Loc { x: 2474, z: 3435, level: 0, action: "Walk-across" }
+[host] slot liveyj6b5f_0: d_loop_us=1115 d_raster_us=157943 d_observe_us=43055 max_observe_us=5047 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156
+[host] slot liveyj6b5f_0: d_loop_us=1202 d_raster_us=158889 d_observe_us=49248 max_observe_us=11387 d_paints=50 d_skips=0 d_ticks=2 window_ms=1187
+[host] slot liveyj6b5f_0: d_loop_us=1161 d_raster_us=149750 d_observe_us=39726 max_observe_us=5130 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164
+[host] slot liveyj6b5f_0: d_loop_us=1198 d_raster_us=166622 d_observe_us=43003 max_observe_us=5239 d_paints=50 d_skips=0 d_ticks=1 window_ms=1168
+[host] slot liveyj6b5f_0: d_loop_us=1250 d_raster_us=168958 d_observe_us=49334 max_observe_us=9368 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155
+[host] slot liveyj6b5f_0: d_loop_us=1241 d_raster_us=160280 d_observe_us=36309 max_observe_us=1785 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167
+[host] slot liveyj6b5f_0: d_loop_us=1237 d_raster_us=162730 d_observe_us=50025 max_observe_us=10272 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160
+[host] slot liveyj6b5f_0: d_loop_us=1277 d_raster_us=196335 d_observe_us=53033 max_observe_us=10254 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152
+[script liveyj6b5f_0] interact ContinueDialog
+[host] slot liveyj6b5f_0: d_loop_us=1222 d_raster_us=218619 d_observe_us=41454 max_observe_us=4761 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156
+[script liveyj6b5f_0] interact Loc { x: 2471, z: 3425, level: 0, action: "Climb-over" }
+[host] slot liveyj6b5f_0: d_loop_us=1200 d_raster_us=176031 d_observe_us=41519 max_observe_us=6694 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165
+[host] slot liveyj6b5f_0: d_loop_us=1195 d_raster_us=164671 d_observe_us=39752 max_observe_us=5123 d_paints=50 d_skips=0 d_ticks=2 window_ms=1172
+[host] slot liveyj6b5f_0: d_loop_us=1238 d_raster_us=171159 d_observe_us=40402 max_observe_us=4669 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168
+[host] slot liveyj6b5f_0: d_loop_us=5488 d_raster_us=162705 d_observe_us=43245 max_observe_us=5114 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165
+[script liveyj6b5f_0] interact Loc { x: 2473, z: 3422, level: 1, action: "Climb" }
+[host] slot liveyj6b5f_0: d_loop_us=1006 d_raster_us=125033 d_observe_us=25726 max_observe_us=1052 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168
+[host] slot liveyj6b5f_0: d_loop_us=1068 d_raster_us=137224 d_observe_us=32899 max_observe_us=6094 d_paints=50 d_skips=0 d_ticks=2 window_ms=1179
+[host] slot liveyj6b5f_0: d_loop_us=3391 d_raster_us=185709 d_observe_us=31274 max_observe_us=2006 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159
+[host] slot liveyj6b5f_0: d_loop_us=1038 d_raster_us=153142 d_observe_us=29673 max_observe_us=1338 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166
+[script liveyj6b5f_0] interact Loc { x: 2478, z: 3420, level: 2, action: "Walk-on" }
+[host] slot liveyj6b5f_0: d_loop_us=930 d_raster_us=136235 d_observe_us=20118 max_observe_us=886 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167
+[host] slot liveyj6b5f_0: d_loop_us=908 d_raster_us=124180 d_observe_us=23082 max_observe_us=986 d_paints=50 d_skips=0 d_ticks=2 window_ms=1175
+[host] slot liveyj6b5f_0: d_loop_us=881 d_raster_us=118876 d_observe_us=24414 max_observe_us=2223 d_paints=50 d_skips=0 d_ticks=2 window_ms=1187
+[host] slot liveyj6b5f_0: d_loop_us=942 d_raster_us=171328 d_observe_us=26490 max_observe_us=2986 d_paints=50 d_skips=0 d_ticks=2 window_ms=1171
+[host] slot liveyj6b5f_0: d_loop_us=879 d_raster_us=150844 d_observe_us=23991 max_observe_us=1480 d_paints=50 d_skips=0 d_ticks=1 window_ms=1175
+[host] slot liveyj6b5f_0: d_loop_us=919 d_raster_us=142699 d_observe_us=28905 max_observe_us=2239 d_paints=50 d_skips=0 d_ticks=2 window_ms=1174
+[host] slot liveyj6b5f_0: d_loop_us=880 d_raster_us=139985 d_observe_us=24813 max_observe_us=988 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167
+[script liveyj6b5f_0] interact Loc { x: 2486, z: 3419, level: 2, action: "Climb-down" }
+[host] slot liveyj6b5f_0: d_loop_us=954 d_raster_us=146036 d_observe_us=26004 max_observe_us=1051 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162
+[host] slot liveyj6b5f_0: d_loop_us=917 d_raster_us=154597 d_observe_us=25299 max_observe_us=994 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161
+[host] slot liveyj6b5f_0: d_loop_us=7433 d_raster_us=168148 d_observe_us=54373 max_observe_us=9028 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148
+[script liveyj6b5f_0] interact Loc { x: 2483, z: 3426, level: 0, action: "Climb-over" }
+[host] slot liveyj6b5f_0: d_loop_us=1206 d_raster_us=174198 d_observe_us=38937 max_observe_us=5042 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167
+[host] slot liveyj6b5f_0: d_loop_us=1177 d_raster_us=162540 d_observe_us=46174 max_observe_us=11270 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166
+[host] slot liveyj6b5f_0: d_loop_us=1252 d_raster_us=164574 d_observe_us=36953 max_observe_us=4725 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155
+[host] slot liveyj6b5f_0: d_loop_us=1206 d_raster_us=171117 d_observe_us=38613 max_observe_us=4679 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156
+[script liveyj6b5f_0] interact Loc { x: 2484, z: 3431, level: 0, action: "Squeeze-through" }
+[host] slot liveyj6b5f_0: d_loop_us=1147 d_raster_us=165887 d_observe_us=38055 max_observe_us=5238 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161
+[host] slot liveyj6b5f_0: d_loop_us=1102 d_raster_us=158867 d_observe_us=37463 max_observe_us=4532 d_paints=50 d_skips=0 d_ticks=2 window_ms=1171
+[host] slot liveyj6b5f_0: d_loop_us=1100 d_raster_us=152063 d_observe_us=39315 max_observe_us=5764 d_paints=50 d_skips=0 d_ticks=2 window_ms=1178
+[host] slot liveyj6b5f_0: d_loop_us=1096 d_raster_us=170515 d_observe_us=31893 max_observe_us=2042 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160
+[host] slot liveyj6b5f_0: d_loop_us=1215 d_raster_us=165352 d_observe_us=33493 max_observe_us=1661 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156
+[host] slot liveyj6b5f_0: d_loop_us=1087 d_raster_us=150626 d_observe_us=31454 max_observe_us=1968 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173
+[host] slot liveyj6b5f_0: d_loop_us=1146 d_raster_us=163081 d_observe_us=31424 max_observe_us=1607 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167
+[host] slot liveyj6b5f_0: d_loop_us=1137 d_raster_us=184967 d_observe_us=44561 max_observe_us=11260 d_paints=50 d_skips=0 d_ticks=1 window_ms=1157
+[host] slot liveyj6b5f_0: d_loop_us=1103 d_raster_us=153073 d_observe_us=38197 max_observe_us=4979 d_paints=50 d_skips=0 d_ticks=2 window_ms=1186
+[script liveyj6b5f_0] lap 3 complete
+[panel] liveyj6b5f_0: script: lap 3 complete
+[host] slot liveyj6b5f_0: d_loop_us=1097 d_raster_us=153708 d_observe_us=38986 max_observe_us=4998 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170
+[script liveyj6b5f_0] interact Loc { x: 2474, z: 3435, level: 0, action: "Walk-across" }
+[host] slot liveyj6b5f_0: d_loop_us=1192 d_raster_us=159451 d_observe_us=38286 max_observe_us=5031 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158
+[host] slot liveyj6b5f_0: d_loop_us=1260 d_raster_us=158608 d_observe_us=45487 max_observe_us=11156 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166
+[host] slot liveyj6b5f_0: d_loop_us=1418 d_raster_us=168563 d_observe_us=39476 max_observe_us=5363 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157
+[host] slot liveyj6b5f_0: d_loop_us=1221 d_raster_us=163604 d_observe_us=41636 max_observe_us=9250 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160
+[host] slot liveyj6b5f_0: d_loop_us=1238 d_raster_us=163145 d_observe_us=38262 max_observe_us=7059 d_paints=50 d_skips=0 d_ticks=2 window_ms=1171
+[host] slot liveyj6b5f_0: d_loop_us=1255 d_raster_us=164404 d_observe_us=39473 max_observe_us=7751 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158
+[host] slot liveyj6b5f_0: d_loop_us=1220 d_raster_us=163234 d_observe_us=45405 max_observe_us=8934 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156
+[host] slot liveyj6b5f_0: d_loop_us=1225 d_raster_us=167100 d_observe_us=36974 max_observe_us=5134 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168
+[script liveyj6b5f_0] interact Loc { x: 2471, z: 3425, level: 0, action: "Climb-over" }
+[host] slot liveyj6b5f_0: d_loop_us=1255 d_raster_us=177921 d_observe_us=37236 max_observe_us=4498 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162
+[host] slot liveyj6b5f_0: d_loop_us=1200 d_raster_us=174492 d_observe_us=37812 max_observe_us=4734 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163
+[host] slot liveyj6b5f_0: d_loop_us=1313 d_raster_us=222057 d_observe_us=37575 max_observe_us=4925 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150
+[host] slot liveyj6b5f_0: d_loop_us=5933 d_raster_us=157892 d_observe_us=42173 max_observe_us=5322 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148
+[host] slot liveyj6b5f_0: d_loop_us=1002 d_raster_us=130575 d_observe_us=27239 max_observe_us=1272 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163
+[script liveyj6b5f_0] interact Loc { x: 2473, z: 3422, level: 1, action: "Climb" }
+[host] slot liveyj6b5f_0: d_loop_us=1020 d_raster_us=131478 d_observe_us=32791 max_observe_us=5956 d_paints=50 d_skips=0 d_ticks=1 window_ms=1158
+[host] slot liveyj6b5f_0: d_loop_us=952 d_raster_us=155383 d_observe_us=27239 max_observe_us=1711 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164
+[host] slot liveyj6b5f_0: d_loop_us=3893 d_raster_us=175374 d_observe_us=38265 max_observe_us=3470 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168
+[script liveyj6b5f_0] interact ContinueDialog
+[host] slot liveyj6b5f_0: d_loop_us=914 d_raster_us=189341 d_observe_us=25416 max_observe_us=1164 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160
+[script liveyj6b5f_0] interact Loc { x: 2478, z: 3420, level: 2, action: "Walk-on" }
+[host] slot liveyj6b5f_0: d_loop_us=890 d_raster_us=134647 d_observe_us=27787 max_observe_us=3086 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167
+[host] slot liveyj6b5f_0: d_loop_us=995 d_raster_us=138409 d_observe_us=24996 max_observe_us=1019 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173
+[host] slot liveyj6b5f_0: d_loop_us=951 d_raster_us=153344 d_observe_us=26308 max_observe_us=2132 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168
+[host] slot liveyj6b5f_0: d_loop_us=1009 d_raster_us=166389 d_observe_us=28966 max_observe_us=3138 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170
+[host] slot liveyj6b5f_0: d_loop_us=948 d_raster_us=146203 d_observe_us=26814 max_observe_us=1902 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173
+[host] slot liveyj6b5f_0: d_loop_us=926 d_raster_us=135928 d_observe_us=26961 max_observe_us=2370 d_paints=50 d_skips=0 d_ticks=2 window_ms=1172

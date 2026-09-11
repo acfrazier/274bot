@@ -41272,13 +41272,20 @@
         "location query and revision-correct location interaction"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Default door and named gate branches pass isolated 6401d3a4 after native Tile distance mapping review.",
       "observable_proof_requirement": "revision-correct door interaction followed by open state or successful crossing",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Both branches show the selected closed loc replaced by its open loc after Start. Other supported settings and frontend acceptance remain separate.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-door-opener-100adccc-6401d3a4.json",
+        "docs/compat/evidence/catalog-harness/live/r274-door-opener-100adccc-6401d3a4.log",
+        "docs/compat/evidence/catalog-harness/live/r274-door-opener-gate-100adccc-6401d3a4.json",
+        "docs/compat/evidence/catalog-harness/live/r274-door-opener-gate-100adccc-6401d3a4.log",
+        "docs/compat/evidence/location-world/isolated-results-6401d3a4.json"
+      ]
     },
     {
       "display_name": "DoorOpener",
@@ -41455,13 +41462,20 @@
         "location query and revision-correct location interaction"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Default door and named gate branches pass isolated 6401d3a4 after native Tile distance mapping review.",
       "observable_proof_requirement": "revision-correct door interaction followed by open state or successful crossing",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Both branches show the selected closed loc replaced by its open loc after Start. Other supported settings and frontend acceptance remain separate.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-door-opener-100adccc-6401d3a4.json",
+        "docs/compat/evidence/catalog-harness/live/r289-door-opener-100adccc-6401d3a4.log",
+        "docs/compat/evidence/catalog-harness/live/r289-door-opener-gate-100adccc-6401d3a4.json",
+        "docs/compat/evidence/catalog-harness/live/r289-door-opener-gate-100adccc-6401d3a4.log",
+        "docs/compat/evidence/location-world/isolated-results-6401d3a4.json"
+      ]
     },
     {
       "display_name": "TannerBot",
@@ -75964,13 +75978,20 @@
         "location query and revision-correct location interaction"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Default door and named gate branches pass isolated 6401d3a4 after native Tile distance mapping review.",
       "observable_proof_requirement": "revision-correct door interaction followed by open state or successful crossing",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Both branches show the selected closed loc replaced by its open loc after Start. Other supported settings and frontend acceptance remain separate.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-door-opener-8e7d965b-6401d3a4.json",
+        "docs/compat/evidence/catalog-harness/live/r274-door-opener-8e7d965b-6401d3a4.log",
+        "docs/compat/evidence/catalog-harness/live/r274-door-opener-gate-8e7d965b-6401d3a4.json",
+        "docs/compat/evidence/catalog-harness/live/r274-door-opener-gate-8e7d965b-6401d3a4.log",
+        "docs/compat/evidence/location-world/isolated-results-6401d3a4.json"
+      ]
     },
     {
       "display_name": "DoorOpener",
@@ -76147,13 +76168,20 @@
         "location query and revision-correct location interaction"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Default door and named gate branches pass isolated 6401d3a4 after native Tile distance mapping review.",
       "observable_proof_requirement": "revision-correct door interaction followed by open state or successful crossing",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Both branches show the selected closed loc replaced by its open loc after Start. Other supported settings and frontend acceptance remain separate.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-door-opener-8e7d965b-6401d3a4.json",
+        "docs/compat/evidence/catalog-harness/live/r289-door-opener-8e7d965b-6401d3a4.log",
+        "docs/compat/evidence/catalog-harness/live/r289-door-opener-gate-8e7d965b-6401d3a4.json",
+        "docs/compat/evidence/catalog-harness/live/r289-door-opener-gate-8e7d965b-6401d3a4.log",
+        "docs/compat/evidence/location-world/isolated-results-6401d3a4.json"
+      ]
     },
     {
       "display_name": "TannerBot",
