@@ -1900,6 +1900,8 @@ globalThis.__rs_tick = (n) => {
 };
 globalThis.__rs2b0t_tick_async = async (n) => {
     globalThis.__rs2b0t_host.tick = n;
+    const fire = globalThis.__rs2b0t_fire_tick_listeners;
+    if (typeof fire === 'function') fire();
     if (!globalThis.__rs2b0t_started) {
         globalThis.__rs2b0t_started = true;
         if (typeof inst.onStart === 'function') { await inst.onStart(); }

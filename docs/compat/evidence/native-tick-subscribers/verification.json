@@ -1,0 +1,60 @@
+{
+  "task": "t_e8541da5",
+  "brief": "docs/compat/briefs/106-native-tick-subscriber-mapping.md",
+  "brief_sha256": "7151b409adc70d6bc454ef37b6c01a4486bcfe723ac2f7d4bcfd5784027487cf",
+  "design": "docs/compat/04aa-native-tick-subscriber-boundary.md",
+  "design_sha256": "b8e9cf3401b183ed13032077f4723fd99b2e559b097c356c8344503184ab45ca",
+  "source_commit": "2744b8be4619d5af9bb6d91755b6bbe339f5ba45",
+  "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "isolated_build": true,
+  "export": ".superpowers/review-exports/native-tick-subscribers-t_e8541da5",
+  "cargo_target_dir": ".superpowers/review-exports/native-tick-subscribers-t_e8541da5-target",
+  "manifest": ".superpowers/review-exports/native-tick-subscribers-t_e8541da5-manifest.json",
+  "files": 3747,
+  "host_files": 3453,
+  "client_files": 294,
+  "live": false,
+  "overlay": [
+    "crates/script/src/shim/bot_host.js",
+    "crates/script/src/shim/execution.js",
+    "crates/script/src/load.rs",
+    "crates/script/tests/tick_subscriber.rs"
+  ],
+  "overlay_sha256": {
+    "crates/script/src/shim/bot_host.js": "203fa1b83d6e9ee4bfe3cdd3aac2da51546720ec627c4a598565a94384baa480",
+    "crates/script/src/shim/execution.js": "e1d6131f779bb7a2cf34ee19e5db9a442f119a0cbee79a952fe0a4738fa8ff61",
+    "crates/script/src/load.rs": "9a15d4b5591ad59ee8d66eb33d0c185411ec7ef583104edbacbd9bd297e552fa",
+    "crates/script/tests/tick_subscriber.rs": "d3f0f068640d00ef6712a98f50662910858b40ee4b292b8873e46745e19031f3"
+  },
+  "commands": [
+    {
+      "name": "script-tick-subscriber",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/native-tick-subscribers-t_e8541da5",
+      "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/native-tick-subscribers-t_e8541da5-target",
+      "cmd": "cargo test --locked --offline -p script --test tick_subscriber -- --test-threads=1",
+      "exit": 0,
+      "result": "10 passed"
+    },
+    {
+      "name": "script-clippy-lib",
+      "cmd": "cargo clippy --locked --offline --no-deps -p script --lib -- -D warnings",
+      "exit": 0
+    },
+    {
+      "name": "script-clippy-tick-subscriber",
+      "cmd": "cargo clippy --locked --offline --no-deps -p script --test tick_subscriber -- -D warnings",
+      "exit": 0
+    },
+    {
+      "name": "fmt-check",
+      "cmd": "rustfmt --edition 2021 --check crates/script/src/load.rs crates/script/tests/tick_subscriber.rs",
+      "exit": 0
+    }
+  ],
+  "notes": [
+    "COMPAT_RUNNER fires after host.tick and before onStart. Pump fires after state.tick and before park.settle.",
+    "Pause/hold/generation skip/stale drain unchanged. No onStop/frame/draw/packet/opcode.",
+    "Listener errors isolated; no tick N: last_error. Not LIVE. Root owns Duel LIVE and cache cleanup.",
+    "Empty-target cache: .superpowers/review-exports/native-tick-subscribers-t_e8541da5-target (3.4G)."
+  ]
+}

@@ -103,6 +103,8 @@ export const Execution = {
 globalThis.__rs2b0t_pump = async (n) => {
     const state = host();
     state.tick = n;
+    const fire = globalThis.__rs2b0t_fire_tick_listeners;
+    if (typeof fire === 'function') fire();
     park.settle(n, performance.now());
     await Promise.resolve();
     globalThis.__rs2b0t_call_on_paint();
