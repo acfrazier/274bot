@@ -1,0 +1,21 @@
+{
+  "brief": "115-combat-start-helper-mappings",
+  "scope": [
+    "crates/script/src/shim/ranged.js",
+    "crates/script/src/shim/food.js",
+    "crates/script/src/shim/settings.js",
+    "crates/script/tests/combat_start_helpers.rs",
+    "crates/script/tests/load_isolate.rs",
+    "docs/compat/04ag-combat-start-helper-mappings.md"
+  ],
+  "checks": [
+    {"command": "cargo test --locked --offline -p script --test combat_start_helpers -- --test-threads=1", "result": "3 passed"},
+    {"command": "cargo test --locked --offline -p script --test load_isolate eat_predicates -- --test-threads=1", "result": "passed"},
+    {"command": "cargo test --locked --offline -p script --test load_isolate isolate_settings_store_does_not_return_schema_defaults -- --test-threads=1", "result": "passed"},
+    {"command": "cargo clippy --locked --offline --no-deps -p script --lib -- -D warnings", "result": "passed"},
+    {"command": "rustfmt --edition 2021 --check owned Rust", "result": "passed"}
+  ],
+  "live": false,
+  "unsupported_preserved": ["rangeSupplyEmpty", "eatAtHpThreshold", "SettingsStore.save", "SettingsStore.globalBag"],
+  "note": "Existing unrelated worktree changes were not staged."
+}
