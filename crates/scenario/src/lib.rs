@@ -4401,12 +4401,15 @@ fn wildy_agility_scenario() -> Scenario {
     }
 }
 
-/// Pay and enter naturally, complete the script's first no-ticket Tag, earn a
-/// later ticket, then require fresh obstacle XP after that ticket. Because this
-/// is the first Agility XP predicate in the scenario, its baseline is captured
-/// only after ticket acquisition rather than at catalog Start.
+/// Pay and enter naturally, require obstacle XP before the script's first
+/// no-ticket Tag, earn a later ticket, then require independently fresh obstacle
+/// XP after that ticket.
 fn brimhaven_agility_scenario() -> Scenario {
-    let subsequent_xp = Proof::StatXpGain {
+    let first_hop_xp = Proof::StatXpGain {
+        id: AGILITY_STAT,
+        min: 1,
+    };
+    let subsequent_xp = Proof::FreshStatXpGain {
         id: AGILITY_STAT,
         min: 1,
     };
@@ -4487,6 +4490,10 @@ fn brimhaven_agility_scenario() -> Scenario {
                 level: BRIMHAVEN_LADDER_LANDING.level,
                 radius: 2,
             },
+        ),
+        (
+            "watch obstacle XP from a real hop before the first Tag",
+            first_hop_xp,
         ),
         (
             "watch the first Tag prompt for the next pillar",
@@ -11292,13 +11299,17 @@ mod tests {
                     level: 3,
                     radius: 2,
                 },
+                Proof::StatXpGain {
+                    id: AGILITY_STAT,
+                    min: 1,
+                },
                 Proof::Chat {
                     needle: "tag the next",
                 },
                 Proof::Varp { id: 309, min: 15 },
                 Proof::ItemIdAtMost { id: 2996, count: 0 },
                 Proof::ItemId { id: 2996, count: 1 },
-                Proof::StatXpGain {
+                Proof::FreshStatXpGain {
                     id: AGILITY_STAT,
                     min: 1,
                 },
@@ -11306,7 +11317,7 @@ mod tests {
         );
         assert_eq!(
             brim.proof,
-            Proof::StatXpGain {
+            Proof::FreshStatXpGain {
                 id: AGILITY_STAT,
                 min: 1,
             }
