@@ -389,6 +389,8 @@ pub fn get(name: &str) -> Option<Scenario> {
         "thiever" => Some(thiever_scenario()),
         "alcher" => Some(alcher_scenario()),
         "alcher_custom" => Some(alcher_custom_scenario()),
+        "alcher_custom_alias" => Some(alcher_custom_alias_scenario()),
+        "alcher_custom_name" => Some(alcher_custom_name_scenario()),
         "alcher_ordered" => Some(alcher_ordered_scenario()),
         "alcher_large_batch" => Some(alcher_large_batch_scenario()),
         "bank_fletcher" => Some(bank_fletcher_scenario()),
@@ -418,6 +420,8 @@ pub fn names() -> Vec<&'static str> {
         "thiever",
         "alcher",
         "alcher_custom",
+        "alcher_custom_alias",
+        "alcher_custom_name",
         "alcher_ordered",
         "alcher_large_batch",
         "bank_fletcher",
@@ -1979,6 +1983,36 @@ const ALCHER_CUSTOM_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 
+const ALCHER_CUSTOM_ALIAS_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "items",
+        value: ScriptInjectValue::StrList(&["custom"]),
+    },
+    ScriptSettingInject {
+        id: "customItem",
+        value: ScriptInjectValue::Str("adamant_scimitar"),
+    },
+    ScriptSettingInject {
+        id: "alchs",
+        value: ScriptInjectValue::Num(1.0),
+    },
+];
+
+const ALCHER_CUSTOM_NAME_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "items",
+        value: ScriptInjectValue::StrList(&["custom"]),
+    },
+    ScriptSettingInject {
+        id: "customItem",
+        value: ScriptInjectValue::Str("Adamant scimitar"),
+    },
+    ScriptSettingInject {
+        id: "alchs",
+        value: ScriptInjectValue::Num(1.0),
+    },
+];
+
 const ALCHER_ORDERED_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "items",
@@ -2125,6 +2159,184 @@ fn alcher_large_batch_scenario() -> Scenario {
         1000,
         Some(("Rune chainbody", 1000)),
     )
+}
+
+const ADAMANT_SCIMITAR_ID: i32 = 1331;
+const CERT_ADAMANT_SCIMITAR_ID: i32 = 1332;
+const NATURE_RUNE_ID: i32 = 561;
+const COINS_ID: i32 = 995;
+const STAFF_OF_FIRE_ID: i32 = 1387;
+/// High Level Alchemy pays 60% of shop cost: floor(2560 * 0.6) = 1536.
+const ADAMANT_SCIMITAR_ALCH_COINS: i32 = 1536;
+const HIGH_ALCH_MAGIC_XP: i32 = 65;
+
+fn alcher_custom_alias_scenario() -> Scenario {
+    alcher_generated_custom_scenario("alcher_custom_alias", ALCHER_CUSTOM_ALIAS_INJECT)
+}
+
+fn alcher_custom_name_scenario() -> Scenario {
+    alcher_generated_custom_scenario("alcher_custom_name", ALCHER_CUSTOM_NAME_INJECT)
+}
+
+/// Select the frozen Alcher Custom sentinel for a generated item that was
+/// never in the handwritten ITEM_DB. The target is banked unnoted and must
+/// be withdrawn as certificate id 1332 before the cast.
+fn alcher_generated_custom_scenario(
+    name: &'static str,
+    inject: &'static [ScriptSettingInject],
+) -> Scenario {
+    let xp = Proof::StatXpGain {
+        id: 6,
+        min: HIGH_ALCH_MAGIC_XP,
+    };
+    let bank = VARROCK_WEST_BANK;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed Magic 55 and one banked generated custom target before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "setstat magic 55");
+                cheat(c, "givebank adamant_scimitar 1");
+                cheat(c, "givebank naturerune 1");
+                cheat(c, "givebank staff_of_fire 1");
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm Magic 55 before Start",
+            Proof::Stat { id: 6, min: 55 },
+        ),
+        (
+            "confirm no seeded unnoted custom target before Start",
+            Proof::ItemIdAtMost {
+                id: ADAMANT_SCIMITAR_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded noted custom target before Start",
+            Proof::ItemIdAtMost {
+                id: CERT_ADAMANT_SCIMITAR_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded coins before Start",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded Nature rune outcome before Start",
+            Proof::ItemIdAtMost {
+                id: NATURE_RUNE_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(bank_fletcher_open_seed_bank(
+        "open and acknowledge the exact unnoted custom seed bank",
+        Proof::BankItemId {
+            id: ADAMANT_SCIMITAR_ID,
+            count: 1,
+        },
+    ));
+    for (step_name, arm) in [
+        (
+            "acknowledge the exact Nature rune seed bank",
+            Proof::BankItemId {
+                id: NATURE_RUNE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "acknowledge the exact staff of fire seed bank",
+            Proof::BankItemId {
+                id: STAFF_OF_FIRE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "acknowledge no seeded noted custom target in bank",
+            Proof::BankItemIdAtMost {
+                id: CERT_ADAMANT_SCIMITAR_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        (
+            "watch the generated custom item land as the noted id",
+            Proof::ItemId {
+                id: CERT_ADAMANT_SCIMITAR_ID,
+                count: 1,
+            },
+        ),
+        ("watch Magic XP from one High Level Alchemy cast", xp),
+        (
+            "watch the noted custom target consumed",
+            Proof::ItemIdAtMost {
+                id: CERT_ADAMANT_SCIMITAR_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch the Nature rune consumed",
+            Proof::ItemIdAtMost {
+                id: NATURE_RUNE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch the exact High Alchemy coin increase",
+            Proof::ItemId {
+                id: COINS_ID,
+                count: ADAMANT_SCIMITAR_ALCH_COINS,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("Alcher"),
+            script_settings_inject: Some(inject),
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
 }
 
 /// The `alcher` scenario: live Alcher gold — Varrock West, noted fodder +
@@ -3289,6 +3501,8 @@ mod tests {
                 "thiever",
                 "alcher",
                 "alcher_custom",
+                "alcher_custom_alias",
+                "alcher_custom_name",
                 "alcher_ordered",
                 "alcher_large_batch",
                 "bank_fletcher",
@@ -3705,6 +3919,98 @@ mod tests {
     }
 
     #[test]
+    fn alcher_generated_custom_cases_select_custom_and_ack_exact_ids() {
+        for (name, custom_item) in [
+            ("alcher_custom_alias", "adamant_scimitar"),
+            ("alcher_custom_name", "Adamant scimitar"),
+        ] {
+            let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
+            assert_eq!(scenario.settings.start_script, Some("Alcher"));
+            assert_eq!(scenario.settings.deadline, SCRIPT_GOLD_DEADLINE);
+            assert_eq!(scenario.settings.terminal_shot, Some(name));
+            let inject = settings_inject_map(scenario.settings.script_settings_inject).unwrap();
+            assert_eq!(
+                inject.get("items"),
+                Some(&Value::Array(vec![Value::String("custom".into())]))
+            );
+            assert_eq!(
+                inject.get("customItem"),
+                Some(&Value::String(custom_item.into()))
+            );
+            assert_eq!(inject.get("alchs"), Some(&Value::from(1.0)));
+            let start = scenario
+                .steps
+                .iter()
+                .position(|step| matches!(step.kind, StepKind::StartScript))
+                .unwrap();
+            assert_eq!(scenario.steps[start - 1].wait.arm, Proof::BankClosed);
+            let seed_arms = scenario.steps[..start]
+                .iter()
+                .map(|step| step.wait.arm)
+                .collect::<Vec<_>>();
+            assert!(seed_arms.contains(&Proof::BankItemId {
+                id: ADAMANT_SCIMITAR_ID,
+                count: 1,
+            }));
+            assert!(seed_arms.contains(&Proof::BankItemId {
+                id: NATURE_RUNE_ID,
+                count: 1,
+            }));
+            assert!(seed_arms.contains(&Proof::BankItemId {
+                id: STAFF_OF_FIRE_ID,
+                count: 1,
+            }));
+            assert!(seed_arms.contains(&Proof::BankItemIdAtMost {
+                id: CERT_ADAMANT_SCIMITAR_ID,
+                count: 0,
+            }));
+            assert!(seed_arms.contains(&Proof::ItemIdAtMost {
+                id: CERT_ADAMANT_SCIMITAR_ID,
+                count: 0,
+            }));
+            assert!(seed_arms.contains(&Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: 0,
+            }));
+            let watch_arms = scenario.steps[start + 1..]
+                .iter()
+                .map(|step| step.wait.arm)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                watch_arms[0],
+                Proof::ItemId {
+                    id: CERT_ADAMANT_SCIMITAR_ID,
+                    count: 1,
+                },
+                "{name} must observe the noted id before XP"
+            );
+            assert!(watch_arms.contains(&Proof::StatXpGain {
+                id: 6,
+                min: HIGH_ALCH_MAGIC_XP,
+            }));
+            assert!(watch_arms.contains(&Proof::ItemId {
+                id: COINS_ID,
+                count: ADAMANT_SCIMITAR_ALCH_COINS,
+            }));
+            assert_eq!(
+                scenario.proof,
+                Proof::StatXpGain {
+                    id: 6,
+                    min: HIGH_ALCH_MAGIC_XP,
+                }
+            );
+            assert!(names().contains(&name));
+        }
+
+        let historical = get("alcher_custom").expect("historical custom case preserved");
+        let inject = settings_inject_map(historical.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("customItem"),
+            Some(&Value::String("rune_chainbody".into()))
+        );
+    }
+
+    #[test]
     fn bone_burier_requires_banking_between_burial_cycles() {
         let s = get("bone_burier").unwrap();
         assert_eq!(s.settings.start_script, Some("BoneBurier"));
@@ -3754,6 +4060,8 @@ mod tests {
             "chicken_killer",
             "thiever",
             "alcher",
+            "alcher_custom_alias",
+            "alcher_custom_name",
             "bank_fletcher",
             "bank_fletcher_string",
             "bank_fletcher_cut_string",

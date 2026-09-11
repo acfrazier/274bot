@@ -19,9 +19,16 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const SUPPORT_MATRIX: &str = include_str!("../../../docs/compat/support-matrix.json");
-const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|thiever|alcher|alcher_custom|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string";
+const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string";
 const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
+const ADAMANT_SCIMITAR_ID: i32 = 1331;
+const CERT_ADAMANT_SCIMITAR_ID: i32 = 1332;
+const NATURE_RUNE_ID: i32 = 561;
+const COINS_ID: i32 = 995;
+/// High Level Alchemy pays 60% of shop cost: floor(2560 * 0.6) = 1536.
+const ADAMANT_SCIMITAR_ALCH_COINS: i32 = 1536;
+const HIGH_ALCH_MAGIC_XP: i32 = 65;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -31,6 +38,8 @@ enum CoreCase {
     Thiever,
     Alcher,
     AlcherCustom,
+    AlcherCustomAlias,
+    AlcherCustomName,
     AlcherOrdered,
     AlcherLargeBatch,
     BankFletcher,
@@ -46,6 +55,8 @@ impl CoreCase {
             "thiever" => Ok(Self::Thiever),
             "alcher" => Ok(Self::Alcher),
             "alcher_custom" => Ok(Self::AlcherCustom),
+            "alcher_custom_alias" => Ok(Self::AlcherCustomAlias),
+            "alcher_custom_name" => Ok(Self::AlcherCustomName),
             "alcher_ordered" => Ok(Self::AlcherOrdered),
             "alcher_large_batch" => Ok(Self::AlcherLargeBatch),
             "bank_fletcher" => Ok(Self::BankFletcher),
@@ -64,6 +75,8 @@ impl CoreCase {
             Self::Thiever => "thiever",
             Self::Alcher => "alcher",
             Self::AlcherCustom => "alcher_custom",
+            Self::AlcherCustomAlias => "alcher_custom_alias",
+            Self::AlcherCustomName => "alcher_custom_name",
             Self::AlcherOrdered => "alcher_ordered",
             Self::AlcherLargeBatch => "alcher_large_batch",
             Self::BankFletcher => "bank_fletcher",
@@ -78,7 +91,11 @@ impl CoreCase {
             Self::ChickenKiller => "ChickenKiller",
             Self::Thiever => "Thiever",
             Self::Alcher => "Alcher",
-            Self::AlcherCustom | Self::AlcherOrdered | Self::AlcherLargeBatch => "Alcher",
+            Self::AlcherCustom
+            | Self::AlcherCustomAlias
+            | Self::AlcherCustomName
+            | Self::AlcherOrdered
+            | Self::AlcherLargeBatch => "Alcher",
             Self::BankFletcher | Self::BankFletcherString | Self::BankFletcherCutString => {
                 "BankFletcher"
             }
@@ -365,6 +382,16 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         | CoreCase::AlcherLargeBatch => {
             near(baseline.tile, (3185, 3440, 0), 6) && baseline.level("magic") >= 55
         }
+        CoreCase::AlcherCustomAlias | CoreCase::AlcherCustomName => {
+            near(baseline.tile, (3185, 3440, 0), 6)
+                && baseline.level("magic") >= 55
+                && baseline.item_id(ADAMANT_SCIMITAR_ID) == 0
+                && baseline.item_id(CERT_ADAMANT_SCIMITAR_ID) == 0
+                && baseline.item_id(COINS_ID) == 0
+                && baseline.item_id(NATURE_RUNE_ID) == 0
+                && baseline.item("Coins") == 0
+                && baseline.item("Rune chainbody") == 0
+        }
         CoreCase::BankFletcher => {
             near(baseline.tile, (3185, 3440, 0), 6)
                 && baseline.item("Knife") >= 1
@@ -399,6 +426,9 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         | CoreCase::AlcherCustom
         | CoreCase::AlcherOrdered
         | CoreCase::AlcherLargeBatch => "Varrock West bank and Magic 55",
+        CoreCase::AlcherCustomAlias | CoreCase::AlcherCustomName => {
+            "Varrock West bank, Magic 55, and no seeded coins/custom-target outcome"
+        }
         CoreCase::BankFletcher => {
             "Varrock West bank, Knife, twenty-seven Willow logs, and Fletching 35"
         }
@@ -428,6 +458,7 @@ struct CoreWitness {
     bank_fletcher_cycle: BankFletcherCycle,
     bank_fletcher_string_cycle: BankFletcherStringCycle,
     bank_fletcher_cut_string_cycle: BankFletcherCutStringCycle,
+    alcher_generated_custom_cycle: AlcherGeneratedCustomCycle,
     ordered_first_exhausted: bool,
 }
 
@@ -629,6 +660,39 @@ impl BankFletcherCutStringCycle {
     }
 }
 
+/// Noted-id withdrawal then Nature-rune consumption. Display name
+/// "Adamant scimitar" is shared by unnoted 1331 and certificate 1332.
+#[derive(Debug, Clone, Default, Serialize)]
+struct AlcherGeneratedCustomCycle {
+    withdrawn: Option<Observation>,
+    consumed: bool,
+}
+
+impl AlcherGeneratedCustomCycle {
+    fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        if self.withdrawn.is_none()
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(CERT_ADAMANT_SCIMITAR_ID) >= 1
+            && now.item_id(ADAMANT_SCIMITAR_ID) == 0
+            && now.item_id(CERT_ADAMANT_SCIMITAR_ID) > baseline.item_id(CERT_ADAMANT_SCIMITAR_ID)
+            && now.item_id(NATURE_RUNE_ID) >= 1
+        {
+            self.withdrawn = Some(now.clone());
+        }
+        if let Some(withdrawn) = &self.withdrawn {
+            self.consumed |= !now.bank_open
+                && !now.bank_loaded
+                && now.item_id(CERT_ADAMANT_SCIMITAR_ID)
+                    < withdrawn.item_id(CERT_ADAMANT_SCIMITAR_ID)
+                && now.item_id(NATURE_RUNE_ID) < withdrawn.item_id(NATURE_RUNE_ID)
+                && now.item_id(COINS_ID) - baseline.item_id(COINS_ID)
+                    == ADAMANT_SCIMITAR_ALCH_COINS
+                && now.skill_xp("magic") - baseline.skill_xp("magic") >= HIGH_ALCH_MAGIC_XP
+                && now.item("Rune chainbody") == withdrawn.item("Rune chainbody");
+        }
+    }
+}
+
 impl CoreWitness {
     fn new(case: CoreCase, baseline: Observation) -> Self {
         Self {
@@ -643,6 +707,7 @@ impl CoreWitness {
             bank_fletcher_cycle: BankFletcherCycle::default(),
             bank_fletcher_string_cycle: BankFletcherStringCycle::default(),
             bank_fletcher_cut_string_cycle: BankFletcherCutStringCycle::default(),
+            alcher_generated_custom_cycle: AlcherGeneratedCustomCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -667,6 +732,13 @@ impl CoreWitness {
         }
         if matches!(self.case, CoreCase::BankFletcherCutString) {
             self.bank_fletcher_cut_string_cycle
+                .observe(&self.baseline, observation);
+        }
+        if matches!(
+            self.case,
+            CoreCase::AlcherCustomAlias | CoreCase::AlcherCustomName
+        ) {
+            self.alcher_generated_custom_cycle
                 .observe(&self.baseline, observation);
         }
         let baseline_sequence = self
@@ -752,6 +824,9 @@ impl CoreWitness {
                         _ => self.acquired_then_consumed("Rune chainbody"),
                     }
             }
+            CoreCase::AlcherCustomAlias | CoreCase::AlcherCustomName => {
+                self.alcher_generated_custom_cycle.consumed
+            }
             CoreCase::BankFletcher => {
                 self.bank_fletcher_cycle.crafted_after_withdrawal
                     && self.xp_gained("fletching")
@@ -781,6 +856,7 @@ impl CoreWitness {
             "bank_fletcher_cycle": self.bank_fletcher_cycle,
             "bank_fletcher_string_cycle": self.bank_fletcher_string_cycle,
             "bank_fletcher_cut_string_cycle": self.bank_fletcher_cut_string_cycle,
+            "alcher_generated_custom_cycle": self.alcher_generated_custom_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -1875,6 +1951,85 @@ mod tests {
         assert!(validate_case_baseline(CoreCase::BankFletcherCutString, &seeded_outcome).is_err());
     }
 
+    fn alcher_generated_obs(item_ids: &[(i32, i32)], magic_xp: i32) -> Observation {
+        let mut observation = observation(&[], &[("magic", magic_xp)], &[]);
+        observation.tile = Some((3185, 3440, 0));
+        observation.levels.insert("magic".into(), 55);
+        observation.item_ids = item_ids.iter().copied().collect();
+        observation
+    }
+
+    #[test]
+    fn alcher_generated_custom_requires_noted_id_then_exact_consumption() {
+        for case in [CoreCase::AlcherCustomAlias, CoreCase::AlcherCustomName] {
+            let mut baseline = alcher_generated_obs(&[], 10_000);
+            baseline.bank_generation = 1;
+            validate_case_baseline(case, &baseline).unwrap();
+
+            let mut withdrawn = alcher_generated_obs(
+                &[(CERT_ADAMANT_SCIMITAR_ID, 1), (NATURE_RUNE_ID, 1)],
+                10_000,
+            );
+            withdrawn.bank_generation = 2;
+            let mut consumed =
+                alcher_generated_obs(&[(COINS_ID, ADAMANT_SCIMITAR_ALCH_COINS)], 10_065);
+            consumed.bank_generation = 2;
+
+            assert!(witness(case, &baseline, [&withdrawn, &consumed])
+                .qualify()
+                .is_ok());
+            assert!(witness(case, &baseline, [&baseline]).qualify().is_err());
+            assert!(witness(case, &baseline, [&withdrawn]).qualify().is_err());
+
+            let mut name_only = withdrawn.clone();
+            name_only.item_ids.clear();
+            name_only.items.insert("Adamant scimitar".into(), 1);
+            name_only.items.insert("Nature rune".into(), 1);
+            assert!(witness(case, &baseline, [&name_only, &consumed])
+                .qualify()
+                .is_err());
+
+            let mut unnoted = withdrawn.clone();
+            unnoted.item_ids.remove(&CERT_ADAMANT_SCIMITAR_ID);
+            unnoted.item_ids.insert(ADAMANT_SCIMITAR_ID, 1);
+            assert!(witness(case, &baseline, [&unnoted, &consumed])
+                .qualify()
+                .is_err());
+
+            let mut chainbody = alcher_generated_obs(&[(NATURE_RUNE_ID, 1)], 10_000);
+            chainbody.items.insert("Rune chainbody".into(), 1);
+            chainbody.items.insert("Nature rune".into(), 1);
+            chainbody.bank_generation = 2;
+            let mut chainbody_after = alcher_generated_obs(&[(COINS_ID, 30_000)], 10_065);
+            chainbody_after.items.insert("Coins".into(), 30_000);
+            chainbody_after.bank_generation = 2;
+            assert!(witness(case, &baseline, [&chainbody, &chainbody_after])
+                .qualify()
+                .is_err());
+
+            let mut wrong_coins = consumed.clone();
+            wrong_coins.item_ids.insert(COINS_ID, 30_000);
+            assert!(witness(case, &baseline, [&withdrawn, &wrong_coins])
+                .qualify()
+                .is_err());
+
+            let mut no_bank_session = withdrawn.clone();
+            no_bank_session.bank_generation = 1;
+            assert!(witness(case, &baseline, [&no_bank_session, &consumed])
+                .qualify()
+                .is_err());
+
+            let mut seeded_notes = baseline.clone();
+            seeded_notes.item_ids.insert(CERT_ADAMANT_SCIMITAR_ID, 1);
+            assert!(validate_case_baseline(case, &seeded_notes).is_err());
+            let mut seeded_coins = baseline.clone();
+            seeded_coins
+                .item_ids
+                .insert(COINS_ID, ADAMANT_SCIMITAR_ALCH_COINS);
+            assert!(validate_case_baseline(case, &seeded_coins).is_err());
+        }
+    }
+
     #[test]
     fn old_catalog_explicitly_refuses_cut_string_mode() {
         let error =
@@ -1882,5 +2037,9 @@ mod tests {
         assert!(error.contains("has no mode setting"), "{error}");
         validate_case_catalog(CoreCase::BankFletcherCutString, CATALOG_COMMIT_B).unwrap();
         validate_case_catalog(CoreCase::BankFletcherString, CATALOG_COMMIT_A).unwrap();
+        for case in [CoreCase::AlcherCustomAlias, CoreCase::AlcherCustomName] {
+            validate_case_catalog(case, CATALOG_COMMIT_A).unwrap();
+            validate_case_catalog(case, CATALOG_COMMIT_B).unwrap();
+        }
     }
 }
