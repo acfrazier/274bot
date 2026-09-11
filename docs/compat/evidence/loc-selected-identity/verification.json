@@ -1,0 +1,39 @@
+{
+  "task": "t_c35281b3",
+  "brief": "docs/compat/briefs/74-loc-selected-identity.md",
+  "brief_sha256": "6863416182aad966bda22c8d7c443bdecaea7f229b6a6e576b1cdcada35fcf58",
+  "host_commit": "feacb79a3c4651465baee58c6e61585a30d95b17",
+  "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "isolated_build": true,
+  "export": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/loc-identity-t_c35281b3",
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/loc-identity-t_c35281b3-target",
+  "export_method": "docs/compat/evidence/build-isolation/export_git_files.py regular Git blobs",
+  "manifest": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/loc-identity-t_c35281b3-manifest.json",
+  "manifest_files": 2818,
+  "shared_campaign_target": false,
+  "live": false,
+  "overlay_sha256": {
+    "crates/script/src/shim/locs.js": "2cac63e02ae9e657500052525b8a8ebc1a86288088f2a897b581e1d380c51be0",
+    "crates/script/src/shim/mod.rs": "0ccb444ef7bad8d1d9fa62f73a39335d6093415c935aeef81247cb8673d5a440",
+    "crates/script/src/host_js.rs": "2052effa720fefd567926a2d8c9d17bf3818a572bf3b04c7a36050cf42416f4e",
+    "crates/script/host-js/index.d.ts": "d716cf5296e2a2575b6faffaddb7999864f5dda4b80c487ab40c106db093575e",
+    "crates/script/src/isolate_fb.rs": "08977e0cf9c5ce1fa88dd732a69a1a680f4c1da4ebf0614abaebbb7ab3850405",
+    "crates/script/tests/loc_selected_identity.rs": "500866026d88656274cd9d90ad52865f37ac5dc1b5087227abc433d4429efa63",
+    "crates/host-play/src/lib.rs": "9704472cc8d07aae199407b9f91fad818f59dc9012df6f63b7aeddfcf6f31ac4",
+    "docs/compat/04i-loc-selected-identity.md": "fe1cbecca619835b8d01cccbfed1bd9693abeb91aa0b2c50ec8667ee5126886b"
+  },
+  "checks": [
+    "cargo test -p script --test loc_selected_identity: 5 passed",
+    "cargo test -p script --test host_js: 2 passed, 1 ignored",
+    "cargo test -p host-play --lib dispatch_loc: 4 passed",
+    "cargo clippy -p script --no-deps --all-targets -- -D warnings: pass",
+    "cargo clippy -p host-play --no-deps -- -D warnings: pass"
+  ],
+  "limits": [
+    "no live client run",
+    "root owns FlaxPicker 274 LIVE requalification",
+    "layer is not posted on SceneEntity; id plus tile distinguishes wall 980 vs flax 2646",
+    "loc id reuses Interact.index like open-booth; isolate.fbs unchanged",
+    "host-js dts regen also restored bank_op_result fields already in host_js tables"
+  ]
+}

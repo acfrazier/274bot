@@ -1,0 +1,10 @@
+isolated empty target: .superpowers/review-exports/loc-identity-t_c35281b3-target
+export: .superpowers/review-exports/loc-identity-t_c35281b3 (2818 files)
+host feacb79a3c4651465baee58c6e61585a30d95b17
+client 9d090ed04957e4efc254f073cda97bc5510ca72b
+
+cargo test -p script --test loc_selected_identity: 5 passed
+cargo test -p script --test host_js: 2 passed, 1 ignored
+cargo test -p host-play --lib dispatch_loc: 4 passed
+cargo clippy -p script --no-deps --all-targets -- -D warnings: pass
+cargo clippy -p host-play --no-deps -- -D warnings: pass
