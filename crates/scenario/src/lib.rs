@@ -24,7 +24,9 @@ pub mod shot;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use api::interact::{cheat, op_loc, tele_args, Driver, Interactions, SendResult, MAXME_SETSTATS};
+use api::interact::{
+    cheat, close_modal, op_loc, tele_args, Driver, Interactions, SendResult, MAXME_SETSTATS,
+};
 use api::snapshot::{GameSnapshot, ReadContext, WorldTile};
 use client::client::Client;
 use serde_json::{Map, Value};
@@ -390,6 +392,8 @@ pub fn get(name: &str) -> Option<Scenario> {
         "alcher_ordered" => Some(alcher_ordered_scenario()),
         "alcher_large_batch" => Some(alcher_large_batch_scenario()),
         "bank_fletcher" => Some(bank_fletcher_scenario()),
+        "bank_fletcher_string" => Some(bank_fletcher_string_scenario()),
+        "bank_fletcher_cut_string" => Some(bank_fletcher_cut_string_scenario()),
         "script_trade" => Some(script_trade_scenario()),
         _ => None,
     }
@@ -417,6 +421,8 @@ pub fn names() -> Vec<&'static str> {
         "alcher_ordered",
         "alcher_large_batch",
         "bank_fletcher",
+        "bank_fletcher_string",
+        "bank_fletcher_cut_string",
         "script_trade",
     ]
 }
@@ -2208,6 +2214,84 @@ const BANK_FLETCHER_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 
+const BANK_FLETCHER_STRING_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "material",
+        value: ScriptInjectValue::Str("Willow logs"),
+    },
+    ScriptSettingInject {
+        id: "product",
+        value: ScriptInjectValue::Str("String short bow"),
+    },
+];
+
+const BANK_FLETCHER_CUT_STRING_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "mode",
+        value: ScriptInjectValue::Str("cut+string"),
+    },
+    ScriptSettingInject {
+        id: "material",
+        value: ScriptInjectValue::Str("Willow logs"),
+    },
+    ScriptSettingInject {
+        id: "product",
+        value: ScriptInjectValue::Str("Short bow"),
+    },
+];
+
+const WILLOW_LOGS_ID: i32 = 1519;
+const UNSTRUNG_WILLOW_SHORTBOW_ID: i32 = 60;
+const STRUNG_WILLOW_SHORTBOW_ID: i32 = 849;
+const BOW_STRING_ID: i32 = 1777;
+const VARROCK_WEST_BANK_BOOTH_ID: i32 = 2213;
+
+fn bank_fletcher_watch(name: &'static str, arm: Proof) -> Step {
+    Step {
+        name,
+        kind: StepKind::Perform {
+            send: Box::new(|_, _| true),
+        },
+        wait: Wait {
+            arm,
+            budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
+        },
+    }
+}
+
+fn bank_fletcher_open_seed_bank(name: &'static str, arm: Proof) -> Step {
+    Step {
+        name,
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                op_loc(
+                    c,
+                    VARROCK_WEST_BANK.x + 1,
+                    VARROCK_WEST_BANK.z,
+                    VARROCK_WEST_BANK_BOOTH_ID,
+                )
+            }),
+        },
+        wait: Wait {
+            arm,
+            budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
+        },
+    }
+}
+
+fn bank_fletcher_close_seed_bank() -> Step {
+    Step {
+        name: "close the acknowledged seed bank before Start",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| close_modal(c)),
+        },
+        wait: Wait {
+            arm: Proof::BankClosed,
+            budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
+        },
+    }
+}
+
 /// Run BankFletcher through a full pack, product deposit, log withdrawal and
 /// another product. All bank stock is prepared before the script starts.
 fn bank_fletcher_scenario() -> Scenario {
@@ -2303,6 +2387,398 @@ fn bank_fletcher_scenario() -> Scenario {
             start_script: Some("BankFletcher"),
             script_settings_inject: Some(BANK_FLETCHER_INJECT),
             terminal_shot: Some("bank_fletcher terminal"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+/// String two carried pairs, bank the exact id-849 products, withdraw a fresh
+/// unstacked 14+14 load, and string beyond the seeded pair. The old catalog has
+/// no `mode`, so product selection is the shared old/new stringing contract.
+fn bank_fletcher_string_scenario() -> Scenario {
+    let bank = VARROCK_WEST_BANK;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed exact willow stringing pairs and bank stock before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "advancestat fletching 35");
+                cheat(c, "give unstrung_willow_shortbow 2");
+                cheat(c, "give bow_string 2");
+                cheat(c, "givebank unstrung_willow_shortbow 28");
+                cheat(c, "givebank bow_string 28");
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(drain_advancestat());
+    for (name, arm) in [
+        (
+            "confirm Fletching 35 before Start",
+            Proof::Stat { id: 9, min: 35 },
+        ),
+        (
+            "confirm two exact unstrung willow shortbows before Start",
+            Proof::ItemId {
+                id: UNSTRUNG_WILLOW_SHORTBOW_ID,
+                count: 2,
+            },
+        ),
+        (
+            "confirm two exact bow strings before Start",
+            Proof::ItemId {
+                id: BOW_STRING_ID,
+                count: 2,
+            },
+        ),
+        (
+            "confirm no seeded strung willow shortbow before Start",
+            Proof::ItemIdAtMost {
+                id: STRUNG_WILLOW_SHORTBOW_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(name, arm));
+    }
+    steps.push(bank_fletcher_open_seed_bank(
+        "open and acknowledge the exact unstrung seed bank",
+        Proof::BankItemId {
+            id: UNSTRUNG_WILLOW_SHORTBOW_ID,
+            count: 28,
+        },
+    ));
+    for (name, arm) in [
+        (
+            "acknowledge the exact bow-string seed bank",
+            Proof::BankItemId {
+                id: BOW_STRING_ID,
+                count: 28,
+            },
+        ),
+        (
+            "acknowledge no seeded strung bow in bank",
+            Proof::BankItemIdAtMost {
+                id: STRUNG_WILLOW_SHORTBOW_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(name, arm));
+    }
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    for (name, arm) in [
+        (
+            "watch XP from both seeded stringing pairs",
+            Proof::StatXpGain { id: 9, min: 66 },
+        ),
+        (
+            "watch both seeded pairs become exact strung willow shortbows",
+            Proof::ItemId {
+                id: STRUNG_WILLOW_SHORTBOW_ID,
+                count: 2,
+            },
+        ),
+        (
+            "watch both seeded unstrung bows consumed",
+            Proof::ItemIdAtMost {
+                id: UNSTRUNG_WILLOW_SHORTBOW_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch both seeded bow strings consumed",
+            Proof::ItemIdAtMost {
+                id: BOW_STRING_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch the exact strung pair enter a fresh bank",
+            Proof::BankItemId {
+                id: STRUNG_WILLOW_SHORTBOW_ID,
+                count: 2,
+            },
+        ),
+        (
+            "watch a fresh fourteen-bow withdrawal",
+            Proof::ItemId {
+                id: UNSTRUNG_WILLOW_SHORTBOW_ID,
+                count: 14,
+            },
+        ),
+        (
+            "watch a fresh fourteen-string withdrawal",
+            Proof::ItemId {
+                id: BOW_STRING_ID,
+                count: 14,
+            },
+        ),
+        (
+            "watch exact unstrung bank stock decrease",
+            Proof::BankItemIdAtMost {
+                id: UNSTRUNG_WILLOW_SHORTBOW_ID,
+                count: 14,
+            },
+        ),
+        (
+            "watch exact bow-string bank stock decrease",
+            Proof::BankItemIdAtMost {
+                id: BOW_STRING_ID,
+                count: 14,
+            },
+        ),
+        (
+            "watch the script close its stringing bank",
+            Proof::BankClosed,
+        ),
+        (
+            "watch a newly withdrawn bow become exact id 849",
+            Proof::ItemId {
+                id: STRUNG_WILLOW_SHORTBOW_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch stringing XP beyond the two seeded pairs",
+            Proof::StatXpGain { id: 9, min: 67 },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(name, arm));
+    }
+    Scenario {
+        name: "bank_fletcher_string",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: Proof::StatXpGain { id: 9, min: 67 },
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("BankFletcher"),
+            script_settings_inject: Some(BANK_FLETCHER_STRING_INJECT),
+            terminal_shot: Some("bank_fletcher_string terminal"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+/// New-catalog combined mode: cut only the two seeded logs, observe their exact
+/// id-60 products in bank, then withdraw those products with strings and finish
+/// both as id 849. No unstrung or strung outcome is seeded.
+fn bank_fletcher_cut_string_scenario() -> Scenario {
+    let bank = VARROCK_WEST_BANK;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed two willow logs and only banked strings before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "advancestat fletching 35");
+                cheat(c, "give knife 1");
+                cheat(c, "give willow_logs 2");
+                cheat(c, "givebank bow_string 28");
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(drain_advancestat());
+    for (name, arm) in [
+        (
+            "confirm Fletching 35 before Start",
+            Proof::Stat { id: 9, min: 35 },
+        ),
+        (
+            "confirm the knife before Start",
+            Proof::Item {
+                name: "Knife",
+                count: 1,
+            },
+        ),
+        (
+            "confirm two exact willow logs before Start",
+            Proof::ItemId {
+                id: WILLOW_LOGS_ID,
+                count: 2,
+            },
+        ),
+        (
+            "confirm no seeded unstrung willow shortbow before Start",
+            Proof::ItemIdAtMost {
+                id: UNSTRUNG_WILLOW_SHORTBOW_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded strung willow shortbow before Start",
+            Proof::ItemIdAtMost {
+                id: STRUNG_WILLOW_SHORTBOW_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(name, arm));
+    }
+    steps.push(bank_fletcher_open_seed_bank(
+        "open and acknowledge the exact bow-string seed bank",
+        Proof::BankItemId {
+            id: BOW_STRING_ID,
+            count: 28,
+        },
+    ));
+    for (name, arm) in [
+        (
+            "acknowledge no extra willow logs in bank",
+            Proof::BankItemIdAtMost {
+                id: WILLOW_LOGS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "acknowledge no seeded unstrung bow in bank",
+            Proof::BankItemIdAtMost {
+                id: UNSTRUNG_WILLOW_SHORTBOW_ID,
+                count: 0,
+            },
+        ),
+        (
+            "acknowledge no seeded strung bow in bank",
+            Proof::BankItemIdAtMost {
+                id: STRUNG_WILLOW_SHORTBOW_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(name, arm));
+    }
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    for (name, arm) in [
+        (
+            "watch cut XP for both seeded logs",
+            Proof::StatXpGain { id: 9, min: 66 },
+        ),
+        (
+            "watch both willow logs become exact unstrung bows",
+            Proof::ItemId {
+                id: UNSTRUNG_WILLOW_SHORTBOW_ID,
+                count: 2,
+            },
+        ),
+        (
+            "watch both willow logs consumed in the cut phase",
+            Proof::ItemIdAtMost {
+                id: WILLOW_LOGS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch the script-created unstrung pair enter a fresh bank",
+            Proof::BankItemId {
+                id: UNSTRUNG_WILLOW_SHORTBOW_ID,
+                count: 2,
+            },
+        ),
+        (
+            "watch the same unstrung pair leave that bank",
+            Proof::ItemId {
+                id: UNSTRUNG_WILLOW_SHORTBOW_ID,
+                count: 2,
+            },
+        ),
+        (
+            "watch the combined string load arrive",
+            Proof::ItemId {
+                id: BOW_STRING_ID,
+                count: 14,
+            },
+        ),
+        (
+            "watch exact unstrung bank stock empty",
+            Proof::BankItemIdAtMost {
+                id: UNSTRUNG_WILLOW_SHORTBOW_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch exact bow-string bank stock decrease",
+            Proof::BankItemIdAtMost {
+                id: BOW_STRING_ID,
+                count: 14,
+            },
+        ),
+        (
+            "watch the combined script close its bank",
+            Proof::BankClosed,
+        ),
+        (
+            "watch XP advance from cutting into stringing",
+            Proof::StatXpGain { id: 9, min: 100 },
+        ),
+        (
+            "watch both script-created bows become exact id 849",
+            Proof::ItemId {
+                id: STRUNG_WILLOW_SHORTBOW_ID,
+                count: 2,
+            },
+        ),
+        (
+            "watch both script-created id-60 bows consumed",
+            Proof::ItemIdAtMost {
+                id: UNSTRUNG_WILLOW_SHORTBOW_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(name, arm));
+    }
+    Scenario {
+        name: "bank_fletcher_cut_string",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: Proof::ItemId {
+            id: STRUNG_WILLOW_SHORTBOW_ID,
+            count: 2,
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("BankFletcher"),
+            script_settings_inject: Some(BANK_FLETCHER_CUT_STRING_INJECT),
+            terminal_shot: Some("bank_fletcher_cut_string terminal"),
             nav: gold_script_nav(),
             ..Default::default()
         },
@@ -2816,6 +3292,8 @@ mod tests {
                 "alcher_ordered",
                 "alcher_large_batch",
                 "bank_fletcher",
+                "bank_fletcher_string",
+                "bank_fletcher_cut_string",
                 "script_trade",
             ]
         );
@@ -3111,6 +3589,122 @@ mod tests {
     }
 
     #[test]
+    fn bank_fletcher_string_modes_are_registered_with_id_strict_proofs() {
+        let string = get("bank_fletcher_string").expect("string scenario registered");
+        assert_eq!(string.settings.start_script, Some("BankFletcher"));
+        assert_eq!(string.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        let inject = settings_inject_map(string.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("material"),
+            Some(&Value::String("Willow logs".into()))
+        );
+        assert_eq!(
+            inject.get("product"),
+            Some(&Value::String("String short bow".into()))
+        );
+        assert!(
+            !inject.contains_key("mode"),
+            "old catalog has no mode setting"
+        );
+        let string_start = string
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        assert_eq!(
+            string.steps[string_start + 1].wait.arm,
+            Proof::StatXpGain { id: 9, min: 66 },
+            "the XP baseline must be armed before the first seeded pair finishes"
+        );
+        let string_seed_arms = string.steps[..string_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(string_seed_arms.contains(&Proof::BankItemId { id: 60, count: 28 }));
+        assert!(string_seed_arms.contains(&Proof::BankItemId {
+            id: 1777,
+            count: 28,
+        }));
+        assert!(string_seed_arms.contains(&Proof::BankItemIdAtMost { id: 849, count: 0 }));
+        assert_eq!(string.steps[string_start - 1].wait.arm, Proof::BankClosed);
+        let string_arms = string
+            .steps
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(string_arms.contains(&Proof::ItemId { id: 849, count: 2 }));
+        assert!(string_arms.contains(&Proof::BankItemId { id: 849, count: 2 }));
+        assert!(string_arms.contains(&Proof::ItemId { id: 60, count: 14 }));
+        assert_eq!(string.proof, Proof::StatXpGain { id: 9, min: 67 });
+
+        let combined = get("bank_fletcher_cut_string").expect("combined scenario registered");
+        assert_eq!(combined.settings.start_script, Some("BankFletcher"));
+        assert_eq!(combined.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        let inject = settings_inject_map(combined.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("mode"),
+            Some(&Value::String("cut+string".into()))
+        );
+        assert_eq!(
+            inject.get("material"),
+            Some(&Value::String("Willow logs".into()))
+        );
+        assert_eq!(
+            inject.get("product"),
+            Some(&Value::String("Short bow".into()))
+        );
+        let combined_start = combined
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        assert_eq!(
+            combined.steps[combined_start + 1].wait.arm,
+            Proof::StatXpGain { id: 9, min: 66 },
+            "the XP baseline must be armed before the cut pair finishes"
+        );
+        let combined_seed_arms = combined.steps[..combined_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(combined_seed_arms.contains(&Proof::BankItemId {
+            id: 1777,
+            count: 28,
+        }));
+        assert!(combined_seed_arms.contains(&Proof::BankItemIdAtMost { id: 1519, count: 0 }));
+        assert!(combined_seed_arms.contains(&Proof::BankItemIdAtMost { id: 60, count: 0 }));
+        assert!(combined_seed_arms.contains(&Proof::BankItemIdAtMost { id: 849, count: 0 }));
+        assert_eq!(
+            combined.steps[combined_start - 1].wait.arm,
+            Proof::BankClosed
+        );
+        let combined_arms = combined
+            .steps
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(combined_arms.contains(&Proof::ItemId { id: 60, count: 2 }));
+        assert!(combined_arms.contains(&Proof::BankItemId { id: 60, count: 2 }));
+        assert!(combined_arms.contains(&Proof::ItemId { id: 849, count: 2 }));
+        let close = combined_arms
+            .iter()
+            .rposition(|proof| *proof == Proof::BankClosed)
+            .unwrap();
+        assert_eq!(
+            combined_arms[close + 1..close + 4],
+            [
+                Proof::StatXpGain { id: 9, min: 100 },
+                Proof::ItemId { id: 849, count: 2 },
+                Proof::ItemIdAtMost { id: 60, count: 0 },
+            ],
+            "stringing XP must be observed before the exact inputs are exhausted"
+        );
+        assert_eq!(combined.proof, Proof::ItemId { id: 849, count: 2 });
+        assert!(names().contains(&"bank_fletcher_string"));
+        assert!(names().contains(&"bank_fletcher_cut_string"));
+    }
+
+    #[test]
     fn bone_burier_requires_banking_between_burial_cycles() {
         let s = get("bone_burier").unwrap();
         assert_eq!(s.settings.start_script, Some("BoneBurier"));
@@ -3161,6 +3755,8 @@ mod tests {
             "thiever",
             "alcher",
             "bank_fletcher",
+            "bank_fletcher_string",
+            "bank_fletcher_cut_string",
             "script_trade",
         ] {
             let s = get(name).unwrap_or_else(|| panic!("{name} registered"));
