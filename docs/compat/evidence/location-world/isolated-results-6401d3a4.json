@@ -1,0 +1,248 @@
+[
+  {
+    "host_commit": "6401d3a4a0fd983d90691a472c23000845bdea4b",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "door_opener",
+    "exit_code": 0,
+    "elapsed_seconds": 22.015,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-door-opener-100adccc-6401d3a4.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-door-opener-100adccc-6401d3a4.log",
+    "build_provenance": "Isolated target started empty; immutable source verified before and after build.",
+    "scope": "Door/gate core option or failed FlaxPicker default; frontend and other branches remain separate.",
+    "outcome": "PASS",
+    "cycle": {
+      "selected": {
+        "id": 1530,
+        "x": 3208,
+        "z": 3211,
+        "level": 0,
+        "name": "Door",
+        "open": true
+      },
+      "opened": true
+    },
+    "post_start_observations": 46
+  },
+  {
+    "host_commit": "6401d3a4a0fd983d90691a472c23000845bdea4b",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "case": "door_opener",
+    "exit_code": 0,
+    "elapsed_seconds": 21.459,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-door-opener-8e7d965b-6401d3a4.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-door-opener-8e7d965b-6401d3a4.log",
+    "build_provenance": "Isolated target started empty; immutable source verified before and after build.",
+    "scope": "Door/gate core option or failed FlaxPicker default; frontend and other branches remain separate.",
+    "outcome": "PASS",
+    "cycle": {
+      "selected": {
+        "id": 1530,
+        "x": 3208,
+        "z": 3211,
+        "level": 0,
+        "name": "Door",
+        "open": true
+      },
+      "opened": true
+    },
+    "post_start_observations": 21
+  },
+  {
+    "host_commit": "6401d3a4a0fd983d90691a472c23000845bdea4b",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "door_opener_gate",
+    "exit_code": 0,
+    "elapsed_seconds": 25.057,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-door-opener-gate-100adccc-6401d3a4.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-door-opener-gate-100adccc-6401d3a4.log",
+    "build_provenance": "Isolated target started empty; immutable source verified before and after build.",
+    "scope": "Door/gate core option or failed FlaxPicker default; frontend and other branches remain separate.",
+    "outcome": "PASS",
+    "cycle": {
+      "selected": {
+        "id": 1551,
+        "x": 3213,
+        "z": 3261,
+        "level": 0,
+        "name": "Gate",
+        "open": true
+      },
+      "opened": true
+    },
+    "post_start_observations": 23
+  },
+  {
+    "host_commit": "6401d3a4a0fd983d90691a472c23000845bdea4b",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "case": "door_opener_gate",
+    "exit_code": 0,
+    "elapsed_seconds": 28.074,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-door-opener-gate-8e7d965b-6401d3a4.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-door-opener-gate-8e7d965b-6401d3a4.log",
+    "build_provenance": "Isolated target started empty; immutable source verified before and after build.",
+    "scope": "Door/gate core option or failed FlaxPicker default; frontend and other branches remain separate.",
+    "outcome": "PASS",
+    "cycle": {
+      "selected": {
+        "id": 1551,
+        "x": 3213,
+        "z": 3261,
+        "level": 0,
+        "name": "Gate",
+        "open": true
+      },
+      "opened": true
+    },
+    "post_start_observations": 22
+  },
+  {
+    "host_commit": "6401d3a4a0fd983d90691a472c23000845bdea4b",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "flax_picker",
+    "exit_code": 1,
+    "elapsed_seconds": 112.658,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-flax-picker-100adccc-6401d3a4.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-flax-picker-100adccc-6401d3a4.log",
+    "build_provenance": "Isolated target started empty; immutable source verified before and after build.",
+    "scope": "Door/gate core option or failed FlaxPicker default; frontend and other branches remain separate.",
+    "outcome": "FAIL",
+    "failure_class": "missing_host_compatibility_mapping",
+    "failure_excerpt": [
+      "FAIL: catalog_boundary_live: scenario failed: step 6 (watch a full pack of exact flax 1779): has_item_id(1779)>=28 not seen within 150 ticks; evidence=Some(Evidence { scenario: \"flax_picker\", outcome: \"FAIL\", predicate: \"has_item_id(1779)>=28\", ticks: 161, elapsed_ms: 109497, message: Some(\"step 6 (watch a full pack of exact flax 1779): has_item_id(1779)>=28 not seen within 150 ticks\"), tile: Some([2741, 3444, 0]), inv: [], stat: Some(StatRow { runenergy: 100 }), chat: [ChatRow { text: \"Inventory wiped.\", username: None }, ChatRow { text: \"set tutorial: to 1000\", username: None }, ChatRow { text: \"Welcome to RuneScape.\", username: None }], scene: 2 })"
+    ],
+    "diagnosis": "No flax or interactions after Start. Frozen canReach maps only NPC/ground rows; FlaxPicker asks for loc coordinates. Coordinate mapping t_246e320b and subsequent canStep t_1a213450 remain required. No foreign-script defect established."
+  },
+  {
+    "host_commit": "6401d3a4a0fd983d90691a472c23000845bdea4b",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "door_opener",
+    "exit_code": 0,
+    "elapsed_seconds": 20.012,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-door-opener-100adccc-6401d3a4.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-door-opener-100adccc-6401d3a4.log",
+    "build_provenance": "Isolated target started empty; immutable source verified before and after build.",
+    "scope": "Door/gate core option or failed FlaxPicker default; frontend and other branches remain separate.",
+    "outcome": "PASS",
+    "cycle": {
+      "selected": {
+        "id": 1530,
+        "x": 3208,
+        "z": 3211,
+        "level": 0,
+        "name": "Door",
+        "open": true
+      },
+      "opened": true
+    },
+    "post_start_observations": 44
+  },
+  {
+    "host_commit": "6401d3a4a0fd983d90691a472c23000845bdea4b",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "case": "door_opener",
+    "exit_code": 0,
+    "elapsed_seconds": 23.254,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-door-opener-8e7d965b-6401d3a4.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-door-opener-8e7d965b-6401d3a4.log",
+    "build_provenance": "Isolated target started empty; immutable source verified before and after build.",
+    "scope": "Door/gate core option or failed FlaxPicker default; frontend and other branches remain separate.",
+    "outcome": "PASS",
+    "cycle": {
+      "selected": {
+        "id": 1530,
+        "x": 3208,
+        "z": 3211,
+        "level": 0,
+        "name": "Door",
+        "open": true
+      },
+      "opened": true
+    },
+    "post_start_observations": 21
+  },
+  {
+    "host_commit": "6401d3a4a0fd983d90691a472c23000845bdea4b",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "door_opener_gate",
+    "exit_code": 0,
+    "elapsed_seconds": 25.093,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-door-opener-gate-100adccc-6401d3a4.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-door-opener-gate-100adccc-6401d3a4.log",
+    "build_provenance": "Isolated target started empty; immutable source verified before and after build.",
+    "scope": "Door/gate core option or failed FlaxPicker default; frontend and other branches remain separate.",
+    "outcome": "PASS",
+    "cycle": {
+      "selected": {
+        "id": 1551,
+        "x": 3213,
+        "z": 3261,
+        "level": 0,
+        "name": "Gate",
+        "open": true
+      },
+      "opened": true
+    },
+    "post_start_observations": 23
+  },
+  {
+    "host_commit": "6401d3a4a0fd983d90691a472c23000845bdea4b",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "case": "door_opener_gate",
+    "exit_code": 0,
+    "elapsed_seconds": 26.198,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-door-opener-gate-8e7d965b-6401d3a4.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-door-opener-gate-8e7d965b-6401d3a4.log",
+    "build_provenance": "Isolated target started empty; immutable source verified before and after build.",
+    "scope": "Door/gate core option or failed FlaxPicker default; frontend and other branches remain separate.",
+    "outcome": "PASS",
+    "cycle": {
+      "selected": {
+        "id": 1551,
+        "x": 3213,
+        "z": 3261,
+        "level": 0,
+        "name": "Gate",
+        "open": true
+      },
+      "opened": true
+    },
+    "post_start_observations": 44
+  },
+  {
+    "host_commit": "6401d3a4a0fd983d90691a472c23000845bdea4b",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "flax_picker",
+    "exit_code": 1,
+    "elapsed_seconds": 113.286,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-flax-picker-100adccc-6401d3a4.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-flax-picker-100adccc-6401d3a4.log",
+    "build_provenance": "Isolated target started empty; immutable source verified before and after build.",
+    "scope": "Door/gate core option or failed FlaxPicker default; frontend and other branches remain separate.",
+    "outcome": "FAIL",
+    "failure_class": "missing_host_compatibility_mapping",
+    "failure_excerpt": [
+      "FAIL: catalog_boundary_live: scenario failed: step 6 (watch a full pack of exact flax 1779): has_item_id(1779)>=28 not seen within 150 ticks; evidence=Some(Evidence { scenario: \"flax_picker\", outcome: \"FAIL\", predicate: \"has_item_id(1779)>=28\", ticks: 162, elapsed_ms: 110106, message: Some(\"step 6 (watch a full pack of exact flax 1779): has_item_id(1779)>=28 not seen within 150 ticks\"), tile: Some([2741, 3444, 0]), inv: [], stat: Some(StatRow { runenergy: 100 }), chat: [ChatRow { text: \"Inventory wiped.\", username: None }, ChatRow { text: \"set tutorial: to 1000\", username: None }, ChatRow { text: \"Welcome to RuneScape.\", username: None }], scene: 2 })"
+    ],
+    "diagnosis": "No flax or interactions after Start. Frozen canReach maps only NPC/ground rows; FlaxPicker asks for loc coordinates. Coordinate mapping t_246e320b and subsequent canStep t_1a213450 remain required. No foreign-script defect established."
+  }
+]
