@@ -130,6 +130,16 @@ fn generated_spell_and_staff_facts_match_selected_content() {
             assert!(fire.contains(&name), "missing fire staff {name}");
         }
         assert!(!fire.contains(&"Staff of air"));
+        let special = data.special_controls().expect("special controls");
+        assert_eq!(special.energy_varp, 300);
+        assert_eq!(special.armed_varp, 301);
+        assert_eq!(special.max_energy, 1000);
+        assert_eq!(data.special_cost("Dragon dagger"), Some(250));
+        assert_eq!(data.special_cost("Magic shortbow"), Some(350));
+        assert_eq!(data.special_cost("Rune scimitar"), None);
+        assert_eq!(data.special_cost("Dragon battleaxe"), None);
+        assert_eq!(data.special_bar(425), 7462);
+        assert_eq!(data.special_bar(328), -1);
     }
 }
 
