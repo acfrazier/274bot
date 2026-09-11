@@ -1,0 +1,21 @@
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/script)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.61s
+     Running tests/gold_stubs.rs (target-t_51452e47/debug/deps/gold_stubs-b1baa438587d820e)
+
+running 13 tests
+test selected_game_data_composes_with_frozen_alcher_logic ... ignored, requires RS2B0T to name a frozen catalog root
+test file_load_parses_export_settings_without_a_throwaway_runtime ... ok
+test death_recovery_import_does_not_404 ... ok
+test quest_engine_throws_not_impl_on_use ... ok
+test alcher_logic_sibling_is_sha_cached_at_start ... ok
+test item_db_reads_host_content_alcher_gold_row ... ok
+test withdraw_x_waits_for_inventory_publication ... ok
+test solve_clue_construct_is_idle_not_impl ... ok
+test bank_access_already_adjacent_does_not_rearm_navigation ... ok
+test thiever_start_helpers_read_posted_bag_without_not_impl ... ok
+test thiever_resolves_food_from_host_loadout_and_queues_eat ... ok
+test selected_game_data_is_published_before_modules_and_offline_stays_empty ... ok
+test gold_catalog_import_paths_resolve_for_live_scripts ... ok
+
+test result: ok. 12 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s
+

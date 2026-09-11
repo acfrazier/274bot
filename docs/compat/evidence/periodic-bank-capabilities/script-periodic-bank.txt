@@ -1,0 +1,16 @@
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/script)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.50s
+     Running tests/periodic_bank.rs (target-t_51452e47/debug/deps/periodic_bank-83134252de0d2c85)
+
+running 8 tests
+test supplied_destination_is_exact_and_does_not_open_a_different_loc ... ok
+test missing_access_backs_off_without_retry_spam ... ok
+test combat_suppresses_loot_count_trigger ... ok
+test either_label_and_shim_loot_token_both_trigger ... ok
+test off_periodic_bank_validates_false_and_sends_nothing ... ok
+test pause_and_session_reset_drop_late_callback_and_sends ... ok
+test loot_count_chicken_shape_observes_deposit_afterdeposit_close_and_return ... ok
+test common_junk_true_deposits_gem_false_skips_it ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+

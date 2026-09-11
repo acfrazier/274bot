@@ -1460,6 +1460,71 @@ mod isolate {
     /// call anchors at isolate-thread start.
     static CLOCK_START: OnceLock<Instant> = OnceLock::new();
 
+    const WORLD_COORD_MAX: i64 = (1 << 14) - 1;
+    const TILE_LEVEL_MAX: i64 = 3;
+    const CROSS_PLANE_DISTANCE: i32 = 1_000_000;
+
+    /// Validate JavaScript Tile values at the native-world boundary, then
+    /// preserve the shim's historical cross-plane representation on top of
+    /// the host query distance primitive.
+    fn tile_distance(args: &[serde_json::Value]) -> Result<serde_json::Value, rustyscript::Error> {
+        let from = distance_tile(args.first(), "from")?;
+        let to = distance_tile(args.get(1), "to")?;
+        let host_distance = api::query::chebyshev_to(from, to);
+        let distance = if host_distance == i32::MAX {
+            let planar = api::query::chebyshev_to(
+                from,
+                api::WorldTile {
+                    level: from.level,
+                    ..to
+                },
+            );
+            CROSS_PLANE_DISTANCE + planar
+        } else {
+            host_distance
+        };
+        Ok(serde_json::Value::from(distance))
+    }
+
+    fn distance_tile(
+        value: Option<&serde_json::Value>,
+        side: &str,
+    ) -> Result<api::WorldTile, rustyscript::Error> {
+        let object = value
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| {
+                rustyscript::Error::Runtime(format!(
+                    "invalid tile distance: {side} must be a Tile-like object"
+                ))
+            })?;
+        Ok(api::WorldTile {
+            x: tile_integer(object.get("x"), side, "x", 0, WORLD_COORD_MAX)?,
+            z: tile_integer(object.get("z"), side, "z", 0, WORLD_COORD_MAX)?,
+            level: match object.get("level") {
+                None | Some(serde_json::Value::Null) => 0,
+                value => tile_integer(value, side, "level", 0, TILE_LEVEL_MAX)?,
+            },
+        })
+    }
+
+    fn tile_integer(
+        value: Option<&serde_json::Value>,
+        side: &str,
+        field: &str,
+        min: i64,
+        max: i64,
+    ) -> Result<i32, rustyscript::Error> {
+        let integer = value
+            .and_then(serde_json::Value::as_i64)
+            .filter(|value| (min..=max).contains(value))
+            .ok_or_else(|| {
+                rustyscript::Error::Runtime(format!(
+                    "invalid tile distance: {side}.{field} must be an integer in {min}..={max}"
+                ))
+            })?;
+        Ok(integer as i32)
+    }
+
     /// Load `source` into `runtime` as a module and wire the global tick
     /// entry. Native sources export `tick(api)`; compat sources
     /// default-export a `defineBot` config and tick through `create()`'s
@@ -1495,6 +1560,9 @@ mod isolate {
             )
             .map_err(|e| format!("register now: {e}"))?;
         runtime
+            .register_function("__rs2b0t_tile_distance", tile_distance)
+            .map_err(|e| format!("register tile distance: {e}"))?;
+        runtime
             .register_function("__rs2b0t_withdraw_step", |args: &[serde_json::Value]| {
                 Ok(crate::bank_withdraw::step(
                     args.first().unwrap_or(&serde_json::Value::Null),
@@ -1513,6 +1581,13 @@ mod isolate {
                 },
             )
             .map_err(|e| format!("register common bank loot: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_periodic_bank", |args: &[serde_json::Value]| {
+                Ok(crate::periodic_bank::dispatch(
+                    args.first().unwrap_or(&serde_json::Value::Null),
+                ))
+            })
+            .map_err(|e| format!("register periodic bank: {e}"))?;
         runtime
             .register_function(
                 "__rs2b0t_selected_loadout",
@@ -2733,6 +2808,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                         Ok(snap) => {
                             if snap.has_hold() {
                                 host_hold = snap.hold();
+                                crate::periodic_bank::on_hold(host_hold);
                             }
                             if let Err(e) = materialize_snapshot(&mut runtime, &snap, host_hold) {
                                 let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
@@ -2982,10 +3058,17 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     }
                 }
                 IsolateCmd::ResetSession => {
+                    crate::periodic_bank::on_reset();
                     let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
                 }
-                IsolateCmd::Pause => paused = true,
-                IsolateCmd::Resume => paused = false,
+                IsolateCmd::Pause => {
+                    paused = true;
+                    crate::periodic_bank::on_pause();
+                }
+                IsolateCmd::Resume => {
+                    paused = false;
+                    crate::periodic_bank::on_resume();
+                }
                 IsolateCmd::Probe(expr, reply) => {
                     let value: Result<serde_json::Value, String> =
                         runtime.eval(expr).map_err(|e| e.to_string());
