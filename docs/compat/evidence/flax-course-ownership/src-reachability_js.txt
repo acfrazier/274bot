@@ -1,0 +1,6 @@
+file=/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-b1cff8a7/crates/script/src/shim/reachability.js
+sha256=ee4127f41dc18b3a8cdc773b962733e1b41afa8eca21319d6ef6479a711b230c
+65|    walkable(target) {
+70|        return bitAt(reach.walkable, reach, tile);
+72|    canReach(target, opts = {}) {
+84|    canStep(from, to) {

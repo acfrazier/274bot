@@ -1,0 +1,62 @@
+{
+  "flax_old": {
+    "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/FlaxPicker/FlaxPicker.ts",
+    "sha256": "e24b0d794e4bb83a0616a841999b28f036da47a48a3bd1e8825316616bbfd83a",
+    "bytes": 15552,
+    "exists": true
+  },
+  "flax_new": {
+    "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a/src/bot/scripts/FlaxPicker/FlaxPicker.ts",
+    "sha256": "e24b0d794e4bb83a0616a841999b28f036da47a48a3bd1e8825316616bbfd83a",
+    "bytes": 15552,
+    "exists": true
+  },
+  "agility_old": {
+    "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/AgilityBot/AgilityBot.ts",
+    "sha256": "dee7c8885685724b0453097a0cf6a66d36a4d081e24157f29d35c742c518028f",
+    "bytes": 8351,
+    "exists": true
+  },
+  "agility_new": {
+    "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a/src/bot/scripts/AgilityBot/AgilityBot.ts",
+    "sha256": "dee7c8885685724b0453097a0cf6a66d36a4d081e24157f29d35c742c518028f",
+    "bytes": 8351,
+    "exists": true
+  },
+  "reachability_js": {
+    "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-b1cff8a7/crates/script/src/shim/reachability.js",
+    "sha256": "ee4127f41dc18b3a8cdc773b962733e1b41afa8eca21319d6ef6479a711b230c",
+    "bytes": 3520,
+    "exists": true
+  },
+  "locs_js": {
+    "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-b1cff8a7/crates/script/src/shim/locs.js",
+    "sha256": "635ff31d9c3e2a32dfa85db27fc0399b3ff355cc6fa0fb82a17bb1a3b50b96a4",
+    "bytes": 1130,
+    "exists": true
+  },
+  "query_js": {
+    "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-b1cff8a7/crates/script/src/shim/query.js",
+    "sha256": "d6a6f544ba542a8379e917a29b766b933ce4e090b946ab9ad45adcd9c84721b8",
+    "bytes": 2630,
+    "exists": true
+  },
+  "api_query": {
+    "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-b1cff8a7/crates/api/src/query.rs",
+    "sha256": "84158080adc1a00d4ba710083f27ad43d746b1a817cdc4c0257491baf9f7f0b9",
+    "bytes": 83906,
+    "exists": true
+  },
+  "api_snapshot": {
+    "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-b1cff8a7/crates/api/src/snapshot.rs",
+    "sha256": "61e4eefc5bbd3288c81bca8472f6104da26e420dce6d3501771b471bccdfaf49",
+    "bytes": 111446,
+    "exists": true
+  },
+  "host_play": {
+    "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-b1cff8a7/crates/host-play/src/lib.rs",
+    "sha256": "2100f8cd4bfff329983729f8c5afaccd46d0299ae6bc69026bb6c26e7ec5ac6e",
+    "bytes": 430608,
+    "exists": true
+  }
+}

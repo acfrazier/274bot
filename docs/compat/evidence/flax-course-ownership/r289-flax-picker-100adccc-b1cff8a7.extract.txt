@@ -1,0 +1,87 @@
+file=/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/catalog-harness/live/r289-flax-picker-100adccc-b1cff8a7.log
+bytes=33018
+sha256=638cb640b606c03bc9b99dc3c3c330d9e462122c3994c50262e1accf0a4a8add
+lines=235
+===INTERESTING===
+3|{"phase":"identity","revision":289,"profile":"local-289 · 127.0.0.1:44594 · revision 289","cache_id":"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack","nav_sha256":"131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924","catalog_commit":"10
+4|[host-play] slot live8ut47w_0: thread up
+14|{"phase":"baseline-after-preparation","scenario":"flax_picker","account":"live8ut47w_0","observation":{"ingame":true,"scene_state":2,"player":"Live8ut47w 0","tile":[2741,3444,0],"tick":15,"items":{},"item_ids":{},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishin
+18|[script live8ut47w_0] FlaxPicker picking 'Flax' (Pick) at (2741, 3444, 0) — gate (2736, 3443, 0), bank entrance (2726, 3487, 0), stand (2725, 3493, 0)
+20|[script live8ut47w_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+25|[script live8ut47w_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+27|[script live8ut47w_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+28|[script live8ut47w_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+31|[script live8ut47w_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick" }
+34|[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+41|[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+45|[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+48|[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+52|[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+55|[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+59|[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+63|[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+66|[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+69|[script live8ut47w_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+72|[script live8ut47w_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+74|[script live8ut47w_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+77|[script live8ut47w_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+80|[script live8ut47w_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick" }
+96|[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+98|[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+101|[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+105|[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+108|[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+113|[script live8ut47w_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+114|[script live8ut47w_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+117|[script live8ut47w_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick" }
+125|[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+127|[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+129|[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+131|[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+133|[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+135|[script live8ut47w_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick" }
+186|[script live8ut47w_0] banked 28 Flax (+ any junk)
+228|[script live8ut47w_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+231|PASS: catalog_boundary_live: {"scenario":"flax_picker","runner":"Some(Evidence { scenario: \"flax_picker\", outcome: \"PASS\", predicate: \"has_item_id(1779)>=1\", ticks: 189, elapsed_ms: 111808, message: None, tile: Some([2739, 3443, 0]), inv: [InvRow { id: 1779, name: Some(\"Flax\"), count: 1 }], stat: Some(StatRow { runenergy: 60 }), chat: [ChatRow { text: \"You pick some flax.\", username: Non
+234|test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 23 filtered out; finished in 114.96s
+===TAIL===
+196|[host] slot live8ut47w_0: d_loop_us=1195 d_raster_us=0 d_observe_us=77542 max_observe_us=22070 d_paints=0 d_skips=50 d_ticks=2 window_ms=1204
+197|[host] hitch live8ut47w_0: observe_us=18078 paints=0 skips=3188 ticks=140
+198|[script live8ut47w_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+199|[host] slot live8ut47w_0: d_loop_us=1073 d_raster_us=0 d_observe_us=67164 max_observe_us=18078 d_paints=0 d_skips=50 d_ticks=2 window_ms=1176
+200|[host] hitch live8ut47w_0: observe_us=19220 paints=0 skips=3214 ticks=141
+201|[host] hitch live8ut47w_0: observe_us=17211 paints=0 skips=3239 ticks=142
+202|[host] slot live8ut47w_0: d_loop_us=955 d_raster_us=0 d_observe_us=73329 max_observe_us=19220 d_paints=0 d_skips=50 d_ticks=2 window_ms=1199
+203|[host] hitch live8ut47w_0: observe_us=17877 paints=0 skips=3264 ticks=143
+204|[script live8ut47w_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+205|[host] slot live8ut47w_0: d_loop_us=928 d_raster_us=0 d_observe_us=69451 max_observe_us=17877 d_paints=0 d_skips=50 d_ticks=2 window_ms=1193
+206|[host] hitch live8ut47w_0: observe_us=21997 paints=0 skips=3314 ticks=145
+207|[host] hitch live8ut47w_0: observe_us=17067 paints=0 skips=3339 ticks=146
+208|[host] slot live8ut47w_0: d_loop_us=975 d_raster_us=0 d_observe_us=81734 max_observe_us=21997 d_paints=0 d_skips=50 d_ticks=2 window_ms=1201
+209|[script live8ut47w_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+210|[host] hitch live8ut47w_0: observe_us=20599 paints=0 skips=3390 ticks=148
+211|[host] slot live8ut47w_0: d_loop_us=923 d_raster_us=0 d_observe_us=76037 max_observe_us=20599 d_paints=0 d_skips=50 d_ticks=2 window_ms=1196
+212|[host] hitch live8ut47w_0: observe_us=20389 paints=0 skips=3414 ticks=149
+213|[host] hitch live8ut47w_0: observe_us=18510 paints=0 skips=3440 ticks=150
+214|[script live8ut47w_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+215|[host] slot live8ut47w_0: d_loop_us=941 d_raster_us=0 d_observe_us=76980 max_observe_us=20389 d_paints=0 d_skips=50 d_ticks=2 window_ms=1184
+216|[host] hitch live8ut47w_0: observe_us=18719 paints=0 skips=3465 ticks=151
+217|[host] hitch live8ut47w_0: observe_us=17896 paints=0 skips=3491 ticks=152
+218|[host] slot live8ut47w_0: d_loop_us=854 d_raster_us=0 d_observe_us=71722 max_observe_us=18719 d_paints=0 d_skips=50 d_ticks=2 window_ms=1179
+219|[host] hitch live8ut47w_0: observe_us=20377 paints=0 skips=3516 ticks=153
+220|[script live8ut47w_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+221|[host] hitch live8ut47w_0: observe_us=17103 paints=0 skips=3541 ticks=154
+222|[host] slot live8ut47w_0: d_loop_us=816 d_raster_us=0 d_observe_us=76745 max_observe_us=20377 d_paints=0 d_skips=50 d_ticks=2 window_ms=1190
+223|[script live8ut47w_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+224|[host] slot live8ut47w_0: d_loop_us=724 d_raster_us=0 d_observe_us=60957 max_observe_us=14671 d_paints=0 d_skips=50 d_ticks=2 window_ms=1195
+225|[host] hitch live8ut47w_0: observe_us=16366 paints=0 skips=3629 ticks=159
+226|[script live8ut47w_0] interact WalkTo { x: 2741, z: 3444, level: 0 }
+227|[host] slot live8ut47w_0: d_loop_us=9852 d_raster_us=0 d_observe_us=93971 max_observe_us=16366 d_paints=0 d_skips=50 d_ticks=3 window_ms=2068
+228|[script live8ut47w_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick" }
+229|[host] slot live8ut47w_0: d_loop_us=782 d_raster_us=0 d_observe_us=60747 max_observe_us=14498 d_paints=0 d_skips=50 d_ticks=2 window_ms=1182
+230|[host] slot live8ut47w_0: d_loop_us=860 d_raster_us=0 d_observe_us=59013 max_observe_us=14136 d_paints=0 d_skips=50 d_ticks=2 window_ms=1206
+231|PASS: catalog_boundary_live: {"scenario":"flax_picker","runner":"Some(Evidence { scenario: \"flax_picker\", outcome: \"PASS\", predicate: \"has_item_id(1779)>=1\", ticks: 189, elapsed_ms: 111808, message: None, tile: Some([2739, 3443, 0]), inv: [InvRow { id: 1779, name: Some(\"Flax\"), count: 1 }], stat: Some(StatRow { runenergy: 60 }), chat: [ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"You pick some flax.\", username: None }, ChatRow { text: \"Inventory wiped.\", username: None }, ChatRow { text: \"set tutorial: to 1000\", username: None }, ChatRow { text: \"Welcome to RuneScape.\", username: None }], scene: 2 })","core":{"case":"flax_picker","baseline":{"ingame":true,"scene_state":2,"player":"Live8ut47w 0","tile":[2741,3444,0],"tick":15,"items":{},"item_ids":{},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[],"equipment_ids":{}},"latest":{"ingame":true,"scene_state":2,"player":"Live8ut47w 0","tile":[2739,3443,0],"tick":164,"items":{"Flax":1},"item_ids":{"1779":1},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":2,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[36,"You pick some flax."],[35,"You pick some flax."],[34,"You pick some flax."],[33,"You pick some flax."],[32,"You pick some flax."],[31,"You pick some flax."],[30,"You pick some flax."],[29,"You pick some flax."],[28,"You pick some flax."],[27,"You pick some flax."],[26,"You pick some flax."],[25,"You pick some flax."],[24,"You pick some flax."],[23,"You pick some flax."],[22,"You pick some flax."],[21,"You pick some flax."],[20,"You pick some flax."],[19,"You pick some flax."],[18,"You pick some flax."],[17,"You pick some flax."],[16,"You pick some flax."],[15,"You pick some flax."],[14,"You pick some flax."],[13,"You pick some flax."],[12,"You pick some flax."],[11,"You pick some flax."],[10,"You pick some flax."],[9,"You pick some flax."],[8,"You pick some flax."],[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[],"equipment_ids":{}},"max_items":{"Flax":28},"max_xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"saw_bury_chat":false,"post_start_observations":3648,"bone_bank_cycle":{"first_batch_buried":false,"opened":null,"withdrawn":null,"buried_after_withdrawal":false},"bank_fletcher_cycle":{"first_pack_created":false,"deposited":null,"withdrawn":null,"crafted_after_withdrawal":false},"bank_fletcher_string_cycle":{"initial_pairs_strung":false,"deposited":null,"withdrawn":null,"strung_after_withdrawal":false},"bank_fletcher_cut_string_cycle":{"cut_pair_created":false,"deposited":null,"withdrawn":null,"string_pair_created":false},"alcher_generated_custom_cycle":{"withdrawn":null,"consumed":false},"dart_fletcher_cycle":{"first":null,"further":false,"wrong_tier":false},"herb_cleaner_cycle":{"first_pack":false,"deposited":null,"withdrawn":null,"cleaned_after_withdrawal":false,"filter_violated":false},"gem_cutter_cycle":{"first_pack":false,"deposited":null,"withdrawn":null,"cut_after_withdrawal":false,"filter_violated":false},"door_opener_cycle":{"selected":null,"opened":false},"gnome_course_cycle":{"log":null,"ground_return":null,"pipe":null,"second_lap":false},"flax_picker_cycle":{"first_pack":true,"deposited":{"ingame":true,"scene_state":2,"player":"Live8ut47w 0","tile":[2721,3493,0],"tick":130,"items":{},"item_ids":{},"bank":{"Flax":28},"bank_ids":{"1779":28},"bank_open":true,"bank_loaded":true,"bank_generation":1,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[35,"You pick some flax."],[34,"You pick some flax."],[33,"You pick some flax."],[32,"You pick some flax."],[31,"You pick some flax."],[30,"You pick some flax."],[29,"You pick some flax."],[28,"You pick some flax."],[27,"You pick some flax."],[26,"You pick some flax."],[25,"You pick some flax."],[24,"You pick some flax."],[23,"You pick some flax."],[22,"You pick some flax."],[21,"You pick some flax."],[20,"You pick some flax."],[19,"You pick some flax."],[18,"You pick some flax."],[17,"You pick some flax."],[16,"You pick some flax."],[15,"You pick some flax."],[14,"You pick some flax."],[13,"You pick some flax."],[12,"You pick some flax."],[11,"You pick some flax."],[10,"You pick some flax."],[9,"You pick some flax."],[8,"You pick some flax."],[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[],"equipment_ids":{}},"returned":true,"further":true},"superheater_cycle":{"first_bars":false,"deposited":null,"withdrawn":null,"produced_after_withdrawal":false,"wrong_product":false,"wrong_staff":false},"chicken_killer_bank_cycle":{"combat_loot":false,"deposited":null,"returned":false,"further":false},"vial_filler_cycle":{"filled":null,"deposited":null,"withdrawn":null,"returned":false,"further":false},"potion_maker_cycle":{"unfinished":null,"finished":null,"deposited":null,"withdrawn":null,"further":false,"wrong_product":false,"filter_violated":false},"ordered_first_exhausted":false}}
+232|test catalog_boundary_live ... ok
+233|
+234|test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 23 filtered out; finished in 114.96s
+235|

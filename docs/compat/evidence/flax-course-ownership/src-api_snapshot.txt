@@ -1,0 +1,40 @@
+file=/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-b1cff8a7/crates/api/src/snapshot.rs
+sha256=61e4eefc5bbd3288c81bca8472f6104da26e420dce6d3501771b471bccdfaf49
+90|    pub distance: i32,
+116|    pub distance: i32,
+145|        distance: i32,
+165|            distance,
+198|/// stats. `distance` is always 0.
+448|pub struct LocView {
+456|    pub distance: i32,
+481|    pub distance: i32,
+574|    loc: Vec<LocView>,
+601|    /// Local-player tile the cached `LocView.distance` scalars were last
+605|    loc_distance_tile: Option<(i32, i32)>,
+725|            loc_distance_tile: None,
+844|            Family::Loc => self.rebuild_loc(client),
+1049|    pub fn locs(&self) -> &[LocView] {
+1055|    pub fn nearest_use_quickly_booth(&self) -> Option<&LocView> {
+1322|                    0, // the local player's distance to itself
+1340|                let distance = local_tile
+1349|                        distance,
+1359|        self.refresh_loc_distances(client);
+1363|    /// Rewrite cached loc Chebyshev distances when the local player tile
+1365|    fn refresh_loc_distances(&mut self, client: &Client) {
+1367|        if origin == self.loc_distance_tile {
+1370|        self.loc_distance_tile = origin;
+1375|            loc.distance = chebyshev(loc.tile.x, loc.tile.z, lx, lz);
+1946|    fn rebuild_loc(&mut self, client: &Client) -> bool {
+1949|        let static_gen = client.world.static_loc_generation();
+2018|        self.loc_distance_tile = local_tile;
+2045|                let distance = local_tile
+2054|                        distance,
+2125|                let distance = local_tile
+2133|                    distance,
+2202|    pub fn locs(&self) -> &[LocView] {
+2504|    distance: i32,
+2513|        distance,
+2530|/// One `LocView` from a placed layer: decode the loc id and the
+2545|) -> LocView {
+2594|    LocView {
+2602|        distance: local_tile
