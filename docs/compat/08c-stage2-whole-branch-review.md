@@ -20,9 +20,10 @@ fixture139/native144 files were not inspected as part of this review.
 
 ## Verdict
 
-**SOURCE REVIEW COMPLETE. APPROVAL WITHHELD** until root
-`docs/compat/evidence/stage-2-preflight-324/validation-ready.json`
-exists after the df2 gear/mage cells and Flax mapping are recorded.
+**SOURCE REVIEW COMPLETE. APPROVAL WITHHELD.** Root has not written
+`docs/compat/evidence/stage-2-preflight-324/validation-ready.json`.
+The operator now requires headed LIVE for remaining cells; orch
+withholds that file until then.
 
 No material host/API/script/frontend/scenario correctness, 274
 preservation, identity, protocol, ownership, or accidental
@@ -169,10 +170,22 @@ and Green Repeat-wear remain recorded in `06an`. N1/N32 Thiever Auto
 is historical qualified behavior, not this milestone's performance
 comparison.
 
-In-progress root cells on binary `fe7a3223…` / host `324d7b594` (not
-df2): both 100adccc mage cells FAIL as above; Flax 274/289 100adccc
-process exit 0. Orch reports three Flax PASS with last 274-new still
-running. These are not validation-ready and were not used to approve.
+Headless root cells were read from logs, not inferred from process
+exit. They are **not** validation-ready and were not used to approve.
+
+324 binary `fe7a3223…` / host `324d7b594`: both 100adccc mage cells
+FAIL at step 9 `driver rejected the send` / `no Start baseline` after
+Repeat wear (staff 1387 already gone). Four Flax reach cells PASS with
+chat `You pick some flax.` and `has_item_id(1779)>=1`
+(274/289 × 100adccc/8e7d965b).
+
+df2 binary `76cc4040…` / host `df2ba846a`: four mage cells PASS with
+Start, `autocast armed: Fire Strike`, Guard attack, and
+`stat_xp_gain(6)>=1` (magic). Two 100adccc Green Dragon cells FAIL
+after Start on `stat_xp_gain(2)>=1` within 150 ticks at Lumbridge
+tiles, not wear refusal. That remaining Green miss stays fixture139;
+df2 only removed the Repeat-wear refusal. Harvest ledger 457 is
+orch-owned. Future cells are headed native UI.
 
 ## Residuals (non-blocking for source; not silent exclusions)
 
@@ -191,9 +204,10 @@ running. These are not validation-ready and were not used to approve.
 ## Gate for approval
 
 Read `evidence/stage-2-preflight-324/validation-ready.json` only after
-root writes it. Require: exact df2 (or a later code-identical pin)
-mapped to fresh mage/gear cells that show Start and script/host-caused
-progress, not process exit; Flax reach cells mapped with original 324
-mage failures retained; `ready_for_final_review` true;
-`approved_for_publication` false. Native regression remains a blocker.
-Incomplete later cards are not automatic pass or reject.
+root writes it following headed LIVE. Require: exact df2 (or a later
+code-identical pin) mapped to mage/gear cells that show Start and
+script/host-caused progress, not process exit; Flax reach cells mapped
+with original 324 mage failures retained; `ready_for_final_review`
+true; `approved_for_publication` false. Native regression remains a
+blocker. Incomplete later cards, including Green Strength-XP miss
+after Start, are not automatic pass or reject.
