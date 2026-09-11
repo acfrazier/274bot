@@ -1,0 +1,22 @@
+{
+  "task": "t_51452e47",
+  "brief": "docs/compat/briefs/28-periodic-banking.md",
+  "brief_sha256": "691682da113a42a24f5dd532c17de21873a3e475e08a458a93d99d5e6e59fd71",
+  "branch": "codex/rs2b0t-multirevision",
+  "client": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "isolated_build": true,
+  "cargo_target_dir": "target-t_51452e47",
+  "base_head_at_verification": "cc57adca72783f8e718163ab877bb6617dc67090",
+  "tests": {
+    "script_lib_periodic_bank": "6 passed",
+    "script_periodic_bank": "8 passed",
+    "script_gold_stubs": "12 passed, 1 ignored",
+    "clippy_script": "pass"
+  },
+  "limits": [
+    "No live client run.",
+    "Queued open/deposit/walk is not a completed bank trip.",
+    "Foreign 120s return timeout is not adopted; host walk bound remains 60000 ms.",
+    "crates/script/src/load.rs is a hotspot (periodic-bank register plus Pause/hold/reset hooks only)."
+  ]
+}
