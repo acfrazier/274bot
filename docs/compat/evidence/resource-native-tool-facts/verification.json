@@ -1,0 +1,71 @@
+{
+  "task": "t_afe0a5a1",
+  "brief": "docs/compat/briefs/105-resource-native-tool-facts.md",
+  "brief_sha256": "44f48d4835ac26cbedfda34715edddab4ea02b634f67e42a3db51f5b2319d385",
+  "design": "docs/compat/04z-resource-adapter-boundaries.md",
+  "design_sha256": "fbf5693a846e2eee43dba50b2807ac950dd8d4bf4f819090043d7d3384ae156a",
+  "source_commit": "d854321b8012b391866dc619d74f0b60ac380a15",
+  "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "isolated_build": true,
+  "export": ".superpowers/review-exports/resource-native-tool-facts-t_afe0a5a1",
+  "cargo_target_dir": ".superpowers/review-exports/resource-native-tool-facts-t_afe0a5a1-target",
+  "manifest": ".superpowers/review-exports/resource-native-tool-facts-t_afe0a5a1-manifest.json",
+  "files": 3738,
+  "host_files": 3444,
+  "client_files": 294,
+  "live": false,
+  "overlay": [
+    "crates/api/src/gather_tools.rs",
+    "crates/api/src/lib.rs",
+    "crates/script/src/shim/mod.rs",
+    "crates/script/src/shim/tools.js",
+    "crates/script/src/shim/traversal.js",
+    "crates/script/tests/resource_tool_facts.rs"
+  ],
+  "overlay_sha256": {
+    "crates/api/src/gather_tools.rs": "2a046d20f050032e19093d5d1a551c726ca40e845431b3442a09a54d821c2647",
+    "crates/api/src/lib.rs": "66b52b157f0650e904d85fcebdc3cd4194bcadc167c19990a30684e244ff56e3",
+    "crates/script/src/shim/mod.rs": "3abe3a49c807ea14d78ee3b949aa3c02d652ff8b5313684ec1a345014e8e44b5",
+    "crates/script/src/shim/tools.js": "aa3f2f95aa56474c2c4e1f51e3321a4f80938b318f05fdfa18bf8f6c0e3029af",
+    "crates/script/src/shim/traversal.js": "c3bb292ffcc01cda9b8cb68bd9c6e3fe89d758aa698d3f46759f53b6e57527f3",
+    "crates/script/tests/resource_tool_facts.rs": "0432e628a61deedb64a886e52f05357507a12a4998f0e13444ba5c0a60067f6a"
+  },
+  "commands": [
+    {
+      "name": "api-gather-tools",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/resource-native-tool-facts-t_afe0a5a1",
+      "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/resource-native-tool-facts-t_afe0a5a1-target",
+      "cmd": "cargo test --locked --offline -p api gather_tools -- --test-threads=1",
+      "exit": 0,
+      "result": "4 passed"
+    },
+    {
+      "name": "script-resource-tool-facts",
+      "cmd": "cargo test --locked --offline -p script --test resource_tool_facts -- --test-threads=1",
+      "exit": 0,
+      "result": "4 passed"
+    },
+    {
+      "name": "api-clippy-lib",
+      "cmd": "cargo clippy --locked --offline --no-deps -p api --lib -- -D warnings",
+      "exit": 0
+    },
+    {
+      "name": "script-clippy-resource-tool-facts",
+      "cmd": "cargo clippy --locked --offline --no-deps -p script --test resource_tool_facts -- -D warnings",
+      "exit": 0
+    },
+    {
+      "name": "fmt-check",
+      "cmd": "rustfmt --edition 2021 --check crates/api/src/gather_tools.rs crates/api/src/lib.rs crates/script/tests/resource_tool_facts.rs",
+      "exit": 0
+    }
+  ],
+  "notes": [
+    "content_json posts gather_tools after baker_stall. Composition only.",
+    "Traversal.preload is void no-op; remaining/requestRepath stay not impl.",
+    "Unknown canWieldTool returns false. Available callback is exclusive.",
+    "Not LIVE. Root owns Gnome/Coal LIVE, Seers haul, Make-X, and cache cleanup.",
+    "Empty-target cache: .superpowers/review-exports/resource-native-tool-facts-t_afe0a5a1-target (4.3G)."
+  ]
+}
