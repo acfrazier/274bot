@@ -77,6 +77,8 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         shop_open: false,
         shop_stock: &[],
         reach: script::isolate_fb::ReachViewInput::UNAVAILABLE,
+        attacked_by_player: false,
+        widgets: &[],
     }
 }
 

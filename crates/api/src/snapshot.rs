@@ -2467,6 +2467,14 @@ fn entity_world_tile(entity: &ClientEntity, base: (i32, i32), level: i32) -> Wor
     }
 }
 
+/// The engine encodes a player face target as slot + 32768.
+pub const PLAYER_FACE_BASE: i32 = 32768;
+
+/// Local `Game.attackedByPlayer`: true only when `face_entity` is a player.
+pub fn attacked_by_player(face_entity: i32) -> bool {
+    face_entity >= PLAYER_FACE_BASE
+}
+
 /// Resolve `face_entity` with the client's own scheme (`entity_face` in
 /// `client.rs`): slots below 32768 are NPC table indexes, at or above are
 /// player slots offset by 32768. The player slot stays the raw server
@@ -2476,7 +2484,7 @@ fn decode_target(face_entity: i32) -> Option<ActorTargetView> {
     if face_entity == -1 {
         return None;
     }
-    if face_entity < 32768 {
+    if face_entity < PLAYER_FACE_BASE {
         Some(ActorTargetView {
             kind: ActorKind::Npc,
             index: face_entity as usize,
@@ -2484,7 +2492,7 @@ fn decode_target(face_entity: i32) -> Option<ActorTargetView> {
     } else {
         Some(ActorTargetView {
             kind: ActorKind::Player,
-            index: (face_entity - 32768) as usize,
+            index: (face_entity - PLAYER_FACE_BASE) as usize,
         })
     }
 }

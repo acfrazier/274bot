@@ -65,8 +65,23 @@ export function requiredThieving(target) {
 
 export const HOSTILE_NAMES = [];
 
-export function isHostileAttacker(_c, _maxDistance) {
-    throw notImpl('isHostileAttacker');
+function callOrValue(c, key) {
+    if (c == null) return undefined;
+    const value = c[key];
+    return typeof value === 'function' ? value.call(c) : value;
+}
+
+export function isHostileAttacker(c, maxDistance) {
+    const distance = callOrValue(c, 'distance');
+    const actions = callOrValue(c, 'actions');
+    return globalThis.rustyscript.functions.__rs2b0t_is_hostile_attacker({
+        name: c == null ? null : c.name,
+        inCombat: !!callOrValue(c, 'inCombat'),
+        targetsAnotherPlayer: !!callOrValue(c, 'targetsAnotherPlayer'),
+        distance: typeof distance === 'number' && Number.isFinite(distance) ? distance : null,
+        actions: Array.isArray(actions) ? actions : [],
+        maxDistance,
+    });
 }
 
 export function chooseTarget(candidatesNearestFirst, reachable) {

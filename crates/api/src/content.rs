@@ -218,6 +218,29 @@ pub fn matches_common_bank_loot(name: &str, id: i32) -> bool {
                 .any(|part| name.to_ascii_lowercase().contains(part)))
 }
 
+/// Frozen Fight/Flee attacker names. Exact display-name match only.
+pub const HOSTILE_ATTACKER_NAMES: &[&str] = &["Guard", "Knight of Ardougne", "Paladin", "Hero"];
+
+/// Exact frozen `isHostileAttacker` facts: named hostile, in combat, not
+/// targeting another player, within `max_distance`, and offering Attack.
+pub fn is_hostile_attacker(
+    name: Option<&str>,
+    in_combat: bool,
+    targets_another_player: bool,
+    distance: i32,
+    actions: &[&str],
+    max_distance: i32,
+) -> bool {
+    let Some(name) = name else {
+        return false;
+    };
+    HOSTILE_ATTACKER_NAMES.contains(&name)
+        && in_combat
+        && !targets_another_player
+        && distance <= max_distance
+        && actions.contains(&"Attack")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,5 +302,91 @@ mod tests {
                 "kebab",
             ]
         );
+    }
+
+    #[test]
+    fn hostile_attacker_requires_every_frozen_fact() {
+        let attack = ["Attack"];
+        assert!(is_hostile_attacker(
+            Some("Guard"),
+            true,
+            false,
+            1,
+            &attack,
+            8
+        ));
+        assert!(is_hostile_attacker(
+            Some("Knight of Ardougne"),
+            true,
+            false,
+            8,
+            &attack,
+            8
+        ));
+        assert!(is_hostile_attacker(
+            Some("Paladin"),
+            true,
+            false,
+            0,
+            &attack,
+            8
+        ));
+        assert!(is_hostile_attacker(
+            Some("Hero"),
+            true,
+            false,
+            4,
+            &attack,
+            8
+        ));
+        assert!(!is_hostile_attacker(
+            Some("guard"),
+            true,
+            false,
+            1,
+            &attack,
+            8
+        ));
+        assert!(!is_hostile_attacker(
+            Some("Man"),
+            true,
+            false,
+            1,
+            &attack,
+            8
+        ));
+        assert!(!is_hostile_attacker(None, true, false, 1, &attack, 8));
+        assert!(!is_hostile_attacker(
+            Some("Guard"),
+            false,
+            false,
+            1,
+            &attack,
+            8
+        ));
+        assert!(!is_hostile_attacker(
+            Some("Guard"),
+            true,
+            true,
+            1,
+            &attack,
+            8
+        ));
+        assert!(!is_hostile_attacker(
+            Some("Guard"),
+            true,
+            false,
+            9,
+            &attack,
+            8
+        ));
+        assert!(!is_hostile_attacker(
+            Some("Guard"),
+            true,
+            false,
+            1,
+            &["Talk-to"],
+            8
+        ));
     }
 }

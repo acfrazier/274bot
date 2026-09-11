@@ -638,6 +638,20 @@ pub(crate) fn content_json(game_data: Option<&api::game_data::SelectedGameData>)
                 })
             })
         }),
+        "duel": game_data.and_then(|data| {
+            data.duel_controls().map(|controls| {
+                serde_json::json!({
+                    "select_modal": controls.select_modal,
+                    "confirm_modal": controls.confirm_modal,
+                    "win_modal": controls.win_modal,
+                    "select_accept": controls.select_accept,
+                    "confirm_accept": controls.confirm_accept,
+                    "select_partner": controls.select_partner,
+                    "select_status": controls.select_status,
+                    "confirm_status": controls.confirm_status,
+                })
+            })
+        }),
     })
     .to_string()
 }

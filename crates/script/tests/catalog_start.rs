@@ -97,6 +97,8 @@ fn empty_snap() -> script::isolate_fb::SnapshotInput<'static> {
         shop_open: false,
         shop_stock: &[],
         reach: script::isolate_fb::ReachViewInput::UNAVAILABLE,
+        attacked_by_player: false,
+        widgets: &[],
     }
 }
 
