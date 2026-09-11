@@ -1903,19 +1903,26 @@ fn dispatch_script_interact(
                 z,
                 level,
                 index,
+                source_item_id,
+                source_item_slot,
+                target_item_id,
+                target_item_slot,
             } => {
-                let wanted = name.to_lowercase();
-                let item = snapshot.inventory().iter().find(|it| {
-                    obj_names
-                        .and_then(|n| n.name(it.def.id))
-                        .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
-                });
+                let item = resolve_inventory_item(
+                    snapshot,
+                    obj_names,
+                    Some(&name),
+                    source_item_id,
+                    source_item_slot,
+                );
                 if let Some(item) = item {
                     if let Some(target) = resolve_op_target(
                         snapshot,
                         obj_names,
                         &kind,
                         target_name.as_deref(),
+                        target_item_id,
+                        target_item_slot,
                         x,
                         z,
                         level,
@@ -1941,6 +1948,8 @@ fn dispatch_script_interact(
                         obj_names,
                         &kind,
                         target_name.as_deref(),
+                        None,
+                        None,
                         x,
                         z,
                         level,
@@ -2048,6 +2057,8 @@ fn resolve_op_target<'a>(
     obj_names: Option<&api::obj_names::ObjNames>,
     kind: &str,
     target_name: Option<&str>,
+    target_item_id: Option<i32>,
+    target_item_slot: Option<i32>,
     x: i32,
     z: i32,
     level: i32,
@@ -2105,19 +2116,37 @@ fn resolve_op_target<'a>(
                 })
                 .map(OpTarget::Player)
         }
-        "inv" | "held" => {
-            let wanted = target_name.map(|n| n.to_lowercase());
-            snapshot
-                .inventory()
-                .iter()
-                .find(|it| {
-                    wanted.as_ref().is_some_and(|w| {
-                        obj_names
-                            .and_then(|n| n.name(it.def.id))
-                            .is_some_and(|n| n.eq_ignore_ascii_case(w))
-                    })
-                })
-                .map(OpTarget::Item)
+        "inv" | "held" => resolve_inventory_item(
+            snapshot,
+            obj_names,
+            target_name,
+            target_item_id,
+            target_item_slot,
+        )
+        .map(OpTarget::Item),
+        _ => None,
+    }
+}
+
+fn resolve_inventory_item<'a>(
+    snapshot: &'a GameSnapshot,
+    obj_names: Option<&api::obj_names::ObjNames>,
+    name: Option<&str>,
+    item_id: Option<i32>,
+    item_slot: Option<i32>,
+) -> Option<&'a api::snapshot::ItemView> {
+    match (item_id, item_slot) {
+        (Some(id), Some(slot)) => snapshot
+            .inventory()
+            .iter()
+            .find(|item| item.def.id == id && item.slot == slot),
+        (None, None) => {
+            let wanted = name?.to_lowercase();
+            snapshot.inventory().iter().find(|item| {
+                obj_names
+                    .and_then(|names| names.name(item.def.id))
+                    .is_some_and(|actual| actual.eq_ignore_ascii_case(&wanted))
+            })
         }
         _ => None,
     }
@@ -2353,6 +2382,7 @@ fn with_script_snapshot_input<R>(
                         noted: false,
                         cert: posted_cert_id(obj_names, *id),
                         component_id: -1,
+                        slot: -1,
                     })
                     .collect()
             })
@@ -2381,6 +2411,7 @@ fn with_script_snapshot_input<R>(
                     noted: it.def.noted,
                     cert: posted_cert(obj_names, &it.def),
                     component_id: -1,
+                    slot: it.slot,
                 })
                 .collect()
         }
@@ -2396,6 +2427,7 @@ fn with_script_snapshot_input<R>(
                     noted: false,
                     cert: posted_cert_id(obj_names, *id),
                     component_id: -1,
+                    slot: -1,
                 })
                 .collect()
         })
@@ -2438,6 +2470,7 @@ fn with_script_snapshot_input<R>(
                 noted: it.def.noted,
                 cert: posted_cert(obj_names, &it.def),
                 component_id: -1,
+                slot: it.slot,
             })
             .collect()
     } else {
@@ -2469,6 +2502,7 @@ fn with_script_snapshot_input<R>(
                 noted: it.def.noted,
                 cert: posted_cert(obj_names, &it.def),
                 component_id: -1,
+                slot: it.slot,
             })
             .collect()
     } else {
@@ -2675,6 +2709,7 @@ fn with_script_snapshot_input<R>(
                 noted: it.def.noted,
                 cert: posted_cert(obj_names, &it.def),
                 component_id: -1,
+                slot: it.slot,
             })
             .collect()
     } else {
@@ -2708,6 +2743,7 @@ fn with_script_snapshot_input<R>(
                 noted: it.def.noted,
                 cert: posted_cert(obj_names, &it.def),
                 component_id: it.component_id,
+                slot: it.slot,
             })
             .collect()
     } else {
@@ -2741,6 +2777,7 @@ fn with_script_snapshot_input<R>(
                 noted: it.def.noted,
                 cert: posted_cert(obj_names, &it.def),
                 component_id: it.component_id,
+                slot: it.slot,
             })
             .collect()
     } else {
@@ -2774,6 +2811,7 @@ fn with_script_snapshot_input<R>(
                 noted: it.def.noted,
                 cert: posted_cert(obj_names, &it.def),
                 component_id: it.component_id,
+                slot: it.slot,
             })
             .collect()
     } else {
@@ -2807,6 +2845,7 @@ fn with_script_snapshot_input<R>(
                 noted: it.def.noted,
                 cert: posted_cert(obj_names, &it.def),
                 component_id: it.component_id,
+                slot: it.slot,
             })
             .collect()
     } else {
@@ -8184,6 +8223,129 @@ export default class T extends LoopingBot {
         assert_eq!(
             c.out.pos, before,
             "a label no held op resolves and an unknown name send nothing"
+        );
+    }
+
+    #[test]
+    fn dispatch_use_on_honors_exact_inventory_identity_and_rejects_stale_slots() {
+        use client::config::ObjType;
+
+        let mut c = bank_fetch_client();
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            cache.objs.resize(1779, ObjType::default());
+            for (id, name) in [
+                (60, "Willow shortbow"),
+                (849, "Willow shortbow"),
+                (1777, "Bow string"),
+                (1778, "Bow string"),
+            ] {
+                cache.objs[id].id = id as i32;
+                cache.objs[id].name = name.into();
+            }
+        }
+        c.set_iface_mut(
+            500,
+            IfTypeMut {
+                // Stored obj ids are real ids + 1. The selected rows sit
+                // after earlier same-name decoys and two empty slots.
+                link_obj_type: Some(vec![850, 1778, 0, 0, 61, 0, 1779]),
+                link_obj_number: Some(vec![1, 1, 0, 0, 1, 0, 1]),
+                ..Default::default()
+            },
+        );
+        c.bump_gens(ServerProt::UPDATE_INV_FULL);
+
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+        assert_eq!(
+            snap.inventory()
+                .iter()
+                .map(|item| (item.def.id, item.slot))
+                .collect::<Vec<_>>(),
+            vec![(849, 0), (1777, 1), (60, 4), (1778, 6)]
+        );
+        let (navs, world) = empty_nav();
+        let request = |source_item_id, source_item_slot, target_item_id, target_item_slot| {
+            script::shim::InteractReq::UseOn {
+                name: "Willow shortbow".into(),
+                kind: "inv".into(),
+                target_name: Some("Bow string".into()),
+                x: 0,
+                z: 0,
+                level: 0,
+                index: None,
+                source_item_id,
+                source_item_slot,
+                target_item_id,
+                target_item_slot,
+            }
+        };
+
+        let mut rec = GuardRec::default();
+        assert!(dispatch_script_interact(
+            &mut rec,
+            &snap,
+            Some(&names),
+            Some((3205, 3205, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![request(Some(60), Some(4), Some(1778), Some(6))],
+        ));
+        assert_eq!(
+            rec.menus,
+            vec![
+                (0, MiniMenuAction::USEHELD_START, 60, 4, 500),
+                (0, MiniMenuAction::USEHELD_ONHELD, 1778, 6, 500),
+            ],
+            "selected ids and slots beat earlier same-name rows"
+        );
+
+        for stale in [
+            request(Some(60), Some(0), Some(1778), Some(6)),
+            request(Some(60), Some(4), Some(1778), Some(1)),
+            request(Some(60), None, Some(1778), Some(6)),
+        ] {
+            let mut rec = GuardRec::default();
+            assert!(!dispatch_script_interact(
+                &mut rec,
+                &snap,
+                Some(&names),
+                Some((3205, 3205, 0)),
+                &navs,
+                &world,
+                None,
+                "alice",
+                vec![stale],
+            ));
+            assert!(
+                rec.menus.is_empty(),
+                "stale or partial identity sends nothing"
+            );
+        }
+
+        let mut legacy = GuardRec::default();
+        assert!(dispatch_script_interact(
+            &mut legacy,
+            &snap,
+            Some(&names),
+            Some((3205, 3205, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![request(None, None, None, None)],
+        ));
+        assert_eq!(
+            legacy.menus,
+            vec![
+                (0, MiniMenuAction::USEHELD_START, 849, 0, 500),
+                (0, MiniMenuAction::USEHELD_ONHELD, 1777, 1, 500),
+            ],
+            "legacy name-only requests retain first-name behavior"
         );
     }
 

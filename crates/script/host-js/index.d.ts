@@ -18,6 +18,8 @@ export interface ItemRow {
   noted: boolean;
   cert: number;
   component_id: number;
+  /** Container slot when the host has exact item identity. */
+  slot?: number;
 }
 
 export interface StatRow {
@@ -238,7 +240,7 @@ export type InteractReq =
   | { op: 'loc'; x: number; z: number; level: number; action: string}
   | { op: 'obj'; x: number; z: number; level: number; name?: string | null; action: string}
   | { op: 'player'; name: string; action: string}
-  | { op: 'use-on'; name: string; kind: string; target_name?: string | null; x: number; z: number; level: number; index?: number | null}
+  | { op: 'use-on'; name: string; kind: string; target_name?: string | null; x: number; z: number; level: number; index?: number | null; source_item_id?: number | null; source_item_slot?: number | null; target_item_id?: number | null; target_item_slot?: number | null}
   | { op: 'use-widget-on'; component_id: number; kind: string; target_name?: string | null; x: number; z: number; level: number; index?: number | null}
   | { op: 'continue'}
   | { op: 'answer'; option: number}

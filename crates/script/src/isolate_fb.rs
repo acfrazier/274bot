@@ -52,7 +52,7 @@ const VT_TILE_X: VOffsetT = 4;
 const VT_TILE_Z: VOffsetT = 6;
 const VT_TILE_LEVEL: VOffsetT = 8;
 
-// Row: { name: string, count: int, id, ops, noted, cert }
+// Row: { name: string, count: int, id, ops, noted, cert, component_id, slot }
 const VT_ROW_NAME: VOffsetT = 4;
 const VT_ROW_COUNT: VOffsetT = 6;
 const VT_ROW_ID: VOffsetT = 8;
@@ -60,6 +60,7 @@ const VT_ROW_OPS: VOffsetT = 10;
 const VT_ROW_NOTED: VOffsetT = 12;
 const VT_ROW_CERT: VOffsetT = 14;
 const VT_ROW_COMPONENT: VOffsetT = 16;
+const VT_ROW_SLOT: VOffsetT = 18;
 
 // Stat: { index, name, xp, base, effective }
 const VT_STAT_INDEX: VOffsetT = 4;
@@ -203,7 +204,8 @@ const VT_VARP_INDEX: VOffsetT = 4;
 const VT_VARP_VALUE: VOffsetT = 6;
 
 // Interact: { op, x, z, level, kind, name, stand_op, choose, action,
-//             index, component_id, bank_generation, bank_item_id, lands_as_id }
+//             index, component_id, bank_generation, bank_item_id, lands_as_id,
+//             source_item_id, source_item_slot, target_item_id, target_item_slot }
 const VT_IN_OP: VOffsetT = 4;
 const VT_IN_X: VOffsetT = 6;
 const VT_IN_Z: VOffsetT = 8;
@@ -218,6 +220,10 @@ const VT_IN_COMPONENT_ID: VOffsetT = 24;
 const VT_IN_BANK_GENERATION: VOffsetT = 26;
 const VT_IN_BANK_ITEM_ID: VOffsetT = 28;
 const VT_IN_LANDS_AS_ID: VOffsetT = 30;
+const VT_IN_SOURCE_ITEM_ID: VOffsetT = 32;
+const VT_IN_SOURCE_ITEM_SLOT: VOffsetT = 34;
+const VT_IN_TARGET_ITEM_ID: VOffsetT = 36;
+const VT_IN_TARGET_ITEM_SLOT: VOffsetT = 38;
 
 // InteractBatch: { reqs: [Interact] }
 const VT_REQS: VOffsetT = 4;
@@ -285,6 +291,7 @@ pub struct ItemRowInput<'a> {
     pub noted: bool,
     pub cert: i32,
     pub component_id: i32,
+    pub slot: i32,
 }
 
 impl<'a> ItemRowInput<'a> {
@@ -297,6 +304,7 @@ impl<'a> ItemRowInput<'a> {
             noted: false,
             cert: -1,
             component_id: -1,
+            slot: -1,
         }
     }
 }
@@ -538,6 +546,12 @@ impl RowReader<'_> {
     pub fn component_id(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_ROW_COMPONENT, None) }.unwrap_or(-1)
     }
+    pub fn has_slot(&self) -> bool {
+        unsafe { self.tab.get::<i32>(VT_ROW_SLOT, None).is_some() }
+    }
+    pub fn slot(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ROW_SLOT, None) }.unwrap_or(-1)
+    }
 }
 
 impl Verifiable for RowReader<'_> {
@@ -552,6 +566,7 @@ impl Verifiable for RowReader<'_> {
             .visit_field::<bool>("noted", VT_ROW_NOTED, false)?
             .visit_field::<i32>("cert", VT_ROW_CERT, false)?
             .visit_field::<i32>("component_id", VT_ROW_COMPONENT, false)?
+            .visit_field::<i32>("slot", VT_ROW_SLOT, false)?
             .finish();
         Ok(())
     }
@@ -1463,6 +1478,7 @@ pub struct ItemRowFp {
     pub noted: bool,
     pub cert: i32,
     pub component_id: i32,
+    pub slot: i32,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -1579,6 +1595,7 @@ impl SnapshotFingerprint {
                 noted: r.noted,
                 cert: r.cert,
                 component_id: r.component_id,
+                slot: r.slot,
             }
         }
         fn entity_fp(e: &SceneEntityInput<'_>) -> SceneEntityFp {
@@ -2539,6 +2556,9 @@ fn row_off<'b>(b: &mut FlatBufferBuilder<'b>, r: &ItemRowInput<'_>) -> WIPOffset
     b.push_slot_always(VT_ROW_NOTED, r.noted);
     b.push_slot_always(VT_ROW_CERT, r.cert);
     b.push_slot_always(VT_ROW_COMPONENT, r.component_id);
+    if r.slot >= 0 {
+        b.push_slot_always(VT_ROW_SLOT, r.slot);
+    }
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -3115,6 +3135,18 @@ impl InteractReader<'_> {
     pub fn lands_as_id(&self) -> Option<i32> {
         unsafe { self.tab.get::<i32>(VT_IN_LANDS_AS_ID, None) }
     }
+    pub fn source_item_id(&self) -> Option<i32> {
+        unsafe { self.tab.get::<i32>(VT_IN_SOURCE_ITEM_ID, None) }
+    }
+    pub fn source_item_slot(&self) -> Option<i32> {
+        unsafe { self.tab.get::<i32>(VT_IN_SOURCE_ITEM_SLOT, None) }
+    }
+    pub fn target_item_id(&self) -> Option<i32> {
+        unsafe { self.tab.get::<i32>(VT_IN_TARGET_ITEM_ID, None) }
+    }
+    pub fn target_item_slot(&self) -> Option<i32> {
+        unsafe { self.tab.get::<i32>(VT_IN_TARGET_ITEM_SLOT, None) }
+    }
 }
 
 impl Verifiable for InteractReader<'_> {
@@ -3134,6 +3166,10 @@ impl Verifiable for InteractReader<'_> {
             .visit_field::<u64>("bank_generation", VT_IN_BANK_GENERATION, false)?
             .visit_field::<i32>("bank_item_id", VT_IN_BANK_ITEM_ID, false)?
             .visit_field::<i32>("lands_as_id", VT_IN_LANDS_AS_ID, false)?
+            .visit_field::<i32>("source_item_id", VT_IN_SOURCE_ITEM_ID, false)?
+            .visit_field::<i32>("source_item_slot", VT_IN_SOURCE_ITEM_SLOT, false)?
+            .visit_field::<i32>("target_item_id", VT_IN_TARGET_ITEM_ID, false)?
+            .visit_field::<i32>("target_item_slot", VT_IN_TARGET_ITEM_SLOT, false)?
             .finish();
         Ok(())
     }
@@ -3440,6 +3476,10 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 z: row.z(),
                 level: row.level(),
                 index: row.index(),
+                source_item_id: row.source_item_id(),
+                source_item_slot: row.source_item_slot(),
+                target_item_id: row.target_item_id(),
+                target_item_slot: row.target_item_slot(),
             }),
             "use-widget-on" => out.push(crate::shim::InteractReq::UseWidgetOn {
                 component_id: row
@@ -3702,7 +3742,15 @@ fn interact_off<'b>(
             b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
         }
         InteractReq::UseOn {
-            x, z, level, index, ..
+            x,
+            z,
+            level,
+            index,
+            source_item_id,
+            source_item_slot,
+            target_item_id,
+            target_item_slot,
+            ..
         } => {
             b.push_slot_always(VT_IN_NAME, name_off.unwrap());
             b.push_slot_always(VT_IN_KIND, kind_off.unwrap());
@@ -3714,6 +3762,18 @@ fn interact_off<'b>(
             }
             if let Some(idx) = index {
                 b.push_slot_always(VT_IN_INDEX, *idx);
+            }
+            if let Some(id) = source_item_id {
+                b.push_slot_always(VT_IN_SOURCE_ITEM_ID, *id);
+            }
+            if let Some(slot) = source_item_slot {
+                b.push_slot_always(VT_IN_SOURCE_ITEM_SLOT, *slot);
+            }
+            if let Some(id) = target_item_id {
+                b.push_slot_always(VT_IN_TARGET_ITEM_ID, *id);
+            }
+            if let Some(slot) = target_item_slot {
+                b.push_slot_always(VT_IN_TARGET_ITEM_SLOT, *slot);
             }
         }
         InteractReq::UseWidgetOn {

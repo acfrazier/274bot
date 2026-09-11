@@ -159,6 +159,7 @@ fn item_row<'a>(
         noted,
         cert,
         component_id,
+        slot: -1,
     }
 }
 
@@ -3311,7 +3312,16 @@ export default class T extends LoopingBot {
         target_index: -1,
     }];
     let mut snap = base_snapshot();
-    let inv = [nc(Some("Knife"), 1)];
+    let inv = [script::isolate_fb::ItemRowInput {
+        name: Some("Knife"),
+        count: 1,
+        id: 946,
+        ops: &[],
+        noted: false,
+        cert: -1,
+        component_id: 500,
+        slot: 7,
+    }];
     snap.inv = &inv;
     snap.locs = &locs;
     post_snapshot_input(&iso, &snap);
@@ -3328,8 +3338,70 @@ export default class T extends LoopingBot {
             z: 3220,
             level: 0,
             index: None,
+            source_item_id: Some(946),
+            source_item_slot: Some(7),
+            target_item_id: None,
+            target_item_slot: None,
         }],
         "useOn on a loc must not hardcode kind npc"
+    );
+    iso.join();
+}
+
+#[test]
+fn inventory_use_on_preserves_selected_source_and_target_identity() {
+    let src = r#"
+import { Inventory } from '../../api/inventory/Inventory.js';
+export default class T extends LoopingBot {
+    loop() {
+        const items = Inventory.items();
+        globalThis.__probe = items[1].useOn(items[0]);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let inv = [
+        script::isolate_fb::ItemRowInput {
+            name: Some("Willow shortbow"),
+            count: 1,
+            id: 849,
+            ops: &[],
+            noted: false,
+            cert: -1,
+            component_id: 500,
+            slot: 0,
+        },
+        script::isolate_fb::ItemRowInput {
+            name: Some("Willow shortbow"),
+            count: 1,
+            id: 60,
+            ops: &[],
+            noted: false,
+            cert: -1,
+            component_id: 500,
+            slot: 4,
+        },
+    ];
+    let mut snap = base_snapshot();
+    snap.inv = &inv;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__probe").unwrap(), true);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::UseOn {
+            name: "Willow shortbow".into(),
+            kind: "inv".into(),
+            target_name: Some("Willow shortbow".into()),
+            x: 0,
+            z: 0,
+            level: 0,
+            index: None,
+            source_item_id: Some(60),
+            source_item_slot: Some(4),
+            target_item_id: Some(849),
+            target_item_slot: Some(0),
+        }],
     );
     iso.join();
 }
@@ -5241,6 +5313,10 @@ export default class T extends LoopingBot {
             z: 0,
             level: 0,
             index: None,
+            source_item_id: None,
+            source_item_slot: None,
+            target_item_id: None,
+            target_item_slot: None,
         }],
         "lightFire is tinderbox use-on logs, not a burn-lane planner"
     );

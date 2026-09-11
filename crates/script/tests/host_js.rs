@@ -25,6 +25,11 @@ fn host_js_dts_includes_required_interfaces() {
     assert!(src.contains("export interface Camera"));
     assert!(src.contains("orbit_yaw"));
     assert!(src.contains("export interface ShopStockRow"));
+    assert!(src.contains("slot?: number"));
+    assert!(src.contains("source_item_id?: number | null"));
+    assert!(src.contains("source_item_slot?: number | null"));
+    assert!(src.contains("target_item_id?: number | null"));
+    assert!(src.contains("target_item_slot?: number | null"));
     assert!(
         !src.contains("Game.teleport"),
         "must not export Game.teleport"
