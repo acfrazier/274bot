@@ -1,0 +1,135 @@
+
+running 1 test
+{"phase":"identity","revision":274,"profile":"local-274 · 127.0.0.1:43594 · revision 274","cache_id":"4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navpack","nav_sha256":"05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4","catalog_commit":"100adccc037d9f6898080e1cad58fcfc43364775","catalog_identity":"pre-289 frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"BankFletcher","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/BankFletcher/BankFletcher.ts","source_sha256":"194eb82dd3613cf2fea77a5cb04fba1dadbacad78efa6e0eee16c1f4a1c3f3ee","compiled_sha256":"888b95330a69f78e109fffec1d55bfe73efdecfd47aef7e27e252afb713b3d3d","siblings":[{"module":"/rs2b0t/bot/scripts/bot/BankFletcherLogic.js","compiled_sha256":"6f904ebac0bbf65e3ef2791a33fbe14dd56827f4897a4c4e09ed7f038d8c6da5"}],"settings":{"material":"Willow logs","product":"String short bow","bankBooth":"Bank booth","leashRadius":6.0}},"account":"livelyeqzy_0","engine_speed_ms":null}
+[host-play] slot livelyeqzy_0: thread up
+274bot: loaded snapshot (4556 models, 336 anim records)
+[host-play] slot livelyeqzy_0: handshake begin reconnect=false
+[host-play] slot livelyeqzy_0: handshake ok
+[host-play] slot livelyeqzy_0: queued mainland tele+setvar (scene 2)
+[host] slot livelyeqzy_0: d_loop_us=7786 d_raster_us=0 d_observe_us=31912 max_observe_us=2952 d_paints=0 d_skips=50 d_ticks=5 window_ms=0
+[host-play] slot livelyeqzy_0: handshake begin reconnect=true
+[host-play] slot livelyeqzy_0: handshake ok
+[host] slot livelyeqzy_0: d_loop_us=724 d_raster_us=0 d_observe_us=30372 max_observe_us=2892 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot livelyeqzy_0: queued mainland tele+setvar (scene 2)
+test catalog_boundary_live has been running for over 60 seconds
+[host] slot livelyeqzy_0: d_loop_us=17521 d_raster_us=0 d_observe_us=72349 max_observe_us=4969 d_paints=0 d_skips=50 d_ticks=26 window_ms=15543
+{"phase":"baseline-after-preparation","scenario":"bank_fletcher_string","account":"livelyeqzy_0","observation":{"ingame":true,"scene_state":2,"player":"Livelyeqzy 0","tile":[3185,3440,0],"tick":30,"items":{"Bow string":2,"Willow shortbow":2},"item_ids":{"60":2,"1777":2},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":2,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":35,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":22406,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[8,"Congratulations, you just advanced a fletching level."],[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]]}}
+[script livelyeqzy_0] start load
+{"phase":"start","account":"livelyeqzy_0","count":1}
+[host] hitch livelyeqzy_0: observe_us=87801 paints=0 skips=104 ticks=30
+[script livelyeqzy_0] BankFletcher stringing 'Willow shortbow' (u id 60) at (3185, 3440, 0) (booth 'Bank booth', r6)
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=1204 d_raster_us=0 d_observe_us=139552 max_observe_us=87801 d_paints=0 d_skips=50 d_ticks=5 window_ms=3536
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=1051 d_raster_us=0 d_observe_us=43876 max_observe_us=5695 d_paints=0 d_skips=50 d_ticks=2 window_ms=1193
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=956 d_raster_us=0 d_observe_us=41770 max_observe_us=4702 d_paints=0 d_skips=50 d_ticks=2 window_ms=1197
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=1015 d_raster_us=0 d_observe_us=46959 max_observe_us=5109 d_paints=0 d_skips=50 d_ticks=2 window_ms=1192
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=927 d_raster_us=0 d_observe_us=43984 max_observe_us=5616 d_paints=0 d_skips=50 d_ticks=2 window_ms=1199
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=1063 d_raster_us=0 d_observe_us=45510 max_observe_us=5172 d_paints=0 d_skips=50 d_ticks=2 window_ms=1185
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=997 d_raster_us=0 d_observe_us=42350 max_observe_us=5309 d_paints=0 d_skips=50 d_ticks=2 window_ms=1204
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=924 d_raster_us=0 d_observe_us=39498 max_observe_us=4921 d_paints=0 d_skips=50 d_ticks=2 window_ms=1186
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=876 d_raster_us=0 d_observe_us=42641 max_observe_us=5598 d_paints=0 d_skips=50 d_ticks=2 window_ms=1185
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=1017 d_raster_us=0 d_observe_us=47949 max_observe_us=5670 d_paints=0 d_skips=50 d_ticks=2 window_ms=1198
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=930 d_raster_us=0 d_observe_us=46042 max_observe_us=5299 d_paints=0 d_skips=50 d_ticks=2 window_ms=1174
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=1023 d_raster_us=0 d_observe_us=48413 max_observe_us=6053 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=919 d_raster_us=0 d_observe_us=46251 max_observe_us=5834 d_paints=0 d_skips=50 d_ticks=2 window_ms=1198
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=943 d_raster_us=0 d_observe_us=42296 max_observe_us=5057 d_paints=0 d_skips=50 d_ticks=2 window_ms=1206
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=1004 d_raster_us=0 d_observe_us=47131 max_observe_us=5281 d_paints=0 d_skips=50 d_ticks=2 window_ms=1171
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=1010 d_raster_us=0 d_observe_us=47721 max_observe_us=6195 d_paints=0 d_skips=50 d_ticks=2 window_ms=1197
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=1044 d_raster_us=0 d_observe_us=47572 max_observe_us=5656 d_paints=0 d_skips=50 d_ticks=2 window_ms=1201
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=996 d_raster_us=0 d_observe_us=46542 max_observe_us=5500 d_paints=0 d_skips=50 d_ticks=2 window_ms=1183
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=962 d_raster_us=0 d_observe_us=46359 max_observe_us=5713 d_paints=0 d_skips=50 d_ticks=2 window_ms=1192
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=1004 d_raster_us=0 d_observe_us=48130 max_observe_us=5928 d_paints=0 d_skips=50 d_ticks=2 window_ms=1198
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=989 d_raster_us=0 d_observe_us=47668 max_observe_us=5689 d_paints=0 d_skips=50 d_ticks=2 window_ms=1203
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=1225 d_raster_us=0 d_observe_us=49012 max_observe_us=6194 d_paints=0 d_skips=50 d_ticks=2 window_ms=1206
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=966 d_raster_us=0 d_observe_us=45435 max_observe_us=5127 d_paints=0 d_skips=50 d_ticks=2 window_ms=1204
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=1009 d_raster_us=0 d_observe_us=48770 max_observe_us=5577 d_paints=0 d_skips=50 d_ticks=2 window_ms=1202
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=985 d_raster_us=0 d_observe_us=47852 max_observe_us=5765 d_paints=0 d_skips=50 d_ticks=2 window_ms=1182
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=965 d_raster_us=0 d_observe_us=46619 max_observe_us=5430 d_paints=0 d_skips=50 d_ticks=2 window_ms=1193
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=999 d_raster_us=0 d_observe_us=47733 max_observe_us=5702 d_paints=0 d_skips=50 d_ticks=2 window_ms=1165
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=994 d_raster_us=0 d_observe_us=47160 max_observe_us=5788 d_paints=0 d_skips=50 d_ticks=2 window_ms=1202
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=1023 d_raster_us=0 d_observe_us=46994 max_observe_us=5404 d_paints=0 d_skips=50 d_ticks=2 window_ms=1203
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=1010 d_raster_us=0 d_observe_us=49158 max_observe_us=6051 d_paints=0 d_skips=50 d_ticks=2 window_ms=1186
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=1035 d_raster_us=0 d_observe_us=48819 max_observe_us=5572 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=1018 d_raster_us=0 d_observe_us=48596 max_observe_us=5878 d_paints=0 d_skips=50 d_ticks=2 window_ms=1183
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=940 d_raster_us=0 d_observe_us=46752 max_observe_us=5222 d_paints=0 d_skips=50 d_ticks=2 window_ms=1199
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=1036 d_raster_us=0 d_observe_us=48075 max_observe_us=5748 d_paints=0 d_skips=50 d_ticks=2 window_ms=1181
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=1029 d_raster_us=0 d_observe_us=47899 max_observe_us=5376 d_paints=0 d_skips=50 d_ticks=2 window_ms=1193
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=985 d_raster_us=0 d_observe_us=46731 max_observe_us=5673 d_paints=0 d_skips=50 d_ticks=2 window_ms=1197
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=888 d_raster_us=0 d_observe_us=48532 max_observe_us=5624 d_paints=0 d_skips=50 d_ticks=2 window_ms=1199
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=943 d_raster_us=0 d_observe_us=48557 max_observe_us=5870 d_paints=0 d_skips=50 d_ticks=2 window_ms=1195
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=952 d_raster_us=0 d_observe_us=47989 max_observe_us=5643 d_paints=0 d_skips=50 d_ticks=2 window_ms=1197
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=1063 d_raster_us=0 d_observe_us=50519 max_observe_us=6161 d_paints=0 d_skips=50 d_ticks=2 window_ms=1192
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=980 d_raster_us=0 d_observe_us=49872 max_observe_us=5531 d_paints=0 d_skips=50 d_ticks=2 window_ms=1180
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=1123 d_raster_us=0 d_observe_us=50696 max_observe_us=5961 d_paints=0 d_skips=50 d_ticks=2 window_ms=1177
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=1052 d_raster_us=0 d_observe_us=51133 max_observe_us=8691 d_paints=0 d_skips=50 d_ticks=2 window_ms=1206
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=979 d_raster_us=0 d_observe_us=43642 max_observe_us=4398 d_paints=0 d_skips=50 d_ticks=2 window_ms=1183
+[script livelyeqzy_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livelyeqzy_0: d_loop_us=1071 d_raster_us=0 d_observe_us=51001 max_observe_us=5932 d_paints=0 d_skips=50 d_ticks=2 window_ms=1201
+FAIL: catalog_boundary_live: scenario failed: step 14 (watch XP from both seeded stringing pairs): stat_xp_gain(9)>=66 not seen within 150 ticks; evidence=Some(Evidence { scenario: "bank_fletcher_string", outcome: "FAIL", predicate: "stat_xp_gain(9)>=66", ticks: 181, elapsed_ms: 95831, message: Some("step 14 (watch XP from both seeded stringing pairs): stat_xp_gain(9)>=66 not seen within 150 ticks"), tile: Some([3185, 3440, 0]), inv: [InvRow { id: 849, name: Some("Willow shortbow"), count: 1 }, InvRow { id: 60, name: Some("Willow shortbow"), count: 1 }, InvRow { id: 1777, name: Some("Bow string"), count: 1 }], stat: Some(StatRow { runenergy: 100 }), chat: [ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "Nothing interesting happens.", username: None }, ChatRow { text: "You add a string to the bow.", username: None }, ChatRow { text: "Congratulations, you just advanced a fletching level.", username: None }, ChatRow { text: "Inventory wiped.", username: None }, ChatRow { text: "set tutorial: to 1000", username: None }, ChatRow { text: "Welcome to RuneScape.", username: None }], scene: 2 })

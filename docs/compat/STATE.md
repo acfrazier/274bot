@@ -1,11 +1,42 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 01:17 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 01:46 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
 Read `docs/execution.md` for dispatch/review rules. Reports below preserve dated
 results and failed cells; this state identifies current work.
+
+## Imported-script ownership (operator clarification, 01:41 UTC)
+
+The shim must preserve the host's behavior. If an imported RS2B0T catalog
+script is broken, dim that card with a concrete reason; repairing foreign
+script behavior is outside this project's responsibility. Do not alter host
+semantics, timeouts, policy or dispatch to accommodate that script. Diagnose
+ownership from the frozen script, bridge and selected game data first: a
+bridge that drops valid IDs/slots or misrepresents a supported host operation
+is our bug and remains in scope. Missing authorized host capabilities remain
+explicit Rust work; dimming must not hide them or a host regression.
+
+Ancillary-feature stubs remain in scope by explicit operator clarification at
+01:46 UTC. Calls such as clue solving that depend on large foreign scripts or
+require importing their world/policy stay bounded stubs; do not import those
+systems. An unavailable optional feature is not itself a broken-script verdict
+and does not dim the otherwise working card. Preserve honest unsupported-call
+behavior and the existing branch refusal policy; never report fabricated
+completion. This clarification preserves the prior stub plan. The stubs are temporary
+integration points: each native host feature is a separate future project,
+and the shim will connect to that feature when it is implemented. This
+compatibility campaign does not absorb those projects.
+
+Keep the original 45-card/180-row inventory and failed evidence as history.
+A diagnosed foreign-script defect may now change the current card status to
+dim, with source identity, failure evidence and reason recorded. This explicit
+operator decision supersedes older instructions against reducing the enabled
+set when they would require accommodating broken imported script behavior.
+The current BankFletcher useOn investigation identifies identity loss in our
+bridge; both frozen scripts select input IDs, so no foreign-script defect or
+card-dimming decision has been established there.
 
 ## Accepted milestones
 
@@ -80,21 +111,24 @@ Catalog and frontend acceptance remain separate.
   Clippy pass. 05a-catalog-live-harness.md and 05-catalog-proof.md.
 - t_887b29b5 frontend session source 5eeff8f0/c9521d2f completed actual Grok
   4.5 review 1135; six targeted lifecycle tests and host tests pass.
-- t_dde220ef Grok 4.6 integration review waits for bank routing, reviewed
-  Alcher option fixtures t_a384fe64, panel startup t_779f58e5 and generated
-  item metadata integration t_f1572cf0, its corrective review t_e6ec9679,
-  and loading progress t_42263bfd. It also
-  covers root profile/harness, script Stop and frontend/world changes.
+- t_dde220ef actual Grok 4.6 integration run 1180/session
+  20260910_211806_39ef8c approved frozen 1e17c07a/client 56d8027. Its
+  world-banking-frontend-integration-grok46.md report covers bank freshness,
+  Withdraw-X pause/hold, Stop cleanup, selected metadata and frontend/loading
+  composition. Older JS wall-clock waits remain explicit qualification limits.
+  This is scoped integration approval, not whole-branch or catalog acceptance.
 - BankFletcher option harness t_ac56c0b5 source 857fda52 passed actual
   Grok 4.5 review 1177/session 20260910_210605_d083be. Root will run four
   stringing cells and two new-catalog cut+string cells on the latest reviewed
   source. No stringing LIVE result is claimed yet.
-- Generated custom-item Alcher fixtures t_1a24382e are running in actual
-  Grok 4.6 run 1178/session 20260910_211105_7af2b0. Brief 51 adds custom
-  alias/display-name cases for Adamant scimitar, with exact noted-ID, rune,
-  coin and XP witnesses. It requires same-card review before eight root LIVE
-  cells. The earlier custom chainbody cases remain valid bounded evidence.
-- Loadout t_3737503d waits for integration review, then targeted spell facts
+- Generated custom-item Alcher fixtures t_1a24382e at 5f86dc87 passed
+  actual Grok 4.5 review 1182/session 20260910_212509_07d113, including
+  the seed helper correction. All eight root alias/display-name
+  LIVE cells pass at frozen d4f1809e/client 56d8027, with exact item/rune/coin/XP
+  and fresh-bank witnesses. All hashes and full witnesses were reverified;
+  core-results.json retains 40 PASS, five FAIL and one PARTIAL historical cells. The earlier custom chainbody cases remain valid bounded evidence.
+- Loadout t_3737503d is running in actual Grok 4.6 run 1186/session
+  20260910_213411_28720e after the integration gate; targeted spell facts
   t_63138b8b, PeriodicBank t_51452e47 and DeathRecovery t_0c5ce97f follow.
   Design reports are guidance, not implemented/live acceptance.
 
@@ -214,8 +248,8 @@ package or announcement has occurred in this campaign.
 The target remains host alpha 2 / 0.1.7, with macOS, Windows and Linux binaries
 in release planning. Packaging and publication follow acceptance.
 Full 377, mixed fleets, tutorial/audio parity and the named quest/clue/gatherer/
-MarketMaker rewrites remain deferred. Do not shrink the enabled ledger or add
-script revision allowlists to make acceptance pass. Do not restart the completed
+MarketMaker rewrites remain deferred. Preserve the original ledger as history; apply the diagnosed foreign-script
+dimming rule above. Do not add script revision allowlists to make acceptance pass. Do not restart the completed
 memory optimization campaign or turn elapsed diagnostic time into savings claims.
 
 
@@ -242,11 +276,13 @@ been performed by this campaign.
 The operator requested a classic text loading bar with plain stage descriptions
 and the existing bright text accent, `theme::ACCENT` / #FFB000. Brief 50 source 79f86973, lint fix 0bfb28ad and stage correction d321908c
 were implemented in Sol run 1174/session 20260910_204357_6fa300. Actual
-Grok 4.5 review 1179/session 20260910_211405_8e47f2 is active. It preserves
+Grok 4.5 review 1179/session 20260910_211405_8e47f2 approved that source
+and the grouped picker fix. It preserves
 all resource checks and reports actual processed work through bounded
-per-generation state. Native proof remains required. Frozen 30193c3b binaries
-include the final stage correction; earlier 28914fce binaries are build
-evidence only and will not be used as the final native progress proof.
+per-generation state. Native 30193c3b internal captures show the orange 20-cell bar during real
+navflags hashing, fitting text, then a cleared banner after preparation.
+The operator observed repeated bars and clarified a new build-time navigation
+identity contract below. Earlier 28914fce binaries remain build evidence only.
 
 Root fixed the newly reported first-run Browse picker at 1a2f2dcf: correct
 window order, clear purpose text, and working Cancel/Not now dismissal. Three
@@ -259,7 +295,7 @@ Grok 4.6 fixture design B completed at 14c3e58a: t_c8c317d0/run 1173/
 session 20260910_203957_c7b349 covers sixteen combat/world cards. Design A
 run 1172 failed after provider timeouts without a saved report; the failure is
 retained. Same-card retry t_a88cd22e/run 1176/session 20260910_210303_cf443d
-is saving the remaining twenty-four production fixtures incrementally. Brief
+completed the twenty-four production fixture designs at bbe2c761. Brief
 49 supplements the accepted capability architecture; reports are design, not
 LIVE acceptance.
 
@@ -273,3 +309,40 @@ The operator accepted the first-pass loadout UX at 01:06 UTC: equipment slots,
 quantity rows, selected-data search, Copy current equipment, preset controls
 and actual save feedback. Brief 26 includes this in the queued Grok loadout
 implementation. Bank previews and further automation stay deferred.
+
+
+## Latest navigation and catalog follow-ups
+
+Operator clarification at 01:28 UTC: compute the navpack hash at build/package
+time and ship the navpack in release builds. Normal bundled startup should
+load once and use that release identity, with no full-file startup rehashing.
+Runtime validation remains for external/custom packs and development iteration.
+Brief 53 (6d585fd9) supersedes root's initial runtime-once interpretation and
+the older requirement to keep three navigation rehash passes. Grok design
+t_66955ad4 was reclaimed shortly after run1184 started, to ensure the clarified
+build-time scope is used on restart. Actual Grok 4.6 run 1185/session
+20260910_212911_04efe4 completed design 09f26d0a. Implementation t_6533221b
+is active in Grok 4.6 run 1188/session 20260910_213711_3ceb77 under brief55:
+release-compiled identity table, one decoded shared world, runtime hashing once
+for external packs, and lazy optional flags. Default source builds have no
+trusted bundle entries. Source review and fresh native proof remain required.
+No release package/signing/publication is authorized here.
+
+The first BankFletcher stringing fixtures at 30193c3b failed before Start in
+both 274 headless and 289 native: seed helper opened OP_LOC1 banker dialogue.
+Failure receipts and both internal native PNGs are retained. Root d4f1809e
+uses existing snapshot-bound Use-quickly; cd393879 only formats the call.
+Scenario 83, harness 13 plus ignored LIVE and strict Clippy pass; export-input
+and formatting setup failures are retained. Custom fixture 5f86dc87 and this
+helper correction passed actual Grok4.5 review1182/session20260910_212509_07d113.
+Both corrected LIVE runs opened the seed bank, then failed after one strung
+bow: useOn discarded the script-selected item identity and reselected a
+same-name finished bow. Source fix t_90e850ab is active in Sol run1187/session
+20260910_213411_aad79e under brief54. Preserve those failures; no stringing
+success is claimed yet. Root repeats the cells only after source review.
+See evidence/bank-seed-open-fix/README.md and checks/reviews JSON.
+
+Inventory-production fixture card t_3317197c follows custom fixture review
+with Grok4.6 implementation defaults. Brief52 covers DartFletcher, HerbCleaner
+and GemCutter core plus explicit option cases, with full bank cycles where
+applicable; root owns twenty-four subsequent LIVE cells after review.
