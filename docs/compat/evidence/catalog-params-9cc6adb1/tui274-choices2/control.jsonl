@@ -1,0 +1,19 @@
+{"action": "click", "x": 28, "y": 39}
+{"action": "click", "x": 6, "y": 39}
+{"action": "click", "x": 10, "y": 31}
+{"action": "click", "x": 6, "y": 25}
+{"action": "click", "x": 6, "y": 39}
+{"action": "key", "key": "enter"}
+{"action": "key", "key": "down"}
+{"action": "key", "key": "down"}
+{"action": "key", "key": "down"}
+{"action": "key", "key": "down"}
+{"action": "key", "key": "down"}
+{"action": "text", "text": " "}
+{"action": "key", "key": "enter"}
+{"action": "key", "key": "escape"}
+{"action": "click", "x": 6, "y": 39}
+{"action": "key", "key": "enter"}
+{"action": "key", "key": "escape"}
+{"action": "key", "key": "escape"}
+{"action": "click", "x": 13, "y": 38}

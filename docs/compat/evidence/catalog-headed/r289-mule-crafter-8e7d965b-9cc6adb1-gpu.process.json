@@ -1,0 +1,30 @@
+{
+  "command": [
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/Catalog Integration Proof.app/Contents/MacOS/catalog-proof",
+    "--live",
+    "script_mule_crafter",
+    "--profile",
+    "local-289",
+    "--revision",
+    "289",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "44594",
+    "--asset-host",
+    "127.0.0.1",
+    "--http-port",
+    "1080",
+    "--engine",
+    "/Users/acfrazier/experiments/lostcity-289/engine",
+    "--nav-pack",
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack",
+    "--nav-flags",
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navflags",
+    "--catalog",
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a"
+  ],
+  "pid": 45874,
+  "started_at": "2026-09-11T10:25:45.818592+00:00",
+  "runner_script_sha256": "a9575d10fc9e0f1add779b1a3b6ffa27ba115c204f0123f74a4f800fd44a8d41"
+}

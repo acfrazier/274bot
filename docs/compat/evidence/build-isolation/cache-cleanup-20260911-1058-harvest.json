@@ -1,0 +1,8 @@
+{
+  "timestamp": "2026-09-11T10:55:18.391176+00:00",
+  "path": "/Users/acfrazier/experiments/274bot/.worktrees/t_a1f4796f/target/debug",
+  "scope": "Unused untracked debug compiler cache from completed memory harvest. Release binaries, sources, diagnostics and docs retained.",
+  "kib": 52613148,
+  "before_free_bytes": 290847121408,
+  "after_free_bytes": 344597843968
+}

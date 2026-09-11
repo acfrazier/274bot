@@ -1,0 +1,14 @@
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-91289e9b/vendor/fr-client-rust/crates/client)
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-91289e9b/crates/api)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.66s
+     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/target-isolated-28d97f38/debug/deps/api-386f1453e56ad78b)
+
+running 5 tests
+test cake_stall::tests::restock_honors_capacity_and_requested_count ... ok
+test cake_stall::tests::depleted_or_wrong_op_or_missing_facts_select_nothing ... ok
+test cake_stall::tests::closer_door_does_not_beat_farther_qualifying_stall ... ok
+test cake_stall::tests::selected_pins_match_headed_274_289_loc_and_live_stand ... ok
+test cake_stall::tests::other_same_id_stall_is_not_the_selected_target ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+

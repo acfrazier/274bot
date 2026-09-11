@@ -1,0 +1,310 @@
+{
+  "started_at": "2026-09-11T10:53:01.522132+00:00",
+  "before_free_bytes": 21098967040,
+  "removed": [
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_eeea20f0-check/debug",
+      "kib": 5210456,
+      "owners": [
+        "t_eeea20f0"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_f8ca5ed7-r1289-iso/debug",
+      "kib": 9670872,
+      "owners": [
+        "t_f8ca5ed7"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_f7fd9f55/debug",
+      "kib": 3749556,
+      "owners": [
+        "t_f7fd9f55"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.review-export-t701d17f4-r1/target-review-fresh/debug",
+      "kib": 2562824,
+      "owners": [
+        "t_701d17f4"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.check-t3317197c/target/debug",
+      "kib": 4186364,
+      "owners": [
+        "t_3317197c"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_15c05b42/debug",
+      "kib": 3841820,
+      "owners": [
+        "t_15c05b42"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-review-t_d68ee0fc/debug",
+      "kib": 5214608,
+      "owners": [
+        "t_d68ee0fc"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-review-t_63138b8b-r1789094202/debug",
+      "kib": 4609188,
+      "owners": [
+        "t_63138b8b"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_f8ca5ed7-r1289/debug",
+      "kib": 8588200,
+      "owners": [
+        "t_f8ca5ed7"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.review-export-t3317197c-r1/target/debug",
+      "kib": 5022008,
+      "owners": [
+        "t_3317197c"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_63138b8b/debug",
+      "kib": 4614572,
+      "owners": [
+        "t_63138b8b"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_51452e47/debug",
+      "kib": 4108352,
+      "owners": [
+        "t_51452e47"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.check-t_c35281b3/debug",
+      "kib": 4120608,
+      "owners": [
+        "t_c35281b3"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_246e320b-check/debug",
+      "kib": 6708400,
+      "owners": [
+        "t_246e320b"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_701d17f4/debug",
+      "kib": 2894436,
+      "owners": [
+        "t_701d17f4"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-review-t_534895e5-r1239/debug",
+      "kib": 5061988,
+      "owners": [
+        "t_534895e5"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-review-t_7dd2b216-r1246/debug",
+      "kib": 5065360,
+      "owners": [
+        "t_7dd2b216"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_1a213450-check/debug",
+      "kib": 4840864,
+      "owners": [
+        "t_1a213450"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_701d17f4-native/debug",
+      "kib": 3001424,
+      "owners": [
+        "t_701d17f4"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/target-t6533221b/debug",
+      "kib": 8050460,
+      "owners": [
+        "t_6533221b"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/t_90e850ab-staged/target/debug",
+      "kib": 4193544,
+      "owners": [
+        "t_90e850ab"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/t_90e850ab-a4157243/target/debug",
+      "kib": 3479404,
+      "owners": [
+        "t_90e850ab"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/t_701d17f4-bc0f05c6/target-t_701d17f4/debug",
+      "kib": 3587680,
+      "owners": [
+        "t_701d17f4"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/t_701d17f4-bc0f05c6/target-t_701d17f4-native/debug",
+      "kib": 3659952,
+      "owners": [
+        "t_701d17f4"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/inventory-t_c0a5785e-target/debug",
+      "kib": 3540276,
+      "owners": [
+        "t_c0a5785e"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/cake-stall-native-t_24333a16-target/debug",
+      "kib": 4600864,
+      "owners": [
+        "t_24333a16"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t464d9c4c-ardy-review-r1267/debug",
+      "kib": 5042804,
+      "owners": [
+        "t_464d9c4c"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/static-loc-reviewer-t192feefa-r1244-target/debug",
+      "kib": 1540080,
+      "owners": [
+        "t_192feefa"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_993a114f-flaxaio-target/debug",
+      "kib": 5065536,
+      "owners": [
+        "t_993a114f"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/hostile-duel-review-t_eeea20f0-r1272-target/debug",
+      "kib": 1171704,
+      "owners": [
+        "t_eeea20f0"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/paired-preparation-t_371cf6e0-target/debug",
+      "kib": 3999496,
+      "owners": [
+        "t_371cf6e0"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/paired-preparation-t_371cf6e0/target/debug",
+      "kib": 3975032,
+      "owners": [
+        "t_371cf6e0"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/inv-button-t_af045121-check-target/debug",
+      "kib": 4054888,
+      "owners": [
+        "t_af045121"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/resource-native-tool-facts-t_afe0a5a1-target/debug",
+      "kib": 4553092,
+      "owners": [
+        "t_afe0a5a1"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/death-recovery-review-t_0c5ce97f-r1240-target/debug",
+      "kib": 3896204,
+      "owners": [
+        "t_0c5ce97f"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_6faf0ef6-station-target/debug",
+      "kib": 5183392,
+      "owners": [
+        "t_6faf0ef6"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/named-bank-approach-t_4948af53-r2-target/debug",
+      "kib": 4467916,
+      "owners": [
+        "t_4948af53"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.check-t192feefa/api-target/debug",
+      "kib": 1201888,
+      "owners": [
+        "t_192feefa"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.check-t192feefa/client-target/debug",
+      "kib": 1079936,
+      "owners": [
+        "t_192feefa"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-review-t_e6ec9679/debug",
+      "kib": 6322244,
+      "owners": [
+        "t_e6ec9679"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_0c5ce97f-r1233/debug",
+      "kib": 3895556,
+      "owners": [
+        "t_0c5ce97f"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_79dfc132-check/debug",
+      "kib": 5079900,
+      "owners": [
+        "t_79dfc132"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_afe0a5a1/debug",
+      "kib": 4638564,
+      "owners": [
+        "t_afe0a5a1"
+      ]
+    }
+  ],
+  "skipped": [],
+  "scope": "Only debug/release compiler outputs of Hermes tasks confirmed done. Sources and evidence retained.",
+  "after_free_bytes": 210590191616
+}

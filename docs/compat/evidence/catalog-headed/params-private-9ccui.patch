@@ -1,0 +1,26 @@
+--- a/crates/panel/examples/catalog_watch.rs
++++ b/crates/panel/examples/catalog_watch.rs
+@@ -16,6 +16,9 @@
+     // The panel's main-thread stores use this existing scoped seam. It does
+     // not alter HOME or the operator's catalog/settings/loadout files.
+     let _stores = script::IsolatedEnv::enter(&format!("catalog-watch-{}", std::process::id()));
++    let mut settings = script::ScriptSettingsStore::with_default_path();
++    settings.set_value(script::ScriptSource::Catalog, "Alcher", "items", serde_json::json!(["rune_chainbody"]));
++    settings.save().expect("private Params setup settings");
+     if let Err(error) = panel::run_panel(args) {
+         eprintln!("FAIL: catalog_watch: {error}");
+         std::process::exit(1);
+--- a/crates/panel/src/app.rs
++++ b/crates/panel/src/app.rs
+@@ -1048,6 +1048,11 @@
+             if !live.announced_pass {
+                 println!("PASS: live {} {}", live.name, record(&evidence));
+                 live.announced_pass = true;
++                // Private UI proof only: gold is already complete. Expose the
++                // ordinary saved-setting path for subsequent native controls.
++                session.script_stop();
++                session.set_script_settings_inject(None);
++                eprintln!("[params-proof] gold complete; script stopped and fixed fixture settings released");
+             }
+             if live.soak {
+                 if live.soak_until.is_some_and(|t| Instant::now() >= t) {

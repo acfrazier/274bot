@@ -1,0 +1,9 @@
+{
+  "timestamp": "2026-09-11T10:50:59.329197+00:00",
+  "removed_compiler_cache": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/target-isolated-28d97f38",
+  "size_kib": 16496536,
+  "reason": "Disk at 4.7GiB free. Root-owned completed compiler cache; binaries and exported source retained.",
+  "open_references": [],
+  "before_free_bytes": 5059592192,
+  "after_free_bytes": 21203668992
+}

@@ -1,0 +1,58 @@
+{
+  "run": {
+    "id": 1306,
+    "profile": "reviewer",
+    "step_key": null,
+    "status": "done",
+    "outcome": "completed",
+    "summary": "Reviewed and approved 3c0f0ea16 (R1 artifact cold read + independent re-run on hash-matched export paired-preparation-t_371cf6e0 / exclusive target). Runner bank200 is Falador East open_booth_at + open+loaded count ack before ruins firstload; shared Start barrier starts both only when prepared/current; gold clock after both Start; deadlines/conservation preserved. rustfmt + 25 passed/2 ignored + Clippy -D warnings + air LIVE ignored. No LIVE.",
+    "error": null,
+    "metadata": {
+      "review_outcome": "approved",
+      "review_round": 1,
+      "lens": "artifact-cold-read-plus-independent-execution",
+      "commit": "3c0f0ea1656fe5ef98c4eb544b382d576c32ee86",
+      "parent": "fc5c9a49d9a4792251fd1c7bfdb5be4cc730c2aa",
+      "export": ".superpowers/review-exports/paired-preparation-t_371cf6e0",
+      "target": ".superpowers/review-exports/paired-preparation-t_371cf6e0-target",
+      "overlay_sha256": {
+        "paired_catalog_live.rs": "8dd02367e6cec5df0519df32712444c6dd9c7733d6a12cb7f664ebb9b04c8e37",
+        "paired_catalog.rs": "40f7be9277308172a40058f7ced1c1da7da464ff1c3fcee67b5ab183a260ccee"
+      },
+      "scope_ok": true,
+      "changed_files": [
+        "crates/host-play/tests/paired_catalog_live.rs",
+        "crates/host-play/tests/support/paired_catalog.rs",
+        "docs/compat/05s-paired-preparation-barrier.md",
+        "docs/compat/evidence/paired-preparation-barrier/"
+      ],
+      "no_open_nearest_booth_in_owned": true,
+      "live_launch_performed": false,
+      "reviewer_checks": [
+        "cold-read brief 103 + commit 3c0f0ea16 sequence (Seed bank@FALADOR_EAST -> AckBank/WaitAck open_booth_at -> Close/WaitClosed -> Seed firstload@ruins; Ready holds; shared_start_barrier StartBoth; gold deadline after both)",
+        "export/workspace overlay hash match verification.json",
+        "rustfmt --check owned paths (pass)",
+        "CARGO_TARGET_DIR=...-target cargo test -p host-play --test paired_catalog_live (25 passed, 2 ignored)",
+        "cargo clippy -p host-play --test paired_catalog_live --no-deps -- -D warnings (pass)",
+        "paired_catalog_air_live --exact remains ignored",
+        "constants PREP/GOLD 180 / WATCH 150 / BANK_SEED 200 unchanged",
+        "identity/conservation/full-vs-partial witnesses retained",
+        "scope limited to owned paired test/support/docs paths"
+      ],
+      "caveats": [
+        "bank_session_generation movement is logged on close, not hard-gated; close itself (bank_open false) is required",
+        "not LIVE/gameplay acceptance; root owns bothrev catalog LIVE rerun"
+      ],
+      "worker_session_id": "20260911_062101_78d5c6"
+    },
+    "worker_pid": null,
+    "started_at": 1789122061,
+    "ended_at": 1789122148
+  },
+  "actual_model": "grok-4.5",
+  "actual_provider": "xai-oauth",
+  "actual_api_calls": 9,
+  "first_api_call": "2026-09-11 06:21:05,709 INFO [20260911_062101_78d5c6] agent.conversation_loop: API call #1: model=grok-4.5 provider=xai-oauth in=23275 out=65 total=23340 latency=3.2s cache=384/23275 (2%) id=6b78b59f-e24c-907d-b712-9bfc46f97e67",
+  "last_api_call": "2026-09-11 06:22:28,147 INFO [20260911_062101_78d5c6] agent.conversation_loop: API call #9: model=grok-4.5 provider=xai-oauth in=63280 out=1048 total=64328 latency=18.0s cache=58368/63280 (92%) id=5100edff-8f90-945e-8149-a88f07ddefcc",
+  "verified_at": "2026-09-11T10:30:10.142295+00:00"
+}

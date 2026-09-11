@@ -1,0 +1,186 @@
+{
+  "verified_at": "2026-09-11T11:02:11.561675+00:00",
+  "task": "t_993a114f",
+  "review_run": {
+    "id": 1309,
+    "profile": "reviewer",
+    "status": "done",
+    "outcome": "completed",
+    "started_at": 1789123146,
+    "ended_at": 1789123319,
+    "summary": "Reviewed and approved d854321b8 (R1 artifact cold read + independent re-run on hash-matched owned export target t_993a114f-flaxaio-target). Five fixtures flax_aio / flax_aio_pick / flax_aio_spin / herblore_secondaries / herblore_secondaries_newt with FlaxAIO own script (not Picker+Spinner concat), exact IDs 1779/1777/223/221/995, XP-before-product on spin paths, FLAX_AIO_BANK 2725 vs spinner 2722, egg/newt mode split, Make-X/Shop.buy/ground-spawn LIVE gates documented. Isolated: scenario 96, catalog 33/1 ignored LIVE, clippy/fmt clean. No LIVE. Releases child t_a74e9684.",
+    "error": null,
+    "metadata": {
+      "review_outcome": "approved",
+      "review_round": 1,
+      "lens": "artifact",
+      "blocking_defects": [],
+      "branch": "codex/rs2b0t-multirevision",
+      "commit": "d854321b8012b391866dc619d74f0b60ac380a15",
+      "git_parent": "91289e9bac158721849209a301dcae5c26988eb9",
+      "brief": "docs/compat/briefs/98-flax-aio-secondary-fixtures.md",
+      "brief_sha256": "942d8c52c4b2b40d549e63ed446db181b1362a72283d42900989ba104ae75353",
+      "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+      "export": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_993a114f-flaxaio",
+      "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_993a114f-flaxaio-target",
+      "export_host_commit_claimed": "91289e9bac158721849209a301dcae5c26988eb9",
+      "isolated_build": true,
+      "review_empty_started": false,
+      "review_empty_start_skip_reason": "disk ~12Gi free; owned target 4.9G already present; overlay sha256 matched workspace+export; re-ran tests on owned target",
+      "live": false,
+      "changed_files": [
+        "crates/scenario/src/lib.rs",
+        "crates/host-play/tests/catalog_boundary_live.rs",
+        "docs/compat/05s-flax-aio-secondary-fixtures.md",
+        "docs/compat/evidence/flax-aio-secondary-fixtures/_query_ids.py",
+        "docs/compat/evidence/flax-aio-secondary-fixtures/id-dump.txt",
+        "docs/compat/evidence/flax-aio-secondary-fixtures/isolated-checks.txt",
+        "docs/compat/evidence/flax-aio-secondary-fixtures/verification.json"
+      ],
+      "overlay_sha256": {
+        "crates/scenario/src/lib.rs": "cb806007076183945fb5d57e0c576b4cb8ef58381426ad1d678cac39501e7ca9",
+        "crates/host-play/tests/catalog_boundary_live.rs": "2e03303df4328d86dd21bc850e3532bc449e9cdcd31d48d87824659584c92b27",
+        "docs/compat/05s-flax-aio-secondary-fixtures.md": "ef76afd3fe552330ef42efdb8660d8801008f9743b7bf08196362b4f7307dd12"
+      },
+      "scenarios": [
+        "flax_aio",
+        "flax_aio_pick",
+        "flax_aio_spin",
+        "herblore_secondaries",
+        "herblore_secondaries_newt"
+      ],
+      "ids": {
+        "flax": 1779,
+        "bow_string": 1777,
+        "noted_flax": 1780,
+        "noted_bow_string": 1778,
+        "ball_of_wool_rejected": 1759,
+        "red_spiders_eggs": 223,
+        "noted_red_spiders_eggs": 224,
+        "eye_of_newt": 221,
+        "noted_eye_of_newt": 222,
+        "coins": 995,
+        "lobster_food_seed": 379,
+        "crafting_stat": 12
+      },
+      "stands": {
+        "flax_field": [
+          2741,
+          3444,
+          0
+        ],
+        "flax_aio_bank": [
+          2725,
+          3493,
+          0
+        ],
+        "flax_spinner_bank_not_this_card": [
+          2722,
+          3493,
+          0
+        ],
+        "flax_wheel": [
+          2711,
+          3471,
+          1
+        ],
+        "egg_field": [
+          3120,
+          9952,
+          0
+        ],
+        "edgeville_bank": [
+          3094,
+          3493,
+          0
+        ],
+        "betty_shop": [
+          3012,
+          3259,
+          0
+        ],
+        "draynor_bank": [
+          3093,
+          3243,
+          0
+        ]
+      },
+      "gold_bounds": {
+        "SCRIPT_GOLD_DEADLINE_secs": 180,
+        "SCRIPT_GOLD_WATCH_TICKS": 150,
+        "unchanged": true
+      },
+      "frozen_script_hashes_match": true,
+      "missing_op_gates": [
+        "Make-X t_4b04cb5f still gates FlaxAIO spin LIVE if world posting fails",
+        "Shop.buy t_1591d140 still gates newt LIVE if stock rows lack component_id",
+        "ground egg spawns cannot be fabricated",
+        "generated game-data JSON has no loc types"
+      ],
+      "limits": [
+        "no live client run",
+        "SCRIPT_GOLD_DEADLINE and SCRIPT_GOLD_WATCH_TICKS unchanged",
+        "pick+spin full cycle may not fit 180s; do not widen timeouts",
+        "review re-used owned target after source hashes matched; not independently empty-started (disk)"
+      ],
+      "tests_run": [
+        "isolated cargo test -p scenario --lib: 96 passed",
+        "isolated cargo test -p host-play --features memory-profile --test catalog_boundary_live: 33 passed, 1 ignored LIVE",
+        "clippy scenario and catalog_boundary_live -D warnings: pass",
+        "rustfmt --check: clean"
+      ],
+      "reviewer_checks": [
+        "r1 artifact cold read of d854321b8 before handoff narrative",
+        "commit scoped to 7 owned paths only; parent 91289e9ba",
+        "brief sha256 942d8c52 matches docs/compat/briefs/98-flax-aio-secondary-fixtures.md",
+        "workspace+export overlay sha256 match for scenario/catalog/05s",
+        "SCRIPT_GOLD_DEADLINE 180s and SCRIPT_GOLD_WATCH_TICKS 150 unchanged vs parent",
+        "flax_aio start_script FlaxAIO with picking+spinning true; seed empty pack Crafting1 at field 2741,3444,0; watch flax then wheel then Crafting XP then 1777 then flax consume then bank deposit then closed return further pick \u2014 not FlaxPicker/FlaxSpinner concat",
+        "flax_aio_pick spinning=false full pack 28 deposit 1779 no bow-string qualify",
+        "flax_aio_spin picking=false bank seed 56 flax at FLAX_AIO_BANK 2725 not spinner 2722; StationProductionCycle restock+upstairs wheel return; ground return rejected",
+        "herblore_secondaries secondary Red spiders' eggs; lobster 50 bank seed Edgeville; ground Take 223; no egg seed; newt 221 rejected as wrong product",
+        "herblore_secondaries_newt Eye of newt at Betty 3012,3259,0; coins 5000 Draynor; catalog coins_spent required; eggs rejected",
+        "frozen flaxaio/picking/spinning/banking/walking and HerbloreSecondaries(+Logic) sha256 match verification.json on 100adccc",
+        "adapter audit + Make-X/Shop.buy/ground-spawn gates named without claiming LIVE success",
+        "independent re-run on t_993a114f-flaxaio-target: scenario 96, catalog 33/1 ignored, clippy -D warnings, rustfmt clean",
+        "no LIVE; releases child t_a74e9684"
+      ],
+      "non_blocking_notes": [
+        "implementer handoff metadata commit full hash was padded nonsense after d854321b8; actual is d854321b8012b391866dc619d74f0b60ac380a15",
+        "untracked evidence helpers _fix_line.py/_hash_overlay.py not in commit scope \u2014 fine",
+        "export path sits under worktree so git rev-parse from export shows campaign HEAD; isolation is file overlay + exclusive CARGO_TARGET_DIR"
+      ],
+      "preserved": [
+        "fc5c9a49d station cook/smelt/spin",
+        "6fc633317 resource gnome/coal",
+        "parent t_6faf0ef6 release chain"
+      ],
+      "releases_child": "t_a74e9684",
+      "worker_session_id": "20260911_063909_420163"
+    },
+    "worker_pid": null,
+    "step_key": null
+  },
+  "actual_model": "grok-4.5",
+  "provider": "xai-oauth",
+  "actual_api_calls": 16,
+  "api_lines": [
+    "2026-09-11 06:39:18,763 INFO [20260911_063909_420163] agent.conversation_loop: API call #1: model=grok-4.5 provider=xai-oauth in=23269 out=86 total=23355 latency=3.7s cache=384/23269 (2%) id=1d9f8b06-3aa7-96f1-8256-9da054cf75d5",
+    "2026-09-11 06:39:24,537 INFO [20260911_063909_420163] agent.conversation_loop: API call #2: model=grok-4.5 provider=xai-oauth in=29949 out=366 total=30315 latency=5.5s cache=23168/29949 (77%) id=b1196ee4-d1a1-94da-bdaa-cfec7d929639",
+    "2026-09-11 06:39:32,408 INFO [20260911_063909_420163] agent.conversation_loop: API call #3: model=grok-4.5 provider=xai-oauth in=32146 out=477 total=32623 latency=6.5s cache=29824/32146 (93%) id=794c6930-e909-9738-be28-4a9571cb8256",
+    "2026-09-11 06:39:39,360 INFO [20260911_063909_420163] agent.conversation_loop: API call #4: model=grok-4.5 provider=xai-oauth in=39566 out=319 total=39885 latency=5.4s cache=32128/39566 (81%) id=13f8cf69-463d-9327-b84e-e91ae043b16e",
+    "2026-09-11 06:39:45,944 INFO [20260911_063909_420163] agent.conversation_loop: API call #5: model=grok-4.5 provider=xai-oauth in=48262 out=205 total=48467 latency=5.7s cache=39552/48262 (82%) id=721ccda9-8f38-981b-9a27-a4314585f038",
+    "2026-09-11 06:39:51,568 INFO [20260911_063909_420163] agent.conversation_loop: API call #6: model=grok-4.5 provider=xai-oauth in=60861 out=303 total=61164 latency=5.5s cache=48256/60861 (79%) id=8565dd64-535a-9c3c-bc04-7b79fa1f72b4",
+    "2026-09-11 06:40:01,445 INFO [20260911_063909_420163] agent.conversation_loop: API call #7: model=grok-4.5 provider=xai-oauth in=73926 out=346 total=74272 latency=9.3s cache=60800/73926 (82%) id=fa57daba-a2f4-9c5a-b373-d345d0683f89",
+    "2026-09-11 06:40:23,425 INFO [20260911_063909_420163] agent.conversation_loop: API call #8: model=grok-4.5 provider=xai-oauth in=81809 out=1310 total=83119 latency=21.6s cache=73856/81809 (90%) id=878aedc3-39a2-913f-9898-8d30a0d41a92",
+    "2026-09-11 06:40:31,690 INFO [20260911_063909_420163] agent.conversation_loop: API call #9: model=grok-4.5 provider=xai-oauth in=83210 out=435 total=83645 latency=5.8s cache=81792/83210 (98%) id=21144ec5-4164-9e8e-90ed-0c642ac6bedb",
+    "2026-09-11 06:40:40,959 INFO [20260911_063909_420163] agent.conversation_loop: API call #10: model=grok-4.5 provider=xai-oauth in=89042 out=540 total=89582 latency=9.0s cache=83200/89042 (93%) id=9b6e780d-963f-9df0-b221-8aed23832822",
+    "2026-09-11 06:40:49,603 INFO [20260911_063909_420163] agent.conversation_loop: API call #11: model=grok-4.5 provider=xai-oauth in=91840 out=382 total=92222 latency=7.2s cache=88960/91840 (97%) id=4f141a35-7281-9bba-b2ba-ff515324f877",
+    "2026-09-11 06:41:03,495 INFO [20260911_063909_420163] agent.conversation_loop: API call #12: model=grok-4.5 provider=xai-oauth in=95116 out=312 total=95428 latency=6.2s cache=91776/95116 (96%) id=d8fdc7bb-ca70-9275-8175-3849d551ac44",
+    "2026-09-11 06:41:13,953 INFO [20260911_063909_420163] agent.conversation_loop: API call #13: model=grok-4.5 provider=xai-oauth in=96503 out=572 total=97075 latency=7.6s cache=95104/96503 (99%) id=df6ac584-d4b3-9ab9-b17e-ef8154927aec",
+    "2026-09-11 06:41:24,509 INFO [20260911_063909_420163] agent.conversation_loop: API call #14: model=grok-4.5 provider=xai-oauth in=98241 out=404 total=98645 latency=8.6s cache=96384/98241 (98%) id=090d0cb2-f22a-9bec-b6b6-de3672f5b595",
+    "2026-09-11 06:41:33,207 INFO [20260911_063909_420163] agent.conversation_loop: API call #15: model=grok-4.5 provider=xai-oauth in=101385 out=295 total=101680 latency=8.4s cache=98176/101385 (97%) id=5555c42f-b068-9f13-b51d-7746b092c9e6",
+    "2026-09-11 06:41:59,036 INFO [20260911_063909_420163] agent.conversation_loop: API call #16: model=grok-4.5 provider=xai-oauth in=102772 out=2091 total=104863 latency=25.8s cache=101376/102772 (99%) id=894aea94-3f75-9f41-a264-50d8e783b88c"
+  ],
+  "qualification": "Review only; no LIVE acceptance. Review used the task target; independent empty-target wording is not endorsed without separate cache evidence."
+}

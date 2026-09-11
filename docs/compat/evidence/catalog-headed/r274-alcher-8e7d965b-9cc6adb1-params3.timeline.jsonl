@@ -1,0 +1,302 @@
+{"elapsed_seconds": 0.106905, "line": "[panel] adapter name=Apple M4 Max backend=Metal device_type=IntegratedGpu vendor=0x0 device=0x0"}
+{"elapsed_seconds": 4.601929, "line": "[host-play] slot liversmys8_0: thread up"}
+{"elapsed_seconds": 4.640357, "line": "274bot: loaded snapshot (4556 models, 336 anim records)"}
+{"elapsed_seconds": 4.822271, "line": "[panel] scenario capture armed: Some(\"alcher terminal\")"}
+{"elapsed_seconds": 4.82234, "line": "[panel] liversmys8_0: liversmys8_0: slot up"}
+{"elapsed_seconds": 4.850237, "line": "[host-play] slot liversmys8_0: handshake begin reconnect=false"}
+{"elapsed_seconds": 5.316441, "line": "[host-play] slot liversmys8_0: handshake ok"}
+{"elapsed_seconds": 5.392724, "line": "[host] hitch liversmys8_0: frame_us=74909 paints=1 skips=0 ticks=0"}
+{"elapsed_seconds": 5.407541, "line": "[panel] liversmys8_0: liversmys8_0: scene 1"}
+{"elapsed_seconds": 6.001536, "line": "[host] hitch liversmys8_0: frame_us=63888 paints=25 skips=0 ticks=1"}
+{"elapsed_seconds": 6.003197, "line": "[panel] liversmys8_0: liversmys8_0: mainland hop queued"}
+{"elapsed_seconds": 6.011716, "line": "[panel] liversmys8_0: liversmys8_0: ingame"}
+{"elapsed_seconds": 6.011787, "line": "[panel] liversmys8_0: liversmys8_0: scene 2"}
+{"elapsed_seconds": 6.011806, "line": "live script_alcher: running step 1/6"}
+{"elapsed_seconds": 6.586995, "line": "[host] slot liversmys8_0: d_loop_us=9359 d_raster_us=351253 d_observe_us=91115 max_observe_us=8280 d_paints=50 d_skips=0 d_ticks=3 window_ms=0"}
+{"elapsed_seconds": 6.59864, "line": "[panel] liversmys8_0: liversmys8_0: scene 1"}
+{"elapsed_seconds": 6.720019, "line": "[panel] liversmys8_0: liversmys8_0: ingame"}
+{"elapsed_seconds": 6.72018, "line": "[panel] liversmys8_0: liversmys8_0: scene 2"}
+{"elapsed_seconds": 7.730568, "line": "[host] slot liversmys8_0: d_loop_us=11186 d_raster_us=267024 d_observe_us=134047 max_observe_us=12533 d_paints=50 d_skips=0 d_ticks=1 window_ms=1144"}
+{"elapsed_seconds": 8.740858, "line": "live script_alcher: running step 2/6"}
+{"elapsed_seconds": 8.901671, "line": "[host] slot liversmys8_0: d_loop_us=1202 d_raster_us=196457 d_observe_us=42869 max_observe_us=5781 d_paints=50 d_skips=0 d_ticks=2 window_ms=1171"}
+{"elapsed_seconds": 8.951144, "line": "[host-play] slot liversmys8_0: handshake begin reconnect=true"}
+{"elapsed_seconds": 8.969994, "line": "[panel] liversmys8_0: liversmys8_0: scene 0"}
+{"elapsed_seconds": 9.517511, "line": "[host-play] slot liversmys8_0: handshake ok"}
+{"elapsed_seconds": 9.560869, "line": "[panel] liversmys8_0: liversmys8_0: scene 1"}
+{"elapsed_seconds": 10.436684, "line": "[panel] liversmys8_0: liversmys8_0: ingame"}
+{"elapsed_seconds": 10.436759, "line": "[panel] liversmys8_0: liversmys8_0: scene 2"}
+{"elapsed_seconds": 10.707978, "line": "[host] slot liversmys8_0: d_loop_us=11684 d_raster_us=147062 d_observe_us=64349 max_observe_us=4650 d_paints=50 d_skips=0 d_ticks=1 window_ms=0"}
+{"elapsed_seconds": 11.873741, "line": "[host] slot liversmys8_0: d_loop_us=1217 d_raster_us=152837 d_observe_us=31244 max_observe_us=3744 d_paints=50 d_skips=0 d_ticks=3 window_ms=1165"}
+{"elapsed_seconds": 12.436668, "line": "live script_alcher: running step 3/6"}
+{"elapsed_seconds": 12.561654, "line": "live script_alcher: running step 4/6"}
+{"elapsed_seconds": 13.05243, "line": "[host] slot liversmys8_0: d_loop_us=1118 d_raster_us=141639 d_observe_us=25378 max_observe_us=665 d_paints=50 d_skips=0 d_ticks=2 window_ms=1178"}
+{"elapsed_seconds": 13.165834, "line": "[panel] liversmys8_0: liversmys8_0: scene 1"}
+{"elapsed_seconds": 13.269983, "line": "[panel] liversmys8_0: liversmys8_0: ingame"}
+{"elapsed_seconds": 13.270057, "line": "[panel] liversmys8_0: liversmys8_0: scene 2"}
+{"elapsed_seconds": 14.228154, "line": "[host] slot liversmys8_0: d_loop_us=10084 d_raster_us=152668 d_observe_us=63835 max_observe_us=5775 d_paints=50 d_skips=0 d_ticks=2 window_ms=1175"}
+{"elapsed_seconds": 15.295032, "line": "live script_alcher: running step 5/6"}
+{"elapsed_seconds": 15.311579, "line": "[script liversmys8_0] start load"}
+{"elapsed_seconds": 15.388279, "line": "live script_alcher: running step 6/6"}
+{"elapsed_seconds": 15.388375, "line": "[host] hitch liversmys8_0: observe_us=77164 paints=246 skips=0 ticks=10"}
+{"elapsed_seconds": 15.44382, "line": "[host] slot liversmys8_0: d_loop_us=940 d_raster_us=144202 d_observe_us=103567 max_observe_us=77164 d_paints=50 d_skips=0 d_ticks=2 window_ms=1215"}
+{"elapsed_seconds": 15.579688, "line": "[host] hitch liversmys8_0: observe_us=19602 paints=254 skips=0 ticks=11"}
+{"elapsed_seconds": 16.180899, "line": "[script liversmys8_0] Alcher \u2014 High Level Alchemy on 1 item(s), richest first: Rune chainbody"}
+{"elapsed_seconds": 16.181024, "line": "[script liversmys8_0] banking at Bank booth (Bank booth / Use-quickly)"}
+{"elapsed_seconds": 16.181064, "line": "[script liversmys8_0] interact OpenBooth { x: 3186, z: 3440, level: 0, id: 2213, name: Some(\"Bank booth\"), action: Some(\"Use-quickly\") }"}
+{"elapsed_seconds": 16.182562, "line": "[panel] liversmys8_0: script: Alcher \u2014 High Level Alchemy on 1 item(s), richest first: Rune chainbody"}
+{"elapsed_seconds": 16.182688, "line": "[panel] liversmys8_0: script: banking at Bank booth (Bank booth / Use-quickly)"}
+{"elapsed_seconds": 16.610518, "line": "[host] slot liversmys8_0: d_loop_us=1321 d_raster_us=275630 d_observe_us=97256 max_observe_us=19602 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166"}
+{"elapsed_seconds": 16.7853, "line": "[host] hitch liversmys8_0: observe_us=23341 paints=306 skips=0 ticks=13"}
+{"elapsed_seconds": 17.376597, "line": "[host] hitch liversmys8_0: observe_us=20679 paints=331 skips=0 ticks=14"}
+{"elapsed_seconds": 17.771323, "line": "[host] slot liversmys8_0: d_loop_us=1966 d_raster_us=494894 d_observe_us=110013 max_observe_us=23341 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160"}
+{"elapsed_seconds": 17.987293, "line": "[host] hitch liversmys8_0: observe_us=26747 paints=358 skips=0 ticks=15"}
+{"elapsed_seconds": 18.005306, "line": "[script liversmys8_0] interact Close"}
+{"elapsed_seconds": 18.005433, "line": "[shim-close] sent"}
+{"elapsed_seconds": 18.584458, "line": "[host] hitch liversmys8_0: observe_us=30064 paints=383 skips=0 ticks=16"}
+{"elapsed_seconds": 18.597372, "line": "[script liversmys8_0] interact Held { name: \"Staff of fire\", action: \"Wield\" }"}
+{"elapsed_seconds": 18.597555, "line": "[shim-held] Staff of fire Wield slot=0 -> sent"}
+{"elapsed_seconds": 18.941786, "line": "[host] slot liversmys8_0: d_loop_us=1765 d_raster_us=455861 d_observe_us=126799 max_observe_us=30064 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170"}
+{"elapsed_seconds": 19.198338, "line": "[host] hitch liversmys8_0: observe_us=18122 paints=409 skips=0 ticks=16"}
+{"elapsed_seconds": 19.25789, "line": "[host] hitch liversmys8_0: observe_us=23454 paints=411 skips=0 ticks=17"}
+{"elapsed_seconds": 19.789626, "line": "[host] hitch liversmys8_0: observe_us=22205 paints=433 skips=0 ticks=18"}
+{"elapsed_seconds": 19.797747, "line": "[script liversmys8_0] wore Staff of fire \u2014 casts need only Nature runes now"}
+{"elapsed_seconds": 19.797883, "line": "[script liversmys8_0] interact OpenBooth { x: 3186, z: 3440, level: 0, id: 2213, name: Some(\"Bank booth\"), action: Some(\"Use-quickly\") }"}
+{"elapsed_seconds": 19.80774, "line": "[panel] liversmys8_0: script: wore Staff of fire \u2014 casts need only Nature runes now"}
+{"elapsed_seconds": 20.15307, "line": "[host] slot liversmys8_0: d_loop_us=1563 d_raster_us=436691 d_observe_us=160691 max_observe_us=23454 d_paints=50 d_skips=0 d_ticks=2 window_ms=1211"}
+{"elapsed_seconds": 20.389595, "line": "[host] hitch liversmys8_0: observe_us=33057 paints=458 skips=0 ticks=19"}
+{"elapsed_seconds": 20.978007, "line": "[host] hitch liversmys8_0: observe_us=22537 paints=483 skips=0 ticks=20"}
+{"elapsed_seconds": 21.343533, "line": "[host] slot liversmys8_0: d_loop_us=1568 d_raster_us=560471 d_observe_us=148069 max_observe_us=33057 d_paints=50 d_skips=0 d_ticks=2 window_ms=1187"}
+{"elapsed_seconds": 21.571542, "line": "[host] hitch liversmys8_0: observe_us=17297 paints=510 skips=0 ticks=21"}
+{"elapsed_seconds": 21.602966, "line": "[script liversmys8_0] interact SetNoteMode { on: true }"}
+{"elapsed_seconds": 21.6031, "line": "[shim-note] on=true sent"}
+{"elapsed_seconds": 22.192657, "line": "[host] hitch liversmys8_0: observe_us=18533 paints=534 skips=0 ticks=22"}
+{"elapsed_seconds": 22.536831, "line": "[host] slot liversmys8_0: d_loop_us=1507 d_raster_us=691978 d_observe_us=111461 max_observe_us=18533 d_paints=50 d_skips=0 d_ticks=2 window_ms=1195"}
+{"elapsed_seconds": 22.773414, "line": "[host] hitch liversmys8_0: observe_us=29752 paints=559 skips=0 ticks=23"}
+{"elapsed_seconds": 23.378904, "line": "[host] hitch liversmys8_0: observe_us=26309 paints=586 skips=0 ticks=24"}
+{"elapsed_seconds": 23.389114, "line": "[script liversmys8_0] withdrew 27 Rune chainbody (noted, 30000gp each)"}
+{"elapsed_seconds": 23.407632, "line": "[panel] liversmys8_0: script: withdrew 27 Rune chainbody (noted, 30000gp each)"}
+{"elapsed_seconds": 23.663659, "line": "[host] slot liversmys8_0: d_loop_us=2155 d_raster_us=486122 d_observe_us=119715 max_observe_us=29752 d_paints=50 d_skips=0 d_ticks=2 window_ms=1126"}
+{"elapsed_seconds": 23.990556, "line": "[host] hitch liversmys8_0: observe_us=26760 paints=613 skips=0 ticks=25"}
+{"elapsed_seconds": 24.568745, "line": "[host] hitch liversmys8_0: observe_us=23381 paints=639 skips=0 ticks=26"}
+{"elapsed_seconds": 24.583406, "line": "[script liversmys8_0] withdrew 27 Nature runes"}
+{"elapsed_seconds": 24.583532, "line": "[script liversmys8_0] interact Close"}
+{"elapsed_seconds": 24.58356, "line": "[shim-close] sent"}
+{"elapsed_seconds": 24.595114, "line": "[panel] liversmys8_0: script: withdrew 27 Nature runes"}
+{"elapsed_seconds": 24.790153, "line": "[host] slot liversmys8_0: d_loop_us=1885 d_raster_us=514892 d_observe_us=141384 max_observe_us=26760 d_paints=50 d_skips=0 d_ticks=2 window_ms=1126"}
+{"elapsed_seconds": 25.170549, "line": "[host] hitch liversmys8_0: observe_us=24461 paints=665 skips=0 ticks=27"}
+{"elapsed_seconds": 25.17877, "line": "[script liversmys8_0] restocked: 27 Rune chainbody notes + 27 Nature runes"}
+{"elapsed_seconds": 25.19927, "line": "[panel] liversmys8_0: script: restocked: 27 Rune chainbody notes + 27 Nature runes"}
+{"elapsed_seconds": 25.761536, "line": "[host] hitch liversmys8_0: observe_us=17421 paints=691 skips=0 ticks=28"}
+{"elapsed_seconds": 25.769034, "line": "[script liversmys8_0] interact SideTab { tab: 6 }"}
+{"elapsed_seconds": 25.873588, "line": "[host] hitch liversmys8_0: frame_us=104516 paints=693 skips=0 ticks=28"}
+{"elapsed_seconds": 26.018336, "line": "[host] slot liversmys8_0: d_loop_us=1462 d_raster_us=410742 d_observe_us=103779 max_observe_us=24461 d_paints=50 d_skips=0 d_ticks=2 window_ms=1227"}
+{"elapsed_seconds": 26.371505, "line": "[host] hitch liversmys8_0: observe_us=18493 paints=714 skips=0 ticks=29"}
+{"elapsed_seconds": 26.380084, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 26.972356, "line": "[panel] scenario capture requested: alcher terminal"}
+{"elapsed_seconds": 27.134234, "line": "[host] hitch liversmys8_0: observe_us=168769 paints=741 skips=0 ticks=30"}
+{"elapsed_seconds": 27.136412, "line": "[panel] capture readback requested: 1"}
+{"elapsed_seconds": 27.305406, "line": "[host] slot liversmys8_0: d_loop_us=1468 d_raster_us=317586 d_observe_us=240234 max_observe_us=168769 d_paints=50 d_skips=0 d_ticks=2 window_ms=1287"}
+{"elapsed_seconds": 28.407559, "line": "[panel] shot alcher terminal -> /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/catalog-headed/r274-alcher-8e7d965b-9cc6adb1-params3/shots/2026-09-11T10-37-29_56677/2026-09-11T10-37-52_alcher_terminal.png"}
+{"elapsed_seconds": 28.407664, "line": "PASS: live script_alcher {\"scenario\":\"alcher\",\"outcome\":\"PASS\",\"predicate\":\"stat_xp_gain(6)>=1\",\"ticks\":33,\"elapsed_ms\":22523,\"tile\":[3185,3440,0],\"inv\":[{\"id\":1114,\"name\":\"Rune chainbody\",\"count\":26},{\"id\":561,\"name\":\"Nature rune\",\"count\":26},{\"id\":995,\"name\":\"Coins\",\"count\":30000}],\"stat\":{\"runenergy\":100},\"chat\":[{\"text\":\"This item can not be withdrawn as a note.\"},{\"text\":\"Welcome to RuneScape.\"}],\"scene\":2}"}
+{"elapsed_seconds": 28.452699, "line": "[host] slot liversmys8_0: d_loop_us=1197 d_raster_us=191573 d_observe_us=53333 max_observe_us=11293 d_paints=50 d_skips=0 d_ticks=2 window_ms=1147"}
+{"elapsed_seconds": 29.368895, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 29.60857, "line": "[host] slot liversmys8_0: d_loop_us=1110 d_raster_us=187846 d_observe_us=50760 max_observe_us=10142 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 29.965996, "line": "[host] hitch liversmys8_0: observe_us=19656 paints=864 skips=0 ticks=35"}
+{"elapsed_seconds": 30.759768, "line": "[host] slot liversmys8_0: d_loop_us=1419 d_raster_us=263652 d_observe_us=73385 max_observe_us=19656 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 31.903858, "line": "[host] slot liversmys8_0: d_loop_us=1171 d_raster_us=170485 d_observe_us=52274 max_observe_us=11547 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144"}
+{"elapsed_seconds": 32.378444, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 33.05106, "line": "[host] slot liversmys8_0: d_loop_us=1092 d_raster_us=166102 d_observe_us=48324 max_observe_us=11328 d_paints=50 d_skips=0 d_ticks=2 window_ms=1147"}
+{"elapsed_seconds": 34.195607, "line": "[host] slot liversmys8_0: d_loop_us=1020 d_raster_us=149470 d_observe_us=47563 max_observe_us=9026 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144"}
+{"elapsed_seconds": 35.365913, "line": "[host] hitch liversmys8_0: observe_us=17578 paints=1099 skips=0 ticks=44"}
+{"elapsed_seconds": 35.374188, "line": "[host] slot liversmys8_0: d_loop_us=1385 d_raster_us=197321 d_observe_us=65933 max_observe_us=17578 d_paints=50 d_skips=0 d_ticks=2 window_ms=1178"}
+{"elapsed_seconds": 35.375562, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 35.974421, "line": "[host] hitch liversmys8_0: observe_us=27009 paints=1125 skips=0 ticks=45"}
+{"elapsed_seconds": 36.517906, "line": "[host] slot liversmys8_0: d_loop_us=1553 d_raster_us=403098 d_observe_us=94267 max_observe_us=27009 d_paints=50 d_skips=0 d_ticks=1 window_ms=1143"}
+{"elapsed_seconds": 36.569504, "line": "[host] hitch liversmys8_0: observe_us=17072 paints=1151 skips=0 ticks=46"}
+{"elapsed_seconds": 37.18121, "line": "[host] hitch liversmys8_0: observe_us=17322 paints=1177 skips=0 ticks=47"}
+{"elapsed_seconds": 37.673913, "line": "[host] slot liversmys8_0: d_loop_us=1538 d_raster_us=364674 d_observe_us=87098 max_observe_us=17322 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 37.778127, "line": "[host] hitch liversmys8_0: observe_us=17189 paints=1203 skips=0 ticks=48"}
+{"elapsed_seconds": 38.373909, "line": "[host] hitch liversmys8_0: observe_us=18973 paints=1229 skips=0 ticks=49"}
+{"elapsed_seconds": 38.382238, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 38.822392, "line": "[host] slot liversmys8_0: d_loop_us=1636 d_raster_us=432118 d_observe_us=104644 max_observe_us=18973 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148"}
+{"elapsed_seconds": 38.973167, "line": "[host] hitch liversmys8_0: observe_us=26745 paints=1255 skips=0 ticks=50"}
+{"elapsed_seconds": 39.571457, "line": "[host] hitch liversmys8_0: observe_us=17943 paints=1281 skips=0 ticks=51"}
+{"elapsed_seconds": 39.99039, "line": "[host] slot liversmys8_0: d_loop_us=4117 d_raster_us=403245 d_observe_us=110027 max_observe_us=26745 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165"}
+{"elapsed_seconds": 40.189545, "line": "[host] hitch liversmys8_0: observe_us=23696 paints=1307 skips=0 ticks=52"}
+{"elapsed_seconds": 40.784915, "line": "[host] hitch liversmys8_0: observe_us=20717 paints=1333 skips=0 ticks=53"}
+{"elapsed_seconds": 41.135726, "line": "[host] slot liversmys8_0: d_loop_us=1684 d_raster_us=423480 d_observe_us=106698 max_observe_us=23696 d_paints=50 d_skips=0 d_ticks=2 window_ms=1147"}
+{"elapsed_seconds": 41.38467, "line": "[host] hitch liversmys8_0: observe_us=22322 paints=1359 skips=0 ticks=54"}
+{"elapsed_seconds": 41.394498, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 41.978633, "line": "[host] hitch liversmys8_0: observe_us=20534 paints=1385 skips=0 ticks=55"}
+{"elapsed_seconds": 42.295044, "line": "[host] slot liversmys8_0: d_loop_us=2570 d_raster_us=344058 d_observe_us=98096 max_observe_us=22322 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 43.449545, "line": "[host] slot liversmys8_0: d_loop_us=1148 d_raster_us=200888 d_observe_us=57258 max_observe_us=12247 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 44.392676, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 44.613346, "line": "[host] slot liversmys8_0: d_loop_us=1044 d_raster_us=177370 d_observe_us=47631 max_observe_us=9023 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163"}
+{"elapsed_seconds": 45.759387, "line": "[host] slot liversmys8_0: d_loop_us=1095 d_raster_us=165860 d_observe_us=53835 max_observe_us=12500 d_paints=50 d_skips=0 d_ticks=2 window_ms=1146"}
+{"elapsed_seconds": 46.912699, "line": "[host] slot liversmys8_0: d_loop_us=1085 d_raster_us=168967 d_observe_us=53711 max_observe_us=11024 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153"}
+{"elapsed_seconds": 47.379608, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 48.065569, "line": "[host] slot liversmys8_0: d_loop_us=1090 d_raster_us=177842 d_observe_us=50423 max_observe_us=10776 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 49.223755, "line": "[host] slot liversmys8_0: d_loop_us=1009 d_raster_us=153679 d_observe_us=46307 max_observe_us=9973 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 50.37787, "line": "[host] slot liversmys8_0: d_loop_us=1072 d_raster_us=164714 d_observe_us=51498 max_observe_us=10873 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 50.384757, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 51.496353, "line": "[host] slot liversmys8_0: d_loop_us=1091 d_raster_us=201271 d_observe_us=51742 max_observe_us=13293 d_paints=50 d_skips=0 d_ticks=1 window_ms=1118"}
+{"elapsed_seconds": 52.64534, "line": "[host] slot liversmys8_0: d_loop_us=1144 d_raster_us=172038 d_observe_us=52995 max_observe_us=10679 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148"}
+{"elapsed_seconds": 53.375442, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 53.790087, "line": "[host] slot liversmys8_0: d_loop_us=1098 d_raster_us=185098 d_observe_us=54161 max_observe_us=10666 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144"}
+{"elapsed_seconds": 54.92663, "line": "[host] slot liversmys8_0: d_loop_us=1058 d_raster_us=176006 d_observe_us=59535 max_observe_us=12274 d_paints=50 d_skips=0 d_ticks=2 window_ms=1136"}
+{"elapsed_seconds": 56.068332, "line": "[host] slot liversmys8_0: d_loop_us=1055 d_raster_us=161716 d_observe_us=51213 max_observe_us=11109 d_paints=50 d_skips=0 d_ticks=2 window_ms=1141"}
+{"elapsed_seconds": 56.369622, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 57.233151, "line": "[host] slot liversmys8_0: d_loop_us=1019 d_raster_us=170474 d_observe_us=48267 max_observe_us=11699 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164"}
+{"elapsed_seconds": 58.403813, "line": "[host] slot liversmys8_0: d_loop_us=1037 d_raster_us=171988 d_observe_us=54303 max_observe_us=10509 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170"}
+{"elapsed_seconds": 59.383207, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 59.570951, "line": "[host] slot liversmys8_0: d_loop_us=1064 d_raster_us=178807 d_observe_us=49279 max_observe_us=10072 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167"}
+{"elapsed_seconds": 60.721061, "line": "[host] slot liversmys8_0: d_loop_us=1104 d_raster_us=177126 d_observe_us=55158 max_observe_us=12542 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150"}
+{"elapsed_seconds": 61.869147, "line": "[host] slot liversmys8_0: d_loop_us=1093 d_raster_us=175165 d_observe_us=52154 max_observe_us=10683 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148"}
+{"elapsed_seconds": 62.375446, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 63.030558, "line": "[host] slot liversmys8_0: d_loop_us=1057 d_raster_us=172056 d_observe_us=53248 max_observe_us=12241 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161"}
+{"elapsed_seconds": 64.196767, "line": "[host] slot liversmys8_0: d_loop_us=1047 d_raster_us=169072 d_observe_us=49604 max_observe_us=10089 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166"}
+{"elapsed_seconds": 65.365269, "line": "[host] slot liversmys8_0: d_loop_us=1050 d_raster_us=166516 d_observe_us=45874 max_observe_us=8444 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168"}
+{"elapsed_seconds": 65.376208, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 66.512284, "line": "[host] slot liversmys8_0: d_loop_us=1037 d_raster_us=182360 d_observe_us=46140 max_observe_us=12395 d_paints=50 d_skips=0 d_ticks=1 window_ms=1147"}
+{"elapsed_seconds": 67.674492, "line": "[host] slot liversmys8_0: d_loop_us=1015 d_raster_us=171320 d_observe_us=50471 max_observe_us=10853 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162"}
+{"elapsed_seconds": 68.379095, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 68.827297, "line": "[host] slot liversmys8_0: d_loop_us=1045 d_raster_us=177463 d_observe_us=52833 max_observe_us=12373 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 69.982374, "line": "[host] slot liversmys8_0: d_loop_us=1074 d_raster_us=171611 d_observe_us=58517 max_observe_us=12174 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 71.14597, "line": "[host] slot liversmys8_0: d_loop_us=1031 d_raster_us=150779 d_observe_us=47288 max_observe_us=10365 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163"}
+{"elapsed_seconds": 71.376702, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 72.302873, "line": "[host] slot liversmys8_0: d_loop_us=1072 d_raster_us=173681 d_observe_us=48748 max_observe_us=10573 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 73.451335, "line": "[host] slot liversmys8_0: d_loop_us=1067 d_raster_us=175756 d_observe_us=49076 max_observe_us=10702 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148"}
+{"elapsed_seconds": 74.37219, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 74.610951, "line": "[host] slot liversmys8_0: d_loop_us=1059 d_raster_us=182134 d_observe_us=48968 max_observe_us=10650 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 75.772935, "line": "[host] slot liversmys8_0: d_loop_us=1044 d_raster_us=171660 d_observe_us=49735 max_observe_us=10934 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161"}
+{"elapsed_seconds": 76.935904, "line": "[host] slot liversmys8_0: d_loop_us=1091 d_raster_us=179065 d_observe_us=54531 max_observe_us=10766 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162"}
+{"elapsed_seconds": 77.372014, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 78.090056, "line": "[host] slot liversmys8_0: d_loop_us=1063 d_raster_us=196836 d_observe_us=54148 max_observe_us=12765 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 79.251981, "line": "[host] slot liversmys8_0: d_loop_us=1069 d_raster_us=189852 d_observe_us=52341 max_observe_us=10890 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161"}
+{"elapsed_seconds": 80.378665, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 80.407094, "line": "[host] slot liversmys8_0: d_loop_us=1098 d_raster_us=181041 d_observe_us=52593 max_observe_us=11569 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 81.563419, "line": "[host] slot liversmys8_0: d_loop_us=1049 d_raster_us=172267 d_observe_us=50159 max_observe_us=10403 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 82.705957, "line": "[host] slot liversmys8_0: d_loop_us=1015 d_raster_us=164107 d_observe_us=41310 max_observe_us=11062 d_paints=50 d_skips=0 d_ticks=1 window_ms=1142"}
+{"elapsed_seconds": 83.372502, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 83.865219, "line": "[host] slot liversmys8_0: d_loop_us=1081 d_raster_us=192506 d_observe_us=50426 max_observe_us=10313 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 85.028689, "line": "[host] slot liversmys8_0: d_loop_us=1115 d_raster_us=182034 d_observe_us=58021 max_observe_us=11957 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163"}
+{"elapsed_seconds": 86.199483, "line": "[host] slot liversmys8_0: d_loop_us=1050 d_raster_us=172344 d_observe_us=48076 max_observe_us=10542 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170"}
+{"elapsed_seconds": 86.375948, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 87.361949, "line": "[host] slot liversmys8_0: d_loop_us=1067 d_raster_us=184247 d_observe_us=53775 max_observe_us=10664 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162"}
+{"elapsed_seconds": 88.507949, "line": "[host] slot liversmys8_0: d_loop_us=1086 d_raster_us=175803 d_observe_us=51136 max_observe_us=10367 d_paints=50 d_skips=0 d_ticks=2 window_ms=1145"}
+{"elapsed_seconds": 89.393063, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 89.674877, "line": "[host] slot liversmys8_0: d_loop_us=1091 d_raster_us=188425 d_observe_us=53085 max_observe_us=11859 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166"}
+{"elapsed_seconds": 90.845689, "line": "[host] slot liversmys8_0: d_loop_us=1050 d_raster_us=169660 d_observe_us=54669 max_observe_us=11128 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170"}
+{"elapsed_seconds": 91.991493, "line": "[host] slot liversmys8_0: d_loop_us=1102 d_raster_us=174378 d_observe_us=50636 max_observe_us=10468 d_paints=50 d_skips=0 d_ticks=2 window_ms=1145"}
+{"elapsed_seconds": 92.383779, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 93.149163, "line": "[host] slot liversmys8_0: d_loop_us=1085 d_raster_us=192520 d_observe_us=55202 max_observe_us=12199 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 94.305906, "line": "[host] slot liversmys8_0: d_loop_us=1019 d_raster_us=158888 d_observe_us=46184 max_observe_us=9642 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 95.373158, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 95.467505, "line": "[host] slot liversmys8_0: d_loop_us=1101 d_raster_us=181573 d_observe_us=51028 max_observe_us=10193 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161"}
+{"elapsed_seconds": 96.612392, "line": "[host] slot liversmys8_0: d_loop_us=1108 d_raster_us=187843 d_observe_us=56343 max_observe_us=13346 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144"}
+{"elapsed_seconds": 97.771257, "line": "[host] slot liversmys8_0: d_loop_us=1108 d_raster_us=188818 d_observe_us=51379 max_observe_us=10512 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 98.388183, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 98.927164, "line": "[host] slot liversmys8_0: d_loop_us=1137 d_raster_us=184579 d_observe_us=40404 max_observe_us=9991 d_paints=50 d_skips=0 d_ticks=1 window_ms=1155"}
+{"elapsed_seconds": 100.07843, "line": "[host] slot liversmys8_0: d_loop_us=1114 d_raster_us=179436 d_observe_us=59002 max_observe_us=12877 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 101.237205, "line": "[host] slot liversmys8_0: d_loop_us=1110 d_raster_us=176738 d_observe_us=52820 max_observe_us=11720 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 101.370986, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 102.394892, "line": "[host] slot liversmys8_0: d_loop_us=1088 d_raster_us=198996 d_observe_us=56145 max_observe_us=12990 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 103.558292, "line": "[host] slot liversmys8_0: d_loop_us=1082 d_raster_us=182121 d_observe_us=54227 max_observe_us=11526 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163"}
+{"elapsed_seconds": 104.375811, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 104.704888, "line": "[host] slot liversmys8_0: d_loop_us=1073 d_raster_us=195342 d_observe_us=53332 max_observe_us=11383 d_paints=50 d_skips=0 d_ticks=2 window_ms=1146"}
+{"elapsed_seconds": 105.86312, "line": "[host] slot liversmys8_0: d_loop_us=1072 d_raster_us=179865 d_observe_us=57499 max_observe_us=11820 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 107.01705, "line": "[host] slot liversmys8_0: d_loop_us=1084 d_raster_us=169696 d_observe_us=50912 max_observe_us=10695 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153"}
+{"elapsed_seconds": 107.391053, "line": "[script liversmys8_0] interact OpenBooth { x: 3186, z: 3440, level: 0, id: 2213, name: Some(\"Bank booth\"), action: Some(\"Use-quickly\") }"}
+{"elapsed_seconds": 108.156291, "line": "[host] slot liversmys8_0: d_loop_us=1109 d_raster_us=187734 d_observe_us=54586 max_observe_us=10826 d_paints=50 d_skips=0 d_ticks=2 window_ms=1139"}
+{"elapsed_seconds": 109.3064, "line": "[host] slot liversmys8_0: d_loop_us=1049 d_raster_us=235777 d_observe_us=53035 max_observe_us=11382 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150"}
+{"elapsed_seconds": 110.446042, "line": "[host] slot liversmys8_0: d_loop_us=1030 d_raster_us=227948 d_observe_us=51059 max_observe_us=10225 d_paints=50 d_skips=0 d_ticks=2 window_ms=1139"}
+{"elapsed_seconds": 111.584906, "line": "[script liversmys8_0] cleared 1 items from the pack"}
+{"elapsed_seconds": 111.585, "line": "[script liversmys8_0] interact SetNoteMode { on: true }"}
+{"elapsed_seconds": 111.585022, "line": "[shim-note] on=true sent"}
+{"elapsed_seconds": 111.589537, "line": "[host] slot liversmys8_0: d_loop_us=1007 d_raster_us=227575 d_observe_us=48920 max_observe_us=10199 d_paints=50 d_skips=0 d_ticks=2 window_ms=1143"}
+{"elapsed_seconds": 111.603172, "line": "[panel] liversmys8_0: script: cleared 1 items from the pack"}
+{"elapsed_seconds": 112.750424, "line": "[host] slot liversmys8_0: d_loop_us=1042 d_raster_us=227750 d_observe_us=44169 max_observe_us=9782 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160"}
+{"elapsed_seconds": 113.386172, "line": "[script liversmys8_0] withdrew 3 Rune chainbody (noted, 30000gp each)"}
+{"elapsed_seconds": 113.394809, "line": "[panel] liversmys8_0: script: withdrew 3 Rune chainbody (noted, 30000gp each)"}
+{"elapsed_seconds": 113.897017, "line": "[host] slot liversmys8_0: d_loop_us=1007 d_raster_us=236565 d_observe_us=52725 max_observe_us=11901 d_paints=50 d_skips=0 d_ticks=1 window_ms=1146"}
+{"elapsed_seconds": 114.588175, "line": "[script liversmys8_0] withdrew 3 Nature runes"}
+{"elapsed_seconds": 114.588259, "line": "[script liversmys8_0] interact Close"}
+{"elapsed_seconds": 114.588278, "line": "[shim-close] sent"}
+{"elapsed_seconds": 114.603178, "line": "[panel] liversmys8_0: script: withdrew 3 Nature runes"}
+{"elapsed_seconds": 115.065134, "line": "[host] slot liversmys8_0: d_loop_us=1134 d_raster_us=204967 d_observe_us=55285 max_observe_us=12554 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168"}
+{"elapsed_seconds": 115.175463, "line": "[script liversmys8_0] restocked: 3 Rune chainbody notes + 3 Nature runes"}
+{"elapsed_seconds": 115.186534, "line": "[panel] liversmys8_0: script: restocked: 3 Rune chainbody notes + 3 Nature runes"}
+{"elapsed_seconds": 115.777847, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 116.224308, "line": "[host] slot liversmys8_0: d_loop_us=1079 d_raster_us=188289 d_observe_us=56006 max_observe_us=14427 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 117.386323, "line": "[host] slot liversmys8_0: d_loop_us=1127 d_raster_us=178067 d_observe_us=57647 max_observe_us=12569 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161"}
+{"elapsed_seconds": 118.557423, "line": "[host] slot liversmys8_0: d_loop_us=1084 d_raster_us=170979 d_observe_us=48640 max_observe_us=9547 d_paints=50 d_skips=0 d_ticks=2 window_ms=1171"}
+{"elapsed_seconds": 118.788284, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 119.717377, "line": "[host] slot liversmys8_0: d_loop_us=1130 d_raster_us=191727 d_observe_us=56635 max_observe_us=12281 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 120.879924, "line": "[host] slot liversmys8_0: d_loop_us=1080 d_raster_us=178897 d_observe_us=52732 max_observe_us=11215 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162"}
+{"elapsed_seconds": 121.774498, "line": "[script liversmys8_0] interact UseWidgetOn { component_id: 1178, kind: \"held\", target_name: Some(\"Rune chainbody\"), x: 0, z: 0, level: 0, index: None }"}
+{"elapsed_seconds": 122.037, "line": "[host] slot liversmys8_0: d_loop_us=1112 d_raster_us=188012 d_observe_us=53136 max_observe_us=11240 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 123.184172, "line": "[host] slot liversmys8_0: d_loop_us=1162 d_raster_us=174953 d_observe_us=57234 max_observe_us=11991 d_paints=50 d_skips=0 d_ticks=2 window_ms=1147"}
+{"elapsed_seconds": 124.345557, "line": "[host] slot liversmys8_0: d_loop_us=1139 d_raster_us=178991 d_observe_us=53173 max_observe_us=11444 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161"}
+{"elapsed_seconds": 124.786024, "line": "[script liversmys8_0] interact OpenBooth { x: 3186, z: 3440, level: 0, id: 2213, name: Some(\"Bank booth\"), action: Some(\"Use-quickly\") }"}
+{"elapsed_seconds": 125.511491, "line": "[host] slot liversmys8_0: d_loop_us=1167 d_raster_us=195561 d_observe_us=58113 max_observe_us=13364 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165"}
+{"elapsed_seconds": 126.66119, "line": "[host] slot liversmys8_0: d_loop_us=1111 d_raster_us=233745 d_observe_us=53640 max_observe_us=12456 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 127.809408, "line": "[host] slot liversmys8_0: d_loop_us=1041 d_raster_us=231362 d_observe_us=51160 max_observe_us=10385 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148"}
+{"elapsed_seconds": 128.368919, "line": "[script liversmys8_0] cleared 1 items from the pack"}
+{"elapsed_seconds": 128.369013, "line": "[script liversmys8_0] interact SetNoteMode { on: true }"}
+{"elapsed_seconds": 128.369034, "line": "[shim-note] on=true sent"}
+{"elapsed_seconds": 128.373923, "line": "[panel] liversmys8_0: script: cleared 1 items from the pack"}
+{"elapsed_seconds": 128.961919, "line": "[host] slot liversmys8_0: d_loop_us=1054 d_raster_us=232908 d_observe_us=51425 max_observe_us=10363 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 128.968652, "line": "[script liversmys8_0] the bank is out of Rune chainbody \u2014 moving on"}
+{"elapsed_seconds": 128.968736, "line": "[script liversmys8_0] the bank is out of every selected item \u2014 stopping"}
+{"elapsed_seconds": 128.968772, "line": "[script liversmys8_0] script requested stop on tick 206; isolate stopping"}
+{"elapsed_seconds": 128.978267, "line": "[panel] liversmys8_0: script: the bank is out of Rune chainbody \u2014 moving on"}
+{"elapsed_seconds": 128.978327, "line": "[panel] liversmys8_0: script: the bank is out of every selected item \u2014 stopping"}
+{"elapsed_seconds": 128.978341, "line": "[panel] liversmys8_0: script: script requested stop on tick 206; isolate stopping"}
+{"elapsed_seconds": 130.111425, "line": "[host] slot liversmys8_0: d_loop_us=1036 d_raster_us=234428 d_observe_us=28253 max_observe_us=805 d_paints=50 d_skips=0 d_ticks=1 window_ms=1149"}
+{"elapsed_seconds": 131.262455, "line": "[host] slot liversmys8_0: d_loop_us=1072 d_raster_us=235458 d_observe_us=28451 max_observe_us=754 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 132.425075, "line": "[host] slot liversmys8_0: d_loop_us=1030 d_raster_us=228879 d_observe_us=27189 max_observe_us=754 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162"}
+{"elapsed_seconds": 133.569573, "line": "[host] slot liversmys8_0: d_loop_us=1078 d_raster_us=230972 d_observe_us=29092 max_observe_us=839 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144"}
+{"elapsed_seconds": 134.733294, "line": "[host] slot liversmys8_0: d_loop_us=1058 d_raster_us=237839 d_observe_us=28046 max_observe_us=736 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163"}
+{"elapsed_seconds": 135.894825, "line": "[host] slot liversmys8_0: d_loop_us=1082 d_raster_us=235099 d_observe_us=28474 max_observe_us=767 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161"}
+{"elapsed_seconds": 137.061457, "line": "[host] slot liversmys8_0: d_loop_us=1015 d_raster_us=233067 d_observe_us=28824 max_observe_us=1227 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166"}
+{"elapsed_seconds": 138.207494, "line": "[host] slot liversmys8_0: d_loop_us=1006 d_raster_us=206655 d_observe_us=26862 max_observe_us=907 d_paints=50 d_skips=0 d_ticks=2 window_ms=1146"}
+{"elapsed_seconds": 139.372393, "line": "[host] slot liversmys8_0: d_loop_us=1034 d_raster_us=231000 d_observe_us=28097 max_observe_us=748 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164"}
+{"elapsed_seconds": 140.521905, "line": "[host] slot liversmys8_0: d_loop_us=1058 d_raster_us=242043 d_observe_us=27496 max_observe_us=711 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 141.674915, "line": "[host] slot liversmys8_0: d_loop_us=1028 d_raster_us=235422 d_observe_us=27226 max_observe_us=853 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 142.836752, "line": "[host] slot liversmys8_0: d_loop_us=1014 d_raster_us=224034 d_observe_us=27553 max_observe_us=802 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161"}
+{"elapsed_seconds": 143.988464, "line": "[host] slot liversmys8_0: d_loop_us=1053 d_raster_us=233616 d_observe_us=28328 max_observe_us=751 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 145.14304, "line": "[host] slot liversmys8_0: d_loop_us=1036 d_raster_us=235674 d_observe_us=27961 max_observe_us=766 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 146.290906, "line": "[host] slot liversmys8_0: d_loop_us=1042 d_raster_us=233360 d_observe_us=28250 max_observe_us=828 d_paints=50 d_skips=0 d_ticks=1 window_ms=1147"}
+{"elapsed_seconds": 147.44891, "line": "[host] slot liversmys8_0: d_loop_us=1079 d_raster_us=231355 d_observe_us=28245 max_observe_us=1031 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 148.618137, "line": "[host] slot liversmys8_0: d_loop_us=1323 d_raster_us=233275 d_observe_us=27097 max_observe_us=709 d_paints=50 d_skips=0 d_ticks=2 window_ms=1169"}
+{"elapsed_seconds": 149.777553, "line": "[host] slot liversmys8_0: d_loop_us=1015 d_raster_us=231615 d_observe_us=28054 max_observe_us=810 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 150.932659, "line": "[host] slot liversmys8_0: d_loop_us=1032 d_raster_us=228546 d_observe_us=27306 max_observe_us=817 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 152.069982, "line": "[host] slot liversmys8_0: d_loop_us=1075 d_raster_us=237891 d_observe_us=31634 max_observe_us=1327 d_paints=50 d_skips=0 d_ticks=2 window_ms=1137"}
+{"elapsed_seconds": 153.20006, "line": "[host] slot liversmys8_0: d_loop_us=1099 d_raster_us=233293 d_observe_us=29768 max_observe_us=1440 d_paints=50 d_skips=0 d_ticks=2 window_ms=1130"}
+{"elapsed_seconds": 154.337619, "line": "[host] slot liversmys8_0: d_loop_us=1022 d_raster_us=212566 d_observe_us=29434 max_observe_us=1667 d_paints=50 d_skips=0 d_ticks=2 window_ms=1137"}
+{"elapsed_seconds": 155.470933, "line": "[host] slot liversmys8_0: d_loop_us=1101 d_raster_us=244261 d_observe_us=32901 max_observe_us=1436 d_paints=50 d_skips=0 d_ticks=2 window_ms=1133"}
+{"elapsed_seconds": 156.614072, "line": "[host] slot liversmys8_0: d_loop_us=1089 d_raster_us=244415 d_observe_us=30020 max_observe_us=1132 d_paints=50 d_skips=0 d_ticks=2 window_ms=1143"}
+{"elapsed_seconds": 157.747416, "line": "[host] slot liversmys8_0: d_loop_us=1110 d_raster_us=232497 d_observe_us=32777 max_observe_us=1428 d_paints=50 d_skips=0 d_ticks=2 window_ms=1133"}
+{"elapsed_seconds": 158.882713, "line": "[host] slot liversmys8_0: d_loop_us=1061 d_raster_us=223665 d_observe_us=30009 max_observe_us=1315 d_paints=50 d_skips=0 d_ticks=1 window_ms=1135"}
+{"elapsed_seconds": 160.027963, "line": "[host] slot liversmys8_0: d_loop_us=1065 d_raster_us=243570 d_observe_us=30773 max_observe_us=1263 d_paints=50 d_skips=0 d_ticks=2 window_ms=1145"}
+{"elapsed_seconds": 161.170865, "line": "[host] slot liversmys8_0: d_loop_us=1081 d_raster_us=242512 d_observe_us=31673 max_observe_us=1400 d_paints=50 d_skips=0 d_ticks=2 window_ms=1142"}
+{"elapsed_seconds": 162.309956, "line": "[host] slot liversmys8_0: d_loop_us=1051 d_raster_us=243872 d_observe_us=33138 max_observe_us=1587 d_paints=50 d_skips=0 d_ticks=2 window_ms=1139"}
+{"elapsed_seconds": 163.450797, "line": "[host] slot liversmys8_0: d_loop_us=1066 d_raster_us=236954 d_observe_us=30998 max_observe_us=1270 d_paints=50 d_skips=0 d_ticks=2 window_ms=1140"}
+{"elapsed_seconds": 164.578571, "line": "[host] slot liversmys8_0: d_loop_us=1072 d_raster_us=236347 d_observe_us=30631 max_observe_us=1238 d_paints=50 d_skips=0 d_ticks=2 window_ms=1127"}
+{"elapsed_seconds": 165.72254, "line": "[host] slot liversmys8_0: d_loop_us=1132 d_raster_us=240291 d_observe_us=32431 max_observe_us=1500 d_paints=50 d_skips=0 d_ticks=2 window_ms=1143"}
+{"elapsed_seconds": 166.856622, "line": "[host] slot liversmys8_0: d_loop_us=1042 d_raster_us=242172 d_observe_us=32741 max_observe_us=1383 d_paints=50 d_skips=0 d_ticks=2 window_ms=1134"}
+{"elapsed_seconds": 167.982305, "line": "[host] slot liversmys8_0: d_loop_us=1138 d_raster_us=239508 d_observe_us=31021 max_observe_us=1446 d_paints=50 d_skips=0 d_ticks=2 window_ms=1125"}
+{"elapsed_seconds": 169.114288, "line": "[host] slot liversmys8_0: d_loop_us=1061 d_raster_us=235964 d_observe_us=34256 max_observe_us=1521 d_paints=50 d_skips=0 d_ticks=1 window_ms=1131"}
+{"elapsed_seconds": 170.245114, "line": "[host] slot liversmys8_0: d_loop_us=1181 d_raster_us=246743 d_observe_us=30170 max_observe_us=1402 d_paints=50 d_skips=0 d_ticks=2 window_ms=1130"}
+{"elapsed_seconds": 171.387593, "line": "[host] slot liversmys8_0: d_loop_us=1068 d_raster_us=239496 d_observe_us=32195 max_observe_us=1634 d_paints=50 d_skips=0 d_ticks=2 window_ms=1142"}
+{"elapsed_seconds": 172.523329, "line": "[host] slot liversmys8_0: d_loop_us=1025 d_raster_us=237561 d_observe_us=31998 max_observe_us=1493 d_paints=50 d_skips=0 d_ticks=2 window_ms=1135"}
+{"elapsed_seconds": 173.671994, "line": "[host] slot liversmys8_0: d_loop_us=1018 d_raster_us=218626 d_observe_us=30319 max_observe_us=1306 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148"}
+{"elapsed_seconds": 174.828525, "line": "[host] slot liversmys8_0: d_loop_us=1063 d_raster_us=232979 d_observe_us=28067 max_observe_us=783 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 175.986293, "line": "[host] slot liversmys8_0: d_loop_us=1072 d_raster_us=231160 d_observe_us=28066 max_observe_us=830 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 177.152239, "line": "[host] slot liversmys8_0: d_loop_us=1080 d_raster_us=237521 d_observe_us=29003 max_observe_us=1009 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165"}
+{"elapsed_seconds": 178.304874, "line": "[host] slot liversmys8_0: d_loop_us=1080 d_raster_us=231225 d_observe_us=27891 max_observe_us=750 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 179.46125, "line": "[host] slot liversmys8_0: d_loop_us=1088 d_raster_us=230019 d_observe_us=26567 max_observe_us=712 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 180.618144, "line": "[host] slot liversmys8_0: d_loop_us=1061 d_raster_us=235784 d_observe_us=27518 max_observe_us=707 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 181.768347, "line": "[host] slot liversmys8_0: d_loop_us=1073 d_raster_us=236350 d_observe_us=28258 max_observe_us=1311 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150"}
+{"elapsed_seconds": 182.902639, "line": "[host] slot liversmys8_0: d_loop_us=1071 d_raster_us=241456 d_observe_us=31129 max_observe_us=1637 d_paints=50 d_skips=0 d_ticks=1 window_ms=1134"}
+{"elapsed_seconds": 184.040866, "line": "[host] slot liversmys8_0: d_loop_us=1118 d_raster_us=225499 d_observe_us=29194 max_observe_us=1297 d_paints=50 d_skips=0 d_ticks=2 window_ms=1138"}

@@ -1,0 +1,106 @@
+{
+  "verified_at": "2026-09-11T11:02:11.313042+00:00",
+  "task": "t_afe0a5a1",
+  "review_run": {
+    "id": 1311,
+    "profile": "reviewer",
+    "status": "done",
+    "outcome": "completed",
+    "started_at": 1789123751,
+    "ended_at": 1789123883,
+    "summary": "Reviewed and approved 2744b8be4 for brief 105. Round-1 artifact cold read plus independent re-run on hash-matched export resource-native-tool-facts-t_afe0a5a1 (host d854321b8 + overlay, client 9d090ed, exclusive target): api gather_tools 4/4, script resource_tool_facts 4/4, clippy -D warnings, rustfmt pass. Scoped owned paths only; gather_tools after baker_stall; void Traversal.preload; exclusive available callbacks. Not LIVE.",
+    "error": null,
+    "metadata": {
+      "review_outcome": "approved",
+      "review_round": 1,
+      "lens": "artifact",
+      "blocking_defects": [],
+      "brief": "docs/compat/briefs/105-resource-native-tool-facts.md",
+      "brief_sha256": "44f48d4835ac26cbedfda34715edddab4ea02b634f67e42a3db51f5b2319d385",
+      "commit": "2744b8be4619d5af9bb6d91755b6bbe339f5ba45",
+      "source_commit": "d854321b8012b391866dc619d74f0b60ac380a15",
+      "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+      "export": ".superpowers/review-exports/resource-native-tool-facts-t_afe0a5a1",
+      "cargo_target_dir": ".superpowers/review-exports/resource-native-tool-facts-t_afe0a5a1-target",
+      "manifest": ".superpowers/review-exports/resource-native-tool-facts-t_afe0a5a1-manifest.json",
+      "files": 3738,
+      "isolated_build": true,
+      "live": false,
+      "report": "docs/compat/04ab-resource-native-tool-facts.md",
+      "evidence": "docs/compat/evidence/resource-native-tool-facts/",
+      "owned_paths": [
+        "crates/api/src/gather_tools.rs",
+        "crates/api/src/lib.rs",
+        "crates/script/src/shim/mod.rs",
+        "crates/script/src/shim/tools.js",
+        "crates/script/src/shim/traversal.js",
+        "crates/script/tests/resource_tool_facts.rs",
+        "docs/compat/04ab-resource-native-tool-facts.md",
+        "docs/compat/evidence/resource-native-tool-facts/"
+      ],
+      "overlay_sha256": {
+        "crates/api/src/gather_tools.rs": "2a046d20f050032e19093d5d1a551c726ca40e845431b3442a09a54d821c2647",
+        "crates/api/src/lib.rs": "66b52b157f0650e904d85fcebdc3cd4194bcadc167c19990a30684e244ff56e3",
+        "crates/script/src/shim/mod.rs": "3abe3a49c807ea14d78ee3b949aa3c02d652ff8b5313684ec1a345014e8e44b5",
+        "crates/script/src/shim/tools.js": "aa3f2f95aa56474c2c4e1f51e3321a4f80938b318f05fdfa18bf8f6c0e3029af",
+        "crates/script/src/shim/traversal.js": "c3bb292ffcc01cda9b8cb68bd9c6e3fe89d758aa698d3f46759f53b6e57527f3",
+        "crates/script/tests/resource_tool_facts.rs": "0432e628a61deedb64a886e52f05357507a12a4998f0e13444ba5c0a60067f6a"
+      },
+      "hotspot": "crates/script/src/shim/mod.rs \u2014 composition only: gather_tools key after baker_stall on content_json. crates/api/src/lib.rs one-line gather_tools export.",
+      "limits": [
+        "not LIVE acceptance",
+        "Seers haul remains later",
+        "Make-X fletch remains stub",
+        "toolRestockPlan stays not impl",
+        "root owns Gnome/Coal LIVE and cache cleanup"
+      ],
+      "releases_children": [
+        "t_e8541da5",
+        "t_68de6f48"
+      ],
+      "tests_passed": 8,
+      "tests_run": [
+        "cargo test --locked --offline -p api gather_tools -- --test-threads=1",
+        "cargo test --locked --offline -p script --test resource_tool_facts -- --test-threads=1",
+        "cargo clippy --locked --offline --no-deps -p api --lib -- -D warnings",
+        "cargo clippy --locked --offline --no-deps -p script --test resource_tool_facts -- -D warnings",
+        "rustfmt --edition 2021 --check crates/api/src/gather_tools.rs crates/api/src/lib.rs crates/script/tests/resource_tool_facts.rs"
+      ],
+      "reviewer_checks": [
+        "cold read of 2744b8be4 vs brief 105 before handoff narrative",
+        "brief sha256 44f48d4835ac26 matches handoff and verification.json",
+        "commit paths only 6 owned overlay code files + report/evidence; no load/slot/host-play/nav/client/fixture/foreign/LIVE edits",
+        "overlay hashes match workspace, export, commit blobs, and verification.json",
+        "export host_commit d854321b8 client 9d090ed files 3738; exclusive target resource-native-tool-facts-t_afe0a5a1-target",
+        "api::gather_tools posts best-first AXES incl black 1361 and PICKAXES with mining use levels 0/0/6/21/31/41 and Attack wield gates; bronze tutorial unwield-gated",
+        "selected_274_289_ids_names_and_wearpos_agree checks generated game data wear_position 3 both revs",
+        "content_json gather_tools after baker_stall via existing seam; lib one-line mod export",
+        "JS Tools thin glue over posted facts; available === true exclusive, no inv fallback (removed prior AXE_NAMES+snap.inv path)",
+        "bestAxe no WC gate; bestPickaxe mining level; canWield unknown false; toolRestockPlan/bankHasBetterGatherTool/exactTool incomplete preserved",
+        "Traversal.preload void no-op; remaining/requestRepath stay notImpl; walkTo/walkResilient untouched",
+        "independent empty-target: api gather_tools 4/4; script resource_tool_facts 4/4; clippy -D warnings api lib + script test; rustfmt check owned Rust",
+        "workspace owned paths zero diff vs 2744b8be4",
+        "not LIVE"
+      ],
+      "worker_session_id": "20260911_064911_bdbceb"
+    },
+    "worker_pid": null,
+    "step_key": null
+  },
+  "actual_model": "grok-4.5",
+  "provider": "xai-oauth",
+  "actual_api_calls": 10,
+  "api_lines": [
+    "2026-09-11 06:49:16,660 INFO [20260911_064911_bdbceb] agent.conversation_loop: API call #1: model=grok-4.5 provider=xai-oauth in=23274 out=59 total=23333 latency=3.6s cache=384/23274 (2%) id=3195c8d5-9488-9e80-b21b-105d4754a28a",
+    "2026-09-11 06:49:23,682 INFO [20260911_064911_bdbceb] agent.conversation_loop: API call #2: model=grok-4.5 provider=xai-oauth in=29976 out=402 total=30378 latency=7.0s cache=23168/29976 (77%) id=057decb9-2081-9188-8ce0-6ae6036b8d6e",
+    "2026-09-11 06:49:34,084 INFO [20260911_064911_bdbceb] agent.conversation_loop: API call #3: model=grok-4.5 provider=xai-oauth in=33748 out=713 total=34461 latency=10.1s cache=29952/33748 (89%) id=61eff1ed-dc99-964e-8a1f-6ae3b1f44bab",
+    "2026-09-11 06:49:56,849 INFO [20260911_064911_bdbceb] agent.conversation_loop: API call #4: model=grok-4.5 provider=xai-oauth in=48300 out=1207 total=49507 latency=22.3s cache=33664/48300 (70%) id=ae36f03b-1391-97fd-9a64-5c6fa7eb6cae",
+    "2026-09-11 06:50:08,205 INFO [20260911_064911_bdbceb] agent.conversation_loop: API call #5: model=grok-4.5 provider=xai-oauth in=60900 out=748 total=61648 latency=11.1s cache=48256/60900 (79%) id=e4acded0-7c34-91e0-9f52-8310e4bd3462",
+    "2026-09-11 06:50:19,417 INFO [20260911_064911_bdbceb] agent.conversation_loop: API call #6: model=grok-4.5 provider=xai-oauth in=64120 out=686 total=64806 latency=10.7s cache=60800/64120 (95%) id=4f66aad8-ae75-92c8-b772-4750f1feebb6",
+    "2026-09-11 06:50:30,018 INFO [20260911_064911_bdbceb] agent.conversation_loop: API call #7: model=grok-4.5 provider=xai-oauth in=67437 out=427 total=67864 latency=10.1s cache=64000/67437 (95%) id=64a2d751-f932-908b-ad14-ced57c62a682",
+    "2026-09-11 06:50:43,045 INFO [20260911_064911_bdbceb] agent.conversation_loop: API call #8: model=grok-4.5 provider=xai-oauth in=69073 out=256 total=69329 latency=12.5s cache=67328/69073 (97%) id=9bdbaa77-0aed-9924-90e0-b7a4ae99377a",
+    "2026-09-11 06:51:01,226 INFO [20260911_064911_bdbceb] agent.conversation_loop: API call #9: model=grok-4.5 provider=xai-oauth in=69645 out=823 total=70468 latency=17.0s cache=68992/69645 (99%) id=a7f68e8f-4d6a-9501-8320-14af915fdc2e",
+    "2026-09-11 06:51:23,941 INFO [20260911_064911_bdbceb] agent.conversation_loop: API call #10: model=grok-4.5 provider=xai-oauth in=72955 out=1662 total=74617 latency=22.2s cache=69632/72955 (95%) id=822d642f-ee04-9f77-a593-8e1052d6559d"
+  ],
+  "qualification": "Review only; no LIVE acceptance. Review used the task target; independent empty-target wording is not endorsed without separate cache evidence."
+}

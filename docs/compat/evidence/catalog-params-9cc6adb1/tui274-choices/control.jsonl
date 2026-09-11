@@ -1,0 +1,14 @@
+{"action": "click", "x": 28, "y": 39, "label": "stop", "at": "2026-09-11T10:29:24.890346+00:00"}
+{"action": "click", "x": 6, "y": 39, "label": "browse", "at": "2026-09-11T10:29:24.890486+00:00"}
+{"action": "click", "x": 10, "y": 31, "label": "selectalcher"}
+{"action": "click", "x": 6, "y": 25, "label": "closebrowse"}
+{"action": "click", "x": 6, "y": 39, "label": "openparams"}
+{"action": "key", "key": "enter", "label": "itemchoices"}
+{"action": "key", "key": "down"}
+{"action": "key", "key": "down"}
+{"action": "key", "key": "down"}
+{"action": "key", "key": "down"}
+{"action": "key", "key": "down"}
+{"action": "text", "text": " "}
+{"action": "key", "key": "enter"}
+{"action": "key", "key": "escape"}
