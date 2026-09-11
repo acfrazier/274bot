@@ -1,0 +1,127 @@
+{"elapsed_seconds": 0.147406, "line": "[panel] adapter name=Apple M4 Max backend=Metal device_type=IntegratedGpu vendor=0x0 device=0x0"}
+{"elapsed_seconds": 4.617449, "line": "[host-play] slot livea9j17x_0: thread up"}
+{"elapsed_seconds": 4.655556, "line": "274bot: loaded snapshot (4556 models, 336 anim records)"}
+{"elapsed_seconds": 4.846028, "line": "[panel] scenario capture armed: Some(\"alcher terminal\")"}
+{"elapsed_seconds": 4.846075, "line": "[panel] livea9j17x_0: livea9j17x_0: slot up"}
+{"elapsed_seconds": 4.863722, "line": "[host-play] slot livea9j17x_0: handshake begin reconnect=false"}
+{"elapsed_seconds": 5.428277, "line": "[host-play] slot livea9j17x_0: handshake ok"}
+{"elapsed_seconds": 5.493233, "line": "[host] hitch livea9j17x_0: frame_us=64490 paints=1 skips=0 ticks=0"}
+{"elapsed_seconds": 5.49607, "line": "[panel] livea9j17x_0: livea9j17x_0: scene 1"}
+{"elapsed_seconds": 6.104697, "line": "[host] hitch livea9j17x_0: frame_us=68956 paints=25 skips=0 ticks=1"}
+{"elapsed_seconds": 6.10596, "line": "[panel] livea9j17x_0: livea9j17x_0: mainland hop queued"}
+{"elapsed_seconds": 6.121223, "line": "[panel] livea9j17x_0: livea9j17x_0: ingame"}
+{"elapsed_seconds": 6.121273, "line": "[panel] livea9j17x_0: livea9j17x_0: scene 2"}
+{"elapsed_seconds": 6.121287, "line": "live script_paint_buttons_ui: running step 1/6"}
+{"elapsed_seconds": 6.66345, "line": "[host] slot livea9j17x_0: d_loop_us=12152 d_raster_us=289532 d_observe_us=51191 max_observe_us=2712 d_paints=50 d_skips=0 d_ticks=3 window_ms=0"}
+{"elapsed_seconds": 6.70449, "line": "[panel] livea9j17x_0: livea9j17x_0: scene 1"}
+{"elapsed_seconds": 6.808711, "line": "[panel] livea9j17x_0: livea9j17x_0: ingame"}
+{"elapsed_seconds": 6.808787, "line": "[panel] livea9j17x_0: livea9j17x_0: scene 2"}
+{"elapsed_seconds": 7.823182, "line": "[host] slot livea9j17x_0: d_loop_us=12091 d_raster_us=195556 d_observe_us=68450 max_observe_us=4623 d_paints=50 d_skips=0 d_ticks=1 window_ms=1159"}
+{"elapsed_seconds": 8.829533, "line": "live script_paint_buttons_ui: running step 2/6"}
+{"elapsed_seconds": 8.984695, "line": "[host] slot livea9j17x_0: d_loop_us=1560 d_raster_us=187591 d_observe_us=37908 max_observe_us=1293 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161"}
+{"elapsed_seconds": 9.076028, "line": "[host-play] slot livea9j17x_0: handshake begin reconnect=true"}
+{"elapsed_seconds": 9.079511, "line": "[panel] livea9j17x_0: livea9j17x_0: scene 0"}
+{"elapsed_seconds": 9.633925, "line": "[host-play] slot livea9j17x_0: handshake ok"}
+{"elapsed_seconds": 9.683718, "line": "[panel] livea9j17x_0: livea9j17x_0: scene 1"}
+{"elapsed_seconds": 10.579545, "line": "[panel] livea9j17x_0: livea9j17x_0: ingame"}
+{"elapsed_seconds": 10.579613, "line": "[panel] livea9j17x_0: livea9j17x_0: scene 2"}
+{"elapsed_seconds": 10.842508, "line": "[host] slot livea9j17x_0: d_loop_us=13612 d_raster_us=164250 d_observe_us=76197 max_observe_us=5492 d_paints=50 d_skips=0 d_ticks=1 window_ms=0"}
+{"elapsed_seconds": 12.000535, "line": "[host] slot livea9j17x_0: d_loop_us=1714 d_raster_us=188051 d_observe_us=40933 max_observe_us=4113 d_paints=50 d_skips=0 d_ticks=3 window_ms=1157"}
+{"elapsed_seconds": 12.600426, "line": "live script_paint_buttons_ui: running step 3/6"}
+{"elapsed_seconds": 12.683717, "line": "live script_paint_buttons_ui: running step 4/6"}
+{"elapsed_seconds": 13.166391, "line": "[host] slot livea9j17x_0: d_loop_us=1609 d_raster_us=190533 d_observe_us=38670 max_observe_us=1204 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165"}
+{"elapsed_seconds": 13.287864, "line": "[panel] livea9j17x_0: livea9j17x_0: scene 1"}
+{"elapsed_seconds": 13.433687, "line": "[panel] livea9j17x_0: livea9j17x_0: ingame"}
+{"elapsed_seconds": 13.433781, "line": "[panel] livea9j17x_0: livea9j17x_0: scene 2"}
+{"elapsed_seconds": 14.339136, "line": "[host] slot livea9j17x_0: d_loop_us=11738 d_raster_us=177653 d_observe_us=71986 max_observe_us=6998 d_paints=50 d_skips=0 d_ticks=2 window_ms=1172"}
+{"elapsed_seconds": 15.454552, "line": "live script_paint_buttons_ui: running step 5/6"}
+{"elapsed_seconds": 15.462377, "line": "[script livea9j17x_0] start load"}
+{"elapsed_seconds": 15.542727, "line": "live script_paint_buttons_ui: running step 6/6"}
+{"elapsed_seconds": 15.542801, "line": "[host] hitch livea9j17x_0: observe_us=80997 paints=247 skips=0 ticks=10"}
+{"elapsed_seconds": 15.5719, "line": "[host] slot livea9j17x_0: d_loop_us=1286 d_raster_us=189012 d_observe_us=116978 max_observe_us=80997 d_paints=50 d_skips=0 d_ticks=2 window_ms=1232"}
+{"elapsed_seconds": 15.707756, "line": "[host] hitch livea9j17x_0: observe_us=23282 paints=254 skips=0 ticks=11"}
+{"elapsed_seconds": 16.292551, "line": "[script livea9j17x_0] NatureCrafter runner starting \u2014 ferrying essence for Air to [paintproof] via the bank + ship + Jiminua"}
+{"elapsed_seconds": 16.292648, "line": "[script livea9j17x_0] interact WalkNear { x: 2655, z: 3283, level: 0, radius: 3, allow_teleports: false }"}
+{"elapsed_seconds": 16.312783, "line": "[panel] livea9j17x_0: script: NatureCrafter runner starting \u2014 ferrying essence for Air to [paintproof] via the bank + ship + Jiminua"}
+{"elapsed_seconds": 16.746987, "line": "[host] slot livea9j17x_0: d_loop_us=784 d_raster_us=132584 d_observe_us=62365 max_observe_us=23282 d_paints=50 d_skips=0 d_ticks=2 window_ms=1175"}
+{"elapsed_seconds": 17.91767, "line": "[host] slot livea9j17x_0: d_loop_us=813 d_raster_us=124545 d_observe_us=41782 max_observe_us=8024 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170"}
+{"elapsed_seconds": 19.089346, "line": "[host] slot livea9j17x_0: d_loop_us=837 d_raster_us=125862 d_observe_us=41323 max_observe_us=7924 d_paints=50 d_skips=0 d_ticks=2 window_ms=1171"}
+{"elapsed_seconds": 20.263435, "line": "[host] slot livea9j17x_0: d_loop_us=830 d_raster_us=126544 d_observe_us=41084 max_observe_us=7897 d_paints=50 d_skips=0 d_ticks=2 window_ms=1174"}
+{"elapsed_seconds": 21.438407, "line": "[host] slot livea9j17x_0: d_loop_us=782 d_raster_us=127313 d_observe_us=41679 max_observe_us=7992 d_paints=50 d_skips=0 d_ticks=2 window_ms=1174"}
+{"elapsed_seconds": 22.608255, "line": "[host] slot livea9j17x_0: d_loop_us=740 d_raster_us=123791 d_observe_us=41645 max_observe_us=8178 d_paints=50 d_skips=0 d_ticks=2 window_ms=1169"}
+{"elapsed_seconds": 23.793317, "line": "[host] slot livea9j17x_0: d_loop_us=775 d_raster_us=124656 d_observe_us=41177 max_observe_us=8049 d_paints=50 d_skips=0 d_ticks=2 window_ms=1185"}
+{"elapsed_seconds": 24.970709, "line": "[host] slot livea9j17x_0: d_loop_us=863 d_raster_us=127828 d_observe_us=41728 max_observe_us=8157 d_paints=50 d_skips=0 d_ticks=2 window_ms=1177"}
+{"elapsed_seconds": 26.154917, "line": "[host] slot livea9j17x_0: d_loop_us=817 d_raster_us=126273 d_observe_us=41284 max_observe_us=7871 d_paints=50 d_skips=0 d_ticks=2 window_ms=1184"}
+{"elapsed_seconds": 27.341743, "line": "[host] slot livea9j17x_0: d_loop_us=800 d_raster_us=122812 d_observe_us=40469 max_observe_us=8001 d_paints=50 d_skips=0 d_ticks=2 window_ms=1186"}
+{"elapsed_seconds": 28.514392, "line": "[host] slot livea9j17x_0: d_loop_us=767 d_raster_us=123200 d_observe_us=40980 max_observe_us=8160 d_paints=50 d_skips=0 d_ticks=2 window_ms=1172"}
+{"elapsed_seconds": 29.691751, "line": "[host] slot livea9j17x_0: d_loop_us=742 d_raster_us=123871 d_observe_us=41172 max_observe_us=7926 d_paints=50 d_skips=0 d_ticks=2 window_ms=1177"}
+{"elapsed_seconds": 30.870927, "line": "[host] slot livea9j17x_0: d_loop_us=794 d_raster_us=129551 d_observe_us=46727 max_observe_us=11354 d_paints=50 d_skips=0 d_ticks=2 window_ms=1179"}
+{"elapsed_seconds": 32.049501, "line": "[host] slot livea9j17x_0: d_loop_us=854 d_raster_us=133030 d_observe_us=46855 max_observe_us=9555 d_paints=50 d_skips=0 d_ticks=2 window_ms=1178"}
+{"elapsed_seconds": 33.229932, "line": "[host] slot livea9j17x_0: d_loop_us=791 d_raster_us=124054 d_observe_us=41148 max_observe_us=8183 d_paints=50 d_skips=0 d_ticks=2 window_ms=1180"}
+{"elapsed_seconds": 34.412472, "line": "[host] slot livea9j17x_0: d_loop_us=764 d_raster_us=125320 d_observe_us=41066 max_observe_us=7930 d_paints=50 d_skips=0 d_ticks=2 window_ms=1182"}
+{"elapsed_seconds": 35.589305, "line": "[host] slot livea9j17x_0: d_loop_us=746 d_raster_us=123707 d_observe_us=43112 max_observe_us=10505 d_paints=50 d_skips=0 d_ticks=2 window_ms=1176"}
+{"elapsed_seconds": 36.756592, "line": "[host] slot livea9j17x_0: d_loop_us=787 d_raster_us=127945 d_observe_us=41451 max_observe_us=8204 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167"}
+{"elapsed_seconds": 37.924912, "line": "[host] slot livea9j17x_0: d_loop_us=803 d_raster_us=127277 d_observe_us=41453 max_observe_us=7866 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168"}
+{"elapsed_seconds": 39.103062, "line": "[host] slot livea9j17x_0: d_loop_us=790 d_raster_us=123313 d_observe_us=41173 max_observe_us=8172 d_paints=50 d_skips=0 d_ticks=2 window_ms=1178"}
+{"elapsed_seconds": 40.280561, "line": "[host] slot livea9j17x_0: d_loop_us=791 d_raster_us=124945 d_observe_us=41313 max_observe_us=8065 d_paints=50 d_skips=0 d_ticks=2 window_ms=1177"}
+{"elapsed_seconds": 41.466176, "line": "[host] slot livea9j17x_0: d_loop_us=778 d_raster_us=128060 d_observe_us=42078 max_observe_us=8114 d_paints=50 d_skips=0 d_ticks=2 window_ms=1185"}
+{"elapsed_seconds": 42.631057, "line": "[host] slot livea9j17x_0: d_loop_us=763 d_raster_us=126160 d_observe_us=33533 max_observe_us=7892 d_paints=50 d_skips=0 d_ticks=1 window_ms=1164"}
+{"elapsed_seconds": 43.808347, "line": "[host] slot livea9j17x_0: d_loop_us=751 d_raster_us=121356 d_observe_us=40776 max_observe_us=7995 d_paints=50 d_skips=0 d_ticks=2 window_ms=1177"}
+{"elapsed_seconds": 44.9934, "line": "[host] slot livea9j17x_0: d_loop_us=765 d_raster_us=123389 d_observe_us=40562 max_observe_us=7878 d_paints=50 d_skips=0 d_ticks=2 window_ms=1185"}
+{"elapsed_seconds": 46.174139, "line": "[host] slot livea9j17x_0: d_loop_us=829 d_raster_us=124512 d_observe_us=41831 max_observe_us=8069 d_paints=50 d_skips=0 d_ticks=2 window_ms=1180"}
+{"elapsed_seconds": 47.333661, "line": "[host] slot livea9j17x_0: d_loop_us=842 d_raster_us=138590 d_observe_us=46426 max_observe_us=9771 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 48.499285, "line": "[host] slot livea9j17x_0: d_loop_us=1191 d_raster_us=169402 d_observe_us=56608 max_observe_us=12126 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165"}
+{"elapsed_seconds": 49.659619, "line": "[host] slot livea9j17x_0: d_loop_us=1250 d_raster_us=169814 d_observe_us=59484 max_observe_us=11106 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160"}
+{"elapsed_seconds": 50.830418, "line": "[host] slot livea9j17x_0: d_loop_us=1246 d_raster_us=176735 d_observe_us=62474 max_observe_us=11805 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170"}
+{"elapsed_seconds": 52.000756, "line": "[host] slot livea9j17x_0: d_loop_us=1148 d_raster_us=168192 d_observe_us=56491 max_observe_us=11381 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170"}
+{"elapsed_seconds": 53.174824, "line": "[host] slot livea9j17x_0: d_loop_us=965 d_raster_us=162036 d_observe_us=52344 max_observe_us=10881 d_paints=50 d_skips=0 d_ticks=2 window_ms=1174"}
+{"elapsed_seconds": 54.347849, "line": "[host] slot livea9j17x_0: d_loop_us=1360 d_raster_us=183673 d_observe_us=63627 max_observe_us=11293 d_paints=50 d_skips=0 d_ticks=2 window_ms=1172"}
+{"elapsed_seconds": 55.509671, "line": "[host] slot livea9j17x_0: d_loop_us=1203 d_raster_us=175740 d_observe_us=62015 max_observe_us=11378 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161"}
+{"elapsed_seconds": 56.682763, "line": "[host] slot livea9j17x_0: d_loop_us=1259 d_raster_us=174661 d_observe_us=59305 max_observe_us=11002 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173"}
+{"elapsed_seconds": 57.856916, "line": "[host] slot livea9j17x_0: d_loop_us=1101 d_raster_us=170624 d_observe_us=58725 max_observe_us=11375 d_paints=50 d_skips=0 d_ticks=2 window_ms=1174"}
+{"elapsed_seconds": 59.019083, "line": "[host] slot livea9j17x_0: d_loop_us=1241 d_raster_us=182134 d_observe_us=64777 max_observe_us=13692 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162"}
+{"elapsed_seconds": 60.184132, "line": "[host] slot livea9j17x_0: d_loop_us=1279 d_raster_us=184984 d_observe_us=64198 max_observe_us=12062 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165"}
+{"elapsed_seconds": 61.349326, "line": "[host] slot livea9j17x_0: d_loop_us=1263 d_raster_us=179855 d_observe_us=63332 max_observe_us=11658 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165"}
+{"elapsed_seconds": 62.502689, "line": "[host] slot livea9j17x_0: d_loop_us=1303 d_raster_us=186147 d_observe_us=63273 max_observe_us=11477 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153"}
+{"elapsed_seconds": 63.668307, "line": "[host] slot livea9j17x_0: d_loop_us=1284 d_raster_us=180090 d_observe_us=51641 max_observe_us=9758 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165"}
+{"elapsed_seconds": 64.817228, "line": "[host] slot livea9j17x_0: d_loop_us=1339 d_raster_us=183623 d_observe_us=63903 max_observe_us=12286 d_paints=50 d_skips=0 d_ticks=1 window_ms=1148"}
+{"elapsed_seconds": 65.971618, "line": "[host] slot livea9j17x_0: d_loop_us=1215 d_raster_us=179755 d_observe_us=60818 max_observe_us=11576 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 67.144193, "line": "[host] slot livea9j17x_0: d_loop_us=1373 d_raster_us=187238 d_observe_us=64024 max_observe_us=11426 d_paints=50 d_skips=0 d_ticks=2 window_ms=1172"}
+{"elapsed_seconds": 68.303951, "line": "[host] slot livea9j17x_0: d_loop_us=1296 d_raster_us=184563 d_observe_us=64384 max_observe_us=12049 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 69.467358, "line": "[host] slot livea9j17x_0: d_loop_us=1142 d_raster_us=170905 d_observe_us=59187 max_observe_us=11651 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163"}
+{"elapsed_seconds": 70.650791, "line": "[host] slot livea9j17x_0: d_loop_us=843 d_raster_us=129847 d_observe_us=42470 max_observe_us=8162 d_paints=50 d_skips=0 d_ticks=2 window_ms=1183"}
+{"elapsed_seconds": 71.826693, "line": "[host] slot livea9j17x_0: d_loop_us=876 d_raster_us=139017 d_observe_us=45164 max_observe_us=8867 d_paints=50 d_skips=0 d_ticks=2 window_ms=1175"}
+{"elapsed_seconds": 72.991036, "line": "[host] slot livea9j17x_0: d_loop_us=1057 d_raster_us=167252 d_observe_us=52895 max_observe_us=10967 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164"}
+{"elapsed_seconds": 74.158961, "line": "[host] slot livea9j17x_0: d_loop_us=896 d_raster_us=156954 d_observe_us=53120 max_observe_us=9603 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167"}
+{"elapsed_seconds": 75.326316, "line": "[host] slot livea9j17x_0: d_loop_us=1152 d_raster_us=182145 d_observe_us=63077 max_observe_us=12494 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167"}
+{"elapsed_seconds": 76.496959, "line": "[host] slot livea9j17x_0: d_loop_us=1358 d_raster_us=181309 d_observe_us=63415 max_observe_us=11822 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170"}
+{"elapsed_seconds": 77.658832, "line": "[host] slot livea9j17x_0: d_loop_us=1302 d_raster_us=175243 d_observe_us=62595 max_observe_us=11149 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161"}
+{"elapsed_seconds": 78.810382, "line": "[host] slot livea9j17x_0: d_loop_us=1217 d_raster_us=182554 d_observe_us=60119 max_observe_us=11469 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 79.974363, "line": "[host] slot livea9j17x_0: d_loop_us=1236 d_raster_us=170177 d_observe_us=60291 max_observe_us=11156 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163"}
+{"elapsed_seconds": 81.129902, "line": "[host] slot livea9j17x_0: d_loop_us=1171 d_raster_us=177473 d_observe_us=61022 max_observe_us=12211 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 82.290525, "line": "[host] slot livea9j17x_0: d_loop_us=1226 d_raster_us=178207 d_observe_us=61990 max_observe_us=13435 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160"}
+{"elapsed_seconds": 83.431712, "line": "[host] slot livea9j17x_0: d_loop_us=1325 d_raster_us=188246 d_observe_us=52354 max_observe_us=10191 d_paints=50 d_skips=0 d_ticks=1 window_ms=1141"}
+{"elapsed_seconds": 84.584361, "line": "[host] slot livea9j17x_0: d_loop_us=1378 d_raster_us=187870 d_observe_us=64294 max_observe_us=11899 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 85.741079, "line": "[host] slot livea9j17x_0: d_loop_us=1181 d_raster_us=170127 d_observe_us=59927 max_observe_us=11557 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 86.895829, "line": "[host] slot livea9j17x_0: d_loop_us=1388 d_raster_us=177651 d_observe_us=62412 max_observe_us=11414 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 88.060708, "line": "[host] slot livea9j17x_0: d_loop_us=1449 d_raster_us=184564 d_observe_us=64654 max_observe_us=11847 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164"}
+{"elapsed_seconds": 89.23509, "line": "[host] slot livea9j17x_0: d_loop_us=1166 d_raster_us=174685 d_observe_us=60641 max_observe_us=12580 d_paints=50 d_skips=0 d_ticks=2 window_ms=1174"}
+{"elapsed_seconds": 90.399057, "line": "[host] slot livea9j17x_0: d_loop_us=1288 d_raster_us=173140 d_observe_us=60346 max_observe_us=12028 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163"}
+{"elapsed_seconds": 91.557678, "line": "[host] slot livea9j17x_0: d_loop_us=1417 d_raster_us=181617 d_observe_us=63521 max_observe_us=11965 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 92.718591, "line": "[host] slot livea9j17x_0: d_loop_us=1337 d_raster_us=181222 d_observe_us=64865 max_observe_us=12282 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160"}
+{"elapsed_seconds": 93.874072, "line": "[host] slot livea9j17x_0: d_loop_us=1291 d_raster_us=179150 d_observe_us=62291 max_observe_us=11332 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 95.019473, "line": "[host] slot livea9j17x_0: d_loop_us=1213 d_raster_us=166646 d_observe_us=56892 max_observe_us=12332 d_paints=50 d_skips=0 d_ticks=2 window_ms=1145"}
+{"elapsed_seconds": 96.16609, "line": "[host] slot livea9j17x_0: d_loop_us=1436 d_raster_us=191034 d_observe_us=60495 max_observe_us=11880 d_paints=50 d_skips=0 d_ticks=2 window_ms=1146"}
+{"elapsed_seconds": 97.312031, "line": "[host] slot livea9j17x_0: d_loop_us=1675 d_raster_us=206583 d_observe_us=67776 max_observe_us=12929 d_paints=50 d_skips=0 d_ticks=2 window_ms=1145"}
+{"elapsed_seconds": 98.479908, "line": "[host] slot livea9j17x_0: d_loop_us=1373 d_raster_us=193082 d_observe_us=63545 max_observe_us=14549 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167"}
+{"elapsed_seconds": 99.624693, "line": "[host] slot livea9j17x_0: d_loop_us=1582 d_raster_us=209527 d_observe_us=53224 max_observe_us=8648 d_paints=50 d_skips=0 d_ticks=1 window_ms=1144"}
+{"elapsed_seconds": 100.788969, "line": "[host] slot livea9j17x_0: d_loop_us=1411 d_raster_us=185002 d_observe_us=60386 max_observe_us=12726 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164"}
+{"elapsed_seconds": 101.941649, "line": "[host] slot livea9j17x_0: d_loop_us=1531 d_raster_us=200118 d_observe_us=62121 max_observe_us=12880 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 103.106542, "line": "[host] slot livea9j17x_0: d_loop_us=1327 d_raster_us=185439 d_observe_us=61593 max_observe_us=12436 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164"}
+{"elapsed_seconds": 103.88464, "line": "[panel] scenario capture requested: alcher terminal"}
+{"elapsed_seconds": 103.972814, "line": "[host] hitch livea9j17x_0: observe_us=88709 paints=4033 skips=0 ticks=158"}
+{"elapsed_seconds": 103.973505, "line": "[panel] capture readback requested: 1"}
+{"elapsed_seconds": 104.331593, "line": "[host] slot livea9j17x_0: d_loop_us=1065 d_raster_us=166425 d_observe_us=129981 max_observe_us=88709 d_paints=50 d_skips=0 d_ticks=2 window_ms=1225"}
+{"elapsed_seconds": 104.838006, "line": "[panel] shot alcher terminal -> /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/catalog-headed/r274-paint-buttons-ui-8e7d965b-paintcd49/shots/2026-09-11T13-47-55_71892/2026-09-11T13-49-34_alcher_terminal.png"}
+{"elapsed_seconds": 104.838109, "line": "FAIL: live script_paint_buttons_ui {\"scenario\":\"paint_buttons_ui\",\"outcome\":\"FAIL\",\"predicate\":\"stat_xp_gain(6)>=1\",\"ticks\":153,\"elapsed_ms\":99353,\"message\":\"step 6 (watch the script alch noted stock): stat_xp_gain(6)>=1 not seen within 150 ticks\",\"tile\":[3185,3440,0],\"stat\":{\"runenergy\":100},\"chat\":[{\"text\":\"Welcome to RuneScape.\"}],\"scene\":2}"}
+{"elapsed_seconds": 104.838148, "line": "FAIL: step 6 (watch the script alch noted stock): stat_xp_gain(6)>=1 not seen within 150 ticks"}

@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 12:55 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 14:10 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -25,10 +25,28 @@ and client5c73a4a are confirmed remote. Cleanup completed:41 inactive worktrees
 and43 local branches removed after verified history/local-artifact backups. Only
 primary and active campaign worktrees remain. See10-worktree-cleanup.md.
 
-Native hint117 and Agility118 R2 are reviewed. Native sequencing123 is running;
-preparation120 follows118, resource125 follows120, Mule bootstrap127 follows125.
-Native trade126 follows the serialized teleport/shop/Make-X/fire capability lane.
-The331-row ledger retains four additional3ba paired failures (no real exchange).
+Native hint117, Agility118 R2, preparation120 and native sequencing123 have
+completed their required reviews. Source21446414 is running the next controlled
+274/289 qualification batch. Resource125 is active, followed by trained
+Brimhaven preparation131, mage combat fixture132 and Mule bootstrap127.
+Native retaliate128 is active and gates teleport/shop/Make-X/fire/trade126.
+
+## Agility and paint follow-up (14:10 UTC)
+
+Exact cd49e147/client aef3952d builds verified4409 files. All8 new headless
+agility cells failed and are appended to339-row ledger. Four Wildy failures
+identify missing reader.retaliateControls. Four Brimhaven failures reached paid
+entrance and obstacle attempts with Agility1; Grok129 found incomplete native
+course reachability at that level. Fixture131 will prepare Agility52 and require
+acknowledgement before Start. Post-fall animation uncertainty remains open.
+Original180s/150 bounds and full ticket-cycle witnesses remain unchanged.
+
+Native paint diagnostic reached real Go bank/Resume callbacks and visible label
+changes; host Pause/Stop proof remains open. TUI paint clipped the button in its
+six-row pane;130 is fixing layout and hit testing. These are private UI diagnostics,
+not gameplay acceptance. See06af and preserved failures. Audit133 is checking
+bulk observation transfer in the new Rust sequencing bridge before publication;
+slow ticks under concurrent diagnostic work are not a performance measurement.
 
 ## Incremental integration and ownership correction
 
@@ -39,8 +57,8 @@ publication on 2026-09-11. Root prepared isolated stage1 at
 client/profile/protocol/world foundation before later catalog helpers. Formatting
 and strict Clippy passed; remaining workspace checks passed with two unchanged
 external-catalog failures separately reproduced on main. Client tests, fresh
-live boundaries, required whole-branch Grok4.6 review and publication remain
-pending. No merge or push yet. Stage1 has its own report08 and raw checks.
+live boundaries, required whole-branch Grok4.6 review and publication completed.
+Main is published through76b2016b7. Stage1 has report08/08a and raw checks.
 
 Audit09 (actual Grok4.6, t_ba428941 run1341) confirms the strict no-JS-policy
 contract did not fully hold. Earlier design-approved one-shot composition is

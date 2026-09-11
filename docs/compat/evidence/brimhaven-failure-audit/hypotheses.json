@@ -1,0 +1,29 @@
+{
+  "rejected": [
+    "Imported BrimhavenAgility is broken; dim the cards",
+    "Raise 180s / 150 until a lucky hop and Tag pass",
+    "Native swing/plank/pillar loc ids or XP are wrong",
+    "Climb-rope still-in-pit is stale host plane publication or a native loc defect",
+    "289 vs 274 arena content differs on rolls/gates (parrot chat only)",
+    "Saws/darts/handholds are the same action as swing/plank/pillar",
+    "Seed Agility 99 or tickets to hide the receipts",
+    "Copy nextHop / ARENA_EDGES / a host arena planner",
+    "design05v steal 20/40 Thieving gates are the Agility seed"
+  ],
+  "accepted": [
+    "Actor is Agility 1 / HP 10; Pay+Climb-Down work; hop/Tag core does not",
+    "Swing 100..310 and pillar 120..340 at level 1 are ~39.5% / ~47.3% STAT_RANDOM",
+    "Plank fail is plank_broke1 with no agility roll",
+    "Hard 20 (handholds, spikes, pressure) and 40 (saws, darts) are a harder tier",
+    "Frozen pathingEdges at agility 1 reaches 11/24 ticket pillars from 24",
+    "Agility 20 is the minimum documented seed that opens those 20-gates and connects 0-24 without saws/darts",
+    "289/newer one successful swing then pillar miss; Tag watch is still actor/RNG, not missing hintTile",
+    "Climb-rope log is delayUntil(!inPit && !animating, 8000); FAIL tiles are plane 3"
+  ],
+  "open_next_snapshot": [
+    "stats[16].{effective,base,xp} after advancestat agility 20",
+    "Hop loc id/name/op plus miss vs broken-plank vs silent success",
+    "Hint pillar vs pathingEdges reachability at seeded effective",
+    "tile.level vs Climbing rope loc level 0 and Game.animating when still-in-pit logs"
+  ]
+}

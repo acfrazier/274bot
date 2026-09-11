@@ -46457,5 +46457,373 @@
     "receipt": "docs/compat/evidence/paired-catalog-fixtures/live/r289-mule-100adccc-3ba51755.json",
     "log": "docs/compat/evidence/paired-catalog-fixtures/live/r289-mule-100adccc-3ba51755.log",
     "scope": "Old catalog only; newer revision/catalog counterparts not run after family failure. Paired exchange not accepted."
+  },
+  {
+    "host_commit": "cd49e147ade94bc5b06e7798e08ed4ad05a5d245",
+    "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "brimhaven_agility",
+    "exit_code": 1,
+    "elapsed_seconds": 77.856,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-brimhaven-agility-100adccc-cd49e147.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-brimhaven-agility-100adccc-cd49e147.log",
+    "outcome": "FAIL",
+    "failure": "FAIL: catalog_boundary_live: scenario failed: step 11 (watch obstacle XP from a real hop before the first Tag): stat_xp_gain(16)>=1 not seen within 150 ticks",
+    "build_provenance": "4409 exact source files and isolated binary reverified",
+    "observed": {
+      "baseline_tile": [
+        2809,
+        3194,
+        0
+      ],
+      "baseline_levels": {
+        "agility": 1,
+        "hitpoints": 10
+      },
+      "script_actions": [
+        "[script livex8gi3p_0] start load",
+        "[script livex8gi3p_0] BrimhavenAgility \u2014 food 'Lobster' x25, bank@1000 tickets, eat@5hp, ticket cap 61/hr",
+        "[script livex8gi3p_0] interact Npc { name: \"Cap'n Izzy No-Beard\", action: \"Pay\", index: Some(4575) }",
+        "[script livex8gi3p_0] paid 200 coins entrance",
+        "[script livex8gi3p_0] interact Loc { x: 2809, z: 3194, level: 0, action: \"Climb-Down\", id: Some(3617) }",
+        "[script livex8gi3p_0] crossing swing 24\u219219 (goal 9)",
+        "[script livex8gi3p_0]   stage 2806,9587 before swing 24\u219219",
+        "[script livex8gi3p_0] interact WalkTo { x: 2806, z: 9587, level: 3 }",
+        "[script livex8gi3p_0]   Swing-on Rope swing @ 2806,9585",
+        "[script livex8gi3p_0] interact Loc { x: 2806, z: 9585, level: 3, action: \"Swing-on\", id: Some(3566) }",
+        "[script livex8gi3p_0]   settled fallen platform -1 (from 24, want 19) anim=false pit=true",
+        "[script livex8gi3p_0] fell into the pit (falls 1) \u2014 avoiding hop to 19",
+        "[script livex8gi3p_0] climbing rope at 2805,9591 (Climb)",
+        "[script livex8gi3p_0] interact Loc { x: 2805, z: 9591, level: 0, action: \"Climb\", id: Some(3610) }",
+        "[script livex8gi3p_0] hint \u2192 pillar 9",
+        "[script livex8gi3p_0] crossing swing 24\u219219 (goal 9)",
+        "[script livex8gi3p_0]   stage 2806,9587 before swing 24\u219219",
+        "[script livex8gi3p_0] interact WalkTo { x: 2806, z: 9587, level: 3 }",
+        "[script livex8gi3p_0]   Swing-on Rope swing @ 2806,9585",
+        "[script livex8gi3p_0] interact Loc { x: 2806, z: 9585, level: 3, action: \"Swing-on\", id: Some(3566) }",
+        "[script livex8gi3p_0]   settled fallen platform -1 (from 24, want 19) anim=false pit=true",
+        "[script livex8gi3p_0] fell into the pit (falls 2) \u2014 avoiding hop to 19",
+        "[script livex8gi3p_0] climbing rope at 2805,9591 (Climb)",
+        "[script livex8gi3p_0] interact Loc { x: 2805, z: 9591, level: 0, action: \"Climb\", id: Some(3610) }",
+        "[script livex8gi3p_0] crossing swing 24\u219219 (goal 9)",
+        "[script livex8gi3p_0]   stage 2806,9587 before swing 24\u219219",
+        "[script livex8gi3p_0] interact WalkTo { x: 2806, z: 9587, level: 3 }",
+        "[script livex8gi3p_0]   Swing-on Rope swing @ 2806,9585",
+        "[script livex8gi3p_0] interact Loc { x: 2806, z: 9585, level: 3, action: \"Swing-on\", id: Some(3566) }",
+        "[script livex8gi3p_0]   settled fallen platform -1 (from 24, want 19) anim=false pit=true",
+        "[script livex8gi3p_0] interact Held { name: \"Lobster\", action: \"Eat\" }",
+        "[script livex8gi3p_0] fell into the pit (falls 3) \u2014 avoiding hop to 19",
+        "[script livex8gi3p_0] climbing rope at 2805,9591 (Climb)",
+        "[script livex8gi3p_0] interact Loc { x: 2805, z: 9591, level: 0, action: \"Climb\", id: Some(3610) }",
+        "[script livex8gi3p_0] crossing plank 24\u219223 (goal 23)",
+        "[script livex8gi3p_0]   stage 2804,9590 before plank 24\u219223",
+        "[script livex8gi3p_0] interact WalkTo { x: 2804, z: 9590, level: 3 }",
+        "[script livex8gi3p_0]   Walk-on Plank @ 2802,9590",
+        "[script livex8gi3p_0] interact Loc { x: 2802, z: 9590, level: 3, action: \"Walk-on\", id: Some(3572) }",
+        "[script livex8gi3p_0]   settled fallen platform -1 (from 24, want 23) anim=true pit=true",
+        "[script livex8gi3p_0] fell into the pit (falls 4) \u2014 avoiding hop to 23",
+        "[script livex8gi3p_0] climbing rope at 2805,9591 (Climb)",
+        "[script livex8gi3p_0] interact Loc { x: 2805, z: 9591, level: 0, action: \"Climb\", id: Some(3610) }",
+        "[script livex8gi3p_0] still in the pit after climbing rope",
+        "[script livex8gi3p_0] climbing rope at 2805,9591 (Climb)",
+        "[script livex8gi3p_0] interact Loc { x: 2805, z: 9591, level: 0, action: \"Climb\", id: Some(3610) }"
+      ]
+    },
+    "scope": "Failed full-core attempt; no agility acceptance."
+  },
+  {
+    "host_commit": "cd49e147ade94bc5b06e7798e08ed4ad05a5d245",
+    "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+    "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "case": "brimhaven_agility",
+    "exit_code": 1,
+    "elapsed_seconds": 73.005,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-brimhaven-agility-8e7d965b-cd49e147.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-brimhaven-agility-8e7d965b-cd49e147.log",
+    "outcome": "FAIL",
+    "failure": "FAIL: catalog_boundary_live: scenario failed: step 11 (watch obstacle XP from a real hop before the first Tag): stat_xp_gain(16)>=1 not seen within 150 ticks",
+    "build_provenance": "4409 exact source files and isolated binary reverified",
+    "observed": {
+      "baseline_tile": [
+        2809,
+        3194,
+        0
+      ],
+      "baseline_levels": {
+        "agility": 1,
+        "hitpoints": 10
+      },
+      "script_actions": [
+        "[script livexd8gas_0] start load",
+        "[script livexd8gas_0] BrimhavenAgility \u2014 food 'Lobster' x25, bank@1000 tickets, eat@5hp, ticket cap 61/hr",
+        "[script livexd8gas_0] interact Npc { name: \"Cap'n Izzy No-Beard\", action: \"Pay\", index: Some(4575) }",
+        "[script livexd8gas_0] paid 200 coins entrance",
+        "[script livexd8gas_0] interact Loc { x: 2809, z: 3194, level: 0, action: \"Climb-Down\", id: Some(3617) }",
+        "[script livexd8gas_0] crossing plank 24\u219223 (goal 23)",
+        "[script livexd8gas_0]   Walk-on Plank @ 2802,9590",
+        "[script livexd8gas_0] interact Loc { x: 2802, z: 9590, level: 3, action: \"Walk-on\", id: Some(3572) }",
+        "[script livexd8gas_0]   settled fallen platform -1 (from 24, want 23) anim=true pit=true",
+        "[script livexd8gas_0] fell into the pit (falls 1) \u2014 avoiding hop to 23",
+        "[script livexd8gas_0] climbing rope at 2805,9591 (Climb)",
+        "[script livexd8gas_0] interact Loc { x: 2805, z: 9591, level: 0, action: \"Climb\", id: Some(3610) }",
+        "[script livexd8gas_0] still in the pit after climbing rope",
+        "[script livexd8gas_0] climbing rope at 2805,9591 (Climb)",
+        "[script livexd8gas_0] interact Loc { x: 2805, z: 9591, level: 0, action: \"Climb\", id: Some(3610) }",
+        "[script livexd8gas_0] crossing swing 24\u219219 (goal 4)",
+        "[script livexd8gas_0]   stage 2806,9587 before swing 24\u219219",
+        "[script livexd8gas_0] interact WalkTo { x: 2806, z: 9587, level: 3 }",
+        "[script livexd8gas_0]   Swing-on Rope swing @ 2806,9585",
+        "[script livexd8gas_0] interact Loc { x: 2806, z: 9585, level: 3, action: \"Swing-on\", id: Some(3566) }",
+        "[script livexd8gas_0]   settled fallen platform -1 (from 24, want 19) anim=false pit=true",
+        "[script livexd8gas_0] fell into the pit (falls 2) \u2014 avoiding hop to 19",
+        "[script livexd8gas_0] climbing rope at 2805,9591 (Climb)",
+        "[script livexd8gas_0] interact Loc { x: 2805, z: 9591, level: 0, action: \"Climb\", id: Some(3610) }",
+        "[script livexd8gas_0] hint \u2192 pillar 4",
+        "[script livexd8gas_0] crossing swing 24\u219219 (goal 4)",
+        "[script livexd8gas_0]   stage 2806,9587 before swing 24\u219219",
+        "[script livexd8gas_0] interact WalkTo { x: 2806, z: 9587, level: 3 }",
+        "[script livexd8gas_0]   Swing-on Rope swing @ 2806,9585",
+        "[script livexd8gas_0] interact Loc { x: 2806, z: 9585, level: 3, action: \"Swing-on\", id: Some(3566) }",
+        "[script livexd8gas_0]   settled fallen platform -1 (from 24, want 19) anim=false pit=true",
+        "[script livexd8gas_0] interact Held { name: \"Lobster\", action: \"Eat\" }",
+        "[script livexd8gas_0] fell into the pit (falls 3) \u2014 avoiding hop to 19",
+        "[script livexd8gas_0] climbing rope at 2805,9591 (Climb)",
+        "[script livexd8gas_0] interact Loc { x: 2805, z: 9591, level: 0, action: \"Climb\", id: Some(3610) }",
+        "[script livexd8gas_0] crossing swing 24\u219219 (goal 4)",
+        "[script livexd8gas_0]   stage 2806,9587 before swing 24\u219219",
+        "[script livexd8gas_0] interact WalkTo { x: 2806, z: 9587, level: 3 }",
+        "[script livexd8gas_0]   Swing-on Rope swing @ 2806,9585",
+        "[script livexd8gas_0] interact Loc { x: 2806, z: 9585, level: 3, action: \"Swing-on\", id: Some(3566) }"
+      ]
+    },
+    "scope": "Failed full-core attempt; no agility acceptance."
+  },
+  {
+    "host_commit": "cd49e147ade94bc5b06e7798e08ed4ad05a5d245",
+    "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "wildy_agility",
+    "exit_code": 1,
+    "elapsed_seconds": 27.268,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-wildy-agility-100adccc-cd49e147.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-wildy-agility-100adccc-cd49e147.log",
+    "outcome": "FAIL",
+    "failure": "FAIL: catalog_boundary_live: script error: tick 34: not impl: reader.retaliateControls",
+    "build_provenance": "4409 exact source files and isolated binary reverified",
+    "observed": {
+      "baseline_tile": [
+        2998,
+        3916,
+        0
+      ],
+      "baseline_levels": {
+        "agility": 52,
+        "hitpoints": 10
+      },
+      "script_actions": [
+        "[script livee6fpjj_0] start load",
+        "[script livee6fpjj_0] tick 34: not impl: reader.retaliateControls"
+      ]
+    },
+    "scope": "Failed full-core attempt; no agility acceptance."
+  },
+  {
+    "host_commit": "cd49e147ade94bc5b06e7798e08ed4ad05a5d245",
+    "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+    "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "case": "wildy_agility",
+    "exit_code": 1,
+    "elapsed_seconds": 28.09,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-wildy-agility-8e7d965b-cd49e147.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-wildy-agility-8e7d965b-cd49e147.log",
+    "outcome": "FAIL",
+    "failure": "FAIL: catalog_boundary_live: script error: tick 36: not impl: reader.retaliateControls",
+    "build_provenance": "4409 exact source files and isolated binary reverified",
+    "observed": {
+      "baseline_tile": [
+        2998,
+        3916,
+        0
+      ],
+      "baseline_levels": {
+        "agility": 52,
+        "hitpoints": 10
+      },
+      "script_actions": [
+        "[script live123td3_0] start load",
+        "[script live123td3_0] tick 36: not impl: reader.retaliateControls"
+      ]
+    },
+    "scope": "Failed full-core attempt; no agility acceptance."
+  },
+  {
+    "host_commit": "cd49e147ade94bc5b06e7798e08ed4ad05a5d245",
+    "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "brimhaven_agility",
+    "exit_code": 1,
+    "elapsed_seconds": 75.952,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-brimhaven-agility-100adccc-cd49e147.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-brimhaven-agility-100adccc-cd49e147.log",
+    "outcome": "FAIL",
+    "failure": "FAIL: catalog_boundary_live: scenario failed: step 11 (watch obstacle XP from a real hop before the first Tag): stat_xp_gain(16)>=1 not seen within 150 ticks",
+    "build_provenance": "4409 exact source files and isolated binary reverified",
+    "observed": {
+      "baseline_tile": [
+        2809,
+        3194,
+        0
+      ],
+      "baseline_levels": {
+        "agility": 1,
+        "hitpoints": 10
+      },
+      "script_actions": [
+        "[script liveyrtvcf_0] start load",
+        "[script liveyrtvcf_0] BrimhavenAgility \u2014 food 'Lobster' x25, bank@1000 tickets, eat@5hp, ticket cap 61/hr",
+        "[script liveyrtvcf_0] interact Npc { name: \"Cap'n Izzy No-Beard\", action: \"Pay\", index: Some(4584) }",
+        "[script liveyrtvcf_0] paid 200 coins entrance",
+        "[script liveyrtvcf_0] interact Loc { x: 2809, z: 3194, level: 0, action: \"Climb-Down\", id: Some(3617) }",
+        "[script liveyrtvcf_0] crossing plank 24\u219223 (goal 23)",
+        "[script liveyrtvcf_0]   stage 2804,9590 before plank 24\u219223",
+        "[script liveyrtvcf_0] interact WalkTo { x: 2804, z: 9590, level: 3 }",
+        "[script liveyrtvcf_0]   Walk-on Plank @ 2802,9590",
+        "[script liveyrtvcf_0] interact Loc { x: 2802, z: 9590, level: 3, action: \"Walk-on\", id: Some(3572) }",
+        "[script liveyrtvcf_0]   settled fallen platform -1 (from 24, want 23) anim=true pit=true",
+        "[script liveyrtvcf_0] fell into the pit (falls 1) \u2014 avoiding hop to 23",
+        "[script liveyrtvcf_0] climbing rope at 2805,9591 (Climb)",
+        "[script liveyrtvcf_0] interact Loc { x: 2805, z: 9591, level: 0, action: \"Climb\", id: Some(3610) }",
+        "[script liveyrtvcf_0] still in the pit after climbing rope",
+        "[script liveyrtvcf_0] climbing rope at 2805,9591 (Climb)",
+        "[script liveyrtvcf_0] interact Loc { x: 2805, z: 9591, level: 0, action: \"Climb\", id: Some(3610) }"
+      ]
+    },
+    "scope": "Failed full-core attempt; no agility acceptance."
+  },
+  {
+    "host_commit": "cd49e147ade94bc5b06e7798e08ed4ad05a5d245",
+    "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+    "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "case": "brimhaven_agility",
+    "exit_code": 1,
+    "elapsed_seconds": 60.196,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-brimhaven-agility-8e7d965b-cd49e147.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-brimhaven-agility-8e7d965b-cd49e147.log",
+    "outcome": "FAIL",
+    "failure": "FAIL: catalog_boundary_live: scenario failed: step 12 (watch the first Tag prompt for the next pillar): chat(contains \"tag the next\") not seen within 150 ticks",
+    "build_provenance": "4409 exact source files and isolated binary reverified",
+    "observed": {
+      "baseline_tile": [
+        2809,
+        3194,
+        0
+      ],
+      "baseline_levels": {
+        "agility": 1,
+        "hitpoints": 10
+      },
+      "script_actions": [
+        "[script liveaquuvp_0] start load",
+        "[script liveaquuvp_0] BrimhavenAgility \u2014 food 'Lobster' x25, bank@1000 tickets, eat@5hp, ticket cap 61/hr",
+        "[script liveaquuvp_0] interact Npc { name: \"Cap'n Izzy No-Beard\", action: \"Pay\", index: Some(4584) }",
+        "[script liveaquuvp_0] paid 200 coins entrance",
+        "[script liveaquuvp_0] interact Loc { x: 2809, z: 3194, level: 0, action: \"Climb-Down\", id: Some(3617) }",
+        "[script liveaquuvp_0] crossing swing 24\u219219 (goal 9)",
+        "[script liveaquuvp_0]   stage 2806,9587 before swing 24\u219219",
+        "[script liveaquuvp_0] interact WalkTo { x: 2806, z: 9587, level: 3 }",
+        "[script liveaquuvp_0]   Swing-on Rope swing @ 2806,9585",
+        "[script liveaquuvp_0] interact Loc { x: 2806, z: 9585, level: 3, action: \"Swing-on\", id: Some(3566) }",
+        "[script liveaquuvp_0]   settled fallen platform -1 (from 24, want 19) anim=false pit=true",
+        "[script liveaquuvp_0] fell into the pit (falls 1) \u2014 avoiding hop to 19",
+        "[script liveaquuvp_0] climbing rope at 2805,9591 (Climb)",
+        "[script liveaquuvp_0] interact Loc { x: 2805, z: 9591, level: 0, action: \"Climb\", id: Some(3610) }",
+        "[script liveaquuvp_0] hint \u2192 pillar 9",
+        "[script liveaquuvp_0] crossing swing 24\u219219 (goal 9)",
+        "[script liveaquuvp_0]   stage 2806,9587 before swing 24\u219219",
+        "[script liveaquuvp_0] interact WalkTo { x: 2806, z: 9587, level: 3 }",
+        "[script liveaquuvp_0]   Swing-on Rope swing @ 2806,9585",
+        "[script liveaquuvp_0] interact Loc { x: 2806, z: 9585, level: 3, action: \"Swing-on\", id: Some(3566) }",
+        "[script liveaquuvp_0]   settled arrived platform 19 (from 24, want 19) anim=true pit=false",
+        "[script liveaquuvp_0] crossing pillar 19\u219214 (goal 9)",
+        "[script liveaquuvp_0]   stage 2805,9578 before pillar 19\u219214",
+        "[script liveaquuvp_0] interact WalkTo { x: 2805, z: 9578, level: 3 }",
+        "[script liveaquuvp_0]   Jump-on Pillar @ 2805,9576",
+        "[script liveaquuvp_0] interact Loc { x: 2805, z: 9576, level: 3, action: \"Jump-on\", id: Some(3578) }",
+        "[script liveaquuvp_0]   settled fallen platform -1 (from 19, want 14) anim=true pit=true",
+        "[script liveaquuvp_0] fell into the pit (falls 2) \u2014 avoiding hop to 14",
+        "[script liveaquuvp_0] climbing rope at 2806,9579 (Climb)",
+        "[script liveaquuvp_0] interact Loc { x: 2806, z: 9579, level: 0, action: \"Climb\", id: Some(3610) }",
+        "[script liveaquuvp_0] still in the pit after climbing rope",
+        "[script liveaquuvp_0] climbing rope at 2806,9579 (Climb)",
+        "[script liveaquuvp_0] interact Loc { x: 2806, z: 9579, level: 0, action: \"Climb\", id: Some(3610) }"
+      ]
+    },
+    "scope": "Failed full-core attempt; no agility acceptance."
+  },
+  {
+    "host_commit": "cd49e147ade94bc5b06e7798e08ed4ad05a5d245",
+    "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "wildy_agility",
+    "exit_code": 1,
+    "elapsed_seconds": 19.797,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-wildy-agility-100adccc-cd49e147.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-wildy-agility-100adccc-cd49e147.log",
+    "outcome": "FAIL",
+    "failure": "FAIL: catalog_boundary_live: script error: tick 39: not impl: reader.retaliateControls",
+    "build_provenance": "4409 exact source files and isolated binary reverified",
+    "observed": {
+      "baseline_tile": [
+        2998,
+        3916,
+        0
+      ],
+      "baseline_levels": {
+        "agility": 52,
+        "hitpoints": 10
+      },
+      "script_actions": [
+        "[script livezw6mm6_0] start load",
+        "[script livezw6mm6_0] tick 39: not impl: reader.retaliateControls"
+      ]
+    },
+    "scope": "Failed full-core attempt; no agility acceptance."
+  },
+  {
+    "host_commit": "cd49e147ade94bc5b06e7798e08ed4ad05a5d245",
+    "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+    "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "case": "wildy_agility",
+    "exit_code": 1,
+    "elapsed_seconds": 20.263,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-wildy-agility-8e7d965b-cd49e147.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-wildy-agility-8e7d965b-cd49e147.log",
+    "outcome": "FAIL",
+    "failure": "FAIL: catalog_boundary_live: script error: tick 41: not impl: reader.retaliateControls",
+    "build_provenance": "4409 exact source files and isolated binary reverified",
+    "observed": {
+      "baseline_tile": [
+        2998,
+        3916,
+        0
+      ],
+      "baseline_levels": {
+        "agility": 52,
+        "hitpoints": 10
+      },
+      "script_actions": [
+        "[script livehy1trv_0] start load",
+        "[script livehy1trv_0] tick 41: not impl: reader.retaliateControls"
+      ]
+    },
+    "scope": "Failed full-core attempt; no agility acceptance."
   }
 ]

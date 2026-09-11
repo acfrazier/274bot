@@ -1,0 +1,26 @@
+{
+  "host_commit": "cd49e147ade94bc5b06e7798e08ed4ad05a5d245",
+  "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "private_source": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/paint-ui-cd49e147",
+  "source_files_verified": 4410,
+  "native_ui_callbacks": {
+    "go_bank": {
+      "elapsed_seconds": 77.117045,
+      "line": "[script liveejtaod_0] Go bank pressed \u2014 heading to the bank to park"
+    },
+    "resume": {
+      "elapsed_seconds": 97.525757,
+      "line": "[script liveejtaod_0] Resume pressed \u2014 back to the loop"
+    },
+    "one_each": true,
+    "real_cua_clicks": true,
+    "labels_visually_read": true
+  },
+  "native_input_result": "PASS for Go bank/Resume callback-and-label roundtrip only",
+  "native_host_pause_stop": "not completed before watchdog",
+  "tui_result": "FAIL: button clipped in six-row pane; digit1 callback reached script",
+  "tui_fix_task": "t_193e97fb",
+  "gameplay_acceptance": false,
+  "private_fixture_limit": "rune setting Air is not canonical Air runes and falls back to foreign Nature defaults; this does not affect Runner paint button code, but no route or trade acceptance is claimed. Correct canonical value in next UI export.",
+  "original_watchdog": "Unchanged original Alcher XP predicate expires; all process FAILs retained. No fake gameplay PASS."
+}

@@ -1,0 +1,34 @@
+--- a/crates/scenario/src/lib.rs
++++ b/crates/scenario/src/lib.rs
+@@ -389,6 +389,7 @@
+         "chicken_killer_bank" => Some(chicken_killer_bank_scenario()),
+         "thiever" => Some(thiever_scenario()),
+         "alcher" => Some(alcher_scenario()),
++        "paint_buttons_ui" => Some(paint_buttons_ui_scenario()),
+         "alcher_custom" => Some(alcher_custom_scenario()),
+         "alcher_custom_alias" => Some(alcher_custom_alias_scenario()),
+         "alcher_custom_name" => Some(alcher_custom_name_scenario()),
+@@ -14403,3 +14404,19 @@
+         assert!(names().contains(&"nav_routes"));
+     }
+ }
++
++// Private root UI diagnostic. Original gold witnesses/clocks remain intact;
++// this fixture never establishes gameplay acceptance and may end by watchdog.
++fn paint_buttons_ui_scenario() -> Scenario {
++    const SETTINGS: &[ScriptSettingInject] = &[
++        ScriptSettingInject { id: "mode", value: ScriptInjectValue::Str("Runner") },
++        ScriptSettingInject { id: "rune", value: ScriptInjectValue::Str("Air") },
++        ScriptSettingInject { id: "partner", value: ScriptInjectValue::Str("paintproof") },
++        ScriptSettingInject { id: "stayInAltar", value: ScriptInjectValue::Bool(false) },
++    ];
++    let mut scenario = alcher_scenario();
++    scenario.name = "paint_buttons_ui";
++    scenario.settings.start_script = Some("NatureCrafter");
++    scenario.settings.script_settings_inject = Some(SETTINGS);
++    scenario
++}
+--- a/crates/tui/examples/platform_proof.rs
++++ b/crates/tui/examples/platform_proof.rs
+@@ -0,0 +1 @@
++fn main() -> std::process::ExitCode { let _stores = script::IsolatedEnv::enter(&format!("paint-ui-{}", std::process::id())); tui::bin::main() }

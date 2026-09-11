@@ -1,0 +1,31 @@
+{
+  "command": [
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-cd49e147",
+    "catalog_boundary_live",
+    "--ignored",
+    "--exact",
+    "--nocapture"
+  ],
+  "started_at": "2026-09-11T13:38:52.355287+00:00",
+  "host_commit": "cd49e147ade94bc5b06e7798e08ed4ad05a5d245",
+  "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "binary_sha256": "b36f1ace35790395f2df6d72162a3d98a50c3cb39535569412d7936ee2cd877e",
+  "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+  "revision": "289",
+  "case": "wildy_agility",
+  "environment": {
+    "LIVE": "1",
+    "BOT_CPU": "1",
+    "BOT_DEBUG": "1",
+    "RUST_BACKTRACE": "1",
+    "CATALOG_REVISION": "289",
+    "CATALOG_SCENARIO": "wildy_agility",
+    "CATALOG_COMMIT": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "CATALOG_ROOT": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a",
+    "CATALOG_NAV_PACK": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack",
+    "CATALOG_NAV_FLAGS": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navflags",
+    "CATALOG_ENGINE_DIR": "/Users/acfrazier/experiments/lostcity-289/engine"
+  },
+  "elapsed_is_not_performance_measurement": true,
+  "pid": 62487
+}
