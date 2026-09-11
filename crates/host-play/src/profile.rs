@@ -556,7 +556,7 @@ impl ProfileSelection {
         };
         let mut crcs = [0; 9];
         observer.report(ProfileProgress::files(
-            ProfileProgressStage::LoadingGameData,
+            ProfileProgressStage::ReadingCacheArchives,
             0,
             JAGS.len() as u64,
         ));
@@ -565,7 +565,7 @@ impl ProfileSelection {
                 .map_err(|e| format!("cache {name}: {e}"))?;
             crcs[i + 1] = Packet::getcrc(&bytes, 0, bytes.len());
             observer.report(ProfileProgress::files(
-                ProfileProgressStage::LoadingGameData,
+                ProfileProgressStage::ReadingCacheArchives,
                 i as u64 + 1,
                 JAGS.len() as u64,
             ));
