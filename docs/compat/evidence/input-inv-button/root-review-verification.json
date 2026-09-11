@@ -1,0 +1,106 @@
+{
+  "checked_at": "2026-09-11T08:04:58.224059+00:00",
+  "run": {
+    "id": 1261,
+    "task_id": "t_af045121",
+    "profile": "reviewer",
+    "step_key": null,
+    "status": "done",
+    "claim_lock": null,
+    "claim_expires": null,
+    "worker_pid": null,
+    "max_runtime_seconds": null,
+    "last_heartbeat_at": 1789113458,
+    "started_at": 1789112755,
+    "ended_at": 1789113466,
+    "outcome": "completed",
+    "summary": "Reviewed and approved bca3429ed for brief 77 input-inv-button. Round-1 artifact + independent empty-target execution on export inv-button-t_af045121 (client Cargo.toml blob 9d090ed): Input.invButton queues selected id/slot/component/op; host re-resolves exact bank row via Interactions::interact(OpTarget::Item, ActionSpec::Operation) with no same-name fallback and no count-dialog answer; script input_inv_button 5, host_js 2/1 ignored, host-play dispatch_inv_button 3, clippy script+host-play -D warnings all pass. Not LIVE; root owns TannerBot requalification.",
+    "metadata": {
+      "review_outcome": "approved",
+      "review_round": 1,
+      "lens": "artifact",
+      "blocking_defects": [],
+      "branch": "codex/rs2b0t-multirevision",
+      "brief": "docs/compat/briefs/77-input-inv-button.md",
+      "brief_sha256": "2b5a5650e139f8bad549539d9ff258c85f433276250fab7fcdfd122854f40b75",
+      "source_commit": "bca3429ed36dfb5b8e35fcfff0a0880c55d768a6",
+      "head_at_review": "bca3429ed36dfb5b8e35fcfff0a0880c55d768a6",
+      "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+      "export": ".superpowers/review-exports/inv-button-t_af045121",
+      "manifest": ".superpowers/review-exports/inv-button-t_af045121-manifest.json",
+      "cargo_target_dir": ".superpowers/review-exports/inv-button-review-t_af045121-r1261-target",
+      "isolated_build": true,
+      "live": false,
+      "report": "docs/compat/04j-input-inv-button.md",
+      "evidence": "docs/compat/evidence/input-inv-button/",
+      "releases_children": [
+        "t_eeea20f0"
+      ],
+      "changed_files": [
+        "crates/script/src/shim/input.js",
+        "crates/script/src/shim/bank.js",
+        "crates/script/src/shim/mod.rs",
+        "crates/script/src/isolate_fb.rs",
+        "crates/script/src/host_js.rs",
+        "crates/script/host-js/index.d.ts",
+        "crates/script/tests/input_inv_button.rs",
+        "crates/host-play/src/lib.rs",
+        "docs/compat/04j-input-inv-button.md",
+        "docs/compat/evidence/input-inv-button/verification.json",
+        "docs/compat/evidence/input-inv-button/isolated-checks.txt"
+      ],
+      "overlay_sha256": {
+        "crates/script/src/shim/input.js": "29e9532361b45019f78e2a94b907d79c1c0f297492abacff7e6c2c8eb7ff4a11",
+        "crates/script/src/shim/bank.js": "8dfb9bbceb451d556c095bfccd3ae696b361959c5ff64d1b3ec57bdbe9357b81",
+        "crates/script/src/shim/mod.rs": "29997d821878a3309a964abed9d7e899fa6500c60562390386ca0dc57c3c0fef",
+        "crates/script/src/isolate_fb.rs": "6551dfd4be29afd20137f97dc39d201f9b76d364e5ae1ca29fb69a045ffa3b6f",
+        "crates/script/src/host_js.rs": "d33931a615b695784dec87436fff55af0cf269508425673d2e04cad4768968ab",
+        "crates/script/host-js/index.d.ts": "a2e9ac440fd7f152a4996b1e303c52ed5dc97331a4bce4acf2bfb0c07c708011",
+        "crates/script/tests/input_inv_button.rs": "b1d5abf054e4906b5a50ca60da08566559e2484364fe81f67c7eb44c071c63ba",
+        "crates/host-play/src/lib.rs": "767dbb909999e9b7a21f20609f6660624e14a0204aabc5a0e037e0575b06a95d",
+        "docs/compat/04j-input-inv-button.md": "20f8f62ff57d62a19f224476cfe7ce12e3e0cfc729413b233834c62b00c12414"
+      },
+      "tests_run": [
+        "cargo test -p script --test input_inv_button: 5 passed",
+        "cargo test -p script --test host_js: 2 passed, 1 ignored",
+        "cargo test -p host-play --lib dispatch_inv_button: 3 passed",
+        "cargo clippy -p script --no-deps --all-targets -- -D warnings: pass",
+        "cargo clippy -p host-play --no-deps -- -D warnings: pass"
+      ],
+      "hotspot": "crates/host-play/src/lib.rs \u2014 inv-button dispatch and tests in the same runtime file as loc/autocast/use-on/nav interact arms; crates/script/src/shim/bank.js \u2014 committed slot/comId only; concurrent named-bank-approach openNearest WIP remains unstaged outside bca3429ed",
+      "limits": [
+        "not LIVE acceptance",
+        "root owns TannerBot 274/289 LIVE requalification",
+        "queued inv-button is not a completed withdrawal",
+        "catalog owns count-dialog answer",
+        "isolate.fbs unchanged",
+        "host-play remains shared runtime hotspot",
+        "host InvButton gates on bank_component_id+generation (shim also requires bank_loaded); no second count owner"
+      ],
+      "reviewer_checks": [
+        "cold read of bca3429ed vs brief 77 before handoff narrative",
+        "brief sha256 2b5a5650e139 matches handoff and verification.json",
+        "overlay hashes match export and bca3429ed content for owned paths (workspace bank.js dirty with concurrent openNearest WIP only; commit/export stay 8dfb9bb slot/comId)",
+        "manifest host base c49fc7515 client 9d090ed; export client Cargo.toml sha 3b1ed32eda matches live vendor at 9d090ed",
+        "Input.invButton validates integers, open+loaded bank, exact id/slot/component_id row, visible 1-based op; queues inv-button with bank_generation",
+        "Bank.items forwards posted slot and component_id as slot/comId",
+        "host posts bank component_id: it.component_id (was -1)",
+        "InteractReq::InvButton + host_js/dts; FB encode/decode reuses bank_item_id/source_item_slot/component_id/stand_op/bank_generation; isolate.fbs unchanged",
+        "host-play InvButton re-finds exact id+slot+component under open bank + matching generation; Interactions::interact Operation; no same-name fallback; no AnswerCount",
+        "script tests: same-name id 10/11 either order queues selected 11 op5; invalid/forged/wrong-slot/closed/missing send nothing; no count answer; FB round-trip",
+        "host-play tests: INV_BUTTON5 on selected 11 not 10; refuse invalid/forged/stale gen/wrong slot/replaced/closed; FB+dispatch compose",
+        "scope: no isolate.fbs/api/client/fixtures/scenario/catalog/nav edits in commit",
+        "not LIVE; root owns TannerBot requalification"
+      ],
+      "worker_session_id": "20260911_034557_9058cb"
+    },
+    "error": null
+  },
+  "actual_session": {
+    "id": "20260911_034557_9058cb",
+    "model": "grok-4.5",
+    "started_at": 1789112765.386879,
+    "ended_at": 1789113467.191954
+  },
+  "live": false
+}

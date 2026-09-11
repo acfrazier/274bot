@@ -1,26 +1,51 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 07:48 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 08:16 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
 Read `docs/execution.md` for dispatch/review rules. Reports below preserve dated
 results and failed cells; this state identifies current work.
 
-## Current follow-ups (07:48 UTC)
+## Current follow-ups (08:16 UTC)
 
+- Root060e15a0/client9d isolated build from3082exactGit files is complete:
+  catalog24/scenario91/strict affectedClippy PASS. Actual Grok4.5 reviews1261
+  Input and1264 named-bank approach approved. Review1264 reused its task export
+  target; root060 built with a new empty target. Both revisions now run East,
+  West, softTanner and hardTanner across both catalogs, stopping each family at
+  its first failure. No Rune/Ardy/current runtime WIP is in this candidate.
+- TUI params e72cfb39e approved by actual Grok4.5 same-card1265. Root exports
+  exact reviewed e72 source for new Mac/Linux TUI builds and native editing
+  proof. Existing four TUI type_complexity lint findings remain explicit.
+- Native289/newer675 Earth FAIL135.724s at step20 XP watch after first27Earth
+  craft, bank deposit27/restock27 and second altar entry. Read terminal PNG
+  holds27essence+Earth talisman; actualGPU tex5154/pixmap0. Root found Rune
+  crafted-item watch precedes first XP-baseline capture, so simultaneous XP
+  is missed. t_67dc0fab/brief86 will correct Rune-only observation ordering,
+  add a real runner regression and emit existing accumulated CoreWitness on
+  catalog failure. It waits for Ardy review and completed Air audit; resource
+  fixtures now wait for its review. Original675 nativeFAIL retained.
+- Air audit05o actualGrok4.6 run1262 confirms original274/newer failure has
+  first bank deposit/restock and two craft commands but lacks failed CoreWitness.
+  It cannot distinguish missing runner snapshot from a missed serial observation;
+  no foreign dim or blanket bank fix. 86 keeps that uncertainty explicit.
 - Full45card/180row plan remains active. Root6750713b/client9d090ed is exported
   from2822 exact Git blobs and built in a new empty target. Catalog24/scenario91
   and strict affected catalog Clippy pass. It includes selected-loc identity
   feacb79a3, approved by actual Grok4.5 review1254/session20260911_031641_4d9083,
   and Rune/Mule fixtures6750713b, approved by actual Grok4.5 review1257/session
   20260911_032746_e78f08. No current worker WIP is in those binaries.
-- All four675 FlaxPicker cells pass both catalogs/revisions through fresh
-  acquisition, bank deposit, return and further flax. The host now preserves
-  selected Flax2646 instead of dispatching colocated Wall980. Native274 GPU
-  repeat is active. First two Air/Solo RuneCrafter cells pass; remaining newer
-  Air, Earth/Solo and blank-partner Air MuleCrafter cells are active. Root
-  harvest and support ledger updates follow completion; current core ledger214.
+- Root675 harvest verifies all14 completed cells:11PASS/3FAIL, ledger228.
+  Allfour Flax and allfour Earth/Solo Rune cells pass full bank-return/further
+  work. Air/Solo has3PASS and274/newer FAIL at180s on the rune pack-empty watch;
+  raw failure has no accumulated CoreWitness. Audit t_8a8e6ef3 actual Grok4.6
+  run1262/session20260911_035401_612221 compares bank/route and serial observation
+  causes; no dim, deadline change or unjustified rerun. Both old Mule cells fail
+  after Start on unknown Falador East: shim BANK_LOCATIONS is empty. This is a
+  missing host metadata mapping, not a foreign defect. Design t_0541f9be/brief85
+  owns only04n/evidence, no code. Native274Flax passes with read GPU field PNG;
+  native289/newer Earth Rune failed as detailed above. Failed cells remain immutable.
 - Root2f production proof is complete: West VialFiller passes all four cells
   (28filled/deposit28/restock28/return/further water). Both revisions and soft/
   hard Tanner fail after Start on missing Input.invButton; newer catalog waits
@@ -49,11 +74,13 @@ results and failed cells; this state identifies current work.
   retry and passed with actual casts. Raw response remains retained. Both owned
   Concord engines are now stopped, four ports absent, original274 system service
   inactive. No Concord compilation or Xvfb. TUI elapsed times are not performance.
-- Input.invButton t_af045121/brief77 actual Grok4.6 run1256/session
-  20260911_032344_09ecb1 owns selected component/item/generation mapping; same-card
-  review remains pending. It gates the four overnight runtime assignments:
-  hostile/duel t_eeea20f0, special t_68de6f48, spellbook teleport t_1bf9a22e,
-  followed by existing Sol shop, Make-X/smithing and fire tasks.
+- Input.invButton bca3429ed is approved by actual Grok4.5 same-card review1261,
+  session20260911_034557_9058cb. Root verified completed model/session and raw
+  review result; Tanner LIVE awaits the next isolated reviewed build. Hostile/
+  duel t_eeea20f0 actual Grok4.6 run1263/session20260911_035800_3b432a now owns
+  runtime files, then special t_68de6f48, teleport t_1bf9a22e, Sol shop,
+  Make-X/smithing and fire. Named approach060e15a0f is in actual Grok4.5 review1264,
+  session20260911_040002_e4240f; no dependent acceptance before completion.
 - Ardy stall/Guard/Knight fixtures t_464d9c4c/brief78 actual Grok4.6 run1259/session
   20260911_033349_8b552c owns scenario/catalog files after Rune review. Resource
   fixtures t_aa061a28/brief83 queue behind its review: Gnome log/short/long and
@@ -71,7 +98,7 @@ results and failed cells; this state identifies current work.
   branch defect established by04/05k audit; four explicit branch limits preserve
   default Gnome support. Full options/frontends/reconnect/final integrated N32
   and final whole-branch Grok review remain required.
-- Browser Grok usage refreshed07:36:72%used/28%remaining, reset11:40UTC/07:40Eastern.
+- Browser Grok usage refreshed08:01:73%used/27%remaining, reset11:40UTC/07:40Eastern.
   Continue useful authorized assignments and same-card reviews. Completed root
   compiler caches2f/6c/B1 were cleaned only after no-open-file and retained-binary
   verification; raw evidence/source/binaries remain. No main/remotes/release changes.

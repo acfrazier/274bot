@@ -28232,13 +28232,18 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated675: rune_crafter=PASS, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "observable_proof_requirement": "after Start, script-caused Runecrafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Isolated675: rune_crafter=PASS, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-rune-crafter-100adccc-6750713b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-rune-crafter-earth-100adccc-6750713b.json",
+        "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json"
+      ]
     },
     {
       "display_name": "RuneCrafter",
@@ -28521,13 +28526,18 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated675: rune_crafter=PASS, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "observable_proof_requirement": "after Start, script-caused Runecrafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Isolated675: rune_crafter=PASS, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-rune-crafter-100adccc-6750713b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-rune-crafter-earth-100adccc-6750713b.json",
+        "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json"
+      ]
     },
     {
       "display_name": "NatureCrafter",
@@ -36029,12 +36039,12 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "B1 both289 catalog cycles pass full pack, deposit28 and fresh picking after return. 274 still fails on co-located loc identity loss; t_c35281b3 gates requalification.",
+      "fixture_readiness": "Isolated675: flax_picker=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "observable_proof_requirement": "flax inventory increase, bank deposit, return, and renewed picking",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "B1 both289 catalog cycles pass full pack, deposit28 and fresh picking after return. 274 still fails on co-located loc identity loss; t_c35281b3 gates requalification.",
+      "status_detail": "Isolated675: flax_picker=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-flax-picker-100adccc-3be68eaf.json",
@@ -36042,7 +36052,9 @@
         "docs/compat/evidence/catalog-harness/followups-3be68eaf.json",
         "docs/compat/evidence/catalog-harness/live/r274-flax-picker-100adccc-b1cff8a7.json",
         "docs/compat/evidence/catalog-harness/live/r274-flax-picker-100adccc-b1cff8a7.log",
-        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json"
+        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r274-flax-picker-100adccc-6750713b.json",
+        "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json"
       ]
     },
     {
@@ -36337,12 +36349,12 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "B1 both289 catalog cycles pass full pack, deposit28 and fresh picking after return. 274 still fails on co-located loc identity loss; t_c35281b3 gates requalification.",
+      "fixture_readiness": "Isolated675: flax_picker=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "observable_proof_requirement": "flax inventory increase, bank deposit, return, and renewed picking",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "B1 both289 catalog cycles pass full pack, deposit28 and fresh picking after return. 274 still fails on co-located loc identity loss; t_c35281b3 gates requalification.",
+      "status_detail": "Isolated675: flax_picker=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-flax-picker-100adccc-3be68eaf.json",
@@ -36350,7 +36362,9 @@
         "docs/compat/evidence/catalog-harness/followups-3be68eaf.json",
         "docs/compat/evidence/catalog-harness/live/r289-flax-picker-100adccc-b1cff8a7.json",
         "docs/compat/evidence/catalog-harness/live/r289-flax-picker-100adccc-b1cff8a7.log",
-        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json"
+        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r289-flax-picker-100adccc-6750713b.json",
+        "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json"
       ]
     },
     {
@@ -40314,13 +40328,17 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated675: mule_crafter=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "observable_proof_requirement": "after Start, script-caused Runecrafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Isolated675: mule_crafter=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-mule-crafter-100adccc-6750713b.json",
+        "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json"
+      ]
     },
     {
       "display_name": "MuleCrafter",
@@ -40615,13 +40633,17 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated675: mule_crafter=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "observable_proof_requirement": "after Start, script-caused Runecrafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Isolated675: mule_crafter=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-mule-crafter-100adccc-6750713b.json",
+        "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json"
+      ]
     },
     {
       "display_name": "ShopBuyout",
@@ -63034,13 +63056,18 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated675: rune_crafter=FAIL, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "observable_proof_requirement": "after Start, script-caused Runecrafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Isolated675: rune_crafter=FAIL, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-rune-crafter-8e7d965b-6750713b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-rune-crafter-earth-8e7d965b-6750713b.json",
+        "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json"
+      ]
     },
     {
       "display_name": "RuneCrafter",
@@ -63323,13 +63350,18 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated675: rune_crafter=PASS, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "observable_proof_requirement": "after Start, script-caused Runecrafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Isolated675: rune_crafter=PASS, rune_crafter_earth=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-rune-crafter-8e7d965b-6750713b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-rune-crafter-earth-8e7d965b-6750713b.json",
+        "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json"
+      ]
     },
     {
       "display_name": "NatureCrafter",
@@ -70875,13 +70907,17 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated675: flax_picker=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "observable_proof_requirement": "flax inventory increase, bank deposit, return, and renewed picking",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Isolated675: flax_picker=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-flax-picker-8e7d965b-6750713b.json",
+        "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json"
+      ]
     },
     {
       "display_name": "FlaxPicker",
@@ -71175,17 +71211,19 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "B1 both289 catalog cycles pass full pack, deposit28 and fresh picking after return. 274 still fails on co-located loc identity loss; t_c35281b3 gates requalification.",
+      "fixture_readiness": "Isolated675: flax_picker=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "observable_proof_requirement": "flax inventory increase, bank deposit, return, and renewed picking",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "B1 both289 catalog cycles pass full pack, deposit28 and fresh picking after return. 274 still fails on co-located loc identity loss; t_c35281b3 gates requalification.",
+      "status_detail": "Isolated675: flax_picker=PASS. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-flax-picker-8e7d965b-b1cff8a7.json",
         "docs/compat/evidence/catalog-harness/live/r289-flax-picker-8e7d965b-b1cff8a7.log",
-        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json"
+        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r289-flax-picker-8e7d965b-6750713b.json",
+        "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json"
       ]
     },
     {

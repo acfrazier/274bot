@@ -1,0 +1,694 @@
+[panel] adapter name=Apple M4 Max backend=Metal device_type=IntegratedGpu vendor=0x0 device=0x0
+[host-play] slot live87fpvx_0: thread up
+274bot: loaded snapshot (4556 models, 336 anim records)
+[panel] scenario capture armed: Some("flax_picker")
+[panel] live87fpvx_0: live87fpvx_0: slot up
+[host-play] slot live87fpvx_0: handshake begin reconnect=false
+[host-play] slot live87fpvx_0: handshake ok
+[host] hitch live87fpvx_0: frame_us=70029 paints=1 skips=0 ticks=0
+[panel] live87fpvx_0: live87fpvx_0: scene 1
+[host] hitch live87fpvx_0: frame_us=56231 paints=25 skips=0 ticks=1
+[panel] live87fpvx_0: live87fpvx_0: mainland hop queued
+[panel] live87fpvx_0: live87fpvx_0: ingame
+[panel] live87fpvx_0: live87fpvx_0: scene 2
+live script_flax_picker: running step 1/10
+[panel] live87fpvx_0: live87fpvx_0: scene 1
+[host] slot live87fpvx_0: d_loop_us=17390 d_raster_us=269947 d_observe_us=57316 max_observe_us=3730 d_paints=50 d_skips=0 d_ticks=3 window_ms=0
+[panel] live87fpvx_0: live87fpvx_0: ingame
+[panel] live87fpvx_0: live87fpvx_0: scene 2
+[host] slot live87fpvx_0: d_loop_us=1205 d_raster_us=164279 d_observe_us=47806 max_observe_us=3699 d_paints=50 d_skips=0 d_ticks=2 window_ms=1304
+live script_flax_picker: running step 2/10
+[host-play] slot live87fpvx_0: handshake begin reconnect=true
+[panel] live87fpvx_0: live87fpvx_0: scene 0
+[host-play] slot live87fpvx_0: handshake ok
+[panel] live87fpvx_0: live87fpvx_0: scene 1
+[panel] live87fpvx_0: live87fpvx_0: ingame
+[panel] live87fpvx_0: live87fpvx_0: scene 2
+[host] slot live87fpvx_0: d_loop_us=12594 d_raster_us=157932 d_observe_us=69495 max_observe_us=5275 d_paints=50 d_skips=0 d_ticks=1 window_ms=0
+[host] slot live87fpvx_0: d_loop_us=1192 d_raster_us=167056 d_observe_us=33694 max_observe_us=4330 d_paints=50 d_skips=0 d_ticks=4 window_ms=1290
+live script_flax_picker: running step 3/10
+[panel] live87fpvx_0: live87fpvx_0: scene 1
+[panel] live87fpvx_0: live87fpvx_0: ingame
+[panel] live87fpvx_0: live87fpvx_0: scene 2
+[host] slot live87fpvx_0: d_loop_us=8654 d_raster_us=155366 d_observe_us=48136 max_observe_us=5333 d_paints=50 d_skips=0 d_ticks=2 window_ms=1292
+[host] slot live87fpvx_0: d_loop_us=694 d_raster_us=146303 d_observe_us=38128 max_observe_us=3077 d_paints=50 d_skips=0 d_ticks=2 window_ms=1312
+live script_flax_picker: running step 4/10
+live script_flax_picker: running step 5/10
+[script live87fpvx_0] start load
+live script_flax_picker: running step 6/10
+[host] hitch live87fpvx_0: observe_us=79611 paints=226 skips=0 ticks=10
+[host] hitch live87fpvx_0: observe_us=16562 paints=232 skips=0 ticks=11
+[host] slot live87fpvx_0: d_loop_us=660 d_raster_us=152145 d_observe_us=127605 max_observe_us=79611 d_paints=50 d_skips=0 d_ticks=2 window_ms=1326
+[script live87fpvx_0] FlaxPicker picking 'Flax' (Pick) at (2741, 3444, 0) — gate (2736, 3443, 0), bank entrance (2726, 3487, 0), stand (2725, 3493, 0)
+[panel] live87fpvx_0: script: FlaxPicker picking 'Flax' (Pick) at (2741, 3444, 0) — gate (2736, 3443, 0), bank entrance (2726, 3487, 0), stand (2725, 3493, 0)
+[script live87fpvx_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=650 d_raster_us=153872 d_observe_us=55399 max_observe_us=11347 d_paints=50 d_skips=0 d_ticks=2 window_ms=1278
+[host] hitch live87fpvx_0: observe_us=19456 paints=348 skips=0 ticks=16
+[host] slot live87fpvx_0: d_loop_us=740 d_raster_us=150684 d_observe_us=79875 max_observe_us=19456 d_paints=50 d_skips=0 d_ticks=3 window_ms=1301
+[script live87fpvx_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick", id: Some(2646) }
+[script live87fpvx_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=706 d_raster_us=153325 d_observe_us=61295 max_observe_us=15877 d_paints=50 d_skips=0 d_ticks=2 window_ms=1304
+[host] hitch live87fpvx_0: observe_us=18139 paints=418 skips=0 ticks=19
+[script live87fpvx_0] interact Loc { x: 2738, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[script live87fpvx_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=735 d_raster_us=144825 d_observe_us=69409 max_observe_us=18139 d_paints=50 d_skips=0 d_ticks=2 window_ms=1288
+[host] slot live87fpvx_0: d_loop_us=683 d_raster_us=135540 d_observe_us=58298 max_observe_us=15885 d_paints=50 d_skips=0 d_ticks=2 window_ms=1268
+[host] hitch live87fpvx_0: observe_us=18898 paints=511 skips=0 ticks=23
+[host] hitch live87fpvx_0: observe_us=17295 paints=534 skips=0 ticks=24
+[script live87fpvx_0] interact Loc { x: 2738, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=704 d_raster_us=143594 d_observe_us=73328 max_observe_us=18898 d_paints=50 d_skips=0 d_ticks=2 window_ms=1315
+[host] hitch live87fpvx_0: observe_us=16832 paints=557 skips=0 ticks=25
+[host] slot live87fpvx_0: d_loop_us=675 d_raster_us=124866 d_observe_us=56959 max_observe_us=16832 d_paints=50 d_skips=0 d_ticks=2 window_ms=1274
+[host] hitch live87fpvx_0: observe_us=17816 paints=604 skips=0 ticks=27
+[script live87fpvx_0] interact Loc { x: 2739, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[host] hitch live87fpvx_0: observe_us=17461 paints=627 skips=0 ticks=28
+[script live87fpvx_0] interact Loc { x: 2739, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=786 d_raster_us=142276 d_observe_us=69452 max_observe_us=17816 d_paints=50 d_skips=0 d_ticks=3 window_ms=1303
+[host] hitch live87fpvx_0: observe_us=18560 paints=673 skips=0 ticks=30
+[script live87fpvx_0] interact Loc { x: 2738, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[script live87fpvx_0] interact Loc { x: 2738, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=735 d_raster_us=184573 d_observe_us=76285 max_observe_us=18560 d_paints=50 d_skips=0 d_ticks=2 window_ms=1292
+[host] hitch live87fpvx_0: observe_us=20105 paints=742 skips=0 ticks=33
+[script live87fpvx_0] interact Loc { x: 2739, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=724 d_raster_us=144605 d_observe_us=65200 max_observe_us=20105 d_paints=50 d_skips=0 d_ticks=2 window_ms=1323
+[host] hitch live87fpvx_0: observe_us=18015 paints=765 skips=0 ticks=34
+[script live87fpvx_0] interact Loc { x: 2739, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=733 d_raster_us=141645 d_observe_us=61828 max_observe_us=18015 d_paints=50 d_skips=0 d_ticks=2 window_ms=1296
+[host] hitch live87fpvx_0: observe_us=19974 paints=811 skips=0 ticks=36
+[script live87fpvx_0] interact Loc { x: 2740, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[host] hitch live87fpvx_0: observe_us=17135 paints=834 skips=0 ticks=37
+[script live87fpvx_0] interact Loc { x: 2740, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=793 d_raster_us=146208 d_observe_us=74520 max_observe_us=19974 d_paints=50 d_skips=0 d_ticks=2 window_ms=1305
+[host] hitch live87fpvx_0: observe_us=20022 paints=879 skips=0 ticks=39
+[script live87fpvx_0] interact Loc { x: 2739, z: 3438, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=784 d_raster_us=151877 d_observe_us=66526 max_observe_us=20022 d_paints=50 d_skips=0 d_ticks=2 window_ms=1300
+[host] hitch live87fpvx_0: observe_us=22098 paints=903 skips=0 ticks=40
+[script live87fpvx_0] interact Loc { x: 2739, z: 3438, level: 0, action: "Pick", id: Some(2646) }
+[host] hitch live87fpvx_0: observe_us=17771 paints=927 skips=0 ticks=41
+[host] slot live87fpvx_0: d_loop_us=860 d_raster_us=144704 d_observe_us=78767 max_observe_us=22098 d_paints=50 d_skips=0 d_ticks=3 window_ms=1269
+[host] hitch live87fpvx_0: observe_us=20849 paints=950 skips=0 ticks=42
+[script live87fpvx_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick", id: Some(2646) }
+[host] hitch live87fpvx_0: observe_us=18753 paints=973 skips=0 ticks=43
+[script live87fpvx_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=784 d_raster_us=158895 d_observe_us=92823 max_observe_us=20849 d_paints=50 d_skips=0 d_ticks=2 window_ms=1308
+[host] hitch live87fpvx_0: observe_us=18983 paints=1020 skips=0 ticks=45
+[script live87fpvx_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=711 d_raster_us=132452 d_observe_us=60707 max_observe_us=18983 d_paints=50 d_skips=0 d_ticks=2 window_ms=1279
+[host] hitch live87fpvx_0: observe_us=18990 paints=1066 skips=0 ticks=47
+[script live87fpvx_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[host] hitch live87fpvx_0: observe_us=17908 paints=1090 skips=0 ticks=48
+[script live87fpvx_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=733 d_raster_us=141838 d_observe_us=72729 max_observe_us=18990 d_paints=50 d_skips=0 d_ticks=2 window_ms=1279
+[host] hitch live87fpvx_0: observe_us=18917 paints=1138 skips=0 ticks=50
+[script live87fpvx_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=768 d_raster_us=136536 d_observe_us=64816 max_observe_us=18917 d_paints=50 d_skips=0 d_ticks=2 window_ms=1237
+[host] hitch live87fpvx_0: observe_us=18804 paints=1162 skips=0 ticks=51
+[script live87fpvx_0] interact Loc { x: 2738, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[host] hitch live87fpvx_0: observe_us=17042 paints=1185 skips=0 ticks=52
+[host] slot live87fpvx_0: d_loop_us=711 d_raster_us=133603 d_observe_us=67247 max_observe_us=18804 d_paints=50 d_skips=0 d_ticks=2 window_ms=1279
+[host] hitch live87fpvx_0: observe_us=18753 paints=1232 skips=0 ticks=54
+[script live87fpvx_0] interact Loc { x: 2739, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=745 d_raster_us=136586 d_observe_us=65031 max_observe_us=18753 d_paints=50 d_skips=0 d_ticks=2 window_ms=1288
+[script live87fpvx_0] interact Loc { x: 2739, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=750 d_raster_us=138852 d_observe_us=58217 max_observe_us=14583 d_paints=50 d_skips=0 d_ticks=2 window_ms=1292
+[host] hitch live87fpvx_0: observe_us=16713 paints=1302 skips=0 ticks=57
+[script live87fpvx_0] interact Loc { x: 2738, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[host] hitch live87fpvx_0: observe_us=17826 paints=1325 skips=0 ticks=58
+[script live87fpvx_0] interact Loc { x: 2738, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=792 d_raster_us=140735 d_observe_us=80696 max_observe_us=17826 d_paints=50 d_skips=0 d_ticks=3 window_ms=1295
+[host] hitch live87fpvx_0: observe_us=20592 paints=1372 skips=0 ticks=60
+[script live87fpvx_0] interact Loc { x: 2739, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=760 d_raster_us=142268 d_observe_us=68863 max_observe_us=20592 d_paints=50 d_skips=0 d_ticks=2 window_ms=1279
+[host] hitch live87fpvx_0: observe_us=18877 paints=1442 skips=0 ticks=63
+[script live87fpvx_0] interact Loc { x: 2740, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=759 d_raster_us=137953 d_observe_us=63448 max_observe_us=18877 d_paints=50 d_skips=0 d_ticks=2 window_ms=1275
+[host] hitch live87fpvx_0: observe_us=16709 paints=1465 skips=0 ticks=64
+[script live87fpvx_0] interact Loc { x: 2740, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=689 d_raster_us=134316 d_observe_us=58829 max_observe_us=16709 d_paints=50 d_skips=0 d_ticks=2 window_ms=1282
+[host] hitch live87fpvx_0: observe_us=19735 paints=1512 skips=0 ticks=66
+[script live87fpvx_0] interact Loc { x: 2739, z: 3438, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=783 d_raster_us=137903 d_observe_us=60124 max_observe_us=19735 d_paints=50 d_skips=0 d_ticks=2 window_ms=1322
+[host] hitch live87fpvx_0: observe_us=16604 paints=1557 skips=0 ticks=68
+[host] hitch live87fpvx_0: observe_us=16319 paints=1579 skips=0 ticks=69
+[host] slot live87fpvx_0: d_loop_us=767 d_raster_us=135068 d_observe_us=66748 max_observe_us=16604 d_paints=50 d_skips=0 d_ticks=2 window_ms=1317
+[host] hitch live87fpvx_0: observe_us=18510 paints=1603 skips=0 ticks=70
+[script live87fpvx_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick", id: Some(2646) }
+[host] hitch live87fpvx_0: observe_us=18658 paints=1626 skips=0 ticks=71
+[script live87fpvx_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick", id: Some(2646) }
+[host] hitch live87fpvx_0: observe_us=16435 paints=1649 skips=0 ticks=72
+[host] slot live87fpvx_0: d_loop_us=812 d_raster_us=140994 d_observe_us=93029 max_observe_us=18658 d_paints=50 d_skips=0 d_ticks=3 window_ms=1313
+[host] hitch live87fpvx_0: observe_us=18813 paints=1672 skips=0 ticks=73
+[script live87fpvx_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick", id: Some(2646) }
+[host] hitch live87fpvx_0: observe_us=18098 paints=1695 skips=0 ticks=74
+[script live87fpvx_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=751 d_raster_us=140352 d_observe_us=71803 max_observe_us=18813 d_paints=50 d_skips=0 d_ticks=2 window_ms=1267
+[host] hitch live87fpvx_0: observe_us=19044 paints=1719 skips=0 ticks=75
+[script live87fpvx_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[script live87fpvx_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=766 d_raster_us=138620 d_observe_us=70439 max_observe_us=19044 d_paints=50 d_skips=0 d_ticks=2 window_ms=1296
+[host] hitch live87fpvx_0: observe_us=16971 paints=1788 skips=0 ticks=78
+[script live87fpvx_0] interact Loc { x: 2738, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=730 d_raster_us=133786 d_observe_us=59209 max_observe_us=16971 d_paints=50 d_skips=0 d_ticks=2 window_ms=1286
+[script live87fpvx_0] interact Loc { x: 2738, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[host] hitch live87fpvx_0: observe_us=20919 paints=1835 skips=0 ticks=80
+[script live87fpvx_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=777 d_raster_us=141065 d_observe_us=63742 max_observe_us=20919 d_paints=50 d_skips=0 d_ticks=2 window_ms=1303
+[host] hitch live87fpvx_0: observe_us=19643 paints=1858 skips=0 ticks=81
+[host] hitch live87fpvx_0: observe_us=17635 paints=1882 skips=0 ticks=82
+[host] slot live87fpvx_0: d_loop_us=724 d_raster_us=136978 d_observe_us=70180 max_observe_us=19643 d_paints=50 d_skips=0 d_ticks=2 window_ms=1271
+[host] hitch live87fpvx_0: observe_us=18058 paints=1928 skips=0 ticks=84
+[host] slot live87fpvx_0: d_loop_us=775 d_raster_us=150088 d_observe_us=68186 max_observe_us=18058 d_paints=50 d_skips=0 d_ticks=2 window_ms=1294
+[host] hitch live87fpvx_0: observe_us=16492 paints=1951 skips=0 ticks=85
+[script live87fpvx_0] interact Loc { x: 2739, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[host] hitch live87fpvx_0: observe_us=20517 paints=1998 skips=0 ticks=87
+[host] slot live87fpvx_0: d_loop_us=713 d_raster_us=131232 d_observe_us=81207 max_observe_us=20517 d_paints=50 d_skips=0 d_ticks=3 window_ms=1279
+[host] hitch live87fpvx_0: observe_us=19908 paints=2021 skips=0 ticks=88
+[script live87fpvx_0] interact Loc { x: 2738, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[host] hitch live87fpvx_0: observe_us=18113 paints=2045 skips=0 ticks=89
+[script live87fpvx_0] interact Loc { x: 2738, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=805 d_raster_us=156981 d_observe_us=73539 max_observe_us=19908 d_paints=50 d_skips=0 d_ticks=2 window_ms=1281
+[host] hitch live87fpvx_0: observe_us=19613 paints=2067 skips=0 ticks=90
+[host] hitch live87fpvx_0: observe_us=16398 paints=2090 skips=0 ticks=91
+[script live87fpvx_0] interact Loc { x: 2739, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=742 d_raster_us=152470 d_observe_us=70014 max_observe_us=19613 d_paints=50 d_skips=0 d_ticks=2 window_ms=1328
+[script live87fpvx_0] interact Loc { x: 2739, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=687 d_raster_us=114933 d_observe_us=50526 max_observe_us=13732 d_paints=50 d_skips=0 d_ticks=2 window_ms=1297
+[script live87fpvx_0] interact Loc { x: 2740, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[script live87fpvx_0] interact Loc { x: 2740, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=739 d_raster_us=119169 d_observe_us=60168 max_observe_us=15990 d_paints=50 d_skips=0 d_ticks=2 window_ms=1311
+[script live87fpvx_0] interact Loc { x: 2739, z: 3438, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=714 d_raster_us=120277 d_observe_us=57599 max_observe_us=15579 d_paints=50 d_skips=0 d_ticks=2 window_ms=1297
+[host] hitch live87fpvx_0: observe_us=16531 paints=2252 skips=0 ticks=98
+[script live87fpvx_0] interact Loc { x: 2739, z: 3438, level: 0, action: "Pick", id: Some(2646) }
+[host] hitch live87fpvx_0: observe_us=16401 paints=2276 skips=0 ticks=99
+[host] slot live87fpvx_0: d_loop_us=734 d_raster_us=118292 d_observe_us=78212 max_observe_us=16531 d_paints=50 d_skips=0 d_ticks=3 window_ms=1278
+live script_flax_picker: running step 7/10
+[script live87fpvx_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick", id: Some(2646) }
+[host] hitch live87fpvx_0: observe_us=16590 paints=2347 skips=0 ticks=102
+[script live87fpvx_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+[host] slot live87fpvx_0: d_loop_us=726 d_raster_us=122506 d_observe_us=66419 max_observe_us=16590 d_paints=50 d_skips=0 d_ticks=2 window_ms=1220
+[host] hitch live87fpvx_0: observe_us=19102 paints=2399 skips=0 ticks=104
+[host] slot live87fpvx_0: d_loop_us=975 d_raster_us=124423 d_observe_us=65188 max_observe_us=19102 d_paints=50 d_skips=0 d_ticks=2 window_ms=1174
+[host] hitch live87fpvx_0: observe_us=18020 paints=2425 skips=0 ticks=105
+[script live87fpvx_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+[host] slot live87fpvx_0: d_loop_us=715 d_raster_us=143765 d_observe_us=50900 max_observe_us=18020 d_paints=50 d_skips=0 d_ticks=1 window_ms=1145
+[host] hitch live87fpvx_0: observe_us=16977 paints=2451 skips=0 ticks=106
+[script live87fpvx_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[host] hitch live87fpvx_0: observe_us=19883 paints=2476 skips=0 ticks=107
+[host] slot live87fpvx_0: d_loop_us=777 d_raster_us=132377 d_observe_us=68681 max_observe_us=19883 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164
+[host] hitch live87fpvx_0: observe_us=19026 paints=2502 skips=0 ticks=108
+[host] hitch live87fpvx_0: observe_us=16680 paints=2528 skips=0 ticks=109
+[host] slot live87fpvx_0: d_loop_us=794 d_raster_us=150193 d_observe_us=73219 max_observe_us=19026 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161
+[host] hitch live87fpvx_0: observe_us=16222 paints=2554 skips=0 ticks=110
+[script live87fpvx_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[host] hitch live87fpvx_0: observe_us=19337 paints=2579 skips=0 ticks=111
+[host] slot live87fpvx_0: d_loop_us=770 d_raster_us=158717 d_observe_us=69368 max_observe_us=19337 d_paints=50 d_skips=0 d_ticks=2 window_ms=1177
+[host] hitch live87fpvx_0: observe_us=18857 paints=2605 skips=0 ticks=112
+[host] hitch live87fpvx_0: observe_us=19719 paints=2631 skips=0 ticks=113
+[script live87fpvx_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[host] slot live87fpvx_0: d_loop_us=822 d_raster_us=154764 d_observe_us=73255 max_observe_us=19719 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164
+[host] hitch live87fpvx_0: observe_us=21176 paints=2656 skips=0 ticks=114
+[host] hitch live87fpvx_0: observe_us=19118 paints=2683 skips=0 ticks=115
+[host] slot live87fpvx_0: d_loop_us=863 d_raster_us=163813 d_observe_us=75948 max_observe_us=21176 d_paints=50 d_skips=0 d_ticks=2 window_ms=1140
+[host] hitch live87fpvx_0: observe_us=20852 paints=2735 skips=0 ticks=117
+[script live87fpvx_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[host] slot live87fpvx_0: d_loop_us=888 d_raster_us=151605 d_observe_us=69234 max_observe_us=20852 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154
+[host] hitch live87fpvx_0: observe_us=18835 paints=2761 skips=0 ticks=118
+[host] hitch live87fpvx_0: observe_us=17884 paints=2787 skips=0 ticks=119
+[host] slot live87fpvx_0: d_loop_us=856 d_raster_us=154510 d_observe_us=71980 max_observe_us=18835 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150
+[script live87fpvx_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[host] hitch live87fpvx_0: observe_us=17973 paints=2839 skips=0 ticks=121
+[host] slot live87fpvx_0: d_loop_us=904 d_raster_us=173367 d_observe_us=65278 max_observe_us=17973 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155
+[host] hitch live87fpvx_0: observe_us=18740 paints=2865 skips=0 ticks=122
+[host] hitch live87fpvx_0: observe_us=16710 paints=2892 skips=0 ticks=123
+[script live87fpvx_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[host] slot live87fpvx_0: d_loop_us=973 d_raster_us=168486 d_observe_us=70784 max_observe_us=18740 d_paints=50 d_skips=0 d_ticks=2 window_ms=1145
+[host] hitch live87fpvx_0: observe_us=16595 paints=2917 skips=0 ticks=124
+[panel] live87fpvx_0: live87fpvx_0: scene 1
+[panel] live87fpvx_0: live87fpvx_0: ingame
+[panel] live87fpvx_0: live87fpvx_0: scene 2
+[host] slot live87fpvx_0: d_loop_us=10512 d_raster_us=176116 d_observe_us=69001 max_observe_us=16595 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168
+[host] hitch live87fpvx_0: observe_us=17864 paints=2994 skips=0 ticks=127
+[script live87fpvx_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[host] slot live87fpvx_0: d_loop_us=1089 d_raster_us=181482 d_observe_us=73021 max_observe_us=17864 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164
+[host] hitch live87fpvx_0: observe_us=17813 paints=3020 skips=0 ticks=128
+[script live87fpvx_0] interact WalkTo { x: 2721, z: 3493, level: 0 }
+[host] hitch live87fpvx_0: observe_us=21408 paints=3046 skips=0 ticks=129
+[host] slot live87fpvx_0: d_loop_us=1192 d_raster_us=219645 d_observe_us=75687 max_observe_us=21408 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165
+[host] hitch live87fpvx_0: observe_us=18491 paints=3072 skips=0 ticks=130
+[host] hitch live87fpvx_0: observe_us=16941 paints=3098 skips=0 ticks=131
+[host] slot live87fpvx_0: d_loop_us=1166 d_raster_us=202082 d_observe_us=67563 max_observe_us=18491 d_paints=50 d_skips=0 d_ticks=2 window_ms=1138
+[host] hitch live87fpvx_0: observe_us=19409 paints=3124 skips=0 ticks=132
+[script live87fpvx_0] interact OpenBooth { x: 2721, z: 3494, level: 0, id: 2213, name: Some("Bank booth"), action: Some("Use-quickly") }
+[host] slot live87fpvx_0: d_loop_us=1110 d_raster_us=195236 d_observe_us=51990 max_observe_us=19409 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168
+[host] slot live87fpvx_0: d_loop_us=1035 d_raster_us=242414 d_observe_us=58223 max_observe_us=12157 d_paints=50 d_skips=0 d_ticks=1 window_ms=1147
+live script_flax_picker: running step 8/10
+[host] slot live87fpvx_0: d_loop_us=1094 d_raster_us=234394 d_observe_us=55744 max_observe_us=12434 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155
+[host] slot live87fpvx_0: d_loop_us=1033 d_raster_us=266944 d_observe_us=51518 max_observe_us=9198 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149
+[script live87fpvx_0] banked 28 Flax (+ any junk)
+[script live87fpvx_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[panel] live87fpvx_0: script: banked 28 Flax (+ any junk)
+[host] hitch live87fpvx_0: observe_us=19636 paints=3332 skips=0live script_flax_picker: running step 9/10
+ ticks=140
+[host] slot live87fpvx_0: d_loop_us=1108 d_raster_us=212426 d_observe_us=65240 max_observe_us=19636 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157
+[panel] rss=571867136 traffic_sum=7672
+[panel] present pixmap=0 tex=3415 bind_noop=3413 bind_rereg=2
+[host] hitch live87fpvx_0: frame_us=65705 paints=3377 skips=1 ticks=141
+[script live87fpvx_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+[host] slot live87fpvx_0: d_loop_us=1054 d_raster_us=230988 d_observe_us=60182 max_observe_us=15781 d_paints=49 d_skips=1 d_ticks=2 window_ms=1199
+[host] hitch live87fpvx_0: observe_us=19842 paints=3407 skips=1 ticks=143
+[panel] rss=588464128 traffic_sum=7780
+[panel] present pixmap=0 tex=3454 bind_noop=3451 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=18036 paints=3432 skips=1 ticks=144
+[host] slot live87fpvx_0: d_loop_us=1180 d_raster_us=190841 d_observe_us=70939 max_observe_us=19842 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163
+[panel] rss=589578240 traffic_sum=7809
+[panel] present pixmap=0 tex=3496 bind_noop=3493 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=16607 paints=3459 skips=1 ticks=145
+[script live87fpvx_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+[host] hitch live87fpvx_0: observe_us=17333 paints=3484 skips=1 ticks=146
+[host] slot live87fpvx_0: d_loop_us=1073 d_raster_us=192101 d_observe_us=64965 max_observe_us=17333 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162
+[panel] rss=590708736 traffic_sum=7869
+[panel] present pixmap=0 tex=3539 bind_noop=3536 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=20537 paints=3510 skips=1 ticks=147
+[host] hitch live87fpvx_0: observe_us=17288 paints=3536 skips=1 ticks=148
+[panel] rss=590888960 traffic_sum=7921
+[panel] present pixmap=0 tex=3581 bind_noop=3578 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=938 d_raster_us=173252 d_observe_us=71046 max_observe_us=20537 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152
+[host] hitch live87fpvx_0: observe_us=16452 paints=3562 skips=1 ticks=149
+[script live87fpvx_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+[host] hitch live87fpvx_0: observe_us=18564 paints=3588 skips=1 ticks=150
+[panel] rss=590888960 traffic_sum=7975
+[panel] present pixmap=0 tex=3622 bind_noop=3619 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=936 d_raster_us=171903 d_observe_us=66753 max_observe_us=18564 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159
+[host] hitch live87fpvx_0: observe_us=20684 paints=3614 skips=1 ticks=151
+[panel] rss=591757312 traffic_sum=8018
+[panel] present pixmap=0 tex=3665 bind_noop=3662 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=18325 paints=3640 skips=1 ticks=152
+[script live87fpvx_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+[host] slot live87fpvx_0: d_loop_us=966 d_raster_us=175336 d_observe_us=75286 max_observe_us=20684 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161
+[host] hitch live87fpvx_0: observe_us=16439 paints=3666 skips=1 ticks=153
+[panel] rss=591757312 traffic_sum=8088
+[panel] present pixmap=0 tex=3706 bind_noop=3703 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=20856 paints=3692 skips=1 ticks=154
+[host] slot live87fpvx_0: d_loop_us=866 d_raster_us=165215 d_observe_us=72062 max_observe_us=20856 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156
+[host] hitch live87fpvx_0: observe_us=19543 paints=3718 skips=1 ticks=155
+[panel] rss=591757312 traffic_sum=8157
+[panel] present pixmap=0 tex=3748 bind_noop=3745 bind_rereg=3
+[script live87fpvx_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+[host] hitch live87fpvx_0: observe_us=18891 paints=3743 skips=1 ticks=156
+[host] slot live87fpvx_0: d_loop_us=895 d_raster_us=165106 d_observe_us=72062 max_observe_us=19543 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157
+[panel] rss=591757312 traffic_sum=8187
+[panel] present pixmap=0 tex=3791 bind_noop=3788 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=17726 paints=3769 skips=1 ticks=157
+[host] hitch live87fpvx_0: observe_us=17166 paints=3795 skips=1 ticks=158
+[host] slot live87fpvx_0: d_loop_us=820 d_raster_us=155684 d_observe_us=64894 max_observe_us=17726 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148
+[panel] rss=591757312 traffic_sum=8214
+[panel] present pixmap=0 tex=3833 bind_noop=3830 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=21846 paints=3821 skips=1 ticks=159
+[script live87fpvx_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+[host] hitch live87fpvx_0: observe_us=18459 paints=3847 skips=1 ticks=160
+live script_flax_picker: running step 10/10
+[host] slot live87fpvx_0: d_loop_us=792 d_raster_us=155017 d_observe_us=74150 max_observe_us=21846 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168
+[panel] rss=591757312 traffic_sum=8294
+[panel] present pixmap=0 tex=3874 bind_noop=3871 bind_rereg=3
+[panel] rss=591757312 traffic_sum=8307
+[panel] present pixmap=0 tex=3917 bind_noop=3914 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=16817 paints=3898 skips=1 ticks=162
+[host] slot live87fpvx_0: d_loop_us=705 d_raster_us=143442 d_observe_us=63155 max_observe_us=16817 d_paints=50 d_skips=0 d_ticks=2 window_ms=1179
+[panel] live87fpvx_0: live87fpvx_0: scene 1
+[panel] live87fpvx_0: live87fpvx_0: ingame
+[panel] live87fpvx_0: live87fpvx_0: scene 2
+[panel] rss=601817088 traffic_sum=8489
+[panel] present pixmap=0 tex=3959 bind_noop=3956 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=9417 d_raster_us=142910 d_observe_us=58197 max_observe_us=5704 d_paints=50 d_skips=0 d_ticks=1 window_ms=1141
+[host] hitch live87fpvx_0: observe_us=18085 paints=3950 skips=1 ticks=164
+[script live87fpvx_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+[host] hitch live87fpvx_0: observe_us=18123 paints=3976 skips=1 ticks=165
+[script live87fpvx_0] interact WalkTo { x: 2741, z: 3444, level: 0 }
+[panel] rss=602095616 traffic_sum=8560
+[panel] present pixmap=0 tex=4001 bind_noop=3998 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=764 d_raster_us=142388 d_observe_us=71735 max_observe_us=18123 d_paints=50 d_skips=0 d_ticks=2 window_ms=1179
+[host] hitch live87fpvx_0: observe_us=16242 paints=4001 skips=1 ticks=166
+[panel] rss=602767360 traffic_sum=8572
+[panel] present pixmap=0 tex=4043 bind_noop=4040 bind_rereg=3
+[script live87fpvx_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=713 d_raster_us=154522 d_observe_us=60825 max_observe_us=16242 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165
+[host] hitch live87fpvx_0: observe_us=16791 paints=4053 skips=1 ticks=168
+[panel] rss=604225536 traffic_sum=8616
+[panel] present pixmap=0 tex=4084 bind_noop=4081 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=721 d_raster_us=137886 d_observe_us=55032 max_observe_us=16791 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173
+[host] hitch live87fpvx_0: observe_us=18082 paints=4104 skips=1 ticks=170
+[panel] scenario capture requested: flax_picker
+[script live87fpvx_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick", id: Some(2646) }
+[host] hitch live87fpvx_0: observe_us=61710 paints=4105 skips=1 ticks=170
+[panel] capture readback requested: 1
+[script live87fpvx_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=765 d_raster_us=138138 d_observe_us=113148 max_observe_us=61710 d_paints=50 d_skips=0 d_ticks=2 window_ms=1192
+[panel] shot flax_picker -> /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/catalog-headed/r274-flax-picker-100adccc-6750713b-gpu/shots/2026-09-11T07-47-47_72716/2026-09-11T07-49-33_flax_picker.png
+PASS: live script_flax_picker {"scenario":"flax_picker","outcome":"PASS","predicate":"has_item_id(1779)>=1","ticks":226,"elapsed_ms":106345,"tile":[2739,3443,0],"inv":[{"id":1779,"name":"Flax","count":1}],"stat":{"runenergy":57},"chat":[{"text":"You pick some flax."},{"text":"You can't carry any more flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"You pick some flax."},{"text":"Inventory wiped."},{"text":"Welcome to RuneScape."}],"scene":2}
+[panel] rss=644169728 traffic_sum=8747
+[panel] present pixmap=0 tex=4123 bind_noop=4120 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=16485 paints=4154 skips=1 ticks=172
+[script live87fpvx_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick", id: Some(2646) }
+[host] hitch live87fpvx_0: observe_us=16406 paints=4180 skips=1 ticks=173
+[script live87fpvx_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=8855
+[panel] present pixmap=0 tex=4165 bind_noop=4162 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=765 d_raster_us=144220 d_observe_us=60871 max_observe_us=16485 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154
+[host] hitch live87fpvx_0: observe_us=16950 paints=4232 skips=1 ticks=175
+[script live87fpvx_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=8949
+[panel] present pixmap=0 tex=4207 bind_noop=4204 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=761 d_raster_us=143496 d_observe_us=55332 max_observe_us=16950 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164
+[host] hitch live87fpvx_0: observe_us=16533 paints=4258 skips=1 ticks=176
+[script live87fpvx_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=8980
+[panel] present pixmap=0 tex=4250 bind_noop=4247 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=727 d_raster_us=142558 d_observe_us=53915 max_observe_us=16533 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164
+[host] hitch live87fpvx_0: observe_us=17289 paints=4309 skips=1 ticks=178
+[script live87fpvx_0] interact Loc { x: 2738, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=9074
+[panel] present pixmap=0 tex=4294 bind_noop=4291 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=16946 paints=4335 skips=1 ticks=179
+[script live87fpvx_0] interact Loc { x: 2738, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=757 d_raster_us=145861 d_observe_us=62425 max_observe_us=17289 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161
+[panel] rss=644169728 traffic_sum=9123
+[panel] present pixmap=0 tex=4336 bind_noop=4333 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=17911 paints=4386 skips=1 ticks=181
+[script live87fpvx_0] interact Loc { x: 2739, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=795 d_raster_us=136734 d_observe_us=54336 max_observe_us=17911 d_paints=50 d_skips=0 d_ticks=2 window_ms=1175
+[panel] rss=644169728 traffic_sum=9199
+[panel] present pixmap=0 tex=4378 bind_noop=4375 bind_rereg=3
+[script live87fpvx_0] interact Loc { x: 2739, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=775 d_raster_us=140140 d_observe_us=53469 max_observe_us=15380 d_paints=50 d_skips=0 d_ticks=2 window_ms=1174
+[panel] rss=644169728 traffic_sum=9248
+[panel] present pixmap=0 tex=4420 bind_noop=4417 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=16785 paints=4463 skips=1 ticks=184
+[script live87fpvx_0] interact Loc { x: 2738, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[script live87fpvx_0] interact Loc { x: 2738, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=9355
+[panel] present pixmap=0 tex=4462 bind_noop=4459 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=767 d_raster_us=144221 d_observe_us=60773 max_observe_us=16785 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166
+[host] hitch live87fpvx_0: observe_us=17991 paints=4541 skips=1 ticks=187
+[panel] rss=644169728 traffic_sum=9424
+[panel] present pixmap=0 tex=4505 bind_noop=4502 bind_rereg=3
+[script live87fpvx_0] interact Loc { x: 2739, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=782 d_raster_us=142187 d_observe_us=53629 max_observe_us=17991 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162
+[host] hitch live87fpvx_0: observe_us=16194 paints=4566 skips=1 ticks=188
+[panel] rss=644169728 traffic_sum=9478
+[panel] present pixmap=0 tex=4547 bind_noop=4544 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=683 d_raster_us=133640 d_observe_us=54004 max_observe_us=16194 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164
+[host] hitch live87fpvx_0: observe_us=17714 paints=4618 skips=1 ticks=190
+[script live87fpvx_0] interact Loc { x: 2740, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=9572
+[panel] present pixmap=0 tex=4589 bind_noop=4586 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=16419 paints=4644 skips=1 ticks=191
+[script live87fpvx_0] interact Loc { x: 2740, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=801 d_raster_us=142615 d_observe_us=63280 max_observe_us=17714 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150
+[panel] rss=644169728 traffic_sum=9621
+[panel] present pixmap=0 tex=4632 bind_noop=4629 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=17133 paints=4696 skips=1 ticks=193
+[host] slot live87fpvx_0: d_loop_us=744 d_raster_us=142645 d_observe_us=56014 max_observe_us=17133 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161
+[script live87fpvx_0] interact Loc { x: 2739, z: 3438, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=9697
+[panel] present pixmap=0 tex=4675 bind_noop=4672 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=18979 paints=4722 skips=1 ticks=194
+[host] hitch live87fpvx_0: observe_us=16476 paints=4747 skips=1 ticks=195
+[host] slot live87fpvx_0: d_loop_us=748 d_raster_us=137374 d_observe_us=65514 max_observe_us=18979 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160
+[panel] rss=644169728 traffic_sum=9762
+[panel] present pixmap=0 tex=4715 bind_noop=4712 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=19508 paints=4773 skips=1 ticks=196
+[script live87fpvx_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=789 d_raster_us=142733 d_observe_us=51448 max_observe_us=19508 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156
+[host] hitch live87fpvx_0: observe_us=19155 paints=4799 skips=1 ticks=197
+[script live87fpvx_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=9903
+[panel] present pixmap=0 tex=4757 bind_noop=4754 bind_rereg=3
+[panel] rss=644169728 traffic_sum=9921
+[panel] present pixmap=0 tex=4801 bind_noop=4798 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=732 d_raster_us=137153 d_observe_us=57976 max_observe_us=19155 d_paints=50 d_skips=0 d_ticks=1 window_ms=1160
+[host] hitch live87fpvx_0: observe_us=18119 paints=4851 skips=1 ticks=199
+[script live87fpvx_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick", id: Some(2646) }
+[script live87fpvx_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=10039
+[panel] present pixmap=0 tex=4844 bind_noop=4841 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=821 d_raster_us=141002 d_observe_us=56855 max_observe_us=18119 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164
+[host] hitch live87fpvx_0: observe_us=18060 paints=4903 skips=1 ticks=201
+[script live87fpvx_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick", id: Some(2646) }
+[host] hitch live87fpvx_0: observe_us=19278 paints=4928 skips=1 ticks=202
+[panel] rss=644169728 traffic_sum=10153
+[panel] present pixmap=0 tex=4885 bind_noop=4882 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=803 d_raster_us=140837 d_observe_us=64858 max_observe_us=19278 d_paints=50 d_skips=0 d_ticks=2 window_ms=1179
+[panel] rss=644169728 traffic_sum=10172
+[panel] present pixmap=0 tex=4928 bind_noop=4925 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=18019 paints=4979 skips=1 ticks=204
+[script live87fpvx_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=813 d_raster_us=146833 d_observe_us=57302 max_observe_us=18019 d_paints=50 d_skips=0 d_ticks=2 window_ms=1175
+[script live87fpvx_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=10292
+[panel] present pixmap=0 tex=4971 bind_noop=4968 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=778 d_raster_us=125860 d_observe_us=49591 max_observe_us=15962 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155
+[script live87fpvx_0] interact Loc { x: 2738, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=10386
+[panel] present pixmap=0 tex=5013 bind_noop=5010 bind_rereg=3
+[script live87fpvx_0] interact Loc { x: 2738, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=770 d_raster_us=143848 d_observe_us=58065 max_observe_us=15945 d_paints=50 d_skips=0 d_ticks=2 window_ms=1178
+[panel] rss=644169728 traffic_sum=10430
+[panel] present pixmap=0 tex=5054 bind_noop=5051 bind_rereg=3
+[script live87fpvx_0] interact Loc { x: 2739, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=774 d_raster_us=121760 d_observe_us=50958 max_observe_us=15296 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159
+[panel] rss=644169728 traffic_sum=10524
+[panel] present pixmap=0 tex=5096 bind_noop=5093 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=16070 paints=5159 skips=1 ticks=211
+[script live87fpvx_0] interact Loc { x: 2739, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=10586
+[panel] present pixmap=0 tex=5139 bind_noop=5136 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=730 d_raster_us=121804 d_observe_us=48706 max_observe_us=16070 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173
+[script live87fpvx_0] interact Loc { x: 2738, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[host] hitch live87fpvx_0: observe_us=16068 paints=5236 skips=1 ticks=214
+[panel] rss=644169728 traffic_sum=10684
+[panel] present pixmap=0 tex=5180 bind_noop=5177 bind_rereg=3
+[script live87fpvx_0] interact Loc { x: 2738, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=763 d_raster_us=126142 d_observe_us=57485 max_observe_us=16068 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154
+[panel] rss=644169728 traffic_sum=10723
+[panel] present pixmap=0 tex=5222 bind_noop=5219 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=17317 paints=5288 skips=1 ticks=216
+[host] slot live87fpvx_0: d_loop_us=946 d_raster_us=138010 d_observe_us=55105 max_observe_us=17317 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173
+[host] hitch live87fpvx_0: observe_us=19829 paints=5313 skips=1 ticks=217
+[script live87fpvx_0] interact Loc { x: 2739, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=10823
+[panel] present pixmap=0 tex=5264 bind_noop=5261 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=17193 paints=5338 skips=1 ticks=218
+[host] slot live87fpvx_0: d_loop_us=794 d_raster_us=139929 d_observe_us=64565 max_observe_us=19829 d_paints=50 d_skips=0 d_ticks=2 window_ms=1175
+[panel] rss=644169728 traffic_sum=10853
+[panel] present pixmap=0 tex=5306 bind_noop=5303 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=16013 paints=5390 skips=1 ticks=220
+[script live87fpvx_0] interact Loc { x: 2740, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=811 d_raster_us=139515 d_observe_us=54750 max_observe_us=16013 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158
+[panel] rss=644169728 traffic_sum=10934
+[panel] present pixmap=0 tex=5349 bind_noop=5346 bind_rereg=3
+[script live87fpvx_0] interact Loc { x: 2740, z: 3439, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=794 d_raster_us=142016 d_observe_us=53427 max_observe_us=15964 d_paints=50 d_skips=0 d_ticks=2 window_ms=1171
+[panel] rss=644169728 traffic_sum=10983
+[panel] present pixmap=0 tex=5389 bind_noop=5386 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=20309 paints=5467 skips=1 ticks=223
+[script live87fpvx_0] interact Loc { x: 2739, z: 3438, level: 0, action: "Pick", id: Some(2646) }
+[host] hitch live87fpvx_0: observe_us=16136 paints=5493 skips=1 ticks=224
+[script live87fpvx_0] interact Loc { x: 2739, z: 3438, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=11105
+[panel] present pixmap=0 tex=5431 bind_noop=5428 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=824 d_raster_us=149910 d_observe_us=69661 max_observe_us=20309 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165
+[host] hitch live87fpvx_0: observe_us=18960 paints=5519 skips=1 ticks=225
+[panel] rss=644169728 traffic_sum=11155
+[panel] present pixmap=0 tex=5473 bind_noop=5470 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=20907 paints=5544 skips=1 ticks=226
+[script live87fpvx_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=821 d_raster_us=156091 d_observe_us=69687 max_observe_us=20907 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165
+[host] hitch live87fpvx_0: observe_us=20821 paints=5570 skips=1 ticks=227
+[script live87fpvx_0] interact Loc { x: 2738, z: 3441, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=11283
+[panel] present pixmap=0 tex=5515 bind_noop=5512 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=16131 paints=5596 skips=1 ticks=228
+[host] slot live87fpvx_0: d_loop_us=888 d_raster_us=143078 d_observe_us=65918 max_observe_us=20821 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160
+[host] hitch live87fpvx_0: observe_us=19281 paints=5622 skips=1 ticks=229
+[script live87fpvx_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=11390
+[panel] present pixmap=0 tex=5557 bind_noop=5554 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=864 d_raster_us=165051 d_observe_us=64105 max_observe_us=19281 d_paints=50 d_skips=0 d_ticks=2 window_ms=1182
+[script live87fpvx_0] interact Loc { x: 2739, z: 3442, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=11421
+[panel] present pixmap=0 tex=5600 bind_noop=5597 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=20089 paints=5673 skips=1 ticks=231
+[host] slot live87fpvx_0: d_loop_us=770 d_raster_us=153967 d_observe_us=48951 max_observe_us=20089 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156
+[host] hitch live87fpvx_0: observe_us=18394 paints=5699 skips=1 ticks=232
+[script live87fpvx_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=11528
+[panel] present pixmap=0 tex=5641 bind_noop=5638 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=17396 paints=5724 skips=1 ticks=233
+[script live87fpvx_0] interact Loc { x: 2737, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=799 d_raster_us=146381 d_observe_us=65117 max_observe_us=18394 d_paints=50 d_skips=0 d_ticks=1 window_ms=1168
+[host] hitch live87fpvx_0: observe_us=19387 paints=5750 skips=1 ticks=234
+[panel] rss=644169728 traffic_sum=11607
+[panel] present pixmap=0 tex=5682 bind_noop=5679 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=18380 paints=5776 skips=1 ticks=235
+[script live87fpvx_0] interact Loc { x: 2738, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=836 d_raster_us=140061 d_observe_us=67370 max_observe_us=19387 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158
+[panel] rss=644169728 traffic_sum=11682
+[panel] present pixmap=0 tex=5725 bind_noop=5722 bind_rereg=3
+[script live87fpvx_0] interact Loc { x: 2738, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[host] hitch live87fpvx_0: observe_us=17544 paints=5828 skips=1 ticks=237
+[script live87fpvx_0] interact Loc { x: 2739, z: 3440, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=11801
+[panel] present pixmap=0 tex=5766 bind_noop=5763 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=796 d_raster_us=148903 d_observe_us=54904 max_observe_us=17544 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168
+[host] hitch live87fpvx_0: observe_us=18456 paints=5879 skips=1 ticks=239
+[script live87fpvx_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=11897
+[panel] present pixmap=0 tex=5806 bind_noop=5803 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=798 d_raster_us=142090 d_observe_us=57258 max_observe_us=18456 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170
+[host] hitch live87fpvx_0: observe_us=20436 paints=5905 skips=1 ticks=240
+[script live87fpvx_0] interact Loc { x: 2739, z: 3444, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=11941
+[panel] present pixmap=0 tex=5848 bind_noop=5845 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=16735 paints=5930 skips=1 ticks=241
+[host] slot live87fpvx_0: d_loop_us=800 d_raster_us=142289 d_observe_us=65407 max_observe_us=20436 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160
+[panel] rss=644169728 traffic_sum=11972
+[panel] present pixmap=0 tex=5892 bind_noop=5889 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=17923 paints=5982 skips=1 ticks=243
+[script live87fpvx_0] interact Loc { x: 2742, z: 3446, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=828 d_raster_us=143426 d_observe_us=58581 max_observe_us=17923 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149
+[host] hitch live87fpvx_0: observe_us=19603 paints=6008 skips=1 ticks=244
+[script live87fpvx_0] interact Loc { x: 2742, z: 3446, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=12093
+[panel] present pixmap=0 tex=5936 bind_noop=5933 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=16453 paints=6034 skips=1 ticks=245
+[host] slot live87fpvx_0: d_loop_us=747 d_raster_us=147370 d_observe_us=64237 max_observe_us=19603 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173
+[panel] rss=644169728 traffic_sum=12123
+[panel] present pixmap=0 tex=5977 bind_noop=5974 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=16282 paints=6085 skips=1 ticks=247
+[host] slot live87fpvx_0: d_loop_us=778 d_raster_us=154548 d_observe_us=60284 max_observe_us=16282 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163
+[panel] rss=644169728 traffic_sum=12193
+[panel] present pixmap=0 tex=6019 bind_noop=6016 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=17538 paints=6111 skips=1 ticks=248
+[script live87fpvx_0] interact Loc { x: 2741, z: 3447, level: 0, action: "Pick", id: Some(2646) }
+[host] slot live87fpvx_0: d_loop_us=768 d_raster_us=179091 d_observe_us=61207 max_observe_us=17538 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154
+[panel] rss=644169728 traffic_sum=12236
+[panel] present pixmap=0 tex=6061 bind_noop=6058 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=18033 paints=6163 skips=1 ticks=250
+[host] hitch live87fpvx_0: observe_us=18122 paints=6189 skips=1 ticks=251
+[script live87fpvx_0] interact Loc { x: 2740, z: 3448, level: 0, action: "Pick", id: Some(2646) }
+[panel] rss=644169728 traffic_sum=12331
+[panel] present pixmap=0 tex=6103 bind_noop=6100 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=821 d_raster_us=148636 d_observe_us=66121 max_observe_us=18122 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156
+[host] hitch live87fpvx_0: observe_us=16392 paints=6215 skips=1 ticks=252
+[panel] rss=644169728 traffic_sum=12362
+[panel] present pixmap=0 tex=6146 bind_noop=6143 bind_rereg=3
+[script live87fpvx_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+[host] slot live87fpvx_0: d_loop_us=800 d_raster_us=147725 d_observe_us=55523 max_observe_us=16392 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165
+[host] hitch live87fpvx_0: observe_us=16610 paints=6267 skips=1 ticks=254
+[panel] rss=644169728 traffic_sum=12448
+[panel] present pixmap=0 tex=6188 bind_noop=6185 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=16009 paints=6293 skips=1 ticks=255
+[host] slot live87fpvx_0: d_loop_us=760 d_raster_us=144069 d_observe_us=59605 max_observe_us=16610 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158
+[host] hitch live87fpvx_0: observe_us=18147 paints=6318 skips=1 ticks=256
+[script live87fpvx_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[panel] rss=644169728 traffic_sum=12523
+[panel] present pixmap=0 tex=6232 bind_noop=6229 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=18143 paints=6345 skips=1 ticks=257
+[host] slot live87fpvx_0: d_loop_us=814 d_raster_us=167864 d_observe_us=66352 max_observe_us=18147 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151
+[panel] rss=644169728 traffic_sum=12556
+[panel] present pixmap=0 tex=6274 bind_noop=6271 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=17468 paints=6370 skips=1 ticks=258
+[script live87fpvx_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[host] slot live87fpvx_0: d_loop_us=806 d_raster_us=148647 d_observe_us=64318 max_observe_us=17468 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164
+[panel] rss=644169728 traffic_sum=12655
+[panel] present pixmap=0 tex=6316 bind_noop=6313 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=17946 paints=6447 skips=1 ticks=261
+[host] slot live87fpvx_0: d_loop_us=731 d_raster_us=148889 d_observe_us=63645 max_observe_us=17946 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173
+[panel] rss=644169728 traffic_sum=12693
+[panel] present pixmap=0 tex=6357 bind_noop=6354 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=16043 paints=6473 skips=1 ticks=262
+[script live87fpvx_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[panel] rss=644169728 traffic_sum=12730
+[panel] present pixmap=0 tex=6399 bind_noop=6396 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=19043 paints=6498 skips=1 ticks=263
+[host] slot live87fpvx_0: d_loop_us=771 d_raster_us=143994 d_observe_us=62366 max_observe_us=19043 d_paints=50 d_skips=0 d_ticks=2 window_ms=1195
+[host] hitch live87fpvx_0: observe_us=18911 paints=6524 skips=1 ticks=264
+[panel] rss=644169728 traffic_sum=12837
+[panel] present pixmap=0 tex=6440 bind_noop=6437 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=871 d_raster_us=146038 d_observe_us=51174 max_observe_us=18911 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149
+[host] hitch live87fpvx_0: observe_us=16223 paints=6549 skips=1 ticks=265
+[script live87fpvx_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[panel] rss=644169728 traffic_sum=12898
+[panel] present pixmap=0 tex=6483 bind_noop=6480 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=828 d_raster_us=170705 d_observe_us=59616 max_observe_us=16223 d_paints=50 d_skips=0 d_ticks=1 window_ms=1160
+[host] hitch live87fpvx_0: observe_us=18055 paints=6601 skips=1 ticks=267
+[host] hitch live87fpvx_0: observe_us=18624 paints=6627 skips=1 ticks=268
+[panel] rss=644169728 traffic_sum=12991
+[panel] present pixmap=0 tex=6525 bind_noop=6522 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=924 d_raster_us=163964 d_observe_us=69208 max_observe_us=18624 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163
+[script live87fpvx_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[panel] rss=644169728 traffic_sum=13024
+[panel] present pixmap=0 tex=6568 bind_noop=6565 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=811 d_raster_us=171747 d_observe_us=58071 max_observe_us=15634 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161
+[host] hitch live87fpvx_0: observe_us=17757 paints=6704 skips=1 ticks=271
+[panel] rss=644169728 traffic_sum=13063
+[panel] present pixmap=0 tex=6610 bind_noop=6607 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=19533 paints=6730 skips=1 ticks=272
+[host] slot live87fpvx_0: d_loop_us=994 d_raster_us=164246 d_observe_us=66620 max_observe_us=19533 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159
+[host] hitch live87fpvx_0: observe_us=16465 paints=6756 skips=1 ticks=273
+[script live87fpvx_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[panel] rss=644169728 traffic_sum=13145
+[panel] present pixmap=0 tex=6651 bind_noop=6648 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=18648 paints=6782 skips=1 ticks=274
+[host] slot live87fpvx_0: d_loop_us=929 d_raster_us=176817 d_observe_us=62747 max_observe_us=18648 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163
+[panel] rss=644169728 traffic_sum=13159
+[panel] present pixmap=0 tex=6693 bind_noop=6690 bind_rereg=3
+[panel] live87fpvx_0: live87fpvx_0: scene 1
+[panel] live87fpvx_0: live87fpvx_0: ingame
+[panel] live87fpvx_0: live87fpvx_0: scene 2
+[host] hitch live87fpvx_0: observe_us=17756 paints=6833 skips=1 ticks=276
+[panel] rss=646529024 traffic_sum=13435
+[panel] present pixmap=0 tex=6734 bind_noop=6731 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=10576 d_raster_us=182354 d_observe_us=65103 max_observe_us=17756 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162
+[host] hitch live87fpvx_0: observe_us=17732 paints=6860 skips=1 ticks=277
+[script live87fpvx_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[host] hitch live87fpvx_0: observe_us=16138 paints=6886 skips=1 ticks=278
+[script live87fpvx_0] interact WalkTo { x: 2721, z: 3493, level: 0 }
+[panel] rss=647462912 traffic_sum=13489
+[panel] present pixmap=0 tex=6776 bind_noop=6773 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=1204 d_raster_us=207361 d_observe_us=59470 max_observe_us=17732 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154
+[host] hitch live87fpvx_0: observe_us=18635 paints=6912 skips=1 ticks=279
+[panel] rss=647462912 traffic_sum=13542
+[panel] present pixmap=0 tex=6820 bind_noop=6817 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=17450 paints=6938 skips=1 ticks=280
+[host] slot live87fpvx_0: d_loop_us=1275 d_raster_us=192501 d_observe_us=60844 max_observe_us=18635 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149
+[host] hitch live87fpvx_0: observe_us=16365 paints=6964 skips=1 ticks=281
+[panel] rss=647544832 traffic_sum=13574
+[panel] present pixmap=0 tex=6861 bind_noop=6858 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=17336 paints=6989 skips=1 ticks=282
+[script live87fpvx_0] interact OpenBooth { x: 2721, z: 3494, level: 0, id: 2213, name: Some("Bank booth"), action: Some("Use-quickly") }
+[host] slot live87fpvx_0: d_loop_us=1059 d_raster_us=186562 d_observe_us=56748 max_observe_us=17336 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167
+[panel] rss=648937472 traffic_sum=13740
+[panel] present pixmap=0 tex=6902 bind_noop=6899 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=1044 d_raster_us=234433 d_observe_us=46120 max_observe_us=11015 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165
+[panel] rss=649084928 traffic_sum=13762
+[panel] present pixmap=0 tex=6946 bind_noop=6943 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=1001 d_raster_us=216614 d_observe_us=42508 max_observe_us=10541 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157
+[panel] rss=649084928 traffic_sum=14035
+[panel] present pixmap=0 tex=6989 bind_noop=6986 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=1019 d_raster_us=226254 d_observe_us=41570 max_observe_us=8499 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159
+[panel] rss=649084928 traffic_sum=14062
+[panel] present pixmap=0 tex=7031 bind_noop=7028 bind_rereg=3
+[script live87fpvx_0] banked 28 Flax (+ any junk)
+[script live87fpvx_0] interact WalkTo { x: 2726, z: 3487, level: 0 }
+[panel] live87fpvx_0: script: banked 28 Flax (+ any junk)
+[panel] rss=649084928 traffic_sum=14088
+[panel] present pixmap=0 tex=7075 bind_noop=7072 bind_rereg=3
+[host] hitch live87fpvx_0: observe_us=17373 paints=7196 skips=1 ticks=290
+[host] slot live87fpvx_0: d_loop_us=1032 d_raster_us=219907 d_observe_us=52556 max_observe_us=17373 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151
+[panel] rss=649084928 traffic_sum=14146
+[panel] present pixmap=0 tex=7116 bind_noop=7113 bind_rereg=3
+[host] slot live87fpvx_0: d_loop_us=1089 d_raster_us=178955 d_observe_us=54779 max_observe_us=15983 d_paints=50 d_skips=0 d_ticks=2 window_ms=1190
+[script live87fpvx_0] interact WalkTo { x: 2736, z: 3443, level: 0 }
+[host] hitch live87fpvx_0: observe_us=17175 paints=7274 skips=1 ticks=293
