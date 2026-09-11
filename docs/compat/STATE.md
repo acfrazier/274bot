@@ -14,13 +14,14 @@ qualification or any performance result. Later banking and catalog capabilities
 remain in the campaign checkout, including native ownership corrections for
 bank/cake/autocast JavaScript sequencing.
 
-Current status: formatting and strict Clippy passed;2603 workspace tests and
+Current status: formatting and strict Clippy passed; 2603 workspace tests and
 1007 separate client tests passed. Two unchanged external-catalog failures were
-reproduced on exact main and retained separately. All eight controlled274/289
+reproduced on exact main and retained separately. All eight controlled 274/289
 boundary/world/Guardian cells passed after restoring three historical fixture
 corrections; the original failed door run is retained. See validation-ready.json
-for source/proof mapping. Whole-branch Grok4.6 review t_fd3a8b47 is running on
-exact code940531c3f/clientaef3952d. Approval, merge and push remain pending.
+for source/proof mapping. Whole-branch Grok 4.6 review t_fd3a8b47 approved exact
+code940531c3f/clientaef3952d (actual model verified). Client/staging publication
+and fresh recursive clone verification are next; main merge/push remain pending.
 
 After acceptance, root publishes the client to acfrazier/FR-client-bothost
 r274-bh-modular, verifies a fresh recursive checkout, then merges this ordinary
