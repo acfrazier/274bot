@@ -10,7 +10,8 @@
     "foreign_script_defects": "Operator clarified 2026-09-11: preserve host behavior; dim a demonstrably broken imported script with source identity, failure evidence and a clear reason. Keep the original inventory/history. Do not dim a host/shim bug or alter host semantics to accommodate foreign-script defects.",
     "ancillary_feature_stubs": "Ancillary dependencies such as clue solving remain honest stubs for separate future native host feature projects; integrate through the shim when those host features exist. Such unavailable ancillary scope alone does not dim an otherwise working card. Preserve the deferred branch refusal policy; no imported foreign planners or fabricated completion.",
     "build_provenance": "Historical shared-target runs remain binary observations. Root detected compiled dependency reuse on 2026-09-11; exact-source acceptance requires isolated-build receipts and fresh qualification. See docs/compat/evidence/build-isolation/README.md.",
-    "headed_live": "Operator requires remaining LIVE qualification to use visible headed clients. Panel scenario PASS alone is not full catalog CoreWitness acceptance; reuse of full observer is tracked by151."
+    "headed_live": "Operator requires remaining LIVE qualification to use visible headed clients. Panel scenario PASS alone is not full catalog CoreWitness acceptance; reuse of full observer is tracked by151.",
+    "bank_sorter": "Operator explicitly chose unavailable on2026-09-11; no native sorting implementation in this campaign, no category-planner import and no value/ID replacement. Preserve existing sortBank refusal and original catalog inventory."
   },
   "catalogs": [
     {
@@ -31725,13 +31726,14 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "No LIVE acceptance sought for explicitly unavailable core.",
       "observable_proof_requirement": "after Start, script-caused Utility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "UNAVAILABLE_BY_OPERATOR_DECISION",
+      "status_detail": "Operator decision2026-09-11: keep BankSorter explicitly unavailable pending a separate native sorter. BLOCKED: missing native bank sorting. No foreign category planner or substitute value/ID policy is introduced.",
+      "fixture_id": "local-274",
+      "operator_scope_boundary": "Deferred native sorter; keep original inventory and honest runtime refusal. Not a foreign-script defect or a successful sort."
     },
     {
       "display_name": "BankSorter",
@@ -31944,13 +31946,14 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "No LIVE acceptance sought for explicitly unavailable core.",
       "observable_proof_requirement": "after Start, script-caused Utility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "UNAVAILABLE_BY_OPERATOR_DECISION",
+      "status_detail": "Operator decision2026-09-11: keep BankSorter explicitly unavailable pending a separate native sorter. BLOCKED: missing native bank sorting. No foreign category planner or substitute value/ID policy is introduced.",
+      "fixture_id": "local-289",
+      "operator_scope_boundary": "Deferred native sorter; keep original inventory and honest runtime refusal. Not a foreign-script defect or a successful sort."
     },
     {
       "display_name": "DartFletcher",
@@ -67035,13 +67038,14 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "No LIVE acceptance sought for explicitly unavailable core.",
       "observable_proof_requirement": "after Start, script-caused Utility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "UNAVAILABLE_BY_OPERATOR_DECISION",
+      "status_detail": "Operator decision2026-09-11: keep BankSorter explicitly unavailable pending a separate native sorter. BLOCKED: missing native bank sorting. No foreign category planner or substitute value/ID policy is introduced.",
+      "fixture_id": "local-274",
+      "operator_scope_boundary": "Deferred native sorter; keep original inventory and honest runtime refusal. Not a foreign-script defect or a successful sort."
     },
     {
       "display_name": "BankSorter",
@@ -67254,13 +67258,14 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "No LIVE acceptance sought for explicitly unavailable core.",
       "observable_proof_requirement": "after Start, script-caused Utility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "UNAVAILABLE_BY_OPERATOR_DECISION",
+      "status_detail": "Operator decision2026-09-11: keep BankSorter explicitly unavailable pending a separate native sorter. BLOCKED: missing native bank sorting. No foreign category planner or substitute value/ID policy is introduced.",
+      "fixture_id": "local-289",
+      "operator_scope_boundary": "Deferred native sorter; keep original inventory and honest runtime refusal. Not a foreign-script defect or a successful sort."
     },
     {
       "display_name": "DartFletcher",
@@ -81230,6 +81235,10 @@
         },
         "receipt": "docs/compat/evidence/brimhaven-source-dim/8e7d965b.json"
       }
-    ]
+    ],
+    "operator_unavailable_rows": 4,
+    "core_qualification_required_cards": 43,
+    "core_qualification_required_rows": 172,
+    "operator_unavailable_note": "BankSorter remains in original inventory; native sorting explicitly deferred. Loader counts above describe actual loader snapshot, not qualified support."
   }
 }

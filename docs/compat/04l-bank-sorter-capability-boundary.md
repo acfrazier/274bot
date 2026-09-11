@@ -291,3 +291,7 @@ posted order.
 Do not, in that card: clone foreign rules, return empty junk, enable
 drop, dim BankSorter, invent a packet, sort before the script asks, or
 call default `reportQuestJunk=true` proven because report was off.
+
+## Operator disposition, 2026-09-11 17:49 UTC
+
+The operator explicitly chose to keep BankSorter unavailable pending a separate native sorter. The proposed value-then-ID policy is not authorized for implementation in this campaign. Record `BLOCKED: missing native bank sorting`, preserve the original catalog inventory and current honest sortBank refusal, and do not classify this as a foreign-script defect or a successful zero-move sort. This closes the campaign policy question without a sorting implementation or LIVE acceptance claim.

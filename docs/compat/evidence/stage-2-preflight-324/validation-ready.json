@@ -1,0 +1,44 @@
+{
+  "ready_for_final_review": true,
+  "recorded_at": "2026-09-11T17:45:37.183040+00:00",
+  "kind": "second-incremental-integration-batch",
+  "host_base": "76b2016b7dafe9aae7b0c33dd591d8a9907380cb",
+  "host_candidate": "df2ba846a51e5010fe8dc8aa104222955b3b0cba",
+  "client_candidate": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "source_files_reverified": 5111,
+  "whole_campaign_acceptance": false,
+  "green_dragon_core_acceptance": false,
+  "release_or_tag_authorized": false,
+  "main_merge_push_authorized_by_operator": true,
+  "scope_decision": "Accept only independently verified incremental native capability/transport, fixture and evidence corrections. Do not advertise complete card/option support. GreenDragon full gameplay is withheld; its unchanged-on-main TaskBot validation bug is separately corrected by152. This is not acceptance of that failure or of later144/139/153 changes.",
+  "green_failure_disposition": {
+    "root_cause": "TaskBot treats Promise(false) from async Traced.validate as true, repeatedly selecting ContinueDialog.",
+    "same_taskbot_block_at_base_and_candidate": true,
+    "taskbot_sha256": "df612f35c83636078313e4f49fd814f8b93c7e687c91aa22623c43c58d78ebb4",
+    "audit": "docs/compat/06ap-headed-core-and-dragon-diagnosis.md",
+    "correction_task": "t_620a63ab",
+    "correction_not_in_candidate": true,
+    "gear_specific_fix": "df2 first-only shield wear reached Start with native shield equipped; previous repeated-wear failures retained.",
+    "older_cells": "Both full-core FAIL; neither promoted to PASS.",
+    "newer_cells": "Held after failure; no until-lucky rerun."
+  },
+  "validation": {
+    "preflight": "docs/compat/evidence/stage-2-preflight-324/checks.json",
+    "prior_full_workspace": "docs/compat/evidence/stage-2-preflight-b18/summary.json",
+    "df2_scenario_tests": "105 existing scenario tests PASS; docs/compat/evidence/stage-2-preflight-324/df2-scenario-tests.log",
+    "mage_full_core": "Four df2 PASS across both revisions/catalogs",
+    "flax_pick_full_core": "Four324 PASS across both revisions/catalogs",
+    "combat_full_core": "Correctedcff Moss/Hill/Auto four each and Coal three; all failures retained",
+    "headed_mage": "Two native older-catalog watches clean0, captures read; scenario-only supplementary evidence, not full CoreWitness",
+    "headed_summary": "docs/compat/evidence/catalog-headed/headed-geardf2-summary.json",
+    "hitch": "72-75ms terminal capture serialization correlation; diagnostic, no animation-loading or performance claim"
+  },
+  "remaining": [
+    "152 awaited TaskBot validation and headed Dragon core",
+    "139 actor/resource preparation",
+    "144 native NPC projection with new client52c37f9 (excluded)",
+    "153 shared headed full witness (excluded)",
+    "Teleport/shop/Make-X/fire/trade/paired/options and final integrated fleet/platform/campaign review"
+  ],
+  "review_instruction": "Independently assess whether this unchanged-source-bug disposition permits the bounded milestone. Reject actual regressions or overstated evidence. Do not approve full GreenDragon or the campaign. Review product only at fixed df2/aef; active HEAD now includes unreviewed later native code."
+}
