@@ -12507,13 +12507,17 @@
         "player query, identity and hostile/interaction facts"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated7c paired FAIL: FAIL: paired_catalog_duel_live: script error on liveu35qcr_0: tick 19: not impl: BotHost.addTickListener. No paired core accepted.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Isolated7c paired FAIL: FAIL: paired_catalog_duel_live: script error on liveu35qcr_0: tick 19: not impl: BotHost.addTickListener. No paired core accepted.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/paired-catalog-fixtures/live/r274-duel-100adccc-7c2eef6e.json",
+        "docs/compat/evidence/paired-catalog-fixtures/summary-7c2eef6e.json"
+      ]
     },
     {
       "display_name": "Duel Arena Combat Trainer",
@@ -12767,13 +12771,17 @@
         "player query, identity and hostile/interaction facts"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated7c paired FAIL: FAIL: paired_catalog_duel_live: script error on livekww5ii_1: tick 17: not impl: BotHost.addTickListener. No paired core accepted.",
       "observable_proof_requirement": "after Start, script-caused Combat progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Isolated7c paired FAIL: FAIL: paired_catalog_duel_live: script error on livekww5ii_1: tick 17: not impl: BotHost.addTickListener. No paired core accepted.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/paired-catalog-fixtures/live/r289-duel-100adccc-7c2eef6e.json",
+        "docs/compat/evidence/paired-catalog-fixtures/summary-7c2eef6e.json"
+      ]
     },
     {
       "display_name": "ChaosDruidKiller",
@@ -27179,13 +27187,19 @@
         "host-owned item/tool acquisition without foreign planner cloning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated28: gnome_chop FAIL missing Traversal.preload, gnome_fletch_long FAIL missing Traversal.preload, gnome_fletch_short FAIL missing Traversal.preload. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
       "observable_proof_requirement": "after Start, script-caused Woodcutting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Isolated28: gnome_chop FAIL missing Traversal.preload, gnome_fletch_long FAIL missing Traversal.preload, gnome_fletch_short FAIL missing Traversal.preload. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-gnome-chop-100adccc-28d97f38.json",
+        "docs/compat/evidence/catalog-harness/live/r274-gnome-fletch-long-100adccc-28d97f38.json",
+        "docs/compat/evidence/catalog-harness/live/r274-gnome-fletch-short-100adccc-28d97f38.json",
+        "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json"
+      ]
     },
     {
       "display_name": "GnomeMagicChopper",
@@ -27477,13 +27491,19 @@
         "host-owned item/tool acquisition without foreign planner cloning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated28: gnome_chop FAIL missing Traversal.preload, gnome_fletch_long FAIL missing Traversal.preload, gnome_fletch_short FAIL missing Traversal.preload. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
       "observable_proof_requirement": "after Start, script-caused Woodcutting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Isolated28: gnome_chop FAIL missing Traversal.preload, gnome_fletch_long FAIL missing Traversal.preload, gnome_fletch_short FAIL missing Traversal.preload. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-gnome-chop-100adccc-28d97f38.json",
+        "docs/compat/evidence/catalog-harness/live/r289-gnome-fletch-long-100adccc-28d97f38.json",
+        "docs/compat/evidence/catalog-harness/live/r289-gnome-fletch-short-100adccc-28d97f38.json",
+        "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json"
+      ]
     },
     {
       "display_name": "CoalTrucks",
@@ -27719,13 +27739,17 @@
         "host-owned item/tool acquisition without foreign planner cloning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated28: coal_trucks FAIL missing Tools.bestPickaxe. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
       "observable_proof_requirement": "after Start, script-caused Mining progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Isolated28: coal_trucks FAIL missing Tools.bestPickaxe. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-coal-trucks-100adccc-28d97f38.json",
+        "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json"
+      ]
     },
     {
       "display_name": "CoalTrucks",
@@ -27961,13 +27985,17 @@
         "host-owned item/tool acquisition without foreign planner cloning"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated28: coal_trucks FAIL missing Tools.bestPickaxe. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
       "observable_proof_requirement": "after Start, script-caused Mining progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Isolated28: coal_trucks FAIL missing Tools.bestPickaxe. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-coal-trucks-100adccc-28d97f38.json",
+        "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json"
+      ]
     },
     {
       "display_name": "RuneCrafter",
@@ -28973,13 +29001,17 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated7c paired FAIL: FAIL: paired_catalog_air_live: preparation timeout; a_prep=Ready b_prep=WaitAck a_started=true b_started=false. No paired core accepted.",
       "observable_proof_requirement": "after Start, script-caused Runecrafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Isolated7c paired FAIL: FAIL: paired_catalog_air_live: preparation timeout; a_prep=Ready b_prep=WaitAck a_started=true b_started=false. No paired core accepted.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/paired-catalog-fixtures/live/r274-air-100adccc-7c2eef6e.json",
+        "docs/compat/evidence/paired-catalog-fixtures/summary-7c2eef6e.json"
+      ]
     },
     {
       "display_name": "NatureCrafter",
@@ -29391,13 +29423,17 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated7c paired FAIL: FAIL: paired_catalog_air_live: preparation timeout; a_prep=Ready b_prep=WaitAck a_started=true b_started=false. No paired core accepted.",
       "observable_proof_requirement": "after Start, script-caused Runecrafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Isolated7c paired FAIL: FAIL: paired_catalog_air_live: preparation timeout; a_prep=Ready b_prep=WaitAck a_started=true b_started=false. No paired core accepted.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/paired-catalog-fixtures/live/r289-air-100adccc-7c2eef6e.json",
+        "docs/compat/evidence/paired-catalog-fixtures/summary-7c2eef6e.json"
+      ]
     },
     {
       "display_name": "CookBot",
@@ -40352,16 +40388,18 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Isolated675: mule_crafter=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "fixture_readiness": "Isolated28: mule_crafter FAIL missing reader.inventory. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
       "observable_proof_requirement": "after Start, script-caused Runecrafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated675: mule_crafter=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "status_detail": "Isolated28: mule_crafter FAIL missing reader.inventory. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-mule-crafter-100adccc-6750713b.json",
-        "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json"
+        "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-mule-crafter-100adccc-28d97f38.json",
+        "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json"
       ]
     },
     {
@@ -40657,16 +40695,18 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Isolated675: mule_crafter=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "fixture_readiness": "Isolated28: mule_crafter FAIL missing reader.inventory. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
       "observable_proof_requirement": "after Start, script-caused Runecrafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated675: mule_crafter=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "status_detail": "Isolated28: mule_crafter FAIL missing reader.inventory. No core accepted; host mapping follow-ups101/102, no foreign-defect dim.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-mule-crafter-100adccc-6750713b.json",
-        "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json"
+        "docs/compat/evidence/catalog-harness/crafting-flax-6750713b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-mule-crafter-100adccc-28d97f38.json",
+        "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json"
       ]
     },
     {
@@ -75532,13 +75572,17 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Native28: FAIL reader.inventory at actual Falador East bank. Air talisman held; essence not withdrawn. No core accepted.",
       "observable_proof_requirement": "after Start, script-caused Runecrafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Native28: FAIL reader.inventory at actual Falador East bank. Air talisman held; essence not withdrawn. No core accepted.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-headed/r289-mule-crafter-8e7d965b-28d97f38-gpu.json",
+        "docs/compat/evidence/catalog-harness/resources-mule-28d97f38.json"
+      ]
     },
     {
       "display_name": "ShopBuyout",

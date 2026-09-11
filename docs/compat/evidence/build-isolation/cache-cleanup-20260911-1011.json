@@ -1,0 +1,123 @@
+{
+  "at": "2026-09-11T10:11:34.593297+00:00",
+  "scope": "Six completed approved review compiler targets only; source exports, raw evidence and all root copied binaries retained. All active caches untouched.",
+  "rows": [
+    {
+      "task": {
+        "id": "t_1a213450",
+        "title": "Map Reachability canStep to native adjacent-step facts",
+        "status": "done",
+        "assignee": "reviewer"
+      },
+      "review": {
+        "id": 1225,
+        "profile": "reviewer",
+        "status": "done",
+        "outcome": "completed"
+      },
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-review-t_1a213450-r1225",
+      "no_open_references": true,
+      "bytes_before": 4906795008,
+      "method": "Remove verified completed compiler children only; no marker synthesized; Finder metadata retained."
+    },
+    {
+      "task": {
+        "id": "t_246e320b",
+        "title": "Connect native coordinate reachability to script snapshots",
+        "status": "done",
+        "assignee": "reviewer"
+      },
+      "review": {
+        "id": 1215,
+        "profile": "reviewer",
+        "status": "done",
+        "outcome": "completed"
+      },
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-review-t_246e320b-r1789098117",
+      "no_open_references": true,
+      "bytes_before": 4904869888,
+      "method": "Remove verified completed compiler children only; no marker synthesized; Finder metadata retained."
+    },
+    {
+      "task": {
+        "id": "t_3317197c",
+        "title": "Qualify inventory production catalog loops",
+        "status": "done",
+        "assignee": "reviewer"
+      },
+      "review": {
+        "id": 1189,
+        "profile": "reviewer",
+        "status": "done",
+        "outcome": "completed"
+      },
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-review-t_3317197c",
+      "no_open_references": true,
+      "bytes_before": 2836643840,
+      "method": "cargo clean",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "     Removed 7006 files, 2.7GiB total\n"
+    },
+    {
+      "task": {
+        "id": "t_51452e47",
+        "title": "Complete required periodic banking and return",
+        "status": "done",
+        "assignee": "reviewer"
+      },
+      "review": {
+        "id": 1211,
+        "profile": "reviewer",
+        "status": "done",
+        "outcome": "completed"
+      },
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-review-t_51452e47-r1789095680",
+      "no_open_references": true,
+      "bytes_before": 3982172160,
+      "method": "cargo clean",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "     Removed 10319 files, 3.8GiB total\n"
+    },
+    {
+      "task": {
+        "id": "t_51452e47",
+        "title": "Complete required periodic banking and return",
+        "status": "done",
+        "assignee": "reviewer"
+      },
+      "review": {
+        "id": 1211,
+        "profile": "reviewer",
+        "status": "done",
+        "outcome": "completed"
+      },
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-review-t_51452e47-r1789096618",
+      "no_open_references": true,
+      "bytes_before": 3985084416,
+      "method": "Remove verified completed compiler children only; no marker synthesized; Finder metadata retained."
+    },
+    {
+      "task": {
+        "id": "t_f7fd9f55",
+        "title": "Map DirectNavigator walkTo to existing native scene walking",
+        "status": "done",
+        "assignee": "reviewer"
+      },
+      "review": {
+        "id": 1221,
+        "profile": "reviewer",
+        "status": "done",
+        "outcome": "completed"
+      },
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-review-t_f7fd9f55-r1221",
+      "no_open_references": true,
+      "bytes_before": 3840905216,
+      "method": "cargo clean",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "     Removed 10081 files, 3.7GiB total\n"
+    }
+  ]
+}

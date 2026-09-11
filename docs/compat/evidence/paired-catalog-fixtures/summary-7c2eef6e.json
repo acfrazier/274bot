@@ -1,0 +1,351 @@
+{
+  "source_files_verified": 3524,
+  "passed": 0,
+  "failed": 4,
+  "rows": [
+    {
+      "host_commit": "7c2eef6eb8db6b01933c333aa64cf5f68169d8d2",
+      "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+      "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+      "revision": 274,
+      "exit_code": 1,
+      "elapsed_seconds": 186.048,
+      "receipt": "docs/compat/evidence/paired-catalog-fixtures/live/r274-air-100adccc-7c2eef6e.json",
+      "log": "docs/compat/evidence/paired-catalog-fixtures/live/r274-air-100adccc-7c2eef6e.log",
+      "outcome": "FAIL",
+      "case": "nature_crafter_air_pair",
+      "failure_excerpt": "FAIL: paired_catalog_air_live: preparation timeout; a_prep=Ready b_prep=WaitAck a_started=true b_started=false",
+      "starts": [
+        {
+          "phase": "start",
+          "account": "livexjql4i_0",
+          "kind": "air_master",
+          "settings": {
+            "rune": "Air runes",
+            "mode": "Master",
+            "partner": "Livexjql4i 1",
+            "bankEvery": 60.0,
+            "withdrawEss": 0.0,
+            "withdrawCoins": 10000.0,
+            "stayInAltar": false
+          }
+        }
+      ],
+      "baselines": [
+        {
+          "phase": "baseline-after-preparation",
+          "account": "livexjql4i_0",
+          "role": "master",
+          "seeded_first_supplies": false,
+          "observation": {
+            "ingame": true,
+            "scene_state": 2,
+            "inventory_tab_available": true,
+            "player": "Livexjql4i 0",
+            "tile": [
+              2983,
+              3288,
+              0
+            ],
+            "tick": 6,
+            "runecraft": 1,
+            "runecraft_xp": 0,
+            "essence_unnoted": 0,
+            "essence_noted": 0,
+            "air_runes": 0,
+            "air_talisman": 1,
+            "bank_open": false,
+            "bank_loaded": false,
+            "bank_essence_unnoted": 0,
+            "trade_offer_open": false,
+            "trade_confirm_open": false,
+            "trade_partner": null,
+            "trade_accept_id": -1,
+            "trade_mine_essence": 0,
+            "trade_theirs_essence": 0,
+            "in_temple": false
+          }
+        }
+      ],
+      "build_provenance": "Exact7c committed source; source-verified root28 functional compiler cache reused, no independent empty-start claim.",
+      "scope": "Neither partial paired outcome nor full core accepted. Newer catalog gated after old-catalog failure.",
+      "failure_class": "fixture_bank_ack_at_ruins_and_missing_shared_start_barrier",
+      "diagnosis": "Runner teleported to Air ruins then attempted open_nearest_booth; Master started alone. Both-revision paired preparation failed; no two-script gameplay claim. Task103 owns correction."
+    },
+    {
+      "host_commit": "7c2eef6eb8db6b01933c333aa64cf5f68169d8d2",
+      "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+      "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+      "revision": 274,
+      "exit_code": 1,
+      "elapsed_seconds": 18.036,
+      "receipt": "docs/compat/evidence/paired-catalog-fixtures/live/r274-duel-100adccc-7c2eef6e.json",
+      "log": "docs/compat/evidence/paired-catalog-fixtures/live/r274-duel-100adccc-7c2eef6e.log",
+      "outcome": "FAIL",
+      "case": "duel_arena_pair",
+      "failure_excerpt": "FAIL: paired_catalog_duel_live: script error on liveu35qcr_0: tick 19: not impl: BotHost.addTickListener",
+      "starts": [
+        {
+          "phase": "start",
+          "account": "liveu35qcr_0",
+          "kind": "duel",
+          "settings": {
+            "targetAttack": 99.0,
+            "targetStrength": 99.0,
+            "targetDefence": 1.0
+          }
+        },
+        {
+          "phase": "start",
+          "account": "liveu35qcr_1",
+          "kind": "duel",
+          "settings": {
+            "targetAttack": 99.0,
+            "targetStrength": 99.0,
+            "targetDefence": 1.0
+          }
+        }
+      ],
+      "baselines": [
+        {
+          "phase": "baseline-after-preparation",
+          "account": "liveu35qcr_0",
+          "observation": {
+            "ingame": true,
+            "scene_state": 2,
+            "inventory_tab_available": true,
+            "player": "Liveu35qcr 0",
+            "tile": [
+              3368,
+              3274,
+              0
+            ],
+            "tick": 11,
+            "attack_xp": 0,
+            "strength_xp": 0,
+            "defence_xp": 0,
+            "hitpoints_xp": 1154,
+            "in_combat": false,
+            "in_challenge_area": true,
+            "in_fight_pen": false,
+            "main_modal": -1,
+            "duel_offer_open": false,
+            "duel_confirm_open": false,
+            "duel_win_open": false,
+            "duel_partner": null,
+            "waiting_for_other": false,
+            "weapon_equipped": true,
+            "peer_visible": true
+          }
+        },
+        {
+          "phase": "baseline-after-preparation",
+          "account": "liveu35qcr_1",
+          "observation": {
+            "ingame": true,
+            "scene_state": 2,
+            "inventory_tab_available": true,
+            "player": "Liveu35qcr 1",
+            "tile": [
+              3368,
+              3274,
+              0
+            ],
+            "tick": 12,
+            "attack_xp": 0,
+            "strength_xp": 0,
+            "defence_xp": 0,
+            "hitpoints_xp": 1154,
+            "in_combat": false,
+            "in_challenge_area": true,
+            "in_fight_pen": false,
+            "main_modal": -1,
+            "duel_offer_open": false,
+            "duel_confirm_open": false,
+            "duel_win_open": false,
+            "duel_partner": null,
+            "waiting_for_other": false,
+            "weapon_equipped": true,
+            "peer_visible": true
+          }
+        }
+      ],
+      "build_provenance": "Exact7c committed source; source-verified root28 functional compiler cache reused, no independent empty-start claim.",
+      "scope": "Neither partial paired outcome nor full core accepted. Newer catalog gated after old-catalog failure.",
+      "failure_class": "missing_adapter_BotHost_addTickListener",
+      "diagnosis": "Two prepared actual Duel scripts reached Start; required native tick callback mapping absent. Task104 designs lifecycle-safe adapter; no duel/combat acceptance."
+    },
+    {
+      "host_commit": "7c2eef6eb8db6b01933c333aa64cf5f68169d8d2",
+      "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+      "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+      "revision": 289,
+      "exit_code": 1,
+      "elapsed_seconds": 185.977,
+      "receipt": "docs/compat/evidence/paired-catalog-fixtures/live/r289-air-100adccc-7c2eef6e.json",
+      "log": "docs/compat/evidence/paired-catalog-fixtures/live/r289-air-100adccc-7c2eef6e.log",
+      "outcome": "FAIL",
+      "case": "nature_crafter_air_pair",
+      "failure_excerpt": "FAIL: paired_catalog_air_live: preparation timeout; a_prep=Ready b_prep=WaitAck a_started=true b_started=false",
+      "starts": [
+        {
+          "phase": "start",
+          "account": "livemafh4a_0",
+          "kind": "air_master",
+          "settings": {
+            "rune": "Air runes",
+            "mode": "Master",
+            "partner": "Livemafh4a 1",
+            "bankEvery": 60.0,
+            "withdrawEss": 0.0,
+            "withdrawCoins": 10000.0,
+            "stayInAltar": false
+          }
+        }
+      ],
+      "baselines": [
+        {
+          "phase": "baseline-after-preparation",
+          "account": "livemafh4a_0",
+          "role": "master",
+          "seeded_first_supplies": false,
+          "observation": {
+            "ingame": true,
+            "scene_state": 2,
+            "inventory_tab_available": true,
+            "player": "Livemafh4a 0",
+            "tile": [
+              2983,
+              3288,
+              0
+            ],
+            "tick": 9,
+            "runecraft": 1,
+            "runecraft_xp": 0,
+            "essence_unnoted": 0,
+            "essence_noted": 0,
+            "air_runes": 0,
+            "air_talisman": 1,
+            "bank_open": false,
+            "bank_loaded": false,
+            "bank_essence_unnoted": 0,
+            "trade_offer_open": false,
+            "trade_confirm_open": false,
+            "trade_partner": null,
+            "trade_accept_id": -1,
+            "trade_mine_essence": 0,
+            "trade_theirs_essence": 0,
+            "in_temple": false
+          }
+        }
+      ],
+      "build_provenance": "Exact7c committed source; source-verified root28 functional compiler cache reused, no independent empty-start claim.",
+      "scope": "Neither partial paired outcome nor full core accepted. Newer catalog gated after old-catalog failure.",
+      "failure_class": "fixture_bank_ack_at_ruins_and_missing_shared_start_barrier",
+      "diagnosis": "Runner teleported to Air ruins then attempted open_nearest_booth; Master started alone. Both-revision paired preparation failed; no two-script gameplay claim. Task103 owns correction."
+    },
+    {
+      "host_commit": "7c2eef6eb8db6b01933c333aa64cf5f68169d8d2",
+      "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+      "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+      "revision": 289,
+      "exit_code": 1,
+      "elapsed_seconds": 18.745,
+      "receipt": "docs/compat/evidence/paired-catalog-fixtures/live/r289-duel-100adccc-7c2eef6e.json",
+      "log": "docs/compat/evidence/paired-catalog-fixtures/live/r289-duel-100adccc-7c2eef6e.log",
+      "outcome": "FAIL",
+      "case": "duel_arena_pair",
+      "failure_excerpt": "FAIL: paired_catalog_duel_live: script error on livekww5ii_1: tick 17: not impl: BotHost.addTickListener",
+      "starts": [
+        {
+          "phase": "start",
+          "account": "livekww5ii_1",
+          "kind": "duel",
+          "settings": {
+            "targetAttack": 99.0,
+            "targetStrength": 99.0,
+            "targetDefence": 1.0
+          }
+        },
+        {
+          "phase": "start",
+          "account": "livekww5ii_0",
+          "kind": "duel",
+          "settings": {
+            "targetAttack": 99.0,
+            "targetStrength": 99.0,
+            "targetDefence": 1.0
+          }
+        }
+      ],
+      "baselines": [
+        {
+          "phase": "baseline-after-preparation",
+          "account": "livekww5ii_1",
+          "observation": {
+            "ingame": true,
+            "scene_state": 2,
+            "inventory_tab_available": true,
+            "player": "Livekww5ii 1",
+            "tile": [
+              3368,
+              3274,
+              0
+            ],
+            "tick": 10,
+            "attack_xp": 0,
+            "strength_xp": 0,
+            "defence_xp": 0,
+            "hitpoints_xp": 1154,
+            "in_combat": false,
+            "in_challenge_area": true,
+            "in_fight_pen": false,
+            "main_modal": -1,
+            "duel_offer_open": false,
+            "duel_confirm_open": false,
+            "duel_win_open": false,
+            "duel_partner": null,
+            "waiting_for_other": false,
+            "weapon_equipped": true,
+            "peer_visible": true
+          }
+        },
+        {
+          "phase": "baseline-after-preparation",
+          "account": "livekww5ii_0",
+          "observation": {
+            "ingame": true,
+            "scene_state": 2,
+            "inventory_tab_available": true,
+            "player": "Livekww5ii 0",
+            "tile": [
+              3368,
+              3274,
+              0
+            ],
+            "tick": 11,
+            "attack_xp": 0,
+            "strength_xp": 0,
+            "defence_xp": 0,
+            "hitpoints_xp": 1154,
+            "in_combat": false,
+            "in_challenge_area": true,
+            "in_fight_pen": false,
+            "main_modal": -1,
+            "duel_offer_open": false,
+            "duel_confirm_open": false,
+            "duel_win_open": false,
+            "duel_partner": null,
+            "waiting_for_other": false,
+            "weapon_equipped": true,
+            "peer_visible": true
+          }
+        }
+      ],
+      "build_provenance": "Exact7c committed source; source-verified root28 functional compiler cache reused, no independent empty-start claim.",
+      "scope": "Neither partial paired outcome nor full core accepted. Newer catalog gated after old-catalog failure.",
+      "failure_class": "missing_adapter_BotHost_addTickListener",
+      "diagnosis": "Two prepared actual Duel scripts reached Start; required native tick callback mapping absent. Task104 designs lifecycle-safe adapter; no duel/combat acceptance."
+    }
+  ]
+}

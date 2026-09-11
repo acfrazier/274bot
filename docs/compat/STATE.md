@@ -1,13 +1,62 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 09:31 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 10:24 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
 Read `docs/execution.md` for dispatch/review rules. Reports below preserve dated
 results and failed cells; this state identifies current work.
 
-## Current follow-ups (09:31 UTC)
+## Current follow-ups (10:24 UTC)
+
+- Full45card/180row implementation remains active. Main, remotes and releases
+  remain unchanged. Final integrated N32, remaining supported branches and
+  native frontend checks, and final Grok whole-branch review are still required.
+- Root28 exact source and focused checks passed. Ten Mule/resource cells failed
+  at reader.inventory, Traversal.preload or Tools.bestPickaxe. Native289/newer
+  Mule also failed at reader.inventory before withdrawal. Reports06t, complete
+  raw artifacts and ledger272 retain those failures and the following paired4.
+- Root7c paired NatureCrafter Air both revisions failed its preparation barrier;
+  root found the runner tried to acknowledge a bank while already at ruins.
+  Duel both revisions failed at BotHost.addTickListener. No paired core accepted.
+  Report06u. Correction103 is committed3c0f0ea16; verify same-card review and new
+  full-cycle LIVE before acceptance. Do not count first transfer/combat as full.
+- Tanner04v host-arrival tightening proposal is rejected. Corrective04x and
+  root's observation-only exact78 exports show reachable destination at every
+  actual Trade, including bounded512 probes. One diagnostic completed the full
+  tan/bank/return cycle; two failed timing-sensitive modal waits. Original four
+  clean failures/native failure retained. Report06v is diagnostic, not ledger
+  acceptance. No host navigation/timeout changes or definitive dim claim made.
+- UI9da99a6d5 and inventory9cc6adb1 actualGrok4.5 reviews1301/1302 verified.
+  Root exact9cc export3536files, reused exclusive root28 compiler cache, copied
+  headless/native/TUI binaries, 6inventory/24registry/6resolver/12TUIparams/
+  31catalog plus strict inventory/script Clippy passed. No independently empty
+  target or performance claim. Mule older catalog both revisions now PASS;
+  newer runs active. Full raw harvest and native Mule/Params proofs next.
+- Station92 fc5c9a49d actualGrok4.5 review1303 approved,11API calls verified.
+  Owns5cook/smelt/spin fixtures; root LIVE pending. FlaxAIO/secondaries98 active,
+  then combat99. Preserve future Make-X/fire gates where reached.
+- Cake97 worker accidentally committed empty tree de70706c then reset to its
+  parent fc5c9a49d before root repair. Root aborted before any mutation, verified
+  restored tree and preserved receipt. Working edits survived. Same card resumed
+  with scoped-commit and actual-diff requirements. No further reset authorized.
+- Resource design102 actualGrok4.6 complete; queued105 native tool facts and void
+  already-prepared preload. Preserve native tool rules including black axe and
+  callback authority; full Coal haul remains required beyond partial fixture.
+- Tick design104 actualGrok4.6 run1300 verified28API calls. New106 t_e8541da5
+  maps callbacks only onto existing normal/parked ticks with pause/hold/generation
+  unchanged. Runtime queue cake97 -> tools105 -> tick106 -> special -> teleport
+  -> Sol shop -> Make-X -> fire. No foreign controller or tick-end opcode.
+- Root cleaned completed compiler caches only at09:35/09:57/10:11, preserving
+  sources/raw/copied binaries and active caches. Receipts in build-isolation.
+- BankSorter policy question remains unanswered; only that card is gated.
+  User-directed ancillary foreign helpers remain stubs. Host behavior stays
+  authoritative; broken imported scripts may be dimmed with evidence.
+- Grok usage refreshed10:22:79%used/21%remaining, reset11:40UTC/07:40Eastern.
+  Existing periodic monitor remains in place. Queue continues under authorized
+  profile defaults; actual reviewer models are verified before LIVE acceptance.
+
+## Historical snapshot (09:31 UTC)
 
 - Full45card/180row implementation remains active on this branch; no main,
   remote or release changes. Supported branches/frontends/reconnect, final

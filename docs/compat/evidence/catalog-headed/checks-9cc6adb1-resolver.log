@@ -1,0 +1,14 @@
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-9cc6adb1/crates/script)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.95s
+     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/target-isolated-28d97f38/debug/deps/script-3c6f978d22f78410)
+
+running 6 tests
+test loadouts_store::tests::resolve_item_options_none_facts_prefix_only ... ok
+test loadouts_store::tests::resolve_item_options_leaves_literals_and_loadouts ... ok
+test loadouts_store::tests::resolve_item_options_drops_missing_alias_and_keeps_sort ... ok
+test loadouts_store::tests::resolve_item_options_tie_order_and_identity_labels ... ok
+test loadouts_store::tests::resolve_item_options_rebounds_without_mutating_schema ... ok
+test loadouts_store::tests::resolve_item_options_matches_both_pinned_revisions ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 68 filtered out; finished in 0.04s
+

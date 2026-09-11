@@ -1,0 +1,54 @@
+{
+  "run": {
+    "id": 1302,
+    "task_id": "t_c0a5785e",
+    "profile": "reviewer",
+    "status": "done",
+    "outcome": "completed",
+    "summary": "Reviewed and approved 9cc6adb1f for brief 101 inventory reader. Round-1 artifact cold read plus independent re-run on export inventory-t_c0a5785e (host 7c2eef6eb + overlay, client 9d090ed, exclusive target): thin reader.inventory maps snap().inv to fresh {slot,id,name,count,ops,comId}; missing component_id \u2192 -1; bank/equipment not substitutes; item id 0 kept; mutation isolation; delta retain/replace/clear; two-isolate separation. 6/6 tests + clippy -D warnings + rustfmt OK. Scoped commit only. Not LIVE; Root28 Mule missing reader.inventory retained."
+  },
+  "metadata": {
+    "review_outcome": "approved",
+    "review_round": 1,
+    "lens": "artifact",
+    "commit": "9cc6adb1fac3adef01529f70778552e8e3a3c5da",
+    "host": "7c2eef6eb8db6b01933c333aa64cf5f68169d8d2",
+    "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "export": ".superpowers/review-exports/inventory-t_c0a5785e",
+    "cargo_target_dir": ".superpowers/review-exports/inventory-t_c0a5785e-target",
+    "overlay_sha256": {
+      "crates/script/src/shim/client_adapter.js": "53cf56b989a0de6c69ba7104f331d050f1be7b10eba1130da5a66e0a5a7a03d7",
+      "crates/script/tests/client_adapter_inventory.rs": "5a95e5d7191ef981b43dd1515e5a5dd1d1a7ec549107325bc1241e44609db3e0"
+    },
+    "changed_files": [
+      "crates/script/src/shim/client_adapter.js",
+      "crates/script/tests/client_adapter_inventory.rs",
+      "docs/compat/04y-client-adapter-inventory.md",
+      "docs/compat/evidence/client-adapter-inventory/"
+    ],
+    "reviewer_checks": [
+      "brief 101 cold-read vs deliverable",
+      "commit scope owned paths only",
+      "inventoryItems thin map slot/id/name/count/ops/comId from snap().inv",
+      "missing component_id sentinel -1",
+      "id 0 retained; bank/equipment not read",
+      "fresh objects + ops.slice mutation isolation",
+      "inventorySize/countDialogOpen/toLocal/walkTo preserved",
+      "hash-matched export overlay",
+      "independent cargo test client_adapter_inventory 6/6",
+      "independent clippy -D warnings pass",
+      "rustfmt --check pass",
+      "not LIVE; Mule acceptance not claimed"
+    ],
+    "live": false,
+    "notes": "Mapping success does not accept Mule; Root28 bothrev Mule missing reader.inventory retained.",
+    "worker_session_id": "20260911_060957_d97d71"
+  },
+  "actual_model": "grok-4.5",
+  "actual_provider": "xai-oauth",
+  "actual_api_calls": 6,
+  "first_api_call": "2026-09-11 06:10:02,314 INFO [20260911_060957_d97d71] agent.conversation_loop: API call #1: model=grok-4.5 provider=xai-oauth in=23281 out=79 total=23360 latency=3.8s id=90331018-a1c2-9d1a-b944-587468b6bf8a",
+  "last_api_call": "2026-09-11 06:10:45,532 INFO [20260911_060957_d97d71] agent.conversation_loop: API call #6: model=grok-4.5 provider=xai-oauth in=39759 out=1051 total=40810 latency=17.5s cache=39040/39759 (98%) id=f5354fb0-888c-9154-a5f6-c38b8281ec60",
+  "turn_end": "2026-09-11 06:10:45,584 INFO [20260911_060957_d97d71] agent.conversation_loop: Turn ended: reason=kanban_run_ended model=grok-4.5 api_calls=6/150 budget=6/150 tool_turns=6 last_msg_role=assistant response_len=57 session=20260911_060957_d97d71",
+  "root_qualification": "Artifact review and source-hash-matched execution on task-owned cache accepted; no independently empty reviewer target claim. Root exact9cc combined source receives focused functional checks on explicitly reused root cache."
+}

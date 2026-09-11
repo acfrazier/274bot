@@ -1,0 +1,18 @@
+{
+  "outcome": "FAIL",
+  "revision": 289,
+  "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+  "case": "mule_crafter",
+  "host_commit": "28d97f38f01b854b6a3c62fdd09c40caf29fcf99",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "receipt": "docs/compat/evidence/catalog-headed/r289-mule-crafter-8e7d965b-28d97f38-gpu.json",
+  "snapshot": "docs/compat/evidence/catalog-headed/r289-mule-crafter-8e7d965b-28d97f38-gpu/shots/2026-09-11T09-46-46_90534/2026-09-11T09-48-29_mule_crafter.json",
+  "snapshot_sha256": "1695bc2a21a1e46cda23bc97b5bbaf5164b080f231a30ea337684eeb75bfda7c",
+  "png": "docs/compat/evidence/catalog-headed/r289-mule-crafter-8e7d965b-28d97f38-gpu/shots/2026-09-11T09-46-46_90534/2026-09-11T09-48-29_mule_crafter.png",
+  "png_sha256": "71812dd3f03e6f5ddab4fc7b5058e5d73a0f24f022e01c5b3c944849064a6430",
+  "visual_read": true,
+  "visual_observation": "Actual Falador East bank open with 200 essence and held Air talisman; panel onPaint and log show not impl: reader.inventory. No essence withdrawn or craft accepted.",
+  "process_elapsed_seconds": 108.608,
+  "runtime_error_lines": 149,
+  "renderer_claim": "GPU requested; no texture-presentation counters were emitted in this run, so no routing or GPU performance claim."
+}

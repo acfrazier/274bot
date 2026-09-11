@@ -1,0 +1,56 @@
+{
+  "task": "t_a4fbd8aa",
+  "brief": "docs/compat/briefs/104-native-tick-subscriber-boundary.md",
+  "report": "docs/compat/04aa-native-tick-subscriber-boundary.md",
+  "kind": "bounded-read-only-design",
+  "branch": "codex/rs2b0t-multirevision",
+  "paired_duel_fail_host": "7c2eef6eb8db6b01933c333aa64cf5f68169d8d2",
+  "campaign_head_at_writeup": "9cc6adb1fac3adef01529f70778552e8e3a3c5da",
+  "client_gitlink": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "tick_files_7c_to_head_identical": true,
+  "sha256": {
+    "brief_104": "05a52f43e31d6887c5e0bc5ee69326341fc8d67b01d1463c6d20a8a43ff5870e",
+    "04aa": "b8e9cf3401b183ed13032077f4723fd99b2e559b097c356c8344503184ab45ca",
+    "BotHost_ts_both_catalogs": "1669d8ad8c4a92197e9c233bdc427f7185fa10ee13b521220c243bc2086d1fed",
+    "DuelArena_ts_both": "5656dabb30a47aac590fa1afadba19e689dd792d70da8dc4851e18d62e52d090",
+    "DuelArenaLogic_ts_both": "325ce631a7a3f246ab0bc51e9b09945aaa018d7c8971b334994384f62cd1d8f2",
+    "bot_host_js": "9069b0a6a6743dc44cd72300f453e16adc21c7423c41a545fa20226b6b815336",
+    "execution_js": "6395e4b43cdd8cccf079a82a3eef02b8228ee0e042f55dfef197c40b70a0ee05",
+    "_kernel_js": "84ca00c764def0ac2810f1fcd723c3ad6ef411eb4543d6668fe9b0b166cd5408",
+    "load_rs": "3f6b8f87c8797c8cf56411cb53ed929dc9531ab9d804319938ca0d656095fdb6",
+    "slot_rs": "1593826ffe821e7a3cd0d4706b7778bbfcf15db8bc8560563d81222700d0d2c4",
+    "shim_mod_rs": "72db2f3563f06d6c4621439cf929df9427c3e27482de8eaf84941f44aa8afb15",
+    "r274_duel_log": "c55de8ab2f2bebe3c2209009612dfe52a3e0a7844ae8fc1a1d69ecf469a2a43f",
+    "r289_duel_log": "ff9dc6941632bf64df5de5386a147d2aa9a067f188386360d9c02786168c04ec"
+  },
+  "catalog": {
+    "old": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "newer": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "BotHost_ts_byte_identical": true,
+    "DuelArena_ts_byte_identical": true,
+    "DuelArenaLogic_ts_byte_identical": true
+  },
+  "live_fail": {
+    "r274": {
+      "account": "liveu35qcr_0",
+      "tick": 19,
+      "error": "not impl: BotHost.addTickListener"
+    },
+    "r289": {
+      "account": "livekww5ii_1",
+      "tick": 17,
+      "error": "not impl: BotHost.addTickListener"
+    }
+  },
+  "owned_implementation_files": [
+    "crates/script/src/shim/bot_host.js",
+    "crates/script/src/shim/execution.js",
+    "crates/script/src/load.rs"
+  ],
+  "hotspot": "crates/script/src/load.rs — COMPAT_RUNNER fire site only; death-recovery/periodic-bank/autocast already share this file",
+  "do_not_touch": [
+    "crates/script/src/shim/client_adapter.js",
+    "registry/UI",
+    "paired catalog test sources"
+  ]
+}

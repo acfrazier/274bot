@@ -1,0 +1,39 @@
+[
+  {
+    "command": [
+      "cargo",
+      "test",
+      "-p",
+      "host-play",
+      "--features",
+      "memory-profile",
+      "--test",
+      "catalog_boundary_live",
+      "--no-run",
+      "--message-format=json"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 11.28,
+    "log": "docs/compat/evidence/tanner-arrival-contract-audit/diagnostic512-build.log",
+    "log_sha256": "615aed1512294cdd0c033e9ca77ea90b87cba7c568ce44da700055c1e54dad4f"
+  },
+  {
+    "command": [
+      "cargo",
+      "clippy",
+      "-p",
+      "host-play",
+      "--features",
+      "memory-profile",
+      "--lib",
+      "--no-deps",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 4.671,
+    "log": "docs/compat/evidence/tanner-arrival-contract-audit/diagnostic512-clippy.log",
+    "log_sha256": "5bd3bfc167d5f954a4051732b3afce2c3a6c10863dbbcbe9cfe07bdb16493711"
+  }
+]

@@ -1,0 +1,439 @@
+{"elapsed_seconds": 0.163467, "line": "[panel] adapter name=Apple M4 Max backend=Metal device_type=IntegratedGpu vendor=0x0 device=0x0"}
+{"elapsed_seconds": 4.841575, "line": "[host-play] slot livezesk4l_0: thread up"}
+{"elapsed_seconds": 4.880373, "line": "274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)"}
+{"elapsed_seconds": 5.094818, "line": "[panel] scenario capture armed: Some(\"mule_crafter\")"}
+{"elapsed_seconds": 5.094881, "line": "[panel] livezesk4l_0: livezesk4l_0: slot up"}
+{"elapsed_seconds": 6.926902, "line": "[host-play] slot livezesk4l_0: handshake begin reconnect=false"}
+{"elapsed_seconds": 7.413522, "line": "[host-play] slot livezesk4l_0: handshake ok"}
+{"elapsed_seconds": 7.480603, "line": "[host] hitch livezesk4l_0: frame_us=66634 paints=1 skips=0 ticks=0"}
+{"elapsed_seconds": 7.492677, "line": "[panel] livezesk4l_0: livezesk4l_0: scene 1"}
+{"elapsed_seconds": 8.520538, "line": "[host] hitch livezesk4l_0: frame_us=56849 paints=43 skips=0 ticks=1"}
+{"elapsed_seconds": 8.521667, "line": "[panel] livezesk4l_0: livezesk4l_0: mainland hop queued"}
+{"elapsed_seconds": 8.534333, "line": "[panel] livezesk4l_0: livezesk4l_0: ingame"}
+{"elapsed_seconds": 8.534404, "line": "[panel] livezesk4l_0: livezesk4l_0: scene 2"}
+{"elapsed_seconds": 8.534446, "line": "live script_mule_crafter: running step 1/28"}
+{"elapsed_seconds": 8.663822, "line": "[host] slot livezesk4l_0: d_loop_us=8906 d_raster_us=217051 d_observe_us=50370 max_observe_us=2360 d_paints=50 d_skips=0 d_ticks=1 window_ms=0"}
+{"elapsed_seconds": 8.930122, "line": "[panel] livezesk4l_0: livezesk4l_0: scene 1"}
+{"elapsed_seconds": 9.02228, "line": "[panel] livezesk4l_0: livezesk4l_0: ingame"}
+{"elapsed_seconds": 9.022352, "line": "[panel] livezesk4l_0: livezesk4l_0: scene 2"}
+{"elapsed_seconds": 9.804918, "line": "[host] slot livezesk4l_0: d_loop_us=9812 d_raster_us=200805 d_observe_us=63441 max_observe_us=5630 d_paints=50 d_skips=0 d_ticks=3 window_ms=1141"}
+{"elapsed_seconds": 10.964465, "line": "[host] slot livezesk4l_0: d_loop_us=1093 d_raster_us=184745 d_observe_us=26519 max_observe_us=1406 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 11.042654, "line": "live script_mule_crafter: running step 2/28"}
+{"elapsed_seconds": 11.651178, "line": "[host-play] slot livezesk4l_0: handshake begin reconnect=true"}
+{"elapsed_seconds": 11.667613, "line": "[panel] livezesk4l_0: livezesk4l_0: scene 0"}
+{"elapsed_seconds": 12.206883, "line": "[host-play] slot livezesk4l_0: handshake ok"}
+{"elapsed_seconds": 12.251062, "line": "[panel] livezesk4l_0: livezesk4l_0: scene 1"}
+{"elapsed_seconds": 13.168123, "line": "[panel] livezesk4l_0: livezesk4l_0: ingame"}
+{"elapsed_seconds": 13.168204, "line": "[panel] livezesk4l_0: livezesk4l_0: scene 2"}
+{"elapsed_seconds": 13.387232, "line": "[host] slot livezesk4l_0: d_loop_us=13019 d_raster_us=139547 d_observe_us=57003 max_observe_us=2971 d_paints=50 d_skips=0 d_ticks=1 window_ms=0"}
+{"elapsed_seconds": 14.538381, "line": "[host] slot livezesk4l_0: d_loop_us=1105 d_raster_us=140787 d_observe_us=34251 max_observe_us=4742 d_paints=50 d_skips=0 d_ticks=3 window_ms=1151"}
+{"elapsed_seconds": 15.188456, "line": "live script_mule_crafter: running step 3/28"}
+{"elapsed_seconds": 15.687507, "line": "[host] slot livezesk4l_0: d_loop_us=1023 d_raster_us=135804 d_observe_us=25379 max_observe_us=1062 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 15.855116, "line": "[panel] livezesk4l_0: livezesk4l_0: scene 1"}
+{"elapsed_seconds": 16.000929, "line": "[panel] livezesk4l_0: livezesk4l_0: ingame"}
+{"elapsed_seconds": 16.001005, "line": "[panel] livezesk4l_0: livezesk4l_0: scene 2"}
+{"elapsed_seconds": 16.856829, "line": "[host] slot livezesk4l_0: d_loop_us=9215 d_raster_us=145428 d_observe_us=54485 max_observe_us=5069 d_paints=50 d_skips=0 d_ticks=2 window_ms=1169"}
+{"elapsed_seconds": 18.016265, "line": "[host] slot livezesk4l_0: d_loop_us=933 d_raster_us=140898 d_observe_us=26034 max_observe_us=1221 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 18.021716, "line": "live script_mule_crafter: running step 4/28"}
+{"elapsed_seconds": 18.042761, "line": "live script_mule_crafter: running step 5/28"}
+{"elapsed_seconds": 18.06345, "line": "live script_mule_crafter: running step 6/28"}
+{"elapsed_seconds": 18.084308, "line": "live script_mule_crafter: running step 7/28"}
+{"elapsed_seconds": 18.105079, "line": "live script_mule_crafter: running step 8/28"}
+{"elapsed_seconds": 18.125881, "line": "live script_mule_crafter: running step 9/28"}
+{"elapsed_seconds": 18.167681, "line": "live script_mule_crafter: running step 10/28"}
+{"elapsed_seconds": 18.875884, "line": "live script_mule_crafter: running step 11/28"}
+{"elapsed_seconds": 18.896741, "line": "live script_mule_crafter: running step 12/28"}
+{"elapsed_seconds": 18.917563, "line": "live script_mule_crafter: running step 13/28"}
+{"elapsed_seconds": 18.959302, "line": "live script_mule_crafter: running step 14/28"}
+{"elapsed_seconds": 18.980118, "line": "live script_mule_crafter: running step 15/28"}
+{"elapsed_seconds": 19.176601, "line": "[host] slot livezesk4l_0: d_loop_us=975 d_raster_us=170398 d_observe_us=32351 max_observe_us=3666 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160"}
+{"elapsed_seconds": 19.459221, "line": "live script_mule_crafter: running step 16/28"}
+{"elapsed_seconds": 19.469823, "line": "[script livezesk4l_0] start load"}
+{"elapsed_seconds": 19.546359, "line": "live script_mule_crafter: running step 17/28"}
+{"elapsed_seconds": 19.546437, "line": "[host] hitch livezesk4l_0: observe_us=77130 paints=312 skips=0 ticks=13"}
+{"elapsed_seconds": 20.060827, "line": "[host] hitch livezesk4l_0: observe_us=19237 paints=334 skips=0 ticks=14"}
+{"elapsed_seconds": 20.397318, "line": "[host] slot livezesk4l_0: d_loop_us=1605 d_raster_us=151073 d_observe_us=127888 max_observe_us=77130 d_paints=50 d_skips=0 d_ticks=2 window_ms=1220"}
+{"elapsed_seconds": 20.665326, "line": "[script livezesk4l_0] tick 22: not impl: reader.inventory"}
+{"elapsed_seconds": 20.665397, "line": "[script livezesk4l_0] MuleCrafter: No partners configured. Running in Solo Crafter mode."}
+{"elapsed_seconds": 20.665415, "line": "[script livezesk4l_0] Crafter inventory contains unauthorized items or missing talisman. Opening bank to clean inventory..."}
+{"elapsed_seconds": 20.665437, "line": "[script livezesk4l_0] interact OpenBooth { x: 3011, z: 3354, level: 0, id: 2213, name: Some(\"Bank booth\"), action: Some(\"Use-quickly\") }"}
+{"elapsed_seconds": 20.671716, "line": "[panel] livezesk4l_0: script: tick 22: not impl: reader.inventory"}
+{"elapsed_seconds": 20.671763, "line": "[panel] livezesk4l_0: script: MuleCrafter: No partners configured. Running in Solo Crafter mode."}
+{"elapsed_seconds": 20.671778, "line": "[panel] livezesk4l_0: script: Crafter inventory contains unauthorized items or missing talisman. Opening bank to clean inventory..."}
+{"elapsed_seconds": 21.268626, "line": "[host] hitch livezesk4l_0: observe_us=17738 paints=386 skips=0 ticks=16"}
+{"elapsed_seconds": 21.318568, "line": "[script livezesk4l_0] tick 23: not impl: reader.inventory"}
+{"elapsed_seconds": 21.338383, "line": "[panel] livezesk4l_0: script: tick 23: not impl: reader.inventory"}
+{"elapsed_seconds": 21.555708, "line": "[host] slot livezesk4l_0: d_loop_us=1074 d_raster_us=164483 d_observe_us=57603 max_observe_us=17738 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 21.878541, "line": "[script livezesk4l_0] tick 24: not impl: reader.inventory"}
+{"elapsed_seconds": 21.88004, "line": "[panel] livezesk4l_0: script: tick 24: not impl: reader.inventory"}
+{"elapsed_seconds": 22.472008, "line": "[script livezesk4l_0] tick 25: not impl: reader.inventory"}
+{"elapsed_seconds": 22.484257, "line": "[panel] livezesk4l_0: script: tick 25: not impl: reader.inventory"}
+{"elapsed_seconds": 22.705707, "line": "[host] slot livezesk4l_0: d_loop_us=1085 d_raster_us=213640 d_observe_us=59179 max_observe_us=11408 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 23.065243, "line": "[script livezesk4l_0] tick 26: not impl: reader.inventory"}
+{"elapsed_seconds": 23.067569, "line": "[panel] livezesk4l_0: script: tick 26: not impl: reader.inventory"}
+{"elapsed_seconds": 23.665458, "line": "[script livezesk4l_0] tick 27: not impl: reader.inventory"}
+{"elapsed_seconds": 23.671728, "line": "[panel] livezesk4l_0: script: tick 27: not impl: reader.inventory"}
+{"elapsed_seconds": 23.854906, "line": "[host] slot livezesk4l_0: d_loop_us=1018 d_raster_us=208224 d_observe_us=50258 max_observe_us=8760 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 24.265965, "line": "[script livezesk4l_0] tick 28: not impl: reader.inventory"}
+{"elapsed_seconds": 24.276006, "line": "[panel] livezesk4l_0: script: tick 28: not impl: reader.inventory"}
+{"elapsed_seconds": 24.866024, "line": "[script livezesk4l_0] tick 29: not impl: reader.inventory"}
+{"elapsed_seconds": 24.880104, "line": "[panel] livezesk4l_0: script: tick 29: not impl: reader.inventory"}
+{"elapsed_seconds": 25.011678, "line": "[host] slot livezesk4l_0: d_loop_us=956 d_raster_us=205549 d_observe_us=50057 max_observe_us=11096 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 25.470154, "line": "[script livezesk4l_0] tick 30: not impl: reader.inventory"}
+{"elapsed_seconds": 25.484248, "line": "[panel] livezesk4l_0: script: tick 30: not impl: reader.inventory"}
+{"elapsed_seconds": 26.074019, "line": "[script livezesk4l_0] tick 31: not impl: reader.inventory"}
+{"elapsed_seconds": 26.074098, "line": "[script livezesk4l_0] withdrew Air talisman from bank"}
+{"elapsed_seconds": 26.088462, "line": "[panel] livezesk4l_0: script: tick 31: not impl: reader.inventory"}
+{"elapsed_seconds": 26.08852, "line": "[panel] livezesk4l_0: script: withdrew Air talisman from bank"}
+{"elapsed_seconds": 26.171273, "line": "[host] slot livezesk4l_0: d_loop_us=992 d_raster_us=219115 d_observe_us=55059 max_observe_us=11407 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 26.672176, "line": "[script livezesk4l_0] tick 32: not impl: reader.inventory"}
+{"elapsed_seconds": 26.6927, "line": "[panel] livezesk4l_0: script: tick 32: not impl: reader.inventory"}
+{"elapsed_seconds": 27.273466, "line": "[script livezesk4l_0] tick 33: not impl: reader.inventory"}
+{"elapsed_seconds": 27.275885, "line": "[panel] livezesk4l_0: script: tick 33: not impl: reader.inventory"}
+{"elapsed_seconds": 27.325529, "line": "[host] slot livezesk4l_0: d_loop_us=954 d_raster_us=219261 d_observe_us=56457 max_observe_us=11050 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 27.878987, "line": "[script livezesk4l_0] tick 34: not impl: reader.inventory"}
+{"elapsed_seconds": 27.880009, "line": "[panel] livezesk4l_0: script: tick 34: not impl: reader.inventory"}
+{"elapsed_seconds": 28.474481, "line": "[script livezesk4l_0] tick 35: not impl: reader.inventory"}
+{"elapsed_seconds": 28.479055, "line": "[host] slot livezesk4l_0: d_loop_us=977 d_raster_us=214242 d_observe_us=51918 max_observe_us=9232 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153"}
+{"elapsed_seconds": 28.484222, "line": "[panel] livezesk4l_0: script: tick 35: not impl: reader.inventory"}
+{"elapsed_seconds": 29.071555, "line": "[script livezesk4l_0] tick 36: not impl: reader.inventory"}
+{"elapsed_seconds": 29.088447, "line": "[panel] livezesk4l_0: script: tick 36: not impl: reader.inventory"}
+{"elapsed_seconds": 29.635928, "line": "[host] slot livezesk4l_0: d_loop_us=972 d_raster_us=220064 d_observe_us=43754 max_observe_us=10469 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 29.675194, "line": "[script livezesk4l_0] tick 37: not impl: reader.inventory"}
+{"elapsed_seconds": 29.692587, "line": "[panel] livezesk4l_0: script: tick 37: not impl: reader.inventory"}
+{"elapsed_seconds": 30.2765, "line": "[script livezesk4l_0] tick 38: not impl: reader.inventory"}
+{"elapsed_seconds": 30.296741, "line": "[panel] livezesk4l_0: script: tick 38: not impl: reader.inventory"}
+{"elapsed_seconds": 30.786225, "line": "[host] slot livezesk4l_0: d_loop_us=1006 d_raster_us=228360 d_observe_us=53737 max_observe_us=10325 d_paints=50 d_skips=0 d_ticks=1 window_ms=1150"}
+{"elapsed_seconds": 30.871181, "line": "[script livezesk4l_0] tick 39: not impl: reader.inventory"}
+{"elapsed_seconds": 30.880085, "line": "[panel] livezesk4l_0: script: tick 39: not impl: reader.inventory"}
+{"elapsed_seconds": 31.46791, "line": "[script livezesk4l_0] tick 40: not impl: reader.inventory"}
+{"elapsed_seconds": 31.484273, "line": "[panel] livezesk4l_0: script: tick 40: not impl: reader.inventory"}
+{"elapsed_seconds": 31.938175, "line": "[host] slot livezesk4l_0: d_loop_us=1058 d_raster_us=228675 d_observe_us=55227 max_observe_us=11008 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 32.069025, "line": "[script livezesk4l_0] tick 41: not impl: reader.inventory"}
+{"elapsed_seconds": 32.088423, "line": "[panel] livezesk4l_0: script: tick 41: not impl: reader.inventory"}
+{"elapsed_seconds": 32.670832, "line": "[script livezesk4l_0] tick 42: not impl: reader.inventory"}
+{"elapsed_seconds": 32.671812, "line": "[panel] livezesk4l_0: script: tick 42: not impl: reader.inventory"}
+{"elapsed_seconds": 33.08938, "line": "[host] slot livezesk4l_0: d_loop_us=1055 d_raster_us=222517 d_observe_us=55395 max_observe_us=13860 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 33.26495, "line": "[script livezesk4l_0] tick 43: not impl: reader.inventory"}
+{"elapsed_seconds": 33.275954, "line": "[panel] livezesk4l_0: script: tick 43: not impl: reader.inventory"}
+{"elapsed_seconds": 33.866179, "line": "[script livezesk4l_0] tick 44: not impl: reader.inventory"}
+{"elapsed_seconds": 33.880104, "line": "[panel] livezesk4l_0: script: tick 44: not impl: reader.inventory"}
+{"elapsed_seconds": 34.244551, "line": "[host] slot livezesk4l_0: d_loop_us=1106 d_raster_us=242264 d_observe_us=54920 max_observe_us=9991 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 34.472542, "line": "[script livezesk4l_0] tick 45: not impl: reader.inventory"}
+{"elapsed_seconds": 34.48429, "line": "[panel] livezesk4l_0: script: tick 45: not impl: reader.inventory"}
+{"elapsed_seconds": 35.074606, "line": "[script livezesk4l_0] tick 46: not impl: reader.inventory"}
+{"elapsed_seconds": 35.08842, "line": "[panel] livezesk4l_0: script: tick 46: not impl: reader.inventory"}
+{"elapsed_seconds": 35.405922, "line": "[host] slot livezesk4l_0: d_loop_us=1053 d_raster_us=219043 d_observe_us=54558 max_observe_us=10650 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161"}
+{"elapsed_seconds": 35.682846, "line": "[script livezesk4l_0] tick 47: not impl: reader.inventory"}
+{"elapsed_seconds": 35.692559, "line": "[panel] livezesk4l_0: script: tick 47: not impl: reader.inventory"}
+{"elapsed_seconds": 36.263964, "line": "[script livezesk4l_0] tick 48: not impl: reader.inventory"}
+{"elapsed_seconds": 36.275876, "line": "[panel] livezesk4l_0: script: tick 48: not impl: reader.inventory"}
+{"elapsed_seconds": 36.572027, "line": "[host] slot livezesk4l_0: d_loop_us=997 d_raster_us=203746 d_observe_us=49121 max_observe_us=8737 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166"}
+{"elapsed_seconds": 36.864144, "line": "[script livezesk4l_0] tick 49: not impl: reader.inventory"}
+{"elapsed_seconds": 36.880065, "line": "[panel] livezesk4l_0: script: tick 49: not impl: reader.inventory"}
+{"elapsed_seconds": 37.470657, "line": "[script livezesk4l_0] tick 50: not impl: reader.inventory"}
+{"elapsed_seconds": 37.484266, "line": "[panel] livezesk4l_0: script: tick 50: not impl: reader.inventory"}
+{"elapsed_seconds": 37.72862, "line": "[host] slot livezesk4l_0: d_loop_us=1009 d_raster_us=197737 d_observe_us=48749 max_observe_us=9106 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 38.073345, "line": "[script livezesk4l_0] tick 51: not impl: reader.inventory"}
+{"elapsed_seconds": 38.088049, "line": "[panel] livezesk4l_0: script: tick 51: not impl: reader.inventory"}
+{"elapsed_seconds": 38.66537, "line": "[script livezesk4l_0] tick 52: not impl: reader.inventory"}
+{"elapsed_seconds": 38.67176, "line": "[panel] livezesk4l_0: script: tick 52: not impl: reader.inventory"}
+{"elapsed_seconds": 38.878399, "line": "[host] slot livezesk4l_0: d_loop_us=1049 d_raster_us=206196 d_observe_us=48095 max_observe_us=8427 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 39.271398, "line": "[script livezesk4l_0] tick 53: not impl: reader.inventory"}
+{"elapsed_seconds": 39.275905, "line": "[panel] livezesk4l_0: script: tick 53: not impl: reader.inventory"}
+{"elapsed_seconds": 39.870351, "line": "[script livezesk4l_0] tick 54: not impl: reader.inventory"}
+{"elapsed_seconds": 39.880135, "line": "[panel] livezesk4l_0: script: tick 54: not impl: reader.inventory"}
+{"elapsed_seconds": 40.030408, "line": "[host] slot livezesk4l_0: d_loop_us=1003 d_raster_us=194722 d_observe_us=47866 max_observe_us=9132 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 40.471842, "line": "[script livezesk4l_0] tick 55: not impl: reader.inventory"}
+{"elapsed_seconds": 40.484235, "line": "[panel] livezesk4l_0: script: tick 55: not impl: reader.inventory"}
+{"elapsed_seconds": 41.077727, "line": "[script livezesk4l_0] tick 56: not impl: reader.inventory"}
+{"elapsed_seconds": 41.088418, "line": "[panel] livezesk4l_0: script: tick 56: not impl: reader.inventory"}
+{"elapsed_seconds": 41.198961, "line": "[host] slot livezesk4l_0: d_loop_us=1054 d_raster_us=195063 d_observe_us=47390 max_observe_us=8432 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168"}
+{"elapsed_seconds": 41.657435, "line": "[script livezesk4l_0] tick 57: not impl: reader.inventory"}
+{"elapsed_seconds": 41.671734, "line": "[panel] livezesk4l_0: script: tick 57: not impl: reader.inventory"}
+{"elapsed_seconds": 42.25981, "line": "[script livezesk4l_0] tick 58: not impl: reader.inventory"}
+{"elapsed_seconds": 42.275892, "line": "[panel] livezesk4l_0: script: tick 58: not impl: reader.inventory"}
+{"elapsed_seconds": 42.356486, "line": "[host] slot livezesk4l_0: d_loop_us=1016 d_raster_us=198164 d_observe_us=46856 max_observe_us=8659 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 42.862268, "line": "[script livezesk4l_0] tick 59: not impl: reader.inventory"}
+{"elapsed_seconds": 42.880114, "line": "[panel] livezesk4l_0: script: tick 59: not impl: reader.inventory"}
+{"elapsed_seconds": 43.46407, "line": "[script livezesk4l_0] tick 60: not impl: reader.inventory"}
+{"elapsed_seconds": 43.484258, "line": "[panel] livezesk4l_0: script: tick 60: not impl: reader.inventory"}
+{"elapsed_seconds": 43.515672, "line": "[host] slot livezesk4l_0: d_loop_us=1022 d_raster_us=198880 d_observe_us=53583 max_observe_us=12893 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 44.084151, "line": "[script livezesk4l_0] tick 61: not impl: reader.inventory"}
+{"elapsed_seconds": 44.088361, "line": "[panel] livezesk4l_0: script: tick 61: not impl: reader.inventory"}
+{"elapsed_seconds": 44.659688, "line": "[script livezesk4l_0] tick 62: not impl: reader.inventory"}
+{"elapsed_seconds": 44.671701, "line": "[panel] livezesk4l_0: script: tick 62: not impl: reader.inventory"}
+{"elapsed_seconds": 44.687993, "line": "[host] slot livezesk4l_0: d_loop_us=1021 d_raster_us=235589 d_observe_us=47262 max_observe_us=8706 d_paints=50 d_skips=0 d_ticks=2 window_ms=1172"}
+{"elapsed_seconds": 45.265699, "line": "[script livezesk4l_0] tick 63: not impl: reader.inventory"}
+{"elapsed_seconds": 45.275855, "line": "[panel] livezesk4l_0: script: tick 63: not impl: reader.inventory"}
+{"elapsed_seconds": 45.859589, "line": "[host] slot livezesk4l_0: d_loop_us=1008 d_raster_us=208924 d_observe_us=47261 max_observe_us=8406 d_paints=50 d_skips=0 d_ticks=2 window_ms=1171"}
+{"elapsed_seconds": 45.868983, "line": "[script livezesk4l_0] tick 64: not impl: reader.inventory"}
+{"elapsed_seconds": 45.879993, "line": "[panel] livezesk4l_0: script: tick 64: not impl: reader.inventory"}
+{"elapsed_seconds": 46.467041, "line": "[script livezesk4l_0] tick 65: not impl: reader.inventory"}
+{"elapsed_seconds": 46.484182, "line": "[panel] livezesk4l_0: script: tick 65: not impl: reader.inventory"}
+{"elapsed_seconds": 47.001158, "line": "[host] slot livezesk4l_0: d_loop_us=1016 d_raster_us=199956 d_observe_us=41492 max_observe_us=8578 d_paints=50 d_skips=0 d_ticks=1 window_ms=1141"}
+{"elapsed_seconds": 47.065302, "line": "[script livezesk4l_0] tick 66: not impl: reader.inventory"}
+{"elapsed_seconds": 47.06749, "line": "[panel] livezesk4l_0: script: tick 66: not impl: reader.inventory"}
+{"elapsed_seconds": 47.663607, "line": "[script livezesk4l_0] tick 67: not impl: reader.inventory"}
+{"elapsed_seconds": 47.671689, "line": "[panel] livezesk4l_0: script: tick 67: not impl: reader.inventory"}
+{"elapsed_seconds": 48.156214, "line": "[host] slot livezesk4l_0: d_loop_us=1079 d_raster_us=195799 d_observe_us=47427 max_observe_us=8520 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 48.264285, "line": "[script livezesk4l_0] tick 68: not impl: reader.inventory"}
+{"elapsed_seconds": 48.275858, "line": "[panel] livezesk4l_0: script: tick 68: not impl: reader.inventory"}
+{"elapsed_seconds": 48.858539, "line": "[script livezesk4l_0] tick 69: not impl: reader.inventory"}
+{"elapsed_seconds": 48.859156, "line": "[panel] livezesk4l_0: script: tick 69: not impl: reader.inventory"}
+{"elapsed_seconds": 49.304169, "line": "[host] slot livezesk4l_0: d_loop_us=1049 d_raster_us=217535 d_observe_us=53119 max_observe_us=10394 d_paints=50 d_skips=0 d_ticks=2 window_ms=1147"}
+{"elapsed_seconds": 49.478071, "line": "[script livezesk4l_0] tick 70: not impl: reader.inventory"}
+{"elapsed_seconds": 49.48417, "line": "[panel] livezesk4l_0: script: tick 70: not impl: reader.inventory"}
+{"elapsed_seconds": 50.07852, "line": "[script livezesk4l_0] tick 71: not impl: reader.inventory"}
+{"elapsed_seconds": 50.088346, "line": "[panel] livezesk4l_0: script: tick 71: not impl: reader.inventory"}
+{"elapsed_seconds": 50.454446, "line": "[host] slot livezesk4l_0: d_loop_us=1029 d_raster_us=234966 d_observe_us=53302 max_observe_us=9226 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150"}
+{"elapsed_seconds": 50.655837, "line": "[script livezesk4l_0] tick 72: not impl: reader.inventory"}
+{"elapsed_seconds": 50.671694, "line": "[panel] livezesk4l_0: script: tick 72: not impl: reader.inventory"}
+{"elapsed_seconds": 51.269282, "line": "[script livezesk4l_0] tick 73: not impl: reader.inventory"}
+{"elapsed_seconds": 51.275914, "line": "[panel] livezesk4l_0: script: tick 73: not impl: reader.inventory"}
+{"elapsed_seconds": 51.597596, "line": "[host] slot livezesk4l_0: d_loop_us=984 d_raster_us=222215 d_observe_us=55715 max_observe_us=10819 d_paints=50 d_skips=0 d_ticks=2 window_ms=1143"}
+{"elapsed_seconds": 51.874943, "line": "[script livezesk4l_0] tick 74: not impl: reader.inventory"}
+{"elapsed_seconds": 51.880059, "line": "[panel] livezesk4l_0: script: tick 74: not impl: reader.inventory"}
+{"elapsed_seconds": 52.461803, "line": "[script livezesk4l_0] tick 75: not impl: reader.inventory"}
+{"elapsed_seconds": 52.46333, "line": "[panel] livezesk4l_0: script: tick 75: not impl: reader.inventory"}
+{"elapsed_seconds": 52.769582, "line": "[host] slot livezesk4l_0: d_loop_us=978 d_raster_us=201654 d_observe_us=50577 max_observe_us=9147 d_paints=50 d_skips=0 d_ticks=2 window_ms=1171"}
+{"elapsed_seconds": 53.080479, "line": "[script livezesk4l_0] tick 76: not impl: reader.inventory"}
+{"elapsed_seconds": 53.088435, "line": "[panel] livezesk4l_0: script: tick 76: not impl: reader.inventory"}
+{"elapsed_seconds": 53.659999, "line": "[script livezesk4l_0] tick 77: not impl: reader.inventory"}
+{"elapsed_seconds": 53.671781, "line": "[panel] livezesk4l_0: script: tick 77: not impl: reader.inventory"}
+{"elapsed_seconds": 53.913986, "line": "[host] slot livezesk4l_0: d_loop_us=1024 d_raster_us=225254 d_observe_us=56556 max_observe_us=10980 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144"}
+{"elapsed_seconds": 54.275844, "line": "[script livezesk4l_0] tick 78: not impl: reader.inventory"}
+{"elapsed_seconds": 54.27594, "line": "[panel] livezesk4l_0: script: tick 78: not impl: reader.inventory"}
+{"elapsed_seconds": 54.872803, "line": "[script livezesk4l_0] tick 79: not impl: reader.inventory"}
+{"elapsed_seconds": 54.880033, "line": "[panel] livezesk4l_0: script: tick 79: not impl: reader.inventory"}
+{"elapsed_seconds": 55.064809, "line": "[host] slot livezesk4l_0: d_loop_us=1020 d_raster_us=229942 d_observe_us=55814 max_observe_us=10175 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150"}
+{"elapsed_seconds": 55.477775, "line": "[script livezesk4l_0] tick 80: not impl: reader.inventory"}
+{"elapsed_seconds": 55.484197, "line": "[panel] livezesk4l_0: script: tick 80: not impl: reader.inventory"}
+{"elapsed_seconds": 56.070532, "line": "[script livezesk4l_0] tick 81: not impl: reader.inventory"}
+{"elapsed_seconds": 56.08844, "line": "[panel] livezesk4l_0: script: tick 81: not impl: reader.inventory"}
+{"elapsed_seconds": 56.216784, "line": "[host] slot livezesk4l_0: d_loop_us=989 d_raster_us=212760 d_observe_us=52313 max_observe_us=9812 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 56.670099, "line": "[script livezesk4l_0] tick 82: not impl: reader.inventory"}
+{"elapsed_seconds": 56.671666, "line": "[panel] livezesk4l_0: script: tick 82: not impl: reader.inventory"}
+{"elapsed_seconds": 57.272058, "line": "[script livezesk4l_0] tick 83: not impl: reader.inventory"}
+{"elapsed_seconds": 57.27584, "line": "[panel] livezesk4l_0: script: tick 83: not impl: reader.inventory"}
+{"elapsed_seconds": 57.372111, "line": "[host] slot livezesk4l_0: d_loop_us=1042 d_raster_us=216416 d_observe_us=51463 max_observe_us=10014 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 57.874078, "line": "[script livezesk4l_0] tick 84: not impl: reader.inventory"}
+{"elapsed_seconds": 57.880017, "line": "[panel] livezesk4l_0: script: tick 84: not impl: reader.inventory"}
+{"elapsed_seconds": 58.477755, "line": "[script livezesk4l_0] tick 85: not impl: reader.inventory"}
+{"elapsed_seconds": 58.484223, "line": "[panel] livezesk4l_0: script: tick 85: not impl: reader.inventory"}
+{"elapsed_seconds": 58.540869, "line": "[host] slot livezesk4l_0: d_loop_us=1028 d_raster_us=230878 d_observe_us=52280 max_observe_us=9829 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168"}
+{"elapsed_seconds": 59.075816, "line": "[script livezesk4l_0] tick 86: not impl: reader.inventory"}
+{"elapsed_seconds": 59.088414, "line": "[panel] livezesk4l_0: script: tick 86: not impl: reader.inventory"}
+{"elapsed_seconds": 59.675933, "line": "[script livezesk4l_0] tick 87: not impl: reader.inventory"}
+{"elapsed_seconds": 59.680044, "line": "[host] slot livezesk4l_0: d_loop_us=1026 d_raster_us=233987 d_observe_us=54332 max_observe_us=10513 d_paints=50 d_skips=0 d_ticks=2 window_ms=1139"}
+{"elapsed_seconds": 59.692597, "line": "[panel] livezesk4l_0: script: tick 87: not impl: reader.inventory"}
+{"elapsed_seconds": 60.272251, "line": "[script livezesk4l_0] tick 88: not impl: reader.inventory"}
+{"elapsed_seconds": 60.275969, "line": "[panel] livezesk4l_0: script: tick 88: not impl: reader.inventory"}
+{"elapsed_seconds": 60.82989, "line": "[host] slot livezesk4l_0: d_loop_us=1051 d_raster_us=224954 d_observe_us=45168 max_observe_us=10505 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 60.86934, "line": "[script livezesk4l_0] tick 89: not impl: reader.inventory"}
+{"elapsed_seconds": 60.880293, "line": "[panel] livezesk4l_0: script: tick 89: not impl: reader.inventory"}
+{"elapsed_seconds": 61.474927, "line": "[script livezesk4l_0] tick 90: not impl: reader.inventory"}
+{"elapsed_seconds": 61.484243, "line": "[panel] livezesk4l_0: script: tick 90: not impl: reader.inventory"}
+{"elapsed_seconds": 61.991767, "line": "[host] slot livezesk4l_0: d_loop_us=1005 d_raster_us=232075 d_observe_us=56170 max_observe_us=10833 d_paints=50 d_skips=0 d_ticks=1 window_ms=1161"}
+{"elapsed_seconds": 62.076136, "line": "[script livezesk4l_0] tick 91: not impl: reader.inventory"}
+{"elapsed_seconds": 62.088397, "line": "[panel] livezesk4l_0: script: tick 91: not impl: reader.inventory"}
+{"elapsed_seconds": 62.677511, "line": "[script livezesk4l_0] tick 92: not impl: reader.inventory"}
+{"elapsed_seconds": 62.69256, "line": "[panel] livezesk4l_0: script: tick 92: not impl: reader.inventory"}
+{"elapsed_seconds": 63.147417, "line": "[host] slot livezesk4l_0: d_loop_us=1063 d_raster_us=232897 d_observe_us=55470 max_observe_us=10275 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 63.275501, "line": "[script livezesk4l_0] tick 93: not impl: reader.inventory"}
+{"elapsed_seconds": 63.275815, "line": "[panel] livezesk4l_0: script: tick 93: not impl: reader.inventory"}
+{"elapsed_seconds": 63.876154, "line": "[script livezesk4l_0] tick 94: not impl: reader.inventory"}
+{"elapsed_seconds": 63.88009, "line": "[panel] livezesk4l_0: script: tick 94: not impl: reader.inventory"}
+{"elapsed_seconds": 64.298176, "line": "[host] slot livezesk4l_0: d_loop_us=983 d_raster_us=216595 d_observe_us=48418 max_observe_us=8684 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150"}
+{"elapsed_seconds": 64.475872, "line": "[script livezesk4l_0] tick 95: not impl: reader.inventory"}
+{"elapsed_seconds": 64.484291, "line": "[panel] livezesk4l_0: script: tick 95: not impl: reader.inventory"}
+{"elapsed_seconds": 65.06072, "line": "[script livezesk4l_0] tick 96: not impl: reader.inventory"}
+{"elapsed_seconds": 65.067525, "line": "[panel] livezesk4l_0: script: tick 96: not impl: reader.inventory"}
+{"elapsed_seconds": 65.456676, "line": "[host] slot livezesk4l_0: d_loop_us=925 d_raster_us=192570 d_observe_us=47035 max_observe_us=8755 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 65.66105, "line": "[script livezesk4l_0] tick 97: not impl: reader.inventory"}
+{"elapsed_seconds": 65.671714, "line": "[panel] livezesk4l_0: script: tick 97: not impl: reader.inventory"}
+{"elapsed_seconds": 66.2632, "line": "[script livezesk4l_0] tick 98: not impl: reader.inventory"}
+{"elapsed_seconds": 66.275608, "line": "[panel] livezesk4l_0: script: tick 98: not impl: reader.inventory"}
+{"elapsed_seconds": 66.615971, "line": "[host] slot livezesk4l_0: d_loop_us=957 d_raster_us=193210 d_observe_us=48178 max_observe_us=8982 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 66.868414, "line": "[script livezesk4l_0] tick 99: not impl: reader.inventory"}
+{"elapsed_seconds": 66.880054, "line": "[panel] livezesk4l_0: script: tick 99: not impl: reader.inventory"}
+{"elapsed_seconds": 67.45988, "line": "[script livezesk4l_0] tick 100: not impl: reader.inventory"}
+{"elapsed_seconds": 67.463357, "line": "[panel] livezesk4l_0: script: tick 100: not impl: reader.inventory"}
+{"elapsed_seconds": 67.77299, "line": "[host] slot livezesk4l_0: d_loop_us=928 d_raster_us=206749 d_observe_us=49516 max_observe_us=8680 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 68.065606, "line": "[script livezesk4l_0] tick 101: not impl: reader.inventory"}
+{"elapsed_seconds": 68.067497, "line": "[panel] livezesk4l_0: script: tick 101: not impl: reader.inventory"}
+{"elapsed_seconds": 68.658, "line": "[script livezesk4l_0] tick 102: not impl: reader.inventory"}
+{"elapsed_seconds": 68.671703, "line": "[panel] livezesk4l_0: script: tick 102: not impl: reader.inventory"}
+{"elapsed_seconds": 68.915487, "line": "[host] slot livezesk4l_0: d_loop_us=945 d_raster_us=199027 d_observe_us=49963 max_observe_us=9736 d_paints=50 d_skips=0 d_ticks=2 window_ms=1142"}
+{"elapsed_seconds": 69.261474, "line": "[script livezesk4l_0] tick 103: not impl: reader.inventory"}
+{"elapsed_seconds": 69.275864, "line": "[panel] livezesk4l_0: script: tick 103: not impl: reader.inventory"}
+{"elapsed_seconds": 69.868994, "line": "[script livezesk4l_0] tick 104: not impl: reader.inventory"}
+{"elapsed_seconds": 69.880035, "line": "[panel] livezesk4l_0: script: tick 104: not impl: reader.inventory"}
+{"elapsed_seconds": 70.082513, "line": "[host] slot livezesk4l_0: d_loop_us=950 d_raster_us=194732 d_observe_us=48351 max_observe_us=8507 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167"}
+{"elapsed_seconds": 70.4675, "line": "[script livezesk4l_0] tick 105: not impl: reader.inventory"}
+{"elapsed_seconds": 70.4842, "line": "[panel] livezesk4l_0: script: tick 105: not impl: reader.inventory"}
+{"elapsed_seconds": 71.060247, "line": "[script livezesk4l_0] tick 106: not impl: reader.inventory"}
+{"elapsed_seconds": 71.067561, "line": "[panel] livezesk4l_0: script: tick 106: not impl: reader.inventory"}
+{"elapsed_seconds": 71.220051, "line": "[host] slot livezesk4l_0: d_loop_us=1054 d_raster_us=222606 d_observe_us=56009 max_observe_us=11897 d_paints=50 d_skips=0 d_ticks=2 window_ms=1137"}
+{"elapsed_seconds": 71.679411, "line": "[script livezesk4l_0] tick 107: not impl: reader.inventory"}
+{"elapsed_seconds": 71.692485, "line": "[panel] livezesk4l_0: script: tick 107: not impl: reader.inventory"}
+{"elapsed_seconds": 72.27253, "line": "[script livezesk4l_0] tick 108: not impl: reader.inventory"}
+{"elapsed_seconds": 72.274569, "line": "[panel] livezesk4l_0: script: tick 108: not impl: reader.inventory"}
+{"elapsed_seconds": 72.371417, "line": "[host] slot livezesk4l_0: d_loop_us=1042 d_raster_us=201390 d_observe_us=49311 max_observe_us=8756 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 72.857464, "line": "[script livezesk4l_0] tick 109: not impl: reader.inventory"}
+{"elapsed_seconds": 72.858426, "line": "[panel] livezesk4l_0: script: tick 109: not impl: reader.inventory"}
+{"elapsed_seconds": 73.46489, "line": "[script livezesk4l_0] tick 110: not impl: reader.inventory"}
+{"elapsed_seconds": 73.485328, "line": "[panel] livezesk4l_0: script: tick 110: not impl: reader.inventory"}
+{"elapsed_seconds": 73.539461, "line": "[host] slot livezesk4l_0: d_loop_us=897 d_raster_us=188497 d_observe_us=46580 max_observe_us=8499 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168"}
+{"elapsed_seconds": 74.074907, "line": "[script livezesk4l_0] tick 111: not impl: reader.inventory"}
+{"elapsed_seconds": 74.088296, "line": "[panel] livezesk4l_0: script: tick 111: not impl: reader.inventory"}
+{"elapsed_seconds": 74.670707, "line": "[script livezesk4l_0] tick 112: not impl: reader.inventory"}
+{"elapsed_seconds": 74.671606, "line": "[panel] livezesk4l_0: script: tick 112: not impl: reader.inventory"}
+{"elapsed_seconds": 74.698172, "line": "[host] slot livezesk4l_0: d_loop_us=858 d_raster_us=183952 d_observe_us=46851 max_observe_us=8751 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 75.267128, "line": "[script livezesk4l_0] tick 113: not impl: reader.inventory"}
+{"elapsed_seconds": 75.275776, "line": "[panel] livezesk4l_0: script: tick 113: not impl: reader.inventory"}
+{"elapsed_seconds": 75.864392, "line": "[host] slot livezesk4l_0: d_loop_us=887 d_raster_us=183983 d_observe_us=46599 max_observe_us=8390 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166"}
+{"elapsed_seconds": 75.874754, "line": "[script livezesk4l_0] tick 114: not impl: reader.inventory"}
+{"elapsed_seconds": 75.879968, "line": "[panel] livezesk4l_0: script: tick 114: not impl: reader.inventory"}
+{"elapsed_seconds": 76.473295, "line": "[script livezesk4l_0] tick 115: not impl: reader.inventory"}
+{"elapsed_seconds": 76.484206, "line": "[panel] livezesk4l_0: script: tick 115: not impl: reader.inventory"}
+{"elapsed_seconds": 77.011717, "line": "[host] slot livezesk4l_0: d_loop_us=904 d_raster_us=197002 d_observe_us=38594 max_observe_us=8256 d_paints=50 d_skips=0 d_ticks=1 window_ms=1147"}
+{"elapsed_seconds": 77.077469, "line": "[script livezesk4l_0] tick 116: not impl: reader.inventory"}
+{"elapsed_seconds": 77.08833, "line": "[panel] livezesk4l_0: script: tick 116: not impl: reader.inventory"}
+{"elapsed_seconds": 77.664064, "line": "[script livezesk4l_0] tick 117: not impl: reader.inventory"}
+{"elapsed_seconds": 77.671666, "line": "[panel] livezesk4l_0: script: tick 117: not impl: reader.inventory"}
+{"elapsed_seconds": 78.18411, "line": "[host] slot livezesk4l_0: d_loop_us=886 d_raster_us=188404 d_observe_us=47217 max_observe_us=8402 d_paints=50 d_skips=0 d_ticks=2 window_ms=1172"}
+{"elapsed_seconds": 78.27058, "line": "[script livezesk4l_0] tick 118: not impl: reader.inventory"}
+{"elapsed_seconds": 78.275927, "line": "[panel] livezesk4l_0: script: tick 118: not impl: reader.inventory"}
+{"elapsed_seconds": 78.858817, "line": "[script livezesk4l_0] tick 119: not impl: reader.inventory"}
+{"elapsed_seconds": 78.859123, "line": "[panel] livezesk4l_0: script: tick 119: not impl: reader.inventory"}
+{"elapsed_seconds": 79.353581, "line": "[host] slot livezesk4l_0: d_loop_us=846 d_raster_us=189662 d_observe_us=49194 max_observe_us=9237 d_paints=50 d_skips=0 d_ticks=2 window_ms=1169"}
+{"elapsed_seconds": 79.463406, "line": "[script livezesk4l_0] tick 120: not impl: reader.inventory"}
+{"elapsed_seconds": 79.484169, "line": "[panel] livezesk4l_0: script: tick 120: not impl: reader.inventory"}
+{"elapsed_seconds": 80.06422, "line": "[script livezesk4l_0] tick 121: not impl: reader.inventory"}
+{"elapsed_seconds": 80.067511, "line": "[panel] livezesk4l_0: script: tick 121: not impl: reader.inventory"}
+{"elapsed_seconds": 80.50483, "line": "[host] slot livezesk4l_0: d_loop_us=895 d_raster_us=227584 d_observe_us=50834 max_observe_us=8592 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 80.660049, "line": "[script livezesk4l_0] tick 122: not impl: reader.inventory"}
+{"elapsed_seconds": 80.671637, "line": "[panel] livezesk4l_0: script: tick 122: not impl: reader.inventory"}
+{"elapsed_seconds": 81.264194, "line": "[script livezesk4l_0] tick 123: not impl: reader.inventory"}
+{"elapsed_seconds": 81.27586, "line": "[panel] livezesk4l_0: script: tick 123: not impl: reader.inventory"}
+{"elapsed_seconds": 81.662101, "line": "[host] slot livezesk4l_0: d_loop_us=906 d_raster_us=214186 d_observe_us=51537 max_observe_us=10557 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 81.86452, "line": "[script livezesk4l_0] tick 124: not impl: reader.inventory"}
+{"elapsed_seconds": 81.880157, "line": "[panel] livezesk4l_0: script: tick 124: not impl: reader.inventory"}
+{"elapsed_seconds": 82.471367, "line": "[script livezesk4l_0] tick 125: not impl: reader.inventory"}
+{"elapsed_seconds": 82.484194, "line": "[panel] livezesk4l_0: script: tick 125: not impl: reader.inventory"}
+{"elapsed_seconds": 82.817702, "line": "[host] slot livezesk4l_0: d_loop_us=1004 d_raster_us=215199 d_observe_us=53441 max_observe_us=10324 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 83.059579, "line": "[script livezesk4l_0] tick 126: not impl: reader.inventory"}
+{"elapsed_seconds": 83.067499, "line": "[panel] livezesk4l_0: script: tick 126: not impl: reader.inventory"}
+{"elapsed_seconds": 83.660332, "line": "[script livezesk4l_0] tick 127: not impl: reader.inventory"}
+{"elapsed_seconds": 83.671785, "line": "[panel] livezesk4l_0: script: tick 127: not impl: reader.inventory"}
+{"elapsed_seconds": 83.966692, "line": "[host] slot livezesk4l_0: d_loop_us=1027 d_raster_us=239251 d_observe_us=54836 max_observe_us=10390 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148"}
+{"elapsed_seconds": 84.257228, "line": "[script livezesk4l_0] tick 128: not impl: reader.inventory"}
+{"elapsed_seconds": 84.275857, "line": "[panel] livezesk4l_0: script: tick 128: not impl: reader.inventory"}
+{"elapsed_seconds": 84.865753, "line": "[script livezesk4l_0] tick 129: not impl: reader.inventory"}
+{"elapsed_seconds": 84.879979, "line": "[panel] livezesk4l_0: script: tick 129: not impl: reader.inventory"}
+{"elapsed_seconds": 85.125242, "line": "[host] slot livezesk4l_0: d_loop_us=956 d_raster_us=203993 d_observe_us=49308 max_observe_us=8789 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 85.462516, "line": "[script livezesk4l_0] tick 130: not impl: reader.inventory"}
+{"elapsed_seconds": 85.463276, "line": "[panel] livezesk4l_0: script: tick 130: not impl: reader.inventory"}
+{"elapsed_seconds": 86.063526, "line": "[script livezesk4l_0] tick 131: not impl: reader.inventory"}
+{"elapsed_seconds": 86.067471, "line": "[panel] livezesk4l_0: script: tick 131: not impl: reader.inventory"}
+{"elapsed_seconds": 86.278659, "line": "[host] slot livezesk4l_0: d_loop_us=1027 d_raster_us=223557 d_observe_us=56583 max_observe_us=10637 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153"}
+{"elapsed_seconds": 86.657232, "line": "[script livezesk4l_0] tick 132: not impl: reader.inventory"}
+{"elapsed_seconds": 86.671814, "line": "[panel] livezesk4l_0: script: tick 132: not impl: reader.inventory"}
+{"elapsed_seconds": 87.275485, "line": "[script livezesk4l_0] tick 133: not impl: reader.inventory"}
+{"elapsed_seconds": 87.275816, "line": "[panel] livezesk4l_0: script: tick 133: not impl: reader.inventory"}
+{"elapsed_seconds": 87.422445, "line": "[host] slot livezesk4l_0: d_loop_us=1008 d_raster_us=231740 d_observe_us=53947 max_observe_us=9380 d_paints=50 d_skips=0 d_ticks=2 window_ms=1143"}
+{"elapsed_seconds": 87.872279, "line": "[script livezesk4l_0] tick 134: not impl: reader.inventory"}
+{"elapsed_seconds": 87.880017, "line": "[panel] livezesk4l_0: script: tick 134: not impl: reader.inventory"}
+{"elapsed_seconds": 88.470465, "line": "[script livezesk4l_0] tick 135: not impl: reader.inventory"}
+{"elapsed_seconds": 88.484189, "line": "[panel] livezesk4l_0: script: tick 135: not impl: reader.inventory"}
+{"elapsed_seconds": 88.570276, "line": "[host] slot livezesk4l_0: d_loop_us=986 d_raster_us=219093 d_observe_us=54262 max_observe_us=10366 d_paints=50 d_skips=0 d_ticks=2 window_ms=1147"}
+{"elapsed_seconds": 89.072643, "line": "[script livezesk4l_0] tick 136: not impl: reader.inventory"}
+{"elapsed_seconds": 89.088347, "line": "[panel] livezesk4l_0: script: tick 136: not impl: reader.inventory"}
+{"elapsed_seconds": 89.669384, "line": "[script livezesk4l_0] tick 137: not impl: reader.inventory"}
+{"elapsed_seconds": 89.671616, "line": "[panel] livezesk4l_0: script: tick 137: not impl: reader.inventory"}
+{"elapsed_seconds": 89.718069, "line": "[host] slot livezesk4l_0: d_loop_us=1028 d_raster_us=230921 d_observe_us=54635 max_observe_us=10465 d_paints=50 d_skips=0 d_ticks=2 window_ms=1147"}
+{"elapsed_seconds": 90.268057, "line": "[script livezesk4l_0] tick 138: not impl: reader.inventory"}
+{"elapsed_seconds": 90.275937, "line": "[panel] livezesk4l_0: script: tick 138: not impl: reader.inventory"}
+{"elapsed_seconds": 90.872278, "line": "[script livezesk4l_0] tick 139: not impl: reader.inventory"}
+{"elapsed_seconds": 90.877111, "line": "[host] slot livezesk4l_0: d_loop_us=1009 d_raster_us=224762 d_observe_us=56809 max_observe_us=10999 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 90.880041, "line": "[panel] livezesk4l_0: script: tick 139: not impl: reader.inventory"}
+{"elapsed_seconds": 91.462673, "line": "[script livezesk4l_0] tick 140: not impl: reader.inventory"}
+{"elapsed_seconds": 91.463286, "line": "[panel] livezesk4l_0: script: tick 140: not impl: reader.inventory"}
+{"elapsed_seconds": 92.025808, "line": "[host] slot livezesk4l_0: d_loop_us=1069 d_raster_us=233912 d_observe_us=46138 max_observe_us=10452 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148"}
+{"elapsed_seconds": 92.065493, "line": "[script livezesk4l_0] tick 141: not impl: reader.inventory"}
+{"elapsed_seconds": 92.067467, "line": "[panel] livezesk4l_0: script: tick 141: not impl: reader.inventory"}
+{"elapsed_seconds": 92.677283, "line": "[script livezesk4l_0] tick 142: not impl: reader.inventory"}
+{"elapsed_seconds": 92.692625, "line": "[panel] livezesk4l_0: script: tick 142: not impl: reader.inventory"}
+{"elapsed_seconds": 93.172808, "line": "[host] slot livezesk4l_0: d_loop_us=1047 d_raster_us=224735 d_observe_us=56288 max_observe_us=10573 d_paints=50 d_skips=0 d_ticks=1 window_ms=1146"}
+{"elapsed_seconds": 93.260413, "line": "[script livezesk4l_0] tick 143: not impl: reader.inventory"}
+{"elapsed_seconds": 93.275845, "line": "[panel] livezesk4l_0: script: tick 143: not impl: reader.inventory"}
+{"elapsed_seconds": 93.859966, "line": "[script livezesk4l_0] tick 144: not impl: reader.inventory"}
+{"elapsed_seconds": 93.880033, "line": "[panel] livezesk4l_0: script: tick 144: not impl: reader.inventory"}
+{"elapsed_seconds": 94.328913, "line": "[host] slot livezesk4l_0: d_loop_us=964 d_raster_us=192943 d_observe_us=48292 max_observe_us=8573 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 94.463889, "line": "[script livezesk4l_0] tick 145: not impl: reader.inventory"}
+{"elapsed_seconds": 94.484165, "line": "[panel] livezesk4l_0: script: tick 145: not impl: reader.inventory"}
+{"elapsed_seconds": 95.072364, "line": "[script livezesk4l_0] tick 146: not impl: reader.inventory"}
+{"elapsed_seconds": 95.088307, "line": "[panel] livezesk4l_0: script: tick 146: not impl: reader.inventory"}
+{"elapsed_seconds": 95.489106, "line": "[host] slot livezesk4l_0: d_loop_us=944 d_raster_us=188638 d_observe_us=48112 max_observe_us=8497 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160"}
+{"elapsed_seconds": 95.67175, "line": "[script livezesk4l_0] tick 147: not impl: reader.inventory"}
+{"elapsed_seconds": 95.692433, "line": "[panel] livezesk4l_0: script: tick 147: not impl: reader.inventory"}
+{"elapsed_seconds": 96.277117, "line": "[script livezesk4l_0] tick 148: not impl: reader.inventory"}
+{"elapsed_seconds": 96.296609, "line": "[panel] livezesk4l_0: script: tick 148: not impl: reader.inventory"}
+{"elapsed_seconds": 96.652965, "line": "[host] slot livezesk4l_0: d_loop_us=917 d_raster_us=185268 d_observe_us=46358 max_observe_us=8356 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163"}
+{"elapsed_seconds": 96.852637, "line": "[script livezesk4l_0] tick 149: not impl: reader.inventory"}
+{"elapsed_seconds": 96.85907, "line": "[panel] livezesk4l_0: script: tick 149: not impl: reader.inventory"}
+{"elapsed_seconds": 97.467972, "line": "[script livezesk4l_0] tick 150: not impl: reader.inventory"}
+{"elapsed_seconds": 97.4841, "line": "[panel] livezesk4l_0: script: tick 150: not impl: reader.inventory"}
+{"elapsed_seconds": 97.794282, "line": "[host] slot livezesk4l_0: d_loop_us=930 d_raster_us=184081 d_observe_us=47576 max_observe_us=8718 d_paints=50 d_skips=0 d_ticks=2 window_ms=1141"}
+{"elapsed_seconds": 98.057137, "line": "[script livezesk4l_0] tick 151: not impl: reader.inventory"}
+{"elapsed_seconds": 98.067396, "line": "[panel] livezesk4l_0: script: tick 151: not impl: reader.inventory"}
+{"elapsed_seconds": 98.679544, "line": "[script livezesk4l_0] tick 152: not impl: reader.inventory"}
+{"elapsed_seconds": 98.692464, "line": "[panel] livezesk4l_0: script: tick 152: not impl: reader.inventory"}
+{"elapsed_seconds": 98.938663, "line": "[host] slot livezesk4l_0: d_loop_us=901 d_raster_us=184117 d_observe_us=47263 max_observe_us=9319 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144"}
+{"elapsed_seconds": 99.275393, "line": "[script livezesk4l_0] tick 153: not impl: reader.inventory"}
+{"elapsed_seconds": 99.275738, "line": "[panel] livezesk4l_0: script: tick 153: not impl: reader.inventory"}
+{"elapsed_seconds": 99.872374, "line": "[script livezesk4l_0] tick 154: not impl: reader.inventory"}
+{"elapsed_seconds": 99.880039, "line": "[panel] livezesk4l_0: script: tick 154: not impl: reader.inventory"}
+{"elapsed_seconds": 100.081356, "line": "[host] slot livezesk4l_0: d_loop_us=1006 d_raster_us=205910 d_observe_us=50310 max_observe_us=10304 d_paints=50 d_skips=0 d_ticks=2 window_ms=1142"}
+{"elapsed_seconds": 100.464207, "line": "[script livezesk4l_0] tick 155: not impl: reader.inventory"}
+{"elapsed_seconds": 100.484186, "line": "[panel] livezesk4l_0: script: tick 155: not impl: reader.inventory"}
+{"elapsed_seconds": 101.070889, "line": "[script livezesk4l_0] tick 156: not impl: reader.inventory"}
+{"elapsed_seconds": 101.088266, "line": "[panel] livezesk4l_0: script: tick 156: not impl: reader.inventory"}
+{"elapsed_seconds": 101.24066, "line": "[host] slot livezesk4l_0: d_loop_us=970 d_raster_us=201715 d_observe_us=50241 max_observe_us=9070 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 101.677224, "line": "[script livezesk4l_0] tick 157: not impl: reader.inventory"}
+{"elapsed_seconds": 101.692468, "line": "[panel] livezesk4l_0: script: tick 157: not impl: reader.inventory"}
+{"elapsed_seconds": 102.261541, "line": "[script livezesk4l_0] tick 158: not impl: reader.inventory"}
+{"elapsed_seconds": 102.275791, "line": "[panel] livezesk4l_0: script: tick 158: not impl: reader.inventory"}
+{"elapsed_seconds": 102.403196, "line": "[host] slot livezesk4l_0: d_loop_us=980 d_raster_us=197907 d_observe_us=48079 max_observe_us=8466 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162"}
+{"elapsed_seconds": 102.861341, "line": "[script livezesk4l_0] tick 159: not impl: reader.inventory"}
+{"elapsed_seconds": 102.879947, "line": "[panel] livezesk4l_0: script: tick 159: not impl: reader.inventory"}
+{"elapsed_seconds": 103.478513, "line": "[script livezesk4l_0] tick 160: not impl: reader.inventory"}
+{"elapsed_seconds": 103.484132, "line": "[panel] livezesk4l_0: script: tick 160: not impl: reader.inventory"}
+{"elapsed_seconds": 103.553649, "line": "[host] slot livezesk4l_0: d_loop_us=924 d_raster_us=183373 d_observe_us=46992 max_observe_us=8605 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150"}
+{"elapsed_seconds": 104.072519, "line": "[script livezesk4l_0] tick 161: not impl: reader.inventory"}
+{"elapsed_seconds": 104.08828, "line": "[panel] livezesk4l_0: script: tick 161: not impl: reader.inventory"}
+{"elapsed_seconds": 104.659564, "line": "[script livezesk4l_0] tick 162: not impl: reader.inventory"}
+{"elapsed_seconds": 104.673283, "line": "[panel] livezesk4l_0: script: tick 162: not impl: reader.inventory"}
+{"elapsed_seconds": 104.687444, "line": "[host] slot livezesk4l_0: d_loop_us=949 d_raster_us=200113 d_observe_us=49294 max_observe_us=8773 d_paints=50 d_skips=0 d_ticks=2 window_ms=1133"}
+{"elapsed_seconds": 105.255868, "line": "[script livezesk4l_0] tick 163: not impl: reader.inventory"}
+{"elapsed_seconds": 105.259079, "line": "[panel] livezesk4l_0: script: tick 163: not impl: reader.inventory"}
+{"elapsed_seconds": 105.847407, "line": "[host] slot livezesk4l_0: d_loop_us=914 d_raster_us=193185 d_observe_us=46993 max_observe_us=8288 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 105.857761, "line": "[script livezesk4l_0] tick 164: not impl: reader.inventory"}
+{"elapsed_seconds": 105.863244, "line": "[panel] livezesk4l_0: script: tick 164: not impl: reader.inventory"}
+{"elapsed_seconds": 106.461305, "line": "[script livezesk4l_0] tick 165: not impl: reader.inventory"}
+{"elapsed_seconds": 106.467422, "line": "[panel] livezesk4l_0: script: tick 165: not impl: reader.inventory"}
+{"elapsed_seconds": 106.99744, "line": "[host] slot livezesk4l_0: d_loop_us=861 d_raster_us=186612 d_observe_us=41075 max_observe_us=8329 d_paints=50 d_skips=0 d_ticks=1 window_ms=1150"}
+{"elapsed_seconds": 107.058383, "line": "[script livezesk4l_0] tick 166: not impl: reader.inventory"}
+{"elapsed_seconds": 107.071605, "line": "[panel] livezesk4l_0: script: tick 166: not impl: reader.inventory"}
+{"elapsed_seconds": 107.639478, "line": "[panel] scenario capture requested: mule_crafter"}
+{"elapsed_seconds": 107.716081, "line": "[host] hitch livezesk4l_0: observe_us=77195 paints=4127 skips=0 ticks=160"}
+{"elapsed_seconds": 107.716945, "line": "[panel] capture readback requested: 1"}
+{"elapsed_seconds": 107.721559, "line": "[script livezesk4l_0] tick 167: not impl: reader.inventory"}
+{"elapsed_seconds": 108.214115, "line": "[host] slot livezesk4l_0: d_loop_us=902 d_raster_us=192149 d_observe_us=115102 max_observe_us=77195 d_paints=50 d_skips=0 d_ticks=2 window_ms=1216"}
+{"elapsed_seconds": 108.279126, "line": "[script livezesk4l_0] tick 168: not impl: reader.inventory"}
+{"elapsed_seconds": 108.59234, "line": "[panel] shot mule_crafter -> /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/catalog-headed/r289-mule-crafter-8e7d965b-28d97f38-gpu/shots/2026-09-11T09-46-46_90534/2026-09-11T09-48-29_mule_crafter.png"}
+{"elapsed_seconds": 108.59241, "line": "[panel] livezesk4l_0: script: tick 167: not impl: reader.inventory"}
+{"elapsed_seconds": 108.592433, "line": "[panel] livezesk4l_0: script: tick 168: not impl: reader.inventory"}
+{"elapsed_seconds": 108.59245, "line": "FAIL: live script_mule_crafter {\"scenario\":\"mule_crafter\",\"outcome\":\"FAIL\",\"predicate\":\"has_item_id(1436)>=1\",\"ticks\":158,\"elapsed_ms\":102873,\"message\":\"step 17 (watch script withdrawal of unnoted essence after Start): has_item_id(1436)>=1 not seen within 150 ticks\",\"tile\":[3011,3355,0],\"inv\":[{\"id\":1438,\"name\":\"Air talisman\",\"count\":1}],\"stat\":{\"runenergy\":100},\"chat\":[{\"text\":\"Inventory wiped.\"},{\"text\":\"Welcome to RuneScape.\"}],\"scene\":2}"}
+{"elapsed_seconds": 108.592465, "line": "FAIL: step 17 (watch script withdrawal of unnoted essence after Start): has_item_id(1436)>=1 not seen within 150 ticks"}

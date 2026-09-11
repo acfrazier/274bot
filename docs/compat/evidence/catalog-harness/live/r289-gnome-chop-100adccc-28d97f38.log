@@ -1,0 +1,20 @@
+
+running 1 test
+{"phase":"identity","revision":289,"profile":"local-289 · 127.0.0.1:44594 · revision 289","cache_id":"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack","nav_sha256":"131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924","catalog_commit":"100adccc037d9f6898080e1cad58fcfc43364775","catalog_identity":"pre-289 frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"GnomeMagicChopper","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/GnomeMagicChopper/GnomeMagicChopper.ts","source_sha256":"3b0d034c761f9b98361561627817a6d806d359f659000cbccdf22e25772471e1","compiled_sha256":"ab343efb7a0a40f49793d87b2ab4ba07ecb563f9dd9687581414bf4620639218","siblings":[],"settings":{"fletchLogs":false}},"account":"livek9tknz_0","engine_speed_ms":null}
+[host-play] slot livek9tknz_0: thread up
+274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+[host-play] slot livek9tknz_0: handshake begin reconnect=false
+[host-play] slot livek9tknz_0: handshake ok
+[host] slot livek9tknz_0: d_loop_us=2460 d_raster_us=0 d_observe_us=30223 max_observe_us=2356 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot livek9tknz_0: queued mainland tele+setvar (scene 2)
+[host-play] slot livek9tknz_0: handshake begin reconnect=true
+[host-play] slot livek9tknz_0: handshake ok
+[host] slot livek9tknz_0: d_loop_us=791 d_raster_us=0 d_observe_us=33901 max_observe_us=2369 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot livek9tknz_0: queued mainland tele+setvar (scene 2)
+{"phase":"baseline-after-preparation","scenario":"gnome_chop","account":"livek9tknz_0","observation":{"ingame":true,"scene_state":2,"player":"Livek9tknz 0","tile":[2372,3425,0],"tick":21,"items":{"Steel axe":1},"item_ids":{"1353":1},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":75},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":1210421},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[{"id":1553,"x":2380,"z":3425,"level":0,"name":"Gate","open":true}],"equipment_ids":{},"main_modal":-1,"widget_ids":[3213,3214]}}
+[script livek9tknz_0] start load
+{"phase":"start","account":"livek9tknz_0","count":1}
+[host] hitch livek9tknz_0: observe_us=69769 paints=0 skips=96 ticks=21
+[host] slot livek9tknz_0: d_loop_us=18041 d_raster_us=0 d_observe_us=152217 max_observe_us=69769 d_paints=0 d_skips=50 d_ticks=21 window_ms=12652
+[script livek9tknz_0] tick 33: not impl: Traversal.preload
+FAIL: catalog_boundary_live: script error: tick 33: not impl: Traversal.preload

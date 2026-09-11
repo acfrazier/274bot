@@ -1,0 +1,32 @@
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-9cc6adb1/crates/script)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.69s
+     Running tests/rs2b0t_registry.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/target-isolated-28d97f38/debug/deps/rs2b0t_registry-1fbca706aec9874d)
+
+running 24 tests
+test parse_registry_errors_on_non_registry_index ... ok
+test parse_registry_resolves_quoted_string_const_default ... ok
+test parse_registry_identifier_valued_setting_inlines_export_const ... ok
+test parse_registry_unescapes_apostrophe_in_description ... ok
+test parse_registry_identifier_options_does_not_execute_ts ... ok
+test parse_registry_resolves_settings_schema_via_import_alias ... ok
+test parse_registry_skips_parent_dir_imports ... ok
+test parse_registry_inlines_same_dir_logic_option_arrays ... ok
+test parse_settings_inlines_same_file_and_shim_spreads ... ok
+test parse_registry_is_relative_path_to_catalog_dir ... ok
+test parse_registry_extracts_high_alchemy_item_option_spec ... ok
+test parse_registry_yields_register_name_and_import_path ... ok
+test parse_registry_inlines_alcher_literal_defaults_and_anyof_const ... ok
+test script_file_path_rejects_escape_and_absolute ... ok
+test parse_settings_skips_typescript_type_annotation ... ok
+test parse_settings_inlines_shim_food_banking_and_spell_keys ... ok
+test parse_registry_rejects_wrong_names_cycles_mixed_and_comments ... ok
+test parse_registry_refuses_unsupported_item_option_expressions ... ok
+test js_library_registers_rs2b0t_cards_without_isolates ... ok
+test rs2b0t_import_deferred_roundtrip ... ok
+test script_file_path_resolves_js_import_to_ts_twin ... ok
+test rs2b0t_root_prefers_env_then_persisted_file ... ok
+test register_rs2b0t_skips_cards_whose_path_escapes_catalog ... ok
+test rs2b0t_fill_uses_register_name_and_skips_reserved_walk_to ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+

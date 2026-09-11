@@ -1,0 +1,38 @@
+--- a/crates/host-play/src/lib.rs
++++ b/crates/host-play/src/lib.rs
+@@ -1855,6 +1855,35 @@
+                     }
+                 });
+                 if let Some(npc) = npc {
++                    // Root diagnostic only: inspect the same immutable native scene
++                    // at the actual Tanner Trade dispatch. No action or timeout change.
++                    if debug_enabled() && wanted == "tanner" && action.eq_ignore_ascii_case("Trade") {
++                        let player_tile = here.map(|(x, z, level)| WorldTile { x, z, level });
++                        let query = api::query::SceneQuery::new(snapshot.scene(), player_tile);
++                        let flood = query.flood_reach();
++                        let at = |tile: WorldTile| {
++                            let bits = flood.as_ref().map(|f| f.at(&tile));
++                            serde_json::json!({
++                                "tile": [tile.x, tile.z, tile.level],
++                                "probeable": query.probeable(tile),
++                                "walkable": query.walkable(tile),
++                                "collision": query.collision_at(tile),
++                                "reachable": bits.map(|b| b.0),
++                                "reachable_adj": bits.map(|b| b.1)
++                            })
++                        };
++                        eprintln!("[diag-tanner-arrival] {}", serde_json::json!({
++                            "snapshot_tick": snapshot.tick(),
++                            "here": player_tile.map(at),
++                            "destination": at(WorldTile { x: 3277, z: 3191, level: 0 }),
++                            "npc": {"index": npc.index, "name": npc.name,
++                                "distance": npc.distance, "reach": at(npc.tile)},
++                            "main_modal_id": snapshot.modals().main,
++                            "scene_available": snapshot.scene().available,
++                            "flood_available": flood.is_some(),
++                            "observation_only": true
++                        }));
++                    }
+                     wrote |= matches!(
+                         ix.interact(OpTarget::Npc(npc), ActionSpec::Label(action.clone())),
+                         SendResult::Sent { .. }

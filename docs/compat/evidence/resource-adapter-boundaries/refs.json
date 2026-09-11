@@ -1,0 +1,52 @@
+{
+  "task": "t_44e1ad0c",
+  "brief": "docs/compat/briefs/102-resource-adapter-boundaries.md",
+  "report": "docs/compat/04z-resource-adapter-boundaries.md",
+  "kind": "bounded-read-only-design-audit",
+  "branch": "codex/rs2b0t-multirevision",
+  "frozen_host": "28d97f38f01b854b6a3c62fdd09c40caf29fcf99",
+  "campaign_head_at_writeup": "7c2eef6eb8db6b01933c333aa64cf5f68169d8d2",
+  "client_gitlink": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "export": ".superpowers/review-exports/catalog-root-28d97f38",
+  "engines": {
+    "274_engine": "4c95f87efe00b068cadbd229d94736626907bd1a",
+    "274_content": "000c19997e07206131bcb3c884265840efce416d",
+    "289_engine": "cc359656b4acd216ca452495874b6beba9a0ac75",
+    "289_content": "92649430fcbc83538d8c4367ecb96cee1a67a944"
+  },
+  "catalog": {
+    "old": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "newer": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "Traversal_Navigator_Tools_Gnome_Coal_byte_identical": true
+  },
+  "sha256": {
+    "04z": "fbf5693a846e2eee43dba50b2807ac950dd8d4bf4f819090043d7d3384ae156a",
+    "brief_102": "4a2213250788a763a47ef90d14969d9b31326ed3d68ab40d576f56dc4ed874a1",
+    "Traversal_ts_both": "984fda1becb12276c46e61e8588f4bd5d51085f968849ff202034b49c44f5d6d",
+    "Navigator_ts_both": "9dd2a86fcdc2178785a30212e8159732ca44ac3fdd35dd8de8d6f220edca61a4",
+    "Tools_ts_both": "34302c46870de39103e2ecbb698a2406122cde765b42157e6b085a52aed2af4e",
+    "GnomeMagicChopper_ts_both": "3b0d034c761f9b98361561627817a6d806d359f659000cbccdf22e25772471e1",
+    "CoalTrucks_ts_both": "d20112f0bfb44612ae53e0c56009c6b3e50808375c2a54dc43ed2160e55fcf36",
+    "CoalTrucksLogic_ts_both": "d6ed36c14e276cc9f85ffdc59fe910a1ec00eb63c162cd19c7cd27a021bc97b5",
+    "traversal_js_28": "5b272833520f908b02e1aae3c75577829ab1c8ad843082659aca0b6148980274",
+    "tools_js_28": "d8e107799c38f011567291c02f0169292f678a3fc3b20b3aabc1a2447e24bde8",
+    "shim_mod_rs_28": "f6b60bc857b96b8280f3f48d9b3cb3eafcde995636ed522b8d4037b165e733b8",
+    "ObjType_ts_274": "61e07de093787c88a00a7224ed9ecffa9be9c1770176650b30926e69fd0ea42b",
+    "ObjType_ts_289": "35172ca7bcd3804bb4e389d45b7d1b8af405e1a57248d374516b46a252d22b84",
+    "pickaxe_checker_rs2_both": "ee6daeca92bb17a1a4879eff713c1ef8402166f3d76e874689c458712d9637b2",
+    "woodcut_rs2_274": "7227f91a266d3a6a8eb87348d39acc1939313e57fd16a8e32409aa87118f3656",
+    "woodcut_rs2_289": "2f5bdacf9743c4bd5478098aaf3af80467204e3921a1b475be057f994d4a36fb",
+    "tier5_rs2_both": "6a16cd2ec7cb58f5214897b059a5c46e048919f35938fa3ea3fe125e427498bc",
+    "pickaxes_obj_both": "dc6ee378cd8b86eef62fcb6a1660b3243477ceeee04077fcdff96269d76c540f",
+    "axes_obj_both": "be13e72b2db2a8d7b0e852a97f0dede6ecdab2b4ce5833e50c28eba0b94b6f3b",
+    "game_data_274_json": "d310498c02aff231d4bd3a45095c9bb5d89007f899ada70f7b02863410b322c1",
+    "r274_gnome_chop_log": "44a76a2e6f6b7ab40eb275161b7921e7eb99adeb488ee2b5457b9ea9fb6d0a9c",
+    "r289_gnome_chop_log": "8ccfbee0096cd619343045cf83d8796dcce8bceab4da3dd07287f7387fb9ed60",
+    "r274_gnome_fletch_short_log": "7d98b613fbf4ed04a0907d3399dbfdc1cbf33bbd820c91e2494e013c728d05b4",
+    "r274_gnome_fletch_long_log": "17cc5090c7f90692357e85ab53d3254a358551baae28adf973d3ae9b5362d85e",
+    "r289_gnome_fletch_short_log": "d866842f3b9457dddff427abe19a9c1173d015c9c208b8391cfe46374cd95baa",
+    "r289_gnome_fletch_long_log": "d6ace0ab1e8d5ae6cd167056b0fbc71852d9ee2ebc25cee98bedf7aa30b7a430",
+    "r274_coal_log": "333713d3e375d5f0059b33de0657e252198100ef9666d2b8d08a223da78b768c",
+    "r289_coal_log": "c85532703e59f41a50027fec6e1aaf5d40b471395e4caed255ec11c586ac6d73"
+  }
+}

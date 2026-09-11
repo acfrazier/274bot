@@ -1,0 +1,52 @@
+{
+  "hypotheses": [
+    {
+      "id": 1,
+      "claim": "Traversal.preload must start a foreign nav worker/router or wait for native readiness",
+      "status": "rejected",
+      "evidence": "Frozen Traversal.preload is void Navigator.start(), unawaited. Host binds NavWorld at profile/template construction before isolate Start. ScriptWalkArm already refuses when world is None."
+    },
+    {
+      "id": 2,
+      "claim": "A void no-op is faithful to already-performed native nav preparation",
+      "status": "confirmed",
+      "evidence": "Panel/TUI/host-play/legacy Play all load NavWorld before script_start_load. Foreign start() also returns immediately without awaiting ready."
+    },
+    {
+      "id": 3,
+      "claim": "Preload should throw when nav is unbound",
+      "status": "rejected",
+      "evidence": "Foreign start() does not throw. Unbound behavior is walk-arm false. Throwing not impl is the current defect even when nav is bound."
+    },
+    {
+      "id": 4,
+      "claim": "bestPickaxe/bestAxe/AXES should copy foreign Tools.ts tables",
+      "status": "rejected",
+      "evidence": "Brief forbids cloning foreign policy. Selected content owns use (pickaxe_checker mining param) and wield (opheld2 Attack). Foreign AXES omits black axe; native woodcut checker includes it."
+    },
+    {
+      "id": 5,
+      "claim": "Existing tools.js AXES id0 and ignored-skill/callback fallback are sufficient",
+      "status": "falsified",
+      "evidence": "Bronze-first AXES inverts Gnome gearHasSteelOrBetter. bestAxe inventory fallback violates bank-only available(). bestPickaxe/canWieldTool throw."
+    },
+    {
+      "id": 6,
+      "claim": "A held steel tool can be wielded on these seeds",
+      "status": "falsified",
+      "evidence": "Coal Attack 1 / gnome Attack 1. opheld2 steel_axe/steel_pickaxe require Attack 5. Use from pack is legal."
+    },
+    {
+      "id": 7,
+      "claim": "axes.obj param=levelrequire is woodcutting use or Attack wield",
+      "status": "falsified",
+      "evidence": "woodcutting_axe_checker has no WC gate. Wield is tier*.rs2 Attack 5/20/30/40, not obj params 6/21/31/41. Pickaxe obj param IS mining use (steel 6)."
+    },
+    {
+      "id": 8,
+      "claim": "First failures are missing loc-chop/mine opcodes or catalog regression",
+      "status": "falsified",
+      "evidence": "Both catalogs byte-identical on these scripts. Loc.interact already exists and never ran. Failures are preload and bestPickaxe not impl."
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "task": "t_59351ef0",
+  "brief": "docs/compat/briefs/96-tanner-modal-trade-audit.md",
+  "kind": "bounded-read-only-audit",
+  "branch": "codex/rs2b0t-multirevision",
+  "frozen_host": "78cc99d07046a781fe8cd5ebf66bb63e663d23ea",
+  "campaign_head_at_writeup": "1d4fb9142caf99dcf7d1c02da119710c35ba4e12",
+  "client_gitlink": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "export": ".superpowers/review-exports/catalog-root-78cc99d0",
+  "sha256": {
+    "04v": "d43b1477b6b42364ef7920e1449699726dbbaed831a2d0a80ff77a4d235c212a",
+    "brief_96": "469a052f531e113ba80dfb29e61661ba5006ac3b7ad038a7bdcb2429266a364f",
+    "TannerBot_ts_both_catalogs": "b8038b17ac72eec3cf7b2e84f8323e4cd898f1975de7d210cfba333e552b8d7f",
+    "client_adapter_js": "f80db4b8518498de5151c6c8da5c02f1073ae9aabaf70b8bcd4b7f92b325ce28",
+    "input_js": "29e9532361b45019f78e2a94b907d79c1c0f297492abacff7e6c2c8eb7ff4a11",
+    "execution_js": "6395e4b43cdd8cccf079a82a3eef02b8228ee0e042f55dfef197c40b70a0ee05",
+    "interact_rs": "7e2e23fabdcf29d82181c14e0b3f9399e21f0f16ae2c3126b0749ca9141deb06",
+    "load_rs": "b429e803b58d952ebfcf0c0667cdc418436276ff97da3a03ff6367adb00b437b",
+    "r274_soft_log": "6e0b0d644e61fff5fd9547e69fedf0bc0786ad121e9f6f146c0d960b89e797cb",
+    "r289_soft_log": "ddc2bb829c6e0d87053c57ae648f1bcce6d5c8ffc6603c259e45bbd6e1c8741c",
+    "r274_hard_log": "49b5da54dd7cd3b8e8131c1aed585194b72b466febef2938a78aff60c7c3dc6a",
+    "r289_hard_log": "4e819678e8b5b30f8d744b223a3f27d48c7c7903dd03767cf1a92c87133a4c6f",
+    "headed_log": "5381f2099e13af901e453624a576a7ccdf727dc0adf133728758461cab82ea8b",
+    "tanner_78cc99d0_json": "59eb4950bac7d8266f94390a42df4d928e8851b5167bac8763abfc00b9452ffa",
+    "headed_png": "e0ec5046fde872b161c167ed53a28d04457324624ad7704b9101422951815f30",
+    "headed_snapshot": "4664a3dd6118ee67e8cbc86cd6b1b5fed5ab9fe5e88f3c738ba126bbbf5883f8"
+  },
+  "catalog": {
+    "old": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "newer": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "TannerBot_ts_byte_identical": true
+  },
+  "nav": {
+    "274": "05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4",
+    "289": "131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924"
+  },
+  "engine": {
+    "274": "4c95f87efe00b068cadbd229d94736626907bd1a",
+    "289": "cc359656b4acd216ca452495874b6beba9a0ac75"
+  },
+  "binary": {
+    "headless": "c334aae122661a235af1fd13c8028819a42e8e479f7dd4604fe160f399ee0816",
+    "headed": "4400a7c1eacf0a1fe9a57354199f53936321d5034f2683294604db9f97459d31"
+  },
+  "content": {
+    "tanner_if": 679,
+    "soft_tan_all": 8686,
+    "hard_tan_all": 8690,
+    "pack_274": "679=tanner; 8686=tanner:com_93; 8690=tanner:com_98",
+    "pack_289": "679=tanner",
+    "npc_ops_both": "op1=Talk-to; op3=Trade; moverestrict=indoors",
+    "rs2_both": "[opnpc3,tanner] -> if_openmain(tanner)"
+  }
+}

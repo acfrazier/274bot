@@ -39032,5 +39032,1463 @@
     },
     "actual_tanner_widget": null,
     "scope": "Count-dialog progress only; no tanning or full bank-cycle acceptance."
+  },
+  {
+    "host_commit": "28d97f38f01b854b6a3c62fdd09c40caf29fcf99",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "coal_trucks",
+    "exit_code": 1,
+    "elapsed_seconds": 24.419,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-coal-trucks-100adccc-28d97f38.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-coal-trucks-100adccc-28d97f38.log",
+    "outcome": "FAIL",
+    "failure_excerpt": "FAIL: catalog_boundary_live: script error: tick 30: not impl: Tools.bestPickaxe",
+    "failure_class": "missing_adapter_Tools_bestPickaxe",
+    "missing_operation": "Tools.bestPickaxe",
+    "baseline": {
+      "ingame": true,
+      "scene_state": 2,
+      "player": "Liveasw4ou 0",
+      "tile": [
+        2582,
+        3481,
+        0
+      ],
+      "tick": 15,
+      "items": {
+        "Steel pickaxe": 1
+      },
+      "item_ids": {
+        "1269": 1
+      },
+      "bank": {},
+      "bank_ids": {},
+      "bank_open": false,
+      "bank_loaded": false,
+      "bank_generation": 0,
+      "levels": {
+        "-unused-": 0,
+        "agility": 1,
+        "attack": 1,
+        "cooking": 1,
+        "crafting": 1,
+        "defence": 1,
+        "firemaking": 1,
+        "fishing": 1,
+        "fletching": 1,
+        "herblore": 1,
+        "hitpoints": 10,
+        "magic": 1,
+        "mining": 30,
+        "prayer": 1,
+        "ranged": 1,
+        "runecraft": 1,
+        "slayer": 1,
+        "smithing": 1,
+        "strength": 1,
+        "thieving": 1,
+        "woodcutting": 1
+      },
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 4,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 1155,
+        "magic": 0,
+        "mining": 13363,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 0
+      },
+      "chat": [
+        [
+          7,
+          "Inventory wiped."
+        ],
+        [
+          6,
+          "set tutorial: to 1000"
+        ],
+        [
+          5,
+          "Welcome to RuneScape."
+        ]
+      ],
+      "loc_facts": [],
+      "equipment_ids": {},
+      "main_modal": -1,
+      "widget_ids": [
+        3213,
+        3214
+      ]
+    },
+    "build_provenance": "3520 exact source blobs and isolated binary verified.",
+    "scope": "No script core accepted. Newer catalog family gated after first old-catalog failure; full supported branches/frontend acceptance remains pending."
+  },
+  {
+    "host_commit": "28d97f38f01b854b6a3c62fdd09c40caf29fcf99",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "gnome_chop",
+    "exit_code": 1,
+    "elapsed_seconds": 27.983,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-gnome-chop-100adccc-28d97f38.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-gnome-chop-100adccc-28d97f38.log",
+    "outcome": "FAIL",
+    "failure_excerpt": "FAIL: catalog_boundary_live: script error: tick 35: not impl: Traversal.preload",
+    "failure_class": "missing_adapter_Traversal_preload",
+    "missing_operation": "Traversal.preload",
+    "baseline": {
+      "ingame": true,
+      "scene_state": 2,
+      "player": "Live2frq4z 0",
+      "tile": [
+        2372,
+        3425,
+        0
+      ],
+      "tick": 21,
+      "items": {
+        "Steel axe": 1
+      },
+      "item_ids": {
+        "1353": 1
+      },
+      "bank": {},
+      "bank_ids": {},
+      "bank_open": false,
+      "bank_loaded": false,
+      "bank_generation": 0,
+      "levels": {
+        "-unused-": 0,
+        "agility": 1,
+        "attack": 1,
+        "cooking": 1,
+        "crafting": 1,
+        "defence": 1,
+        "firemaking": 1,
+        "fishing": 1,
+        "fletching": 1,
+        "herblore": 1,
+        "hitpoints": 10,
+        "magic": 1,
+        "mining": 1,
+        "prayer": 1,
+        "ranged": 1,
+        "runecraft": 1,
+        "slayer": 1,
+        "smithing": 1,
+        "strength": 1,
+        "thieving": 1,
+        "woodcutting": 75
+      },
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 1210421
+      },
+      "chat": [
+        [
+          7,
+          "Inventory wiped."
+        ],
+        [
+          6,
+          "set tutorial: to 1000"
+        ],
+        [
+          5,
+          "Welcome to RuneScape."
+        ]
+      ],
+      "loc_facts": [
+        {
+          "id": 1553,
+          "x": 2380,
+          "z": 3425,
+          "level": 0,
+          "name": "Gate",
+          "open": true
+        }
+      ],
+      "equipment_ids": {},
+      "main_modal": -1,
+      "widget_ids": [
+        3213,
+        3214
+      ]
+    },
+    "build_provenance": "3520 exact source blobs and isolated binary verified.",
+    "scope": "No script core accepted. Newer catalog family gated after first old-catalog failure; full supported branches/frontend acceptance remains pending."
+  },
+  {
+    "host_commit": "28d97f38f01b854b6a3c62fdd09c40caf29fcf99",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "gnome_fletch_long",
+    "exit_code": 1,
+    "elapsed_seconds": 29.783,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-gnome-fletch-long-100adccc-28d97f38.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-gnome-fletch-long-100adccc-28d97f38.log",
+    "outcome": "FAIL",
+    "failure_excerpt": "FAIL: catalog_boundary_live: script error: tick 38: not impl: Traversal.preload",
+    "failure_class": "missing_adapter_Traversal_preload",
+    "missing_operation": "Traversal.preload",
+    "baseline": {
+      "ingame": true,
+      "scene_state": 2,
+      "player": "Livetr6m6a 0",
+      "tile": [
+        2372,
+        3425,
+        0
+      ],
+      "tick": 24,
+      "items": {
+        "Knife": 1,
+        "Steel axe": 1
+      },
+      "item_ids": {
+        "946": 1,
+        "1353": 1
+      },
+      "bank": {},
+      "bank_ids": {},
+      "bank_open": false,
+      "bank_loaded": false,
+      "bank_generation": 0,
+      "levels": {
+        "-unused-": 0,
+        "agility": 1,
+        "attack": 1,
+        "cooking": 1,
+        "crafting": 1,
+        "defence": 1,
+        "firemaking": 1,
+        "fishing": 1,
+        "fletching": 85,
+        "herblore": 1,
+        "hitpoints": 10,
+        "magic": 1,
+        "mining": 1,
+        "prayer": 1,
+        "ranged": 1,
+        "runecraft": 1,
+        "slayer": 1,
+        "smithing": 1,
+        "strength": 1,
+        "thieving": 1,
+        "woodcutting": 75
+      },
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 3258594,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 1210421
+      },
+      "chat": [
+        [
+          7,
+          "Inventory wiped."
+        ],
+        [
+          6,
+          "set tutorial: to 1000"
+        ],
+        [
+          5,
+          "Welcome to RuneScape."
+        ]
+      ],
+      "loc_facts": [
+        {
+          "id": 1553,
+          "x": 2380,
+          "z": 3425,
+          "level": 0,
+          "name": "Gate",
+          "open": true
+        }
+      ],
+      "equipment_ids": {},
+      "main_modal": -1,
+      "widget_ids": [
+        3213,
+        3214
+      ]
+    },
+    "build_provenance": "3520 exact source blobs and isolated binary verified.",
+    "scope": "No script core accepted. Newer catalog family gated after first old-catalog failure; full supported branches/frontend acceptance remains pending."
+  },
+  {
+    "host_commit": "28d97f38f01b854b6a3c62fdd09c40caf29fcf99",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "gnome_fletch_short",
+    "exit_code": 1,
+    "elapsed_seconds": 26.834,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-gnome-fletch-short-100adccc-28d97f38.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-gnome-fletch-short-100adccc-28d97f38.log",
+    "outcome": "FAIL",
+    "failure_excerpt": "FAIL: catalog_boundary_live: script error: tick 34: not impl: Traversal.preload",
+    "failure_class": "missing_adapter_Traversal_preload",
+    "missing_operation": "Traversal.preload",
+    "baseline": {
+      "ingame": true,
+      "scene_state": 2,
+      "player": "Liveheypok 0",
+      "tile": [
+        2372,
+        3425,
+        0
+      ],
+      "tick": 20,
+      "items": {
+        "Knife": 1,
+        "Steel axe": 1
+      },
+      "item_ids": {
+        "946": 1,
+        "1353": 1
+      },
+      "bank": {},
+      "bank_ids": {},
+      "bank_open": false,
+      "bank_loaded": false,
+      "bank_generation": 0,
+      "levels": {
+        "-unused-": 0,
+        "agility": 1,
+        "attack": 1,
+        "cooking": 1,
+        "crafting": 1,
+        "defence": 1,
+        "firemaking": 1,
+        "fishing": 1,
+        "fletching": 80,
+        "herblore": 1,
+        "hitpoints": 10,
+        "magic": 1,
+        "mining": 1,
+        "prayer": 1,
+        "ranged": 1,
+        "runecraft": 1,
+        "slayer": 1,
+        "smithing": 1,
+        "strength": 1,
+        "thieving": 1,
+        "woodcutting": 75
+      },
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 1986068,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 1210421
+      },
+      "chat": [
+        [
+          7,
+          "Inventory wiped."
+        ],
+        [
+          6,
+          "set tutorial: to 1000"
+        ],
+        [
+          5,
+          "Welcome to RuneScape."
+        ]
+      ],
+      "loc_facts": [
+        {
+          "id": 1553,
+          "x": 2380,
+          "z": 3425,
+          "level": 0,
+          "name": "Gate",
+          "open": true
+        }
+      ],
+      "equipment_ids": {},
+      "main_modal": -1,
+      "widget_ids": [
+        3213,
+        3214
+      ]
+    },
+    "build_provenance": "3520 exact source blobs and isolated binary verified.",
+    "scope": "No script core accepted. Newer catalog family gated after first old-catalog failure; full supported branches/frontend acceptance remains pending."
+  },
+  {
+    "host_commit": "28d97f38f01b854b6a3c62fdd09c40caf29fcf99",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "mule_crafter",
+    "exit_code": 1,
+    "elapsed_seconds": 34.501,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-mule-crafter-100adccc-28d97f38.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-mule-crafter-100adccc-28d97f38.log",
+    "outcome": "FAIL",
+    "failure_excerpt": "FAIL: catalog_boundary_live: script error: tick 46: not impl: reader.inventory",
+    "failure_class": "missing_adapter_reader_inventory",
+    "missing_operation": "reader.inventory",
+    "baseline": {
+      "ingame": true,
+      "scene_state": 2,
+      "player": "Livepyq8lf 0",
+      "tile": [
+        3012,
+        3355,
+        0
+      ],
+      "tick": 32,
+      "items": {},
+      "item_ids": {},
+      "bank": {},
+      "bank_ids": {},
+      "bank_open": false,
+      "bank_loaded": false,
+      "bank_generation": 2,
+      "levels": {
+        "-unused-": 0,
+        "agility": 1,
+        "attack": 1,
+        "cooking": 1,
+        "crafting": 1,
+        "defence": 1,
+        "firemaking": 1,
+        "fishing": 1,
+        "fletching": 1,
+        "herblore": 1,
+        "hitpoints": 10,
+        "magic": 1,
+        "mining": 1,
+        "prayer": 1,
+        "ranged": 1,
+        "runecraft": 1,
+        "slayer": 1,
+        "smithing": 1,
+        "strength": 1,
+        "thieving": 1,
+        "woodcutting": 1
+      },
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 0
+      },
+      "chat": [
+        [
+          7,
+          "Inventory wiped."
+        ],
+        [
+          6,
+          "set tutorial: to 1000"
+        ],
+        [
+          5,
+          "Welcome to RuneScape."
+        ]
+      ],
+      "loc_facts": [],
+      "equipment_ids": {},
+      "main_modal": -1,
+      "widget_ids": [
+        3213,
+        3214
+      ]
+    },
+    "build_provenance": "3520 exact source blobs and isolated binary verified.",
+    "scope": "No script core accepted. Newer catalog family gated after first old-catalog failure; full supported branches/frontend acceptance remains pending."
+  },
+  {
+    "host_commit": "28d97f38f01b854b6a3c62fdd09c40caf29fcf99",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "coal_trucks",
+    "exit_code": 1,
+    "elapsed_seconds": 28.659,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-coal-trucks-100adccc-28d97f38.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-coal-trucks-100adccc-28d97f38.log",
+    "outcome": "FAIL",
+    "failure_excerpt": "FAIL: catalog_boundary_live: script error: tick 34: not impl: Tools.bestPickaxe",
+    "failure_class": "missing_adapter_Tools_bestPickaxe",
+    "missing_operation": "Tools.bestPickaxe",
+    "baseline": {
+      "ingame": true,
+      "scene_state": 2,
+      "player": "Livei7o10w 0",
+      "tile": [
+        2582,
+        3481,
+        0
+      ],
+      "tick": 20,
+      "items": {
+        "Steel pickaxe": 1
+      },
+      "item_ids": {
+        "1269": 1
+      },
+      "bank": {},
+      "bank_ids": {},
+      "bank_open": false,
+      "bank_loaded": false,
+      "bank_generation": 0,
+      "levels": {
+        "-unused-": 0,
+        "agility": 1,
+        "attack": 1,
+        "cooking": 1,
+        "crafting": 1,
+        "defence": 1,
+        "firemaking": 1,
+        "fishing": 1,
+        "fletching": 1,
+        "herblore": 1,
+        "hitpoints": 10,
+        "magic": 1,
+        "mining": 30,
+        "prayer": 1,
+        "ranged": 1,
+        "runecraft": 1,
+        "slayer": 1,
+        "smithing": 1,
+        "strength": 1,
+        "thieving": 1,
+        "woodcutting": 1
+      },
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 0,
+        "mining": 13363,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 0
+      },
+      "chat": [
+        [
+          7,
+          "Inventory wiped."
+        ],
+        [
+          6,
+          "set tutorial: to 1000"
+        ],
+        [
+          5,
+          "Welcome to RuneScape."
+        ]
+      ],
+      "loc_facts": [],
+      "equipment_ids": {},
+      "main_modal": -1,
+      "widget_ids": [
+        3213,
+        3214
+      ]
+    },
+    "build_provenance": "3520 exact source blobs and isolated binary verified.",
+    "scope": "No script core accepted. Newer catalog family gated after first old-catalog failure; full supported branches/frontend acceptance remains pending."
+  },
+  {
+    "host_commit": "28d97f38f01b854b6a3c62fdd09c40caf29fcf99",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "gnome_chop",
+    "exit_code": 1,
+    "elapsed_seconds": 27.931,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-gnome-chop-100adccc-28d97f38.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-gnome-chop-100adccc-28d97f38.log",
+    "outcome": "FAIL",
+    "failure_excerpt": "FAIL: catalog_boundary_live: script error: tick 33: not impl: Traversal.preload",
+    "failure_class": "missing_adapter_Traversal_preload",
+    "missing_operation": "Traversal.preload",
+    "baseline": {
+      "ingame": true,
+      "scene_state": 2,
+      "player": "Livek9tknz 0",
+      "tile": [
+        2372,
+        3425,
+        0
+      ],
+      "tick": 21,
+      "items": {
+        "Steel axe": 1
+      },
+      "item_ids": {
+        "1353": 1
+      },
+      "bank": {},
+      "bank_ids": {},
+      "bank_open": false,
+      "bank_loaded": false,
+      "bank_generation": 0,
+      "levels": {
+        "-unused-": 0,
+        "agility": 1,
+        "attack": 1,
+        "cooking": 1,
+        "crafting": 1,
+        "defence": 1,
+        "firemaking": 1,
+        "fishing": 1,
+        "fletching": 1,
+        "herblore": 1,
+        "hitpoints": 10,
+        "magic": 1,
+        "mining": 1,
+        "prayer": 1,
+        "ranged": 1,
+        "runecraft": 1,
+        "slayer": 1,
+        "smithing": 1,
+        "strength": 1,
+        "thieving": 1,
+        "woodcutting": 75
+      },
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 1210421
+      },
+      "chat": [
+        [
+          7,
+          "Inventory wiped."
+        ],
+        [
+          6,
+          "set tutorial: to 1000"
+        ],
+        [
+          5,
+          "Welcome to RuneScape."
+        ]
+      ],
+      "loc_facts": [
+        {
+          "id": 1553,
+          "x": 2380,
+          "z": 3425,
+          "level": 0,
+          "name": "Gate",
+          "open": true
+        }
+      ],
+      "equipment_ids": {},
+      "main_modal": -1,
+      "widget_ids": [
+        3213,
+        3214
+      ]
+    },
+    "build_provenance": "3520 exact source blobs and isolated binary verified.",
+    "scope": "No script core accepted. Newer catalog family gated after first old-catalog failure; full supported branches/frontend acceptance remains pending."
+  },
+  {
+    "host_commit": "28d97f38f01b854b6a3c62fdd09c40caf29fcf99",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "gnome_fletch_long",
+    "exit_code": 1,
+    "elapsed_seconds": 28.652,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-gnome-fletch-long-100adccc-28d97f38.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-gnome-fletch-long-100adccc-28d97f38.log",
+    "outcome": "FAIL",
+    "failure_excerpt": "FAIL: catalog_boundary_live: script error: tick 34: not impl: Traversal.preload",
+    "failure_class": "missing_adapter_Traversal_preload",
+    "missing_operation": "Traversal.preload",
+    "baseline": {
+      "ingame": true,
+      "scene_state": 2,
+      "player": "Live1lk1x7 0",
+      "tile": [
+        2372,
+        3425,
+        0
+      ],
+      "tick": 20,
+      "items": {
+        "Knife": 1,
+        "Steel axe": 1
+      },
+      "item_ids": {
+        "946": 1,
+        "1353": 1
+      },
+      "bank": {},
+      "bank_ids": {},
+      "bank_open": false,
+      "bank_loaded": false,
+      "bank_generation": 0,
+      "levels": {
+        "-unused-": 0,
+        "agility": 1,
+        "attack": 1,
+        "cooking": 1,
+        "crafting": 1,
+        "defence": 1,
+        "firemaking": 1,
+        "fishing": 1,
+        "fletching": 85,
+        "herblore": 1,
+        "hitpoints": 10,
+        "magic": 1,
+        "mining": 1,
+        "prayer": 1,
+        "ranged": 1,
+        "runecraft": 1,
+        "slayer": 1,
+        "smithing": 1,
+        "strength": 1,
+        "thieving": 1,
+        "woodcutting": 75
+      },
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 3258594,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 1210421
+      },
+      "chat": [
+        [
+          7,
+          "Inventory wiped."
+        ],
+        [
+          6,
+          "set tutorial: to 1000"
+        ],
+        [
+          5,
+          "Welcome to RuneScape."
+        ]
+      ],
+      "loc_facts": [
+        {
+          "id": 1553,
+          "x": 2380,
+          "z": 3425,
+          "level": 0,
+          "name": "Gate",
+          "open": true
+        }
+      ],
+      "equipment_ids": {},
+      "main_modal": -1,
+      "widget_ids": [
+        3213,
+        3214
+      ]
+    },
+    "build_provenance": "3520 exact source blobs and isolated binary verified.",
+    "scope": "No script core accepted. Newer catalog family gated after first old-catalog failure; full supported branches/frontend acceptance remains pending."
+  },
+  {
+    "host_commit": "28d97f38f01b854b6a3c62fdd09c40caf29fcf99",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "gnome_fletch_short",
+    "exit_code": 1,
+    "elapsed_seconds": 30.449,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-gnome-fletch-short-100adccc-28d97f38.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-gnome-fletch-short-100adccc-28d97f38.log",
+    "outcome": "FAIL",
+    "failure_excerpt": "FAIL: catalog_boundary_live: script error: tick 37: not impl: Traversal.preload",
+    "failure_class": "missing_adapter_Traversal_preload",
+    "missing_operation": "Traversal.preload",
+    "baseline": {
+      "ingame": true,
+      "scene_state": 2,
+      "player": "Lived79j8q 0",
+      "tile": [
+        2372,
+        3425,
+        0
+      ],
+      "tick": 23,
+      "items": {
+        "Knife": 1,
+        "Steel axe": 1
+      },
+      "item_ids": {
+        "946": 1,
+        "1353": 1
+      },
+      "bank": {},
+      "bank_ids": {},
+      "bank_open": false,
+      "bank_loaded": false,
+      "bank_generation": 0,
+      "levels": {
+        "-unused-": 0,
+        "agility": 1,
+        "attack": 1,
+        "cooking": 1,
+        "crafting": 1,
+        "defence": 1,
+        "firemaking": 1,
+        "fishing": 1,
+        "fletching": 80,
+        "herblore": 1,
+        "hitpoints": 10,
+        "magic": 1,
+        "mining": 1,
+        "prayer": 1,
+        "ranged": 1,
+        "runecraft": 1,
+        "slayer": 1,
+        "smithing": 1,
+        "strength": 1,
+        "thieving": 1,
+        "woodcutting": 75
+      },
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 1986068,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 1210421
+      },
+      "chat": [
+        [
+          7,
+          "Inventory wiped."
+        ],
+        [
+          6,
+          "set tutorial: to 1000"
+        ],
+        [
+          5,
+          "Welcome to RuneScape."
+        ]
+      ],
+      "loc_facts": [
+        {
+          "id": 1553,
+          "x": 2380,
+          "z": 3425,
+          "level": 0,
+          "name": "Gate",
+          "open": true
+        }
+      ],
+      "equipment_ids": {},
+      "main_modal": -1,
+      "widget_ids": [
+        3213,
+        3214
+      ]
+    },
+    "build_provenance": "3520 exact source blobs and isolated binary verified.",
+    "scope": "No script core accepted. Newer catalog family gated after first old-catalog failure; full supported branches/frontend acceptance remains pending."
+  },
+  {
+    "host_commit": "28d97f38f01b854b6a3c62fdd09c40caf29fcf99",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "mule_crafter",
+    "exit_code": 1,
+    "elapsed_seconds": 38.009,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-mule-crafter-100adccc-28d97f38.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-mule-crafter-100adccc-28d97f38.log",
+    "outcome": "FAIL",
+    "failure_excerpt": "FAIL: catalog_boundary_live: script error: tick 45: not impl: reader.inventory",
+    "failure_class": "missing_adapter_reader_inventory",
+    "missing_operation": "reader.inventory",
+    "baseline": {
+      "ingame": true,
+      "scene_state": 2,
+      "player": "Live4y8mn8 0",
+      "tile": [
+        3012,
+        3355,
+        0
+      ],
+      "tick": 30,
+      "items": {},
+      "item_ids": {},
+      "bank": {},
+      "bank_ids": {},
+      "bank_open": false,
+      "bank_loaded": false,
+      "bank_generation": 2,
+      "levels": {
+        "-unused-": 0,
+        "agility": 1,
+        "attack": 1,
+        "cooking": 1,
+        "crafting": 1,
+        "defence": 1,
+        "firemaking": 1,
+        "fishing": 1,
+        "fletching": 1,
+        "herblore": 1,
+        "hitpoints": 10,
+        "magic": 1,
+        "mining": 1,
+        "prayer": 1,
+        "ranged": 1,
+        "runecraft": 1,
+        "slayer": 1,
+        "smithing": 1,
+        "strength": 1,
+        "thieving": 1,
+        "woodcutting": 1
+      },
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 0
+      },
+      "chat": [
+        [
+          7,
+          "Inventory wiped."
+        ],
+        [
+          6,
+          "set tutorial: to 1000"
+        ],
+        [
+          5,
+          "Welcome to RuneScape."
+        ]
+      ],
+      "loc_facts": [],
+      "equipment_ids": {},
+      "main_modal": -1,
+      "widget_ids": [
+        3213,
+        3214
+      ]
+    },
+    "build_provenance": "3520 exact source blobs and isolated binary verified.",
+    "scope": "No script core accepted. Newer catalog family gated after first old-catalog failure; full supported branches/frontend acceptance remains pending."
+  },
+  {
+    "host_commit": "7c2eef6eb8db6b01933c333aa64cf5f68169d8d2",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "revision": 274,
+    "exit_code": 1,
+    "elapsed_seconds": 186.048,
+    "receipt": "docs/compat/evidence/paired-catalog-fixtures/live/r274-air-100adccc-7c2eef6e.json",
+    "log": "docs/compat/evidence/paired-catalog-fixtures/live/r274-air-100adccc-7c2eef6e.log",
+    "outcome": "FAIL",
+    "case": "nature_crafter_air_pair",
+    "failure_excerpt": "FAIL: paired_catalog_air_live: preparation timeout; a_prep=Ready b_prep=WaitAck a_started=true b_started=false",
+    "starts": [
+      {
+        "phase": "start",
+        "account": "livexjql4i_0",
+        "kind": "air_master",
+        "settings": {
+          "rune": "Air runes",
+          "mode": "Master",
+          "partner": "Livexjql4i 1",
+          "bankEvery": 60.0,
+          "withdrawEss": 0.0,
+          "withdrawCoins": 10000.0,
+          "stayInAltar": false
+        }
+      }
+    ],
+    "baselines": [
+      {
+        "phase": "baseline-after-preparation",
+        "account": "livexjql4i_0",
+        "role": "master",
+        "seeded_first_supplies": false,
+        "observation": {
+          "ingame": true,
+          "scene_state": 2,
+          "inventory_tab_available": true,
+          "player": "Livexjql4i 0",
+          "tile": [
+            2983,
+            3288,
+            0
+          ],
+          "tick": 6,
+          "runecraft": 1,
+          "runecraft_xp": 0,
+          "essence_unnoted": 0,
+          "essence_noted": 0,
+          "air_runes": 0,
+          "air_talisman": 1,
+          "bank_open": false,
+          "bank_loaded": false,
+          "bank_essence_unnoted": 0,
+          "trade_offer_open": false,
+          "trade_confirm_open": false,
+          "trade_partner": null,
+          "trade_accept_id": -1,
+          "trade_mine_essence": 0,
+          "trade_theirs_essence": 0,
+          "in_temple": false
+        }
+      }
+    ],
+    "build_provenance": "Exact7c committed source; source-verified root28 functional compiler cache reused, no independent empty-start claim.",
+    "scope": "Neither partial paired outcome nor full core accepted. Newer catalog gated after old-catalog failure.",
+    "failure_class": "fixture_bank_ack_at_ruins_and_missing_shared_start_barrier",
+    "diagnosis": "Runner teleported to Air ruins then attempted open_nearest_booth; Master started alone. Both-revision paired preparation failed; no two-script gameplay claim. Task103 owns correction."
+  },
+  {
+    "host_commit": "7c2eef6eb8db6b01933c333aa64cf5f68169d8d2",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "revision": 274,
+    "exit_code": 1,
+    "elapsed_seconds": 18.036,
+    "receipt": "docs/compat/evidence/paired-catalog-fixtures/live/r274-duel-100adccc-7c2eef6e.json",
+    "log": "docs/compat/evidence/paired-catalog-fixtures/live/r274-duel-100adccc-7c2eef6e.log",
+    "outcome": "FAIL",
+    "case": "duel_arena_pair",
+    "failure_excerpt": "FAIL: paired_catalog_duel_live: script error on liveu35qcr_0: tick 19: not impl: BotHost.addTickListener",
+    "starts": [
+      {
+        "phase": "start",
+        "account": "liveu35qcr_0",
+        "kind": "duel",
+        "settings": {
+          "targetAttack": 99.0,
+          "targetStrength": 99.0,
+          "targetDefence": 1.0
+        }
+      },
+      {
+        "phase": "start",
+        "account": "liveu35qcr_1",
+        "kind": "duel",
+        "settings": {
+          "targetAttack": 99.0,
+          "targetStrength": 99.0,
+          "targetDefence": 1.0
+        }
+      }
+    ],
+    "baselines": [
+      {
+        "phase": "baseline-after-preparation",
+        "account": "liveu35qcr_0",
+        "observation": {
+          "ingame": true,
+          "scene_state": 2,
+          "inventory_tab_available": true,
+          "player": "Liveu35qcr 0",
+          "tile": [
+            3368,
+            3274,
+            0
+          ],
+          "tick": 11,
+          "attack_xp": 0,
+          "strength_xp": 0,
+          "defence_xp": 0,
+          "hitpoints_xp": 1154,
+          "in_combat": false,
+          "in_challenge_area": true,
+          "in_fight_pen": false,
+          "main_modal": -1,
+          "duel_offer_open": false,
+          "duel_confirm_open": false,
+          "duel_win_open": false,
+          "duel_partner": null,
+          "waiting_for_other": false,
+          "weapon_equipped": true,
+          "peer_visible": true
+        }
+      },
+      {
+        "phase": "baseline-after-preparation",
+        "account": "liveu35qcr_1",
+        "observation": {
+          "ingame": true,
+          "scene_state": 2,
+          "inventory_tab_available": true,
+          "player": "Liveu35qcr 1",
+          "tile": [
+            3368,
+            3274,
+            0
+          ],
+          "tick": 12,
+          "attack_xp": 0,
+          "strength_xp": 0,
+          "defence_xp": 0,
+          "hitpoints_xp": 1154,
+          "in_combat": false,
+          "in_challenge_area": true,
+          "in_fight_pen": false,
+          "main_modal": -1,
+          "duel_offer_open": false,
+          "duel_confirm_open": false,
+          "duel_win_open": false,
+          "duel_partner": null,
+          "waiting_for_other": false,
+          "weapon_equipped": true,
+          "peer_visible": true
+        }
+      }
+    ],
+    "build_provenance": "Exact7c committed source; source-verified root28 functional compiler cache reused, no independent empty-start claim.",
+    "scope": "Neither partial paired outcome nor full core accepted. Newer catalog gated after old-catalog failure.",
+    "failure_class": "missing_adapter_BotHost_addTickListener",
+    "diagnosis": "Two prepared actual Duel scripts reached Start; required native tick callback mapping absent. Task104 designs lifecycle-safe adapter; no duel/combat acceptance."
+  },
+  {
+    "host_commit": "7c2eef6eb8db6b01933c333aa64cf5f68169d8d2",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "revision": 289,
+    "exit_code": 1,
+    "elapsed_seconds": 185.977,
+    "receipt": "docs/compat/evidence/paired-catalog-fixtures/live/r289-air-100adccc-7c2eef6e.json",
+    "log": "docs/compat/evidence/paired-catalog-fixtures/live/r289-air-100adccc-7c2eef6e.log",
+    "outcome": "FAIL",
+    "case": "nature_crafter_air_pair",
+    "failure_excerpt": "FAIL: paired_catalog_air_live: preparation timeout; a_prep=Ready b_prep=WaitAck a_started=true b_started=false",
+    "starts": [
+      {
+        "phase": "start",
+        "account": "livemafh4a_0",
+        "kind": "air_master",
+        "settings": {
+          "rune": "Air runes",
+          "mode": "Master",
+          "partner": "Livemafh4a 1",
+          "bankEvery": 60.0,
+          "withdrawEss": 0.0,
+          "withdrawCoins": 10000.0,
+          "stayInAltar": false
+        }
+      }
+    ],
+    "baselines": [
+      {
+        "phase": "baseline-after-preparation",
+        "account": "livemafh4a_0",
+        "role": "master",
+        "seeded_first_supplies": false,
+        "observation": {
+          "ingame": true,
+          "scene_state": 2,
+          "inventory_tab_available": true,
+          "player": "Livemafh4a 0",
+          "tile": [
+            2983,
+            3288,
+            0
+          ],
+          "tick": 9,
+          "runecraft": 1,
+          "runecraft_xp": 0,
+          "essence_unnoted": 0,
+          "essence_noted": 0,
+          "air_runes": 0,
+          "air_talisman": 1,
+          "bank_open": false,
+          "bank_loaded": false,
+          "bank_essence_unnoted": 0,
+          "trade_offer_open": false,
+          "trade_confirm_open": false,
+          "trade_partner": null,
+          "trade_accept_id": -1,
+          "trade_mine_essence": 0,
+          "trade_theirs_essence": 0,
+          "in_temple": false
+        }
+      }
+    ],
+    "build_provenance": "Exact7c committed source; source-verified root28 functional compiler cache reused, no independent empty-start claim.",
+    "scope": "Neither partial paired outcome nor full core accepted. Newer catalog gated after old-catalog failure.",
+    "failure_class": "fixture_bank_ack_at_ruins_and_missing_shared_start_barrier",
+    "diagnosis": "Runner teleported to Air ruins then attempted open_nearest_booth; Master started alone. Both-revision paired preparation failed; no two-script gameplay claim. Task103 owns correction."
+  },
+  {
+    "host_commit": "7c2eef6eb8db6b01933c333aa64cf5f68169d8d2",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "revision": 289,
+    "exit_code": 1,
+    "elapsed_seconds": 18.745,
+    "receipt": "docs/compat/evidence/paired-catalog-fixtures/live/r289-duel-100adccc-7c2eef6e.json",
+    "log": "docs/compat/evidence/paired-catalog-fixtures/live/r289-duel-100adccc-7c2eef6e.log",
+    "outcome": "FAIL",
+    "case": "duel_arena_pair",
+    "failure_excerpt": "FAIL: paired_catalog_duel_live: script error on livekww5ii_1: tick 17: not impl: BotHost.addTickListener",
+    "starts": [
+      {
+        "phase": "start",
+        "account": "livekww5ii_1",
+        "kind": "duel",
+        "settings": {
+          "targetAttack": 99.0,
+          "targetStrength": 99.0,
+          "targetDefence": 1.0
+        }
+      },
+      {
+        "phase": "start",
+        "account": "livekww5ii_0",
+        "kind": "duel",
+        "settings": {
+          "targetAttack": 99.0,
+          "targetStrength": 99.0,
+          "targetDefence": 1.0
+        }
+      }
+    ],
+    "baselines": [
+      {
+        "phase": "baseline-after-preparation",
+        "account": "livekww5ii_1",
+        "observation": {
+          "ingame": true,
+          "scene_state": 2,
+          "inventory_tab_available": true,
+          "player": "Livekww5ii 1",
+          "tile": [
+            3368,
+            3274,
+            0
+          ],
+          "tick": 10,
+          "attack_xp": 0,
+          "strength_xp": 0,
+          "defence_xp": 0,
+          "hitpoints_xp": 1154,
+          "in_combat": false,
+          "in_challenge_area": true,
+          "in_fight_pen": false,
+          "main_modal": -1,
+          "duel_offer_open": false,
+          "duel_confirm_open": false,
+          "duel_win_open": false,
+          "duel_partner": null,
+          "waiting_for_other": false,
+          "weapon_equipped": true,
+          "peer_visible": true
+        }
+      },
+      {
+        "phase": "baseline-after-preparation",
+        "account": "livekww5ii_0",
+        "observation": {
+          "ingame": true,
+          "scene_state": 2,
+          "inventory_tab_available": true,
+          "player": "Livekww5ii 0",
+          "tile": [
+            3368,
+            3274,
+            0
+          ],
+          "tick": 11,
+          "attack_xp": 0,
+          "strength_xp": 0,
+          "defence_xp": 0,
+          "hitpoints_xp": 1154,
+          "in_combat": false,
+          "in_challenge_area": true,
+          "in_fight_pen": false,
+          "main_modal": -1,
+          "duel_offer_open": false,
+          "duel_confirm_open": false,
+          "duel_win_open": false,
+          "duel_partner": null,
+          "waiting_for_other": false,
+          "weapon_equipped": true,
+          "peer_visible": true
+        }
+      }
+    ],
+    "build_provenance": "Exact7c committed source; source-verified root28 functional compiler cache reused, no independent empty-start claim.",
+    "scope": "Neither partial paired outcome nor full core accepted. Newer catalog gated after old-catalog failure.",
+    "failure_class": "missing_adapter_BotHost_addTickListener",
+    "diagnosis": "Two prepared actual Duel scripts reached Start; required native tick callback mapping absent. Task104 designs lifecycle-safe adapter; no duel/combat acceptance."
   }
 ]
