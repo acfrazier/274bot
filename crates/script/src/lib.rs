@@ -63,6 +63,8 @@ mod bank_withdraw;
 mod death_recovery;
 #[cfg(feature = "load")]
 mod periodic_bank;
+#[cfg(feature = "load")]
+mod special;
 
 #[cfg(feature = "memory-profile")]
 pub mod memory_profile;

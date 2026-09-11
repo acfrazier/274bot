@@ -675,6 +675,17 @@ pub(crate) fn content_json(
                 })
             })
         }),
+        "special": game_data.and_then(|data| {
+            data.special_controls().map(|controls| {
+                serde_json::json!({
+                    "energy_varp": controls.energy_varp,
+                    "armed_varp": controls.armed_varp,
+                    "armed_value": controls.armed_value,
+                    "max_energy": controls.max_energy,
+                    "arm_confirm_ticks": controls.arm_confirm_ticks,
+                })
+            })
+        }),
     })
     .to_string()
 }

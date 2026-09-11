@@ -30,8 +30,15 @@
         "select_status": 6684,
         "confirm_status": 6571
       },
-      "bytes": 1385582,
-      "sha256": "d310498c02aff231d4bd3a45095c9bb5d89007f899ada70f7b02863410b322c1",
+      "special": {
+        "energy_varp": 300,
+        "armed_varp": 301,
+        "max_energy": 1000,
+        "bars": 14,
+        "weapons": 12
+      },
+      "bytes": 1388949,
+      "sha256": "6ca4c04acd7f12f635b99c044009d24d0af09d1d23afb709e8f0e6ca5a634232",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -98,6 +105,11 @@
           "sha256": "76bc70a53a37f2ccceb1a745f732407a86337f35c5055237d386b1b5cb5c646f"
         },
         {
+          "path": "scripts/skill_combat/configs/combat.constant",
+          "bytes": 90,
+          "sha256": "7ee4903db1bd8fae92d173eb1126707d2d2f2e77e9dc64803161c0c980e6fd64"
+        },
+        {
           "path": "pack/interface.pack",
           "bytes": 286718,
           "sha256": "74f8c9d15bcf4c519a709a92a756450eb1d617d493eec50b8439f8d12b4aae00"
@@ -106,6 +118,11 @@
           "path": "pack/varp.pack",
           "bytes": 6016,
           "sha256": "be5d9b325d1e26c06c2643a63d796a922acc1f4dde38f1090c0653ee833517d8"
+        },
+        {
+          "path": "pack/param.pack",
+          "bytes": 4626,
+          "sha256": "9cc4db0b4c58591ed335590e526327d1810373cef6ea697383f06f05e2edf36b"
         }
       ],
       "decoder_sources": [
@@ -224,8 +241,15 @@
         "select_status": 6684,
         "confirm_status": 6571
       },
-      "bytes": 1448078,
-      "sha256": "9e7336807bd8756d86dc52568eb009520696b1b3ba4ac7066b9c997c6ad8f380",
+      "special": {
+        "energy_varp": 300,
+        "armed_varp": 301,
+        "max_energy": 1000,
+        "bars": 14,
+        "weapons": 12
+      },
+      "bytes": 1451445,
+      "sha256": "f7c78bf2ac32b29c618cc5690c555495abd29f101d1e1eba7e382dc4b8f0422b",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
@@ -292,6 +316,11 @@
           "sha256": "76bc70a53a37f2ccceb1a745f732407a86337f35c5055237d386b1b5cb5c646f"
         },
         {
+          "path": "scripts/skill_combat/configs/combat.constant",
+          "bytes": 90,
+          "sha256": "7ee4903db1bd8fae92d173eb1126707d2d2f2e77e9dc64803161c0c980e6fd64"
+        },
+        {
           "path": "pack/interface.pack",
           "bytes": 318712,
           "sha256": "259f2c47f0e0b91807be1126c9a7cf66d39bc24efec8caf075c0a52805ec610a"
@@ -300,6 +329,11 @@
           "path": "pack/varp.pack",
           "bytes": 6665,
           "sha256": "22f75da703461b26797f5291d36e655302b3409e6454d9b0b1169869e15ef6ef"
+        },
+        {
+          "path": "pack/param.pack",
+          "bytes": 4698,
+          "sha256": "5000136e59d80917ded02dc94bbf8a129d3ae4339ae09e081bf23021ca74515b"
         }
       ],
       "decoder_sources": [

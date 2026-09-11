@@ -132,6 +132,64 @@ impl DuelControls {
     }
 }
 
+/// Packed combat-tab spec bar for one weapon interface root.
+#[derive(Debug, Deserialize, Clone)]
+pub struct SpecialBar {
+    pub root: String,
+    pub root_id: i32,
+    pub bar: i32,
+}
+
+/// Weapon that carries both `specwep` and a positive `sa_energy` cost.
+#[derive(Debug, Deserialize, Clone)]
+pub struct SpecialWeapon {
+    pub alias: String,
+    pub id: i32,
+    pub name: String,
+    pub cost: i32,
+}
+
+/// Packed special-attack varps, bars and weapon costs from the selected cache.
+#[derive(Debug, Deserialize, Clone)]
+pub struct SpecialControls {
+    pub energy_varp: i32,
+    pub armed_varp: i32,
+    pub armed_value: i32,
+    pub max_energy: i32,
+    pub arm_confirm_ticks: i32,
+    pub bars: Vec<SpecialBar>,
+    pub weapons: Vec<SpecialWeapon>,
+}
+
+impl SpecialControls {
+    pub fn available(&self) -> bool {
+        self.energy_varp >= 0
+            && self.armed_varp >= 0
+            && self.max_energy > 0
+            && self.arm_confirm_ticks > 0
+            && !self.bars.is_empty()
+            && !self.weapons.is_empty()
+    }
+
+    /// Energy cost for a display name, or `None` when the weapon has no special.
+    pub fn cost(&self, weapon_name: &str) -> Option<i32> {
+        let wanted = weapon_name.trim();
+        self.weapons
+            .iter()
+            .find(|weapon| weapon.name.eq_ignore_ascii_case(wanted))
+            .map(|weapon| weapon.cost)
+    }
+
+    /// Spec-bar component for a posted combat-tab root, or -1 when absent.
+    pub fn bar_for_root(&self, combat_tab_root: i32) -> i32 {
+        self.bars
+            .iter()
+            .find(|bar| bar.root_id == combat_tab_root)
+            .map(|bar| bar.bar)
+            .unwrap_or(-1)
+    }
+}
+
 /// One generated per-cast rune cost.
 #[derive(Debug, Deserialize, Clone)]
 pub struct SpellRune {
@@ -192,6 +250,8 @@ pub struct SelectedGameData {
     autocast: Option<AutocastControls>,
     #[serde(default)]
     duel: Option<DuelControls>,
+    #[serde(default)]
+    special: Option<SpecialControls>,
 }
 
 impl SelectedGameData {
@@ -288,6 +348,22 @@ impl SelectedGameData {
 
     pub fn duel_controls(&self) -> Option<&DuelControls> {
         self.duel.as_ref().filter(|controls| controls.available())
+    }
+
+    pub fn special_controls(&self) -> Option<&SpecialControls> {
+        self.special
+            .as_ref()
+            .filter(|controls| controls.available())
+    }
+
+    pub fn special_cost(&self, weapon_name: &str) -> Option<i32> {
+        self.special_controls()?.cost(weapon_name)
+    }
+
+    pub fn special_bar(&self, combat_tab_root: i32) -> i32 {
+        self.special_controls()
+            .map(|controls| controls.bar_for_root(combat_tab_root))
+            .unwrap_or(-1)
     }
 
     pub fn spell(&self, name: &str) -> Option<&SpellFact> {

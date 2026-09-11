@@ -68,6 +68,11 @@
         "sha256": "76bc70a53a37f2ccceb1a745f732407a86337f35c5055237d386b1b5cb5c646f"
       },
       {
+        "path": "scripts/skill_combat/configs/combat.constant",
+        "bytes": 90,
+        "sha256": "7ee4903db1bd8fae92d173eb1126707d2d2f2e77e9dc64803161c0c980e6fd64"
+      },
+      {
         "path": "pack/interface.pack",
         "bytes": 286718,
         "sha256": "74f8c9d15bcf4c519a709a92a756450eb1d617d493eec50b8439f8d12b4aae00"
@@ -76,6 +81,11 @@
         "path": "pack/varp.pack",
         "bytes": 6016,
         "sha256": "be5d9b325d1e26c06c2643a63d796a922acc1f4dde38f1090c0653ee833517d8"
+      },
+      {
+        "path": "pack/param.pack",
+        "bytes": 4626,
+        "sha256": "9cc4db0b4c58591ed335590e526327d1810373cef6ea697383f06f05e2edf36b"
       }
     ],
     "decoder_sources": [
@@ -58094,5 +58104,158 @@
     "select_partner": 6671,
     "select_status": 6684,
     "confirm_status": 6571
+  },
+  "special": {
+    "energy_varp": 300,
+    "armed_varp": 301,
+    "armed_value": 1,
+    "max_energy": 1000,
+    "arm_confirm_ticks": 2,
+    "bars": [
+      {
+        "root": "combat_blunt",
+        "root_id": 425,
+        "bar": 7462
+      },
+      {
+        "root": "combat_axe",
+        "root_id": 1698,
+        "bar": 7487
+      },
+      {
+        "root": "combat_crossbow",
+        "root_id": 1749,
+        "bar": 7512
+      },
+      {
+        "root": "combat_bow",
+        "root_id": 1764,
+        "bar": 7537
+      },
+      {
+        "root": "combat_stabsword",
+        "root_id": 2276,
+        "bar": 7562
+      },
+      {
+        "root": "combat_hacksword",
+        "root_id": 2423,
+        "bar": 7587
+      },
+      {
+        "root": "combat_spiked",
+        "root_id": 3796,
+        "bar": 7612
+      },
+      {
+        "root": "combat_thrown",
+        "root_id": 4446,
+        "bar": 7637
+      },
+      {
+        "root": "combat_spear",
+        "root_id": 4679,
+        "bar": 7662
+      },
+      {
+        "root": "combat_heavysword",
+        "root_id": 4705,
+        "bar": 7687
+      },
+      {
+        "root": "combat_pickaxe",
+        "root_id": 5570,
+        "bar": 7712
+      },
+      {
+        "root": "combat_unarmed",
+        "root_id": 5855,
+        "bar": 7737
+      },
+      {
+        "root": "combat_claw",
+        "root_id": 7762,
+        "bar": 7788
+      },
+      {
+        "root": "combat_polearm",
+        "root_id": 8460,
+        "bar": 8481
+      }
+    ],
+    "weapons": [
+      {
+        "alias": "rune_thrownaxe",
+        "id": 805,
+        "name": "Rune thrownaxe",
+        "cost": 100
+      },
+      {
+        "alias": "magic_longbow",
+        "id": 859,
+        "name": "Magic longbow",
+        "cost": 350
+      },
+      {
+        "alias": "magic_shortbow",
+        "id": 861,
+        "name": "Magic shortbow",
+        "cost": 350
+      },
+      {
+        "alias": "dragon_dagger",
+        "id": 1215,
+        "name": "Dragon dagger",
+        "cost": 250
+      },
+      {
+        "alias": "dragon_dagger_p",
+        "id": 1231,
+        "name": "Dragon dagger(p)",
+        "cost": 250
+      },
+      {
+        "alias": "dragon_spear",
+        "id": 1249,
+        "name": "Dragon spear",
+        "cost": 250
+      },
+      {
+        "alias": "dragon_spear_p",
+        "id": 1263,
+        "name": "Dragon spear(p)",
+        "cost": 250
+      },
+      {
+        "alias": "dragon_longsword",
+        "id": 1305,
+        "name": "Dragon longsword",
+        "cost": 250
+      },
+      {
+        "alias": "dragon_mace",
+        "id": 1434,
+        "name": "Dragon mace",
+        "cost": 250
+      },
+      {
+        "alias": "rune_claws",
+        "id": 3101,
+        "name": "Rune claws",
+        "cost": 250
+      },
+      {
+        "alias": "tbwt_dragon_spear_kp",
+        "id": 3176,
+        "name": "Dragon spear(kp)",
+        "cost": 250
+      },
+      {
+        "alias": "dragon_halberd",
+        "id": 3204,
+        "name": "Dragon halberd",
+        "cost": 300
+      }
+    ]
   }
 }

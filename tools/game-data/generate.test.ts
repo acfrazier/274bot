@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { extractFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, parsePack, parseRows } from './generate.ts';
+import { extractFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractSpecialControls, parsePack, parseRows } from './generate.ts';
 
 const rows = parseRows(`
 // repeated aliases and typed tuples
@@ -116,4 +116,28 @@ assert.equal(duel.select_partner, 6671);
 assert.equal(duel.select_status, 6684);
 assert.equal(duel.confirm_status, 6571);
 assert.equal(parsePack('328=combat_staff_2\n').get('combat_staff_2'), 328);
+fs.mkdirSync(path.join(content, 'scripts/skill_combat/configs'), { recursive: true });
+fs.appendFileSync(path.join(content, 'pack/interface.pack'), '425=combat_blunt\n7462=combat_blunt:specbar\n2423=combat_hacksword\n7587=combat_hacksword:specbar\n');
+fs.appendFileSync(path.join(content, 'pack/varp.pack'), '300=sa_energy\n301=sa_attack\n');
+fs.writeFileSync(path.join(content, 'pack/param.pack'), '136=specwep\n137=sa_energy\n');
+fs.writeFileSync(path.join(content, 'scripts/skill_combat/configs/combat.constant'), '^sa_max_energy = 1000\n^sa_regen_amount = 100\n');
+const daggerParams = new Map([[136, 1], [137, 250]]);
+const axeParams = new Map([[136, 1]]);
+const scimParams = new Map();
+const special = extractSpecialControls(content, [
+    { id: 1215, debugname: 'dragon_dagger', name: 'Dragon dagger', cost: 0, stackable: false, members: true, certlink: -1, certtemplate: -1, wearpos: 3, wearpos2: -1, wearpos3: -1, params: daggerParams },
+    { id: 1377, debugname: 'dragon_battleaxe', name: 'Dragon battleaxe', cost: 0, stackable: false, members: true, certlink: -1, certtemplate: -1, wearpos: 3, wearpos2: -1, wearpos3: -1, params: axeParams },
+    { id: 1333, debugname: 'rune_scimitar', name: 'Rune scimitar', cost: 0, stackable: false, members: false, certlink: -1, certtemplate: -1, wearpos: 3, wearpos2: -1, wearpos3: -1, params: scimParams },
+]);
+assert.equal(special.energy_varp, 300);
+assert.equal(special.armed_varp, 301);
+assert.equal(special.max_energy, 1000);
+assert.equal(special.bars.length, 2);
+assert.equal(special.bars.find((bar) => bar.root === 'combat_blunt')?.bar, 7462);
+assert.equal(special.bars.find((bar) => bar.root === 'combat_hacksword')?.root_id, 2423);
+assert.equal(special.bars.some((bar) => bar.root === 'combat_staff_2'), false);
+assert.equal(special.weapons.length, 1);
+assert.equal(special.weapons[0].name, 'Dragon dagger');
+assert.equal(special.weapons[0].cost, 250);
+assert.equal(special.weapons.some((weapon) => weapon.name === 'Dragon battleaxe'), false);
 console.log('generate fixture passed');

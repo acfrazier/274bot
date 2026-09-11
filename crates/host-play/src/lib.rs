@@ -2903,18 +2903,31 @@ fn with_script_snapshot_input<R>(
     });
     let varps = snapshot.map(|s| {
         let magic = api::snapshot::ReadContext::new(s).varp(108);
+        let energy = api::snapshot::ReadContext::new(s).varp(300);
+        let armed = api::snapshot::ReadContext::new(s).varp(301);
         // attackstyle_magic is packed as varp 108 on both selected caches.
-        // Always post it, including 0, so Autocast.armed/selected can observe
-        // the real staff-spell state instead of a missing-row default.
-        let mut rows: Vec<VarpInput> = vec![VarpInput {
-            index: 108,
-            value: magic,
-        }];
+        // sa_energy/sa_attack are packed as 300/301. Always post them,
+        // including 0, so Special.energy/armed and Autocast.armed/selected
+        // observe real state instead of a missing-row default.
+        let mut rows: Vec<VarpInput> = vec![
+            VarpInput {
+                index: 108,
+                value: magic,
+            },
+            VarpInput {
+                index: 300,
+                value: energy,
+            },
+            VarpInput {
+                index: 301,
+                value: armed,
+            },
+        ];
         rows.extend(
             s.varps()
                 .iter()
-                .filter(|v| v.value != 0 && v.index != 108)
-                .take(31)
+                .filter(|v| v.value != 0 && v.index != 108 && v.index != 300 && v.index != 301)
+                .take(29)
                 .map(|v| VarpInput {
                     index: v.index,
                     value: v.value,
