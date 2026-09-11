@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 03:52 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 04:06 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -134,10 +134,22 @@ not a product behavior change.
   this is a design fact, not a measured saving. Superheater fixtures t_10f975b7 committed 6d750e65 and entered actual
   Grok 4.5 review 1212/session 20260910_232854_63c926, now approved. Root's new
   empty-target 6d750e65 binaries completed the ten Superheater LIVE cells above.
-  PeriodicBank fixture t_63524882 is actual Grok 4.6 run 1214/session
-  20260910_233959_9ec089, preserving one owner for scenario/harness files.
-  Independent loadout provisioning proof t_3d333b56 is actual Grok 4.6 run
-  1213/session 20260910_233255_ce3577, owning a standalone host-play test.
+  PeriodicBank fixture t_63524882 committed fe4a7e41 and entered actual review
+  1220; root asked the reviewer to verify isolated-test provenance after a
+  blocked shell command left one earlier check using a default target. Shared
+  source is released; next vial/potion fixture t_534895e5 is queued behind the
+  same review, with brief 66 and no runtime changes. Root Superheater correction 6c7075ce seeds and separately
+  acknowledges Attack 30, validates it at Start and tests missing-stat refusal.
+  Independent loadout provisioning proof t_3d333b56 committed 064de2cf and
+  passed actual Grok 4.5 review 1218/session 20260910_235201_5cc73e. Root
+  isolated LIVE failed both revisions before Start on a fixture relog witness:
+  returning on hold was one issue, but c40c6c8c repeats show no Play frame need
+  arrive off-world. Source 8dc534b6 now uses the existing ScenarioRunner
+  SideTabAvailable index-3 contract and logs actual relog observations. Both
+  failed generations are retained. Both 8dc534b6 reruns now pass: empty Start
+  baseline, fresh bank, exact 17 Lobsters withdrawn (40 to 23 bank), Rune
+  scimitar withdrawn/equipped in slot 3 and supplies preserved. Root reverified
+  hashes and ordered observations; component proof only, not catalog/frontend.
   DirectNavigator mapping t_f7fd9f55 is actual Grok 4.6 run 1216/session
   20260910_234659_5fde26; canStep t_1a213450 is actual Grok 4.6 run 1217/session
   20260910_234659_340044. The separate
@@ -151,7 +163,7 @@ not a product behavior change.
 - The task heartbeat checks every 15 minutes until the observed Grok reset,
   2026-09-11 11:40 UTC (07:40 Eastern). Hermes has no xai-oauth account-usage
   fetcher, but the operator provided the authenticated Grok Usage tab in the
-  Codex in-app browser. Root refreshed at 03:39 UTC: 66% used / 34% remaining and September 11
+  Codex in-app browser. Root refreshed at 03:55 UTC: 67% used / 33% remaining and September 11
   7:40 AM reset there. Use that browser tab for actual quota checks; token
   activity and rate-limit failures remain a fallback if it is unavailable.
   Continue useful authorized work as gates clear, not filler to consume quota.
@@ -159,9 +171,17 @@ not a product behavior change.
   03:48:36 UTC using 6d750e65 plus a seven-line private IsolatedEnv entry.
   The new empty-target binary uses the existing shipped controller, private
   Memory food loadout, Auto banking, 120 s warmup and 600 s observation.
-  Both have live script-caused theft during warmup; bank/return and observation
-  qualification remain pending. Raw artifacts are in evidence/fleet-prerequisite/.
+  Both now pass independent bank/restock/return and 600-second sustained-work
+  qualification: 274 +2,902 XP and 289 +2,574 XP across four positive 150-second
+  windows each. 274 records exact bank stock 2,000 to 1,981; the 1 Hz 289 sampler
+  misses bank-after stock but captures actual 3-to-22 food restock at the bank,
+  return and further XP. The 289 bank trip occurs during warmup. Root started
+  N32 274 on the same isolated binary; every actor still needs qualification. Raw artifacts are in evidence/fleet-prerequisite/.
   These overlapping runs are functional diagnostics, not performance comparisons.
+- Two-slot isolation fixture t_4eb51061 is actual Grok 4.6 run 1219/session
+  20260910_235909_d68e23. Brief 65 uses two real frozen catalog scripts through
+  shared Play, distinct settings/results and observed Pause/Resume/Stop isolation;
+  unique test/support paths, no shared runtime/fixture changes and no worker LIVE.
 
 ## Accepted milestones
 

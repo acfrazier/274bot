@@ -91,3 +91,12 @@ interval. The fixture now uses the existing ScenarioRunner relog completion
 contract, SideTabAvailable index 3, and requires that bound tab at Start. It logs
 before/after relog and the latest actual observation on timeout. The first
 diagnosis was incomplete; both sets of failures remain.
+
+Root 8dc534b6 isolated LIVE now passes both revisions (25.7/28.5 seconds).
+`harvest_live.py` reverified 2,233 source files, binary and log hashes, actual
+unbound-to-bound inventory tab after relog, empty Start baseline, fresh bank
+generation, bank lobsters 40 to 23 / inventory 17, bank scimitar 1 to 0, and
+observed scimitar 1333 equipped in slot 3 with all 17 supplies retained.
+The five existing witness tests also pass on that exact binary. This qualifies
+the selected public loadout/bank/equip component; it does not replace catalog
+or frontend proof. Four earlier preparation failures remain as history.
