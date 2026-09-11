@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 04:24 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 04:39 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -85,8 +85,8 @@ not a product behavior change.
 - Loadout source 89767527 passed Grok 4.5 review 1192. Root repeated the affected
   checks in isolated a4157243: all pass. Native UI exposed layout clipping;
   bounded fix 50f2be8a and five existing tests pass. Native search, slot/quantity
-  Save, Duplicate and reopen are verified against private on-disk JSON. Actual
-  completed bank provisioning remains outstanding.
+  Save, Duplicate and reopen are verified against private on-disk JSON. Actual bank provisioning now passes both revisions through the controlled
+  component fixture, as recorded below.
 - Inventory identity a4157243 passed same-card Grok 4.5 review 1194 using an
   empty target. The isolated binary passes string-only on all four catalog/
   revision cells and cut-and-string on both newer-catalog cells. Native 289
@@ -138,7 +138,8 @@ not a product behavior change.
   1220/session 20260911_000310_756c0e (actual Grok 4.5). Review requested
   changes: the scenario final Strength XP arm reused an already-satisfied
   per-skill baseline. Exact catalog witness is sound; native scenario needs
-  new post-return loot/work. Corrective Grok 4.6 run 1222 is active. Root
+  new post-return loot/work. Corrective Grok 4.6 run 1222 committed 6f464d17 with a post-return
+  exact Feather 314 arm; same-card review remains required. Root
   separately verified all 294 exported client files match 56d80272; apparent
   b2bd5023 client identity was inherited outer-host Git discovery, not a mismatch. Shared
   source is released; next vial/potion fixture t_534895e5 is queued behind the
@@ -155,10 +156,10 @@ not a product behavior change.
   scimitar withdrawn/equipped in slot 3 and supplies preserved. Root reverified
   hashes and ordered observations; component proof only, not catalog/frontend.
   DirectNavigator source 5ce85959 passed actual Grok 4.5 review 1221/session
-  20260911_000609_c455f5 with fresh isolated checks; canStep t_1a213450 is actual Grok 4.6 run 1217/session
-  20260910_234659_340044. The separate
-  missing DirectNavigator.walkTo must also map to existing native walking;
-  foreign radius-8 re-sync remains a distinct source finding, not a pass.
+  20260911_000609_c455f5 with fresh isolated checks; canStep source 5612b265/evidence f2cbde36 entered actual Grok 4.5
+  review 1225/session 20260911_003832_ffa188 after Grok 4.6 implementation
+  1217. New dependent LIVE remains gated. DirectNavigator.walkTo now maps
+  to existing native walking; foreign radius-8 re-sync remains to qualify.
 - Operator requested four more Grok implementation assignments and periodic
   dispatch/usage checks for about eight hours. Queued t_79dfc132 autocast,
   t_eeea20f0 hostile/duel facts, t_68de6f48 special controls and t_1bf9a22e
@@ -168,7 +169,7 @@ not a product behavior change.
   2026-09-11 11:40 UTC (07:40 Eastern). Hermes has no xai-oauth account-usage
   fetcher, but the operator provided the authenticated Grok Usage tab in the
   Codex in-app browser. Root refreshed at 03:55 UTC: 67% used / 33% remaining and September 11
-  7:40 AM reset there. The 04:25 UTC refresh remained 67% used. Use that browser tab for actual quota checks; token
+  7:40 AM reset there. The 04:39 UTC refresh shows 68% used / 32% remaining. Use that browser tab for actual quota checks; token
   activity and rate-limit failures remain a fallback if it is unavailable.
   Continue useful authorized work as gates clear, not filler to consume quota.
 - Root started two N=1 sustained TUI Thiever prerequisites on 274 and 289 at
@@ -182,13 +183,17 @@ not a product behavior change.
   return and further XP. The 289 bank trip occurs during warmup. Root started
   N32 274 on the same isolated binary now passes every actor: depleted food,
   loaded bank, actual replenishment to 22, return and further XP/coins, with
-  1,965–4,540 observation XP each. N32 289 is now running separately. These
+  1,965–4,540 observation XP each. N32 289 also passes all 32 actors, with 2,340–4,492 observation XP
+  each and every 150-second interval positive. These
   qualify this candidate; final integrated-source preservation is still pending. Raw artifacts are in evidence/fleet-prerequisite/.
   These overlapping runs are functional diagnostics, not performance comparisons.
 - Two-slot isolation fixture t_4eb51061 is actual Grok 4.6 run 1219/session
   20260910_235909_d68e23. Brief 65 uses two real frozen catalog scripts through
   shared Play, distinct settings/results and observed Pause/Resume/Stop isolation;
   unique test/support paths, no shared runtime/fixture changes and no worker LIVE.
+  Source 6acd778a entered actual Grok 4.5 review 1223, which requested
+  the confirmed loadout relog-witness correction. Corrective Grok 4.6
+  run 1224/session 20260911_003634_f17a4b is active; no N2 LIVE yet.
 
 ## Accepted milestones
 

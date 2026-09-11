@@ -1,0 +1,37 @@
+{
+  "observed_at": "2026-09-11T04:40:03.374760+00:00",
+  "runs": [
+    {
+      "task": "t_1a213450",
+      "session": {
+        "id": "20260911_003832_ffa188",
+        "model": "grok-4.5",
+        "profile_name": "reviewer",
+        "started_at": 1789101513.565942,
+        "ended_at": null
+      }
+    },
+    {
+      "task": "t_4eb51061",
+      "session": {
+        "id": "20260911_002626_c70d51",
+        "model": "grok-4.5",
+        "profile_name": "reviewer",
+        "started_at": 1789100787.242081,
+        "ended_at": 1789101348.6245089
+      }
+    },
+    {
+      "task": "t_4eb51061",
+      "session": {
+        "id": "20260911_003634_f17a4b",
+        "model": "grok-4.6",
+        "profile_name": "grok46",
+        "started_at": 1789101404.582647,
+        "ended_at": null
+      }
+    }
+  ],
+  "can_step_status": "review running; new LIVE depending on it remains gated",
+  "two_slot_status": "review changes requested for unobservable WaitLoggedOut; corrective implementation running"
+}

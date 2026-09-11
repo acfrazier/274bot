@@ -36,5 +36,16 @@ incorrectly skipped two real baselines. No product/fixture behavior changed.
 The shipped samples report median resident memory 1,268,727,808 bytes and
 mean process CPU about 199.5% across the observation window. Concurrent agent
 work means these are diagnostics, with no matched performance claim. N32 289
-is running separately; final integrated-source preservation remains a later
+also passes; final integrated-source preservation remains a later
 gate. `harvest_fleet.py` verifies every actor and source/binary/log hash.
+
+## N32 289 on 6d750e65
+
+All 32 actors independently pass the same food depletion, loaded bank,
+replenishment to 22, return and further theft witnesses. The process exits
+zero after 600.037 seconds of observation; gains are 2,340–4,492 XP per actor
+and every 150-second interval is positive (minimum 234 XP). Fifteen bank-after
+counts were sampled. Source (1,969 files), binary and all raw log hashes verify.
+`n32-r289-6d750e65/qualification.json` preserves each actor's observations.
+This completes N1 and N32 qualification on this candidate for both revisions;
+final integrated-source regression and other frontend/control gates remain.
