@@ -973,6 +973,8 @@ Root reconciled the active campaign through equivalent history (68bcf3659 ->7abc
 
 139 preparation and152 TaskBot async validation are APPROVED with actualGrok4.5 runs1387 and1388 verified from usage receipts. Audit154 completed actualGrok4.6 run1385: five noncombat cards, eleven proposed scenarios, forty-four revision/catalog cells; no LIVE or support claim. BuyoutPlan is ancillary while nativeSHOP_DB is empty; Shop.buy remains required native38. BankSorter stays operator-unavailable. Native144 review1389 still runs;153 shared visible full-core witness waits144, then releases37 and option147. Mule127 is running in paired fixture files. All new LIVE remains headed and root-owned.
 
-## Remaining implementation queue (18:08 UTC)
+## Remaining implementation queue (18:06 UTC)
 
 155 t_af1a1d64 implements exactly11 noncombat scenarios/44 cells from verified154 after150+40+153, using the shared core. Native156 t_6b9a0675 follows126 for the missing Flax driveActivePartnerTrade Rust exchange, preserving callback projection and host ownership.157 t_587aa6ca follows153+127+155+156 for visible paired slots and the same complete two-actor witness, with NatureAir/MuleAir/Flax defaults. These are queued implementation/proof work, not LIVE acceptance; paired distinct extras remain listed for later completion.
+
+144 NPC projection approved actualGrok4.5 run1389/session20260911_135632_d3016b (14calls). Root verified all12 owned export blobs against real e05ecafb806b5af7f1d729b6f9c23c780956c118/client52c37f9 and corrected a transcribed nonresolving suffix in report/verification; raw correction receipt retained.153 started Sol1391 at18:05;127 remains active Sol1390. No new LIVE until shared full witness review.

@@ -5,8 +5,8 @@
   "brief_sha256": "47cc91859323a800924cddf473592e51aa0874246dc0a05b65873333cf6c296e",
   "root_base_commit": "2c4fd6040f9cd0c9ab9b90143fd91576eaebf362",
   "root_implementation_commit": "a1434ae2015a0af0b24bf4819ec8a919e5de28dc",
-  "root_projection_gate_commit": "e05ecafb806b5a0af0b24bf4819ec8a919e5de28dc",
-  "checked_root_commit": "e05ecafb806b5a0af0b24bf4819ec8a919e5de28dc",
+  "root_projection_gate_commit": "e05ecafb806b5af7f1d729b6f9c23c780956c118",
+  "checked_root_commit": "e05ecafb806b5af7f1d729b6f9c23c780956c118",
   "client_base_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
   "client_commit": "52c37f9ce50d1f184656d5b4469c007ec8a5791a",
   "owned_git_blobs": {

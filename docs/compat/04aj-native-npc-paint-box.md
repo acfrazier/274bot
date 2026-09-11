@@ -35,7 +35,7 @@ The frozen contract is an optional eight-point current-frame box consumed by Fir
 
 ## Verification
 
-The exact checked export contains root commit `e05ecafb806b5a0af0b24bf4819ec8a919e5de28dc` with nested client commit `52c37f9ce50d1f184656d5b4469c007ec8a5791a`. All Cargo commands used `--locked --offline`; root and client used separate empty `target-review-t_c48f1d6a-r2` target directories.
+The exact checked export contains root commit `e05ecafb806b5af7f1d729b6f9c23c780956c118` with nested client commit `52c37f9ce50d1f184656d5b4469c007ec8a5791a`. All Cargo commands used `--locked --offline`; root and client used separate empty `target-review-t_c48f1d6a-r2` target directories.
 
 - Script library tests: PASS (83).
 - Native NPC-box transport/isolate tests: PASS (5).
@@ -47,7 +47,7 @@ The exact checked export contains root commit `e05ecafb806b5a0af0b24bf4819ec8a91
 - Root and client `cargo fmt --all -- --check`: PASS.
 - Scoped root and client `git diff --check`: PASS.
 
-The first root implementation commit is `a1434ae2015a0af0b24bf4819ec8a919e5de28dc`; the projection-demand correction is `e05ecafb806b5a0af0b24bf4819ec8a919e5de28dc`. The client implementation commit is `52c37f9ce50d1f184656d5b4469c007ec8a5791a` on parent `aef3952d1cd7bb3b93d39c497f0f476b68021c59`. Subsequent fixture, TaskBot-validation, and qualification-documentation commits did not change task-owned paths and were not a reason to restart the exact checks.
+The first root implementation commit is `a1434ae2015a0af0b24bf4819ec8a919e5de28dc`; the projection-demand correction is `e05ecafb806b5af7f1d729b6f9c23c780956c118`. The client implementation commit is `52c37f9ce50d1f184656d5b4469c007ec8a5791a` on parent `aef3952d1cd7bb3b93d39c497f0f476b68021c59`. Subsequent fixture, TaskBot-validation, and qualification-documentation commits did not change task-owned paths and were not a reason to restart the exact checks.
 
 Evidence, provenance, checked blob identities, and exact commands are under `docs/compat/evidence/native-npc-paint-box/`.
 
