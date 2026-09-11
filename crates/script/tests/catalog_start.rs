@@ -161,7 +161,12 @@ fn bright_catalog_cards_start_without_not_impl() {
             }
         };
         let bag = script::merge_bag(&card.settings_schema, &serde_json::Map::new(), None);
-        match LoadIsolate::spawn(card.js.clone(), card.shape, siblings) {
+        match LoadIsolate::spawn_with_game_data(
+            card.js.clone(),
+            card.shape,
+            siblings,
+            api::game_data::for_revision(client::io::ClientRevision::R274).unwrap(),
+        ) {
             Err(e) => {
                 hits.insert(format!("{name}: load {e}"));
             }

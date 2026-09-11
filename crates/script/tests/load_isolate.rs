@@ -4260,7 +4260,13 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(
+        src.to_string(),
+        LoadShape::CompatClass,
+        vec![],
+        api::game_data::for_revision(client::io::ClientRevision::R274).unwrap(),
+    )
+    .unwrap();
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
     let parsed: serde_json::Value =
@@ -5538,7 +5544,13 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(
+        src.to_string(),
+        LoadShape::CompatClass,
+        vec![],
+        api::game_data::for_revision(client::io::ClientRevision::R274).unwrap(),
+    )
+    .unwrap();
     post_snapshot_input(&iso, &base_snapshot());
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();

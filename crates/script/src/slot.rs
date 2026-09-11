@@ -316,6 +316,19 @@ impl SlotScript {
         siblings: Vec<(String, String)>,
         loadouts: &[crate::loadouts_store::Loadout],
     ) -> Result<(), String> {
+        self.start_load_with_loadouts_and_game_data(source, shape, siblings, loadouts, None)
+    }
+
+    /// Start with explicit loadouts and immutable selected-revision facts.
+    #[cfg(feature = "load")]
+    pub fn start_load_with_loadouts_and_game_data(
+        &mut self,
+        source: String,
+        shape: LoadShape,
+        siblings: Vec<(String, String)>,
+        loadouts: &[crate::loadouts_store::Loadout],
+        game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
+    ) -> Result<(), String> {
         match self.state {
             RunState::Running | RunState::Paused | RunState::Stopping => {
                 Err("script already active: stop it first".to_string())
@@ -324,7 +337,12 @@ impl SlotScript {
                 if self.compiled.is_some() {
                     return Err("compiled script active: stop it first".to_string());
                 }
-                let isolate = LoadIsolate::spawn(source, shape, siblings)?;
+                let isolate = match game_data {
+                    Some(game_data) => {
+                        LoadIsolate::spawn_with_game_data(source, shape, siblings, game_data)?
+                    }
+                    None => LoadIsolate::spawn(source, shape, siblings)?,
+                };
                 isolate.post_loadouts(loadouts);
                 self.load = Some(isolate);
                 self.want_run = true;
@@ -571,7 +589,27 @@ impl SlotScript {
         bag: Option<&serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
     ) -> Result<(), String> {
-        self.start_load(source, shape, siblings)?;
+        self.start_load_with_settings_and_game_data(source, shape, bag, siblings, None)
+    }
+
+    /// Start with settings and the immutable facts selected by the owning Play.
+    #[cfg(feature = "load")]
+    pub fn start_load_with_settings_and_game_data(
+        &mut self,
+        source: String,
+        shape: LoadShape,
+        bag: Option<&serde_json::Map<String, serde_json::Value>>,
+        siblings: Vec<(String, String)>,
+        game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
+    ) -> Result<(), String> {
+        let loadouts = crate::loadouts_store::LoadoutsStore::with_default_path();
+        self.start_load_with_loadouts_and_game_data(
+            source,
+            shape,
+            siblings,
+            loadouts.loadouts(),
+            game_data,
+        )?;
         if let Some(bag) = bag {
             self.post_settings_bag(bag);
         }

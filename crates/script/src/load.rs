@@ -1023,6 +1023,26 @@ mod isolate {
             shape: LoadShape,
             siblings: Vec<(String, String)>,
         ) -> Result<Self, String> {
+            Self::spawn_inner(js, shape, siblings, None)
+        }
+
+        /// Spawn with immutable selected-revision facts. The Arc is shared
+        /// until the isolate's one startup publication is complete.
+        pub fn spawn_with_game_data(
+            js: String,
+            shape: LoadShape,
+            siblings: Vec<(String, String)>,
+            game_data: std::sync::Arc<api::game_data::SelectedGameData>,
+        ) -> Result<Self, String> {
+            Self::spawn_inner(js, shape, siblings, Some(game_data))
+        }
+
+        fn spawn_inner(
+            js: String,
+            shape: LoadShape,
+            siblings: Vec<(String, String)>,
+            game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
+        ) -> Result<Self, String> {
             ensure_platform();
             let (tx, rx) = mpsc::channel::<IsolateCmd>();
             let (msg_tx, msg_rx) = mpsc::channel::<ThreadMsg>();
@@ -1040,6 +1060,7 @@ mod isolate {
                         js,
                         shape,
                         siblings,
+                        game_data,
                         rx,
                         msg_tx,
                         setup_tx,
@@ -1392,6 +1413,7 @@ mod isolate {
         source: String,
         shape: LoadShape,
         siblings: Vec<(String, String)>,
+        game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         cmds: Receiver<IsolateCmd>,
         out: Sender<ThreadMsg>,
         setup: Sender<Result<v8::IsolateHandle, String>>,
@@ -1417,7 +1439,7 @@ mod isolate {
         counters
             .heap_live
             .store(1, std::sync::atomic::Ordering::Relaxed);
-        if let Err(e) = wire_runtime(&mut runtime, &source, shape, &siblings) {
+        if let Err(e) = wire_runtime(&mut runtime, &source, shape, &siblings, game_data) {
             let _ = setup.send(Err(e));
             return;
         }
@@ -1455,6 +1477,7 @@ mod isolate {
         source: &str,
         shape: LoadShape,
         siblings: &[(String, String)],
+        game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
     ) -> Result<(), String> {
         if shape == LoadShape::Reject {
             return Err("not a bot shape".to_string());
@@ -1505,8 +1528,9 @@ mod isolate {
                 },
             )
             .map_err(|e| format!("register loadout: {e}"))?;
+        let selected_food = game_data.clone();
         runtime
-            .register_function("__rs2b0t_food_of", |args: &[serde_json::Value]| {
+            .register_function("__rs2b0t_food_of", move |args: &[serde_json::Value]| {
                 let fallback = args.get(1).cloned().unwrap_or(serde_json::json!(""));
                 let food = args
                     .first()
@@ -1515,10 +1539,13 @@ mod isolate {
                     .and_then(|rows| {
                         rows.iter().find_map(|row| {
                             let name = row.get("item")?.as_str()?;
-                            api::content::FOOD_HEALS
-                                .iter()
-                                .find(|(n, _)| n.eq_ignore_ascii_case(name))
-                                .map(|(n, _)| serde_json::json!(n))
+                            selected_food
+                                .as_deref()
+                                .and_then(|data| {
+                                    data.fixed_food_heals()
+                                        .find(|(known, _)| known.eq_ignore_ascii_case(name))
+                                })
+                                .map(|(known, _)| serde_json::json!(known))
                         })
                     });
                 Ok(food.unwrap_or(fallback))
@@ -1529,7 +1556,7 @@ mod isolate {
             .map_err(|e| format!("shim: {e}"))?;
         let content = format!(
             "globalThis.__rs2b0t_host.content = {};",
-            crate::shim::content_json()
+            crate::shim::content_json(game_data.as_deref())
         );
         runtime
             .eval::<()>(content.as_str())

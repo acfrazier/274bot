@@ -422,6 +422,10 @@ fn bound_public_client_refuses_fixture_cheats_after_mutable_config_changes() {
     assert_eq!(profile.target(), BotTarget::Prod);
     assert_eq!(profile.revision(), ClientRevision::R289);
     let template = SharedClientTemplate::load(profile).unwrap();
+    assert!(
+        template.game_data().is_none(),
+        "a synthetic cache must not receive the selected 289 data"
+    );
     let mut client = template.prepare_client(740_003, true).unwrap();
     client.config.host = "127.0.0.1".into();
     client.config.port = 43594;

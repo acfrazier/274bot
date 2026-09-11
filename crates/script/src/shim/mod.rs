@@ -518,14 +518,50 @@ pub(crate) fn remap_catalog_imports(source: &str) -> String {
     remap_hash_bot(&remap_rs2b0t_api(source))
 }
 
-/// Host-owned coordinate tables posted once onto `__rs2b0t_host.content`.
-/// Catalog data modules read this instead of duplicating tiles in JS.
-pub(crate) fn content_json() -> String {
-    use api::content::{
-        COOK_STANDS, COW_FIELDS, FIRE_PLOTS, ITEMS, PICKPOCKET_SPOTS, ROCK_TYPE_NAMES,
-    };
+/// Host-owned policy plus optional selected-revision generated facts, posted
+/// once onto `__rs2b0t_host.content` before catalog modules evaluate.
+pub(crate) fn content_json(game_data: Option<&api::game_data::SelectedGameData>) -> String {
+    use api::content::{COOK_STANDS, COW_FIELDS, FIRE_PLOTS, PICKPOCKET_SPOTS, ROCK_TYPE_NAMES};
+    let items = game_data
+        .map(|data| {
+            data.items()
+                .iter()
+                .filter_map(|item| {
+                    Some(serde_json::json!({
+                        "obj": item.alias.as_deref()?,
+                        "id": item.id,
+                        "name": item.name.as_deref()?,
+                        "cost": item.cost,
+                    }))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let food_heals = game_data
+        .map(|data| {
+            data.fixed_food_heals()
+                .map(|(name, heal)| serde_json::json!([name, heal]))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let pickpocket_spots = PICKPOCKET_SPOTS
+        .iter()
+        .map(|spot| {
+            let mut row = serde_json::Map::from_iter([
+                ("name".into(), serde_json::json!(spot.name)),
+                ("x".into(), serde_json::json!(spot.x)),
+                ("z".into(), serde_json::json!(spot.z)),
+                ("level".into(), serde_json::json!(spot.level)),
+                ("leash".into(), serde_json::json!(spot.leash)),
+            ]);
+            if let Some(required) = game_data.and_then(|data| data.required_thieving(spot.name)) {
+                row.insert("required_thieving".into(), serde_json::json!(required));
+            }
+            serde_json::Value::Object(row)
+        })
+        .collect::<Vec<_>>();
     serde_json::json!({
-        "food_heals": api::content::FOOD_HEALS,
+        "food_heals": food_heals,
         "common_bank_loot": api::content::COMMON_BANK_LOOT,
         "random_event_casket_id": api::content::RANDOM_EVENT_CASKET_ID,
         "cow_fields": COW_FIELDS.iter().map(|f| {
@@ -545,25 +581,9 @@ pub(crate) fn content_json() -> String {
                 "range": {"x": s.range.x, "z": s.range.z, "level": s.range.level}
             })
         }).collect::<Vec<_>>(),
-        "items": ITEMS.iter().map(|i| {
-            serde_json::json!({
-                "obj": i.obj,
-                "id": i.id,
-                "name": i.name,
-                "cost": i.cost
-            })
-        }).collect::<Vec<_>>(),
+        "items": items,
         "rock_type_names": ROCK_TYPE_NAMES,
-        "pickpocket_spots": PICKPOCKET_SPOTS.iter().map(|p| {
-            serde_json::json!({
-                "name": p.name,
-                "x": p.x,
-                "z": p.z,
-                "level": p.level,
-                "leash": p.leash,
-                "required_thieving": p.required_thieving
-            })
-        }).collect::<Vec<_>>(),
+        "pickpocket_spots": pickpocket_spots,
     })
     .to_string()
 }
