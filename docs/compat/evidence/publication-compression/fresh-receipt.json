@@ -1,0 +1,36 @@
+{
+  "host": "57aee576b9250ccb4c7c8fd1fb5ebd12b4541aa8",
+  "client": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "fresh_recursive_github_clone": true,
+  "compiler_cache": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target",
+  "checks": [
+    {
+      "label": "all-targets",
+      "command": [
+        "cargo",
+        "check",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--features",
+        "memory-profile"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 15.57
+    },
+    {
+      "label": "frontends",
+      "command": [
+        "cargo",
+        "build",
+        "-p",
+        "panel",
+        "-p",
+        "tui",
+        "--locked"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 12.01
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 17:28 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 18:04 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -964,3 +964,11 @@ Operator answered the sorting-policy question: keep BankSorter explicitly unavai
 Required branchreview146 approved fixeddf2/aef incremental integration in29bed3b73. Actual Grok4.6 run1386/session20260911_134626_7ecd42 verified21 API calls. Four full mage and four Flax cores plus two supplemental headed watches are recorded; Green failures remain unqualified and TaskBot block is byte-identical to main76. Root composes docs onto the frozen stage2 candidate; later139/144/152/153 code stays excluded. Merge/push and fresh recursive GitHub build are next.
 
 New code lane:139 bbe1742cd in same-card review1387;144 a1434ae20 plus root-requested projection gate e05ecafb8 completing checks;152 await-validation3bf3644ad in same-card review queue. Shared headed witness153 t_8ae5a895 follows139/144+audit151, gates native37 and option147. Mule127 paired files may proceed after139. Audit154 t_8f13bdf1 covers remaining five noncombat core cards against37-40. Audit151 completed verifiedG4.6 run1383 (35 calls). Root reclaimed37.77GiB from four DONE/unopened Cargo caches only.
+
+## Published stage2 and current gates (18:04 UTC)
+
+Main57aee576b is published by ordinary push and verified remotely. GitHub initially rejected two N32 diagnostic blobs over100MiB; root compressed them losslessly, verified decompressed SHA256 against original receipts, preserved every unpublished individual commit message/author/committer/topology and all product bytes, and retained local backup refs. Mapping/provenance and fresh-recursive-GitHub all-targets check plus panel/TUI build PASS are in evidence/publication-compression. No tags/release/full-campaign claim. Client stays publishedaef3952d.
+
+Root reconciled the active campaign through equivalent history (68bcf3659 ->7abce46b9) and merged main documentation without changing product bytes or worker-owned files. Historical code/review IDs remain recoverable through commit maps and backup refs. Current campaign client52c37f9 remains separate/unpublished pending144 review and later integration.
+
+139 preparation and152 TaskBot async validation are APPROVED with actualGrok4.5 runs1387 and1388 verified from usage receipts. Audit154 completed actualGrok4.6 run1385: five noncombat cards, eleven proposed scenarios, forty-four revision/catalog cells; no LIVE or support claim. BuyoutPlan is ancillary while nativeSHOP_DB is empty; Shop.buy remains required native38. BankSorter stays operator-unavailable. Native144 review1389 still runs;153 shared visible full-core witness waits144, then releases37 and option147. Mule127 is running in paired fixture files. All new LIVE remains headed and root-owned.

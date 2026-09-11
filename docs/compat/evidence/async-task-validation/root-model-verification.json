@@ -1,0 +1,21 @@
+{
+  "task_id": "t_620a63ab",
+  "run_id": 1388,
+  "session_id": "20260911_135127_fcd2d4",
+  "usage": [
+    {
+      "session_id": "20260911_135127_fcd2d4",
+      "model": "grok-4.5",
+      "billing_provider": "xai-oauth",
+      "api_call_count": 8
+    },
+    {
+      "session_id": "20260911_135127_fcd2d4",
+      "model": "grok-4.5",
+      "billing_provider": "xai-oauth",
+      "api_call_count": 1
+    }
+  ],
+  "actual_model_verified": true,
+  "review_outcome": "approved"
+}
