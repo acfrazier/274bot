@@ -407,6 +407,8 @@ pub fn get(name: &str) -> Option<Scenario> {
         "door_opener_gate" => Some(door_opener_gate_scenario()),
         "gnome_course" => Some(gnome_course_scenario()),
         "gnome_course_radius" => Some(gnome_course_radius_scenario()),
+        "wildy_agility" => Some(wildy_agility_scenario()),
+        "brimhaven_agility" => Some(brimhaven_agility_scenario()),
         "flax_picker" => Some(flax_picker_scenario()),
         "superheater" => Some(superheater_scenario()),
         "superheater_steel" => Some(superheater_steel_scenario()),
@@ -487,6 +489,8 @@ pub fn names() -> Vec<&'static str> {
         "door_opener_gate",
         "gnome_course",
         "gnome_course_radius",
+        "wildy_agility",
+        "brimhaven_agility",
         "flax_picker",
         "superheater",
         "superheater_steel",
@@ -3994,6 +3998,63 @@ const GNOME_PIPE: WorldTile = WorldTile {
     level: 0,
 };
 
+const WILDY_START: WorldTile = WorldTile {
+    x: 2998,
+    z: 3916,
+    level: 0,
+};
+/// North of the selected inner Gate at (2998,3931). Radius 2 cannot include
+/// the gate tile, so a ridge click without the world crossing fails closed.
+const WILDY_AFTER_RIDGE: WorldTile = WorldTile {
+    x: 2998,
+    z: 3934,
+    level: 0,
+};
+/// Selected m46_61 loc 2288 at (3004,3938); rs2 lands at loc z+9.
+const WILDY_PIPE_DEST: WorldTile = WorldTile {
+    x: 3004,
+    z: 3947,
+    level: 0,
+};
+/// Selected m46_61 loc 2283 at (3005,3952); rs2 lands five north of its stand.
+const WILDY_ROPE_DEST: WorldTile = WorldTile {
+    x: 3005,
+    z: 3958,
+    level: 0,
+};
+/// Selected m46_61 loc 2311 at (3001,3960); the sixth jump lands x-5.
+const WILDY_STONE_DEST: WorldTile = WorldTile {
+    x: 2996,
+    z: 3960,
+    level: 0,
+};
+/// Selected level-1 m46_61 loc 2297 at (3001,3945); the moves land x-7.
+const WILDY_LOG_DEST: WorldTile = WorldTile {
+    x: 2994,
+    z: 3945,
+    level: 1,
+};
+/// Centre tile of the selected three-wide rocks 2328; rs2 lands three south.
+const WILDY_ROCKS_DEST: WorldTile = WorldTile {
+    x: 2994,
+    z: 3933,
+    level: 0,
+};
+
+const BRIMHAVEN_ENTRANCE: WorldTile = WorldTile {
+    x: 2809,
+    z: 3194,
+    level: 0,
+};
+/// Selected ladder 3617 Climb-Down destination, also arena platform 24.
+const BRIMHAVEN_LADDER_LANDING: WorldTile = WorldTile {
+    x: 2805,
+    z: 9590,
+    level: 3,
+};
+const AGILITY_TICKET_ID: i32 = 2996;
+const AGILITY_ARENA_VARP: i32 = 309;
+
 const FLAX_FIELD: WorldTile = WorldTile {
     x: 2741,
     z: 3444,
@@ -4020,6 +4081,28 @@ const GNOME_COURSE_RADIUS_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject
     id: "searchRadius",
     value: ScriptInjectValue::Num(8.0),
 }];
+
+const WILDY_AGILITY_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "acquireFoodAtStart",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "minFood",
+        value: ScriptInjectValue::Num(0.0),
+    },
+];
+
+const BRIMHAVEN_AGILITY_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "stealRestock",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "bankAtTickets",
+        value: ScriptInjectValue::Num(1000.0),
+    },
+];
 
 fn door_opener_scenario() -> Scenario {
     door_opener_variant(
@@ -4144,6 +4227,321 @@ fn gnome_course_scenario() -> Scenario {
 
 fn gnome_course_radius_scenario() -> Scenario {
     gnome_course_variant("gnome_course_radius", Some(GNOME_COURSE_RADIUS_INJECT))
+}
+
+/// Cross the south ridge, complete the five selected wilderness obstacles and
+/// make real progress through the next pipe. All setup cheats happen before
+/// catalog Start; post-Start steps are observation-only.
+fn wildy_agility_scenario() -> Scenario {
+    let further_xp = Proof::StatXpGain {
+        id: AGILITY_STAT,
+        min: 598,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed Agility 52 and five Lobsters, then tele south of the ridge",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                cheat(c, "advancestat agility 52");
+                cheat(c, "give lobster 5");
+                cheat(
+                    c,
+                    &tele_args(WILDY_START.level, WILDY_START.x, WILDY_START.z),
+                );
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: WILDY_START.x,
+                z: WILDY_START.z,
+                level: WILDY_START.level,
+                radius: 2,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(bank_fletcher_watch(
+        "confirm five exact Lobsters before Start",
+        Proof::ItemId {
+            id: LOBSTER_ID,
+            count: 5,
+        },
+    ));
+    steps.push(drain_advancestat());
+    steps.push(start_catalog_step());
+    for (name, arm) in [
+        (
+            "watch ridge Agility XP",
+            Proof::StatXpGain {
+                id: AGILITY_STAT,
+                min: 15,
+            },
+        ),
+        (
+            "watch the ridge world crossing north of the inner gate",
+            Proof::ArrivedNear {
+                x: WILDY_AFTER_RIDGE.x,
+                z: WILDY_AFTER_RIDGE.z,
+                level: WILDY_AFTER_RIDGE.level,
+                radius: 2,
+            },
+        ),
+        (
+            "watch pipe XP after the ridge",
+            Proof::StatXpGain {
+                id: AGILITY_STAT,
+                min: 27,
+            },
+        ),
+        (
+            "watch the selected pipe destination",
+            Proof::ArrivedNear {
+                x: WILDY_PIPE_DEST.x,
+                z: WILDY_PIPE_DEST.z,
+                level: WILDY_PIPE_DEST.level,
+                radius: 3,
+            },
+        ),
+        (
+            "watch ropeswing XP after the pipe",
+            Proof::StatXpGain {
+                id: AGILITY_STAT,
+                min: 47,
+            },
+        ),
+        (
+            "watch the selected ropeswing destination",
+            Proof::ArrivedNear {
+                x: WILDY_ROPE_DEST.x,
+                z: WILDY_ROPE_DEST.z,
+                level: WILDY_ROPE_DEST.level,
+                radius: 3,
+            },
+        ),
+        (
+            "watch stepping-stone XP after the ropeswing",
+            Proof::StatXpGain {
+                id: AGILITY_STAT,
+                min: 67,
+            },
+        ),
+        (
+            "watch the selected stepping-stone destination",
+            Proof::ArrivedNear {
+                x: WILDY_STONE_DEST.x,
+                z: WILDY_STONE_DEST.z,
+                level: WILDY_STONE_DEST.level,
+                radius: 3,
+            },
+        ),
+        (
+            "watch log XP after the stepping stones",
+            Proof::StatXpGain {
+                id: AGILITY_STAT,
+                min: 87,
+            },
+        ),
+        (
+            "watch the selected log destination",
+            Proof::ArrivedNear {
+                x: WILDY_LOG_DEST.x,
+                z: WILDY_LOG_DEST.z,
+                level: WILDY_LOG_DEST.level,
+                radius: 3,
+            },
+        ),
+        (
+            "watch the five-obstacle lap XP bonus",
+            Proof::StatXpGain {
+                id: AGILITY_STAT,
+                min: 586,
+            },
+        ),
+        (
+            "watch the selected rocks destination",
+            Proof::ArrivedNear {
+                x: WILDY_ROCKS_DEST.x,
+                z: WILDY_ROCKS_DEST.z,
+                level: WILDY_ROCKS_DEST.level,
+                radius: 3,
+            },
+        ),
+        (
+            "watch the next pipe destination after the full lap",
+            Proof::ArrivedNear {
+                x: WILDY_PIPE_DEST.x,
+                z: WILDY_PIPE_DEST.z,
+                level: WILDY_PIPE_DEST.level,
+                radius: 3,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(name, arm));
+    }
+    Scenario {
+        name: "wildy_agility",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: further_xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("WildyAgility"),
+            script_settings_inject: Some(WILDY_AGILITY_INJECT),
+            terminal_shot: Some("wildy_agility"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+/// Pay and enter naturally, complete the script's first no-ticket Tag, earn a
+/// later ticket, then require fresh obstacle XP after that ticket. Because this
+/// is the first Agility XP predicate in the scenario, its baseline is captured
+/// only after ticket acquisition rather than at catalog Start.
+fn brimhaven_agility_scenario() -> Scenario {
+    let subsequent_xp = Proof::StatXpGain {
+        id: AGILITY_STAT,
+        min: 1,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed 1000 Coins and ten Lobsters, then tele to the arena entrance",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                cheat(c, "give coins 1000");
+                cheat(c, "give lobster 10");
+                cheat(
+                    c,
+                    &tele_args(
+                        BRIMHAVEN_ENTRANCE.level,
+                        BRIMHAVEN_ENTRANCE.x,
+                        BRIMHAVEN_ENTRANCE.z,
+                    ),
+                );
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: BRIMHAVEN_ENTRANCE.x,
+                z: BRIMHAVEN_ENTRANCE.z,
+                level: BRIMHAVEN_ENTRANCE.level,
+                radius: 2,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (name, arm) in [
+        (
+            "confirm 1000 exact Coins before Start",
+            Proof::ItemId {
+                id: COINS_ID,
+                count: 1000,
+            },
+        ),
+        (
+            "confirm ten exact Lobsters before Start",
+            Proof::ItemId {
+                id: LOBSTER_ID,
+                count: 10,
+            },
+        ),
+        (
+            "confirm no seeded agility-arena ticket before Start",
+            Proof::ItemIdAtMost {
+                id: AGILITY_TICKET_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(name, arm));
+    }
+    steps.push(start_catalog_step());
+    for (name, arm) in [
+        (
+            "watch the 200-Coin arena fee",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: 800,
+            },
+        ),
+        (
+            "watch the arena paid bit",
+            Proof::Varp {
+                id: AGILITY_ARENA_VARP,
+                min: 2,
+            },
+        ),
+        (
+            "watch Climb-Down reach the arena ladder platform",
+            Proof::ArrivedNear {
+                x: BRIMHAVEN_LADDER_LANDING.x,
+                z: BRIMHAVEN_LADDER_LANDING.z,
+                level: BRIMHAVEN_LADDER_LANDING.level,
+                radius: 2,
+            },
+        ),
+        (
+            "watch the first Tag prompt for the next pillar",
+            Proof::Chat {
+                needle: "tag the next",
+            },
+        ),
+        (
+            "watch the first Tag set the tagged bit",
+            Proof::Varp {
+                id: AGILITY_ARENA_VARP,
+                min: 15,
+            },
+        ),
+        (
+            "confirm the first Tag grants no ticket",
+            Proof::ItemIdAtMost {
+                id: AGILITY_TICKET_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch a later Tag grant the first ticket",
+            Proof::ItemId {
+                id: AGILITY_TICKET_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch subsequent arena obstacle XP after the ticket",
+            subsequent_xp,
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(name, arm));
+    }
+    Scenario {
+        name: "brimhaven_agility",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: subsequent_xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("BrimhavenAgility"),
+            script_settings_inject: Some(BRIMHAVEN_AGILITY_INJECT),
+            terminal_shot: Some("brimhaven_agility"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
 }
 
 /// Complete a natural gnome lap, then cross the log again. Selected 274/289
@@ -9686,6 +10084,8 @@ mod tests {
                 "door_opener_gate",
                 "gnome_course",
                 "gnome_course_radius",
+                "wildy_agility",
+                "brimhaven_agility",
                 "flax_picker",
                 "superheater",
                 "superheater_steel",
@@ -10721,6 +11121,197 @@ mod tests {
         ] {
             assert!(names().contains(&name));
         }
+    }
+
+    #[test]
+    fn wildy_agility_registers_the_full_ordered_course_and_further_pipe() {
+        let wildy = get("wildy_agility").expect("wildy_agility");
+        assert_eq!(wildy.settings.start_script, Some("WildyAgility"));
+        assert_eq!(wildy.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        let inject = settings_inject_map(wildy.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("acquireFoodAtStart"), Some(&Value::Bool(false)));
+        assert_eq!(inject.get("minFood").and_then(Value::as_f64), Some(0.0));
+
+        let start = wildy
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .expect("StartScript");
+        let seed = wildy.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(wildy.steps[..start]
+            .iter()
+            .any(|step| step.name.contains("Agility 52")));
+        assert!(seed.contains(&Proof::ItemId { id: 379, count: 5 }));
+        assert!(seed.contains(&Proof::ArrivedNear {
+            x: 2998,
+            z: 3916,
+            level: 0,
+            radius: 2,
+        }));
+
+        let watch = wildy.steps[start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            watch,
+            vec![
+                Proof::StatXpGain {
+                    id: AGILITY_STAT,
+                    min: 15,
+                },
+                Proof::ArrivedNear {
+                    x: 2998,
+                    z: 3934,
+                    level: 0,
+                    radius: 2,
+                },
+                Proof::StatXpGain {
+                    id: AGILITY_STAT,
+                    min: 27,
+                },
+                Proof::ArrivedNear {
+                    x: 3004,
+                    z: 3947,
+                    level: 0,
+                    radius: 3,
+                },
+                Proof::StatXpGain {
+                    id: AGILITY_STAT,
+                    min: 47,
+                },
+                Proof::ArrivedNear {
+                    x: 3005,
+                    z: 3958,
+                    level: 0,
+                    radius: 3,
+                },
+                Proof::StatXpGain {
+                    id: AGILITY_STAT,
+                    min: 67,
+                },
+                Proof::ArrivedNear {
+                    x: 2996,
+                    z: 3960,
+                    level: 0,
+                    radius: 3,
+                },
+                Proof::StatXpGain {
+                    id: AGILITY_STAT,
+                    min: 87,
+                },
+                Proof::ArrivedNear {
+                    x: 2994,
+                    z: 3945,
+                    level: 1,
+                    radius: 3,
+                },
+                Proof::StatXpGain {
+                    id: AGILITY_STAT,
+                    min: 586,
+                },
+                Proof::ArrivedNear {
+                    x: 2994,
+                    z: 3933,
+                    level: 0,
+                    radius: 3,
+                },
+                Proof::ArrivedNear {
+                    x: 3004,
+                    z: 3947,
+                    level: 0,
+                    radius: 3,
+                },
+            ]
+        );
+        assert_eq!(
+            wildy.proof,
+            Proof::StatXpGain {
+                id: AGILITY_STAT,
+                min: 598,
+            }
+        );
+        assert!(names().contains(&"wildy_agility"));
+    }
+
+    #[test]
+    fn brimhaven_agility_registers_fee_tags_ticket_and_subsequent_xp() {
+        let brim = get("brimhaven_agility").expect("brimhaven_agility");
+        assert_eq!(brim.settings.start_script, Some("BrimhavenAgility"));
+        assert_eq!(brim.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        let inject = settings_inject_map(brim.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("stealRestock"), Some(&Value::Bool(false)));
+        assert_eq!(
+            inject.get("bankAtTickets").and_then(Value::as_f64),
+            Some(1000.0)
+        );
+
+        let start = brim
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .expect("StartScript");
+        let seed = brim.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::ItemId {
+            id: 995,
+            count: 1000,
+        }));
+        assert!(seed.contains(&Proof::ItemId { id: 379, count: 10 }));
+        assert!(seed.contains(&Proof::ItemIdAtMost { id: 2996, count: 0 }));
+        assert!(seed.contains(&Proof::ArrivedNear {
+            x: 2809,
+            z: 3194,
+            level: 0,
+            radius: 2,
+        }));
+        assert!(!seed
+            .iter()
+            .any(|proof| matches!(proof, Proof::ItemId { id: 2996, .. })));
+
+        let watch = brim.steps[start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            watch,
+            vec![
+                Proof::ItemIdAtMost {
+                    id: 995,
+                    count: 800,
+                },
+                Proof::Varp { id: 309, min: 2 },
+                Proof::ArrivedNear {
+                    x: 2805,
+                    z: 9590,
+                    level: 3,
+                    radius: 2,
+                },
+                Proof::Chat {
+                    needle: "tag the next",
+                },
+                Proof::Varp { id: 309, min: 15 },
+                Proof::ItemIdAtMost { id: 2996, count: 0 },
+                Proof::ItemId { id: 2996, count: 1 },
+                Proof::StatXpGain {
+                    id: AGILITY_STAT,
+                    min: 1,
+                },
+            ]
+        );
+        assert_eq!(
+            brim.proof,
+            Proof::StatXpGain {
+                id: AGILITY_STAT,
+                min: 1,
+            }
+        );
+        assert!(names().contains(&"brimhaven_agility"));
     }
 
     #[test]

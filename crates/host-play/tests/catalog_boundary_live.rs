@@ -19,7 +19,7 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const SUPPORT_MATRIX: &str = include_str!("../../../docs/compat/support-matrix.json");
-const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_thiever|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|moss_giant|hill_giant|auto_fighter|rock_crab|green_dragon|fire_giant|ardy_fighter";
+const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_thiever|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|moss_giant|hill_giant|auto_fighter|rock_crab|green_dragon|fire_giant|ardy_fighter";
 const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -66,6 +66,17 @@ const GNOME_GROUND_RETURN: (i32, i32, i32) = (2487, 3420, 0);
 const GNOME_PIPE: (i32, i32, i32) = (2484, 3431, 0);
 // Selected 274/289 content: 86.5 XP per full lap, then 7.5 for the next log.
 const GNOME_SECOND_LOG_XP: i32 = 94;
+const WILDY_START: (i32, i32, i32) = (2998, 3916, 0);
+const WILDY_PIPE_DEST: (i32, i32, i32) = (3004, 3947, 0);
+const WILDY_ROPE_DEST: (i32, i32, i32) = (3005, 3958, 0);
+const WILDY_STONE_DEST: (i32, i32, i32) = (2996, 3960, 0);
+const WILDY_LOG_DEST: (i32, i32, i32) = (2994, 3945, 1);
+const WILDY_ROCKS_DEST: (i32, i32, i32) = (2994, 3933, 0);
+const WILDY_LAP_XP: i32 = 586;
+const WILDY_FURTHER_XP: i32 = 598;
+const BRIMHAVEN_START: (i32, i32, i32) = (2809, 3194, 0);
+const BRIMHAVEN_ARENA_VARP: i32 = 309;
+const BRIMHAVEN_TICKET_ID: i32 = 2996;
 const FLAX_FIELD: (i32, i32, i32) = (2741, 3444, 0);
 const FALADOR_CHICKENS: (i32, i32, i32) = (3029, 3294, 0);
 const EMPTY_VIAL_ID: i32 = 229;
@@ -229,6 +240,8 @@ enum CoreCase {
     DoorOpenerGate,
     GnomeCourse,
     GnomeCourseRadius,
+    WildyAgility,
+    BrimhavenAgility,
     FlaxPicker,
     Superheater,
     SuperheaterSteel,
@@ -295,6 +308,8 @@ impl CoreCase {
             "door_opener_gate" => Ok(Self::DoorOpenerGate),
             "gnome_course" => Ok(Self::GnomeCourse),
             "gnome_course_radius" => Ok(Self::GnomeCourseRadius),
+            "wildy_agility" => Ok(Self::WildyAgility),
+            "brimhaven_agility" => Ok(Self::BrimhavenAgility),
             "flax_picker" => Ok(Self::FlaxPicker),
             "superheater" => Ok(Self::Superheater),
             "superheater_steel" => Ok(Self::SuperheaterSteel),
@@ -364,6 +379,8 @@ impl CoreCase {
             Self::DoorOpenerGate => "door_opener_gate",
             Self::GnomeCourse => "gnome_course",
             Self::GnomeCourseRadius => "gnome_course_radius",
+            Self::WildyAgility => "wildy_agility",
+            Self::BrimhavenAgility => "brimhaven_agility",
             Self::FlaxPicker => "flax_picker",
             Self::Superheater => "superheater",
             Self::SuperheaterSteel => "superheater_steel",
@@ -424,6 +441,8 @@ impl CoreCase {
             Self::GemCutter | Self::GemCutterNamed => "GemCutter",
             Self::DoorOpener | Self::DoorOpenerGate => "DoorOpener",
             Self::GnomeCourse | Self::GnomeCourseRadius => "GnomeCourse",
+            Self::WildyAgility => "WildyAgility",
+            Self::BrimhavenAgility => "BrimhavenAgility",
             Self::FlaxPicker => "FlaxPicker",
             Self::Superheater | Self::SuperheaterSteel | Self::SuperheaterFireBattlestaff => {
                 "Superheater"
@@ -623,6 +642,8 @@ struct Observation {
     bank_generation: u64,
     levels: BTreeMap<String, i32>,
     xp: BTreeMap<String, i32>,
+    /// Only varps explicitly used by a core witness; do not clone the full table.
+    varps: BTreeMap<i32, i32>,
     chat: Vec<(i32, String)>,
     loc_facts: Vec<BoundedLoc>,
     npc_facts: Vec<BoundedNpc>,
@@ -705,6 +726,12 @@ impl Observation {
             .stats()
             .iter()
             .map(|stat| (stat.name.to_ascii_lowercase(), stat.base))
+            .collect();
+        let varps = snapshot
+            .varps()
+            .iter()
+            .filter(|varp| varp.index == BRIMHAVEN_ARENA_VARP)
+            .map(|varp| (varp.index, varp.value))
             .collect();
         let chat = snapshot
             .chat_lines()
@@ -806,6 +833,7 @@ impl Observation {
             bank_generation: snapshot.bank_session_generation(),
             levels,
             xp,
+            varps,
             chat,
             loc_facts,
             npc_facts,
@@ -846,6 +874,10 @@ impl Observation {
 
     fn level(&self, name: &str) -> i32 {
         self.levels.get(name).copied().unwrap_or(0)
+    }
+
+    fn varp(&self, index: i32) -> i32 {
+        self.varps.get(&index).copied().unwrap_or(0)
     }
 
     fn equipment_id(&self, id: i32) -> i32 {
@@ -1301,6 +1333,18 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
                     .is_some_and(|loc| loc.open)
         }
         CoreCase::GnomeCourse | CoreCase::GnomeCourseRadius => near(baseline.tile, GNOME_START, 2),
+        CoreCase::WildyAgility => {
+            near(baseline.tile, WILDY_START, 2)
+                && baseline.level("agility") >= 52
+                && baseline.item_id(LOBSTER_ID) >= 5
+        }
+        CoreCase::BrimhavenAgility => {
+            near(baseline.tile, BRIMHAVEN_START, 2)
+                && baseline.item_id(COINS_ID) >= 200
+                && baseline.item_id(LOBSTER_ID) >= 10
+                && baseline.item_id(BRIMHAVEN_TICKET_ID) == 0
+                && baseline.varp(BRIMHAVEN_ARENA_VARP) & 0b10 == 0
+        }
         CoreCase::FlaxPicker => {
             near(baseline.tile, FLAX_FIELD, 6) && baseline.item_id(FLAX_ID) == 0
         }
@@ -1505,6 +1549,12 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         CoreCase::GnomeCourse | CoreCase::GnomeCourseRadius => {
             "Gnome Stronghold start (2474,3436,0)"
         }
+        CoreCase::WildyAgility => {
+            "south ridge stand (2998,3916,0), Agility 52, and five Lobsters 379"
+        }
+        CoreCase::BrimhavenAgility => {
+            "surface entrance (2804,3193,0), at least 200 coins, ten Lobsters 379, no ticket 2996, and unpaid varp 309"
+        }
         CoreCase::FlaxPicker => "Seers flax field (2741,3444,0) with empty pack of 1779",
         CoreCase::Superheater => {
             "Varrock West bank, Magic 43, Smithing 1, empty pack of 436/438/2349/561/1387"
@@ -1634,6 +1684,8 @@ struct CoreWitness {
     gem_cutter_cycle: GemCutterCycle,
     door_opener_cycle: DoorOpenerCycle,
     gnome_course_cycle: GnomeCourseCycle,
+    wildy_agility_cycle: WildyAgilityCycle,
+    brimhaven_agility_cycle: BrimhavenAgilityCycle,
     flax_picker_cycle: FlaxPickerCycle,
     superheater_cycle: SuperheaterCycle,
     chicken_killer_bank_cycle: ChickenKillerBankCycle,
@@ -2150,6 +2202,190 @@ impl GnomeCourseCycle {
 
     fn qualified(&self) -> bool {
         self.second_lap
+    }
+}
+
+/// Ordered ridge, five-obstacle lap bonus, and next-pipe milestones from the
+/// selected m46_61 loc destinations. A queued click or aggregate XP alone
+/// cannot advance the chain.
+#[derive(Debug, Clone, Default, Serialize)]
+struct WildyAgilityCycle {
+    ridge: Option<Observation>,
+    pipe: Option<Observation>,
+    rope: Option<Observation>,
+    stone: Option<Observation>,
+    log: Option<Observation>,
+    rocks: Option<Observation>,
+    further_pipe: bool,
+}
+
+impl WildyAgilityCycle {
+    fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        let xp = now.skill_xp("agility");
+        let baseline_sequence = baseline
+            .chat
+            .iter()
+            .map(|(sequence, _)| *sequence)
+            .max()
+            .unwrap_or(i32::MIN);
+        let fresh_chat = |needle: &str| {
+            now.chat.iter().any(|(sequence, text)| {
+                *sequence > baseline_sequence
+                    && text
+                        .to_ascii_lowercase()
+                        .contains(&needle.to_ascii_lowercase())
+            })
+        };
+        let on_course = now.tile.is_some_and(|(x, z, level)| {
+            level == 0 && (3932..=3967).contains(&z) && (x - 2998).abs() <= 24
+        });
+        let ridge_failed = fresh_chat("lose your footing and fall into the wolf pit");
+        if self.ridge.is_none()
+            && on_course
+            && !ridge_failed
+            && (xp - baseline.skill_xp("agility") >= 15
+                || fresh_chat("skillfully balance across the ridge"))
+        {
+            self.ridge = Some(now.clone());
+        }
+        if let Some(ridge) = &self.ridge {
+            if self.pipe.is_none()
+                && xp > ridge.skill_xp("agility")
+                && near(now.tile, WILDY_PIPE_DEST, 3)
+            {
+                self.pipe = Some(now.clone());
+            }
+        }
+        if let Some(pipe) = &self.pipe {
+            if self.rope.is_none()
+                && xp > pipe.skill_xp("agility")
+                && near(now.tile, WILDY_ROPE_DEST, 3)
+            {
+                self.rope = Some(now.clone());
+            }
+        }
+        if let Some(rope) = &self.rope {
+            if self.stone.is_none()
+                && xp > rope.skill_xp("agility")
+                && near(now.tile, WILDY_STONE_DEST, 3)
+            {
+                self.stone = Some(now.clone());
+            }
+        }
+        if let Some(stone) = &self.stone {
+            if self.log.is_none()
+                && xp > stone.skill_xp("agility")
+                && near(now.tile, WILDY_LOG_DEST, 3)
+            {
+                self.log = Some(now.clone());
+            }
+        }
+        if let Some(log) = &self.log {
+            if self.rocks.is_none()
+                && xp > log.skill_xp("agility")
+                && xp - baseline.skill_xp("agility") >= WILDY_LAP_XP
+                && near(now.tile, WILDY_ROCKS_DEST, 3)
+            {
+                self.rocks = Some(now.clone());
+            }
+        }
+        if let Some(rocks) = &self.rocks {
+            self.further_pipe |= xp > rocks.skill_xp("agility")
+                && xp - baseline.skill_xp("agility") >= WILDY_FURTHER_XP
+                && near(now.tile, WILDY_PIPE_DEST, 3);
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.further_pipe
+    }
+}
+
+fn brimhaven_platform(tile: Option<(i32, i32, i32)>) -> Option<usize> {
+    let (x, z, level) = tile?;
+    if level != 3 {
+        return None;
+    }
+    let xs = [2761, 2772, 2783, 2794, 2805];
+    let zs = [9546, 9557, 9568, 9579, 9590];
+    for (row, center_z) in zs.into_iter().enumerate() {
+        for (column, center_x) in xs.into_iter().enumerate() {
+            if (x - center_x).abs() <= 4 && (z - center_z).abs() <= 4 {
+                return Some(row * xs.len() + column);
+            }
+        }
+    }
+    None
+}
+
+/// Ordered natural entrance fee, arena movement, first tag, first ticket, and
+/// work after the ticket. Platform indexing only recognizes the selected
+/// 5-by-5 arena centers and does not reproduce the foreign route planner.
+#[derive(Debug, Clone, Default, Serialize)]
+struct BrimhavenAgilityCycle {
+    paid: bool,
+    entered: Option<(usize, Observation)>,
+    moved: Option<(usize, Observation)>,
+    first_tag: bool,
+    ticket: Option<(usize, Observation)>,
+    subsequent_work: bool,
+}
+
+impl BrimhavenAgilityCycle {
+    fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        let varp = now.varp(BRIMHAVEN_ARENA_VARP);
+        self.paid |= baseline.item_id(COINS_ID) - now.item_id(COINS_ID) >= 200 && varp & 0b10 != 0;
+        if !self.paid {
+            return;
+        }
+
+        let platform = brimhaven_platform(now.tile);
+        if self.entered.is_none() {
+            if let Some(platform) = platform {
+                self.entered = Some((platform, now.clone()));
+            }
+            return;
+        }
+        if self.moved.is_none() {
+            let (entered_platform, entered) = self.entered.as_ref().unwrap();
+            if platform.is_some_and(|platform| platform != *entered_platform)
+                && now.skill_xp("agility") > entered.skill_xp("agility")
+            {
+                self.moved = Some((platform.unwrap(), now.clone()));
+            }
+            return;
+        }
+        if !self.first_tag {
+            let baseline_sequence = baseline
+                .chat
+                .iter()
+                .map(|(sequence, _)| *sequence)
+                .max()
+                .unwrap_or(i32::MIN);
+            let fresh_next_pillar = now.chat.iter().any(|(sequence, text)| {
+                *sequence > baseline_sequence && text.to_ascii_lowercase().contains("tag the next")
+            });
+            if varp & 0b1111 == 0b1111 && now.item_id(BRIMHAVEN_TICKET_ID) == 0 && fresh_next_pillar
+            {
+                self.first_tag = true;
+            }
+            return;
+        }
+        if self.ticket.is_none() {
+            if now.item_id(BRIMHAVEN_TICKET_ID) >= 1 {
+                if let Some(platform) = platform {
+                    self.ticket = Some((platform, now.clone()));
+                }
+            }
+            return;
+        }
+        let (ticket_platform, ticket) = self.ticket.as_ref().unwrap();
+        self.subsequent_work |= platform.is_some_and(|platform| platform != *ticket_platform)
+            || now.skill_xp("agility") > ticket.skill_xp("agility");
+    }
+
+    fn qualified(&self) -> bool {
+        self.subsequent_work
     }
 }
 
@@ -3857,6 +4093,8 @@ impl CoreWitness {
             gem_cutter_cycle: GemCutterCycle::default(),
             door_opener_cycle: DoorOpenerCycle::default(),
             gnome_course_cycle: GnomeCourseCycle::default(),
+            wildy_agility_cycle: WildyAgilityCycle::default(),
+            brimhaven_agility_cycle: BrimhavenAgilityCycle::default(),
             flax_picker_cycle: FlaxPickerCycle::default(),
             superheater_cycle: SuperheaterCycle::default(),
             chicken_killer_bank_cycle: ChickenKillerBankCycle::default(),
@@ -3970,6 +4208,14 @@ impl CoreWitness {
             CoreCase::GnomeCourse | CoreCase::GnomeCourseRadius
         ) {
             self.gnome_course_cycle.observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::WildyAgility) {
+            self.wildy_agility_cycle
+                .observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::BrimhavenAgility) {
+            self.brimhaven_agility_cycle
+                .observe(&self.baseline, observation);
         }
         if matches!(self.case, CoreCase::FlaxPicker) {
             self.flax_picker_cycle.observe(&self.baseline, observation);
@@ -4270,6 +4516,8 @@ impl CoreWitness {
             CoreCase::GnomeCourse | CoreCase::GnomeCourseRadius => {
                 self.gnome_course_cycle.qualified()
             }
+            CoreCase::WildyAgility => self.wildy_agility_cycle.qualified(),
+            CoreCase::BrimhavenAgility => self.brimhaven_agility_cycle.qualified(),
             CoreCase::FlaxPicker => self.flax_picker_cycle.qualified(),
             CoreCase::Superheater
             | CoreCase::SuperheaterSteel
@@ -4336,6 +4584,8 @@ impl CoreWitness {
             "gem_cutter_cycle": self.gem_cutter_cycle,
             "door_opener_cycle": self.door_opener_cycle,
             "gnome_course_cycle": self.gnome_course_cycle,
+            "wildy_agility_cycle": self.wildy_agility_cycle,
+            "brimhaven_agility_cycle": self.brimhaven_agility_cycle,
             "flax_picker_cycle": self.flax_picker_cycle,
             "superheater_cycle": self.superheater_cycle,
             "chicken_killer_bank_cycle": self.chicken_killer_bank_cycle,
@@ -4927,6 +5177,7 @@ mod tests {
                 .iter()
                 .map(|(name, value)| ((*name).to_string(), *value))
                 .collect::<BTreeMap<_, _>>(),
+            varps: BTreeMap::new(),
             chat: chat
                 .iter()
                 .map(|(sequence, text)| (*sequence, (*text).to_string()))
@@ -4998,6 +5249,8 @@ mod tests {
                 CoreCase::GemCutter,
                 CoreCase::DoorOpener,
                 CoreCase::GnomeCourse,
+                CoreCase::WildyAgility,
+                CoreCase::BrimhavenAgility,
                 CoreCase::FlaxPicker,
                 CoreCase::FlaxAio,
                 CoreCase::HerbloreSecondaries,
@@ -6001,6 +6254,241 @@ mod tests {
         let mut observation = observation(&[], &[("agility", agility_xp)], &[]);
         observation.tile = Some(tile);
         observation
+    }
+
+    #[test]
+    fn wildy_agility_is_a_registered_catalog_core_case() {
+        assert!(CoreCase::parse("wildy_agility").is_ok());
+    }
+
+    #[test]
+    fn brimhaven_agility_is_a_registered_catalog_core_case() {
+        assert!(CoreCase::parse("brimhaven_agility").is_ok());
+    }
+
+    fn wildy_obs(tile: (i32, i32, i32), agility_xp: i32) -> Observation {
+        let mut observation = observation(&[], &[("agility", agility_xp)], &[]);
+        observation.tile = Some(tile);
+        observation
+    }
+
+    #[test]
+    fn wildy_agility_requires_the_ordered_lap_bonus_and_second_pipe() {
+        let mut baseline = wildy_obs(WILDY_START, 1_000);
+        baseline.levels.insert("agility".into(), 52);
+        baseline.item_ids.insert(LOBSTER_ID, 5);
+        validate_case_baseline(CoreCase::WildyAgility, &baseline).unwrap();
+        let mut under_level = baseline.clone();
+        under_level.levels.insert("agility".into(), 51);
+        assert!(validate_case_baseline(CoreCase::WildyAgility, &under_level).is_err());
+        let mut under_food = baseline.clone();
+        under_food.item_ids.insert(LOBSTER_ID, 4);
+        assert!(validate_case_baseline(CoreCase::WildyAgility, &under_food).is_err());
+
+        let ridge = wildy_obs((2998, 3933, 0), 1_015);
+        let pipe = wildy_obs((3004, 3947, 0), 1_027);
+        let rope = wildy_obs((3005, 3958, 0), 1_047);
+        let stone = wildy_obs((2996, 3960, 0), 1_067);
+        let log = wildy_obs((2994, 3945, 1), 1_087);
+        let rocks = wildy_obs((2994, 3933, 0), 1_586);
+        let second_pipe = wildy_obs((3004, 3947, 0), 1_598);
+
+        assert!(witness(
+            CoreCase::WildyAgility,
+            &baseline,
+            [&ridge, &pipe, &rope, &stone, &log, &rocks, &second_pipe]
+        )
+        .qualify()
+        .is_ok());
+        assert!(witness(CoreCase::WildyAgility, &baseline, [&ridge])
+            .qualify()
+            .is_err());
+        assert!(witness(
+            CoreCase::WildyAgility,
+            &baseline,
+            [&ridge, &pipe, &rope, &stone, &log, &rocks]
+        )
+        .qualify()
+        .is_err());
+
+        let only_571 = wildy_obs((3004, 3947, 0), 1_571);
+        assert!(witness(
+            CoreCase::WildyAgility,
+            &baseline,
+            [&ridge, &pipe, &rope, &stone, &log, &rocks, &only_571]
+        )
+        .qualify()
+        .is_err());
+
+        let queued = wildy_obs((3004, 3947, 0), 1_598);
+        assert!(witness(CoreCase::WildyAgility, &baseline, [&queued])
+            .qualify()
+            .is_err());
+
+        let high_z_pit = wildy_obs((2998, 9933, 0), 1_015);
+        assert!(witness(
+            CoreCase::WildyAgility,
+            &baseline,
+            [
+                &high_z_pit,
+                &pipe,
+                &rope,
+                &stone,
+                &log,
+                &rocks,
+                &second_pipe,
+            ]
+        )
+        .qualify()
+        .is_err());
+
+        let wrong_side = wildy_obs((3004, 3937, 0), 1_027);
+        assert!(witness(
+            CoreCase::WildyAgility,
+            &baseline,
+            [
+                &ridge,
+                &wrong_side,
+                &rope,
+                &stone,
+                &log,
+                &rocks,
+                &second_pipe
+            ]
+        )
+        .qualify()
+        .is_err());
+
+        let mut wolf_pit = wildy_obs((2998, 3933, 0), 1_015);
+        wolf_pit.chat = vec![(
+            1,
+            "You lose your footing and fall into the wolf pit.".into(),
+        )];
+        assert!(witness(CoreCase::WildyAgility, &baseline, [&wolf_pit])
+            .qualify()
+            .is_err());
+    }
+
+    fn brimhaven_obs(
+        tile: (i32, i32, i32),
+        agility_xp: i32,
+        coins: i32,
+        tickets: i32,
+        varp: i32,
+        chat: &[(i32, &str)],
+    ) -> Observation {
+        let mut observation = observation(&[], &[("agility", agility_xp)], chat);
+        observation.tile = Some(tile);
+        observation.item_ids = [
+            (COINS_ID, coins),
+            (LOBSTER_ID, 10),
+            (BRIMHAVEN_TICKET_ID, tickets),
+        ]
+        .into_iter()
+        .collect();
+        observation.varps.insert(BRIMHAVEN_ARENA_VARP, varp);
+        observation
+    }
+
+    #[test]
+    fn brimhaven_agility_requires_fee_movement_tag_ticket_and_subsequent_work() {
+        let baseline = brimhaven_obs(
+            BRIMHAVEN_START,
+            1_000,
+            1_000,
+            0,
+            0,
+            &[(4, "Tag the next pillar")],
+        );
+        validate_case_baseline(CoreCase::BrimhavenAgility, &baseline).unwrap();
+        let mut pre_paid = baseline.clone();
+        pre_paid.varps.insert(BRIMHAVEN_ARENA_VARP, 2);
+        assert!(validate_case_baseline(CoreCase::BrimhavenAgility, &pre_paid).is_err());
+        let mut seeded_ticket = baseline.clone();
+        seeded_ticket.item_ids.insert(BRIMHAVEN_TICKET_ID, 1);
+        assert!(validate_case_baseline(CoreCase::BrimhavenAgility, &seeded_ticket).is_err());
+        let mut underfunded = baseline.clone();
+        underfunded.item_ids.insert(COINS_ID, 199);
+        assert!(validate_case_baseline(CoreCase::BrimhavenAgility, &underfunded).is_err());
+
+        let paid = brimhaven_obs(BRIMHAVEN_START, 1_000, 800, 0, 2, &[]);
+        let entered = brimhaven_obs((2805, 9590, 3), 1_000, 800, 0, 2, &[]);
+        let moved = brimhaven_obs((2805, 9579, 3), 1_006, 800, 0, 2, &[]);
+        let first_tag = brimhaven_obs(
+            (2805, 9579, 3),
+            1_006,
+            800,
+            0,
+            15,
+            &[(5, "Tag the next pillar")],
+        );
+        let ticket = brimhaven_obs((2794, 9579, 3), 1_012, 800, 1, 7, &[]);
+        let subsequent = brimhaven_obs((2783, 9579, 3), 1_018, 800, 1, 6, &[]);
+
+        assert!(witness(
+            CoreCase::BrimhavenAgility,
+            &baseline,
+            [&paid, &entered, &moved, &first_tag, &ticket, &subsequent]
+        )
+        .qualify()
+        .is_ok());
+        assert!(witness(CoreCase::BrimhavenAgility, &baseline, [&paid])
+            .qualify()
+            .is_err());
+        assert!(
+            witness(CoreCase::BrimhavenAgility, &baseline, [&paid, &entered])
+                .qualify()
+                .is_err()
+        );
+        assert!(witness(
+            CoreCase::BrimhavenAgility,
+            &baseline,
+            [&paid, &entered, &moved, &first_tag]
+        )
+        .qualify()
+        .is_err());
+        assert!(witness(
+            CoreCase::BrimhavenAgility,
+            &baseline,
+            [&paid, &entered, &moved, &first_tag, &ticket]
+        )
+        .qualify()
+        .is_err());
+
+        let stale_tag = brimhaven_obs(
+            (2805, 9579, 3),
+            1_006,
+            800,
+            0,
+            15,
+            &[(4, "Tag the next pillar")],
+        );
+        assert!(witness(
+            CoreCase::BrimhavenAgility,
+            &baseline,
+            [&paid, &entered, &moved, &stale_tag, &ticket, &subsequent]
+        )
+        .qualify()
+        .is_err());
+
+        let wrong_hint = brimhaven_obs(
+            (2805, 9579, 3),
+            1_006,
+            800,
+            0,
+            15,
+            &[(
+                5,
+                "You can only get a ticket when the flashing arrow is above the pillar.",
+            )],
+        );
+        assert!(witness(
+            CoreCase::BrimhavenAgility,
+            &baseline,
+            [&paid, &entered, &moved, &wrong_hint, &ticket, &subsequent]
+        )
+        .qualify()
+        .is_err());
     }
 
     fn flax_obs(
