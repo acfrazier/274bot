@@ -1,5 +1,6 @@
 //! Immutable generated game facts selected by the bound client revision.
 
+use std::collections::HashSet;
 use std::sync::{Arc, OnceLock};
 
 use client::io::ClientRevision;
@@ -76,6 +77,53 @@ struct PickpocketFact {
     level: i32,
 }
 
+/// Frozen staff_spells grid base: component id 1830 + ssb.
+/// Inventory-target casts use posted magic-tab buttons, not this base.
+pub const STAFF_SPELLS_COM0: i32 = 1830;
+
+/// One generated per-cast rune cost.
+#[derive(Debug, Deserialize, Clone)]
+pub struct SpellRune {
+    pub alias: String,
+    pub id: i32,
+    pub name: String,
+    pub count: i32,
+}
+
+/// Named autocast combat spell from the selected cache.
+#[derive(Debug, Deserialize)]
+pub struct SpellFact {
+    pub name: String,
+    pub ssb: i32,
+    pub level: i32,
+    pub continue_by_autocast: bool,
+    pub runes: Vec<SpellRune>,
+}
+
+/// Rune provided by a staff while wielded.
+#[derive(Debug, Deserialize, Clone)]
+pub struct StaffRune {
+    pub alias: String,
+    pub id: i32,
+    pub name: String,
+}
+
+/// Staff that substitutes one or more runes.
+#[derive(Debug, Deserialize)]
+pub struct StaffFact {
+    pub alias: String,
+    pub id: i32,
+    pub name: String,
+    pub runes: Vec<StaffRune>,
+}
+
+/// Remaining rune cost after staff substitution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemainingRuneCost {
+    pub rune: String,
+    pub count: i32,
+}
+
 /// Generated immutable facts for one client/cache revision.
 #[derive(Debug, Deserialize)]
 pub struct SelectedGameData {
@@ -85,6 +133,10 @@ pub struct SelectedGameData {
     items: Vec<GameItem>,
     consumption: Vec<ConsumptionFact>,
     pickpocket: Vec<PickpocketFact>,
+    #[serde(default)]
+    spells: Vec<SpellFact>,
+    #[serde(default)]
+    staves: Vec<StaffFact>,
 }
 
 impl SelectedGameData {
@@ -162,6 +214,79 @@ impl SelectedGameData {
                 .any(|npc| npc.name.eq_ignore_ascii_case(name))
                 .then_some(fact.level)
         })
+    }
+
+    pub fn spells(&self) -> &[SpellFact] {
+        &self.spells
+    }
+
+    pub fn staves(&self) -> &[StaffFact] {
+        &self.staves
+    }
+
+    pub fn spell(&self, name: &str) -> Option<&SpellFact> {
+        self.spells
+            .iter()
+            .find(|spell| spell.name.eq_ignore_ascii_case(name.trim()))
+    }
+
+    /// Staff display name → rune display names it provides.
+    pub fn staff_runes_table(&self) -> Vec<(&str, Vec<&str>)> {
+        self.staves
+            .iter()
+            .map(|staff| {
+                (
+                    staff.name.as_str(),
+                    staff.runes.iter().map(|rune| rune.name.as_str()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    fn provided_runes(&self, wielded: &[impl AsRef<str>]) -> HashSet<String> {
+        let mut provided = HashSet::new();
+        for item in wielded {
+            let wanted = item.as_ref().trim();
+            if let Some(staff) = self
+                .staves
+                .iter()
+                .find(|staff| staff.name.eq_ignore_ascii_case(wanted))
+            {
+                for rune in &staff.runes {
+                    provided.insert(rune.name.to_ascii_lowercase());
+                }
+            }
+        }
+        provided
+    }
+
+    /// Remaining per-cast rune costs after staff substitution.
+    /// `None` is an unknown spell; `Some([])` means no remaining cost.
+    pub fn runes_per_cast(
+        &self,
+        spell_name: &str,
+        wielded: &[impl AsRef<str>],
+    ) -> Option<Vec<RemainingRuneCost>> {
+        let spell = self.spell(spell_name)?;
+        let provided = self.provided_runes(wielded);
+        Some(
+            spell
+                .runes
+                .iter()
+                .filter(|rune| !provided.contains(&rune.name.to_ascii_lowercase()))
+                .map(|rune| RemainingRuneCost {
+                    rune: rune.name.clone(),
+                    count: rune.count,
+                })
+                .collect(),
+        )
+    }
+
+    /// `1830 + ssb` for a known autocast spell, otherwise -1.
+    pub fn spell_button_com(&self, spell_name: &str) -> i32 {
+        self.spell(spell_name)
+            .map(|spell| STAFF_SPELLS_COM0 + spell.ssb)
+            .unwrap_or(-1)
     }
 
     pub fn item_by_id(&self, id: i32) -> Option<&GameItem> {

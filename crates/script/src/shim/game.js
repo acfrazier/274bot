@@ -120,6 +120,8 @@ export const Game = new Proxy(
         },
         async castOnItem(spell, item) {
             if (!item) return false;
+            const name = typeof item === 'string' ? item : item.name;
+            if (!name) return false;
             const wanted = String(spell).toLowerCase();
             const row = (snap().spell_buttons || []).find(
                 (s) => s && s.label && String(s.label).toLowerCase() === wanted,
@@ -127,11 +129,19 @@ export const Game = new Proxy(
             if (!row || typeof row.component_id !== 'number') {
                 throw notImpl('Game.castOnItem');
             }
+            const held = (snap().inv || []).some(
+                (slot) =>
+                    slot &&
+                    slot.name &&
+                    String(slot.name).toLowerCase() === String(name).toLowerCase() &&
+                    slot.count > 0,
+            );
+            if (!held) return false;
             queue({
                 op: 'use-widget-on',
                 component_id: row.component_id,
                 kind: 'held',
-                target_name: item.name ?? null,
+                target_name: name,
                 x: 0,
                 z: 0,
                 level: 0,

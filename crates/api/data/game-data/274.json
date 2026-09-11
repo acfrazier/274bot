@@ -51,6 +51,21 @@
         "path": "scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2",
         "bytes": 6851,
         "sha256": "6eace195d85d2a3d7752406978355288721a63cd764374c8a8f3670963fd4e01"
+      },
+      {
+        "path": "scripts/skill_combat/configs/magic/magic_combat_spells.dbrow",
+        "bytes": 18342,
+        "sha256": "be4d9ac0f9ccf7207f0b695090618b6dda68168901afe4984bc4647f5b761423"
+      },
+      {
+        "path": "scripts/skill_magic/configs/magic.dbtable",
+        "bytes": 868,
+        "sha256": "508d6911af3763713d3030ee16218b8879a0bef2933e4abe50246d9b35781a77"
+      },
+      {
+        "path": "scripts/skill_magic/configs/magic_staff.dbrow",
+        "bytes": 698,
+        "sha256": "76bc70a53a37f2ccceb1a745f732407a86337f35c5055237d386b1b5cb5c646f"
       }
     ],
     "decoder_sources": [
@@ -57458,6 +57473,596 @@
         }
       ],
       "pocket": "Fremennik's pocket"
+    }
+  ],
+  "spells": [
+    {
+      "name": "Wind Strike",
+      "source_row": "magic_spell_wind_strike",
+      "ssb": 0,
+      "level": 1,
+      "continue_by_autocast": true,
+      "runes": [
+        {
+          "alias": "mindrune",
+          "id": 558,
+          "name": "Mind rune",
+          "count": 1
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "Water Strike",
+      "source_row": "magic_spell_water_strike",
+      "ssb": 1,
+      "level": 5,
+      "continue_by_autocast": true,
+      "runes": [
+        {
+          "alias": "mindrune",
+          "id": 558,
+          "name": "Mind rune",
+          "count": 1
+        },
+        {
+          "alias": "waterrune",
+          "id": 555,
+          "name": "Water rune",
+          "count": 1
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "Earth Strike",
+      "source_row": "magic_spell_earth_strike",
+      "ssb": 2,
+      "level": 9,
+      "continue_by_autocast": true,
+      "runes": [
+        {
+          "alias": "mindrune",
+          "id": 558,
+          "name": "Mind rune",
+          "count": 1
+        },
+        {
+          "alias": "earthrune",
+          "id": 557,
+          "name": "Earth rune",
+          "count": 2
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "name": "Fire Strike",
+      "source_row": "magic_spell_fire_strike",
+      "ssb": 3,
+      "level": 13,
+      "continue_by_autocast": true,
+      "runes": [
+        {
+          "alias": "mindrune",
+          "id": 558,
+          "name": "Mind rune",
+          "count": 1
+        },
+        {
+          "alias": "firerune",
+          "id": 554,
+          "name": "Fire rune",
+          "count": 3
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "name": "Wind Bolt",
+      "source_row": "magic_spell_wind_bolt",
+      "ssb": 4,
+      "level": 17,
+      "continue_by_autocast": true,
+      "runes": [
+        {
+          "alias": "chaosrune",
+          "id": 562,
+          "name": "Chaos rune",
+          "count": 1
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "name": "Water Bolt",
+      "source_row": "magic_spell_water_bolt",
+      "ssb": 5,
+      "level": 23,
+      "continue_by_autocast": true,
+      "runes": [
+        {
+          "alias": "chaosrune",
+          "id": 562,
+          "name": "Chaos rune",
+          "count": 1
+        },
+        {
+          "alias": "waterrune",
+          "id": 555,
+          "name": "Water rune",
+          "count": 2
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "name": "Earth Bolt",
+      "source_row": "magic_spell_earth_bolt",
+      "ssb": 6,
+      "level": 29,
+      "continue_by_autocast": true,
+      "runes": [
+        {
+          "alias": "chaosrune",
+          "id": 562,
+          "name": "Chaos rune",
+          "count": 1
+        },
+        {
+          "alias": "earthrune",
+          "id": 557,
+          "name": "Earth rune",
+          "count": 3
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "name": "Fire Bolt",
+      "source_row": "magic_spell_fire_bolt",
+      "ssb": 7,
+      "level": 35,
+      "continue_by_autocast": true,
+      "runes": [
+        {
+          "alias": "chaosrune",
+          "id": 562,
+          "name": "Chaos rune",
+          "count": 1
+        },
+        {
+          "alias": "firerune",
+          "id": 554,
+          "name": "Fire rune",
+          "count": 4
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "name": "Wind Blast",
+      "source_row": "magic_spell_wind_blast",
+      "ssb": 8,
+      "level": 41,
+      "continue_by_autocast": true,
+      "runes": [
+        {
+          "alias": "deathrune",
+          "id": 560,
+          "name": "Death rune",
+          "count": 1
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "name": "Water Blast",
+      "source_row": "magic_spell_water_blast",
+      "ssb": 9,
+      "level": 47,
+      "continue_by_autocast": true,
+      "runes": [
+        {
+          "alias": "deathrune",
+          "id": 560,
+          "name": "Death rune",
+          "count": 1
+        },
+        {
+          "alias": "waterrune",
+          "id": 555,
+          "name": "Water rune",
+          "count": 3
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "name": "Earth Blast",
+      "source_row": "magic_spell_earth_blast",
+      "ssb": 10,
+      "level": 53,
+      "continue_by_autocast": true,
+      "runes": [
+        {
+          "alias": "deathrune",
+          "id": 560,
+          "name": "Death rune",
+          "count": 1
+        },
+        {
+          "alias": "earthrune",
+          "id": 557,
+          "name": "Earth rune",
+          "count": 4
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "name": "Fire Blast",
+      "source_row": "magic_spell_fire_blast",
+      "ssb": 11,
+      "level": 59,
+      "continue_by_autocast": true,
+      "runes": [
+        {
+          "alias": "deathrune",
+          "id": 560,
+          "name": "Death rune",
+          "count": 1
+        },
+        {
+          "alias": "firerune",
+          "id": 554,
+          "name": "Fire rune",
+          "count": 5
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 4
+        }
+      ]
+    },
+    {
+      "name": "Wind Wave",
+      "source_row": "magic_spell_wind_wave",
+      "ssb": 12,
+      "level": 62,
+      "continue_by_autocast": true,
+      "runes": [
+        {
+          "alias": "bloodrune",
+          "id": 565,
+          "name": "Blood rune",
+          "count": 1
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 5
+        }
+      ]
+    },
+    {
+      "name": "Water Wave",
+      "source_row": "magic_spell_water_wave",
+      "ssb": 13,
+      "level": 65,
+      "continue_by_autocast": true,
+      "runes": [
+        {
+          "alias": "bloodrune",
+          "id": 565,
+          "name": "Blood rune",
+          "count": 1
+        },
+        {
+          "alias": "waterrune",
+          "id": 555,
+          "name": "Water rune",
+          "count": 7
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 5
+        }
+      ]
+    },
+    {
+      "name": "Earth Wave",
+      "source_row": "magic_spell_earth_wave",
+      "ssb": 14,
+      "level": 70,
+      "continue_by_autocast": true,
+      "runes": [
+        {
+          "alias": "bloodrune",
+          "id": 565,
+          "name": "Blood rune",
+          "count": 1
+        },
+        {
+          "alias": "earthrune",
+          "id": 557,
+          "name": "Earth rune",
+          "count": 7
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 5
+        }
+      ]
+    },
+    {
+      "name": "Fire Wave",
+      "source_row": "magic_spell_fire_wave",
+      "ssb": 15,
+      "level": 75,
+      "continue_by_autocast": true,
+      "runes": [
+        {
+          "alias": "bloodrune",
+          "id": 565,
+          "name": "Blood rune",
+          "count": 1
+        },
+        {
+          "alias": "firerune",
+          "id": 554,
+          "name": "Fire rune",
+          "count": 7
+        },
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune",
+          "count": 5
+        }
+      ]
+    }
+  ],
+  "staves": [
+    {
+      "alias": "air_battlestaff",
+      "id": 1397,
+      "name": "Air battlestaff",
+      "runes": [
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune"
+        }
+      ]
+    },
+    {
+      "alias": "earth_battlestaff",
+      "id": 1399,
+      "name": "Earth battlestaff",
+      "runes": [
+        {
+          "alias": "earthrune",
+          "id": 557,
+          "name": "Earth rune"
+        }
+      ]
+    },
+    {
+      "alias": "fire_battlestaff",
+      "id": 1393,
+      "name": "Fire battlestaff",
+      "runes": [
+        {
+          "alias": "firerune",
+          "id": 554,
+          "name": "Fire rune"
+        }
+      ]
+    },
+    {
+      "alias": "lava_battlestaff",
+      "id": 3053,
+      "name": "Lava battlestaff",
+      "runes": [
+        {
+          "alias": "earthrune",
+          "id": 557,
+          "name": "Earth rune"
+        },
+        {
+          "alias": "firerune",
+          "id": 554,
+          "name": "Fire rune"
+        }
+      ]
+    },
+    {
+      "alias": "mystic_air_staff",
+      "id": 1405,
+      "name": "Mystic air staff",
+      "runes": [
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune"
+        }
+      ]
+    },
+    {
+      "alias": "mystic_earth_staff",
+      "id": 1407,
+      "name": "Mystic earth staff",
+      "runes": [
+        {
+          "alias": "earthrune",
+          "id": 557,
+          "name": "Earth rune"
+        }
+      ]
+    },
+    {
+      "alias": "mystic_fire_staff",
+      "id": 1401,
+      "name": "Mystic fire staff",
+      "runes": [
+        {
+          "alias": "firerune",
+          "id": 554,
+          "name": "Fire rune"
+        }
+      ]
+    },
+    {
+      "alias": "mystic_lava_staff",
+      "id": 3054,
+      "name": "Mystic lava staff",
+      "runes": [
+        {
+          "alias": "earthrune",
+          "id": 557,
+          "name": "Earth rune"
+        },
+        {
+          "alias": "firerune",
+          "id": 554,
+          "name": "Fire rune"
+        }
+      ]
+    },
+    {
+      "alias": "mystic_water_staff",
+      "id": 1403,
+      "name": "Mystic water staff",
+      "runes": [
+        {
+          "alias": "waterrune",
+          "id": 555,
+          "name": "Water rune"
+        }
+      ]
+    },
+    {
+      "alias": "staff_of_air",
+      "id": 1381,
+      "name": "Staff of air",
+      "runes": [
+        {
+          "alias": "airrune",
+          "id": 556,
+          "name": "Air rune"
+        }
+      ]
+    },
+    {
+      "alias": "staff_of_earth",
+      "id": 1385,
+      "name": "Staff of earth",
+      "runes": [
+        {
+          "alias": "earthrune",
+          "id": 557,
+          "name": "Earth rune"
+        }
+      ]
+    },
+    {
+      "alias": "staff_of_fire",
+      "id": 1387,
+      "name": "Staff of fire",
+      "runes": [
+        {
+          "alias": "firerune",
+          "id": 554,
+          "name": "Fire rune"
+        }
+      ]
+    },
+    {
+      "alias": "staff_of_water",
+      "id": 1383,
+      "name": "Staff of water",
+      "runes": [
+        {
+          "alias": "waterrune",
+          "id": 555,
+          "name": "Water rune"
+        }
+      ]
+    },
+    {
+      "alias": "water_battlestaff",
+      "id": 1395,
+      "name": "Water battlestaff",
+      "runes": [
+        {
+          "alias": "waterrune",
+          "id": 555,
+          "name": "Water rune"
+        }
+      ]
     }
   ]
 }

@@ -560,6 +560,44 @@ pub(crate) fn content_json(game_data: Option<&api::game_data::SelectedGameData>)
             serde_json::Value::Object(row)
         })
         .collect::<Vec<_>>();
+    let spell_db = game_data
+        .map(|data| {
+            data.spells()
+                .iter()
+                .map(|spell| {
+                    (
+                        spell.name.clone(),
+                        serde_json::json!({
+                            "ssb": spell.ssb,
+                            "level": spell.level,
+                            "runes": spell
+                                .runes
+                                .iter()
+                                .map(|rune| serde_json::json!({"rune": rune.name, "count": rune.count}))
+                                .collect::<Vec<_>>(),
+                        }),
+                    )
+                })
+                .collect::<serde_json::Map<_, _>>()
+        })
+        .unwrap_or_default();
+    let staff_runes = game_data
+        .map(|data| {
+            data.staves()
+                .iter()
+                .map(|staff| {
+                    (
+                        staff.name.clone(),
+                        serde_json::json!(staff
+                            .runes
+                            .iter()
+                            .map(|rune| rune.name.clone())
+                            .collect::<Vec<_>>()),
+                    )
+                })
+                .collect::<serde_json::Map<_, _>>()
+        })
+        .unwrap_or_default();
     serde_json::json!({
         "food_heals": food_heals,
         "common_bank_loot": api::content::COMMON_BANK_LOOT,
@@ -584,6 +622,8 @@ pub(crate) fn content_json(game_data: Option<&api::game_data::SelectedGameData>)
         "items": items,
         "rock_type_names": ROCK_TYPE_NAMES,
         "pickpocket_spots": pickpocket_spots,
+        "spell_db": spell_db,
+        "staff_runes": staff_runes,
     })
     .to_string()
 }
