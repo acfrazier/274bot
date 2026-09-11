@@ -8,11 +8,13 @@ ArdyFighter cards and script source unchanged. Four shared scenario names:
   requires a native dormant Rocks activation into Rock Crab before
   combat progress. Banking is not this cell.
 - `green_dragon`: GreenDragon default melee/strength at the wilderness
-  field (3096,3814,0) r22, z>=3520. Rune scimitar 1333, worn Dragonfire
-  shield 1540, lobster 379 x12. useSpecial=false, usePotions=false,
-  escape=Flee to bank, solveClues=false, buryBones=false. Loot is dragon
-  bones 536 or green hide 1753 only. Black/red/blue hide 1747/1749/1751
-  fail. Escape/bank is not this cell.
+  field (3096,3814,0) r22, z>=3520. Rune scimitar 1333, Dragonfire
+  shield 1540 packed before Start (frozen GearEquip wears it after
+  Start), lobster 379 x12. useSpecial=false, usePotions=false,
+  escape=Flee to bank, solveClues=false, buryBones=false. Catalog Start
+  baseline is held 1540; cycle `shield_worn` is the real worn 1540 proof.
+  Loot is dragon bones 536 or green hide 1753 only. Black/red/blue hide
+  1747/1749/1751 fail. Escape/bank is not this cell.
 - `fire_giant`: FireGiant default melee already inside the east dungeon
   room (2575,9893,0) r10, z>=9000. Waterfall Quest via existing
   `~completequests` + DrainDialogs. Glarial's amulet 295 and rope 954
@@ -56,9 +58,10 @@ gates above.
 Name-only, seeded baseline XP/loot/food, readiness-only, target
 despawn without combat/loot, one attack admission, no continued work,
 Attack XP in place of Strength, Rock crab / Green Dragon / Fire Giant
-aliases, black/red/blue hide, chocolate cake 1897, pack-only shield,
-missing Rocks activation, missing stolen food, unrelated item, or a
-bank roundtrip used as this core fail.
+aliases, black/red/blue hide, chocolate cake 1897, missing held 1540 at
+Start, unworn shield through the cycle, missing Rocks activation,
+missing stolen food, unrelated item, or a bank roundtrip used as this
+core fail.
 
 ## Adapter audit
 
@@ -73,8 +76,10 @@ bank roundtrip used as this core fail.
   mapped.
 - Eat food / stall steal: inventory Eat and Baker's stall Steal from.
   Already mapped for Ardy cakes; ArdyFighter reuses that steal path.
-- GreenDragon shield: script `Equipment.equip` after Start if the
-  shield is in pack. Catalog baseline requires worn 1540.
+- GreenDragon shield: scenario packs 1540 before Start. Frozen
+  `GearEquip` wears pack-held shield after Start. Catalog Start
+  baseline is held 1540 (pack or worn). Cycle `shield_worn` is the
+  real worn 1540 proof.
 - FireGiant quest: `Quests.status('Waterfall Quest') === 'notStarted'`
   parks. Seed uses existing `~completequests`. Approach rope/raft is
   not this cell.
