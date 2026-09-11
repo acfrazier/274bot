@@ -1,0 +1,49 @@
+{
+  "panel_pass_is_not_core_pass": true,
+  "surfaces": {
+    "catalog_watch": "crates/panel/examples/catalog_watch.rs",
+    "live_script_tick": "crates/panel/src/app.rs:1024",
+    "live_script_observes": "ScenarioRunner status/evidence only",
+    "core_witness": "crates/host-play/tests/catalog_boundary_live.rs CoreWitness",
+    "observation_type": "catalog_boundary_live.rs:666 test-local",
+    "combat_qualified": "engagements>=2 && defeats>=1 && further_work && style_xp && loot/shield extras"
+  },
+  "serialization": {
+    "until_review": {
+      "139": "crates/host-play/tests/catalog_boundary_live.rs",
+      "144": ["crates/host-play/src/lib.rs", "crates/panel/src/session.rs"]
+    },
+    "shared_core_follows": ["139 review", "144 review"],
+    "gate_on_extraction": "native37 Game.teleport (avoid host-play lib overlap)",
+    "may_proceed": "mule127 paired_catalog_live/support only",
+    "must_wait": "option147 catalog_boundary_live edits"
+  },
+  "smallest_reuse_after_139_144": [
+    "Extract Observation+CoreWitness+cycles into a dedicated host-play module; keep qualified() unchanged; lib.rs only re-exports after 144",
+    "catalog_boundary_live becomes a consumer after 139 releases it",
+    "Headed LiveScript for CoreCase names captures Start baseline and observes via Observation::from_snapshot on the existing slot snapshot",
+    "live_script_tick: runner Failed still fails; runner Passed on a core case requires witness.evaluate() Ok",
+    "Non-core script_* stay runner-only"
+  ],
+  "later_fixture_authors": "Add a cycle + CoreCase arm on the extracted witness. Headed catalog_watch inherits via LiveScript. Do not copy cycle structs into panel or option-fixture tests.",
+  "paired": {
+    "seam": "each paired slot feeds shared Observation::from_snapshot + CoreWitness; pair-level qualifier stays in the paired harness",
+    "headed_limitation": "catalog_watch LiveScript is one scenario / one ScenarioRunner; this audit does not add a paired headed harness"
+  },
+  "do_not": [
+    "Duplicate CombatCoreCycle in panel",
+    "Treat ScenarioRunner Passed as core PASS",
+    "Extract into catalog_boundary_live.rs, host-play/lib.rs, or panel/session.rs while 139/144 own them",
+    "Touch crates/scenario or crates/script/src/load.rs",
+    "Pretty-print GameSnapshot inside CoreWitness::observe",
+    "Implement paired headed witness in this audit"
+  ],
+  "shot_sink": {
+    "site": "crates/panel/src/app.rs:4277-4288",
+    "behavior": "slot-threaded runner callback serde_json::to_string_pretty(full GameSnapshot) then enqueue",
+    "evidence": "docs/compat/evidence/first-fire-strike-hitch/timing.json",
+    "timing": "72-75ms observe_us immediately after scenario capture requested on first XP, both 274 and 289",
+    "recommendation": "enqueue label+handle on the runner thread; serialize/readback off gameplay/observe",
+    "not_claimed": "model-loading cause"
+  }
+}
