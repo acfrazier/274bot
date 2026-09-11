@@ -5,8 +5,9 @@ The source and binaries use dedicated empty-target build receipts under
 catalog-headed. Four default GnomeCourse cells pass across both catalogs and
 revisions. Root verified ordered observed log, ground-return and pipe milestones
 with increasing ticks and Agility XP, followed by further next-lap XP. These
-are native observations beyond the scenario's first-XP predicate. Body plane
-is still recorded as 0, so these runs do not establish nonzero-plane facts.
+are native observations beyond the scenario's first-XP predicate. The stored baseline and selected milestones are on plane 0. Native publication
+uses client.minusedlevel, and actual loc dispatches also include levels 1 and 2;
+the stored milestones do not capture every upper-floor player transition.
 
 Three failed cells remain: 274 old-catalog DoorOpener throws because settings.tile
 returned a raw object without distanceTo; radius-8 old-catalog Gnome on 274 and

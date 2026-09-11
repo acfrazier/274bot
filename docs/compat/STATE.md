@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 03:03 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 03:20 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -87,22 +87,28 @@ not a product behavior change.
   pass ordered log/ground-return/pipe and next-lap XP. DoorOpener fails on
   settings.tile losing Tile methods; radius-8 old-catalog Gnome on both
   revisions fails on missing Reachability.walkable. These are our mappings
-  to repair. Existing body-plane facts remain a documented limitation.
+  to repair. Stored Gnome milestones are on the ground; native tile publication already
+  uses client.minusedlevel, and live loc dispatches include levels 1 and 2.
 
 ## Current implementation and overnight routing (03:03 UTC)
 
 - Spell facts/casting f6b9ec4b passed actual Grok 4.5 review 1196/session
   20260910_223536_ceec05 with an empty target. Root LIVE qualification remains
-  separate. PeriodicBank t_51452e47 is running as Grok 4.6; reviewed completion
-  releases DeathRecovery t_0c5ce97f.
-- Settings Tile t_701d17f4 is active as Sol after the operator clarified that
-  distanceTo must delegate Rust geometry. Root preserved and reclaimed the
-  earlier shape-only run, revised brief 57, then verified resumed run 1201
-  uses gpt-5.6-sol. Do not alter native distance policy for imported scripts.
+  separate. PeriodicBank t_51452e47 is running as Grok 4.6; reviewed completion, plus coordinate-query review to serialize the shared
+  publication files, releases DeathRecovery t_0c5ce97f.
+- Settings Tile t_701d17f4 completed Sol source at 6401d3a4 and is in actual
+  Grok 4.5 review 1209. PeriodicBank 41cf8eac accidentally captured its shared
+  load.rs hunks; root separated that composition at 922dac24 using a private
+  index without removing working source. PeriodicBank corrective Grok 4.5
+  review 1211 evaluates exact 922dac24. Interrupted/default-profile runs and
+  old log hash mismatches are retained under evidence/shared-file-ownership
+  and settings-tile-shape. Neither family is LIVE-approved before its review.
 - Coordinate reachability design t_d49b087b completed as actual Grok 4.6 run
   1199, commit cc57adca. It recommends posting compact bits from the existing
   native flood, with no JS collision algorithm or per-read world copies.
-  Coordinate query implementation and same-card review are next. The separate
+  Coordinate query implementation t_246e320b is active in actual Grok 4.6
+  run 1203. Superheater fixtures t_10f975b7 run independently as Grok 4.6
+  run 1204. DirectNavigator mapping t_f7fd9f55 follows query review. The separate
   missing DirectNavigator.walkTo must also map to existing native walking;
   foreign radius-8 re-sync remains a distinct source finding, not a pass.
 - Operator requested four more Grok implementation assignments and periodic
@@ -110,10 +116,12 @@ not a product behavior change.
   t_eeea20f0 hostile/duel facts, t_68de6f48 special controls and t_1bf9a22e
   spellbook teleport now use profile grok46 defaults, with their existing
   dependencies and same-card Grok 4.5 review unchanged. Briefs 34-37 are current.
-- The task heartbeat checks every 15 minutes until 2026-09-11 10:56 UTC
-  (06:56 Eastern). Hermes currently has no xai-oauth account-usage fetcher:
-  its quota result is unavailable, not zero. Track actual runs/token activity
-  and rate-limit failures honestly; the operator supplied the 35% estimate.
+- The task heartbeat checks every 15 minutes until the observed Grok reset,
+  2026-09-11 11:40 UTC (07:40 Eastern). Hermes has no xai-oauth account-usage
+  fetcher, but the operator provided the authenticated Grok Usage tab in the
+  Codex in-app browser. Root read 65% used / 35% remaining and September 11
+  7:40 AM reset there. Use that browser tab for actual quota checks; token
+  activity and rate-limit failures remain a fallback if it is unavailable.
   Continue useful authorized work as gates clear, not filler to consume quota.
 
 ## Accepted milestones

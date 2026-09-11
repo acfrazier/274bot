@@ -100,10 +100,13 @@ clears the snapshot fingerprint so the next post is a keyframe
 (`02b-host-snapshot-reset.md`). Flood is skipped when `here` is missing or
 `scene.available` is false; entity bits then post `(false, false)`.
 
-`GameSnapshot::tile` is still documented as body level 0. Flood already
-requires `here.level == scene.level`. This hop does not decode a new
-player-plane field. Coordinate queries use the posted scene plane; a
-dest on another level is false.
+Root correction after inspecting immutable 50f2be8a source: `GameSnapshot::tile`
+and `host_play::player_here_tile` both publish `client.minusedlevel`, not a
+hardcoded body level 0. The sampled Gnome milestones happen on the ground;
+that does not establish a constant-plane defect. Live loc dispatches include
+levels 1 and 2. Flood requires `here.level == scene.level`; coordinate queries
+use this actual posted scene plane, and a destination on another plane is false.
+No new player-plane field is required by this design.
 
 ## Enabled callers of these two ops
 
@@ -235,4 +238,5 @@ BFS, map `canStep`/`probeable`/`walkTo`, rewrite AgilityBot, dim
 GnomeCourse, or call radius-8 LIVE green because `walkable` exists.
 
 Out of scope here: product edits, LIVE, packaging, nav identity, tile
-distance (`43672c4d`), settings Tile shape, player-body plane decoding.
+distance (`43672c4d`) and settings Tile shape. Native level publication already
+uses the selected current scene level; do not add a speculative decoding fix.
