@@ -1,0 +1,15 @@
+     Running unittests src/lib.rs (.superpowers/review-exports/death-recovery-root-8fd0f138-target/debug/deps/script-3c6f978d22f78410)
+
+running 6 tests
+test death_recovery::tests::bounds_match_frozen_contract ... ok
+test death_recovery::tests::seeded_duplicate_and_old_chat_do_not_latch ... ok
+test death_recovery::tests::walk_back_is_invoked_instead_of_default_walk ... ok
+test death_recovery::tests::respawn_timeout_still_advances_to_ticks ... ok
+test death_recovery::tests::pause_freezes_sends_and_reset_drops_stale_token ... ok
+test death_recovery::tests::validate_false_until_new_death_and_recovers_once_at_anchor ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 59 filtered out; finished in 0.00s
+
+export: .superpowers/review-exports/death-recovery-root-8fd0f138
+host: 8fd0f13870dbe7d207c1604726937ca36963d5aa
+client: 56d80272bcbda3eb1e22db096c1c5e21d3497de4

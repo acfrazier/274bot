@@ -1,0 +1,5 @@
+    Checking script v0.1.0 (.superpowers/review-exports/death-recovery-root-8fd0f138/crates/script)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 53.71s
+
+clippy -p script --no-deps -- -D warnings: pass
+export: .superpowers/review-exports/death-recovery-root-8fd0f138
