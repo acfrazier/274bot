@@ -1,0 +1,144 @@
+{
+  "tile": [
+    2668,
+    3312,
+    0
+  ],
+  "tick": 18,
+  "items": {},
+  "item_ids": {},
+  "levels": {
+    "hitpoints": 40,
+    "thieving": 5
+  },
+  "effective_levels": {
+    "hitpoints": 40,
+    "thieving": 5
+  },
+  "xp": {
+    "hitpoints": 37224,
+    "thieving": 388
+  },
+  "local_health": 0,
+  "local_in_combat": false,
+  "local_target_npc": null,
+  "npc_facts": [],
+  "loc_facts": [
+    {
+      "id": 1530,
+      "x": 2669,
+      "z": 3316,
+      "level": 0,
+      "name": "Door",
+      "open": true
+    },
+    {
+      "id": 1530,
+      "x": 2670,
+      "z": 3320,
+      "level": 0,
+      "name": "Door",
+      "open": true
+    },
+    {
+      "id": 131,
+      "x": 2672,
+      "z": 3304,
+      "level": 0,
+      "name": "Door",
+      "open": true
+    },
+    {
+      "id": 131,
+      "x": 2672,
+      "z": 3305,
+      "level": 0,
+      "name": "Door",
+      "open": true
+    },
+    {
+      "id": 131,
+      "x": 2672,
+      "z": 3311,
+      "level": 0,
+      "name": "Door",
+      "open": true
+    },
+    {
+      "id": 2551,
+      "x": 2674,
+      "z": 3304,
+      "level": 0,
+      "name": "Door",
+      "open": true
+    },
+    {
+      "id": 2550,
+      "x": 2674,
+      "z": 3305,
+      "level": 0,
+      "name": "Door",
+      "open": true
+    },
+    {
+      "id": 131,
+      "x": 2676,
+      "z": 3304,
+      "level": 0,
+      "name": "Door",
+      "open": true
+    },
+    {
+      "id": 131,
+      "x": 2676,
+      "z": 3305,
+      "level": 0,
+      "name": "Door",
+      "open": true
+    }
+  ],
+  "chat": [
+    [
+      7,
+      "Inventory wiped."
+    ],
+    [
+      6,
+      "set tutorial: to 1000"
+    ],
+    [
+      5,
+      "Welcome to RuneScape."
+    ]
+  ],
+  "obs_keys": [
+    "bank",
+    "bank_generation",
+    "bank_ids",
+    "bank_loaded",
+    "bank_open",
+    "chat",
+    "combat_level",
+    "effective_levels",
+    "equipment_ids",
+    "ground_loot",
+    "ingame",
+    "item_ids",
+    "items",
+    "levels",
+    "loc_facts",
+    "local_animation",
+    "local_health",
+    "local_in_combat",
+    "local_target_npc",
+    "main_modal",
+    "npc_facts",
+    "player",
+    "scene_state",
+    "tick",
+    "tile",
+    "varps",
+    "widget_ids",
+    "xp"
+  ]
+}

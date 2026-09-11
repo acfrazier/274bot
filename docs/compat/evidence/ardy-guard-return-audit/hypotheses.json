@@ -1,0 +1,36 @@
+{
+  "owner": "native-274-guard-los-catch",
+  "not_owner": [
+    "host-loc-identity",
+    "walkto-command-identity",
+    "stale-baker-stall-facts",
+    "returntostall-task",
+    "thieving-stat-random",
+    "underqualified-thieving5",
+    "foreign-catalog-regression",
+    "214-isolate-termination",
+    "289-slow-pack-fill",
+    "task-139-ballast",
+    "budgeted-reach-140"
+  ],
+  "engine": {
+    "stall_has_stat_random": false,
+    "catch": "stealing_check_for_guard: npc_huntall(player, 5) + LOS + type ardougne_guard + mode != opplayer2",
+    "catch_before_reward": true,
+    "catch_does_not_empty_stall": true,
+    "combat_lockout_ticks": 10,
+    "baker_level": 5,
+    "xp_tenths": 160,
+    "respawn_ticks_after_success_only": 8
+  },
+  "host": {
+    "stealCakes": "one-attempt",
+    "lockout_while_waiting": "immediate no-progress",
+    "walk_to_stand": "queue walk-to -> InteractReq::WalkTo -> ix.walk",
+    "flee": "walkOpening -> Walk allow_teleports=false",
+    "return_to_stall_task": "did not run (flee cheb 13 < market r40)",
+    "onReset": "never called",
+    "classifySteal": "not impl / unused"
+  },
+  "insufficiency": "274 npc_facts empty at baseline tick 18; no per-steal NPC snapshot for click 1. Catch is still witnessed by stealCakes combat + HP 40->37."
+}

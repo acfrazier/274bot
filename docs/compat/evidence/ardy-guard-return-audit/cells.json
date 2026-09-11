@@ -1,0 +1,595 @@
+{
+  "pins": {
+    "stand": [
+      2668,
+      3312,
+      0
+    ],
+    "stall": [
+      2667,
+      3310,
+      0
+    ],
+    "flee": [
+      2655,
+      3298,
+      0
+    ],
+    "bank": [
+      2655,
+      3286,
+      0
+    ],
+    "stand_alt": [
+      2669,
+      3310,
+      0
+    ]
+  },
+  "hunt_radius": 5,
+  "lockout_ticks": 10,
+  "stall_xp_tenths": 160,
+  "r274": {
+    "receipt": {
+      "command": [
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-native942",
+        "catalog_boundary_live",
+        "--ignored",
+        "--exact",
+        "--nocapture"
+      ],
+      "started_at": "2026-09-11T15:09:38.124797+00:00",
+      "host_commit": "9429357d1124a9a3451c33e2fae1725fd5296be0",
+      "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+      "binary_sha256": "51c4e645ba7d7f0c1b0ab1df35e624358d2a794a18748f2b16d77f9448a624d6",
+      "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+      "revision": "274",
+      "case": "ardy_cakes",
+      "environment": {
+        "LIVE": "1",
+        "BOT_CPU": "1",
+        "BOT_DEBUG": "1",
+        "RUST_BACKTRACE": "1",
+        "CATALOG_REVISION": "274",
+        "CATALOG_SCENARIO": "ardy_cakes",
+        "CATALOG_COMMIT": "100adccc037d9f6898080e1cad58fcfc43364775",
+        "CATALOG_ROOT": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775",
+        "CATALOG_NAV_PACK": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navpack",
+        "CATALOG_NAV_FLAGS": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navflags",
+        "CATALOG_ENGINE_DIR": "/Users/acfrazier/experiments/Server/engine"
+      },
+      "elapsed_is_not_performance_measurement": true,
+      "pid": 74501,
+      "finished_at": "2026-09-11T15:11:12.926094+00:00",
+      "elapsed_seconds": 94.801,
+      "exit_code": 1,
+      "log_sha256": "c61486cae3603f8fae65b2062341beb4e7606e1207995ad47ff52ff9f04d6402",
+      "nav_sha256": "05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4",
+      "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a"
+    },
+    "events": {
+      "loc_interacts": 4,
+      "caught": 2,
+      "no_progress": 29,
+      "kites": 3,
+      "walk_to_stand": 3,
+      "walk_flee": 3,
+      "eat": 0,
+      "script_lines": [
+        "start load",
+        "ArdyCakes starting \u2014 stand (2668, 3312, 0), bank (2655, 3286, 0), flee mode",
+        "interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }",
+        "guard caught the steal \u2014 handling per guardResponse",
+        "combat \u2014 kiting the guard to 2655,3298",
+        "interact Walk { x: 2655, z: 3298, level: 0, allow_teleports: false }",
+        "[nav-follow] here=WorldTile { x: 2655, z: 3298, level: 0 } walk=false transport=false leg=1 hops=1 outcome=Some(Arrived { at: WorldTile { x: 2655, z: 3298, level: 0 } })",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "interact WalkTo { x: 2668, z: 3312, level: 0 }",
+        "interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }",
+        "steal pass made no progress \u2014 re-entering",
+        "interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }",
+        "steal pass made no progress \u2014 re-entering",
+        "combat \u2014 kiting the guard to 2655,3298",
+        "interact Walk { x: 2655, z: 3298, level: 0, allow_teleports: false }",
+        "[nav-follow] here=WorldTile { x: 2655, z: 3298, level: 0 } walk=false transport=false leg=1 hops=1 outcome=Some(Arrived { at: WorldTile { x: 2655, z: 3298, level: 0 } })",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "interact WalkTo { x: 2668, z: 3312, level: 0 }",
+        "interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }",
+        "guard caught the steal \u2014 handling per guardResponse",
+        "combat \u2014 kiting the guard to 2655,3298",
+        "interact Walk { x: 2655, z: 3298, level: 0, allow_teleports: false }",
+        "[nav-follow] here=WorldTile { x: 2655, z: 3298, level: 0 } walk=false transport=false leg=1 hops=1 outcome=Some(Arrived { at: WorldTile { x: 2655, z: 3298, level: 0 } })",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "interact WalkTo { x: 2668, z: 3312, level: 0 }",
+        "FAIL: catalog_boundary_live: scenario failed: step 11 (watch Thieving XP from Baker's stall after Start): stat_xp_gain(17)>=1 not seen within 150 ticks; evidence=Some(Evidence { scenario: \"ardy_cakes\", outcome: \"FAIL\", predicate: \"stat_xp_gain(17)>=1"
+      ]
+    },
+    "baseline_npcs": [],
+    "latest_npcs": [
+      {
+        "index": 3556,
+        "name": "Guard",
+        "tile": [
+          2660,
+          3308,
+          0
+        ],
+        "distance_posted": 8,
+        "cheb_player": 8,
+        "cheb_stand": 8,
+        "cheb_stall": 7,
+        "in_combat": false,
+        "targeting_local": false,
+        "health": 22,
+        "total_health": 22
+      },
+      {
+        "index": 3555,
+        "name": "Guard",
+        "tile": [
+          2659,
+          3303,
+          0
+        ],
+        "distance_posted": 3,
+        "cheb_player": 3,
+        "cheb_stand": 9,
+        "cheb_stall": 8,
+        "in_combat": false,
+        "targeting_local": false,
+        "health": 22,
+        "total_health": 22
+      },
+      {
+        "index": 3559,
+        "name": "Guard",
+        "tile": [
+          2664,
+          3301,
+          0
+        ],
+        "distance_posted": 7,
+        "cheb_player": 7,
+        "cheb_stand": 11,
+        "cheb_stall": 9,
+        "in_combat": false,
+        "targeting_local": false,
+        "health": 0,
+        "total_health": 0
+      }
+    ],
+    "latest_tile": [
+      2657,
+      3300,
+      0
+    ],
+    "latest_tick": 134,
+    "thiev_xp": {
+      "baseline": 388,
+      "latest": 388,
+      "max": 388
+    },
+    "hp": {
+      "base": 40,
+      "effective": 37,
+      "local_health": 37
+    },
+    "items": {},
+    "in_combat": false,
+    "ardy_cakes_cycle": {
+      "stolen": null,
+      "deposited": null,
+      "returned": false,
+      "further": false,
+      "wrong_product": false,
+      "noted": false
+    },
+    "predicate": "stat_xp_gain(17)>=1",
+    "fail_ticks": 165,
+    "elapsed_ms": 91610,
+    "fail_tile": [
+      2657,
+      3300,
+      0
+    ]
+  },
+  "r289": {
+    "receipt": {
+      "command": [
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-native942",
+        "catalog_boundary_live",
+        "--ignored",
+        "--exact",
+        "--nocapture"
+      ],
+      "started_at": "2026-09-11T15:08:18.468460+00:00",
+      "host_commit": "9429357d1124a9a3451c33e2fae1725fd5296be0",
+      "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+      "binary_sha256": "51c4e645ba7d7f0c1b0ab1df35e624358d2a794a18748f2b16d77f9448a624d6",
+      "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+      "revision": "289",
+      "case": "ardy_cakes",
+      "environment": {
+        "LIVE": "1",
+        "BOT_CPU": "1",
+        "BOT_DEBUG": "1",
+        "RUST_BACKTRACE": "1",
+        "CATALOG_REVISION": "289",
+        "CATALOG_SCENARIO": "ardy_cakes",
+        "CATALOG_COMMIT": "100adccc037d9f6898080e1cad58fcfc43364775",
+        "CATALOG_ROOT": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775",
+        "CATALOG_NAV_PACK": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack",
+        "CATALOG_NAV_FLAGS": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navflags",
+        "CATALOG_ENGINE_DIR": "/Users/acfrazier/experiments/lostcity-289/engine"
+      },
+      "elapsed_is_not_performance_measurement": true,
+      "pid": 72150,
+      "finished_at": "2026-09-11T15:09:37.218064+00:00",
+      "elapsed_seconds": 78.749,
+      "exit_code": 1,
+      "log_sha256": "0672490b67cc743ea5118b7da4c54cce51fee4d7f681b2855a65248fc3327ecd",
+      "nav_sha256": "131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924",
+      "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75"
+    },
+    "events": {
+      "loc_interacts": 14,
+      "caught": 2,
+      "no_progress": 43,
+      "kites": 2,
+      "walk_to_stand": 2,
+      "walk_flee": 2,
+      "eat": 1,
+      "script_lines": [
+        "start load",
+        "ArdyCakes starting \u2014 stand (2668, 3312, 0), bank (2655, 3286, 0), flee mode",
+        "interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }",
+        "steal pass made no progress \u2014 re-entering",
+        "interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }",
+        "guard caught the steal \u2014 handling per guardResponse",
+        "combat \u2014 kiting the guard to 2655,3298",
+        "interact Walk { x: 2655, z: 3298, level: 0, allow_teleports: false }",
+        "[nav-follow] here=WorldTile { x: 2655, z: 3298, level: 0 } walk=false transport=false leg=1 hops=1 outcome=Some(Arrived { at: WorldTile { x: 2655, z: 3298, level: 0 } })",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "interact WalkTo { x: 2668, z: 3312, level: 0 }",
+        "interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }",
+        "steal pass made no progress \u2014 re-entering",
+        "interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }",
+        "steal pass made no progress \u2014 re-entering",
+        "interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }",
+        "guard caught the steal \u2014 handling per guardResponse",
+        "combat \u2014 kiting the guard to 2655,3298",
+        "interact Walk { x: 2655, z: 3298, level: 0, allow_teleports: false }",
+        "[nav-follow] here=WorldTile { x: 2655, z: 3298, level: 0 } walk=false transport=false leg=1 hops=1 outcome=Some(Arrived { at: WorldTile { x: 2655, z: 3298, level: 0 } })",
+        "interact Held { name: \"Bread\", action: \"Eat\" }",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "interact WalkTo { x: 2668, z: 3312, level: 0 }",
+        "interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "steal pass made no progress \u2014 re-entering",
+        "interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }",
+        "steal pass made no progress \u2014 re-entering",
+        "interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }",
+        "steal pass made no progress \u2014 re-entering",
+        "interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }",
+        "steal pass made no progress \u2014 re-entering",
+        "interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }",
+        "steal pass made no progress \u2014 re-entering",
+        "interact Loc { x: 2667, z: 3310, level: 0, action: \"Steal from\", id: Some(2561) }",
+        "FAIL: catalog_boundary_live: scenario failed: step 13 (watch arrival at the Ardougne bank after the stall fill): arrived_near(2655,3286,0,6) not seen within 150 ticks; evidence=Some(Evidence { scenario: \"ardy_cakes\", outcome: \"FAIL\", predicate: \"arri"
+      ]
+    },
+    "baseline_npcs": [
+      {
+        "index": 3565,
+        "name": "Guard",
+        "tile": [
+          2660,
+          3313,
+          0
+        ],
+        "distance_posted": 8,
+        "cheb_player": 8,
+        "cheb_stand": 8,
+        "cheb_stall": 7,
+        "in_combat": false,
+        "targeting_local": false,
+        "health": 0,
+        "total_health": 0
+      },
+      {
+        "index": 3566,
+        "name": "Guard",
+        "tile": [
+          2664,
+          3304,
+          0
+        ],
+        "distance_posted": 8,
+        "cheb_player": 8,
+        "cheb_stand": 8,
+        "cheb_stall": 6,
+        "in_combat": false,
+        "targeting_local": false,
+        "health": 0,
+        "total_health": 0
+      },
+      {
+        "index": 3567,
+        "name": "Guard",
+        "tile": [
+          2661,
+          3316,
+          0
+        ],
+        "distance_posted": 7,
+        "cheb_player": 7,
+        "cheb_stand": 7,
+        "cheb_stall": 6,
+        "in_combat": false,
+        "targeting_local": false,
+        "health": 0,
+        "total_health": 0
+      }
+    ],
+    "latest_npcs": [
+      {
+        "index": 3564,
+        "name": "Guard",
+        "tile": [
+          2662,
+          3309,
+          0
+        ],
+        "distance_posted": 6,
+        "cheb_player": 6,
+        "cheb_stand": 6,
+        "cheb_stall": 5,
+        "in_combat": false,
+        "targeting_local": false,
+        "health": 22,
+        "total_health": 22
+      },
+      {
+        "index": 3565,
+        "name": "Guard",
+        "tile": [
+          2661,
+          3308,
+          0
+        ],
+        "distance_posted": 7,
+        "cheb_player": 7,
+        "cheb_stand": 7,
+        "cheb_stall": 6,
+        "in_combat": false,
+        "targeting_local": false,
+        "health": 22,
+        "total_health": 22
+      },
+      {
+        "index": 3567,
+        "name": "Guard",
+        "tile": [
+          2664,
+          3318,
+          0
+        ],
+        "distance_posted": 6,
+        "cheb_player": 6,
+        "cheb_stand": 6,
+        "cheb_stall": 8,
+        "in_combat": false,
+        "targeting_local": false,
+        "health": 0,
+        "total_health": 0
+      }
+    ],
+    "latest_tile": [
+      2668,
+      3312,
+      0
+    ],
+    "latest_tick": 232,
+    "thiev_xp": {
+      "baseline": 388,
+      "latest": 452,
+      "max": 452
+    },
+    "hp": {
+      "base": 40,
+      "effective": 40,
+      "local_health": 36
+    },
+    "items": {
+      "Cake": 1,
+      "Chocolate slice": 2
+    },
+    "max_items": {
+      "Bread": 1,
+      "Cake": 1,
+      "Chocolate slice": 2
+    },
+    "in_combat": false,
+    "stolen": {
+      "tile": [
+        2668,
+        3312,
+        0
+      ],
+      "tick": 47,
+      "items": {
+        "Bread": 1
+      },
+      "item_ids": {
+        "2309": 1
+      },
+      "thiev_xp": 404,
+      "hp_eff": 40,
+      "health": 0,
+      "in_combat": false,
+      "chat": [
+        [
+          8,
+          "You steal some bread."
+        ],
+        [
+          7,
+          "Inventory wiped."
+        ],
+        [
+          6,
+          "set tutorial: to 1000"
+        ],
+        [
+          5,
+          "Welcome to RuneScape."
+        ]
+      ],
+      "npcs": [
+        {
+          "index": 3564,
+          "name": "Guard",
+          "tile": [
+            2662,
+            3313,
+            0
+          ],
+          "distance_posted": 6,
+          "cheb_player": 6,
+          "cheb_stand": 6,
+          "cheb_stall": 5,
+          "in_combat": false,
+          "targeting_local": false,
+          "health": 0,
+          "total_health": 0
+        },
+        {
+          "index": 3565,
+          "name": "Guard",
+          "tile": [
+            2662,
+            3308,
+            0
+          ],
+          "distance_posted": 6,
+          "cheb_player": 6,
+          "cheb_stand": 6,
+          "cheb_stall": 5,
+          "in_combat": false,
+          "targeting_local": false,
+          "health": 0,
+          "total_health": 0
+        },
+        {
+          "index": 3566,
+          "name": "Guard",
+          "tile": [
+            2661,
+            3306,
+            0
+          ],
+          "distance_posted": 7,
+          "cheb_player": 7,
+          "cheb_stand": 7,
+          "cheb_stall": 6,
+          "in_combat": false,
+          "targeting_local": false,
+          "health": 0,
+          "total_health": 0
+        },
+        {
+          "index": 3567,
+          "name": "Guard",
+          "tile": [
+            2666,
+            3317,
+            0
+          ],
+          "distance_posted": 5,
+          "cheb_player": 5,
+          "cheb_stand": 5,
+          "cheb_stall": 7,
+          "in_combat": false,
+          "targeting_local": false,
+          "health": 0,
+          "total_health": 0
+        }
+      ]
+    },
+    "ardy_cakes_cycle_flags": {
+      "stolen": true,
+      "deposited": null,
+      "returned": false,
+      "further": false,
+      "wrong_product": false,
+      "noted": false
+    },
+    "predicate": "arrived_near(2655,3286,0,6)",
+    "fail_ticks": 251,
+    "elapsed_ms": 75557,
+    "fail_tile": [
+      2668,
+      3312,
+      0
+    ]
+  }
+}

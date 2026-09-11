@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 15:27 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 15:59 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -36,23 +36,31 @@ four cells with real work. ArdyCakes214 fails after isolate termination.
 
 Fixture lane: resource125 reviewed (Grok4.5 run1361); root resource batch on exact2d589c7ba completed1 PASS/10 FAIL; nine
 newer-catalog cells remain held after old-catalog failure. Trained Brimhaven131 reviewed (verified Grok4.5 run1364) -> reviewed Wildy plane135 (verified Grok4.5 run1369)
--> active combat observer/Coal bounded preparation136 -> mage132 -> resource
+-> combat observer/Coal136 in review1372 -> mage132 -> resource
 start preparation139 -> Mule bootstrap127.
 Native lane: observation projection134 reviewed (verified Grok4.5 run1365) after audit133/retaliate128 ->
-quest status transport137 -> bounded reachability140 -> teleport -> shop -> Make-X -> fire -> trade126.
+quest status transport137 in review1373 -> bounded reachability140 -> teleport -> shop -> Make-X -> fire -> trade126.
 Existing parent gates remain. Independent bounded reachability audit138 completed (verified Grok4.6
 run1363): Flax requests maxSteps400 but shim uses unrestricted flood bits.
 Rust flood-metadata mapping140 will honor budgets without JS BFS, preserve
 valid adjacency, and prevent entity-row budget bypass. No live fix claimed.
 Exact942 LIVE completed16 bank-dependent PASSs and4 Brimhaven/Ardy FAILs.
 Audit141 verified Grok4.6 identifies a frozen Brimhaven route defect; root
-will dim only the audited card/helper hashes after137 releases load metadata.
+has applied the verified source-specific loader dim after137 handed off:
+43 loader tests and both frozen catalogs passed; changed-card/helper controls
+no longer dim. Four original rows now DIM_FOREIGN_DEFECT; none are LIVE PASSs.
 Original45-card/180-row inventory remains. Ardy139 includes bounded6-slot
 production preparation; the274 caught/flee failure is not fixed by ballast.
 Wildy8c LIVE completed3 PASS/1 FAIL after verified review1369. Both274
 catalogs and289newer finish core;289old died after ropefall atHP10.
 Preparation139 additionally acknowledgesHP40, preservingAgility52/food/
 hostility/clocks. No until-lucky rerun. Root has no LIVE processes left.
+Audit142 completed with verified Grok4.6 run1371:274 is a native guard LOS
+catch with successful flee/return movement, no proven foreign defect. Keep
+ArdyCakes enabled and retain FAIL;139 pack preparation is separate.
+Root committed2c216863: move the existing adjacent bank regression onto native
+SnapshotInput transport. Isolated old fixture FAIL and corrected24-test PASS
+retained in evidence/native-bank-test-transport; no runtime change.
 No new main publication beyond76b2016b7 yet; stage2 needs native correction
 and reviewed/live-qualified scope.
 

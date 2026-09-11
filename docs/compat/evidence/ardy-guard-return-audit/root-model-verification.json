@@ -1,0 +1,68 @@
+{
+  "actual_model_verified": true,
+  "model": "grok-4.6",
+  "provider": "xai-oauth",
+  "api_call_count": 38,
+  "checked_at": "2026-09-11T15:59:12.527670+00:00",
+  "run": {
+    "id": 1371,
+    "task_id": "t_ad570a8a",
+    "profile": "grok46",
+    "status": "done",
+    "outcome": "completed",
+    "summary": "Read-only grok46 audit: 274 no-first-XP is a native Baker-stall guard LOS catch (hunt r5, no stat_random), not a host loc/WalkTo/observation identity defect and not a foreign catalog regression. Same sequencer on 289 stole four times (+64 XP) then failed the 28-slot bank watch. Do not dim; do not edit 139. Report 06al.",
+    "metadata": {
+      "review_outcome": "audit",
+      "report": "docs/compat/06al-ardy-guard-return-audit.md",
+      "evidence": "docs/compat/evidence/ardy-guard-return-audit/",
+      "live_host": "9429357d1124a9a3451c33e2fae1725fd5296be0",
+      "client": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+      "campaign_head_at_writeup": "6dd6f9102b1111fdcadf551ccfd3a24658d81661",
+      "owner": "native-274-guard-los-catch",
+      "not_owner": [
+        "host-loc-identity",
+        "walkto-command-identity",
+        "foreign-catalog-regression",
+        "thieving-stat-random",
+        "214-isolate",
+        "289-slow-fill",
+        "task-139",
+        "budgeted-reach-140"
+      ],
+      "r274": {
+        "predicate": "stat_xp_gain(17)>=1",
+        "ticks": 165,
+        "tile": [
+          2657,
+          3300,
+          0
+        ],
+        "thieving_xp": 388,
+        "hp_effective": 37,
+        "loc_clicks": 4,
+        "caught": 2,
+        "kites": 3
+      },
+      "r289": {
+        "predicate": "arrived_near(2655,3286,0,6)",
+        "ticks": 251,
+        "tile": [
+          2668,
+          3312,
+          0
+        ],
+        "thieving_xp": 452,
+        "stolen_tick": 47
+      },
+      "dim": false,
+      "edited_139": false,
+      "created_tasks": false,
+      "tests_run": "none (read-only)",
+      "artifacts": [
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/06al-ardy-guard-return-audit.md"
+      ],
+      "worker_session_id": "20260911_114338_d785d8"
+    }
+  },
+  "root_disposition": "Keep ArdyCakes enabled and retain 274 FAIL. No proven foreign defect or native correction established by this cell. 139 pack preparation does not fix or qualify the 274 catch failure."
+}

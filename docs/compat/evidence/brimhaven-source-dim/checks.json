@@ -1,0 +1,37 @@
+{
+  "source_host": "4bad86a583d0ab5fdb447464c62c39239835e259",
+  "overlays": {
+    "crates/script/src/load.rs": "94460a6b172be0f8f581ee67736190873acac9bc194ce86f5b19528182dea4c0",
+    "crates/script/examples/catalog_inventory.rs": "17cf7b1772c71b03d358f0ceacac1e9e9f7f247795e75a8b2ced11523801b866"
+  },
+  "commands": [
+    [
+      "cargo",
+      "test",
+      "-p",
+      "script",
+      "--test",
+      "load_siblings",
+      "--test",
+      "load_picker",
+      "--test",
+      "load_shape",
+      "--test",
+      "rs2b0t_registry",
+      "--locked"
+    ],
+    [
+      "cargo",
+      "build",
+      "-p",
+      "script",
+      "--example",
+      "catalog_inventory",
+      "--locked"
+    ]
+  ],
+  "exit_code": 0,
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target",
+  "cache_reused": true,
+  "completed_at": "2026-09-11T15:36:16.182095+00:00"
+}

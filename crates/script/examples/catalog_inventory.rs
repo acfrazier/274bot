@@ -47,7 +47,12 @@ fn run() -> Result<(), String> {
         .cards()
         .iter()
         .map(|card| {
-            let status = if is_catalog_dim(&card.name) {
+            let status = if is_catalog_dim(&card.name)
+                || card
+                    .unloadable
+                    .as_deref()
+                    .is_some_and(|reason| reason.starts_with("dim:"))
+            {
                 dim += 1;
                 "dim"
             } else if card.unloadable.is_some() {
