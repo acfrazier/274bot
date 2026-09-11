@@ -108,3 +108,13 @@ readback; raising the same binary in a minimal app bundle produced the PNG.
 Windows 6c6bb2d5 also produced its internal full-window PNG without that trace
 change. Both images and real scene-2 sidecars were read. Screenshot success is
 separate from independent gameplay qualification and all-frontends acceptance.
+
+
+Latest operator UI follow-ups: require loading-progress card t_42263bfd and
+selected-data corrective gate t_e6ec9679 before this review starts. Source
+7852b5a0 was prematurely self-completed and has not yet received its required
+Grok 4.5 review. Include first-run Browse fix 1a2f2dcf and its native UI evidence
+at docs/compat/evidence/browse-ux/README.md, alongside loading progress. Root's
+interactive Mac startup check now rejects an after-bind resource mutation
+without changing the empty fixture vault, then unlocks after restoration;
+06f-panel-startup-native-proof.md records the exact limits and captures.

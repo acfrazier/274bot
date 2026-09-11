@@ -1,0 +1,3 @@
+   Compiling panel v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/browse-ux/source-1a2f2dcf/crates/panel)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.37s
+     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/debug/deps/panel-7188c474ed0869ed)
