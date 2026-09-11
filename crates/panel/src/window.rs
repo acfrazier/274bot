@@ -542,6 +542,9 @@ impl AppWindow {
             let mut guard = shots.lock().unwrap();
             let wanted = mem::take(&mut guard.wanted);
             if !wanted.is_empty() {
+                if std::env::var_os("BOT_DEBUG").is_some() {
+                    eprintln!("[panel] capture readback requested: {}", wanted.len());
+                }
                 let source = self.offscreen.as_ref().unwrap_or(&frame.texture);
                 readbacks = self.readback(source, &mut encoder, &wanted);
             }
@@ -644,19 +647,22 @@ impl AppWindow {
                 let slice = rb.buffer.slice(..);
                 let mapped = Arc::new(AtomicBool::new(false));
                 let flag = Arc::clone(&mapped);
-                slice.map_async(wgpu::MapMode::Read, move |res| {
-                    if res.is_ok() {
-                        flag.store(true, Ordering::Release);
-                    }
+                let label = rb.label.clone();
+                slice.map_async(wgpu::MapMode::Read, move |res| match res {
+                    Ok(()) => flag.store(true, Ordering::Release),
+                    Err(error) => eprintln!("[panel] shot {label}: map failed: {error}"),
                 });
-                let _ = self.device.poll(wgpu::PollType::Wait {
+                if let Err(error) = self.device.poll(wgpu::PollType::Wait {
                     submission_index: None,
                     timeout: None,
-                });
+                }) {
+                    eprintln!("[panel] shot {}: poll failed: {error}", rb.label);
+                }
                 // A failed map (device lost) drops the shot instead of
                 // panicking the loop, which recovers GPU state on render
                 // errors — the shot is a smoke artifact, not the run.
                 if !mapped.load(Ordering::Acquire) {
+                    eprintln!("[panel] shot {}: readback did not complete", rb.label);
                     return None;
                 }
                 let data = slice.get_mapped_range();
