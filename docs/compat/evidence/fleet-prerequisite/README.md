@@ -19,3 +19,22 @@ These overlap Grok work and other live/build activity. RSS/CPU are shipped
 diagnostics, with no matched performance comparison or savings claim. N32
 started separately and must independently qualify every actor; N1 does not
 establish the fleet, controls, or full frontend acceptance.
+
+## N32 274 on 6d750e65
+
+All 32 actors pass bank/restock, observed return and further theft, with
+1,965–4,540 XP per actor during 600 seconds of observation. Each of their
+four 150-second intervals is positive (minimum 187 XP). Fourteen bank-after
+counts were sampled; the other actors still have loaded bank-before, actual
+food replenishment at bank, return and subsequent XP/coins. Some actors eat
+to two food while stunned before banking, which is valid for the threshold
+of three. The collector records the initial four food after Script Start,
+including while the seed runner is still waiting for first theft; it verifies
+that runner later passes. Requiring its Passed label for the initial baseline
+incorrectly skipped two real baselines. No product/fixture behavior changed.
+
+The shipped samples report median resident memory 1,268,727,808 bytes and
+mean process CPU about 199.5% across the observation window. Concurrent agent
+work means these are diagnostics, with no matched performance claim. N32 289
+is running separately; final integrated-source preservation remains a later
+gate. `harvest_fleet.py` verifies every actor and source/binary/log hash.

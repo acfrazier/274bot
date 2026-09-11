@@ -1,0 +1,9 @@
+{
+  "archive": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/platform-preparation/platform-isolated-6c7075ce.tar.gz",
+  "archive_sha256": "84e955cccd1cbe821d8aff7bc7b911af0b82c2bfa1012a5774056a059fee4e0a",
+  "archive_bytes": 77884042,
+  "host_commit": "6c7075ce2ae98fac1f2641026445b9b87a566076",
+  "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "source_files": 5933,
+  "old_inputs_archive_sha256": "2b848e33b3e7325bfcad3f43c7693f000d2958bb4b8d7a3b55bb1c766baa81fa"
+}

@@ -1,0 +1,6077 @@
+{
+  "outcome": "PASS",
+  "n": 32,
+  "revision": "274",
+  "host_commit": "6d750e65a227aa8a39f2bb6fdc1e5ceb5a452338",
+  "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "binary_sha256": "822e74e01c36c8fb331608f9f220e01ce539b0345d33dcb4af8a2ba8d28d2c3b",
+  "scope": "Sustained functional fleet qualification on this candidate; final integrated-source regression remains separate",
+  "observed_seconds": 600.015723333,
+  "receipt": "docs/compat/evidence/fleet-prerequisite/n32-r274-6d750e65/receipt.json",
+  "source_files_verified": 1969,
+  "actors": {
+    "liveqyy2r_0": {
+      "name": "liveqyy2r_0",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1417,
+        "xp": 104609,
+        "hp": 45,
+        "position": [
+          2663,
+          3308,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 1950,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1413,
+        "dispatched": 1392
+      },
+      "baseline": {
+        "elapsed_s": 71.227701542,
+        "state": "Running",
+        "tick": 28,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 24,
+        "dispatched": 3
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 176.732484667,
+        "state": "Running",
+        "tick": 204,
+        "xp": 101567,
+        "hp": 47,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 150,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 200,
+        "dispatched": 179
+      },
+      "restock": {
+        "elapsed_s": 179.824327792,
+        "state": "Running",
+        "tick": 209,
+        "xp": 101567,
+        "hp": 47,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 205,
+        "dispatched": 184
+      },
+      "return_arrival": {
+        "elapsed_s": 195.291347833,
+        "state": "Running",
+        "tick": 236,
+        "xp": 101567,
+        "hp": 48,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 231,
+        "dispatched": 210
+      },
+      "further_steals": {
+        "elapsed_s": 197.333158542,
+        "state": "Running",
+        "tick": 239,
+        "xp": 101613,
+        "hp": 48,
+        "position": [
+          2661,
+          3305,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 234,
+        "dispatched": 213
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 421,
+        "xp": 102362,
+        "hp": 46,
+        "position": [
+          2663,
+          3303,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 510,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 416,
+        "dispatched": 395
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1417,
+        "xp": 104609,
+        "hp": 45,
+        "position": [
+          2663,
+          3308,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 1950,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1413,
+        "dispatched": 1392
+      },
+      "observation_xp_delta": 2247,
+      "quarter_xp_deltas": [
+        421,
+        328,
+        889,
+        609
+      ]
+    },
+    "liveqyy2r_1": {
+      "name": "liveqyy2r_1",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 104468,
+        "hp": 50,
+        "position": [
+          2659,
+          3309,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 12,
+        "coins": 1710,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1391
+      },
+      "baseline": {
+        "elapsed_s": 71.227701542,
+        "state": "Running",
+        "tick": 29,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 25,
+        "dispatched": 2
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 213.767573042,
+        "state": "Running",
+        "tick": 266,
+        "xp": 101801,
+        "hp": 42,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 0,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 263,
+        "dispatched": 240
+      },
+      "bank_after": {
+        "elapsed_s": 215.831797167,
+        "state": "Running",
+        "tick": 270,
+        "xp": 101801,
+        "hp": 42,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 266,
+        "dispatched": 243
+      },
+      "restock": {
+        "elapsed_s": 215.831797167,
+        "state": "Running",
+        "tick": 270,
+        "xp": 101801,
+        "hp": 42,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 266,
+        "dispatched": 243
+      },
+      "return_arrival": {
+        "elapsed_s": 233.330878667,
+        "state": "Running",
+        "tick": 299,
+        "xp": 101801,
+        "hp": 42,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 295,
+        "dispatched": 272
+      },
+      "further_steals": {
+        "elapsed_s": 244.64872775,
+        "state": "Running",
+        "tick": 318,
+        "xp": 101847,
+        "hp": 41,
+        "position": [
+          2658,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 314,
+        "dispatched": 291
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 421,
+        "xp": 102503,
+        "hp": 46,
+        "position": [
+          2657,
+          3311,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 450,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 417,
+        "dispatched": 394
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 104468,
+        "hp": 50,
+        "position": [
+          2659,
+          3309,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 12,
+        "coins": 1710,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1391
+      },
+      "observation_xp_delta": 1965,
+      "quarter_xp_deltas": [
+        421,
+        561,
+        562,
+        421
+      ]
+    },
+    "liveqyy2r_2": {
+      "name": "liveqyy2r_2",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1317,
+        "xp": 104983,
+        "hp": 47,
+        "position": [
+          2660,
+          3308,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 15,
+        "coins": 1950,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1313,
+        "dispatched": 1291
+      },
+      "baseline": {
+        "elapsed_s": 130.522136208,
+        "state": "Running",
+        "tick": 26,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 23,
+        "dispatched": 1
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 320,
+        "xp": 101941,
+        "hp": 49,
+        "position": [
+          2648,
+          3284,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 2,
+        "coins": 390,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 316,
+        "dispatched": 294
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1317,
+        "xp": 104983,
+        "hp": 47,
+        "position": [
+          2660,
+          3308,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 15,
+        "coins": 1950,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1313,
+        "dispatched": 1291
+      },
+      "bank_before": {
+        "elapsed_s": 310.574289083,
+        "state": "Running",
+        "tick": 327,
+        "xp": 101941,
+        "hp": 49,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 2,
+        "coins": 390,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 323,
+        "dispatched": 301
+      },
+      "bank_after": {
+        "elapsed_s": 312.636903875,
+        "state": "Running",
+        "tick": 330,
+        "xp": 101941,
+        "hp": 49,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1980,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 326,
+        "dispatched": 305
+      },
+      "restock": {
+        "elapsed_s": 312.636903875,
+        "state": "Running",
+        "tick": 330,
+        "xp": 101941,
+        "hp": 49,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1980,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 326,
+        "dispatched": 305
+      },
+      "return_arrival": {
+        "elapsed_s": 330.099722667,
+        "state": "Running",
+        "tick": 359,
+        "xp": 101941,
+        "hp": 49,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 356,
+        "dispatched": 334
+      },
+      "further_steals": {
+        "elapsed_s": 341.439979917,
+        "state": "Running",
+        "tick": 379,
+        "xp": 101988,
+        "hp": 47,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 375,
+        "dispatched": 353
+      },
+      "observation_xp_delta": 3042,
+      "quarter_xp_deltas": [
+        842,
+        843,
+        889,
+        421
+      ]
+    },
+    "liveqyy2r_3": {
+      "name": "liveqyy2r_3",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105077,
+        "hp": 44,
+        "position": [
+          2659,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2160,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1391
+      },
+      "baseline": {
+        "elapsed_s": 71.227701542,
+        "state": "Running",
+        "tick": 29,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 25,
+        "dispatched": 2
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 200.460477625,
+        "state": "Running",
+        "tick": 244,
+        "xp": 101707,
+        "hp": 44,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 240,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 241,
+        "dispatched": 218
+      },
+      "restock": {
+        "elapsed_s": 203.541008958,
+        "state": "Running",
+        "tick": 249,
+        "xp": 101707,
+        "hp": 44,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 246,
+        "dispatched": 223
+      },
+      "return_arrival": {
+        "elapsed_s": 219.964264875,
+        "state": "Running",
+        "tick": 278,
+        "xp": 101707,
+        "hp": 44,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 273,
+        "dispatched": 250
+      },
+      "further_steals": {
+        "elapsed_s": 222.089230167,
+        "state": "Running",
+        "tick": 281,
+        "xp": 101754,
+        "hp": 44,
+        "position": [
+          2657,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 277,
+        "dispatched": 254
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 422,
+        "xp": 102175,
+        "hp": 42,
+        "position": [
+          2658,
+          3311,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 300,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 417,
+        "dispatched": 394
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105077,
+        "hp": 44,
+        "position": [
+          2659,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2160,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1391
+      },
+      "observation_xp_delta": 2902,
+      "quarter_xp_deltas": [
+        655,
+        468,
+        983,
+        702
+      ]
+    },
+    "liveqyy2r_4": {
+      "name": "liveqyy2r_4",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1417,
+        "xp": 105030,
+        "hp": 48,
+        "position": [
+          2646,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2070,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1413,
+        "dispatched": 1389
+      },
+      "baseline": {
+        "elapsed_s": 72.515276417,
+        "state": "Running",
+        "tick": 31,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 26,
+        "dispatched": 2
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 194.244102792,
+        "state": "Running",
+        "tick": 234,
+        "xp": 101801,
+        "hp": 48,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 0,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 229,
+        "dispatched": 205
+      },
+      "restock": {
+        "elapsed_s": 196.322499625,
+        "state": "Running",
+        "tick": 237,
+        "xp": 101801,
+        "hp": 48,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 233,
+        "dispatched": 209
+      },
+      "return_arrival": {
+        "elapsed_s": 212.753761417,
+        "state": "Running",
+        "tick": 264,
+        "xp": 101801,
+        "hp": 48,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 260,
+        "dispatched": 236
+      },
+      "further_steals": {
+        "elapsed_s": 225.098189208,
+        "state": "Running",
+        "tick": 285,
+        "xp": 101847,
+        "hp": 46,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 281,
+        "dispatched": 257
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 421,
+        "xp": 102222,
+        "hp": 46,
+        "position": [
+          2659,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 270,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 416,
+        "dispatched": 392
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1417,
+        "xp": 105030,
+        "hp": 48,
+        "position": [
+          2646,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2070,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1413,
+        "dispatched": 1389
+      },
+      "observation_xp_delta": 2808,
+      "quarter_xp_deltas": [
+        889,
+        702,
+        608,
+        562
+      ]
+    },
+    "liveqyy2r_5": {
+      "name": "liveqyy2r_5",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105591,
+        "hp": 42,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 2340,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1389
+      },
+      "baseline": {
+        "elapsed_s": 72.515276417,
+        "state": "Running",
+        "tick": 32,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 27,
+        "dispatched": 2
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 208.650445792,
+        "state": "Running",
+        "tick": 259,
+        "xp": 101941,
+        "hp": 44,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 390,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 254,
+        "dispatched": 229
+      },
+      "bank_after": {
+        "elapsed_s": 210.69792025,
+        "state": "Running",
+        "tick": 262,
+        "xp": 101941,
+        "hp": 44,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 258,
+        "dispatched": 233
+      },
+      "restock": {
+        "elapsed_s": 210.69792025,
+        "state": "Running",
+        "tick": 262,
+        "xp": 101941,
+        "hp": 44,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 258,
+        "dispatched": 233
+      },
+      "return_arrival": {
+        "elapsed_s": 228.211556458,
+        "state": "Running",
+        "tick": 291,
+        "xp": 101941,
+        "hp": 44,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 287,
+        "dispatched": 262
+      },
+      "further_steals": {
+        "elapsed_s": 230.2355455,
+        "state": "Running",
+        "tick": 294,
+        "xp": 101988,
+        "hp": 44,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 290,
+        "dispatched": 265
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 421,
+        "xp": 102456,
+        "hp": 44,
+        "position": [
+          2661,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 330,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 417,
+        "dispatched": 392
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105591,
+        "hp": 42,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 2340,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1389
+      },
+      "observation_xp_delta": 3135,
+      "quarter_xp_deltas": [
+        1170,
+        749,
+        422,
+        748
+      ]
+    },
+    "liveqyy2r_6": {
+      "name": "liveqyy2r_6",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105404,
+        "hp": 48,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2160,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1389
+      },
+      "baseline": {
+        "elapsed_s": 72.515276417,
+        "state": "Running",
+        "tick": 32,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 27,
+        "dispatched": 2
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 238.48531275,
+        "state": "Running",
+        "tick": 308,
+        "xp": 102035,
+        "hp": 40,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 0,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 304,
+        "dispatched": 279
+      },
+      "bank_after": {
+        "elapsed_s": 240.566038042,
+        "state": "Running",
+        "tick": 311,
+        "xp": 102035,
+        "hp": 40,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 307,
+        "dispatched": 282
+      },
+      "restock": {
+        "elapsed_s": 240.566038042,
+        "state": "Running",
+        "tick": 311,
+        "xp": 102035,
+        "hp": 40,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 307,
+        "dispatched": 282
+      },
+      "return_arrival": {
+        "elapsed_s": 257.984850542,
+        "state": "Running",
+        "tick": 340,
+        "xp": 102035,
+        "hp": 41,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 336,
+        "dispatched": 311
+      },
+      "further_steals": {
+        "elapsed_s": 268.302937208,
+        "state": "Running",
+        "tick": 359,
+        "xp": 102081,
+        "hp": 39,
+        "position": [
+          2661,
+          3305,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 354,
+        "dispatched": 329
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 421,
+        "xp": 102269,
+        "hp": 46,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 150,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 417,
+        "dispatched": 392
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105404,
+        "hp": 48,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2160,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1389
+      },
+      "observation_xp_delta": 3135,
+      "quarter_xp_deltas": [
+        608,
+        889,
+        1077,
+        561
+      ]
+    },
+    "liveqyy2r_7": {
+      "name": "liveqyy2r_7",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105779,
+        "hp": 41,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 2490,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1391
+      },
+      "baseline": {
+        "elapsed_s": 71.227701542,
+        "state": "Running",
+        "tick": 29,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 25,
+        "dispatched": 2
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 183.85854325,
+        "state": "Running",
+        "tick": 217,
+        "xp": 101894,
+        "hp": 50,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 0,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 213,
+        "dispatched": 190
+      },
+      "bank_after": {
+        "elapsed_s": 185.948497042,
+        "state": "Running",
+        "tick": 220,
+        "xp": 101894,
+        "hp": 50,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 216,
+        "dispatched": 193
+      },
+      "restock": {
+        "elapsed_s": 185.948497042,
+        "state": "Running",
+        "tick": 220,
+        "xp": 101894,
+        "hp": 50,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 216,
+        "dispatched": 193
+      },
+      "return_arrival": {
+        "elapsed_s": 202.531126667,
+        "state": "Running",
+        "tick": 249,
+        "xp": 101894,
+        "hp": 50,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 244,
+        "dispatched": 221
+      },
+      "further_steals": {
+        "elapsed_s": 235.41837625,
+        "state": "Running",
+        "tick": 303,
+        "xp": 101941,
+        "hp": 44,
+        "position": [
+          2658,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 299,
+        "dispatched": 276
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 421,
+        "xp": 102409,
+        "hp": 46,
+        "position": [
+          2662,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 330,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 417,
+        "dispatched": 394
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105779,
+        "hp": 41,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 2490,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1391
+      },
+      "observation_xp_delta": 3370,
+      "quarter_xp_deltas": [
+        562,
+        795,
+        1404,
+        609
+      ]
+    },
+    "liveqyy2r_8": {
+      "name": "liveqyy2r_8",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105685,
+        "hp": 49,
+        "position": [
+          2659,
+          3309,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2460,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1391
+      },
+      "baseline": {
+        "elapsed_s": 71.227701542,
+        "state": "Running",
+        "tick": 30,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 25,
+        "dispatched": 2
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 181.840457708,
+        "state": "Running",
+        "tick": 214,
+        "xp": 101847,
+        "hp": 49,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 0,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 210,
+        "dispatched": 187
+      },
+      "bank_after": {
+        "elapsed_s": 183.85854325,
+        "state": "Running",
+        "tick": 217,
+        "xp": 101847,
+        "hp": 49,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 213,
+        "dispatched": 190
+      },
+      "restock": {
+        "elapsed_s": 183.85854325,
+        "state": "Running",
+        "tick": 217,
+        "xp": 101847,
+        "hp": 49,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 213,
+        "dispatched": 190
+      },
+      "return_arrival": {
+        "elapsed_s": 201.508866375,
+        "state": "Running",
+        "tick": 246,
+        "xp": 101847,
+        "hp": 50,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 242,
+        "dispatched": 219
+      },
+      "further_steals": {
+        "elapsed_s": 202.531126667,
+        "state": "Running",
+        "tick": 248,
+        "xp": 101894,
+        "hp": 50,
+        "position": [
+          2660,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 244,
+        "dispatched": 221
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 422,
+        "xp": 102175,
+        "hp": 44,
+        "position": [
+          2657,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 210,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 417,
+        "dispatched": 394
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105685,
+        "hp": 49,
+        "position": [
+          2659,
+          3309,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2460,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1391
+      },
+      "observation_xp_delta": 3510,
+      "quarter_xp_deltas": [
+        936,
+        608,
+        936,
+        983
+      ]
+    },
+    "liveqyy2r_9": {
+      "name": "liveqyy2r_9",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 106106,
+        "hp": 44,
+        "position": [
+          2661,
+          3309,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 2670,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1391
+      },
+      "baseline": {
+        "elapsed_s": 71.227701542,
+        "state": "Running",
+        "tick": 29,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 25,
+        "dispatched": 2
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 184.89326,
+        "state": "Running",
+        "tick": 218,
+        "xp": 101941,
+        "hp": 50,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 390,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 215,
+        "dispatched": 192
+      },
+      "restock": {
+        "elapsed_s": 188.037684042,
+        "state": "Running",
+        "tick": 224,
+        "xp": 101941,
+        "hp": 50,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 220,
+        "dispatched": 197
+      },
+      "return_arrival": {
+        "elapsed_s": 204.568360917,
+        "state": "Running",
+        "tick": 251,
+        "xp": 101941,
+        "hp": 50,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 247,
+        "dispatched": 224
+      },
+      "further_steals": {
+        "elapsed_s": 206.625255583,
+        "state": "Running",
+        "tick": 254,
+        "xp": 101988,
+        "hp": 50,
+        "position": [
+          2660,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 251,
+        "dispatched": 228
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 421,
+        "xp": 102690,
+        "hp": 48,
+        "position": [
+          2658,
+          3312,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 480,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 417,
+        "dispatched": 394
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 106106,
+        "hp": 44,
+        "position": [
+          2661,
+          3309,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 2670,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1391
+      },
+      "observation_xp_delta": 3416,
+      "quarter_xp_deltas": [
+        655,
+        889,
+        1077,
+        795
+      ]
+    },
+    "liveqyy2r_10": {
+      "name": "liveqyy2r_10",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105123,
+        "hp": 50,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2130,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1390
+      },
+      "baseline": {
+        "elapsed_s": 71.227701542,
+        "state": "Running",
+        "tick": 30,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 25,
+        "dispatched": 1
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 176.732484667,
+        "state": "Running",
+        "tick": 205,
+        "xp": 101801,
+        "hp": 49,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 0,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 201,
+        "dispatched": 177
+      },
+      "bank_after": {
+        "elapsed_s": 178.783846333,
+        "state": "Running",
+        "tick": 208,
+        "xp": 101801,
+        "hp": 49,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 204,
+        "dispatched": 180
+      },
+      "restock": {
+        "elapsed_s": 178.783846333,
+        "state": "Running",
+        "tick": 208,
+        "xp": 101801,
+        "hp": 49,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 204,
+        "dispatched": 180
+      },
+      "return_arrival": {
+        "elapsed_s": 195.291347833,
+        "state": "Running",
+        "tick": 237,
+        "xp": 101801,
+        "hp": 50,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 232,
+        "dispatched": 208
+      },
+      "further_steals": {
+        "elapsed_s": 259.00088875,
+        "state": "Running",
+        "tick": 342,
+        "xp": 101847,
+        "hp": 49,
+        "position": [
+          2662,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 338,
+        "dispatched": 314
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 421,
+        "xp": 102175,
+        "hp": 42,
+        "position": [
+          2658,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 240,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 417,
+        "dispatched": 393
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105123,
+        "hp": 50,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2130,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1390
+      },
+      "observation_xp_delta": 2948,
+      "quarter_xp_deltas": [
+        702,
+        515,
+        889,
+        842
+      ]
+    },
+    "liveqyy2r_11": {
+      "name": "liveqyy2r_11",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1417,
+        "xp": 106153,
+        "hp": 46,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 2670,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1413,
+        "dispatched": 1389
+      },
+      "baseline": {
+        "elapsed_s": 72.515276417,
+        "state": "Running",
+        "tick": 31,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 26,
+        "dispatched": 2
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 212.753761417,
+        "state": "Running",
+        "tick": 264,
+        "xp": 101988,
+        "hp": 46,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 420,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 260,
+        "dispatched": 236
+      },
+      "bank_after": {
+        "elapsed_s": 214.849220417,
+        "state": "Running",
+        "tick": 268,
+        "xp": 101988,
+        "hp": 46,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 263,
+        "dispatched": 240
+      },
+      "restock": {
+        "elapsed_s": 214.849220417,
+        "state": "Running",
+        "tick": 268,
+        "xp": 101988,
+        "hp": 46,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 263,
+        "dispatched": 240
+      },
+      "return_arrival": {
+        "elapsed_s": 232.285918708,
+        "state": "Running",
+        "tick": 297,
+        "xp": 101988,
+        "hp": 46,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 293,
+        "dispatched": 269
+      },
+      "further_steals": {
+        "elapsed_s": 234.373366542,
+        "state": "Running",
+        "tick": 300,
+        "xp": 102035,
+        "hp": 46,
+        "position": [
+          2658,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 296,
+        "dispatched": 272
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 420,
+        "xp": 102690,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 450,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 416,
+        "dispatched": 392
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1417,
+        "xp": 106153,
+        "hp": 46,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 2670,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1413,
+        "dispatched": 1389
+      },
+      "observation_xp_delta": 3463,
+      "quarter_xp_deltas": [
+        749,
+        1124,
+        514,
+        1030
+      ]
+    },
+    "liveqyy2r_12": {
+      "name": "liveqyy2r_12",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105217,
+        "hp": 47,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2280,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1389
+      },
+      "baseline": {
+        "elapsed_s": 72.515276417,
+        "state": "Running",
+        "tick": 32,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 27,
+        "dispatched": 2
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 186.985302708,
+        "state": "Running",
+        "tick": 222,
+        "xp": 101660,
+        "hp": 46,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 0,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 218,
+        "dispatched": 193
+      },
+      "restock": {
+        "elapsed_s": 189.058280167,
+        "state": "Running",
+        "tick": 227,
+        "xp": 101660,
+        "hp": 46,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 222,
+        "dispatched": 197
+      },
+      "return_arrival": {
+        "elapsed_s": 205.583891458,
+        "state": "Running",
+        "tick": 254,
+        "xp": 101660,
+        "hp": 46,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 249,
+        "dispatched": 224
+      },
+      "further_steals": {
+        "elapsed_s": 225.098189208,
+        "state": "Running",
+        "tick": 286,
+        "xp": 101707,
+        "hp": 42,
+        "position": [
+          2656,
+          3308,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 282,
+        "dispatched": 257
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 421,
+        "xp": 102035,
+        "hp": 41,
+        "position": [
+          2657,
+          3311,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 240,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 417,
+        "dispatched": 392
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105217,
+        "hp": 47,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2280,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1389
+      },
+      "observation_xp_delta": 3182,
+      "quarter_xp_deltas": [
+        795,
+        702,
+        608,
+        983
+      ]
+    },
+    "liveqyy2r_13": {
+      "name": "liveqyy2r_13",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1417,
+        "xp": 105404,
+        "hp": 50,
+        "position": [
+          2661,
+          3309,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2310,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1413,
+        "dispatched": 1389
+      },
+      "baseline": {
+        "elapsed_s": 72.515276417,
+        "state": "Running",
+        "tick": 31,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 26,
+        "dispatched": 2
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 196.322499625,
+        "state": "Running",
+        "tick": 237,
+        "xp": 101801,
+        "hp": 48,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 300,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 233,
+        "dispatched": 209
+      },
+      "restock": {
+        "elapsed_s": 199.397560583,
+        "state": "Running",
+        "tick": 242,
+        "xp": 101801,
+        "hp": 48,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 238,
+        "dispatched": 214
+      },
+      "return_arrival": {
+        "elapsed_s": 215.831797167,
+        "state": "Running",
+        "tick": 269,
+        "xp": 101801,
+        "hp": 48,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 265,
+        "dispatched": 241
+      },
+      "further_steals": {
+        "elapsed_s": 217.903311833,
+        "state": "Running",
+        "tick": 273,
+        "xp": 101847,
+        "hp": 48,
+        "position": [
+          2660,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 269,
+        "dispatched": 245
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 420,
+        "xp": 102643,
+        "hp": 50,
+        "position": [
+          2658,
+          3311,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 540,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 416,
+        "dispatched": 392
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1417,
+        "xp": 105404,
+        "hp": 50,
+        "position": [
+          2661,
+          3309,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2310,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1413,
+        "dispatched": 1389
+      },
+      "observation_xp_delta": 2761,
+      "quarter_xp_deltas": [
+        983,
+        749,
+        280,
+        749
+      ]
+    },
+    "liveqyy2r_14": {
+      "name": "liveqyy2r_14",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 104749,
+        "hp": 44,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 1740,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1391
+      },
+      "baseline": {
+        "elapsed_s": 71.227701542,
+        "state": "Running",
+        "tick": 29,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 25,
+        "dispatched": 2
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 256.960505708,
+        "state": "Running",
+        "tick": 338,
+        "xp": 102035,
+        "hp": 49,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 2,
+        "coins": 450,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 335,
+        "dispatched": 312
+      },
+      "restock": {
+        "elapsed_s": 260.015727333,
+        "state": "Running",
+        "tick": 345,
+        "xp": 102035,
+        "hp": 49,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 340,
+        "dispatched": 317
+      },
+      "return_arrival": {
+        "elapsed_s": 276.46209925,
+        "state": "Running",
+        "tick": 372,
+        "xp": 102035,
+        "hp": 49,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 367,
+        "dispatched": 344
+      },
+      "further_steals": {
+        "elapsed_s": 288.787111833,
+        "state": "Running",
+        "tick": 392,
+        "xp": 102081,
+        "hp": 47,
+        "position": [
+          2663,
+          3301,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 388,
+        "dispatched": 365
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 421,
+        "xp": 102222,
+        "hp": 46,
+        "position": [
+          2660,
+          3303,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 120,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 417,
+        "dispatched": 394
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 104749,
+        "hp": 44,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 1740,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1391
+      },
+      "observation_xp_delta": 2527,
+      "quarter_xp_deltas": [
+        655,
+        281,
+        889,
+        702
+      ]
+    },
+    "liveqyy2r_15": {
+      "name": "liveqyy2r_15",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1319,
+        "xp": 105357,
+        "hp": 48,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 2370,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1315,
+        "dispatched": 1291
+      },
+      "baseline": {
+        "elapsed_s": 130.522136208,
+        "state": "Running",
+        "tick": 28,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 25,
+        "dispatched": 1
+      },
+      "observed_eat_request": true,
+      "seed_qualified": true,
+      "bank_before": {
+        "elapsed_s": 244.64872775,
+        "state": "Running",
+        "tick": 219,
+        "xp": 101660,
+        "hp": 45,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 210,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 215,
+        "dispatched": 191
+      },
+      "bank_after": {
+        "elapsed_s": 246.721797417,
+        "state": "Running",
+        "tick": 222,
+        "xp": 101660,
+        "hp": 45,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 219,
+        "dispatched": 195
+      },
+      "restock": {
+        "elapsed_s": 246.721797417,
+        "state": "Running",
+        "tick": 222,
+        "xp": 101660,
+        "hp": 45,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 219,
+        "dispatched": 195
+      },
+      "return_arrival": {
+        "elapsed_s": 263.109555458,
+        "state": "Running",
+        "tick": 251,
+        "xp": 101660,
+        "hp": 45,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 246,
+        "dispatched": 222
+      },
+      "further_steals": {
+        "elapsed_s": 265.174360292,
+        "state": "Running",
+        "tick": 254,
+        "xp": 101707,
+        "hp": 45,
+        "position": [
+          2660,
+          3303,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 249,
+        "dispatched": 225
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 322,
+        "xp": 101894,
+        "hp": 40,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 150,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 318,
+        "dispatched": 294
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1319,
+        "xp": 105357,
+        "hp": 48,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 2370,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1315,
+        "dispatched": 1291
+      },
+      "observation_xp_delta": 3463,
+      "quarter_xp_deltas": [
+        936,
+        1170,
+        702,
+        655
+      ]
+    },
+    "liveqyy2r_16": {
+      "name": "liveqyy2r_16",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1417,
+        "xp": 104936,
+        "hp": 44,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2100,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1413,
+        "dispatched": 1389
+      },
+      "baseline": {
+        "elapsed_s": 72.515276417,
+        "state": "Running",
+        "tick": 31,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 26,
+        "dispatched": 2
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 166.470367292,
+        "state": "Running",
+        "tick": 187,
+        "xp": 101660,
+        "hp": 49,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 210,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 183,
+        "dispatched": 159
+      },
+      "restock": {
+        "elapsed_s": 169.58021475,
+        "state": "Running",
+        "tick": 192,
+        "xp": 101660,
+        "hp": 49,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 188,
+        "dispatched": 164
+      },
+      "return_arrival": {
+        "elapsed_s": 185.948497042,
+        "state": "Running",
+        "tick": 219,
+        "xp": 101660,
+        "hp": 50,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 215,
+        "dispatched": 191
+      },
+      "further_steals": {
+        "elapsed_s": 188.037684042,
+        "state": "Running",
+        "tick": 224,
+        "xp": 101707,
+        "hp": 50,
+        "position": [
+          2662,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 219,
+        "dispatched": 195
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 420,
+        "xp": 102081,
+        "hp": 40,
+        "position": [
+          2661,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 270,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 416,
+        "dispatched": 392
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1417,
+        "xp": 104936,
+        "hp": 44,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2100,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1413,
+        "dispatched": 1389
+      },
+      "observation_xp_delta": 2855,
+      "quarter_xp_deltas": [
+        843,
+        889,
+        608,
+        515
+      ]
+    },
+    "liveqyy2r_17": {
+      "name": "liveqyy2r_17",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105872,
+        "hp": 45,
+        "position": [
+          2661,
+          3309,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 2520,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1389
+      },
+      "baseline": {
+        "elapsed_s": 72.515276417,
+        "state": "Running",
+        "tick": 32,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 27,
+        "dispatched": 2
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 202.531126667,
+        "state": "Running",
+        "tick": 249,
+        "xp": 101941,
+        "hp": 46,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 390,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 244,
+        "dispatched": 219
+      },
+      "restock": {
+        "elapsed_s": 205.583891458,
+        "state": "Running",
+        "tick": 254,
+        "xp": 101941,
+        "hp": 46,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 249,
+        "dispatched": 224
+      },
+      "return_arrival": {
+        "elapsed_s": 222.089230167,
+        "state": "Running",
+        "tick": 281,
+        "xp": 101941,
+        "hp": 46,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 277,
+        "dispatched": 252
+      },
+      "further_steals": {
+        "elapsed_s": 224.05902225,
+        "state": "Running",
+        "tick": 284,
+        "xp": 101988,
+        "hp": 46,
+        "position": [
+          2657,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 280,
+        "dispatched": 255
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 421,
+        "xp": 102503,
+        "hp": 48,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 390,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 417,
+        "dispatched": 392
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105872,
+        "hp": 45,
+        "position": [
+          2661,
+          3309,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 2520,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1389
+      },
+      "observation_xp_delta": 3369,
+      "quarter_xp_deltas": [
+        1216,
+        375,
+        1123,
+        655
+      ]
+    },
+    "liveqyy2r_18": {
+      "name": "liveqyy2r_18",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105685,
+        "hp": 41,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 2490,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1390
+      },
+      "baseline": {
+        "elapsed_s": 71.227701542,
+        "state": "Running",
+        "tick": 30,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 25,
+        "dispatched": 1
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 189.058280167,
+        "state": "Running",
+        "tick": 226,
+        "xp": 101801,
+        "hp": 48,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 300,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 222,
+        "dispatched": 198
+      },
+      "restock": {
+        "elapsed_s": 192.172138875,
+        "state": "Running",
+        "tick": 231,
+        "xp": 101801,
+        "hp": 48,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 227,
+        "dispatched": 203
+      },
+      "return_arrival": {
+        "elapsed_s": 208.650445792,
+        "state": "Running",
+        "tick": 259,
+        "xp": 101801,
+        "hp": 48,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 254,
+        "dispatched": 230
+      },
+      "further_steals": {
+        "elapsed_s": 224.05902225,
+        "state": "Running",
+        "tick": 284,
+        "xp": 101847,
+        "hp": 46,
+        "position": [
+          2660,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 280,
+        "dispatched": 256
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 422,
+        "xp": 102269,
+        "hp": 46,
+        "position": [
+          2662,
+          3307,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 300,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 417,
+        "dispatched": 393
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105685,
+        "hp": 41,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 2490,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1390
+      },
+      "observation_xp_delta": 3416,
+      "quarter_xp_deltas": [
+        842,
+        608,
+        1077,
+        889
+      ]
+    },
+    "liveqyy2r_19": {
+      "name": "liveqyy2r_19",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 104421,
+        "hp": 42,
+        "position": [
+          2663,
+          3308,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 1710,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1389
+      },
+      "baseline": {
+        "elapsed_s": 72.515276417,
+        "state": "Running",
+        "tick": 32,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 27,
+        "dispatched": 2
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 183.85854325,
+        "state": "Running",
+        "tick": 216,
+        "xp": 101754,
+        "hp": 48,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 0,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 213,
+        "dispatched": 188
+      },
+      "bank_after": {
+        "elapsed_s": 185.948497042,
+        "state": "Running",
+        "tick": 221,
+        "xp": 101754,
+        "hp": 48,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 216,
+        "dispatched": 191
+      },
+      "restock": {
+        "elapsed_s": 185.948497042,
+        "state": "Running",
+        "tick": 221,
+        "xp": 101754,
+        "hp": 48,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 216,
+        "dispatched": 191
+      },
+      "return_arrival": {
+        "elapsed_s": 202.531126667,
+        "state": "Running",
+        "tick": 249,
+        "xp": 101754,
+        "hp": 48,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 244,
+        "dispatched": 219
+      },
+      "further_steals": {
+        "elapsed_s": 204.568360917,
+        "state": "Running",
+        "tick": 252,
+        "xp": 101801,
+        "hp": 48,
+        "position": [
+          2660,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 247,
+        "dispatched": 222
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 422,
+        "xp": 102081,
+        "hp": 42,
+        "position": [
+          2662,
+          3303,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 210,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 417,
+        "dispatched": 392
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 104421,
+        "hp": 42,
+        "position": [
+          2663,
+          3308,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 1710,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1389
+      },
+      "observation_xp_delta": 2340,
+      "quarter_xp_deltas": [
+        375,
+        1123,
+        187,
+        608
+      ]
+    },
+    "liveqyy2r_20": {
+      "name": "liveqyy2r_20",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1417,
+        "xp": 105638,
+        "hp": 42,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 2460,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1413,
+        "dispatched": 1390
+      },
+      "baseline": {
+        "elapsed_s": 71.227701542,
+        "state": "Running",
+        "tick": 29,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 24,
+        "dispatched": 1
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 198.344516792,
+        "state": "Running",
+        "tick": 240,
+        "xp": 101801,
+        "hp": 46,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 0,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 236,
+        "dispatched": 213
+      },
+      "restock": {
+        "elapsed_s": 200.460477625,
+        "state": "Running",
+        "tick": 244,
+        "xp": 101801,
+        "hp": 46,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 240,
+        "dispatched": 217
+      },
+      "return_arrival": {
+        "elapsed_s": 216.863330792,
+        "state": "Running",
+        "tick": 271,
+        "xp": 101801,
+        "hp": 46,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 267,
+        "dispatched": 244
+      },
+      "further_steals": {
+        "elapsed_s": 218.917198583,
+        "state": "Running",
+        "tick": 274,
+        "xp": 101847,
+        "hp": 46,
+        "position": [
+          2660,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 270,
+        "dispatched": 247
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 420,
+        "xp": 102035,
+        "hp": 44,
+        "position": [
+          2662,
+          3307,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 150,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 416,
+        "dispatched": 393
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1417,
+        "xp": 105638,
+        "hp": 42,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 2460,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1413,
+        "dispatched": 1390
+      },
+      "observation_xp_delta": 3603,
+      "quarter_xp_deltas": [
+        1450,
+        656,
+        889,
+        608
+      ]
+    },
+    "liveqyy2r_21": {
+      "name": "liveqyy2r_21",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105357,
+        "hp": 50,
+        "position": [
+          2662,
+          3309,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2310,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1388
+      },
+      "baseline": {
+        "elapsed_s": 72.515276417,
+        "state": "Running",
+        "tick": 32,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 27,
+        "dispatched": 1
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 182.826034375,
+        "state": "Running",
+        "tick": 215,
+        "xp": 101754,
+        "hp": 50,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 270,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 211,
+        "dispatched": 185
+      },
+      "bank_after": {
+        "elapsed_s": 184.89326,
+        "state": "Running",
+        "tick": 218,
+        "xp": 101754,
+        "hp": 50,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 215,
+        "dispatched": 189
+      },
+      "restock": {
+        "elapsed_s": 184.89326,
+        "state": "Running",
+        "tick": 218,
+        "xp": 101754,
+        "hp": 50,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 215,
+        "dispatched": 189
+      },
+      "return_arrival": {
+        "elapsed_s": 201.508866375,
+        "state": "Running",
+        "tick": 247,
+        "xp": 101754,
+        "hp": 50,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 242,
+        "dispatched": 216
+      },
+      "further_steals": {
+        "elapsed_s": 220.971014792,
+        "state": "Running",
+        "tick": 279,
+        "xp": 101801,
+        "hp": 46,
+        "position": [
+          2659,
+          3307,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 275,
+        "dispatched": 249
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 421,
+        "xp": 102315,
+        "hp": 46,
+        "position": [
+          2662,
+          3303,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 360,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 417,
+        "dispatched": 391
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105357,
+        "hp": 50,
+        "position": [
+          2662,
+          3309,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2310,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1388
+      },
+      "observation_xp_delta": 3042,
+      "quarter_xp_deltas": [
+        375,
+        842,
+        702,
+        1123
+      ]
+    },
+    "liveqyy2r_22": {
+      "name": "liveqyy2r_22",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 106434,
+        "hp": 46,
+        "position": [
+          2660,
+          3308,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 3090,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1388
+      },
+      "baseline": {
+        "elapsed_s": 72.515276417,
+        "state": "Running",
+        "tick": 32,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 27,
+        "dispatched": 1
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 184.89326,
+        "state": "Running",
+        "tick": 218,
+        "xp": 101613,
+        "hp": 48,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 180,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 215,
+        "dispatched": 189
+      },
+      "restock": {
+        "elapsed_s": 188.037684042,
+        "state": "Running",
+        "tick": 225,
+        "xp": 101613,
+        "hp": 48,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 220,
+        "dispatched": 194
+      },
+      "return_arrival": {
+        "elapsed_s": 204.568360917,
+        "state": "Running",
+        "tick": 252,
+        "xp": 101613,
+        "hp": 48,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 247,
+        "dispatched": 221
+      },
+      "further_steals": {
+        "elapsed_s": 206.625255583,
+        "state": "Running",
+        "tick": 255,
+        "xp": 101660,
+        "hp": 48,
+        "position": [
+          2660,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 251,
+        "dispatched": 225
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 421,
+        "xp": 102643,
+        "hp": 50,
+        "position": [
+          2657,
+          3309,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 660,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 417,
+        "dispatched": 391
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 106434,
+        "hp": 46,
+        "position": [
+          2660,
+          3308,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 3090,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1388
+      },
+      "observation_xp_delta": 3791,
+      "quarter_xp_deltas": [
+        749,
+        1170,
+        655,
+        1217
+      ]
+    },
+    "liveqyy2r_23": {
+      "name": "liveqyy2r_23",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1419,
+        "xp": 106434,
+        "hp": 48,
+        "position": [
+          2646,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 3210,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1388
+      },
+      "baseline": {
+        "elapsed_s": 72.515276417,
+        "state": "Running",
+        "tick": 32,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 27,
+        "dispatched": 1
+      },
+      "observed_eat_request": true,
+      "seed_qualified": true,
+      "bank_before": {
+        "elapsed_s": 158.219485917,
+        "state": "Running",
+        "tick": 174,
+        "xp": 101426,
+        "hp": 48,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 0,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 170,
+        "dispatched": 144
+      },
+      "restock": {
+        "elapsed_s": 160.289654875,
+        "state": "Running",
+        "tick": 178,
+        "xp": 101426,
+        "hp": 48,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 174,
+        "dispatched": 148
+      },
+      "return_arrival": {
+        "elapsed_s": 176.732484667,
+        "state": "Running",
+        "tick": 205,
+        "xp": 101426,
+        "hp": 48,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 201,
+        "dispatched": 175
+      },
+      "further_steals": {
+        "elapsed_s": 179.824327792,
+        "state": "Running",
+        "tick": 210,
+        "xp": 101473,
+        "hp": 48,
+        "position": [
+          2657,
+          3307,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 206,
+        "dispatched": 180
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 421,
+        "xp": 101894,
+        "hp": 41,
+        "position": [
+          2653,
+          3309,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 300,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 417,
+        "dispatched": 391
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1419,
+        "xp": 106434,
+        "hp": 48,
+        "position": [
+          2646,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 3210,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1388
+      },
+      "observation_xp_delta": 4540,
+      "quarter_xp_deltas": [
+        936,
+        1451,
+        749,
+        1311
+      ]
+    },
+    "liveqyy2r_24": {
+      "name": "liveqyy2r_24",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1319,
+        "xp": 105264,
+        "hp": 50,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 1920,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1315,
+        "dispatched": 1291
+      },
+      "baseline": {
+        "elapsed_s": 130.522136208,
+        "state": "Running",
+        "tick": 28,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 0,
+        "dispatched": 1
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 300.227209292,
+        "state": "Running",
+        "tick": 312,
+        "xp": 102269,
+        "hp": 42,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 600,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 308,
+        "dispatched": 284
+      },
+      "restock": {
+        "elapsed_s": 303.313545958,
+        "state": "Running",
+        "tick": 317,
+        "xp": 102269,
+        "hp": 42,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 313,
+        "dispatched": 289
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 322,
+        "xp": 102269,
+        "hp": 43,
+        "position": [
+          2653,
+          3285,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 318,
+        "dispatched": 294
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1319,
+        "xp": 105264,
+        "hp": 50,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 1920,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1315,
+        "dispatched": 1291
+      },
+      "return_arrival": {
+        "elapsed_s": 319.793778875,
+        "state": "Running",
+        "tick": 344,
+        "xp": 102269,
+        "hp": 43,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 340,
+        "dispatched": 316
+      },
+      "further_steals": {
+        "elapsed_s": 321.866315375,
+        "state": "Running",
+        "tick": 348,
+        "xp": 102315,
+        "hp": 43,
+        "position": [
+          2661,
+          3303,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 344,
+        "dispatched": 320
+      },
+      "observation_xp_delta": 2995,
+      "quarter_xp_deltas": [
+        889,
+        842,
+        843,
+        421
+      ]
+    },
+    "liveqyy2r_25": {
+      "name": "liveqyy2r_25",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105217,
+        "hp": 46,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2190,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1388
+      },
+      "baseline": {
+        "elapsed_s": 72.515276417,
+        "state": "Running",
+        "tick": 32,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 27,
+        "dispatched": 1
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 191.127418833,
+        "state": "Running",
+        "tick": 230,
+        "xp": 101801,
+        "hp": 48,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 300,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 225,
+        "dispatched": 199
+      },
+      "restock": {
+        "elapsed_s": 194.244102792,
+        "state": "Running",
+        "tick": 235,
+        "xp": 101801,
+        "hp": 48,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 230,
+        "dispatched": 204
+      },
+      "return_arrival": {
+        "elapsed_s": 210.69792025,
+        "state": "Running",
+        "tick": 262,
+        "xp": 101801,
+        "hp": 48,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 258,
+        "dispatched": 232
+      },
+      "further_steals": {
+        "elapsed_s": 211.699552292,
+        "state": "Running",
+        "tick": 264,
+        "xp": 101847,
+        "hp": 48,
+        "position": [
+          2659,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 259,
+        "dispatched": 233
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 421,
+        "xp": 102315,
+        "hp": 46,
+        "position": [
+          2658,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 330,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 417,
+        "dispatched": 391
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105217,
+        "hp": 46,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2190,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1388
+      },
+      "observation_xp_delta": 2902,
+      "quarter_xp_deltas": [
+        936,
+        983,
+        655,
+        328
+      ]
+    },
+    "liveqyy2r_26": {
+      "name": "liveqyy2r_26",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105638,
+        "hp": 41,
+        "position": [
+          2659,
+          3309,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 2640,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1390
+      },
+      "baseline": {
+        "elapsed_s": 71.227701542,
+        "state": "Running",
+        "tick": 30,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 0,
+        "dispatched": 1
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 177.73929175,
+        "state": "Running",
+        "tick": 207,
+        "xp": 101520,
+        "hp": 47,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 0,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 203,
+        "dispatched": 179
+      },
+      "bank_after": {
+        "elapsed_s": 179.824327792,
+        "state": "Running",
+        "tick": 211,
+        "xp": 101520,
+        "hp": 47,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 206,
+        "dispatched": 182
+      },
+      "restock": {
+        "elapsed_s": 179.824327792,
+        "state": "Running",
+        "tick": 211,
+        "xp": 101520,
+        "hp": 47,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 206,
+        "dispatched": 182
+      },
+      "return_arrival": {
+        "elapsed_s": 196.322499625,
+        "state": "Running",
+        "tick": 238,
+        "xp": 101520,
+        "hp": 48,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 234,
+        "dispatched": 210
+      },
+      "further_steals": {
+        "elapsed_s": 208.650445792,
+        "state": "Running",
+        "tick": 258,
+        "xp": 101567,
+        "hp": 46,
+        "position": [
+          2660,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 254,
+        "dispatched": 230
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 421,
+        "xp": 102269,
+        "hp": 46,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 480,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 417,
+        "dispatched": 393
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105638,
+        "hp": 41,
+        "position": [
+          2659,
+          3309,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 2640,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1390
+      },
+      "observation_xp_delta": 3369,
+      "quarter_xp_deltas": [
+        795,
+        655,
+        890,
+        1029
+      ]
+    },
+    "liveqyy2r_27": {
+      "name": "liveqyy2r_27",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1321,
+        "xp": 105404,
+        "hp": 48,
+        "position": [
+          2659,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 2190,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1317,
+        "dispatched": 1291
+      },
+      "baseline": {
+        "elapsed_s": 130.522136208,
+        "state": "Running",
+        "tick": 30,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 0,
+        "dispatched": 1
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 265.174360292,
+        "state": "Running",
+        "tick": 256,
+        "xp": 101988,
+        "hp": 46,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 420,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 251,
+        "dispatched": 225
+      },
+      "bank_after": {
+        "elapsed_s": 267.258117042,
+        "state": "Running",
+        "tick": 260,
+        "xp": 101988,
+        "hp": 46,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 255,
+        "dispatched": 229
+      },
+      "restock": {
+        "elapsed_s": 267.258117042,
+        "state": "Running",
+        "tick": 260,
+        "xp": 101988,
+        "hp": 46,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 255,
+        "dispatched": 229
+      },
+      "return_arrival": {
+        "elapsed_s": 283.619112,
+        "state": "Running",
+        "tick": 287,
+        "xp": 101988,
+        "hp": 46,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 282,
+        "dispatched": 256
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 324,
+        "xp": 101988,
+        "hp": 41,
+        "position": [
+          2662,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 320,
+        "dispatched": 294
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1321,
+        "xp": 105404,
+        "hp": 48,
+        "position": [
+          2659,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 2190,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1317,
+        "dispatched": 1291
+      },
+      "further_steals": {
+        "elapsed_s": 320.829836792,
+        "state": "Running",
+        "tick": 348,
+        "xp": 102035,
+        "hp": 39,
+        "position": [
+          2660,
+          3305,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 344,
+        "dispatched": 318
+      },
+      "observation_xp_delta": 3416,
+      "quarter_xp_deltas": [
+        795,
+        749,
+        983,
+        842
+      ]
+    },
+    "liveqyy2r_28": {
+      "name": "liveqyy2r_28",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105357,
+        "hp": 50,
+        "position": [
+          2659,
+          3309,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2220,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1388
+      },
+      "baseline": {
+        "elapsed_s": 72.515276417,
+        "state": "Running",
+        "tick": 32,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 27,
+        "dispatched": 1
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 206.625255583,
+        "state": "Running",
+        "tick": 255,
+        "xp": 101894,
+        "hp": 48,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 360,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 251,
+        "dispatched": 225
+      },
+      "restock": {
+        "elapsed_s": 209.678433583,
+        "state": "Running",
+        "tick": 260,
+        "xp": 101894,
+        "hp": 48,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 256,
+        "dispatched": 230
+      },
+      "return_arrival": {
+        "elapsed_s": 226.146764208,
+        "state": "Running",
+        "tick": 287,
+        "xp": 101894,
+        "hp": 48,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 283,
+        "dispatched": 257
+      },
+      "further_steals": {
+        "elapsed_s": 228.211556458,
+        "state": "Running",
+        "tick": 291,
+        "xp": 101941,
+        "hp": 48,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 287,
+        "dispatched": 261
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 422,
+        "xp": 102175,
+        "hp": 46,
+        "position": [
+          2659,
+          3309,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 180,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 417,
+        "dispatched": 391
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105357,
+        "hp": 50,
+        "position": [
+          2659,
+          3309,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2220,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1388
+      },
+      "observation_xp_delta": 3182,
+      "quarter_xp_deltas": [
+        983,
+        655,
+        842,
+        702
+      ]
+    },
+    "liveqyy2r_29": {
+      "name": "liveqyy2r_29",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105030,
+        "hp": 44,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2040,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1388
+      },
+      "baseline": {
+        "elapsed_s": 72.515276417,
+        "state": "Running",
+        "tick": 32,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 0,
+        "dispatched": 1
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 181.840457708,
+        "state": "Running",
+        "tick": 213,
+        "xp": 101847,
+        "hp": 49,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 0,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 210,
+        "dispatched": 184
+      },
+      "bank_after": {
+        "elapsed_s": 183.85854325,
+        "state": "Running",
+        "tick": 216,
+        "xp": 101847,
+        "hp": 49,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 213,
+        "dispatched": 187
+      },
+      "restock": {
+        "elapsed_s": 183.85854325,
+        "state": "Running",
+        "tick": 216,
+        "xp": 101847,
+        "hp": 49,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 1981,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 213,
+        "dispatched": 187
+      },
+      "return_arrival": {
+        "elapsed_s": 200.460477625,
+        "state": "Running",
+        "tick": 245,
+        "xp": 101847,
+        "hp": 50,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 241,
+        "dispatched": 215
+      },
+      "further_steals": {
+        "elapsed_s": 219.964264875,
+        "state": "Running",
+        "tick": 277,
+        "xp": 101894,
+        "hp": 46,
+        "position": [
+          2660,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 273,
+        "dispatched": 247
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 422,
+        "xp": 102035,
+        "hp": 42,
+        "position": [
+          2663,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 120,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 417,
+        "dispatched": 391
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105030,
+        "hp": 44,
+        "position": [
+          2660,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2040,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1388
+      },
+      "observation_xp_delta": 2995,
+      "quarter_xp_deltas": [
+        702,
+        1029,
+        655,
+        609
+      ]
+    },
+    "liveqyy2r_30": {
+      "name": "liveqyy2r_30",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105498,
+        "hp": 42,
+        "position": [
+          2659,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 2430,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1390
+      },
+      "baseline": {
+        "elapsed_s": 71.227701542,
+        "state": "Running",
+        "tick": 30,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 0,
+        "dispatched": 1
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 200.460477625,
+        "state": "Running",
+        "tick": 245,
+        "xp": 101707,
+        "hp": 44,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 240,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 241,
+        "dispatched": 217
+      },
+      "restock": {
+        "elapsed_s": 203.541008958,
+        "state": "Running",
+        "tick": 250,
+        "xp": 101707,
+        "hp": 44,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 246,
+        "dispatched": 222
+      },
+      "return_arrival": {
+        "elapsed_s": 219.964264875,
+        "state": "Running",
+        "tick": 277,
+        "xp": 101707,
+        "hp": 44,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 273,
+        "dispatched": 249
+      },
+      "further_steals": {
+        "elapsed_s": 236.45939625,
+        "state": "Running",
+        "tick": 304,
+        "xp": 101754,
+        "hp": 42,
+        "position": [
+          2658,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 60,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 301,
+        "dispatched": 277
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 421,
+        "xp": 102175,
+        "hp": 44,
+        "position": [
+          2657,
+          3309,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 300,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 417,
+        "dispatched": 393
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105498,
+        "hp": 42,
+        "position": [
+          2659,
+          3310,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 14,
+        "coins": 2430,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1390
+      },
+      "observation_xp_delta": 3323,
+      "quarter_xp_deltas": [
+        608,
+        890,
+        889,
+        936
+      ]
+    },
+    "liveqyy2r_31": {
+      "name": "liveqyy2r_31",
+      "last_running": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105123,
+        "hp": 48,
+        "position": [
+          2661,
+          3309,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2070,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1388
+      },
+      "baseline": {
+        "elapsed_s": 72.515276417,
+        "state": "Running",
+        "tick": 32,
+        "xp": 101333,
+        "hp": 50,
+        "position": [
+          2661,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 4,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 0,
+        "dispatched": 1
+      },
+      "seed_qualified": true,
+      "observed_eat_request": true,
+      "bank_before": {
+        "elapsed_s": 210.69792025,
+        "state": "Running",
+        "tick": 261,
+        "xp": 101894,
+        "hp": 46,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 3,
+        "coins": 360,
+        "bank_lobster": 2000,
+        "bank_open": true,
+        "bank_loaded": true,
+        "last_completed_tick": 258,
+        "dispatched": 232
+      },
+      "restock": {
+        "elapsed_s": 213.767573042,
+        "state": "Running",
+        "tick": 266,
+        "xp": 101894,
+        "hp": 46,
+        "position": [
+          2655,
+          3286,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 263,
+        "dispatched": 237
+      },
+      "return_arrival": {
+        "elapsed_s": 230.2355455,
+        "state": "Running",
+        "tick": 294,
+        "xp": 101894,
+        "hp": 46,
+        "position": [
+          2659,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 0,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 290,
+        "dispatched": 264
+      },
+      "further_steals": {
+        "elapsed_s": 267.258117042,
+        "state": "Running",
+        "tick": 355,
+        "xp": 101941,
+        "hp": 39,
+        "position": [
+          2662,
+          3306,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 22,
+        "coins": 30,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 352,
+        "dispatched": 326
+      },
+      "observe_first": {
+        "elapsed_s": 306.424386542,
+        "state": "Running",
+        "tick": 421,
+        "xp": 102269,
+        "hp": 46,
+        "position": [
+          2663,
+          3304,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 21,
+        "coins": 240,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 417,
+        "dispatched": 391
+      },
+      "observe_last": {
+        "elapsed_s": 904.775680125,
+        "state": "Running",
+        "tick": 1418,
+        "xp": 105123,
+        "hp": 48,
+        "position": [
+          2661,
+          3309,
+          0
+        ],
+        "ingame": true,
+        "scene_state": 2,
+        "food": 13,
+        "coins": 2070,
+        "bank_lobster": 0,
+        "bank_open": false,
+        "bank_loaded": false,
+        "last_completed_tick": 1414,
+        "dispatched": 1388
+      },
+      "observation_xp_delta": 2854,
+      "quarter_xp_deltas": [
+        561,
+        796,
+        655,
+        842
+      ]
+    }
+  },
+  "diagnostics": {
+    "rss_median_bytes": 1268727808.0,
+    "process_cpu_percent": 199.50028601744904
+  },
+  "limits": [
+    "1 Hz sampler can miss bank-after counts; actual food replenishment at loaded bank, observed return and further client XP/coins qualify each actor",
+    "Bank trips can occur in warmup; every actor must also progress throughout the observation window",
+    "Overlapping agent/build activity: diagnostic samples are not a matched performance comparison or savings claim"
+  ]
+}
