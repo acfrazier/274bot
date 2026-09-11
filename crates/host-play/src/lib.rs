@@ -3909,6 +3909,33 @@ fn projected_npc_boxes(client: &Client) -> Option<Vec<script::isolate_fb::NpcBox
     )
 }
 
+/// Evaluate native NPC projection only for a frame that can post an isolate
+/// snapshot. Held running isolates still satisfy this gate because they post
+/// the snapshot before dispatching their paint-only tick; idle, paused,
+/// compiled-only, and non-tick frames do not consume one.
+fn project_npc_boxes_for_isolate_snapshot<F>(
+    scripts: &ScriptWall,
+    name: &str,
+    tick_edge: bool,
+    project: F,
+) -> Option<Vec<script::isolate_fb::NpcBoxInput>>
+where
+    F: FnOnce() -> Option<Vec<script::isolate_fb::NpcBoxInput>>,
+{
+    if !tick_edge {
+        return None;
+    }
+    let consumes_snapshot = script_slot(scripts, name).is_some_and(|slot| {
+        let slot = slot.lock().unwrap();
+        slot.state() == script::RunState::Running && slot.load_active()
+    });
+    if consumes_snapshot {
+        project()
+    } else {
+        None
+    }
+}
+
 /// Per-slot control arm. The panel flips these to make a slot sit on the
 /// title screen (no handshake) until login is armed, request a clean IF
 /// logout, or stop the thread. A `None` arm at spawn means CLI/e2e: the
@@ -5126,7 +5153,12 @@ fn spawn_slot_thread(
                                 running,
                                 nav_armed,
                             );
-                            let npc_boxes = projected_npc_boxes(c);
+                            let npc_boxes = project_npc_boxes_for_isolate_snapshot(
+                                &slot_scripts,
+                                name,
+                                tick_edge,
+                                || projected_npc_boxes(c),
+                            );
                             script_observe_with_npc_boxes(
                                 c,
                                 name,
@@ -10178,6 +10210,65 @@ export default class T extends LoopingBot {
                 .has_snapshot_fingerprint(),
             "compiled-only Running must not encode isolate snapshot delta"
         );
+    }
+
+    #[test]
+    fn projected_npc_boxes_are_lazy_for_the_isolate_snapshot_gate() {
+        let ScriptWiring {
+            scripts: compiled_scripts,
+            cheats: _,
+            count: _,
+        } = script_wiring();
+        let mut projections = 0;
+        assert!(
+            project_npc_boxes_for_isolate_snapshot(&compiled_scripts, "alice", true, || {
+                projections += 1;
+                Some(Vec::new())
+            },)
+            .is_none()
+        );
+        assert_eq!(projections, 0, "compiled scripts consume no snapshots");
+
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let slot = script_slot_or_insert(&scripts, "alice");
+        slot.lock()
+            .unwrap()
+            .start_load(
+                "export default class T extends LoopingBot { loop() {} }".to_string(),
+                script::LoadShape::CompatClass,
+                vec![],
+            )
+            .expect("load isolate starts");
+
+        assert!(
+            project_npc_boxes_for_isolate_snapshot(&scripts, "alice", false, || {
+                projections += 1;
+                Some(Vec::new())
+            })
+            .is_none()
+        );
+        assert_eq!(projections, 0, "non-tick frames consume no snapshots");
+
+        assert_eq!(
+            project_npc_boxes_for_isolate_snapshot(&scripts, "alice", true, || {
+                projections += 1;
+                Some(Vec::new())
+            }),
+            Some(Vec::new()),
+            "a running isolate consumes the tick-edge snapshot"
+        );
+        assert_eq!(projections, 1);
+
+        slot.lock().unwrap().pause();
+        assert!(
+            project_npc_boxes_for_isolate_snapshot(&scripts, "alice", true, || {
+                projections += 1;
+                Some(Vec::new())
+            })
+            .is_none()
+        );
+        assert_eq!(projections, 1, "paused isolates consume no snapshots");
+        slot.lock().unwrap().stop();
     }
 
     #[test]
