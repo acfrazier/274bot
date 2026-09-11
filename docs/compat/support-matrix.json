@@ -11519,7 +11519,7 @@
         "death detection, reacquisition and return-to-anchor behavior"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
+      "fixture_readiness": "Core melee passes; Loot-count banking returns but further-feather deadline fails.",
       "observable_proof_requirement": "after Start at the chicken pen, combat XP plus supported loot/bury deltas; for banking, force depletion, bank restock, return, and renewed combat progress",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -11533,7 +11533,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
+      "status_detail": "Both old-catalog revision cells complete the periodic bank trip but lack required fresh Feather314 before unchanged 180 seconds. Fixture/travel/combat diagnosis pending; no card defect established.",
       "fixture_id": "local-274",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-100adccc-c933f37c.json"
@@ -11541,7 +11541,10 @@
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-100adccc-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-100adccc-f6b9ec4b.log",
-        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-bank-100adccc-3be68eaf.json",
+        "docs/compat/evidence/catalog-harness/live/r274-chicken-killer-bank-100adccc-3be68eaf.log",
+        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json"
       ]
     },
     {
@@ -12218,7 +12221,7 @@
         "death detection, reacquisition and return-to-anchor behavior"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Core and linked named options qualified with an isolated build and independently checked gameplay witnesses.",
+      "fixture_readiness": "Core melee passes; Loot-count banking returns but further-feather deadline fails.",
       "observable_proof_requirement": "after Start at the chicken pen, combat XP plus supported loot/bury deltas; for banking, force depletion, bank restock, return, and renewed combat progress",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -12232,7 +12235,7 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
+      "status_detail": "Both old-catalog revision cells complete the periodic bank trip but lack required fresh Feather314 before unchanged 180 seconds. Fixture/travel/combat diagnosis pending; no card defect established.",
       "fixture_id": "local-289",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-100adccc-c933f37c.json"
@@ -12240,7 +12243,10 @@
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-100adccc-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-100adccc-f6b9ec4b.log",
-        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json"
+        "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-bank-100adccc-3be68eaf.json",
+        "docs/compat/evidence/catalog-harness/live/r289-chicken-killer-bank-100adccc-3be68eaf.log",
+        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json"
       ]
     },
     {
@@ -36003,13 +36009,18 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Actual picking observed; adapter mapping and native static-loc freshness investigation pending.",
       "observable_proof_requirement": "flax inventory increase, bank deposit, return, and renewed picking",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "289 fails on reader.toLocal after picking. 274 has seven flax at full-pack deadline; source audit suspects native cache invalidation. Neither is accepted or classified as a foreign-script defect.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-flax-picker-100adccc-3be68eaf.json",
+        "docs/compat/evidence/catalog-harness/live/r274-flax-picker-100adccc-3be68eaf.log",
+        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json"
+      ]
     },
     {
       "display_name": "FlaxPicker",
@@ -36303,13 +36314,18 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Actual picking observed; adapter mapping and native static-loc freshness investigation pending.",
       "observable_proof_requirement": "flax inventory increase, bank deposit, return, and renewed picking",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "289 fails on reader.toLocal after picking. 274 has seven flax at full-pack deadline; source audit suspects native cache invalidation. Neither is accepted or classified as a foreign-script defect.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-flax-picker-100adccc-3be68eaf.json",
+        "docs/compat/evidence/catalog-harness/live/r289-flax-picker-100adccc-3be68eaf.log",
+        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json"
+      ]
     },
     {
       "display_name": "FlaxSpinner",
@@ -37966,17 +37982,20 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Controlled local fixture qualified for the linked core/named option on an isolated build; full branch and frontend acceptance remains separate.",
+      "fixture_readiness": "Default course now proves one lap plus actual next log at XP94.",
       "observable_proof_requirement": "Agility XP and completed obstacle/lap displacement",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Reviewed isolated 50f2be8a passes this catalog/revision core proof. Default radius completes ordered log, ground-return and pipe milestones, then further Agility XP on the next lap. Radius-8 old-catalog cells on both revisions fail at our missing Reachability.walkable mapping; no foreign-script defect is established. Remaining supported settings and integrated/frontend qualification remain outstanding.",
+      "status_detail": "Both catalogs/revisions pass stronger isolated default proof. Radius8 resyncs to exit pipe and fails; source/distance ownership audit pending before any dimming decision.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-gnome-course-100adccc-50f2be8a.json",
         "docs/compat/evidence/catalog-harness/live/r274-gnome-course-100adccc-50f2be8a.log",
-        "docs/compat/evidence/location-world/isolated-results-50f2be8a.json"
+        "docs/compat/evidence/location-world/isolated-results-50f2be8a.json",
+        "docs/compat/evidence/catalog-harness/live/r274-gnome-course-100adccc-3be68eaf.json",
+        "docs/compat/evidence/catalog-harness/live/r274-gnome-course-100adccc-3be68eaf.log",
+        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json"
       ]
     },
     {
@@ -38182,17 +38201,20 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Controlled local fixture qualified for the linked core/named option on an isolated build; full branch and frontend acceptance remains separate.",
+      "fixture_readiness": "Default course now proves one lap plus actual next log at XP94.",
       "observable_proof_requirement": "Agility XP and completed obstacle/lap displacement",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Reviewed isolated 50f2be8a passes this catalog/revision core proof. Default radius completes ordered log, ground-return and pipe milestones, then further Agility XP on the next lap. Radius-8 old-catalog cells on both revisions fail at our missing Reachability.walkable mapping; no foreign-script defect is established. Remaining supported settings and integrated/frontend qualification remain outstanding.",
+      "status_detail": "Both catalogs/revisions pass stronger isolated default proof. Radius8 resyncs to exit pipe and fails; source/distance ownership audit pending before any dimming decision.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-gnome-course-100adccc-50f2be8a.json",
         "docs/compat/evidence/catalog-harness/live/r289-gnome-course-100adccc-50f2be8a.log",
-        "docs/compat/evidence/location-world/isolated-results-50f2be8a.json"
+        "docs/compat/evidence/location-world/isolated-results-50f2be8a.json",
+        "docs/compat/evidence/catalog-harness/live/r289-gnome-course-100adccc-3be68eaf.json",
+        "docs/compat/evidence/catalog-harness/live/r289-gnome-course-100adccc-3be68eaf.log",
+        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json"
       ]
     },
     {
@@ -69020,12 +69042,12 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Bronze and Steel complete isolated full bank/production cycles; alternative staff fixture correction pending.",
+      "fixture_readiness": "Isolated Bronze/Steel and corrected Attack30 alternative Fire battlestaff cycles pass.",
       "observable_proof_requirement": "Magic and Smithing XP, ore/nature consumption and bar production through bank cycles; 8e7d965b must prove each accepted fire-rune staff alternative",
       "source_version_difference": "accepts multiple fire-rune staff identities, selects an available one, and verifies Wield after bank close",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Core Bronze and Steel show actual staff equip, exact ore/rune consumption, bars, Magic/Smithing XP, deposit/restock and further production. Newer-catalog alternative Fire battlestaff cells were seeded with Attack 1 instead of required 30 and failed honestly at wield; this is a fixture defect, not a script/card defect.",
+      "status_detail": "Exact Fire battlestaff1393 equipped; 13 Bronze bars deposited, 13+13 ores restocked, further bar and rune/ore consumption with Magic/Smithing XP. Previous Attack1 fixture failures retained; other settings/frontends separate.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-superheater-8e7d965b-6d750e65.json",
@@ -69034,7 +69056,10 @@
         "docs/compat/evidence/catalog-harness/live/r274-superheater-fire-battlestaff-8e7d965b-6d750e65.log",
         "docs/compat/evidence/catalog-harness/live/r274-superheater-steel-8e7d965b-6d750e65.json",
         "docs/compat/evidence/catalog-harness/live/r274-superheater-steel-8e7d965b-6d750e65.log",
-        "docs/compat/evidence/superheater-fixtures/isolated-results-6d750e65.json"
+        "docs/compat/evidence/superheater-fixtures/isolated-results-6d750e65.json",
+        "docs/compat/evidence/catalog-harness/live/r274-superheater-fire-battlestaff-8e7d965b-3be68eaf.json",
+        "docs/compat/evidence/catalog-harness/live/r274-superheater-fire-battlestaff-8e7d965b-3be68eaf.log",
+        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json"
       ]
     },
     {
@@ -69238,12 +69263,12 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Bronze and Steel complete isolated full bank/production cycles; alternative staff fixture correction pending.",
+      "fixture_readiness": "Isolated Bronze/Steel and corrected Attack30 alternative Fire battlestaff cycles pass.",
       "observable_proof_requirement": "Magic and Smithing XP, ore/nature consumption and bar production through bank cycles; 8e7d965b must prove each accepted fire-rune staff alternative",
       "source_version_difference": "accepts multiple fire-rune staff identities, selects an available one, and verifies Wield after bank close",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Core Bronze and Steel show actual staff equip, exact ore/rune consumption, bars, Magic/Smithing XP, deposit/restock and further production. Newer-catalog alternative Fire battlestaff cells were seeded with Attack 1 instead of required 30 and failed honestly at wield; this is a fixture defect, not a script/card defect.",
+      "status_detail": "Exact Fire battlestaff1393 equipped; 13 Bronze bars deposited, 13+13 ores restocked, further bar and rune/ore consumption with Magic/Smithing XP. Previous Attack1 fixture failures retained; other settings/frontends separate.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-superheater-8e7d965b-6d750e65.json",
@@ -69252,7 +69277,10 @@
         "docs/compat/evidence/catalog-harness/live/r289-superheater-fire-battlestaff-8e7d965b-6d750e65.log",
         "docs/compat/evidence/catalog-harness/live/r289-superheater-steel-8e7d965b-6d750e65.json",
         "docs/compat/evidence/catalog-harness/live/r289-superheater-steel-8e7d965b-6d750e65.log",
-        "docs/compat/evidence/superheater-fixtures/isolated-results-6d750e65.json"
+        "docs/compat/evidence/superheater-fixtures/isolated-results-6d750e65.json",
+        "docs/compat/evidence/catalog-harness/live/r289-superheater-fire-battlestaff-8e7d965b-3be68eaf.json",
+        "docs/compat/evidence/catalog-harness/live/r289-superheater-fire-battlestaff-8e7d965b-3be68eaf.log",
+        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json"
       ]
     },
     {
@@ -72690,17 +72718,20 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Controlled local fixture qualified for the linked core/named option on an isolated build; full branch and frontend acceptance remains separate.",
+      "fixture_readiness": "Default course now proves one lap plus actual next log at XP94.",
       "observable_proof_requirement": "Agility XP and completed obstacle/lap displacement",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Reviewed isolated 50f2be8a passes this catalog/revision core proof. Default radius completes ordered log, ground-return and pipe milestones, then further Agility XP on the next lap. Radius-8 old-catalog cells on both revisions fail at our missing Reachability.walkable mapping; no foreign-script defect is established. Remaining supported settings and integrated/frontend qualification remain outstanding.",
+      "status_detail": "Both catalogs/revisions pass stronger isolated default proof. Radius8 resyncs to exit pipe and fails; source/distance ownership audit pending before any dimming decision.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-gnome-course-8e7d965b-50f2be8a.json",
         "docs/compat/evidence/catalog-harness/live/r274-gnome-course-8e7d965b-50f2be8a.log",
-        "docs/compat/evidence/location-world/isolated-results-50f2be8a.json"
+        "docs/compat/evidence/location-world/isolated-results-50f2be8a.json",
+        "docs/compat/evidence/catalog-harness/live/r274-gnome-course-8e7d965b-3be68eaf.json",
+        "docs/compat/evidence/catalog-harness/live/r274-gnome-course-8e7d965b-3be68eaf.log",
+        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json"
       ]
     },
     {
@@ -72906,17 +72937,20 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Controlled local fixture qualified for the linked core/named option on an isolated build; full branch and frontend acceptance remains separate.",
+      "fixture_readiness": "Default course now proves one lap plus actual next log at XP94.",
       "observable_proof_requirement": "Agility XP and completed obstacle/lap displacement",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Reviewed isolated 50f2be8a passes this catalog/revision core proof. Default radius completes ordered log, ground-return and pipe milestones, then further Agility XP on the next lap. Radius-8 old-catalog cells on both revisions fail at our missing Reachability.walkable mapping; no foreign-script defect is established. Remaining supported settings and integrated/frontend qualification remain outstanding.",
+      "status_detail": "Both catalogs/revisions pass stronger isolated default proof. Radius8 resyncs to exit pipe and fails; source/distance ownership audit pending before any dimming decision.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-gnome-course-8e7d965b-50f2be8a.json",
         "docs/compat/evidence/catalog-harness/live/r289-gnome-course-8e7d965b-50f2be8a.log",
-        "docs/compat/evidence/location-world/isolated-results-50f2be8a.json"
+        "docs/compat/evidence/location-world/isolated-results-50f2be8a.json",
+        "docs/compat/evidence/catalog-harness/live/r289-gnome-course-8e7d965b-3be68eaf.json",
+        "docs/compat/evidence/catalog-harness/live/r289-gnome-course-8e7d965b-3be68eaf.log",
+        "docs/compat/evidence/catalog-harness/followups-3be68eaf.json"
       ]
     },
     {
