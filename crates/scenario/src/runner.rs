@@ -91,6 +91,9 @@ pub struct ScenarioRunner {
     /// Skill XP baselines captured when a watch step with [`Proof::StatXpGain`]
     /// begins — `(skill id, xp at step start)`.
     xp_baselines: Vec<(i32, i32)>,
+    /// Baseline for the current [`Proof::FreshStatXpGain`] step only. Cleared
+    /// at every step and session boundary so prior work cannot satisfy it.
+    fresh_xp_baseline: Option<(i32, i32)>,
     /// Whole-window shot sink: fired once when a `StepKind::Shot` step's
     /// arm holds, with the label and the terminal snapshot. The headed
     /// panel fills this with its window capture; the headless twin keeps
@@ -154,6 +157,7 @@ impl ScenarioRunner {
             engine_speed_sent: false,
             evidence: None,
             xp_baselines: Vec::new(),
+            fresh_xp_baseline: None,
             shot_sink: None,
         }
     }
@@ -340,6 +344,9 @@ impl ScenarioRunner {
             return;
         }
         let dirty = self.snapshot.rebuild(client);
+        if !self.snapshot.ingame() {
+            self.fresh_xp_baseline = None;
+        }
         self.retry_xp_baselines();
         // Scene-settle tracking: the wall-clock instant the scene first
         // held `scene_state == 2`; any drop below 2 (a tele's rebuild)
@@ -417,10 +424,11 @@ impl ScenarioRunner {
                 let wait = &self.current_step().wait;
                 (wait.arm, wait.budget_ticks)
             };
-            if arm.check_with_xp_baselines(
+            if arm.check_with_xp_context(
                 &self.snapshot,
                 self.obj_names.as_deref(),
                 Some(&self.xp_baselines),
+                self.fresh_xp_baseline,
             ) {
                 // A nav step only advances once its follow has
                 // terminated: the arm can hold on a snapshot the
@@ -458,10 +466,11 @@ impl ScenarioRunner {
             }
         }
         if matches!(self.phase, Phase::Proving)
-            && self.scenario.proof.check_with_xp_baselines(
+            && self.scenario.proof.check_with_xp_context(
                 &self.snapshot,
                 self.obj_names.as_deref(),
                 Some(&self.xp_baselines),
+                self.fresh_xp_baseline,
             )
         {
             self.finish_pass();
@@ -519,23 +528,38 @@ impl ScenarioRunner {
         self.ticks_waited = 0;
         self.traveller.clear();
         self.route = None;
+        self.fresh_xp_baseline = None;
         self.capture_xp_baseline(self.current_step().wait.arm);
     }
 
     fn capture_xp_baseline(&mut self, proof: Proof) {
-        if let Proof::StatXpGain { id, .. } = proof {
-            if self.xp_baselines.iter().any(|(i, _)| *i == id) {
-                return;
+        let id = match proof {
+            Proof::StatXpGain { id, .. } => {
+                if self.xp_baselines.iter().any(|(i, _)| *i == id) {
+                    return;
+                }
+                id
             }
-            let Some(xp) = self
-                .snapshot
-                .stats()
-                .iter()
-                .find(|s| s.index == id)
-                .map(|s| s.xp)
-            else {
-                return;
-            };
+            Proof::FreshStatXpGain { id, .. } => {
+                if !self.snapshot.ingame() || self.fresh_xp_baseline.is_some() {
+                    return;
+                }
+                id
+            }
+            _ => return,
+        };
+        let Some(xp) = self
+            .snapshot
+            .stats()
+            .iter()
+            .find(|s| s.index == id)
+            .map(|s| s.xp)
+        else {
+            return;
+        };
+        if matches!(proof, Proof::FreshStatXpGain { .. }) {
+            self.fresh_xp_baseline = Some((id, xp));
+        } else {
             self.xp_baselines.push((id, xp));
         }
     }
@@ -582,7 +606,9 @@ impl ScenarioRunner {
     fn advance_step(&mut self) {
         self.step += 1;
         if self.step >= self.scenario.steps.len() {
-            self.capture_xp_baseline(self.scenario.proof);
+            if !matches!(self.scenario.proof, Proof::FreshStatXpGain { .. }) {
+                self.capture_xp_baseline(self.scenario.proof);
+            }
             self.phase = Phase::Proving;
         } else {
             self.begin_step();
@@ -2128,5 +2154,78 @@ mod tests {
             }
             other => panic!("seed-only input must not pass, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn fresh_xp_watch_does_not_consume_a_prior_step_gain() {
+        const SKILL: i32 = 17;
+        let cumulative = Proof::StatXpGain { id: SKILL, min: 1 };
+        let fresh = Proof::FreshStatXpGain { id: SKILL, min: 1 };
+        let scenario = Scenario {
+            name: "fresh-xp",
+            seed: Seed {
+                profiles: vec![("test", "test")],
+                mainland: false,
+            },
+            steps: vec![
+                Step {
+                    name: "watch the earlier gain",
+                    kind: StepKind::Perform {
+                        send: Box::new(|_, _| true),
+                    },
+                    wait: wait(cumulative, 4),
+                },
+                Step {
+                    name: "watch a later fresh gain",
+                    kind: StepKind::Perform {
+                        send: Box::new(|_, _| true),
+                    },
+                    wait: wait(fresh, 4),
+                },
+            ],
+            proof: fresh,
+            companions: vec![],
+            settings: ScenarioSettings::default(),
+        };
+        let mut c = seeded_client();
+        c.stat_xp[SKILL as usize] = 100;
+        let mut runner = ScenarioRunner::with_world(scenario, None);
+        runner.set_scene_settle(Duration::ZERO);
+
+        runner.tick(&mut c);
+        c.stat_xp[SKILL as usize] = 101;
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        runner.tick(&mut c);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 1, total: 2 },
+            "the first gain advances only to the fresh watch"
+        );
+
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        runner.tick(&mut c);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 1, total: 2 },
+            "unchanged XP cannot reuse the prior step gain"
+        );
+
+        c.ingame = false;
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        runner.tick(&mut c);
+        assert_eq!(
+            runner.fresh_xp_baseline, None,
+            "leaving the session clears the step-local baseline"
+        );
+        c.ingame = true;
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        runner.tick(&mut c);
+        assert_eq!(runner.fresh_xp_baseline, Some((SKILL, 101)));
+
+        c.stat_xp[SKILL as usize] = 102;
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        runner.tick(&mut c);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
     }
 }

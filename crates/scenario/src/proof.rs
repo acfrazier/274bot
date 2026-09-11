@@ -79,6 +79,9 @@ pub enum Proof {
     /// Skill `id`'s XP rose by at least `min` since the runner captured a
     /// baseline at step start (live gold: thieving / combat / alch / fletch).
     StatXpGain { id: i32, min: i32 },
+    /// Skill `id`'s XP rose by at least `min` since this specific step began.
+    /// Unlike [`Proof::StatXpGain`], an earlier step's gain cannot satisfy it.
+    FreshStatXpGain { id: i32, min: i32 },
     /// An NPC of `r#type` stands on the tile.
     NpcAt { r#type: usize, x: i32, z: i32 },
     /// An NPC of the obj `r#type` id stands within chebyshev `radius` of
@@ -140,6 +143,9 @@ impl Proof {
             Proof::StatAtMost { id, max } => format!("stat({id})<={max}"),
             Proof::Chat { needle } => format!("chat(contains \"{needle}\")"),
             Proof::StatXpGain { id, min } => format!("stat_xp_gain({id})>={min}"),
+            Proof::FreshStatXpGain { id, min } => {
+                format!("fresh_stat_xp_gain({id})>={min}")
+            }
             Proof::NpcAt { r#type, x, z } => format!("npc({type})@({x},{z})"),
             Proof::NpcNear { r#type, radius } => format!("npc_near({type},{radius})"),
             Proof::LocIdNear {
@@ -178,6 +184,18 @@ impl Proof {
         snap: &GameSnapshot,
         names: Option<&ObjNames>,
         xp_baselines: Option<&[(i32, i32)]>,
+    ) -> bool {
+        self.check_with_xp_context(snap, names, xp_baselines, None)
+    }
+
+    /// Like [`Proof::check_with_xp_baselines`], with the current step's
+    /// independently captured XP baseline for [`Proof::FreshStatXpGain`].
+    pub fn check_with_xp_context(
+        &self,
+        snap: &GameSnapshot,
+        names: Option<&ObjNames>,
+        xp_baselines: Option<&[(i32, i32)]>,
+        fresh_xp_baseline: Option<(i32, i32)>,
     ) -> bool {
         match self {
             Proof::Item { name, count } => {
@@ -326,6 +344,15 @@ impl Proof {
                 else {
                     return false;
                 };
+                stat_xp(snap, *id).is_some_and(|cur| cur - baseline >= *min)
+            }
+            Proof::FreshStatXpGain { id, min } => {
+                let Some((baseline_id, baseline)) = fresh_xp_baseline else {
+                    return false;
+                };
+                if baseline_id != *id {
+                    return false;
+                }
                 stat_xp(snap, *id).is_some_and(|cur| cur - baseline >= *min)
             }
             Proof::NpcAt { r#type, x, z } => snap
@@ -1055,6 +1082,28 @@ mod tests {
                 Some(&baselines)
             )
         );
+    }
+
+    #[test]
+    fn fresh_stat_xp_gain_requires_its_step_entry_baseline() {
+        let mut c = seeded();
+        c.stat_xp[17] = 146;
+        let s = snap(&mut c);
+        let cumulative = [(17, 100)];
+        let proof = Proof::FreshStatXpGain { id: 17, min: 1 };
+
+        assert!(
+            !proof.check_with_xp_context(&s, None, Some(&cumulative), None),
+            "earlier cumulative XP must not satisfy a fresh step"
+        );
+        assert!(
+            !proof.check_with_xp_context(&s, None, Some(&cumulative), Some((17, 146))),
+            "an unchanged observation must not satisfy a fresh step"
+        );
+        c.stat_xp[17] = 147;
+        let s = snap(&mut c);
+        assert!(proof.check_with_xp_context(&s, None, Some(&cumulative), Some((17, 146))));
+        assert_eq!(proof.name(), "fresh_stat_xp_gain(17)>=1");
     }
 
     #[test]

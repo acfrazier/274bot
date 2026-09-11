@@ -1,0 +1,93 @@
+{
+  "task": "t_71168fc4",
+  "round": 2,
+  "verified_at_utc": "2026-09-11T13:00:58Z",
+  "brief": "docs/compat/briefs/118-agility-full-core-fixtures.md",
+  "brief_sha256": "ec0d44abc8ccef092795b9dea843bae64cb59ae3c5961bff687962da2d40e3c6",
+  "verification_base_head": "9113abd65282ecce77f310cc227992b0b87e4a8b",
+  "original_fixture_commit": "b6013ba36ddb8bb0f5a56172be726d3b09a60622",
+  "client": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "branch": "codex/rs2b0t-multirevision",
+  "live": false,
+  "exclusive_reused_cargo_target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_71168fc4",
+  "source_model": "exact Git HEAD plus the task-owned overlay hashes below; unrelated dirty paths were not owned or committed",
+  "scenarios": [
+    "wildy_agility",
+    "brimhaven_agility"
+  ],
+  "catalogs": {
+    "100adccc037d9f6898080e1cad58fcfc43364775": {
+      "WildyAgility.ts": "71170d4bfe844161fe87d36e411ded9e99424ebadac875e11db9f781043c405f",
+      "WildyAgilityLogic.ts": "8e38f53a01cea150f1e9fa67ece422ea4f642c748f52326c3a0512125bc77942",
+      "BrimhavenAgility.ts": "771daff07bd4b3d6f2826ab1300d4fd66bcbae0f9d7a76e4a2ad07a4d050e859",
+      "BrimhavenAgilityLogic.ts": "fedf5f8e05fd43642efb0370352e71e5feebf258a784bc503a2e145c33b46d4d"
+    },
+    "8e7d965be2071d6ec65c3265e12af797082d720a": {
+      "WildyAgility.ts": "71170d4bfe844161fe87d36e411ded9e99424ebadac875e11db9f781043c405f",
+      "WildyAgilityLogic.ts": "8e38f53a01cea150f1e9fa67ece422ea4f642c748f52326c3a0512125bc77942",
+      "BrimhavenAgility.ts": "771daff07bd4b3d6f2826ab1300d4fd66bcbae0f9d7a76e4a2ad07a4d050e859",
+      "BrimhavenAgilityLogic.ts": "fedf5f8e05fd43642efb0370352e71e5feebf258a784bc503a2e145c33b46d4d"
+    }
+  },
+  "overlay_sha256": {
+    "crates/scenario/src/lib.rs": "23a68a447cb08c13e4fe8c76c412887999409583ace72bcc8db6063d84a2722e",
+    "crates/scenario/src/proof.rs": "58736da62a1106f1274fbb402b017cf082d7aa5ec2895ad482960826517118a7",
+    "crates/scenario/src/runner.rs": "835c78d572a75405398905ea429903f2ee5b46d015813a04d7d008ced19d7dbb",
+    "crates/host-play/tests/catalog_boundary_live.rs": "56ae8be14269b6d8fe4df0bd4ac91c56c09bdc53e7f55b01cb21dc3a3632d7c6"
+  },
+  "identities": {
+    "wildy_agility": "WildyAgility; Agility 52; Lobster 379 x5; south start 2998,3916,0; ridge then selected pipe/rope/stone/log/rocks; >=586 lap and >=598 plus second pipe",
+    "brimhaven_agility": "BrimhavenAgility; Coins 995 x1000; Lobster 379 x10; ticket 2996 absent; surface 2809,3194,0; fee and varp309 paid; ladder 2805,9590,3; pre-Tag hop XP; first Tag no ticket; later ticket; fresh post-ticket XP"
+  },
+  "gold_bounds": {
+    "SCRIPT_GOLD_DEADLINE_secs": 180,
+    "SCRIPT_GOLD_WATCH_TICKS": 150,
+    "unchanged": true
+  },
+  "named_false_positives": {
+    "wildy": [
+      "under-level setup",
+      "under-food setup",
+      "ridge-only",
+      "lap without second pipe",
+      "571 XP without further work",
+      "queued second-pipe destination without ordered chain",
+      "high-z obstacle pit",
+      "wrong-side obstacle arrival",
+      "wolf-pit failure chat"
+    ],
+    "brimhaven": [
+      "pre-paid baseline",
+      "seeded ticket baseline",
+      "underfunded setup",
+      "fee-only",
+      "entered without movement and XP",
+      "first Tag without ticket",
+      "ticket without subsequent work",
+      "stale first-Tag chat",
+      "wrong-hint Tag",
+      "prior XP reused for fresh step",
+      "unchanged fresh-step XP",
+      "missing fresh baseline"
+    ]
+  },
+  "fresh_xp_semantics": {
+    "existing_StatXpGain": "unchanged once-per-skill cumulative baseline",
+    "FreshStatXpGain": "baseline captured at exact step entry; absent baseline fails closed; step and off-session boundaries clear it; terminal proof reuses the just-passed final-step baseline",
+    "accepted": "a later observed gain at or above min"
+  },
+  "checks": [
+    "cargo test -p scenario: 102 passed",
+    "cargo test -p host-play --features memory-profile --test catalog_boundary_live: 38 passed, 1 ignored LIVE",
+    "checked_in_frozen_core_sources_match_both_catalog_ledgers: passed",
+    "cargo clippy -p scenario -p host-play --features host-play/memory-profile --tests -- -D warnings: passed",
+    "rustfmt --edition 2021 --check on four owned Rust files: passed",
+    "git diff --check: passed"
+  ],
+  "limits": [
+    "no LIVE client run",
+    "no gameplay/client/engine/navigation/catalog-source/ledger changes",
+    "root owns the 2 catalogs x 2 revisions x 2 core scenarios acceptance matrix",
+    "current client is recorded but was not rebuilt solely for revision-label changes"
+  ]
+}
