@@ -1,0 +1,21 @@
+{
+  "task": "t_3737503d",
+  "brief": "docs/compat/briefs/26-loadout-provisioning.md",
+  "brief_sha256": "691f71fb09e3a659d9cca364be546251b7a51965aa3a82960383dc7a42a5e7bb",
+  "branch": "codex/rs2b0t-multirevision",
+  "client": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "tests": {
+    "api_wearpos": "pass",
+    "script_lib_loadout": "10 passed",
+    "script_loadouts_bag": "4 passed",
+    "script_gold_stubs": "12 passed, 1 ignored",
+    "tui_loadout": "6 passed (earlier this run)",
+    "panel_loadout": "5 passed (earlier this run)",
+    "clippy_api_script": "pass"
+  },
+  "limits": [
+    "No live client run.",
+    "Later tui/panel rerun blocked by concurrent crates/scenario WIP (missing door_opener/gnome_course/flax_picker scenario fns).",
+    "crates/script/src/load.rs also carries a concurrent inventory-row slot publish; hotspot flagged."
+  ]
+}

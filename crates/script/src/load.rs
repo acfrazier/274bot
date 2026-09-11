@@ -1552,6 +1552,33 @@ mod isolate {
             })
             .map_err(|e| format!("register food: {e}"))?;
         runtime
+            .register_function("__rs2b0t_gear_of", |args: &[serde_json::Value]| {
+                Ok(serde_json::to_value(crate::loadouts_store::gear_of(
+                    args.first().unwrap_or(&serde_json::Value::Null),
+                ))
+                .unwrap_or(serde_json::json!([])))
+            })
+            .map_err(|e| format!("register gear: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_supplies_of", |args: &[serde_json::Value]| {
+                Ok(serde_json::to_value(crate::loadouts_store::supplies_of(
+                    args.first().unwrap_or(&serde_json::Value::Null),
+                ))
+                .unwrap_or(serde_json::json!([])))
+            })
+            .map_err(|e| format!("register supplies: {e}"))?;
+        runtime
+            .register_function("__rs2b0t_weapon_of", |args: &[serde_json::Value]| {
+                let fallback = args
+                    .get(1)
+                    .and_then(|v| if v.is_null() { None } else { v.as_str() });
+                Ok(crate::loadouts_store::weapon_of(
+                    args.first().unwrap_or(&serde_json::Value::Null),
+                    fallback,
+                ))
+            })
+            .map_err(|e| format!("register weapon: {e}"))?;
+        runtime
             .eval::<()>(crate::shim::PRELUDE)
             .map_err(|e| format!("shim: {e}"))?;
         let content = format!(
@@ -2232,7 +2259,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         Ok(())
     }
 
-    /// One `{id, name, ops, count, noted, cert}` row from ItemView.
+    /// One `{id, name, ops, count, noted, cert, component_id, slot}` row from ItemView.
     fn row_object<'s>(
         scope: &mut v8::HandleScope<'s>,
         row: &crate::isolate_fb::RowReader<'_>,
@@ -2266,6 +2293,10 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         if row.has_component_id() {
             let component_id = num(scope, row.component_id() as f64);
             set(scope, o, "component_id", component_id)?;
+        }
+        if row.has_slot() {
+            let slot = num(scope, row.slot() as f64);
+            set(scope, o, "slot", slot)?;
         }
         Ok(o.into())
     }

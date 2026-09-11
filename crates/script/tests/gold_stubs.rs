@@ -504,11 +504,9 @@ export default class T extends LoopingBot {
         api::game_data::for_revision(client::io::ClientRevision::R274).unwrap(),
     )
     .unwrap();
-    iso.post_loadouts(&[script::Loadout {
-        name: "Food".into(),
-        worn: vec![],
-        carry: vec!["Coins".into(), "Lobster".into()],
-    }]);
+    iso.post_loadouts(&[script::Loadout::new("Food")
+        .with_carry("Coins", 1)
+        .with_carry("Lobster", 1)]);
     iso.probe("globalThis.__rs2b0t_host.snapshot = {inv: [{name:'Lobster',count:1}]}; true")
         .unwrap();
     iso.on_game_tick(1);

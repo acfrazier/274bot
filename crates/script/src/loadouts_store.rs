@@ -1,18 +1,224 @@
-//! Operator loadouts: `{ name, worn, carry }` persisted at
-//! `~/.274bot/loadouts.json` (0o600). `optionsFrom: 'loadouts'` fills
-//! setting combos from [`LoadoutsStore::names`].
+//! Operator loadouts persisted at `~/.274bot/loadouts.json` (0o600).
+//!
+//! Wire shape is `{ name, worn: {slot: name}, carry: [{item, qty}], unassigned? }`.
+//! Legacy `{ worn: [name], carry: [name] }` files are read without guessing
+//! slots or dropping items. `optionsFrom: 'loadouts'` fills setting combos
+//! from [`LoadoutsStore::names`].
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use vault::write_private_file;
 
-/// One named equipment/inventory preset.
+/// Loadout equipment slots, named as the content wearpos decoder names them.
+pub const WORN_SLOTS: [&str; 11] = [
+    "hat",
+    "back",
+    "front",
+    "righthand",
+    "torso",
+    "lefthand",
+    "legs",
+    "hands",
+    "feet",
+    "ring",
+    "quiver",
+];
+
+/// Compact equipment layout used by the native editor. `None` is a spacer.
+pub const WORN_SLOT_LAYOUT: [[Option<&'static str>; 3]; 5] = [
+    [None, Some("hat"), None],
+    [Some("back"), Some("front"), Some("quiver")],
+    [Some("righthand"), Some("torso"), Some("lefthand")],
+    [None, Some("legs"), None],
+    [Some("hands"), Some("feet"), Some("ring")],
+];
+
+pub fn worn_slot_label(slot: &str) -> &'static str {
+    match slot {
+        "hat" => "Hat",
+        "back" => "Cape",
+        "front" => "Amulet",
+        "righthand" => "Weapon",
+        "torso" => "Body",
+        "lefthand" => "Shield",
+        "legs" => "Legs",
+        "hands" => "Hands",
+        "feet" => "Feet",
+        "ring" => "Ring",
+        "quiver" => "Quiver",
+        _ => "Slot",
+    }
+}
+
+pub fn is_worn_slot(slot: &str) -> bool {
+    WORN_SLOTS.contains(&slot)
+}
+
+/// One carried supply with a required positive quantity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CarryEntry {
+    pub item: String,
+    pub qty: u32,
+}
+
+impl CarryEntry {
+    pub fn new(item: impl Into<String>, qty: u32) -> Self {
+        Self {
+            item: item.into(),
+            qty: qty.max(1),
+        }
+    }
+}
+
+/// One named equipment/inventory preset.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Loadout {
     pub name: String,
-    pub worn: Vec<String>,
-    pub carry: Vec<String>,
+    pub worn: BTreeMap<String, String>,
+    pub unassigned: Vec<String>,
+    pub carry: Vec<CarryEntry>,
+}
+
+impl Loadout {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            worn: BTreeMap::new(),
+            unassigned: Vec::new(),
+            carry: Vec::new(),
+        }
+    }
+
+    pub fn with_slot(mut self, slot: &str, item: impl Into<String>) -> Self {
+        if is_worn_slot(slot) {
+            self.worn.insert(slot.to_string(), item.into());
+        } else {
+            self.unassigned.push(item.into());
+        }
+        self
+    }
+
+    pub fn with_carry(mut self, item: impl Into<String>, qty: u32) -> Self {
+        self.carry.push(CarryEntry::new(item, qty));
+        self
+    }
+
+    pub fn set_slot(&mut self, slot: &str, item: Option<String>) {
+        if !is_worn_slot(slot) {
+            return;
+        }
+        match item {
+            Some(name) if !name.trim().is_empty() => {
+                self.worn.insert(slot.to_string(), name);
+            }
+            _ => {
+                self.worn.remove(slot);
+            }
+        }
+    }
+}
+
+impl Serialize for Loadout {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        struct Wire<'a> {
+            name: &'a str,
+            worn: &'a BTreeMap<String, String>,
+            carry: &'a [CarryEntry],
+            #[serde(skip_serializing_if = "slice_empty")]
+            unassigned: &'a [String],
+        }
+        Wire {
+            name: &self.name,
+            worn: &self.worn,
+            carry: &self.carry,
+            unassigned: &self.unassigned,
+        }
+        .serialize(serializer)
+    }
+}
+
+fn slice_empty(value: &[String]) -> bool {
+    value.is_empty()
+}
+
+impl<'de> Deserialize<'de> for Loadout {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        parse_loadout(&value).ok_or_else(|| serde::de::Error::custom("invalid loadout"))
+    }
+}
+
+fn parse_loadout(value: &serde_json::Value) -> Option<Loadout> {
+    let name = value.get("name")?.as_str()?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let mut worn = BTreeMap::new();
+    let mut unassigned = Vec::new();
+    match value.get("worn") {
+        Some(serde_json::Value::Array(rows)) => {
+            for row in rows {
+                if let Some(item) = row.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                    unassigned.push(item.to_string());
+                }
+            }
+        }
+        Some(serde_json::Value::Object(map)) => {
+            for (slot, raw) in map {
+                let Some(item) = raw.as_str().map(str::trim).filter(|s| !s.is_empty()) else {
+                    continue;
+                };
+                if is_worn_slot(slot) {
+                    worn.insert(slot.clone(), item.to_string());
+                } else {
+                    unassigned.push(item.to_string());
+                }
+            }
+        }
+        _ => {}
+    }
+    if let Some(serde_json::Value::Array(rows)) = value.get("unassigned") {
+        for row in rows {
+            if let Some(item) = row.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                unassigned.push(item.to_string());
+            }
+        }
+    }
+    let mut carry = Vec::new();
+    if let Some(serde_json::Value::Array(rows)) = value.get("carry") {
+        for row in rows {
+            if let Some(item) = row.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                carry.push(CarryEntry::new(item, 1));
+                continue;
+            }
+            let Some(item) = row
+                .get("item")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            else {
+                continue;
+            };
+            let qty = row
+                .get("qty")
+                .and_then(|v| {
+                    v.as_u64()
+                        .or_else(|| v.as_i64().and_then(|n| u64::try_from(n).ok()))
+                        .or_else(|| v.as_f64().and_then(|n| (n >= 1.0).then_some(n as u64)))
+                })
+                .unwrap_or(1);
+            carry.push(CarryEntry::new(item, qty.min(u32::MAX as u64) as u32));
+        }
+    }
+    Some(Loadout {
+        name: name.to_string(),
+        worn,
+        unassigned,
+        carry,
+    })
 }
 
 /// Default operator loadouts path (`~/.274bot/loadouts.json`).
@@ -31,7 +237,7 @@ impl LoadoutsStore {
     pub fn at(path: PathBuf) -> Self {
         let loadouts = std::fs::read_to_string(&path)
             .ok()
-            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .and_then(|raw| parse_loadouts_file(&raw))
             .unwrap_or_default();
         LoadoutsStore {
             path,
@@ -54,6 +260,15 @@ impl LoadoutsStore {
 
     pub fn get(&self, name: &str) -> Option<&Loadout> {
         self.loadouts.iter().find(|l| l.name == name)
+    }
+
+    pub fn snapshot(&self) -> Vec<Loadout> {
+        self.loadouts.clone()
+    }
+
+    pub fn restore(&mut self, loadouts: Vec<Loadout>) {
+        self.loadouts = loadouts;
+        self.dirty = false;
     }
 
     pub fn upsert(&mut self, loadout: Loadout) {
@@ -86,6 +301,10 @@ impl LoadoutsStore {
         }
     }
 
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
     pub fn save(&mut self) -> Result<(), String> {
         if !self.dirty {
             return Ok(());
@@ -96,6 +315,69 @@ impl LoadoutsStore {
         self.dirty = false;
         Ok(())
     }
+}
+
+fn parse_loadouts_file(raw: &str) -> Option<Vec<Loadout>> {
+    let payload: serde_json::Value = serde_json::from_str(raw).ok()?;
+    let rows = payload.as_array()?;
+    Some(rows.iter().filter_map(parse_loadout).collect())
+}
+
+pub fn unique_loadout_name(existing: &[Loadout], base: &str) -> String {
+    let taken: Vec<String> = existing
+        .iter()
+        .map(|l| l.name.to_ascii_lowercase())
+        .collect();
+    if !taken.iter().any(|n| n == &base.to_ascii_lowercase()) {
+        return base.to_string();
+    }
+    for n in 2.. {
+        let candidate = format!("{base} {n}");
+        if !taken
+            .iter()
+            .any(|name| name == &candidate.to_ascii_lowercase())
+        {
+            return candidate;
+        }
+    }
+    base.to_string()
+}
+
+/// Copy observed equipment into worn slots. Supplies are left unchanged.
+/// Unknown slot identity is retained as unassigned gear.
+pub fn copy_equipment_preserving_supplies(
+    loadout: &mut Loadout,
+    items: &[(String, i32)],
+    data: Option<&api::game_data::SelectedGameData>,
+) {
+    let mut worn = BTreeMap::new();
+    let mut unassigned = Vec::new();
+    for (name, id) in items {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let slot = data.and_then(|facts| {
+            facts
+                .item_by_id(*id)
+                .and_then(api::game_data::GameItem::loadout_slot)
+                .or_else(|| {
+                    facts.items().iter().find_map(|item| {
+                        (item.name.as_deref() == Some(trimmed) && !item.is_certificate())
+                            .then(|| item.loadout_slot())
+                            .flatten()
+                    })
+                })
+        });
+        match slot {
+            Some(slot) if !worn.contains_key(slot) => {
+                worn.insert(slot.to_string(), trimmed.to_string());
+            }
+            _ => unassigned.push(trimmed.to_string()),
+        }
+    }
+    loadout.worn = worn;
+    loadout.unassigned = unassigned;
 }
 
 /// Combo options for a setting: inline `options` win; `optionsFrom: 'loadouts'`
@@ -111,6 +393,104 @@ pub fn resolve_setting_options(
         return loadouts.names();
     }
     Vec::new()
+}
+
+/// Adapt the host's persisted loadout shape for script accessors.
+pub fn selected_compat_loadout(rows: &[Loadout], wanted: &str) -> serde_json::Value {
+    let Some(row) = rows
+        .iter()
+        .find(|r| r.name.eq_ignore_ascii_case(wanted.trim()))
+        .or_else(|| rows.first())
+    else {
+        return serde_json::Value::Null;
+    };
+    loadout_to_compat(row)
+}
+
+pub fn loadout_to_compat(row: &Loadout) -> serde_json::Value {
+    let mut worn = serde_json::Map::new();
+    for (slot, item) in &row.worn {
+        worn.insert(slot.clone(), serde_json::Value::String(item.clone()));
+    }
+    let mut out = serde_json::Map::new();
+    out.insert("name".into(), serde_json::Value::String(row.name.clone()));
+    out.insert("worn".into(), serde_json::Value::Object(worn));
+    out.insert(
+        "carry".into(),
+        serde_json::to_value(&row.carry).unwrap_or_else(|_| serde_json::json!([])),
+    );
+    if !row.unassigned.is_empty() {
+        out.insert(
+            "unassigned".into(),
+            serde_json::to_value(&row.unassigned).unwrap_or_else(|_| serde_json::json!([])),
+        );
+    }
+    serde_json::Value::Object(out)
+}
+
+pub fn gear_of(loadout: &serde_json::Value) -> Vec<String> {
+    if loadout.is_null() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    if let Some(worn) = loadout.get("worn").and_then(|v| v.as_object()) {
+        for slot in WORN_SLOTS {
+            if let Some(item) = worn.get(slot).and_then(|v| v.as_str()).map(str::trim) {
+                if !item.is_empty() {
+                    out.push(item.to_string());
+                }
+            }
+        }
+    }
+    if let Some(rows) = loadout.get("unassigned").and_then(|v| v.as_array()) {
+        for row in rows {
+            if let Some(item) = row.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                out.push(item.to_string());
+            }
+        }
+    }
+    out
+}
+
+pub fn supplies_of(loadout: &serde_json::Value) -> Vec<CarryEntry> {
+    if loadout.is_null() {
+        return Vec::new();
+    }
+    loadout
+        .get("carry")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|row| {
+            let item = row
+                .get("item")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())?;
+            let qty = row
+                .get("qty")
+                .and_then(|v| v.as_u64())
+                .filter(|n| *n > 0)
+                .unwrap_or(1) as u32;
+            Some(CarryEntry::new(item, qty))
+        })
+        .collect()
+}
+
+pub fn weapon_of(loadout: &serde_json::Value, fallback: Option<&str>) -> serde_json::Value {
+    if let Some(name) = loadout
+        .get("worn")
+        .and_then(|v| v.get("righthand"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return serde_json::Value::String(name.to_string());
+    }
+    match fallback {
+        Some(name) => serde_json::Value::String(name.to_string()),
+        None => serde_json::Value::Null,
+    }
 }
 
 #[cfg(test)]
@@ -140,16 +520,13 @@ mod tests {
         let path = tmp_path();
         {
             let mut store = LoadoutsStore::at(path.clone());
-            store.upsert(Loadout {
-                name: "melee".into(),
-                worn: vec!["helm".into(), "plate".into()],
-                carry: vec!["food".into()],
-            });
-            store.upsert(Loadout {
-                name: "range".into(),
-                worn: vec!["coif".into()],
-                carry: vec![],
-            });
+            store.upsert(
+                Loadout::new("melee")
+                    .with_slot("hat", "helm")
+                    .with_slot("torso", "plate")
+                    .with_carry("food", 1),
+            );
+            store.upsert(Loadout::new("range").with_slot("hat", "coif"));
             store.save().expect("save loadouts");
         }
 
@@ -166,24 +543,101 @@ mod tests {
             vec!["melee".to_string(), "range".to_string()]
         );
         let melee = store.get("melee").expect("melee loadout");
-        assert_eq!(melee.worn, vec!["helm", "plate"]);
-        assert_eq!(melee.carry, vec!["food"]);
+        assert_eq!(melee.worn.get("hat").map(String::as_str), Some("helm"));
+        assert_eq!(melee.worn.get("torso").map(String::as_str), Some("plate"));
+        assert_eq!(melee.carry, vec![CarryEntry::new("food", 1)]);
+    }
+
+    #[test]
+    fn legacy_array_worn_and_carry_are_preserved_without_guessing_slots() {
+        let path = tmp_path();
+        std::fs::write(
+            &path,
+            r#"[{"name":"old","worn":["helm","plate"],"carry":["Lobster"]}]"#,
+        )
+        .unwrap();
+        let store = LoadoutsStore::at(path.clone());
+        let row = store.get("old").expect("legacy loadout");
+        assert!(row.worn.is_empty(), "array order must not invent slots");
+        assert_eq!(row.unassigned, vec!["helm", "plate"]);
+        assert_eq!(row.carry, vec![CarryEntry::new("Lobster", 1)]);
+
+        let mut store = LoadoutsStore::at(path.clone());
+        let mut row = store.get("old").unwrap().clone();
+        row.name = "old-renamed".into();
+        store.replace_at(0, row);
+        store.save().unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            raw.contains("helm"),
+            "rename/save must keep unassigned gear"
+        );
+        assert!(raw.contains("Lobster"));
+        assert!(!raw.contains("\"worn\": ["), "save writes the slot map");
+    }
+
+    #[test]
+    fn explicit_slots_and_quantities_survive_file_round_trip() {
+        let path = tmp_path();
+        let mut store = LoadoutsStore::at(path.clone());
+        store.upsert(
+            Loadout::new("melee")
+                .with_slot("righthand", "Rune scimitar")
+                .with_carry("Lobster", 10)
+                .with_carry("Prayer potion(4)", 2),
+        );
+        store.save().unwrap();
+        let store = LoadoutsStore::at(path);
+        let row = store.get("melee").unwrap();
+        assert_eq!(
+            row.worn.get("righthand").map(String::as_str),
+            Some("Rune scimitar")
+        );
+        assert_eq!(row.carry[0], CarryEntry::new("Lobster", 10));
+        assert_eq!(row.carry[1], CarryEntry::new("Prayer potion(4)", 2));
+    }
+
+    #[test]
+    fn failed_save_can_restore_the_previous_file_image() {
+        let path = tmp_path();
+        let mut store = LoadoutsStore::at(path.clone());
+        store.upsert(Loadout::new("keep").with_carry("Lobster", 4));
+        store.save().unwrap();
+        let backup = store.snapshot();
+        store.upsert(Loadout::new("keep").with_carry("Shark", 9));
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(store.save().is_err());
+        store.restore(backup);
+        assert_eq!(
+            store.get("keep").unwrap().carry[0],
+            CarryEntry::new("Lobster", 4)
+        );
+        assert!(!store.is_dirty());
+    }
+
+    #[test]
+    fn copy_equipment_keeps_supplies_and_unknown_gear() {
+        let mut loadout = Loadout::new("melee").with_carry("Lobster", 8);
+        copy_equipment_preserving_supplies(
+            &mut loadout,
+            &[("Rune scimitar".into(), 1333), ("Mystery hat".into(), 0)],
+            Some(&api::game_data::for_revision(client::io::ClientRevision::R274).unwrap()),
+        );
+        assert_eq!(
+            loadout.worn.get("righthand").map(String::as_str),
+            Some("Rune scimitar")
+        );
+        assert_eq!(loadout.unassigned, vec!["Mystery hat"]);
+        assert_eq!(loadout.carry, vec![CarryEntry::new("Lobster", 8)]);
     }
 
     #[test]
     fn resolve_setting_options_lists_loadout_names() {
         let path = tmp_path();
         let mut store = LoadoutsStore::at(path);
-        store.upsert(Loadout {
-            name: "fish".into(),
-            worn: vec![],
-            carry: vec!["net".into()],
-        });
-        store.upsert(Loadout {
-            name: "mine".into(),
-            worn: vec![],
-            carry: vec![],
-        });
+        store.upsert(Loadout::new("fish").with_carry("net", 1));
+        store.upsert(Loadout::new("mine"));
         let def = SettingDef {
             id: "loadout".into(),
             ty: "string".into(),
@@ -208,28 +662,20 @@ mod tests {
     fn replace_at_renames_without_duplicating() {
         let path = tmp_path();
         let mut store = LoadoutsStore::at(path);
-        store.upsert(Loadout {
-            name: "melee".into(),
-            worn: vec!["helm".into()],
-            carry: vec![],
-        });
-        store.upsert(Loadout {
-            name: "range".into(),
-            worn: vec![],
-            carry: vec![],
-        });
-        assert!(store.replace_at(
-            0,
-            Loadout {
-                name: "melee2".into(),
-                worn: vec!["helm".into()],
-                carry: vec![],
-            },
-        ));
+        store.upsert(Loadout::new("melee").with_slot("hat", "helm"));
+        store.upsert(Loadout::new("range"));
+        assert!(store.replace_at(0, Loadout::new("melee2").with_slot("hat", "helm")));
         assert_eq!(store.loadouts().len(), 2);
         assert_eq!(store.loadouts()[0].name, "melee2");
         assert!(store.get("melee").is_none());
         assert!(store.get("melee2").is_some());
+    }
+
+    #[test]
+    fn unique_loadout_name_avoids_collisions() {
+        let rows = vec![Loadout::new("loadout"), Loadout::new("loadout 2")];
+        assert_eq!(unique_loadout_name(&rows, "loadout"), "loadout 3");
+        assert_eq!(unique_loadout_name(&rows, "fresh"), "fresh");
     }
 }
 
@@ -239,34 +685,47 @@ mod compatibility_tests {
     #[test]
     fn selected_loadout_matches_case_and_falls_back_to_first() {
         let rows = vec![
-            Loadout {
-                name: "First".into(),
-                worn: vec![],
-                carry: vec!["Coins".into(), "Lobster".into()],
-            },
-            Loadout {
-                name: "Second".into(),
-                worn: vec![],
-                carry: vec!["Shark".into()],
-            },
+            Loadout::new("First")
+                .with_carry("Coins", 1)
+                .with_carry("Lobster", 1),
+            Loadout::new("Second").with_carry("Shark", 1),
         ];
         assert_eq!(selected_compat_loadout(&rows, " SECOND ")["name"], "Second");
         assert_eq!(
             selected_compat_loadout(&rows, "missing")["carry"][1]["item"],
             "Lobster"
         );
+        assert_eq!(
+            selected_compat_loadout(&rows, "missing")["carry"][1]["qty"],
+            1
+        );
         assert!(selected_compat_loadout(&[], "").is_null());
     }
-}
 
-/// Adapt the host's persisted loadout shape without changing its wire format.
-pub fn selected_compat_loadout(rows: &[Loadout], wanted: &str) -> serde_json::Value {
-    let Some(row) = rows
-        .iter()
-        .find(|r| r.name.eq_ignore_ascii_case(wanted.trim()))
-        .or_else(|| rows.first())
-    else {
-        return serde_json::Value::Null;
-    };
-    serde_json::json!({"name":row.name,"worn":row.worn,"carry":row.carry.iter().map(|item| serde_json::json!({"item":item})).collect::<Vec<_>>()})
+    #[test]
+    fn accessors_read_righthand_qty_and_unassigned_gear() {
+        let row = Loadout::new("melee")
+            .with_slot("righthand", "Rune scimitar")
+            .with_slot("torso", "Rune chainbody")
+            .with_carry("Lobster", 10);
+        let mut row = row;
+        row.unassigned.push("old helm".into());
+        let json = loadout_to_compat(&row);
+        assert_eq!(weapon_of(&json, Some("Bronze sword")), "Rune scimitar");
+        assert_eq!(supplies_of(&json), vec![CarryEntry::new("Lobster", 10)]);
+        assert_eq!(
+            gear_of(&json),
+            vec!["Rune scimitar", "Rune chainbody", "old helm"]
+        );
+        assert_eq!(
+            weapon_of(&serde_json::Value::Null, None),
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            weapon_of(&serde_json::Value::Null, Some("Bronze sword")),
+            "Bronze sword"
+        );
+        assert!(gear_of(&serde_json::Value::Null).is_empty());
+        assert!(supplies_of(&serde_json::Value::Null).is_empty());
+    }
 }

@@ -163,6 +163,141 @@ impl SelectedGameData {
                 .then_some(fact.level)
         })
     }
+
+    pub fn item_by_id(&self, id: i32) -> Option<&GameItem> {
+        self.items.iter().find(|item| item.id == id)
+    }
+
+    /// Bounded slot search over generated wearpos facts. Empty query still
+    /// returns only a capped page so the editor never serializes the table.
+    pub fn search_slot_items(&self, slot: &str, query: &str, limit: usize) -> Vec<ItemSearchHit> {
+        let Some(pos) = wearpos_for_loadout_slot(slot) else {
+            return Vec::new();
+        };
+        search_items(
+            self.items.iter().filter(|item| {
+                !item.is_certificate() && item.wear_position == pos && item.name.is_some()
+            }),
+            query,
+            limit,
+        )
+    }
+
+    /// Bounded name search for supply rows. Requires a query so the full
+    /// object table is not copied into the UI.
+    pub fn search_named_items(&self, query: &str, limit: usize) -> Vec<ItemSearchHit> {
+        if query.trim().is_empty() {
+            return Vec::new();
+        }
+        search_items(
+            self.items
+                .iter()
+                .filter(|item| !item.is_certificate() && item.name.is_some()),
+            query,
+            limit,
+        )
+    }
+}
+
+/// One filtered item row for native editors. `alias` and `id` distinguish
+/// equal display names without guessing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ItemSearchHit {
+    pub name: String,
+    pub alias: String,
+    pub id: i32,
+}
+
+impl GameItem {
+    /// Primary loadout slot from generated `wear_position`, or none for
+    /// appearance-only wearpos values (arms/head/jaw) and unequippable rows.
+    pub fn loadout_slot(&self) -> Option<&'static str> {
+        loadout_slot_for_wearpos(self.wear_position)
+    }
+
+    pub fn is_two_handed(&self) -> bool {
+        self.wear_position == WEARPOS_RIGHTHAND && self.wear_position_2 == WEARPOS_LEFTHAND
+    }
+
+    pub fn is_certificate(&self) -> bool {
+        self.certificate_template != -1
+    }
+}
+
+/// Content `wearpos` ids from the selected ObjType decoder (`getWearPosId`).
+pub const WEARPOS_HAT: i32 = 0;
+pub const WEARPOS_BACK: i32 = 1;
+pub const WEARPOS_FRONT: i32 = 2;
+pub const WEARPOS_RIGHTHAND: i32 = 3;
+pub const WEARPOS_TORSO: i32 = 4;
+pub const WEARPOS_LEFTHAND: i32 = 5;
+pub const WEARPOS_LEGS: i32 = 7;
+pub const WEARPOS_HANDS: i32 = 9;
+pub const WEARPOS_FEET: i32 = 10;
+pub const WEARPOS_RING: i32 = 12;
+pub const WEARPOS_QUIVER: i32 = 13;
+
+/// Map a generated wearpos onto the loadout slot names used by callers.
+/// Appearance slots 6/8/11 (arms/head/jaw) stay unmapped.
+pub fn loadout_slot_for_wearpos(pos: i32) -> Option<&'static str> {
+    match pos {
+        WEARPOS_HAT => Some("hat"),
+        WEARPOS_BACK => Some("back"),
+        WEARPOS_FRONT => Some("front"),
+        WEARPOS_RIGHTHAND => Some("righthand"),
+        WEARPOS_TORSO => Some("torso"),
+        WEARPOS_LEFTHAND => Some("lefthand"),
+        WEARPOS_LEGS => Some("legs"),
+        WEARPOS_HANDS => Some("hands"),
+        WEARPOS_FEET => Some("feet"),
+        WEARPOS_RING => Some("ring"),
+        WEARPOS_QUIVER => Some("quiver"),
+        _ => None,
+    }
+}
+
+pub fn wearpos_for_loadout_slot(slot: &str) -> Option<i32> {
+    match slot {
+        "hat" => Some(WEARPOS_HAT),
+        "back" => Some(WEARPOS_BACK),
+        "front" => Some(WEARPOS_FRONT),
+        "righthand" => Some(WEARPOS_RIGHTHAND),
+        "torso" => Some(WEARPOS_TORSO),
+        "lefthand" => Some(WEARPOS_LEFTHAND),
+        "legs" => Some(WEARPOS_LEGS),
+        "hands" => Some(WEARPOS_HANDS),
+        "feet" => Some(WEARPOS_FEET),
+        "ring" => Some(WEARPOS_RING),
+        "quiver" => Some(WEARPOS_QUIVER),
+        _ => None,
+    }
+}
+
+fn search_items<'a, I>(items: I, query: &str, limit: usize) -> Vec<ItemSearchHit>
+where
+    I: Iterator<Item = &'a GameItem>,
+{
+    let q = query.trim().to_ascii_lowercase();
+    items
+        .filter(|item| {
+            if q.is_empty() {
+                return true;
+            }
+            let name = item.name.as_deref().unwrap_or("");
+            name.to_ascii_lowercase().contains(&q)
+                || item
+                    .alias
+                    .as_deref()
+                    .is_some_and(|alias| alias.to_ascii_lowercase().contains(&q))
+                || item.id.to_string() == q
+        })
+        .take(limit)
+        .map(|item| ItemSearchHit {
+            name: item.name.clone().unwrap_or_default(),
+            alias: item.alias.clone().unwrap_or_default(),
+            id: item.id,
+        })
+        .collect()
 }
 
 /// Load one revision exactly once and share it for the process lifetime.
