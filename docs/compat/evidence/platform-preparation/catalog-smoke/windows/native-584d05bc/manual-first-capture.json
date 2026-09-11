@@ -1,0 +1,6 @@
+{
+  "at": "2026-09-10T23:37:11.966970+00:00",
+  "exit_code": 0,
+  "stdout": "{\"pid\":19216,\"session\":1,\"window\":656226,\"foreground\":true,\"left\":228,\"top\":228,\"width\":1135,\"height\":617,\"sha256\":\"c7a27f38bf994a3070bd97c4e85de22860ee5be2981f5dddbd3b9786d235e33f\"}\n",
+  "stderr": ""
+}
