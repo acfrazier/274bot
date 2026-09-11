@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use api::obj_names::ObjNames;
-use api::snapshot::{ActorKind, GameSnapshot};
+use api::snapshot::{ActorKind, GameSnapshot, LocView, SceneView, WorldTile};
 use host::Pump;
 use host_play::{ProfileOptions, ScriptStartHandle, SharedClientTemplate};
 use scenario::{RunnerStatus, ScenarioRunner};
@@ -84,6 +84,7 @@ const BRIMHAVEN_START: (i32, i32, i32) = (2809, 3194, 0);
 const BRIMHAVEN_ARENA_VARP: i32 = 309;
 const BRIMHAVEN_TICKET_ID: i32 = 2996;
 const FLAX_FIELD: (i32, i32, i32) = (2741, 3444, 0);
+const FLAX_FIELD_SCOPE: i32 = 12;
 const FALADOR_CHICKENS: (i32, i32, i32) = (3029, 3294, 0);
 const EMPTY_VIAL_ID: i32 = 229;
 const VIAL_OF_WATER_ID: i32 = 227;
@@ -140,6 +141,8 @@ const NOTED_UNSTRUNG_MAGIC_SHORTBOW_ID: i32 = 73;
 const NOTED_UNSTRUNG_MAGIC_LONGBOW_ID: i32 = 71;
 const KNIFE_ID: i32 = 946;
 const STEEL_AXE_ID: i32 = 1353;
+const RUNE_AXE_ID: i32 = 1359;
+const GNOME_BALLAST_KNIVES: i32 = 26;
 const STEEL_PICKAXE_ID: i32 = 1269;
 const NOTED_COAL_ID: i32 = 454;
 const GNOME_WEST_MAGICS: (i32, i32, i32) = (2372, 3425, 0);
@@ -709,6 +712,127 @@ struct BoundedGround {
     distance: i32,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct FlaxLocFailureFact {
+    id: i32,
+    tile: (i32, i32, i32),
+    name: Option<String>,
+    actions: Vec<String>,
+    field_distance: i32,
+    player_distance: i32,
+    reachable: bool,
+    reachable_adj: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct FlaxAioPickFailureFacts {
+    player_tile: Option<(i32, i32, i32)>,
+    field_center: (i32, i32, i32),
+    field_scope: i32,
+    at_field: bool,
+    bank_open: bool,
+    bank_loaded: bool,
+    bank_generation: u64,
+    reachability_source: &'static str,
+    adapter_query: &'static str,
+    reachability_available: bool,
+    relevant_locs: Vec<FlaxLocFailureFact>,
+    nearest_reachable: Option<(i32, i32, i32)>,
+}
+
+fn flax_aio_pick_failure_facts(
+    case: CoreCase,
+    observation: &Observation,
+    scene: &SceneView,
+    locs: &[LocView],
+) -> Option<FlaxAioPickFailureFacts> {
+    if case != CoreCase::FlaxAioPick {
+        return None;
+    }
+    let player_tile = observation.tile;
+    let player_world = player_tile.map(|(x, z, level)| WorldTile { x, z, level });
+    let flood = api::query::SceneQuery::new(scene, player_world).flood_reach();
+    let field_world = WorldTile {
+        x: FLAX_FIELD.0,
+        z: FLAX_FIELD.1,
+        level: FLAX_FIELD.2,
+    };
+    let distance = |a: WorldTile, b: WorldTile| {
+        let xz = (a.x - b.x).abs().max((a.z - b.z).abs());
+        if a.level == b.level {
+            xz
+        } else {
+            1_000_000 + xz
+        }
+    };
+    let mut relevant_locs = locs
+        .iter()
+        .filter(|loc| {
+            loc.name
+                .as_deref()
+                .is_some_and(|name| name.trim().eq_ignore_ascii_case("Flax"))
+                && loc
+                    .actions
+                    .iter()
+                    .flatten()
+                    .any(|action| action.eq_ignore_ascii_case("Pick"))
+                && distance(loc.tile, field_world) <= FLAX_FIELD_SCOPE
+        })
+        .map(|loc| {
+            let (reachable, reachable_adj) = flood
+                .as_ref()
+                .map(|flood| flood.at(&loc.tile))
+                .unwrap_or((false, false));
+            FlaxLocFailureFact {
+                id: loc.id,
+                tile: (loc.tile.x, loc.tile.z, loc.tile.level),
+                name: loc.name.clone(),
+                actions: loc.actions.iter().flatten().cloned().collect(),
+                field_distance: distance(loc.tile, field_world),
+                player_distance: player_world
+                    .map(|player| distance(loc.tile, player))
+                    .unwrap_or(1_000_000),
+                reachable,
+                reachable_adj,
+            }
+        })
+        .collect::<Vec<_>>();
+    relevant_locs.sort_by_key(|loc| loc.player_distance);
+    let nearest_reachable = relevant_locs
+        .iter()
+        .find(|loc| loc.reachable_adj)
+        .map(|loc| loc.tile);
+
+    Some(FlaxAioPickFailureFacts {
+        player_tile,
+        field_center: FLAX_FIELD,
+        field_scope: FLAX_FIELD_SCOPE,
+        at_field: player_world
+            .is_some_and(|player| distance(player, field_world) <= FLAX_FIELD_SCOPE),
+        bank_open: observation.bank_open,
+        bank_loaded: observation.bank_loaded,
+        bank_generation: observation.bank_generation,
+        reachability_source: "api::query::SceneQuery::flood_reach().at(tile)",
+        adapter_query: "Reachability.canReach(tile,{adjacentOk:true,maxSteps:400})",
+        reachability_available: flood.is_some(),
+        relevant_locs,
+        nearest_reachable,
+    })
+}
+
+fn failure_diagnostic(case: CoreCase, snapshot: &GameSnapshot, names: &ObjNames) -> Value {
+    let observation = Observation::from_snapshot(snapshot, names);
+    json!({
+        "observation": &observation,
+        "flax_aio_pick": flax_aio_pick_failure_facts(
+            case,
+            &observation,
+            snapshot.scene(),
+            snapshot.locs(),
+        ),
+    })
+}
+
 impl Observation {
     fn from_snapshot(snapshot: &GameSnapshot, names: &ObjNames) -> Self {
         let mut items = BTreeMap::new();
@@ -1037,10 +1161,14 @@ fn gnome_noted(observation: &Observation) -> bool {
         || observation.bank_item_id(NOTED_UNSTRUNG_MAGIC_LONGBOW_ID) > 0
 }
 
+fn gnome_resource_tools(observation: &Observation) -> bool {
+    held_id(observation, RUNE_AXE_ID) == 1 && observation.item_id(KNIFE_ID) == GNOME_BALLAST_KNIVES
+}
+
 fn gnome_chop_baseline_ready(baseline: &Observation) -> bool {
     near(baseline.tile, GNOME_WEST_MAGICS, 8)
         && baseline.level("woodcutting") >= 75
-        && held_id(baseline, STEEL_AXE_ID) >= 1
+        && gnome_resource_tools(baseline)
         && baseline.item_id(MAGIC_LOGS_ID) == 0
         && baseline.item_id(UNSTRUNG_MAGIC_SHORTBOW_ID) == 0
         && baseline.item_id(UNSTRUNG_MAGIC_LONGBOW_ID) == 0
@@ -1054,7 +1182,6 @@ fn gnome_fletch_baseline_ready(baseline: &Observation, fletching: i32, max: Opti
         && max
             .map(|max| baseline.level("fletching") <= max)
             .unwrap_or(true)
-        && baseline.item_id(KNIFE_ID) >= 1
 }
 
 fn coal_trucks_baseline_ready(baseline: &Observation) -> bool {
@@ -1646,13 +1773,13 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
             "Ardougne Knight stand (2661,3306,0), Thieving 55, and empty pack of 995/1891"
         }
         CoreCase::GnomeChop => {
-            "west magics (2372,3425,0), Woodcutting 75, steel axe 1353, empty pack of 1513/72/70"
+            "west magics (2372,3425,0), Woodcutting 75, one Rune axe 1359, exactly 26 Knives 946, and no seeded 1513/72/70"
         }
         CoreCase::GnomeFletchShort => {
-            "west magics, Woodcutting 75, Fletching 80-84, knife 946, steel axe, empty pack of 1513/72"
+            "west magics, Woodcutting 75, Fletching 80-84, one Rune axe 1359, exactly 26 Knives 946, and no seeded 1513/72"
         }
         CoreCase::GnomeFletchLong => {
-            "west magics, Woodcutting 75, Fletching 85, knife 946, steel axe, empty pack of 1513/70"
+            "west magics, Woodcutting 75, Fletching 85, one Rune axe 1359, exactly 26 Knives 946, and no seeded 1513/70"
         }
         CoreCase::CoalTrucks => {
             "coal mine (2582,3481,0), native combat level >=55, Mining 30, steel pickaxe 1269, and empty pack of 453"
@@ -3868,6 +3995,7 @@ impl GnomeChopCycle {
             && now.item_id(MAGIC_LOGS_ID) >= 1
             && baseline.item_id(MAGIC_LOGS_ID) == 0
             && now.skill_xp("woodcutting") > baseline.skill_xp("woodcutting")
+            && gnome_resource_tools(now)
             && !gnome_wrong_bows(now)
             && !gnome_noted(now)
         {
@@ -3881,6 +4009,7 @@ impl GnomeChopCycle {
             && now.item_id(MAGIC_LOGS_ID) == 0
             && now.bank_item_id(MAGIC_LOGS_ID) >= 1
             && near(now.tile, GNOME_BANK_STAND, 8)
+            && gnome_resource_tools(now)
         {
             self.deposited = Some(now.clone());
         }
@@ -3888,10 +4017,12 @@ impl GnomeChopCycle {
             self.returned |= !now.bank_open
                 && !now.bank_loaded
                 && now.bank_generation > deposited.bank_generation
-                && near(now.tile, GNOME_BANK_STAIR_SOUTH, 30);
+                && near(now.tile, GNOME_BANK_STAIR_SOUTH, 30)
+                && gnome_resource_tools(now);
         }
         if self.returned {
-            self.further |= !now.bank_open && now.item_id(MAGIC_LOGS_ID) >= 1;
+            self.further |=
+                !now.bank_open && now.item_id(MAGIC_LOGS_ID) >= 1 && gnome_resource_tools(now);
         }
     }
 
@@ -3928,6 +4059,7 @@ impl GnomeFletchCycle {
             && baseline.item_id(MAGIC_LOGS_ID) == 0
             && now.skill_xp("woodcutting") > baseline.skill_xp("woodcutting")
             && now.item_id(product) == 0
+            && gnome_resource_tools(now)
             && !gnome_wrong_bows(now)
             && !gnome_noted(now)
         {
@@ -3944,6 +4076,7 @@ impl GnomeFletchCycle {
                     .unwrap_or(0)
             && now.skill_xp("fletching") > baseline.skill_xp("fletching")
             && now.item_id(other) == 0
+            && gnome_resource_tools(now)
             && !gnome_wrong_bows(now)
             && !gnome_noted(now)
         {
@@ -3957,6 +4090,7 @@ impl GnomeFletchCycle {
             && now.item_id(product) == 0
             && now.bank_item_id(product) >= 1
             && near(now.tile, GNOME_BANK_STAND, 8)
+            && gnome_resource_tools(now)
         {
             self.deposited = Some(now.clone());
         }
@@ -3964,10 +4098,12 @@ impl GnomeFletchCycle {
             self.returned |= !now.bank_open
                 && !now.bank_loaded
                 && now.bank_generation > deposited.bank_generation
-                && near(now.tile, GNOME_BANK_STAIR_SOUTH, 30);
+                && near(now.tile, GNOME_BANK_STAIR_SOUTH, 30)
+                && gnome_resource_tools(now);
         }
         if self.returned {
-            self.further |= !now.bank_open && now.item_id(MAGIC_LOGS_ID) >= 1;
+            self.further |=
+                !now.bank_open && now.item_id(MAGIC_LOGS_ID) >= 1 && gnome_resource_tools(now);
         }
     }
 
@@ -5252,17 +5388,21 @@ fn run_cell() -> Result<(), String> {
     let outer_deadline = Instant::now() + deadline + Duration::from_secs(5);
     let outcome = loop {
         if let Some(error) = play.script_last_error(&account) {
-            break Err(format!("script error: {error}"));
+            let state = state.lock().unwrap();
+            let diagnostic = failure_diagnostic(case, &state.snapshot, &state.names);
+            break Err(format!("script error: {error}; diagnostic={diagnostic}"));
         }
         let mut state = state.lock().unwrap();
         if let Some(error) = state.start_error.take() {
-            break Err(error);
+            let diagnostic = failure_diagnostic(case, &state.snapshot, &state.names);
+            break Err(format!("{error}; diagnostic={diagnostic}"));
         }
         match state.runner.status() {
             RunnerStatus::Failed(error) => {
                 let core = accumulated_core(state.witness.as_ref());
+                let diagnostic = failure_diagnostic(case, &state.snapshot, &state.names);
                 break Err(format!(
-                    "scenario failed: {error}; evidence={:?}; core={core}",
+                    "scenario failed: {error}; evidence={:?}; core={core}; diagnostic={diagnostic}",
                     state.runner.evidence()
                 ));
             }
@@ -5289,8 +5429,9 @@ fn run_cell() -> Result<(), String> {
         }
         if Instant::now() >= outer_deadline {
             let core = accumulated_core(state.witness.as_ref());
+            let diagnostic = failure_diagnostic(case, &state.snapshot, &state.names);
             break Err(format!(
-                "bounded timeout; runner={:?}; core={core}",
+                "bounded timeout; runner={:?}; core={core}; diagnostic={diagnostic}",
                 state.runner.status()
             ));
         }
@@ -8208,12 +8349,90 @@ mod tests {
         observation
     }
 
+    fn flax_loc(id: i32, x: i32, z: i32, actions: &[&str]) -> LocView {
+        LocView {
+            typecode: 0,
+            info: 0,
+            id,
+            name: Some("Flax".into()),
+            description: None,
+            actions: actions
+                .iter()
+                .map(|action| Some((*action).into()))
+                .collect(),
+            tile: WorldTile { x, z, level: 0 },
+            distance: 0,
+            layer: api::snapshot::LocLayer::Ground,
+            shape: 10,
+            angle: 0,
+            width: 1,
+            length: 1,
+            footprint_width: 1,
+            footprint_length: 1,
+            block_walk: true,
+            block_range: false,
+            active: true,
+            animation: -1,
+            map_function: -1,
+            map_scene: -1,
+            force_approach: 0,
+        }
+    }
+
+    #[test]
+    fn flax_pick_failure_facts_include_all_scoped_locs_and_native_reachability() {
+        let mut failure = resource_obs(SEERS_BANK, &[], &[(FLAX_ID, 28)], &[], &[], &[]);
+        failure.bank_open = true;
+        failure.bank_loaded = true;
+        failure.bank_generation = 7;
+        let scene = SceneView {
+            available: true,
+            base_x: 2710,
+            base_z: 3430,
+            level: 0,
+            width: 64,
+            height: 72,
+            collision_flags: vec![0; 64 * 72],
+        };
+        let locs = [
+            flax_loc(2646, 2741, 3444, &["Pick"]),
+            flax_loc(2646, 2742, 3445, &["Examine", "Pick"]),
+            flax_loc(2646, 2740, 3444, &["Examine"]),
+            flax_loc(2646, 2754, 3444, &["Pick"]),
+        ];
+
+        let facts = flax_aio_pick_failure_facts(CoreCase::FlaxAioPick, &failure, &scene, &locs)
+            .expect("FlaxAIO pick diagnostics");
+        assert_eq!(facts.player_tile, Some(SEERS_BANK));
+        assert_eq!(facts.field_center, FLAX_FIELD);
+        assert_eq!(facts.field_scope, FLAX_FIELD_SCOPE);
+        assert!(!facts.at_field);
+        assert!(facts.bank_open);
+        assert!(facts.bank_loaded);
+        assert_eq!(facts.bank_generation, 7);
+        assert!(facts.reachability_available);
+        assert_eq!(
+            facts.reachability_source,
+            "api::query::SceneQuery::flood_reach().at(tile)"
+        );
+        assert_eq!(
+            facts.adapter_query,
+            "Reachability.canReach(tile,{adjacentOk:true,maxSteps:400})"
+        );
+        assert_eq!(facts.relevant_locs.len(), 2);
+        assert!(facts.relevant_locs.iter().all(|loc| loc.reachable_adj));
+        assert_eq!(facts.nearest_reachable, Some((2742, 3445, 0)));
+        assert!(
+            flax_aio_pick_failure_facts(CoreCase::FlaxAioSpin, &failure, &scene, &locs,).is_none()
+        );
+    }
+
     #[test]
     fn gnome_chop_requires_log_xp_upstairs_deposit_ground_return_and_further_chop() {
         let levels = [("woodcutting", 75), ("fletching", 1)];
         let baseline = resource_obs(
             GNOME_WEST_MAGICS,
-            &[(STEEL_AXE_ID, 1)],
+            &[(RUNE_AXE_ID, 1), (KNIFE_ID, GNOME_BALLAST_KNIVES)],
             &[],
             &[],
             &[("woodcutting", 0)],
@@ -8223,7 +8442,11 @@ mod tests {
 
         let chopped = resource_obs(
             GNOME_WEST_MAGICS,
-            &[(STEEL_AXE_ID, 1), (MAGIC_LOGS_ID, 4)],
+            &[
+                (RUNE_AXE_ID, 1),
+                (KNIFE_ID, GNOME_BALLAST_KNIVES),
+                (MAGIC_LOGS_ID, 1),
+            ],
             &[],
             &[],
             &[("woodcutting", 250)],
@@ -8231,8 +8454,8 @@ mod tests {
         );
         let mut deposited = resource_obs(
             GNOME_BANK_STAND,
-            &[(STEEL_AXE_ID, 1)],
-            &[(MAGIC_LOGS_ID, 4)],
+            &[(RUNE_AXE_ID, 1), (KNIFE_ID, GNOME_BALLAST_KNIVES)],
+            &[(MAGIC_LOGS_ID, 1)],
             &[],
             &[("woodcutting", 250)],
             &levels,
@@ -8242,7 +8465,7 @@ mod tests {
         deposited.bank_generation = 1;
         let mut returned = resource_obs(
             GNOME_BANK_STAIR_SOUTH,
-            &[(STEEL_AXE_ID, 1)],
+            &[(RUNE_AXE_ID, 1), (KNIFE_ID, GNOME_BALLAST_KNIVES)],
             &[],
             &[],
             &[("woodcutting", 250)],
@@ -8251,7 +8474,11 @@ mod tests {
         returned.bank_generation = 2;
         let mut further = resource_obs(
             GNOME_WEST_MAGICS,
-            &[(STEEL_AXE_ID, 1), (MAGIC_LOGS_ID, 1)],
+            &[
+                (RUNE_AXE_ID, 1),
+                (KNIFE_ID, GNOME_BALLAST_KNIVES),
+                (MAGIC_LOGS_ID, 1),
+            ],
             &[],
             &[],
             &[("woodcutting", 500)],
@@ -8266,6 +8493,26 @@ mod tests {
         )
         .qualify()
         .is_ok());
+        let mut missing_tool = chopped.clone();
+        missing_tool.item_ids.remove(&RUNE_AXE_ID);
+        assert!(witness(
+            CoreCase::GnomeChop,
+            &baseline,
+            [&missing_tool, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+        let mut lost_ballast = chopped.clone();
+        lost_ballast
+            .item_ids
+            .insert(KNIFE_ID, GNOME_BALLAST_KNIVES - 1);
+        assert!(witness(
+            CoreCase::GnomeChop,
+            &baseline,
+            [&lost_ballast, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_err());
         assert!(witness(CoreCase::GnomeChop, &baseline, [&baseline])
             .qualify()
             .is_err());
@@ -8324,7 +8571,7 @@ mod tests {
 
         let xp_only = resource_obs(
             GNOME_WEST_MAGICS,
-            &[(STEEL_AXE_ID, 1)],
+            &[(RUNE_AXE_ID, 1), (KNIFE_ID, GNOME_BALLAST_KNIVES)],
             &[],
             &[],
             &[("woodcutting", 250)],
@@ -8363,7 +8610,7 @@ mod tests {
         assert!(validate_case_baseline(CoreCase::GnomeChop, &seeded).is_err());
         let low = resource_obs(
             GNOME_WEST_MAGICS,
-            &[(STEEL_AXE_ID, 1)],
+            &[(RUNE_AXE_ID, 1), (KNIFE_ID, GNOME_BALLAST_KNIVES)],
             &[],
             &[],
             &[("woodcutting", 0)],
@@ -8381,16 +8628,30 @@ mod tests {
         assert!(validate_case_baseline(CoreCase::GnomeChop, &no_axe).is_err());
         let wielded = resource_obs(
             GNOME_WEST_MAGICS,
+            &[(KNIFE_ID, GNOME_BALLAST_KNIVES)],
             &[],
-            &[],
-            &[(STEEL_AXE_ID, 1)],
+            &[(RUNE_AXE_ID, 1)],
             &[("woodcutting", 0)],
             &levels,
         );
         validate_case_baseline(CoreCase::GnomeChop, &wielded).unwrap();
+        let mut wrong_axe = baseline.clone();
+        wrong_axe.item_ids.remove(&RUNE_AXE_ID);
+        wrong_axe.item_ids.insert(STEEL_AXE_ID, 1);
+        assert!(validate_case_baseline(CoreCase::GnomeChop, &wrong_axe).is_err());
+        let mut too_few_knives = baseline.clone();
+        too_few_knives
+            .item_ids
+            .insert(KNIFE_ID, GNOME_BALLAST_KNIVES - 1);
+        assert!(validate_case_baseline(CoreCase::GnomeChop, &too_few_knives).is_err());
+        let mut too_many_knives = baseline.clone();
+        too_many_knives
+            .item_ids
+            .insert(KNIFE_ID, GNOME_BALLAST_KNIVES + 1);
+        assert!(validate_case_baseline(CoreCase::GnomeChop, &too_many_knives).is_err());
         let flax = resource_obs(
             FLAX_FIELD,
-            &[(STEEL_AXE_ID, 1)],
+            &[(RUNE_AXE_ID, 1), (KNIFE_ID, GNOME_BALLAST_KNIVES)],
             &[],
             &[],
             &[("woodcutting", 0)],
@@ -8418,7 +8679,7 @@ mod tests {
             let levels = [("woodcutting", 75), ("fletching", fletching)];
             let baseline = resource_obs(
                 GNOME_WEST_MAGICS,
-                &[(STEEL_AXE_ID, 1), (KNIFE_ID, 1)],
+                &[(RUNE_AXE_ID, 1), (KNIFE_ID, GNOME_BALLAST_KNIVES)],
                 &[],
                 &[],
                 &[("woodcutting", 0), ("fletching", 0)],
@@ -8428,7 +8689,11 @@ mod tests {
 
             let chopped = resource_obs(
                 GNOME_WEST_MAGICS,
-                &[(STEEL_AXE_ID, 1), (KNIFE_ID, 1), (MAGIC_LOGS_ID, 4)],
+                &[
+                    (RUNE_AXE_ID, 1),
+                    (KNIFE_ID, GNOME_BALLAST_KNIVES),
+                    (MAGIC_LOGS_ID, 1),
+                ],
                 &[],
                 &[],
                 &[("woodcutting", 250), ("fletching", 0)],
@@ -8436,7 +8701,11 @@ mod tests {
             );
             let fletched = resource_obs(
                 GNOME_WEST_MAGICS,
-                &[(STEEL_AXE_ID, 1), (KNIFE_ID, 1), (product, 4)],
+                &[
+                    (RUNE_AXE_ID, 1),
+                    (KNIFE_ID, GNOME_BALLAST_KNIVES),
+                    (product, 1),
+                ],
                 &[],
                 &[],
                 &[("woodcutting", 250), ("fletching", 168)],
@@ -8444,8 +8713,8 @@ mod tests {
             );
             let mut deposited = resource_obs(
                 GNOME_BANK_STAND,
-                &[(STEEL_AXE_ID, 1), (KNIFE_ID, 1)],
-                &[(product, 4)],
+                &[(RUNE_AXE_ID, 1), (KNIFE_ID, GNOME_BALLAST_KNIVES)],
+                &[(product, 1)],
                 &[],
                 &[("woodcutting", 250), ("fletching", 168)],
                 &levels,
@@ -8455,7 +8724,7 @@ mod tests {
             deposited.bank_generation = 1;
             let mut returned = resource_obs(
                 GNOME_BANK_STAIR_SOUTH,
-                &[(STEEL_AXE_ID, 1), (KNIFE_ID, 1)],
+                &[(RUNE_AXE_ID, 1), (KNIFE_ID, GNOME_BALLAST_KNIVES)],
                 &[],
                 &[],
                 &[("woodcutting", 250), ("fletching", 168)],
@@ -8464,7 +8733,11 @@ mod tests {
             returned.bank_generation = 2;
             let mut further = resource_obs(
                 GNOME_WEST_MAGICS,
-                &[(STEEL_AXE_ID, 1), (KNIFE_ID, 1), (MAGIC_LOGS_ID, 1)],
+                &[
+                    (RUNE_AXE_ID, 1),
+                    (KNIFE_ID, GNOME_BALLAST_KNIVES),
+                    (MAGIC_LOGS_ID, 1),
+                ],
                 &[],
                 &[],
                 &[("woodcutting", 500), ("fletching", 168)],
@@ -8479,6 +8752,17 @@ mod tests {
             )
             .qualify()
             .is_ok());
+            let mut lost_ballast = fletched.clone();
+            lost_ballast
+                .item_ids
+                .insert(KNIFE_ID, GNOME_BALLAST_KNIVES - 1);
+            assert!(witness(
+                case,
+                &baseline,
+                [&chopped, &lost_ballast, &deposited, &returned, &further]
+            )
+            .qualify()
+            .is_err());
             assert!(witness(case, &baseline, [&baseline]).qualify().is_err());
             assert!(witness(case, &baseline, [&chopped]).qualify().is_err());
             assert!(witness(case, &baseline, [&chopped, &fletched])
@@ -8515,11 +8799,16 @@ mod tests {
             let mut no_knife = baseline.clone();
             no_knife.item_ids.remove(&KNIFE_ID);
             assert!(validate_case_baseline(case, &no_knife).is_err());
+            let mut wrong_knife_count = baseline.clone();
+            wrong_knife_count
+                .item_ids
+                .insert(KNIFE_ID, GNOME_BALLAST_KNIVES - 1);
+            assert!(validate_case_baseline(case, &wrong_knife_count).is_err());
         }
 
         let short_high = resource_obs(
             GNOME_WEST_MAGICS,
-            &[(STEEL_AXE_ID, 1), (KNIFE_ID, 1)],
+            &[(RUNE_AXE_ID, 1), (KNIFE_ID, GNOME_BALLAST_KNIVES)],
             &[],
             &[],
             &[("woodcutting", 0), ("fletching", 0)],
@@ -8529,7 +8818,7 @@ mod tests {
         validate_case_baseline(CoreCase::GnomeFletchLong, &short_high).unwrap();
         let long_low = resource_obs(
             GNOME_WEST_MAGICS,
-            &[(STEEL_AXE_ID, 1), (KNIFE_ID, 1)],
+            &[(RUNE_AXE_ID, 1), (KNIFE_ID, GNOME_BALLAST_KNIVES)],
             &[],
             &[],
             &[("woodcutting", 0), ("fletching", 0)],

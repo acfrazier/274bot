@@ -7322,7 +7322,10 @@ const MAGIC_LONGBOW_ID: i32 = 859;
 const NOTED_UNSTRUNG_MAGIC_SHORTBOW_ID: i32 = 73;
 const NOTED_UNSTRUNG_MAGIC_LONGBOW_ID: i32 = 71;
 const KNIFE_ID: i32 = 946;
-const STEEL_AXE_ID: i32 = 1353;
+const RUNE_AXE_ID: i32 = 1359;
+/// One Rune axe plus 26 unstackable Knives leaves one product slot. The
+/// frozen Gnome script preserves Knife as a tool during gear prep and bank trips.
+const GNOME_BALLAST_KNIVES: i32 = 26;
 const STEEL_PICKAXE_ID: i32 = 1269;
 const NOTED_COAL_ID: i32 = 454;
 /// With the ordinary prayer/ranged/magic defaults, 48 in each melee/HP stat
@@ -7365,10 +7368,11 @@ const GNOME_FLETCH_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
     value: ScriptInjectValue::Bool(true),
 }];
 
-/// Empty pack at west magics. fletchLogs off. Seed WC 75 and steel axe
-/// 1353. Script chops magic logs 1513 with Woodcutting XP, deposits them
-/// at the upstairs gnome booth, returns to ground and chops again.
-/// Death/boat/shop recovery stays out of this core.
+/// One free product slot at west magics. fletchLogs off. Seed WC 75, Rune
+/// axe 1359, and retained nonproduct Knife ballast. The script chops one
+/// magic log 1513 with Woodcutting XP, deposits it at the upstairs gnome
+/// booth, returns to ground and chops again. This qualifies the resource
+/// cycle, not ordinary 28-slot throughput. Death recovery stays out.
 fn gnome_chop_scenario() -> Scenario {
     let stand = GNOME_WEST_MAGICS;
     let first_xp = Proof::StatXpGain {
@@ -7381,12 +7385,13 @@ fn gnome_chop_scenario() -> Scenario {
     };
     let mut steps = script_live_seed_steps();
     steps.push(Step {
-        name: "seed woodcutting, steel axe, empty pack and west magics before Start",
+        name: "seed woodcutting, rune axe, 26-Knife ballast and west magics before Start",
         kind: StepKind::Perform {
             send: Box::new(move |c, _| {
                 cheat(c, "~clearinv");
                 cheat(c, "setstat woodcutting 75");
-                cheat(c, "give steel_axe 1");
+                cheat(c, "give rune_axe 1");
+                cheat(c, &format!("give knife {GNOME_BALLAST_KNIVES}"));
                 cheat(c, &tele_args(stand.level, stand.x, stand.z));
                 true
             }),
@@ -7410,10 +7415,31 @@ fn gnome_chop_scenario() -> Scenario {
             },
         ),
         (
-            "confirm steel axe 1353 before Start",
+            "confirm Rune axe 1359 before Start",
             Proof::ItemId {
-                id: STEEL_AXE_ID,
+                id: RUNE_AXE_ID,
                 count: 1,
+            },
+        ),
+        (
+            "confirm exactly one Rune axe before Start",
+            Proof::ItemIdAtMost {
+                id: RUNE_AXE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "confirm 26 retained nonproduct Knives before Start",
+            Proof::ItemId {
+                id: KNIFE_ID,
+                count: GNOME_BALLAST_KNIVES,
+            },
+        ),
+        (
+            "confirm exactly 26 retained nonproduct Knives before Start",
+            Proof::ItemIdAtMost {
+                id: KNIFE_ID,
+                count: GNOME_BALLAST_KNIVES,
             },
         ),
         (
@@ -7555,11 +7581,12 @@ fn gnome_fletch_long_scenario() -> Scenario {
     })
 }
 
-/// fletchLogs on. Seed WC 75, Fletching 80/85, steel axe and knife.
-/// Script chops logs 1513, consumes them into exact unstrung 72/70 with
-/// Fletching XP, deposits the bows upstairs, returns to ground and chops
-/// again. Missing knife is a stop, not a pass. Strung 861/859 are not
-/// the unstrung product.
+/// fletchLogs on. Seed WC 75, Fletching 80/85, Rune axe, and 26 retained
+/// Knives so one script-chopped log fills the pack. The script consumes it
+/// into exact unstrung 72/70 with Fletching XP, deposits the bow upstairs,
+/// returns to ground and chops again. This is cycle qualification, not
+/// ordinary capacity proof. Missing Knife is a stop, not a pass; strung
+/// 861/859 are not the unstrung product.
 fn gnome_fletch_variant(spec: GnomeFletchSpec) -> Scenario {
     let GnomeFletchSpec {
         name,
@@ -7586,14 +7613,15 @@ fn gnome_fletch_variant(spec: GnomeFletchSpec) -> Scenario {
     };
     let mut steps = script_live_seed_steps();
     steps.push(Step {
-        name: "seed woodcutting, fletching, axe, knife, empty pack and west magics before Start",
+        name:
+            "seed woodcutting, fletching, rune axe, 26-Knife ballast and west magics before Start",
         kind: StepKind::Perform {
             send: Box::new(move |c, _| {
                 cheat(c, "~clearinv");
                 cheat(c, "setstat woodcutting 75");
                 cheat(c, &format!("setstat fletching {fletching}"));
-                cheat(c, "give steel_axe 1");
-                cheat(c, "give knife 1");
+                cheat(c, "give rune_axe 1");
+                cheat(c, &format!("give knife {GNOME_BALLAST_KNIVES}"));
                 cheat(c, &tele_args(stand.level, stand.x, stand.z));
                 true
             }),
@@ -7624,17 +7652,31 @@ fn gnome_fletch_variant(spec: GnomeFletchSpec) -> Scenario {
             },
         ),
         (
-            "confirm steel axe 1353 before Start",
+            "confirm Rune axe 1359 before Start",
             Proof::ItemId {
-                id: STEEL_AXE_ID,
+                id: RUNE_AXE_ID,
                 count: 1,
             },
         ),
         (
-            "confirm knife 946 before Start",
+            "confirm exactly one Rune axe before Start",
+            Proof::ItemIdAtMost {
+                id: RUNE_AXE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "confirm 26 retained nonproduct Knives before Start",
             Proof::ItemId {
                 id: KNIFE_ID,
-                count: 1,
+                count: GNOME_BALLAST_KNIVES,
+            },
+        ),
+        (
+            "confirm exactly 26 retained nonproduct Knives before Start",
+            Proof::ItemIdAtMost {
+                id: KNIFE_ID,
+                count: GNOME_BALLAST_KNIVES,
             },
         ),
         (
@@ -7981,6 +8023,14 @@ const EDGEVILLE_BANK: WorldTile = WorldTile {
     z: 3493,
     level: 0,
 };
+/// Selected 274/289 packs both contain this Edgeville booth as id 2213 with
+/// native booth op2 (`Use-quickly`). Keep the walk stand separate from it.
+const EDGEVILLE_BANK_BOOTH: WorldTile = WorldTile {
+    x: 3096,
+    z: 3493,
+    level: 0,
+};
+const EDGEVILLE_BANK_BOOTH_ID: i32 = 2213;
 const BETTY_SHOP: WorldTile = WorldTile {
     x: 3012,
     z: 3259,
@@ -9429,6 +9479,25 @@ fn flax_aio_spin_scenario() -> Scenario {
     }
 }
 
+fn herblore_open_seed_bank(name: &'static str, arm: Proof) -> Step {
+    Step {
+        name,
+        kind: StepKind::Repeat {
+            send: Box::new(|c, snapshot| {
+                matches!(
+                    Interactions::new(snapshot, c)
+                        .open_booth_at(EDGEVILLE_BANK_BOOTH, EDGEVILLE_BANK_BOOTH_ID),
+                    SendResult::Sent { .. }
+                )
+            }),
+        },
+        wait: Wait {
+            arm,
+            budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
+        },
+    }
+}
+
 /// HerbloreSecondaries default Red spiders' eggs. Empty pack at the
 /// Edgeville dungeon field, lobster food banked only. Ground Take 223,
 /// deposit, closed return, further Take. Eggs are not given.
@@ -9460,7 +9529,7 @@ fn herblore_secondaries_scenario() -> Scenario {
             budget_ticks: 200,
         },
     });
-    steps.push(tanner_open_seed_bank(
+    steps.push(herblore_open_seed_bank(
         "open and acknowledge the exact lobster food seed bank",
         Proof::BankItemId {
             id: LOBSTER_ID,
@@ -13302,9 +13371,22 @@ mod tests {
             min: 75,
         }));
         assert!(seed.contains(&Proof::ItemId {
-            id: STEEL_AXE_ID,
+            id: RUNE_AXE_ID,
             count: 1,
         }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: RUNE_AXE_ID,
+            count: 1,
+        }));
+        assert!(seed.contains(&Proof::ItemId {
+            id: KNIFE_ID,
+            count: 26,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: KNIFE_ID,
+            count: 26,
+        }));
+        assert!(!seed.contains(&Proof::ItemId { id: 1353, count: 1 }));
         assert!(seed.contains(&Proof::ItemIdAtMost {
             id: MAGIC_LOGS_ID,
             count: 0,
@@ -13401,8 +13483,20 @@ mod tests {
             max: 84,
         }));
         assert!(short_seed.contains(&Proof::ItemId {
-            id: KNIFE_ID,
+            id: RUNE_AXE_ID,
             count: 1,
+        }));
+        assert!(short_seed.contains(&Proof::ItemIdAtMost {
+            id: RUNE_AXE_ID,
+            count: 1,
+        }));
+        assert!(short_seed.contains(&Proof::ItemId {
+            id: KNIFE_ID,
+            count: GNOME_BALLAST_KNIVES,
+        }));
+        assert!(short_seed.contains(&Proof::ItemIdAtMost {
+            id: KNIFE_ID,
+            count: GNOME_BALLAST_KNIVES,
         }));
         assert!(!short_seed.contains(&Proof::Stat {
             id: FLETCHING_STAT,
@@ -14024,6 +14118,28 @@ mod tests {
             id: LOBSTER_ID,
             count: HERBLORE_EGG_FOOD_SEED,
         }));
+        let seed_bank = eggs.steps[..eggs_start]
+            .iter()
+            .find(|step| {
+                step.wait.arm
+                    == Proof::BankItemId {
+                        id: LOBSTER_ID,
+                        count: HERBLORE_EGG_FOOD_SEED,
+                    }
+            })
+            .expect("exact Edgeville seed-bank acknowledgement");
+        assert!(matches!(seed_bank.kind, StepKind::Repeat { .. }));
+        assert_eq!(
+            EDGEVILLE_BANK_BOOTH,
+            WorldTile {
+                x: 3096,
+                z: 3493,
+                level: 0
+            }
+        );
+        assert_eq!(EDGEVILLE_BANK_BOOTH_ID, 2213);
+        assert_eq!(seed_bank.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS);
+
         assert!(eggs_seed.contains(&Proof::ItemIdAtMost {
             id: RED_SPIDERS_EGGS_ID,
             count: 0,
