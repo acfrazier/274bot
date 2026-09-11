@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 17:17 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 17:28 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -74,7 +74,7 @@ failures/clocks/predicates retained, no RNG forcing. Native144 t_c48f1d6a owns
 NPC projection and gates teleport. Exact324 batch completed4 Flax PASS/2
 mage pre-Start FAIL; two newer mage cells held. Ledger451. Rootdf2 fixes only
 two gear steps Repeat -> Perform, with105 scenario tests PASS. Exactdf2
-5111-file build is running fresh mage/Green cells; three mage PASS so far.
+5111-file build completed four mage PASS and two Green FAIL after Start; ledger457. Both wrappers reaped. Green shield worn but rune scimitar remained held, no Strength gain; diagnosis151 pending.
 Original failures remain. Root owns those two send-kind lines,139 preserves them.
 Root frozen stage2 candidate324d7b594/clientaef passed workspace fmt, strict
 all-target Clippy, full script suite and49 catalog tests;5030 source files
@@ -948,3 +948,9 @@ performance claim is inferred from a raw process exit. Resource125 live starts
 retesting its already known missing capability. Source2d589 build4687 hashes
 verified; runtime source remains prior to134, so future seam requalification
 must follow its review. Main remains76b2016b7; no stage2 merge/push yet.
+
+## Headed qualification requirement (17:28 UTC)
+
+Operator requires all remaining live qualification to be visible headed so they can watch preparation and gameplay. No more headless cells are launched. Root ran exactdf2 native274 mage: scenario PASS and clean process; screenshot read shows Staff of fire, Fire Strike selection and active script. This is a headed scenario result, not an additional full CoreWitness pass. Native289 mage also completed scenario PASS and clean process; both screenshots read. The full CoreWitness is currently in host-play integration test; panel scenario does not enforce all of it. Audit151 t_9f72114a grok46/run1383 traces minimal sound observer reuse and the GreenDragon stall. Green repeat cells remain held. Stage2 validation-ready remains absent pending diagnosis.
+
+Root identified GreenDragon async Traced.validate vs synchronous TaskBot predicate check: Promise(false) selects ContinueDialog and starves later tasks. Bounded correction152 t_620a63ab queued with real isolate regression and same-card review. Audit151 independently checks. No dim; stage2 review stays pending. User first-cast hitch correlates with72-75ms terminal screenshot serialization in host observe; animation-loading causation remains unproven. See06aq.
