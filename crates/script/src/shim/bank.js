@@ -118,6 +118,55 @@ export function withdrawOp(ops, which) {
     return labels[String(which)] || null;
 }
 
+function chebyshevTo(tile) {
+    const here = snap().here;
+    if (!here || !tile || here.level !== tile.level) return null;
+    return Math.max(Math.abs(here.x - tile.x), Math.abs(here.z - tile.z));
+}
+
+function namedBoothRow(wantedName, wantedAction) {
+    return (snap().locs || [])
+        .filter(
+            (loc) =>
+                loc &&
+                typeof loc.name === 'string' &&
+                loc.name.toLowerCase() === String(wantedName).toLowerCase() &&
+                Array.isArray(loc.actions) &&
+                loc.actions.some(
+                    (action) =>
+                        String(action).toLowerCase() === String(wantedAction).toLowerCase(),
+                ) &&
+                (!snap().here || loc.level === snap().here.level),
+        )
+        .sort(
+            (a, b) =>
+                (a.distance ?? Number.MAX_SAFE_INTEGER) - (b.distance ?? Number.MAX_SAFE_INTEGER),
+        )[0];
+}
+
+function sameNamedBoothIdentity(selected, wantedName, wantedAction) {
+    return (snap().locs || []).some(
+        (loc) =>
+            loc &&
+            Number.isInteger(loc.id) &&
+            loc.id === selected.id &&
+            Number.isInteger(loc.x) &&
+            loc.x === selected.x &&
+            Number.isInteger(loc.z) &&
+            loc.z === selected.z &&
+            Number.isInteger(loc.level) &&
+            loc.level === selected.level &&
+            typeof loc.name === 'string' &&
+            loc.name.toLowerCase() === String(wantedName).toLowerCase() &&
+            Array.isArray(loc.actions) &&
+            loc.actions.some(
+                (action) =>
+                    String(action).toLowerCase() === String(wantedAction).toLowerCase(),
+            ) &&
+            (!snap().here || loc.level === snap().here.level),
+    );
+}
+
 export const Bank = new Proxy(
     {
         isOpen() {
@@ -347,7 +396,57 @@ export const Bank = new Proxy(
             return Bank.waitSnapshotAfter(generation, 5000);
         },
         async openNearest(boothName, op, log) {
-            return Bank.openBooth(undefined, boothName, op, log);
+            const named = boothName !== undefined || op !== undefined;
+            if (!named) {
+                return Bank.openBooth(undefined, boothName, op, log);
+            }
+            if (Bank.isOpen()) {
+                return Bank.waitReady(5000);
+            }
+            const wantedName = boothName ?? 'Bank booth';
+            const wantedAction = op ?? 'Use-quickly';
+            const row = namedBoothRow(wantedName, wantedAction);
+            if (
+                !row ||
+                !Number.isInteger(row.x) ||
+                !Number.isInteger(row.z) ||
+                !Number.isInteger(row.level) ||
+                !Number.isInteger(row.id) ||
+                row.id < 0
+            ) {
+                return false;
+            }
+            const selected = { x: row.x, z: row.z, level: row.level, id: row.id };
+            const adjacent = () => {
+                const dist = chebyshevTo(selected);
+                return typeof dist === 'number' && dist <= 1;
+            };
+            if (!adjacent()) {
+                queue({
+                    op: 'walk-near',
+                    x: selected.x,
+                    z: selected.z,
+                    level: selected.level,
+                    radius: 1,
+                    allow_teleports: false,
+                });
+                if (!(await Execution.delayUntil(adjacent, 60000))) return false;
+                if (Bank.isOpen()) return Bank.waitReady(5000);
+                if (!sameNamedBoothIdentity(selected, wantedName, wantedAction) || !adjacent()) {
+                    return false;
+                }
+            }
+            const generation = Bank.snapshotGeneration();
+            queue({
+                op: 'open-booth',
+                x: selected.x,
+                z: selected.z,
+                level: selected.level,
+                id: selected.id,
+                name: String(wantedName),
+                action: String(wantedAction),
+            });
+            return Bank.waitSnapshotAfter(generation, 5000);
         },
         async openNearestWorld() {
             if (Bank.isOpen()) return Bank.waitReady(5000);

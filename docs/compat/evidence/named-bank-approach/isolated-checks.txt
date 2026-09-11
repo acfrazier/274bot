@@ -1,0 +1,12 @@
+isolated empty target: .superpowers/review-exports/named-bank-approach-t_4948af53-r2-target
+export: .superpowers/review-exports/named-bank-approach-t_4948af53-r2 (2832 files)
+export_method: docs/compat/evidence/build-isolation/export_git_files.py regular Git blobs
+host_export_base: bca3429ed36dfb5b8e35fcfff0a0880c55d768a6
+client: 9d090ed04957e4efc254f073cda97bc5510ca72b
+shared_campaign_target: false
+live: false
+
+cargo test -p script --test named_bank_approach: 7 passed
+cargo test -p script --test load_isolate isolate_bank: 20 passed
+cargo test -p api --test interact open_nearest_booth_walks_when_not_adjacent: 1 passed
+cargo clippy -p script --no-deps --test named_bank_approach -- -D warnings: pass on campaign tree before isolated clippy; isolated clippy then failed with No space left on device
