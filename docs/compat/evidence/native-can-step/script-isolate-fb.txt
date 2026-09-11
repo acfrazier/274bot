@@ -1,0 +1,13 @@
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/t_1a213450-5612b265/vendor/fr-client-rust/crates/client)
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/t_1a213450-5612b265/crates/api)
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/t_1a213450-5612b265/crates/script)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 07s
+     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_1a213450/debug/deps/script-3c6f978d22f78410)
+
+running 3 tests
+test isolate_fb::tests::unavailable_reach_is_posted_when_cleared ... ok
+test isolate_fb::tests::omitted_reach_is_absent_when_unchanged ... ok
+test isolate_fb::tests::encode_decode_reach_view_round_trips ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 56 filtered out; finished in 0.00s
+

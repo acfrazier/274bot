@@ -1,0 +1,86 @@
+{
+  "task": "t_1a213450",
+  "isolated_build": true,
+  "host_commit": "5612b2652968ebcfa6577bf4439f183de1fd5e21",
+  "host_archive_sha256": "47411514b8671c414f156d6741d2e688959c5273b5f1566fdf9d280b1b282d40",
+  "client_gitlink": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "client_archive_sha256": "ffe863519e87cc44e56823bab93ab275f42408a9f0ccbf8fcbc070cf7c881a0f",
+  "client_pin_method": "git archive of 56d80272 tarball hash; not git rev-parse inside gitless export",
+  "export": ".superpowers/task-exports/t_1a213450-5612b265",
+  "export_gitless": true,
+  "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/t_1a213450-5612b265",
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_1a213450",
+  "overlay": "owned source only; no concurrent catalog/scenario/DirectNavigator WIP copied onto the export",
+  "live": false,
+  "view_bytes_104x104": 14872,
+  "bitset_bytes_104x104": 4056,
+  "step_bytes_104x104": 10816,
+  "commands": [
+    {
+      "name": "api-query",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/t_1a213450-5612b265",
+      "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_1a213450",
+      "cmd": "cargo test --locked --offline -p api --test query -- pack_reach_query",
+      "exit": 0,
+      "result": "3 passed (pack_reach_query_matches_walkable_and_flood, pack_reach_query_word_boundaries_survive_u32_pack, pack_reach_query_step_masks_match_can_step)"
+    },
+    {
+      "name": "api-flood",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/t_1a213450-5612b265",
+      "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_1a213450",
+      "cmd": "cargo test --locked --offline -p api --test query -- flood_reach_matches",
+      "exit": 0,
+      "result": "1 passed (flood_reach_matches_one_shot_can_reach_without_step_cap)"
+    },
+    {
+      "name": "script-isolate-fb",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/t_1a213450-5612b265",
+      "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_1a213450",
+      "cmd": "cargo test --locked --offline -p script --lib -- encode_decode_reach_view omitted_reach unavailable_reach",
+      "exit": 0,
+      "result": "3 passed",
+      "notes": "first invocation timed out at 300s mid-compile; saved log is the successful retry"
+    },
+    {
+      "name": "script-load-isolate",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/t_1a213450-5612b265",
+      "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_1a213450",
+      "cmd": "cargo test --locked --offline -p script --test load_isolate -- isolate_reachability",
+      "exit": 0,
+      "result": "7 passed (5 existing coordinate/row + 2 canStep)",
+      "notes": "waited on package cache lock; compiler path is the export; operator: cache lock does not invalidate"
+    },
+    {
+      "name": "api-clippy",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/t_1a213450-5612b265",
+      "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_1a213450",
+      "cmd": "cargo clippy --locked --offline --no-deps -p api --all-targets -- -D warnings",
+      "exit": 0
+    },
+    {
+      "name": "script-clippy",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/t_1a213450-5612b265",
+      "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_1a213450",
+      "cmd": "cargo clippy --locked --offline --no-deps -p script --all-targets -- -D warnings",
+      "exit": 0
+    },
+    {
+      "name": "host-play-clippy",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/t_1a213450-5612b265",
+      "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_1a213450",
+      "cmd": "cargo clippy --locked --offline --no-deps -p host-play --lib -- -D warnings",
+      "exit": 0
+    },
+    {
+      "name": "fmt-check",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision",
+      "cmd": "rustfmt --edition 2021 --check <owned rust files>",
+      "exit": 0
+    }
+  ],
+  "notes": [
+    "Per-view size is 3 * ceil(104*104/32) u32 * 4 + 104*104 bytes = 4056 + 10816 = 14872; design fact, not a measured win.",
+    "Package-cache lock wait on load_isolate does not invalidate the empty compiled target.",
+    "DirectNavigator.walkTo, FlaxPicker LIVE, and probeable remain out of scope."
+  ]
+}

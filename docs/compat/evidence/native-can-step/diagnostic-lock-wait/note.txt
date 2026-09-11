@@ -1,0 +1,13 @@
+First script-lib cargo test in the empty target hit the 300s tool timeout while
+still compiling rustyscript/script (incomplete). That attempt is not acceptance.
+The saved script-isolate-fb.txt is the successful retry in the same export and
+CARGO_TARGET_DIR=.../target-t_1a213450.
+
+script-load-isolate.txt waited on the Cargo package cache lock. Operator
+clarification: a package-cache lock across independent targets is normal and
+does not invalidate checks. Source lines name the export crate; the binary ran
+from target-t_1a213450. Kept as valid.
+
+git rev-parse inside the gitless export is not a client pin (it can inherit the
+host repo). Client identity is the 56d80272 git archive tarball hash, not
+parent Git discovery.
