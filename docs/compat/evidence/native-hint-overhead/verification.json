@@ -1,0 +1,101 @@
+{
+  "brief": "117-native-hint-and-overhead-facts",
+  "brief_path": "docs/compat/briefs/117-native-hint-and-overhead-facts.md",
+  "brief_sha256": "d2a9586538825218e280a1f9611ba404e8859c0d50856478b785de1b8e8a6641",
+  "design_path": "docs/compat/05v-remaining-agility-design.md",
+  "design_sha256": "f9a6469f7134a24917cef30dfdbe40c2803a7aa04fd814286874f0b6c59d4c65",
+  "base_commit": "70bef7113ce63cfc032226e7ad246967935abaef",
+  "implementation_commit": "99073acf85c30135478fedfb8bbff5164a414ed1",
+  "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "export": ".superpowers/review-exports/native-hint-overhead-t_6bd482fb",
+  "cargo_target_dir": ".superpowers/review-exports/native-hint-overhead-t_6bd482fb-target",
+  "disk_free_before_exact_export_checks": "257GiB",
+  "scope": [
+    "crates/api/src/snapshot.rs",
+    "crates/api/tests/native_hint_overhead.rs",
+    "crates/host-play/src/lib.rs",
+    "crates/script/schema/isolate.fbs",
+    "crates/script/src/isolate_fb.rs",
+    "crates/script/src/load.rs",
+    "crates/script/src/shim/client_adapter.js",
+    "crates/script/src/slot.rs",
+    "crates/script/tests/native_hint_overhead.rs",
+    "docs/compat/04ah-native-hint-overhead.md"
+  ],
+  "overlay_sha256": {
+    "crates/api/src/snapshot.rs": "ac195c8e4f0dd62cff3afcb46ef0024857c4fec99a46497550b2b3e45f8d0916",
+    "crates/api/tests/native_hint_overhead.rs": "bb9a999ae6b4507b9803f5fcd9d1515f31e26ba269a1fc45578e36468a5ec269",
+    "crates/host-play/src/lib.rs": "875c35c3e9c149a70b199c649968ed69a8e3736530cbd56f6ee1c08d4834e8d6",
+    "crates/script/schema/isolate.fbs": "7f8a9eca2e9ffb9b88e813ac59f23bfd2ce87fc2632a956ecbb97f52b26c8911",
+    "crates/script/src/isolate_fb.rs": "53e5050cde6a011e3b0057a1fbbb24718fb5fc1595a5bc991f7f5f190f07381d",
+    "crates/script/src/load.rs": "9e0f5b220c36cd0326204a0d72110940f0e4b945562f99b0d5935f6df06f5ec5",
+    "crates/script/src/shim/client_adapter.js": "f14efd20820c19f1381541320bd116558ae6a2d381954bfd954d21ec2a3c8485",
+    "crates/script/src/slot.rs": "e289cef3da6f52cc1a9f282a20cc83c34f2eceafbd33f4b68d66428130ebe719",
+    "crates/script/tests/native_hint_overhead.rs": "729fe9673d91a5600e439043cf6a287054b072aec96d64d3c95dfaebab2c74cd",
+    "docs/compat/04ah-native-hint-overhead.md": "42aefcb4ba9890a859218ae3b41a3196912aaaeb464d0dac34e5ac43cb68adf8"
+  },
+  "checks": [
+    {
+      "command": "cargo test --locked --offline -p api --test native_hint_overhead -- --test-threads=1",
+      "result": "2 passed"
+    },
+    {
+      "command": "cargo test --locked --offline -p api --test snapshot -- --test-threads=1",
+      "result": "62 passed"
+    },
+    {
+      "command": "cargo test --locked --offline -p script --test native_hint_overhead -- --test-threads=1",
+      "result": "4 passed"
+    },
+    {
+      "command": "cargo test --locked --offline -p script --lib -- --test-threads=1",
+      "result": "76 passed"
+    },
+    {
+      "command": "cargo test --locked --offline -p host-play --lib script_snapshot -- --test-threads=1",
+      "result": "8 passed"
+    },
+    {
+      "command": "cargo clippy --locked --offline --no-deps -p api --lib -- -D warnings",
+      "result": "passed"
+    },
+    {
+      "command": "cargo clippy --locked --offline --no-deps -p api --test native_hint_overhead -- -D warnings",
+      "result": "passed"
+    },
+    {
+      "command": "cargo clippy --locked --offline --no-deps -p script --lib -- -D warnings",
+      "result": "passed"
+    },
+    {
+      "command": "cargo clippy --locked --offline --no-deps -p script --test native_hint_overhead -- -D warnings",
+      "result": "passed"
+    },
+    {
+      "command": "cargo clippy --locked --offline --no-deps -p host-play --lib -- -D warnings",
+      "result": "passed"
+    },
+    {
+      "command": "rustfmt --edition 2021 --check owned Rust",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check scoped files",
+      "result": "passed"
+    }
+  ],
+  "behavior": {
+    "self_chat": "current local-player native overhead text only; null on absent, expiry, logout, or restart",
+    "hint_tile": "native coordinate hint type 2 only; decoder-normalized types 2-6; null for other or absent types",
+    "freshness": "refreshed each snapshot read without requiring a packet-family generation; unchanged overhead strings are retained without cloning",
+    "delta": "changes and clears are fingerprinted and emitted; old buffers default both facts absent",
+    "set_run": "thin ordered queue projection onto existing set-run interaction"
+  },
+  "limits": [
+    "not LIVE acceptance",
+    "no client, navigation, lifecycle, parser, or opcode changes",
+    "root owns native/headless Duel and Brimhaven proof"
+  ],
+  "live": false,
+  "note": "Exact committed host source and exact client source were exported separately; all checks ran from that export with the reviewer-reusable exclusive target. Existing unrelated worktree changes were not staged."
+}
