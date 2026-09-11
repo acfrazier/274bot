@@ -1258,7 +1258,9 @@ impl MuleSlotRecord {
         if self.restock_withdraw && near(observation.tile, AIR_RUINS, 8) {
             self.returned_to_ruins = true;
         }
-        self.air_from_script = (observation.air_runes - self.baseline.air_runes).max(0);
+        self.air_from_script = self
+            .air_from_script
+            .max((observation.air_runes - self.baseline.air_runes).max(0));
         self.xp_from_script = (observation.runecraft_xp - self.baseline.runecraft_xp).max(0);
         self.latest = Some(observation);
     }
@@ -1325,7 +1327,11 @@ impl MulePairWitness {
 
     pub fn qualify_full_cycle(&self) -> Result<MuleClaim, String> {
         self.qualify_supported()?;
-        if self.mule.air_from_script <= 0 {
+        let mule_held_script_air = self
+            .mule
+            .air_from_script
+            .max((self.mule.peak_air - self.mule.baseline.air_runes).max(0));
+        if mule_held_script_air <= 0 {
             return Err(
                 "no mule bank deposit of received runes: mule never held script Air 556".into(),
             );
