@@ -1446,6 +1446,61 @@ mod tests {
         MulePairWitness { crafter, mule }
     }
 
+    fn mule_fresh_pair() -> MulePairWitness {
+        let crafter_base = air_obs("alice", 0, 0, 0);
+        let mule_base = air_obs("bob", 27, 0, 0);
+        MulePairWitness {
+            crafter: MuleSlotRecord::new(
+                MuleRole::Crafter,
+                "alice".into(),
+                "alice".into(),
+                "bob".into(),
+                json!({"mode":"Crafter","partner":"bob","rune":"Air rune","bankFill":true})
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+                crafter_base,
+            ),
+            mule: MuleSlotRecord::new(
+                MuleRole::Mule,
+                "bob".into(),
+                "bob".into(),
+                "alice".into(),
+                json!({"mode":"Mule","partner":"alice","rune":"Air rune","bankFill":true})
+                    .as_object()
+                    .cloned()
+                    .unwrap(),
+                mule_base,
+            ),
+        }
+    }
+
+    fn with_trade(
+        mut observation: AirObservation,
+        partner: &str,
+        offer: bool,
+        confirm: bool,
+    ) -> AirObservation {
+        observation.trade_offer_open = offer;
+        observation.trade_confirm_open = confirm;
+        observation.trade_partner = Some(partner.into());
+        observation
+    }
+
+    fn observe_first_exchange(pair: &mut MulePairWitness) {
+        pair.crafter
+            .observe(with_trade(air_obs("alice", 0, 0, 0), "bob", true, false));
+        pair.crafter
+            .observe(with_trade(air_obs("alice", 0, 0, 0), "bob", false, true));
+        pair.mule
+            .observe(with_trade(air_obs("bob", 27, 0, 0), "alice", true, false));
+        pair.mule
+            .observe(with_trade(air_obs("bob", 27, 0, 0), "alice", false, true));
+        pair.mule.observe(air_obs("bob", 0, 0, 0));
+        pair.crafter.observe(air_obs("alice", 27, 0, 0));
+        pair.crafter.observe(air_obs("alice", 0, 27, 135));
+    }
+
     fn duel_obs(player: &str, xp: i32) -> DuelObservation {
         DuelObservation {
             ingame: true,
@@ -1759,6 +1814,51 @@ mod tests {
             pair.qualify_supported().unwrap(),
             MuleClaim::FirstExchangeCraft
         );
+    }
+
+    #[test]
+    fn mule_observe_crafter_bank_deposit_keeps_first_exchange_craft() {
+        let mut pair = mule_fresh_pair();
+        observe_first_exchange(&mut pair);
+        let mut deposited = air_obs("alice", 0, 0, 135);
+        deposited.tile = Some(FALADOR_EAST);
+        deposited.bank_open = true;
+        deposited.bank_loaded = true;
+        pair.crafter.observe(deposited);
+        assert!(
+            pair.crafter.air_from_script > 0,
+            "sticky peak must survive crafter bank deposit of 556"
+        );
+        assert_eq!(pair.crafter.xp_from_script, 135);
+        assert_eq!(pair.crafter.latest.as_ref().unwrap().air_runes, 0);
+        assert_eq!(
+            pair.qualify_supported().unwrap(),
+            MuleClaim::FirstExchangeCraft
+        );
+    }
+
+    #[test]
+    fn mule_observe_deposit_keeps_held_air_for_full_cycle_gate() {
+        let mut pair = mule_fresh_pair();
+        observe_first_exchange(&mut pair);
+        pair.mule.observe(air_obs("bob", 0, 27, 0));
+        let mut deposited = air_obs("bob", 0, 0, 0);
+        deposited.tile = Some(FALADOR_EAST);
+        deposited.bank_open = true;
+        deposited.bank_loaded = true;
+        pair.mule.observe(deposited);
+        assert!(
+            pair.mule.air_from_script > 0,
+            "sticky peak must survive mule Falador East deposit of received 556"
+        );
+        assert!(pair.mule.deposited_received_air);
+        pair.qualify_supported().unwrap();
+        let error = pair.qualify_full_cycle().unwrap_err();
+        assert!(
+            error.contains("no actual bank restock"),
+            "held-air/deposit must pass so restock can fail honestly: {error}"
+        );
+        assert!(!error.contains("never held script Air 556"), "{error}");
     }
 
     #[test]

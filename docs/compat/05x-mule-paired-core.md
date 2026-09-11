@@ -75,12 +75,18 @@ Partial `FirstExchangeCraft`: both offer+confirm with the minted
 counterpart; 1436 left the mule; crafter 556 ≥ 1 and RC XP ≥ 1 from
 script; conservation of transferred 1436 (crafter in == mule out, or
 crafter already converted to 556). Seeded runes fail. Stale open trade
-after claimed craft fails.
+after claimed craft fails. `MuleSlotRecord::air_from_script` is a sticky
+peak of `(air - baseline)`, so `CrafterGoBank` depositing 556 before gold
+timeout does not erase craft. XP is already monotonic. Current pack may
+be 0.
 
-Full `MuleBankReturnSecondCycle`: mule held script 556, deposited it at
-a loaded Falador East bank, withdrew a **new** 1436 load (first 27 is
-seed), returned to ruins, second transfer, further crafter craft
-(`craft_events >= 2`). First-transfer printed as full is rejected.
+Full `MuleBankReturnSecondCycle`: mule held script 556 (sticky
+`air_from_script` or `peak_air - baseline`, not current pack), deposited
+it at a loaded Falador East bank, withdrew a **new** 1436 load (first 27
+is seed), returned to ruins, second transfer, further crafter craft
+(`craft_events >= 2`). First-transfer printed as full is rejected. Mule
+deposit of received 556 still requires `deposited_received_air`; sticky
+air does not weaken restock or second-cycle gates.
 
 ## Verification
 
@@ -92,10 +98,12 @@ target `.superpowers/review-exports/mule-paired-core-t_aba60704-target`
 target reused for the reviewer.
 
 - `rustfmt --check --edition 2021 -- crates/host-play/tests/paired_catalog_live.rs crates/host-play/tests/support/paired_catalog.rs` — pass.
-- `cargo test -p host-play --test paired_catalog_live` — 37 passed, 3 ignored
+- `cargo test -p host-play --test paired_catalog_live` — 39 passed, 3 ignored
   (existing Air/Duel identity/conservation/full-vs-partial plus Mule wrong-partner,
   one-sided, seed-only, missing conservation, stale trade, empty partner, both-Crafter,
   no mule bank deposit, no restock, no second cycle, first-exchange accept,
+  observe-path crafter deposit still FirstExchangeCraft, observe-path mule
+  receive+deposit keeps held-air so restock can fail honestly,
   prepared-current, frozen hashes).
 - `cargo clippy -p host-play --test paired_catalog_live --no-deps -- -D warnings` — pass.
 - `cargo test -p host-play --test paired_catalog_live paired_catalog_mule_live -- --exact` — 0 passed, 1 ignored.
