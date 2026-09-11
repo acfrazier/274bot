@@ -1,0 +1,14 @@
+{
+  "host_commit": "1eba4b1e11daf6b97e79ac3c393413a7540ab002",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "inherits_review_gate": "docs/compat/evidence/catalog-headed/review-gates-04d7b1f4.json",
+  "additional_reviews": [
+    "docs/compat/evidence/cook-location-shape/root-model-verification.json",
+    "docs/compat/evidence/special-attack-capabilities/root-model-verification.json"
+  ],
+  "pending_reviews": [],
+  "all_required_reviews_approved": true,
+  "root_fixture_checks_passed": true,
+  "root_source_files": 3941,
+  "scope": "Reviewed parent before unapproved fighter109 fixtures; cook and special source included, no fighter109 code."
+}

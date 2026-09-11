@@ -1,0 +1,13 @@
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-1eba4b1e/vendor/fr-client-rust/crates/client)
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-1eba4b1e/crates/api)
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-1eba4b1e/crates/script)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.50s
+     Running tests/cook_location_shape.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/cook_location_shape-308115cbb79dcfe6)
+
+running 3 tests
+test custom_keeps_settings_fallback_and_options_stay_catherby ... ok
+test unknown_and_auto_do_not_invent_a_location ... ok
+test catherby_consumer_reads_bank_tile_and_host_stand ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+

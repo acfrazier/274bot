@@ -1,0 +1,448 @@
+[panel] adapter name=Apple M4 Max backend=Metal device_type=IntegratedGpu vendor=0x0 device=0x0
+[host-play] slot liveg938j4_0: thread up
+274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+[panel] scenario capture armed: Some("cook_bot_lobster")
+[panel] liveg938j4_0: liveg938j4_0: slot up
+[host-play] slot liveg938j4_0: handshake begin reconnect=false
+[host-play] slot liveg938j4_0: handshake ok
+[host] hitch liveg938j4_0: frame_us=75514 paints=1 skips=0 ticks=0
+[panel] liveg938j4_0: liveg938j4_0: scene 1
+[host] hitch liveg938j4_0: frame_us=75480 paints=43 skips=0 ticks=1
+[panel] liveg938j4_0: liveg938j4_0: mainland hop queued
+[panel] liveg938j4_0: liveg938j4_0: ingame
+[panel] liveg938j4_0: liveg938j4_0: scene 2
+live script_cook_bot_lobster: running step 1/27
+[host] slot liveg938j4_0: d_loop_us=12243 d_raster_us=256271 d_observe_us=59506 max_observe_us=2557 d_paints=50 d_skips=0 d_ticks=1 window_ms=0
+[panel] liveg938j4_0: liveg938j4_0: scene 1
+[panel] liveg938j4_0: liveg938j4_0: ingame
+[panel] liveg938j4_0: liveg938j4_0: scene 2
+[host] slot liveg938j4_0: d_loop_us=11459 d_raster_us=238832 d_observe_us=74933 max_observe_us=4970 d_paints=50 d_skips=0 d_ticks=3 window_ms=1151
+[host] slot liveg938j4_0: d_loop_us=1308 d_raster_us=230912 d_observe_us=30466 max_observe_us=895 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149
+live script_cook_bot_lobster: running step 2/27
+[host-play] slot liveg938j4_0: handshake begin reconnect=true
+[panel] liveg938j4_0: liveg938j4_0: scene 0
+[host-play] slot liveg938j4_0: handshake ok
+[panel] liveg938j4_0: liveg938j4_0: scene 1
+[host] hitch liveg938j4_0: frame_us=53214 paints=39 skips=0 ticks=1
+[panel] liveg938j4_0: liveg938j4_0: ingame
+[panel] liveg938j4_0: liveg938j4_0: scene 2
+[host] slot liveg938j4_0: d_loop_us=18264 d_raster_us=205001 d_observe_us=81758 max_observe_us=5432 d_paints=50 d_skips=0 d_ticks=1 window_ms=0
+[host] slot liveg938j4_0: d_loop_us=1376 d_raster_us=189166 d_observe_us=39401 max_observe_us=6004 d_paints=50 d_skips=0 d_ticks=3 window_ms=1155
+live script_cook_bot_lobster: running step 3/27
+[host] slot liveg938j4_0: d_loop_us=1337 d_raster_us=191745 d_observe_us=26458 max_observe_us=829 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159
+[panel] liveg938j4_0: liveg938j4_0: scene 1
+[panel] liveg938j4_0: liveg938j4_0: ingame
+[panel] liveg938j4_0: liveg938j4_0: scene 2
+[host] slot liveg938j4_0: d_loop_us=8282 d_raster_us=195372 d_observe_us=57464 max_observe_us=5380 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153
+live script_cook_bot_lobster: running step 4/27
+live script_cook_bot_lobster: running step 5/27
+[host] slot liveg938j4_0: d_loop_us=1139 d_raster_us=242297 d_observe_us=29391 max_observe_us=1024 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153
+live script_cook_bot_lobster: running step 6/27
+live script_cook_bot_lobster: running step 7/27
+live script_cook_bot_lobster: running step 8/27
+live script_cook_bot_lobster: running step 9/27
+live script_cook_bot_lobster: running step 10/27
+live script_cook_bot_lobster: running step 11/27
+live script_cook_bot_lobster: running step 12/27
+live script_cook_bot_lobster: running step 13/27
+live script_cook_bot_lobster: running step 14/27
+live script_cook_bot_lobster: running step 15/27
+live script_cook_bot_lobster: running step 16/27
+[host] slot liveg938j4_0: d_loop_us=1207 d_raster_us=267072 d_observe_us=36987 max_observe_us=4012 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151
+live script_cook_bot_lobster: running step 17/27
+[script liveg938j4_0] start load
+live script_cook_bot_lobster: running step 18/27
+[host] hitch liveg938j4_0: observe_us=79000 paints=312 skips=0 ticks=13
+live script_cook_bot_lobster: running step 19/27
+[host] slot liveg938j4_0: d_loop_us=1117 d_raster_us=251055 d_observe_us=130626 max_observe_us=79000 d_paints=50 d_skips=0 d_ticks=2 window_ms=1204
+[script liveg938j4_0] CookBot cooking 'Raw lobster' at Catherby, Range (2817, 3443, 0)
+[script liveg938j4_0] interact OpenBooth { x: 2809, z: 3442, level: 0, id: 2213, name: Some("Bank booth"), action: Some("Use-quickly") }
+[panel] liveg938j4_0: script: CookBot cooking 'Raw lobster' at Catherby, Range (2817, 3443, 0)
+[host] slot liveg938j4_0: d_loop_us=1152 d_raster_us=274567 d_observe_us=75405 max_observe_us=11095 d_paints=50 d_skips=0 d_ticks=5 window_ms=1129
+[script liveg938j4_0] withdrawing Raw lobster
+[panel] liveg938j4_0: script: withdrawing Raw lobster
+[host] slot liveg938j4_0: d_loop_us=1264 d_raster_us=290194 d_observe_us=79950 max_observe_us=7942 d_paints=50 d_skips=0 d_ticks=6 window_ms=1143
+[script liveg938j4_0] interact Walk { x: 2817, z: 3443, level: 0, allow_teleports: false }
+[nav-follow] here=WorldTile { x: 2809, z: 3441, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2809, z: 3439, level: 0 } aim=WorldTile { x: 2815, z: 3438, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2809, z: 3441, level: 0 })
+[nav-follow] here=WorldTile { x: 2809, z: 3439, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2809, z: 3437, level: 0 } aim=WorldTile { x: 2815, z: 3438, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2809, z: 3441, level: 0 })
+[nav-follow] here=WorldTile { x: 2809, z: 3437, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] slot liveg938j4_0: d_loop_us=1308 d_raster_us=267606 d_observe_us=94767 max_observe_us=14807 d_paints=50 d_skips=0 d_ticks=5 window_ms=1127
+[nav-walk] here=WorldTile { x: 2811, z: 3437, level: 0 } aim=WorldTile { x: 2815, z: 3438, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2809, z: 3441, level: 0 })
+[nav-follow] here=WorldTile { x: 2811, z: 3437, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2813, z: 3437, level: 0 } aim=WorldTile { x: 2815, z: 3438, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 2809, z: 3441, level: 0 })
+[nav-follow] here=WorldTile { x: 2813, z: 3437, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2815, z: 3438, level: 0 } aim=WorldTile { x: 2815, z: 3438, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 2809, z: 3441, level: 0 })
+[nav-follow] here=WorldTile { x: 2815, z: 3438, level: 0 } walk=false transport=true leg=1 hops=1 outcome=None
+[nav-transport] here=WorldTile { x: 2816, z: 3439, level: 0 } to=WorldTile { x: 2816, z: 3439, level: 0 } troll=false ticks_waited=0 loc_id=1530 open=true
+[nav-follow] here=WorldTile { x: 2816, z: 3439, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[nav-walk] here=WorldTile { x: 2816, z: 3441, level: 0 } aim=WorldTile { x: 2817, z: 3443, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2816, z: 3439, level: 0 })
+[nav-follow] here=WorldTile { x: 2816, z: 3441, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[host] hitch liveg938j4_0: observe_us=16880 paints=537 skips=0 ticks=35
+[nav-walk] here=WorldTile { x: 2816, z: 3443, level: 0 } aim=WorldTile { x: 2817, z: 3443, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2816, z: 3439, level: 0 })
+[nav-follow] here=WorldTile { x: 2816, z: 3443, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[host] slot liveg938j4_0: d_loop_us=1334 d_raster_us=257698 d_observe_us=117606 max_observe_us=16880 d_paints=50 d_skips=0 d_ticks=6 window_ms=1133
+[nav-walk] here=WorldTile { x: 2817, z: 3443, level: 0 } aim=WorldTile { x: 2817, z: 3443, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2816, z: 3439, level: 0 })
+[nav-follow] here=WorldTile { x: 2817, z: 3443, level: 0 } walk=false transport=false leg=3 hops=2 outcome=Some(Arrived { at: WorldTile { x: 2817, z: 3443, level: 0 } })
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+live script_cook_bot_lobster: running step 20/27
+live script_cook_bot_lobster: running step 21/27
+[host] slot liveg938j4_0: d_loop_us=1329 d_raster_us=237670 d_observe_us=79112 max_observe_us=12718 d_paints=50 d_skips=0 d_ticks=6 window_ms=1151
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1343 d_raster_us=263380 d_observe_us=74671 max_observe_us=10570 d_paints=50 d_skips=0 d_ticks=6 window_ms=1152
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1379 d_raster_us=274786 d_observe_us=86470 max_observe_us=11808 d_paints=50 d_skips=0 d_ticks=5 window_ms=1126
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1425 d_raster_us=276140 d_observe_us=86965 max_observe_us=11868 d_paints=50 d_skips=0 d_ticks=6 window_ms=1133
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1326 d_raster_us=262582 d_observe_us=72974 max_observe_us=11043 d_paints=50 d_skips=0 d_ticks=6 window_ms=1136
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1323 d_raster_us=265778 d_observe_us=81731 max_observe_us=10821 d_paints=50 d_skips=0 d_ticks=5 window_ms=1145
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1334 d_raster_us=250319 d_observe_us=79994 max_observe_us=10520 d_paints=50 d_skips=0 d_ticks=6 window_ms=1143
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1272 d_raster_us=229676 d_observe_us=77698 max_observe_us=10612 d_paints=50 d_skips=0 d_ticks=6 window_ms=1157
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1141 d_raster_us=210676 d_observe_us=65051 max_observe_us=9902 d_paints=50 d_skips=0 d_ticks=6 window_ms=1144
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1076 d_raster_us=199898 d_observe_us=69634 max_observe_us=9055 d_paints=50 d_skips=0 d_ticks=5 window_ms=1155
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1373 d_raster_us=244276 d_observe_us=82022 max_observe_us=11882 d_paints=50 d_skips=0 d_ticks=6 window_ms=1152
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1414 d_raster_us=251416 d_observe_us=88621 max_observe_us=12172 d_paints=50 d_skips=0 d_ticks=6 window_ms=1138
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1318 d_raster_us=244689 d_observe_us=80736 max_observe_us=12119 d_paints=50 d_skips=0 d_ticks=5 window_ms=1118
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1419 d_raster_us=251121 d_observe_us=88730 max_observe_us=12775 d_paints=50 d_skips=0 d_ticks=6 window_ms=1134
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1388 d_raster_us=248007 d_observe_us=76928 max_observe_us=12145 d_paints=50 d_skips=0 d_ticks=6 window_ms=1119
+live script_cook_bot_lobster: running step 22/27
+[script liveg938j4_0] interact Walk { x: 2809, z: 3441, level: 0, allow_teleports: false }
+[nav-follow] here=WorldTile { x: 2817, z: 3443, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2816, z: 3442, level: 0 } aim=WorldTile { x: 2816, z: 3439, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2817, z: 3443, level: 0 })
+[nav-follow] here=WorldTile { x: 2816, z: 3442, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2816, z: 3440, level: 0 } aim=WorldTile { x: 2816, z: 3439, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2817, z: 3443, level: 0 })
+[nav-follow] here=WorldTile { x: 2816, z: 3440, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2816, z: 3439, level: 0 } aim=WorldTile { x: 2816, z: 3439, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2817, z: 3443, level: 0 })
+[nav-follow] here=WorldTile { x: 2816, z: 3439, level: 0 } walk=false transport=true leg=1 hops=1 outcome=None
+[host] slot liveg938j4_0: d_loop_us=1317 d_raster_us=231924 d_observe_us=101568 max_observe_us=14967 d_paints=50 d_skips=0 d_ticks=5 window_ms=1119
+[nav-transport] here=WorldTile { x: 2816, z: 3437, level: 0 } to=WorldTile { x: 2816, z: 3437, level: 0 } troll=false ticks_waited=0 loc_id=1530 open=false
+[nav-follow] here=WorldTile { x: 2816, z: 3437, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[nav-walk] here=WorldTile { x: 2814, z: 3437, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })
+[nav-follow] here=WorldTile { x: 2814, z: 3437, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[nav-walk] here=WorldTile { x: 2812, z: 3437, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })
+[nav-follow] here=WorldTile { x: 2812, z: 3437, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[nav-walk] here=WorldTile { x: 2810, z: 3437, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })
+[nav-follow] here=WorldTile { x: 2810, z: 3437, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[nav-walk] here=WorldTile { x: 2809, z: 3438, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })
+[nav-follow] here=WorldTile { x: 2809, z: 3438, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[nav-walk] here=WorldTile { x: 2809, z: 3440, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })
+[nav-follow] here=WorldTile { x: 2809, z: 3440, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[host] slot liveg938j4_0: d_loop_us=1314 d_raster_us=234574 d_observe_us=117465 max_observe_us=15617 d_paints=50 d_skips=0 d_ticks=6 window_ms=1135
+[nav-walk] here=WorldTile { x: 2809, z: 3441, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=5 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })
+[nav-follow] here=WorldTile { x: 2809, z: 3441, level: 0 } walk=false transport=false leg=3 hops=2 outcome=Some(Arrived { at: WorldTile { x: 2809, z: 3441, level: 0 } })
+[script liveg938j4_0] interact OpenBooth { x: 2809, z: 3442, level: 0, id: 2213, name: Some("Bank booth"), action: Some("Use-quickly") }
+live script_cook_bot_lobster: running step 23/27
+live script_cook_bot_lobster: running step 24/27
+[host] slot liveg938j4_0: d_loop_us=1321 d_raster_us=282240 d_observe_us=87640 max_observe_us=13586 d_paints=50 d_skips=0 d_ticks=5 window_ms=1115
+[host] slot liveg938j4_0: d_loop_us=1249 d_raster_us=290029 d_observe_us=77546 max_observe_us=8569 d_paints=50 d_skips=0 d_ticks=6 window_ms=1130
+[script liveg938j4_0] withdrawing Raw lobster
+[panel] liveg938j4_0: script: withdrawing Raw lobster
+live script_cook_bot_lobster: running step 25/27
+[script liveg938j4_0] interact Walk { x: 2817, z: 3443, level: 0, allow_teleports: false }
+[nav-follow] here=WorldTile { x: 2809, z: 3441, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2809, z: 3439, level: 0 } aim=WorldTile { x: 2815, z: 3438, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2809, z: 3441, level: 0 })
+[nav-follow] here=WorldTile { x: 2809, z: 3439, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+live script_cook_bot_lobster: running step 26/27
+live script_cook_bot_lobster: running step 27/27
+[nav-walk] here=WorldTile { x: 2809, z: 3437, level: 0 } aim=WorldTile { x: 2815, z: 3438, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2809, z: 3441, level: 0 })
+[nav-follow] here=WorldTile { x: 2809, z: 3437, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] slot liveg938j4_0: d_loop_us=1237 d_raster_us=255210 d_observe_us=94288 max_observe_us=13132 d_paints=50 d_skips=0 d_ticks=6 window_ms=1134
+[nav-walk] here=WorldTile { x: 2811, z: 3437, level: 0 } aim=WorldTile { x: 2815, z: 3438, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2809, z: 3441, level: 0 })
+[nav-follow] here=WorldTile { x: 2811, z: 3437, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2813, z: 3437, level: 0 } aim=WorldTile { x: 2815, z: 3438, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 2809, z: 3441, level: 0 })
+[nav-follow] here=WorldTile { x: 2813, z: 3437, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2815, z: 3438, level: 0 } aim=WorldTile { x: 2815, z: 3438, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 2809, z: 3441, level: 0 })
+[nav-follow] here=WorldTile { x: 2815, z: 3438, level: 0 } walk=false transport=true leg=1 hops=1 outcome=None
+[nav-transport] cheap hop walk-through to WorldTile { x: 2816, z: 3439, level: 0 }
+[nav-follow] here=WorldTile { x: 2815, z: 3438, level: 0 } walk=false transport=true leg=1 hops=1 outcome=None
+[nav-transport] here=WorldTile { x: 2816, z: 3439, level: 0 } to=WorldTile { x: 2816, z: 3439, level: 0 } troll=false ticks_waited=0 loc_id=1530 open=true
+[nav-follow] here=WorldTile { x: 2816, z: 3439, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[host] slot liveg938j4_0: d_loop_us=1269 d_raster_us=240742 d_observe_us=101166 max_observe_us=14866 d_paints=50 d_skips=0 d_ticks=5 window_ms=1122
+[nav-walk] here=WorldTile { x: 2816, z: 3441, level: 0 } aim=WorldTile { x: 2817, z: 3443, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2816, z: 3439, level: 0 })
+[nav-follow] here=WorldTile { x: 2816, z: 3441, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[host] hitch liveg938j4_0: observe_us=16995 paints=1602 skips=0 ticks=156
+[nav-walk] here=WorldTile { x: 2816, z: 3443, level: 0 } aim=WorldTile { x: 2817, z: 3443, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2816, z: 3439, level: 0 })
+[nav-follow] here=WorldTile { x: 2816, z: 3443, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[nav-walk] here=WorldTile { x: 2817, z: 3443, level: 0 } aim=WorldTile { x: 2817, z: 3443, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2816, z: 3439, level: 0 })
+[nav-follow] here=WorldTile { x: 2817, z: 3443, level: 0 } walk=false transport=false leg=3 hops=2 outcome=Some(Arrived { at: WorldTile { x: 2817, z: 3443, level: 0 } })
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1442 d_raster_us=243708 d_observe_us=99621 max_observe_us=16995 d_paints=50 d_skips=0 d_ticks=6 window_ms=1143
+[panel] scenario capture requested: cook_bot_lobster
+[host] hitch liveg938j4_0: observe_us=63009 paints=1654 skips=0 ticks=162
+[panel] capture readback requested: 1
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[panel] shot cook_bot_lobster -> /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/catalog-headed/r289-cook-bot-lobster-8e7d965b-1eba4b1e-gpu/shots/2026-09-11T12-01-56_75569/2026-09-11T12-02-40_cook_bot_lobster.png
+PASS: live script_cook_bot_lobster {"scenario":"cook_bot_lobster","outcome":"PASS","predicate":"has_item_id(379)>=1","ticks":225,"elapsed_ms":44825,"tile":[2817,3443,0],"inv":[{"id":379,"name":"Lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1},{"id":377,"name":"Raw lobster","count":1}],"stat":{"runenergy":85},"chat":[{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"The lobster is now nicely cooked."},{"text":"You put the lobster on the stove."},{"text":"Inventory wiped."},{"text":"Welcome to RuneScape."}],"scene":2}
+[host] slot liveg938j4_0: d_loop_us=1161 d_raster_us=231637 d_observe_us=120998 max_observe_us=63009 d_paints=50 d_skips=0 d_ticks=6 window_ms=1191
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1289 d_raster_us=259546 d_observe_us=76988 max_observe_us=8807 d_paints=50 d_skips=0 d_ticks=6 window_ms=1136
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1328 d_raster_us=261905 d_observe_us=72888 max_observe_us=10157 d_paints=50 d_skips=0 d_ticks=5 window_ms=1129
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1440 d_raster_us=257351 d_observe_us=81997 max_observe_us=10546 d_paints=50 d_skips=0 d_ticks=6 window_ms=1127
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1567 d_raster_us=263414 d_observe_us=83337 max_observe_us=10240 d_paints=50 d_skips=0 d_ticks=6 window_ms=1153
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1324 d_raster_us=259007 d_observe_us=71559 max_observe_us=10602 d_paints=50 d_skips=0 d_ticks=5 window_ms=1135
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1483 d_raster_us=251349 d_observe_us=80673 max_observe_us=8727 d_paints=50 d_skips=0 d_ticks=6 window_ms=1130
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1490 d_raster_us=257583 d_observe_us=82708 max_observe_us=10378 d_paints=50 d_skips=0 d_ticks=6 window_ms=1132
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1353 d_raster_us=253607 d_observe_us=75549 max_observe_us=10731 d_paints=50 d_skips=0 d_ticks=5 window_ms=1138
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1319 d_raster_us=248786 d_observe_us=82606 max_observe_us=10359 d_paints=50 d_skips=0 d_ticks=6 window_ms=1146
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1374 d_raster_us=257696 d_observe_us=84721 max_observe_us=11343 d_paints=50 d_skips=0 d_ticks=6 window_ms=1129
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1294 d_raster_us=234134 d_observe_us=71520 max_observe_us=8749 d_paints=50 d_skips=0 d_ticks=6 window_ms=1155
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1227 d_raster_us=216803 d_observe_us=59372 max_observe_us=8410 d_paints=50 d_skips=0 d_ticks=5 window_ms=1141
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[host] slot liveg938j4_0: d_loop_us=1194 d_raster_us=213397 d_observe_us=65437 max_observe_us=8267 d_paints=50 d_skips=0 d_ticks=6 window_ms=1152
+[script liveg938j4_0] interact UseOn { name: "Raw lobster", kind: "loc", target_name: Some("Range"), x: 2817, z: 3444, level: 0, index: None, source_item_id: Some(377), source_item_slot: Some(27), target_item_id: None, target_item_slot: None }
+[script liveg938j4_0] interact Walk { x: 2809, z: 3441, level: 0, allow_teleports: false }
+[nav-follow] here=WorldTile { x: 2817, z: 3443, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] slot liveg938j4_0: d_loop_us=1279 d_raster_us=225525 d_observe_us=72164 max_observe_us=8784 d_paints=50 d_skips=0 d_ticks=6 window_ms=1142
+[nav-walk] here=WorldTile { x: 2816, z: 3442, level: 0 } aim=WorldTile { x: 2816, z: 3439, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2817, z: 3443, level: 0 })
+[nav-follow] here=WorldTile { x: 2816, z: 3442, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2816, z: 3440, level: 0 } aim=WorldTile { x: 2816, z: 3439, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2817, z: 3443, level: 0 })
+[nav-follow] here=WorldTile { x: 2816, z: 3440, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2816, z: 3439, level: 0 } aim=WorldTile { x: 2816, z: 3439, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2817, z: 3443, level: 0 })
+[nav-follow] here=WorldTile { x: 2816, z: 3439, level: 0 } walk=false transport=true leg=1 hops=1 outcome=None
+[nav-transport] here=WorldTile { x: 2816, z: 3437, level: 0 } to=WorldTile { x: 2816, z: 3437, level: 0 } troll=false ticks_waited=0 loc_id=1530 open=true
+[nav-follow] here=WorldTile { x: 2816, z: 3437, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[nav-walk] here=WorldTile { x: 2814, z: 3437, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })
+[nav-follow] here=WorldTile { x: 2814, z: 3437, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[host] slot liveg938j4_0: d_loop_us=1299 d_raster_us=241141 d_observe_us=97536 max_observe_us=14405 d_paints=50 d_skips=0 d_ticks=5 window_ms=1129
+[nav-walk] here=WorldTile { x: 2812, z: 3437, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })
+[nav-follow] here=WorldTile { x: 2812, z: 3437, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[nav-walk] here=WorldTile { x: 2810, z: 3437, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })
+[nav-follow] here=WorldTile { x: 2810, z: 3437, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[nav-walk] here=WorldTile { x: 2809, z: 3438, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })
+[nav-follow] here=WorldTile { x: 2809, z: 3438, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[nav-walk] here=WorldTile { x: 2809, z: 3440, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })
+[nav-follow] here=WorldTile { x: 2809, z: 3440, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[nav-walk] here=WorldTile { x: 2809, z: 3441, level: 0 } aim=WorldTile { x: 2809, z: 3441, level: 0 } radius=0 ticks_waited=5 sent_tile=Some(WorldTile { x: 2816, z: 3437, level: 0 })
+[nav-follow] here=WorldTile { x: 2809, z: 3441, level: 0 } walk=false transport=false leg=3 hops=2 outcome=Some(Arrived { at: WorldTile { x: 2809, z: 3441, level: 0 } })
+[script liveg938j4_0] interact OpenBooth { x: 2809, z: 3442, level: 0, id: 2213, name: Some("Bank booth"), action: Some("Use-quickly") }
+[host] slot liveg938j4_0: d_loop_us=1351 d_raster_us=250024 d_observe_us=108324 max_observe_us=15179 d_paints=50 d_skips=0 d_ticks=6 window_ms=1129
+[host] slot liveg938j4_0: d_loop_us=1337 d_raster_us=299781 d_observe_us=79991 max_observe_us=10073 d_paints=50 d_skips=0 d_ticks=6 window_ms=1128
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1200 d_raster_us=293443 d_observe_us=68306 max_observe_us=8248 d_paints=50 d_skips=0 d_ticks=5 window_ms=1132
+[host] slot liveg938j4_0: d_loop_us=1279 d_raster_us=276242 d_observe_us=72982 max_observe_us=8480 d_paints=50 d_skips=0 d_ticks=6 window_ms=1138
+[host] slot liveg938j4_0: d_loop_us=1308 d_raster_us=291378 d_observe_us=76063 max_observe_us=8458 d_paints=50 d_skips=0 d_ticks=6 window_ms=1128
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1232 d_raster_us=292629 d_observe_us=70487 max_observe_us=8461 d_paints=50 d_skips=0 d_ticks=5 window_ms=1128
+[host] slot liveg938j4_0: d_loop_us=1344 d_raster_us=296418 d_observe_us=77989 max_observe_us=8435 d_paints=50 d_skips=0 d_ticks=6 window_ms=1127
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1281 d_raster_us=285848 d_observe_us=77596 max_observe_us=8576 d_paints=50 d_skips=0 d_ticks=6 window_ms=1148
+[host] slot liveg938j4_0: d_loop_us=1310 d_raster_us=296309 d_observe_us=70945 max_observe_us=8453 d_paints=50 d_skips=0 d_ticks=5 window_ms=1119
+[host] slot liveg938j4_0: d_loop_us=1278 d_raster_us=290430 d_observe_us=79268 max_observe_us=8805 d_paints=50 d_skips=0 d_ticks=6 window_ms=1115
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1253 d_raster_us=277095 d_observe_us=73883 max_observe_us=9656 d_paints=50 d_skips=0 d_ticks=6 window_ms=1147
+[host] slot liveg938j4_0: d_loop_us=1300 d_raster_us=281343 d_observe_us=67221 max_observe_us=8156 d_paints=50 d_skips=0 d_ticks=5 window_ms=1123
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1178 d_raster_us=255978 d_observe_us=66181 max_observe_us=8526 d_paints=50 d_skips=0 d_ticks=6 window_ms=1151
+[host] slot liveg938j4_0: d_loop_us=1167 d_raster_us=260641 d_observe_us=65501 max_observe_us=8092 d_paints=50 d_skips=0 d_ticks=6 window_ms=1140
+[host] slot liveg938j4_0: d_loop_us=1065 d_raster_us=246209 d_observe_us=56181 max_observe_us=6643 d_paints=50 d_skips=0 d_ticks=6 window_ms=1150
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1083 d_raster_us=253972 d_observe_us=65173 max_observe_us=8375 d_paints=50 d_skips=0 d_ticks=5 window_ms=1149
+[host] slot liveg938j4_0: d_loop_us=1288 d_raster_us=284551 d_observe_us=77098 max_observe_us=8287 d_paints=50 d_skips=0 d_ticks=6 window_ms=1136
+[host] slot liveg938j4_0: d_loop_us=1281 d_raster_us=282907 d_observe_us=74368 max_observe_us=8413 d_paints=50 d_skips=0 d_ticks=6 window_ms=1144
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1243 d_raster_us=291329 d_observe_us=70100 max_observe_us=8241 d_paints=50 d_skips=0 d_ticks=5 window_ms=1128
+[host] slot liveg938j4_0: d_loop_us=1326 d_raster_us=289035 d_observe_us=76338 max_observe_us=8384 d_paints=50 d_skips=0 d_ticks=6 window_ms=1130
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1253 d_raster_us=283965 d_observe_us=66360 max_observe_us=8220 d_paints=50 d_skips=0 d_ticks=6 window_ms=1134
+[host] slot liveg938j4_0: d_loop_us=1238 d_raster_us=292608 d_observe_us=75673 max_observe_us=8248 d_paints=50 d_skips=0 d_ticks=5 window_ms=1129
+[host] slot liveg938j4_0: d_loop_us=1194 d_raster_us=289074 d_observe_us=76509 max_observe_us=8613 d_paints=50 d_skips=0 d_ticks=6 window_ms=1127
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1245 d_raster_us=300366 d_observe_us=68981 max_observe_us=8140 d_paints=50 d_skips=0 d_ticks=6 window_ms=1136
+[host] slot liveg938j4_0: d_loop_us=1340 d_raster_us=287797 d_observe_us=74363 max_observe_us=8827 d_paints=50 d_skips=0 d_ticks=5 window_ms=1133
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1246 d_raster_us=289490 d_observe_us=76933 max_observe_us=8285 d_paints=50 d_skips=0 d_ticks=6 window_ms=1119
+[host] slot liveg938j4_0: d_loop_us=1258 d_raster_us=286779 d_observe_us=67277 max_observe_us=8340 d_paints=50 d_skips=0 d_ticks=6 window_ms=1133
+[host] slot liveg938j4_0: d_loop_us=1219 d_raster_us=283073 d_observe_us=76410 max_observe_us=8428 d_paints=50 d_skips=0 d_ticks=5 window_ms=1136
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1261 d_raster_us=291065 d_observe_us=77771 max_observe_us=8390 d_paints=50 d_skips=0 d_ticks=6 window_ms=1122
+[host] slot liveg938j4_0: d_loop_us=1172 d_raster_us=266892 d_observe_us=62401 max_observe_us=8292 d_paints=50 d_skips=0 d_ticks=6 window_ms=1137
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1150 d_raster_us=265683 d_observe_us=67591 max_observe_us=7752 d_paints=50 d_skips=0 d_ticks=5 window_ms=1132
+[host] slot liveg938j4_0: d_loop_us=1811 d_raster_us=261342 d_observe_us=65097 max_observe_us=7163 d_paints=50 d_skips=0 d_ticks=6 window_ms=1142
+[host] slot liveg938j4_0: d_loop_us=1185 d_raster_us=246703 d_observe_us=64300 max_observe_us=7134 d_paints=50 d_skips=0 d_ticks=6 window_ms=1155
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1218 d_raster_us=291182 d_observe_us=69741 max_observe_us=8292 d_paints=50 d_skips=0 d_ticks=5 window_ms=1126
+[host] slot liveg938j4_0: d_loop_us=1266 d_raster_us=285591 d_observe_us=76053 max_observe_us=8293 d_paints=50 d_skips=0 d_ticks=6 window_ms=1134
+[host] slot liveg938j4_0: d_loop_us=1214 d_raster_us=288227 d_observe_us=68979 max_observe_us=8546 d_paints=50 d_skips=0 d_ticks=6 window_ms=1127
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1209 d_raster_us=278506 d_observe_us=73822 max_observe_us=8374 d_paints=50 d_skips=0 d_ticks=5 window_ms=1120
+[host] slot liveg938j4_0: d_loop_us=1294 d_raster_us=276451 d_observe_us=68738 max_observe_us=7754 d_paints=50 d_skips=0 d_ticks=6 window_ms=1141
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1343 d_raster_us=301256 d_observe_us=71527 max_observe_us=10200 d_paints=50 d_skips=0 d_ticks=6 window_ms=1132
+[host] slot liveg938j4_0: d_loop_us=1332 d_raster_us=316017 d_observe_us=74704 max_observe_us=8545 d_paints=50 d_skips=0 d_ticks=5 window_ms=1134
+[host] slot liveg938j4_0: d_loop_us=1433 d_raster_us=301954 d_observe_us=74063 max_observe_us=7904 d_paints=50 d_skips=0 d_ticks=6 window_ms=1149
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1372 d_raster_us=288829 d_observe_us=71212 max_observe_us=7856 d_paints=50 d_skips=0 d_ticks=6 window_ms=1141
+[host] slot liveg938j4_0: d_loop_us=1284 d_raster_us=298943 d_observe_us=65393 max_observe_us=8127 d_paints=50 d_skips=0 d_ticks=5 window_ms=1119
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1368 d_raster_us=290253 d_observe_us=74153 max_observe_us=8452 d_paints=50 d_skips=0 d_ticks=6 window_ms=1142
+[host] slot liveg938j4_0: d_loop_us=1390 d_raster_us=297295 d_observe_us=73930 max_observe_us=8119 d_paints=50 d_skips=0 d_ticks=6 window_ms=1139
+[host] slot liveg938j4_0: d_loop_us=1304 d_raster_us=293523 d_observe_us=66718 max_observe_us=8170 d_paints=50 d_skips=0 d_ticks=5 window_ms=1131
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=2929 d_raster_us=288342 d_observe_us=74100 max_observe_us=8087 d_paints=50 d_skips=0 d_ticks=6 window_ms=1132
+[host] slot liveg938j4_0: d_loop_us=1349 d_raster_us=298837 d_observe_us=75702 max_observe_us=8184 d_paints=50 d_skips=0 d_ticks=6 window_ms=1140
+[host] slot liveg938j4_0: d_loop_us=1301 d_raster_us=293678 d_observe_us=66141 max_observe_us=7821 d_paints=50 d_skips=0 d_ticks=5 window_ms=1137
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1310 d_raster_us=291101 d_observe_us=73532 max_observe_us=8428 d_paints=50 d_skips=0 d_ticks=6 window_ms=1138
+[host] slot liveg938j4_0: d_loop_us=1391 d_raster_us=298735 d_observe_us=74264 max_observe_us=8040 d_paints=50 d_skips=0 d_ticks=6 window_ms=1131
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1326 d_raster_us=292873 d_observe_us=65761 max_observe_us=7852 d_paints=50 d_skips=0 d_ticks=5 window_ms=1144
+[host] slot liveg938j4_0: d_loop_us=1340 d_raster_us=288622 d_observe_us=70109 max_observe_us=7776 d_paints=50 d_skips=0 d_ticks=6 window_ms=1132
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1362 d_raster_us=296008 d_observe_us=75692 max_observe_us=8235 d_paints=50 d_skips=0 d_ticks=6 window_ms=1134
+[host] slot liveg938j4_0: d_loop_us=1385 d_raster_us=298515 d_observe_us=67331 max_observe_us=8202 d_paints=50 d_skips=0 d_ticks=6 window_ms=1144
+[host] slot liveg938j4_0: d_loop_us=1355 d_raster_us=297324 d_observe_us=76833 max_observe_us=8518 d_paints=50 d_skips=0 d_ticks=5 window_ms=1132
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1278 d_raster_us=287702 d_observe_us=70863 max_observe_us=7696 d_paints=50 d_skips=0 d_ticks=6 window_ms=1144
+[host] slot liveg938j4_0: d_loop_us=1329 d_raster_us=298685 d_observe_us=75425 max_observe_us=8100 d_paints=50 d_skips=0 d_ticks=6 window_ms=1143
+[host] slot liveg938j4_0: d_loop_us=1363 d_raster_us=310074 d_observe_us=69352 max_observe_us=8295 d_paints=50 d_skips=0 d_ticks=5 window_ms=1122
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1379 d_raster_us=303876 d_observe_us=75136 max_observe_us=8073 d_paints=50 d_skips=0 d_ticks=6 window_ms=1138
+[host] slot liveg938j4_0: d_loop_us=1399 d_raster_us=363296 d_observe_us=75060 max_observe_us=8185 d_paints=50 d_skips=0 d_ticks=6 window_ms=1141
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1343 d_raster_us=304841 d_observe_us=72325 max_observe_us=9169 d_paints=50 d_skips=0 d_ticks=5 window_ms=1123
+[host] slot liveg938j4_0: d_loop_us=1352 d_raster_us=294925 d_observe_us=75214 max_observe_us=8231 d_paints=50 d_skips=0 d_ticks=6 window_ms=1135
+[host] slot liveg938j4_0: d_loop_us=1353 d_raster_us=292346 d_observe_us=71502 max_observe_us=8221 d_paints=50 d_skips=0 d_ticks=6 window_ms=1151
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1336 d_raster_us=296176 d_observe_us=67192 max_observe_us=8233 d_paints=50 d_skips=0 d_ticks=5 window_ms=1133
+[host] slot liveg938j4_0: d_loop_us=1319 d_raster_us=293759 d_observe_us=71895 max_observe_us=8169 d_paints=50 d_skips=0 d_ticks=6 window_ms=1136
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1320 d_raster_us=283846 d_observe_us=70144 max_observe_us=7766 d_paints=50 d_skips=0 d_ticks=6 window_ms=1136
+[host] slot liveg938j4_0: d_loop_us=1234 d_raster_us=261145 d_observe_us=59958 max_observe_us=8674 d_paints=50 d_skips=0 d_ticks=5 window_ms=1131
+[host] slot liveg938j4_0: d_loop_us=1202 d_raster_us=285995 d_observe_us=74459 max_observe_us=8858 d_paints=50 d_skips=0 d_ticks=6 window_ms=1124
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1291 d_raster_us=290812 d_observe_us=76521 max_observe_us=8292 d_paints=50 d_skips=0 d_ticks=6 window_ms=1136
+[host] slot liveg938j4_0: d_loop_us=1353 d_raster_us=277291 d_observe_us=71246 max_observe_us=11495 d_paints=50 d_skips=0 d_ticks=5 window_ms=1129
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1282 d_raster_us=284199 d_observe_us=73788 max_observe_us=8250 d_paints=50 d_skips=0 d_ticks=6 window_ms=1128
+[host] slot liveg938j4_0: d_loop_us=1246 d_raster_us=263885 d_observe_us=65335 max_observe_us=7306 d_paints=50 d_skips=0 d_ticks=6 window_ms=1147
+[host] slot liveg938j4_0: d_loop_us=1216 d_raster_us=262180 d_observe_us=58038 max_observe_us=6777 d_paints=50 d_skips=0 d_ticks=5 window_ms=1134
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1298 d_raster_us=268750 d_observe_us=66406 max_observe_us=7163 d_paints=50 d_skips=0 d_ticks=6 window_ms=1148
+[host] slot liveg938j4_0: d_loop_us=1253 d_raster_us=259692 d_observe_us=67449 max_observe_us=8626 d_paints=50 d_skips=0 d_ticks=6 window_ms=1142
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1259 d_raster_us=290793 d_observe_us=70963 max_observe_us=8505 d_paints=50 d_skips=0 d_ticks=5 window_ms=1132
+[host] slot liveg938j4_0: d_loop_us=1285 d_raster_us=294389 d_observe_us=76516 max_observe_us=8044 d_paints=50 d_skips=0 d_ticks=6 window_ms=1118
+[host] slot liveg938j4_0: d_loop_us=1249 d_raster_us=273437 d_observe_us=68919 max_observe_us=8057 d_paints=50 d_skips=0 d_ticks=6 window_ms=1134
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1211 d_raster_us=282995 d_observe_us=62967 max_observe_us=7516 d_paints=50 d_skips=0 d_ticks=5 window_ms=1128
+[host] slot liveg938j4_0: d_loop_us=1386 d_raster_us=287464 d_observe_us=73008 max_observe_us=7889 d_paints=50 d_skips=0 d_ticks=6 window_ms=1121
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1266 d_raster_us=292091 d_observe_us=74688 max_observe_us=8582 d_paints=50 d_skips=0 d_ticks=6 window_ms=1130
+[host] slot liveg938j4_0: d_loop_us=3213 d_raster_us=291268 d_observe_us=62657 max_observe_us=7817 d_paints=50 d_skips=0 d_ticks=5 window_ms=1131
+[host] slot liveg938j4_0: d_loop_us=1395 d_raster_us=318725 d_observe_us=76411 max_observe_us=8763 d_paints=50 d_skips=0 d_ticks=6 window_ms=1137
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1336 d_raster_us=292030 d_observe_us=71046 max_observe_us=7779 d_paints=50 d_skips=0 d_ticks=6 window_ms=1139
+[host] slot liveg938j4_0: d_loop_us=2497 d_raster_us=311637 d_observe_us=66518 max_observe_us=8136 d_paints=50 d_skips=0 d_ticks=5 window_ms=1143
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1353 d_raster_us=303498 d_observe_us=73056 max_observe_us=8010 d_paints=50 d_skips=0 d_ticks=6 window_ms=1137
+[host] slot liveg938j4_0: d_loop_us=1401 d_raster_us=304778 d_observe_us=75609 max_observe_us=8280 d_paints=50 d_skips=0 d_ticks=6 window_ms=1144
+[host] slot liveg938j4_0: d_loop_us=1321 d_raster_us=313563 d_observe_us=67080 max_observe_us=7936 d_paints=50 d_skips=0 d_ticks=6 window_ms=1145
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1332 d_raster_us=305259 d_observe_us=76143 max_observe_us=8674 d_paints=50 d_skips=0 d_ticks=5 window_ms=1134
+[host] slot liveg938j4_0: d_loop_us=1271 d_raster_us=290975 d_observe_us=74425 max_observe_us=8368 d_paints=50 d_skips=0 d_ticks=6 window_ms=1138
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1312 d_raster_us=287812 d_observe_us=70262 max_observe_us=7965 d_paints=50 d_skips=0 d_ticks=6 window_ms=1150
+[host] slot liveg938j4_0: d_loop_us=1320 d_raster_us=309672 d_observe_us=65151 max_observe_us=7844 d_paints=50 d_skips=0 d_ticks=5 window_ms=1131
+[host] slot liveg938j4_0: d_loop_us=1368 d_raster_us=302623 d_observe_us=74291 max_observe_us=8544 d_paints=50 d_skips=0 d_ticks=6 window_ms=1142
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1304 d_raster_us=305691 d_observe_us=75994 max_observe_us=9968 d_paints=50 d_skips=0 d_ticks=6 window_ms=1141
+[host] slot liveg938j4_0: d_loop_us=1299 d_raster_us=299650 d_observe_us=67308 max_observe_us=7964 d_paints=50 d_skips=0 d_ticks=5 window_ms=1138
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1299 d_raster_us=289378 d_observe_us=70781 max_observe_us=8257 d_paints=50 d_skips=0 d_ticks=6 window_ms=1141
+[host] slot liveg938j4_0: d_loop_us=1321 d_raster_us=295522 d_observe_us=72250 max_observe_us=7894 d_paints=50 d_skips=0 d_ticks=6 window_ms=1134
+[host] slot liveg938j4_0: d_loop_us=1306 d_raster_us=300166 d_observe_us=66109 max_observe_us=7920 d_paints=50 d_skips=0 d_ticks=6 window_ms=1140
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1215 d_raster_us=293585 d_observe_us=71466 max_observe_us=7912 d_paints=50 d_skips=0 d_ticks=5 window_ms=1136
+[host] slot liveg938j4_0: d_loop_us=1313 d_raster_us=296361 d_observe_us=74488 max_observe_us=8108 d_paints=50 d_skips=0 d_ticks=6 window_ms=1123
+[script liveg938j4_0] no 'Raw lobster' in the bank — idling
+[panel] liveg938j4_0: script: no 'Raw lobster' in the bank — idling
+[host] slot liveg938j4_0: d_loop_us=1316 d_raster_us=283935 d_observe_us=64655 max_observe_us=8037 d_paints=50 d_skips=0 d_ticks=6 window_ms=1138
+[host] slot liveg938j4_0: d_loop_us=1116 d_raster_us=268353 d_observe_us=64779 max_observe_us=6900 d_paints=50 d_skips=0 d_ticks=5 window_ms=1137

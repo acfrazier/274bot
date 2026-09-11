@@ -1,0 +1,458 @@
+
+running 1 test
+{"phase":"identity","case":"air","revision":289,"profile":"local-289 · 127.0.0.1:44594 · revision 289","cache_id":"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack","nav_sha256":"131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924","catalog_commit":"100adccc037d9f6898080e1cad58fcfc43364775","catalog_identity":"pre-289 frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"NatureCrafter","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/NatureCrafter/NatureCrafter.ts","source_sha256":"025ac395b25d64ef818cc0321478f0a2c84a051b79f99decbbfec5a9a2f0812a","compiled_sha256":"0b3e4f6062041de83568da1b970960ca7b9023bb7ae33d1974054d2951a4b2ff","siblings":[{"module":"/rs2b0t/bot/scripts/bot/NatureRunnerLogic.js","compiled_sha256":"be4333d9c5b6aa95fb21de8ca896bfa5c2701060d96ce6f256d5ecb41bf6ba9c"}]},"accounts":["liveuu9iqn_0","liveuu9iqn_1"],"gold_deadline_secs":180,"gold_watch_ticks":150}
+[host-play] slot liveuu9iqn_0: thread up
+[host-play] slot liveuu9iqn_1: thread up
+274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+[host-play] slot liveuu9iqn_1: handshake begin reconnect=false
+[host-play] slot liveuu9iqn_0: handshake begin reconnect=false
+[host-play] slot liveuu9iqn_1: handshake ok
+[host-play] slot liveuu9iqn_0: handshake ok
+[host] slot liveuu9iqn_0: d_loop_us=2275 d_raster_us=0 d_observe_us=15622 max_observe_us=1361 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host] slot liveuu9iqn_1: d_loop_us=2836 d_raster_us=0 d_observe_us=17674 max_observe_us=1969 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot liveuu9iqn_0: queued mainland tele+setvar (scene 2)
+[host-play] slot liveuu9iqn_1: queued mainland tele+setvar (scene 2)
+{"phase":"before-relog","account":"liveuu9iqn_1"}
+{"phase":"before-relog","account":"liveuu9iqn_0"}
+[host-play] slot liveuu9iqn_1: handshake begin reconnect=true
+[host-play] slot liveuu9iqn_0: handshake begin reconnect=true
+[host-play] slot liveuu9iqn_1: handshake ok
+{"phase":"relog-observed-logout","account":"liveuu9iqn_1"}
+[host-play] slot liveuu9iqn_0: handshake ok
+{"phase":"relog-observed-logout","account":"liveuu9iqn_0"}
+[host] slot liveuu9iqn_1: d_loop_us=1033 d_raster_us=0 d_observe_us=21382 max_observe_us=2323 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host] slot liveuu9iqn_0: d_loop_us=828 d_raster_us=0 d_observe_us=22641 max_observe_us=1456 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+{"phase":"after-relog","account":"liveuu9iqn_1"}
+[host-play] slot liveuu9iqn_1: queued mainland tele+setvar (scene 2)
+{"phase":"after-relog","account":"liveuu9iqn_0"}
+[host-play] slot liveuu9iqn_0: queued mainland tele+setvar (scene 2)
+{"phase":"seed-queued","account":"liveuu9iqn_1","kind":"air_runner_bank200_at_falador_east","note":"queued seed is not bank acknowledgement or script restock"}
+{"phase":"seed-queued","account":"liveuu9iqn_0","kind":"air_master_talisman_noessence_at_ruins","note":"queued seed is not bank acknowledgement or script restock"}
+{"phase":"seed-observed","account":"liveuu9iqn_0","bank_ack_done":false}
+{"phase":"seed-observed","account":"liveuu9iqn_1","bank_ack_done":false}
+{"phase":"baseline-after-preparation","account":"liveuu9iqn_0","role":"master","seeded_first_supplies":false,"observation":{"ingame":true,"scene_state":2,"inventory_tab_available":true,"player":"Liveuu9iqn 0","tile":[2983,3288,0],"tick":8,"runecraft":1,"runecraft_xp":0,"essence_unnoted":0,"essence_noted":0,"air_runes":0,"air_talisman":1,"bank_open":false,"bank_loaded":false,"bank_session_generation":0,"bank_essence_unnoted":0,"trade_offer_open":false,"trade_confirm_open":false,"trade_partner":null,"trade_accept_id":-1,"trade_mine_essence":0,"trade_theirs_essence":0,"in_temple":false}}
+{"phase":"prepared","account":"liveuu9iqn_0","role":"master","note":"waiting for shared start barrier; not Start"}
+{"phase":"acknowledged-bank","account":"liveuu9iqn_1","bank_essence_unnoted":200,"bank_session_generation":1,"stand":[3013,3355,0],"tile":[3012,3355,0],"note":"givebank blankrune 200 observed open+loaded at Falador East; not the script restock"}
+{"phase":"closed-bank","account":"liveuu9iqn_1","bank_session_generation":4,"ack_generation":1,"generation_moved":true,"stand":[3013,3355,0]}
+{"phase":"seed-queued","account":"liveuu9iqn_1","kind":"air_runner_firstload25_at_ruins","note":"queued seed is not bank acknowledgement or script restock"}
+[host] slot liveuu9iqn_1: d_loop_us=26508 d_raster_us=0 d_observe_us=105367 max_observe_us=8762 d_paints=0 d_skips=50 d_ticks=15 window_ms=4478
+{"phase":"seed-observed","account":"liveuu9iqn_1","bank_ack_done":true}
+{"phase":"baseline-after-preparation","account":"liveuu9iqn_1","role":"runner","seeded_first_supplies":true,"observation":{"ingame":true,"scene_state":2,"inventory_tab_available":true,"player":"Liveuu9iqn 1","tile":[2983,3288,0],"tick":20,"runecraft":1,"runecraft_xp":0,"essence_unnoted":25,"essence_noted":0,"air_runes":0,"air_talisman":0,"bank_open":false,"bank_loaded":false,"bank_session_generation":4,"bank_essence_unnoted":0,"trade_offer_open":false,"trade_confirm_open":false,"trade_partner":null,"trade_accept_id":-1,"trade_mine_essence":0,"trade_theirs_essence":0,"in_temple":false}}
+{"phase":"prepared","account":"liveuu9iqn_1","role":"runner","note":"waiting for shared start barrier; not Start"}
+[script liveuu9iqn_0] start load
+{"phase":"start","account":"liveuu9iqn_0","kind":"air_master","settings":{"rune":"Air runes","mode":"Master","partner":"Liveuu9iqn 1","bankEvery":60.0,"withdrawEss":0.0,"withdrawCoins":10000.0,"stayInAltar":false}}
+[script liveuu9iqn_1] start load
+{"phase":"start","account":"liveuu9iqn_1","kind":"air_runner","settings":{"rune":"Air runes","mode":"Runner","partner":"Liveuu9iqn 0","bankEvery":60.0,"withdrawEss":0.0,"withdrawCoins":10000.0,"stayInAltar":false}}
+{"phase":"both-started","gold_clock":"begin","note":"gold clock starts only after both Start; preparation is not counted"}
+[host] hitch liveuu9iqn_0: observe_us=17173 paints=0 skips=91 ticks=21
+[host] hitch liveuu9iqn_1: observe_us=17348 paints=0 skips=110 ticks=21
+[script liveuu9iqn_0] NatureCrafter master starting — Air runes at (2983, 3288, 0), accepting essence from [Liveuu9iqn 1], banking everything every 60min
+[script liveuu9iqn_1] NatureCrafter runner starting — ferrying essence for Air runes to [Liveuu9iqn 0] straight from the bank (unnoted)
+[script liveuu9iqn_1] runner: Trade-with 'Liveuu9iqn 0' d=0 closed with=- mine=0 theirs=0 unnoted=25
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_0: d_loop_us=25204 d_raster_us=0 d_observe_us=95455 max_observe_us=17173 d_paints=0 d_skips=50 d_ticks=21 window_ms=6436
+[host] slot liveuu9iqn_1: d_loop_us=14334 d_raster_us=0 d_observe_us=117612 max_observe_us=17348 d_paints=0 d_skips=50 d_ticks=9 window_ms=2682
+[host] slot liveuu9iqn_0: d_loop_us=1331 d_raster_us=0 d_observe_us=113741 max_observe_us=15021 d_paints=0 d_skips=50 d_ticks=4 window_ms=1156
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=2209 d_raster_us=0 d_observe_us=94418 max_observe_us=13183 d_paints=0 d_skips=50 d_ticks=3 window_ms=1163
+[host] slot liveuu9iqn_0: d_loop_us=1186 d_raster_us=0 d_observe_us=95503 max_observe_us=12394 d_paints=0 d_skips=50 d_ticks=4 window_ms=1182
+[host] slot liveuu9iqn_1: d_loop_us=1371 d_raster_us=0 d_observe_us=93425 max_observe_us=15587 d_paints=0 d_skips=50 d_ticks=4 window_ms=1164
+[host] slot liveuu9iqn_0: d_loop_us=1227 d_raster_us=0 d_observe_us=88821 max_observe_us=10240 d_paints=0 d_skips=50 d_ticks=4 window_ms=1161
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=1228 d_raster_us=0 d_observe_us=80577 max_observe_us=12896 d_paints=0 d_skips=50 d_ticks=4 window_ms=1166
+[host] hitch liveuu9iqn_0: observe_us=17718 paints=0 skips=299 ticks=38
+[host] slot liveuu9iqn_0: d_loop_us=1336 d_raster_us=0 d_observe_us=114502 max_observe_us=17718 d_paints=0 d_skips=50 d_ticks=4 window_ms=1158
+[host] slot liveuu9iqn_1: d_loop_us=927 d_raster_us=0 d_observe_us=84930 max_observe_us=13814 d_paints=0 d_skips=50 d_ticks=4 window_ms=1182
+[host] slot liveuu9iqn_0: d_loop_us=839 d_raster_us=0 d_observe_us=63173 max_observe_us=10470 d_paints=0 d_skips=50 d_ticks=3 window_ms=1140
+[host] hitch liveuu9iqn_0: observe_us=16209 paints=0 skips=376 ticks=44
+[host] hitch liveuu9iqn_1: observe_us=20387 paints=0 skips=393 ticks=44
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=918 d_raster_us=0 d_observe_us=81274 max_observe_us=20387 d_paints=0 d_skips=50 d_ticks=4 window_ms=1178
+[host] slot liveuu9iqn_0: d_loop_us=1021 d_raster_us=0 d_observe_us=94321 max_observe_us=16209 d_paints=0 d_skips=50 d_ticks=4 window_ms=1181
+[host] slot liveuu9iqn_1: d_loop_us=1173 d_raster_us=0 d_observe_us=76078 max_observe_us=10929 d_paints=0 d_skips=50 d_ticks=4 window_ms=1175
+[host] slot liveuu9iqn_0: d_loop_us=1838 d_raster_us=0 d_observe_us=76499 max_observe_us=11312 d_paints=0 d_skips=50 d_ticks=4 window_ms=1182
+[host] hitch liveuu9iqn_0: observe_us=16483 paints=0 skips=478 ticks=52
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=804 d_raster_us=0 d_observe_us=85490 max_observe_us=14250 d_paints=0 d_skips=50 d_ticks=4 window_ms=1191
+[host] slot liveuu9iqn_0: d_loop_us=1084 d_raster_us=0 d_observe_us=97636 max_observe_us=16483 d_paints=0 d_skips=50 d_ticks=4 window_ms=1178
+[host] slot liveuu9iqn_1: d_loop_us=905 d_raster_us=0 d_observe_us=80247 max_observe_us=11572 d_paints=0 d_skips=50 d_ticks=4 window_ms=1161
+[host] slot liveuu9iqn_0: d_loop_us=741 d_raster_us=0 d_observe_us=82627 max_observe_us=12448 d_paints=0 d_skips=50 d_ticks=4 window_ms=1180
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=930 d_raster_us=0 d_observe_us=69102 max_observe_us=12571 d_paints=0 d_skips=50 d_ticks=4 window_ms=1187
+[host] slot liveuu9iqn_0: d_loop_us=835 d_raster_us=0 d_observe_us=72731 max_observe_us=13232 d_paints=0 d_skips=50 d_ticks=4 window_ms=1195
+[host] slot liveuu9iqn_1: d_loop_us=829 d_raster_us=0 d_observe_us=75031 max_observe_us=11538 d_paints=0 d_skips=50 d_ticks=4 window_ms=1179
+[host] slot liveuu9iqn_0: d_loop_us=796 d_raster_us=0 d_observe_us=81815 max_observe_us=13381 d_paints=0 d_skips=50 d_ticks=4 window_ms=1173
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=1196 d_raster_us=0 d_observe_us=69996 max_observe_us=11028 d_paints=0 d_skips=50 d_ticks=4 window_ms=1166
+[host] slot liveuu9iqn_0: d_loop_us=910 d_raster_us=0 d_observe_us=95754 max_observe_us=15574 d_paints=0 d_skips=50 d_ticks=4 window_ms=1167
+[host] slot liveuu9iqn_1: d_loop_us=917 d_raster_us=0 d_observe_us=86082 max_observe_us=13438 d_paints=0 d_skips=50 d_ticks=3 window_ms=1168
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_0: d_loop_us=947 d_raster_us=0 d_observe_us=92795 max_observe_us=13922 d_paints=0 d_skips=50 d_ticks=4 window_ms=1174
+[host] slot liveuu9iqn_1: d_loop_us=813 d_raster_us=0 d_observe_us=83760 max_observe_us=14351 d_paints=0 d_skips=50 d_ticks=4 window_ms=1175
+[host] slot liveuu9iqn_0: d_loop_us=846 d_raster_us=0 d_observe_us=83052 max_observe_us=12868 d_paints=0 d_skips=50 d_ticks=4 window_ms=1174
+[host] slot liveuu9iqn_1: d_loop_us=959 d_raster_us=0 d_observe_us=78010 max_observe_us=14424 d_paints=0 d_skips=50 d_ticks=4 window_ms=1168
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_0: d_loop_us=1065 d_raster_us=0 d_observe_us=90475 max_observe_us=12966 d_paints=0 d_skips=50 d_ticks=4 window_ms=1172
+[host] slot liveuu9iqn_1: d_loop_us=1183 d_raster_us=0 d_observe_us=88664 max_observe_us=13264 d_paints=0 d_skips=50 d_ticks=4 window_ms=1168
+[host] slot liveuu9iqn_0: d_loop_us=1029 d_raster_us=0 d_observe_us=86906 max_observe_us=12656 d_paints=0 d_skips=50 d_ticks=4 window_ms=1178
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=859 d_raster_us=0 d_observe_us=75634 max_observe_us=12331 d_paints=0 d_skips=50 d_ticks=4 window_ms=1156
+[host] slot liveuu9iqn_0: d_loop_us=878 d_raster_us=0 d_observe_us=76008 max_observe_us=10744 d_paints=0 d_skips=50 d_ticks=4 window_ms=1194
+[host] slot liveuu9iqn_1: d_loop_us=743 d_raster_us=0 d_observe_us=81459 max_observe_us=14895 d_paints=0 d_skips=50 d_ticks=4 window_ms=1176
+[host] slot liveuu9iqn_0: d_loop_us=831 d_raster_us=0 d_observe_us=64207 max_observe_us=11965 d_paints=0 d_skips=50 d_ticks=4 window_ms=1170
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=548 d_raster_us=0 d_observe_us=51080 max_observe_us=8115 d_paints=0 d_skips=50 d_ticks=4 window_ms=1197
+[host] slot liveuu9iqn_0: d_loop_us=646 d_raster_us=0 d_observe_us=52107 max_observe_us=8611 d_paints=0 d_skips=50 d_ticks=4 window_ms=1199
+[host] slot liveuu9iqn_1: d_loop_us=600 d_raster_us=0 d_observe_us=49555 max_observe_us=7804 d_paints=0 d_skips=50 d_ticks=4 window_ms=1196
+[host] slot liveuu9iqn_0: d_loop_us=589 d_raster_us=0 d_observe_us=52420 max_observe_us=8884 d_paints=0 d_skips=50 d_ticks=3 window_ms=1183
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=641 d_raster_us=0 d_observe_us=59682 max_observe_us=9105 d_paints=0 d_skips=50 d_ticks=4 window_ms=1195
+[host] slot liveuu9iqn_0: d_loop_us=972 d_raster_us=0 d_observe_us=79234 max_observe_us=11998 d_paints=0 d_skips=50 d_ticks=4 window_ms=1189
+[host] slot liveuu9iqn_1: d_loop_us=741 d_raster_us=0 d_observe_us=72166 max_observe_us=12346 d_paints=0 d_skips=50 d_ticks=4 window_ms=1191
+[host] slot liveuu9iqn_0: d_loop_us=791 d_raster_us=0 d_observe_us=77127 max_observe_us=12982 d_paints=0 d_skips=50 d_ticks=4 window_ms=1167
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=835 d_raster_us=0 d_observe_us=71892 max_observe_us=13836 d_paints=0 d_skips=50 d_ticks=4 window_ms=1192
+[host] slot liveuu9iqn_0: d_loop_us=724 d_raster_us=0 d_observe_us=58272 max_observe_us=9284 d_paints=0 d_skips=50 d_ticks=4 window_ms=1183
+[host] slot liveuu9iqn_1: d_loop_us=848 d_raster_us=0 d_observe_us=66575 max_observe_us=10313 d_paints=0 d_skips=50 d_ticks=4 window_ms=1188
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_0: d_loop_us=883 d_raster_us=0 d_observe_us=78803 max_observe_us=11321 d_paints=0 d_skips=50 d_ticks=4 window_ms=1163
+[host] slot liveuu9iqn_1: d_loop_us=873 d_raster_us=0 d_observe_us=70903 max_observe_us=11740 d_paints=0 d_skips=50 d_ticks=4 window_ms=1181
+[host] slot liveuu9iqn_0: d_loop_us=1186 d_raster_us=0 d_observe_us=74102 max_observe_us=12651 d_paints=0 d_skips=50 d_ticks=4 window_ms=1170
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=795 d_raster_us=0 d_observe_us=83847 max_observe_us=14405 d_paints=0 d_skips=50 d_ticks=4 window_ms=1179
+[host] slot liveuu9iqn_0: d_loop_us=923 d_raster_us=0 d_observe_us=81256 max_observe_us=13430 d_paints=0 d_skips=50 d_ticks=4 window_ms=1167
+[host] slot liveuu9iqn_1: d_loop_us=947 d_raster_us=0 d_observe_us=82336 max_observe_us=14841 d_paints=0 d_skips=50 d_ticks=4 window_ms=1187
+[host] slot liveuu9iqn_0: d_loop_us=817 d_raster_us=0 d_observe_us=73690 max_observe_us=13756 d_paints=0 d_skips=50 d_ticks=4 window_ms=1157
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=746 d_raster_us=0 d_observe_us=72335 max_observe_us=10930 d_paints=0 d_skips=50 d_ticks=4 window_ms=1198
+[host] hitch liveuu9iqn_0: observe_us=16186 paints=0 skips=1497 ticks=132
+[host] slot liveuu9iqn_0: d_loop_us=1060 d_raster_us=0 d_observe_us=98667 max_observe_us=16186 d_paints=0 d_skips=50 d_ticks=4 window_ms=1175
+[host] slot liveuu9iqn_1: d_loop_us=778 d_raster_us=0 d_observe_us=66243 max_observe_us=9722 d_paints=0 d_skips=50 d_ticks=4 window_ms=1167
+[host] slot liveuu9iqn_0: d_loop_us=814 d_raster_us=0 d_observe_us=79683 max_observe_us=11251 d_paints=0 d_skips=50 d_ticks=4 window_ms=1182
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=816 d_raster_us=0 d_observe_us=82170 max_observe_us=14673 d_paints=0 d_skips=50 d_ticks=3 window_ms=1183
+[host] slot liveuu9iqn_0: d_loop_us=831 d_raster_us=0 d_observe_us=85405 max_observe_us=13358 d_paints=0 d_skips=50 d_ticks=3 window_ms=1137
+[host] slot liveuu9iqn_1: d_loop_us=832 d_raster_us=0 d_observe_us=78832 max_observe_us=11514 d_paints=0 d_skips=50 d_ticks=4 window_ms=1177
+[host] slot liveuu9iqn_0: d_loop_us=949 d_raster_us=0 d_observe_us=86853 max_observe_us=11937 d_paints=0 d_skips=50 d_ticks=4 window_ms=1178
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=934 d_raster_us=0 d_observe_us=79169 max_observe_us=10839 d_paints=0 d_skips=50 d_ticks=4 window_ms=1176
+[host] slot liveuu9iqn_0: d_loop_us=975 d_raster_us=0 d_observe_us=79696 max_observe_us=12756 d_paints=0 d_skips=50 d_ticks=4 window_ms=1169
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=878 d_raster_us=0 d_observe_us=79773 max_observe_us=14479 d_paints=0 d_skips=50 d_ticks=4 window_ms=1173
+[host] slot liveuu9iqn_0: d_loop_us=913 d_raster_us=0 d_observe_us=87036 max_observe_us=12762 d_paints=0 d_skips=50 d_ticks=4 window_ms=1181
+[host] slot liveuu9iqn_1: d_loop_us=1172 d_raster_us=0 d_observe_us=86092 max_observe_us=12547 d_paints=0 d_skips=50 d_ticks=4 window_ms=1170
+[host] slot liveuu9iqn_0: d_loop_us=876 d_raster_us=0 d_observe_us=83686 max_observe_us=11908 d_paints=0 d_skips=50 d_ticks=4 window_ms=1171
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=835 d_raster_us=0 d_observe_us=79412 max_observe_us=12747 d_paints=0 d_skips=50 d_ticks=4 window_ms=1170
+[host] slot liveuu9iqn_0: d_loop_us=1498 d_raster_us=0 d_observe_us=82292 max_observe_us=11224 d_paints=0 d_skips=50 d_ticks=4 window_ms=1181
+[host] slot liveuu9iqn_1: d_loop_us=885 d_raster_us=0 d_observe_us=67783 max_observe_us=11961 d_paints=0 d_skips=50 d_ticks=4 window_ms=1182
+[host] slot liveuu9iqn_0: d_loop_us=758 d_raster_us=0 d_observe_us=77471 max_observe_us=11127 d_paints=0 d_skips=50 d_ticks=4 window_ms=1181
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=878 d_raster_us=0 d_observe_us=77881 max_observe_us=12419 d_paints=0 d_skips=50 d_ticks=4 window_ms=1183
+test paired_catalog_air_live has been running for over 60 seconds
+[host] slot liveuu9iqn_0: d_loop_us=1754 d_raster_us=0 d_observe_us=84123 max_observe_us=12029 d_paints=0 d_skips=50 d_ticks=4 window_ms=1175
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=1074 d_raster_us=0 d_observe_us=84329 max_observe_us=12396 d_paints=0 d_skips=50 d_ticks=4 window_ms=1169
+[host] slot liveuu9iqn_0: d_loop_us=1280 d_raster_us=0 d_observe_us=97174 max_observe_us=13794 d_paints=0 d_skips=50 d_ticks=4 window_ms=1166
+[host] slot liveuu9iqn_1: d_loop_us=1037 d_raster_us=0 d_observe_us=87865 max_observe_us=12359 d_paints=0 d_skips=50 d_ticks=4 window_ms=1164
+[host] slot liveuu9iqn_0: d_loop_us=1032 d_raster_us=0 d_observe_us=79736 max_observe_us=13528 d_paints=0 d_skips=50 d_ticks=4 window_ms=1174
+[host] slot liveuu9iqn_1: d_loop_us=853 d_raster_us=0 d_observe_us=61136 max_observe_us=8691 d_paints=0 d_skips=50 d_ticks=4 window_ms=1174
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_0: d_loop_us=1136 d_raster_us=0 d_observe_us=77600 max_observe_us=12232 d_paints=0 d_skips=50 d_ticks=4 window_ms=1167
+[host] slot liveuu9iqn_1: d_loop_us=970 d_raster_us=0 d_observe_us=66539 max_observe_us=11843 d_paints=0 d_skips=50 d_ticks=4 window_ms=1159
+[host] slot liveuu9iqn_0: d_loop_us=888 d_raster_us=0 d_observe_us=76279 max_observe_us=15593 d_paints=0 d_skips=50 d_ticks=3 window_ms=1160
+[host] slot liveuu9iqn_1: d_loop_us=840 d_raster_us=0 d_observe_us=81627 max_observe_us=13549 d_paints=0 d_skips=50 d_ticks=3 window_ms=1165
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_0: d_loop_us=869 d_raster_us=0 d_observe_us=80489 max_observe_us=11611 d_paints=0 d_skips=50 d_ticks=4 window_ms=1173
+[host] slot liveuu9iqn_1: d_loop_us=755 d_raster_us=0 d_observe_us=71474 max_observe_us=12582 d_paints=0 d_skips=50 d_ticks=4 window_ms=1175
+[host] slot liveuu9iqn_0: d_loop_us=793 d_raster_us=0 d_observe_us=80226 max_observe_us=12485 d_paints=0 d_skips=50 d_ticks=4 window_ms=1166
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=790 d_raster_us=0 d_observe_us=70399 max_observe_us=11413 d_paints=0 d_skips=50 d_ticks=4 window_ms=1194
+[host] slot liveuu9iqn_0: d_loop_us=723 d_raster_us=0 d_observe_us=65944 max_observe_us=10317 d_paints=0 d_skips=50 d_ticks=4 window_ms=1191
+[host] slot liveuu9iqn_1: d_loop_us=944 d_raster_us=0 d_observe_us=75122 max_observe_us=11394 d_paints=0 d_skips=50 d_ticks=4 window_ms=1181
+[host] slot liveuu9iqn_0: d_loop_us=868 d_raster_us=0 d_observe_us=89532 max_observe_us=14233 d_paints=0 d_skips=50 d_ticks=4 window_ms=1155
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=968 d_raster_us=0 d_observe_us=74367 max_observe_us=11866 d_paints=0 d_skips=50 d_ticks=4 window_ms=1190
+[host] slot liveuu9iqn_0: d_loop_us=997 d_raster_us=0 d_observe_us=86559 max_observe_us=14612 d_paints=0 d_skips=50 d_ticks=4 window_ms=1165
+[host] slot liveuu9iqn_1: d_loop_us=854 d_raster_us=0 d_observe_us=82058 max_observe_us=15350 d_paints=0 d_skips=50 d_ticks=4 window_ms=1182
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_0: d_loop_us=969 d_raster_us=0 d_observe_us=80060 max_observe_us=11774 d_paints=0 d_skips=50 d_ticks=4 window_ms=1178
+[host] slot liveuu9iqn_1: d_loop_us=878 d_raster_us=0 d_observe_us=79927 max_observe_us=13368 d_paints=0 d_skips=50 d_ticks=4 window_ms=1159
+[host] slot liveuu9iqn_0: d_loop_us=983 d_raster_us=0 d_observe_us=98963 max_observe_us=13944 d_paints=0 d_skips=50 d_ticks=4 window_ms=1168
+[host] slot liveuu9iqn_1: d_loop_us=934 d_raster_us=0 d_observe_us=77794 max_observe_us=11698 d_paints=0 d_skips=50 d_ticks=4 window_ms=1179
+[host] slot liveuu9iqn_0: d_loop_us=1102 d_raster_us=0 d_observe_us=89517 max_observe_us=11824 d_paints=0 d_skips=50 d_ticks=4 window_ms=1167
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=898 d_raster_us=0 d_observe_us=74480 max_observe_us=12939 d_paints=0 d_skips=50 d_ticks=4 window_ms=1168
+[host] slot liveuu9iqn_0: d_loop_us=1019 d_raster_us=0 d_observe_us=84307 max_observe_us=13748 d_paints=0 d_skips=50 d_ticks=4 window_ms=1189
+[host] slot liveuu9iqn_1: d_loop_us=2058 d_raster_us=0 d_observe_us=84709 max_observe_us=14449 d_paints=0 d_skips=50 d_ticks=4 window_ms=1184
+[host] slot liveuu9iqn_0: d_loop_us=990 d_raster_us=0 d_observe_us=78391 max_observe_us=12977 d_paints=0 d_skips=50 d_ticks=4 window_ms=1146
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=792 d_raster_us=0 d_observe_us=73555 max_observe_us=12161 d_paints=0 d_skips=50 d_ticks=4 window_ms=1171
+[host] slot liveuu9iqn_0: d_loop_us=2533 d_raster_us=0 d_observe_us=92377 max_observe_us=12442 d_paints=0 d_skips=50 d_ticks=3 window_ms=1162
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=1616 d_raster_us=0 d_observe_us=76943 max_observe_us=13184 d_paints=0 d_skips=50 d_ticks=4 window_ms=1188
+[host] slot liveuu9iqn_0: d_loop_us=892 d_raster_us=0 d_observe_us=80410 max_observe_us=12920 d_paints=0 d_skips=50 d_ticks=4 window_ms=1177
+[host] slot liveuu9iqn_1: d_loop_us=933 d_raster_us=0 d_observe_us=62179 max_observe_us=13374 d_paints=0 d_skips=50 d_ticks=4 window_ms=1162
+[host] slot liveuu9iqn_0: d_loop_us=855 d_raster_us=0 d_observe_us=73490 max_observe_us=11593 d_paints=0 d_skips=50 d_ticks=4 window_ms=1175
+[host] hitch liveuu9iqn_0: observe_us=16213 paints=0 skips=2817 ticks=235
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=900 d_raster_us=0 d_observe_us=74890 max_observe_us=11874 d_paints=0 d_skips=50 d_ticks=3 window_ms=1189
+[host] slot liveuu9iqn_0: d_loop_us=1075 d_raster_us=0 d_observe_us=88875 max_observe_us=16213 d_paints=0 d_skips=50 d_ticks=4 window_ms=1160
+[host] slot liveuu9iqn_1: d_loop_us=1019 d_raster_us=0 d_observe_us=76714 max_observe_us=12741 d_paints=0 d_skips=50 d_ticks=4 window_ms=1174
+[host] slot liveuu9iqn_0: d_loop_us=882 d_raster_us=0 d_observe_us=72904 max_observe_us=11671 d_paints=0 d_skips=50 d_ticks=4 window_ms=1184
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=887 d_raster_us=0 d_observe_us=69649 max_observe_us=9921 d_paints=0 d_skips=50 d_ticks=4 window_ms=1185
+[host] slot liveuu9iqn_0: d_loop_us=881 d_raster_us=0 d_observe_us=85053 max_observe_us=15550 d_paints=0 d_skips=50 d_ticks=4 window_ms=1177
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=1008 d_raster_us=0 d_observe_us=83086 max_observe_us=13480 d_paints=0 d_skips=50 d_ticks=4 window_ms=1172
+[host] slot liveuu9iqn_0: d_loop_us=993 d_raster_us=0 d_observe_us=93556 max_observe_us=13636 d_paints=0 d_skips=50 d_ticks=4 window_ms=1181
+[host] slot liveuu9iqn_1: d_loop_us=783 d_raster_us=0 d_observe_us=74219 max_observe_us=14189 d_paints=0 d_skips=50 d_ticks=4 window_ms=1154
+[host] slot liveuu9iqn_0: d_loop_us=945 d_raster_us=0 d_observe_us=75614 max_observe_us=10805 d_paints=0 d_skips=50 d_ticks=4 window_ms=1183
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=926 d_raster_us=0 d_observe_us=73190 max_observe_us=12447 d_paints=0 d_skips=50 d_ticks=4 window_ms=1158
+[host] slot liveuu9iqn_0: d_loop_us=1064 d_raster_us=0 d_observe_us=78569 max_observe_us=10808 d_paints=0 d_skips=50 d_ticks=4 window_ms=1176
+[host] slot liveuu9iqn_1: d_loop_us=955 d_raster_us=0 d_observe_us=82524 max_observe_us=14417 d_paints=0 d_skips=50 d_ticks=4 window_ms=1167
+[host] slot liveuu9iqn_0: d_loop_us=970 d_raster_us=0 d_observe_us=101885 max_observe_us=14278 d_paints=0 d_skips=50 d_ticks=4 window_ms=1175
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=954 d_raster_us=0 d_observe_us=84640 max_observe_us=14793 d_paints=0 d_skips=50 d_ticks=4 window_ms=1174
+[host] slot liveuu9iqn_0: d_loop_us=918 d_raster_us=0 d_observe_us=83483 max_observe_us=14651 d_paints=0 d_skips=50 d_ticks=4 window_ms=1166
+[host] slot liveuu9iqn_1: d_loop_us=966 d_raster_us=0 d_observe_us=73622 max_observe_us=11616 d_paints=0 d_skips=50 d_ticks=4 window_ms=1160
+[host] slot liveuu9iqn_0: d_loop_us=657 d_raster_us=0 d_observe_us=66182 max_observe_us=11279 d_paints=0 d_skips=50 d_ticks=3 window_ms=1167
+[host] slot liveuu9iqn_1: d_loop_us=1061 d_raster_us=0 d_observe_us=70587 max_observe_us=12673 d_paints=0 d_skips=50 d_ticks=4 window_ms=1155
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_0: d_loop_us=908 d_raster_us=0 d_observe_us=86314 max_observe_us=13018 d_paints=0 d_skips=50 d_ticks=4 window_ms=1167
+[host] slot liveuu9iqn_1: d_loop_us=915 d_raster_us=0 d_observe_us=85598 max_observe_us=12937 d_paints=0 d_skips=50 d_ticks=3 window_ms=1168
+[host] slot liveuu9iqn_0: d_loop_us=1335 d_raster_us=0 d_observe_us=95551 max_observe_us=13071 d_paints=0 d_skips=50 d_ticks=4 window_ms=1169
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=791 d_raster_us=0 d_observe_us=69780 max_observe_us=11606 d_paints=0 d_skips=50 d_ticks=4 window_ms=1185
+[host] slot liveuu9iqn_0: d_loop_us=919 d_raster_us=0 d_observe_us=70844 max_observe_us=12215 d_paints=0 d_skips=50 d_ticks=4 window_ms=1151
+[host] slot liveuu9iqn_1: d_loop_us=744 d_raster_us=0 d_observe_us=75503 max_observe_us=13128 d_paints=0 d_skips=50 d_ticks=4 window_ms=1180
+[host] slot liveuu9iqn_0: d_loop_us=912 d_raster_us=0 d_observe_us=76616 max_observe_us=12481 d_paints=0 d_skips=50 d_ticks=4 window_ms=1180
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=870 d_raster_us=0 d_observe_us=76718 max_observe_us=13202 d_paints=0 d_skips=50 d_ticks=4 window_ms=1159
+[host] slot liveuu9iqn_0: d_loop_us=922 d_raster_us=0 d_observe_us=88838 max_observe_us=13996 d_paints=0 d_skips=50 d_ticks=4 window_ms=1186
+[host] slot liveuu9iqn_1: d_loop_us=986 d_raster_us=0 d_observe_us=81980 max_observe_us=12519 d_paints=0 d_skips=50 d_ticks=4 window_ms=1168
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_0: d_loop_us=1078 d_raster_us=0 d_observe_us=83003 max_observe_us=11800 d_paints=0 d_skips=50 d_ticks=4 window_ms=1187
+[host] slot liveuu9iqn_1: d_loop_us=860 d_raster_us=0 d_observe_us=72502 max_observe_us=13598 d_paints=0 d_skips=50 d_ticks=4 window_ms=1188
+[host] slot liveuu9iqn_0: d_loop_us=865 d_raster_us=0 d_observe_us=75565 max_observe_us=11163 d_paints=0 d_skips=50 d_ticks=4 window_ms=1172
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=899 d_raster_us=0 d_observe_us=75551 max_observe_us=12000 d_paints=0 d_skips=50 d_ticks=4 window_ms=1167
+[host] slot liveuu9iqn_0: d_loop_us=1087 d_raster_us=0 d_observe_us=84273 max_observe_us=14393 d_paints=0 d_skips=50 d_ticks=4 window_ms=1172
+[host] slot liveuu9iqn_1: d_loop_us=1229 d_raster_us=0 d_observe_us=82502 max_observe_us=14523 d_paints=0 d_skips=50 d_ticks=4 window_ms=1171
+[host] slot liveuu9iqn_0: d_loop_us=935 d_raster_us=0 d_observe_us=91297 max_observe_us=14438 d_paints=0 d_skips=50 d_ticks=4 window_ms=1164
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=1008 d_raster_us=0 d_observe_us=78306 max_observe_us=12261 d_paints=0 d_skips=50 d_ticks=4 window_ms=1162
+[host] slot liveuu9iqn_0: d_loop_us=924 d_raster_us=0 d_observe_us=75007 max_observe_us=11840 d_paints=0 d_skips=50 d_ticks=4 window_ms=1177
+[host] slot liveuu9iqn_1: d_loop_us=832 d_raster_us=0 d_observe_us=61751 max_observe_us=13477 d_paints=0 d_skips=50 d_ticks=4 window_ms=1189
+[host] slot liveuu9iqn_0: d_loop_us=594 d_raster_us=0 d_observe_us=68482 max_observe_us=12275 d_paints=0 d_skips=50 d_ticks=4 window_ms=1214
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=809 d_raster_us=0 d_observe_us=77239 max_observe_us=14845 d_paints=0 d_skips=50 d_ticks=4 window_ms=1193
+[host] slot liveuu9iqn_0: d_loop_us=1268 d_raster_us=0 d_observe_us=81487 max_observe_us=14695 d_paints=0 d_skips=50 d_ticks=4 window_ms=1169
+[host] slot liveuu9iqn_1: d_loop_us=811 d_raster_us=0 d_observe_us=57984 max_observe_us=10073 d_paints=0 d_skips=50 d_ticks=4 window_ms=1164
+[host] slot liveuu9iqn_0: d_loop_us=909 d_raster_us=0 d_observe_us=76626 max_observe_us=13001 d_paints=0 d_skips=50 d_ticks=3 window_ms=1174
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=739 d_raster_us=0 d_observe_us=66472 max_observe_us=12175 d_paints=0 d_skips=50 d_ticks=3 window_ms=1182
+[host] slot liveuu9iqn_0: d_loop_us=1103 d_raster_us=0 d_observe_us=75395 max_observe_us=12329 d_paints=0 d_skips=50 d_ticks=4 window_ms=1185
+[host] slot liveuu9iqn_1: d_loop_us=1031 d_raster_us=0 d_observe_us=93084 max_observe_us=15013 d_paints=0 d_skips=50 d_ticks=4 window_ms=1157
+[host] slot liveuu9iqn_0: d_loop_us=934 d_raster_us=0 d_observe_us=85101 max_observe_us=11567 d_paints=0 d_skips=50 d_ticks=4 window_ms=1153
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=1045 d_raster_us=0 d_observe_us=86735 max_observe_us=13131 d_paints=0 d_skips=50 d_ticks=4 window_ms=1175
+[host] slot liveuu9iqn_0: d_loop_us=909 d_raster_us=0 d_observe_us=86598 max_observe_us=12081 d_paints=0 d_skips=50 d_ticks=4 window_ms=1167
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=1219 d_raster_us=0 d_observe_us=78225 max_observe_us=12215 d_paints=0 d_skips=50 d_ticks=4 window_ms=1179
+[host] slot liveuu9iqn_0: d_loop_us=1029 d_raster_us=0 d_observe_us=79049 max_observe_us=12074 d_paints=0 d_skips=50 d_ticks=4 window_ms=1187
+[host] slot liveuu9iqn_1: d_loop_us=1237 d_raster_us=0 d_observe_us=76482 max_observe_us=11497 d_paints=0 d_skips=50 d_ticks=4 window_ms=1157
+[host] slot liveuu9iqn_0: d_loop_us=1232 d_raster_us=0 d_observe_us=85991 max_observe_us=10839 d_paints=0 d_skips=50 d_ticks=4 window_ms=1151
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=957 d_raster_us=0 d_observe_us=87533 max_observe_us=15721 d_paints=0 d_skips=50 d_ticks=4 window_ms=1162
+[host] slot liveuu9iqn_0: d_loop_us=882 d_raster_us=0 d_observe_us=83678 max_observe_us=13325 d_paints=0 d_skips=50 d_ticks=4 window_ms=1179
+[host] slot liveuu9iqn_1: d_loop_us=1096 d_raster_us=0 d_observe_us=88998 max_observe_us=13273 d_paints=0 d_skips=50 d_ticks=4 window_ms=1166
+[host] slot liveuu9iqn_0: d_loop_us=1131 d_raster_us=0 d_observe_us=88623 max_observe_us=13476 d_paints=0 d_skips=50 d_ticks=4 window_ms=1158
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=916 d_raster_us=0 d_observe_us=78650 max_observe_us=13580 d_paints=0 d_skips=50 d_ticks=4 window_ms=1187
+[host] slot liveuu9iqn_0: d_loop_us=976 d_raster_us=0 d_observe_us=78162 max_observe_us=13838 d_paints=0 d_skips=50 d_ticks=4 window_ms=1192
+[host] slot liveuu9iqn_1: d_loop_us=1019 d_raster_us=0 d_observe_us=77562 max_observe_us=12347 d_paints=0 d_skips=50 d_ticks=4 window_ms=1185
+[host] slot liveuu9iqn_0: d_loop_us=1298 d_raster_us=0 d_observe_us=75423 max_observe_us=12336 d_paints=0 d_skips=50 d_ticks=4 window_ms=1165
+[host] slot liveuu9iqn_1: d_loop_us=1030 d_raster_us=0 d_observe_us=78885 max_observe_us=10886 d_paints=0 d_skips=50 d_ticks=4 window_ms=1185
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_0: d_loop_us=1004 d_raster_us=0 d_observe_us=83619 max_observe_us=11225 d_paints=0 d_skips=50 d_ticks=3 window_ms=1171
+[host] slot liveuu9iqn_1: d_loop_us=897 d_raster_us=0 d_observe_us=71991 max_observe_us=12564 d_paints=0 d_skips=50 d_ticks=4 window_ms=1159
+[host] slot liveuu9iqn_0: d_loop_us=740 d_raster_us=0 d_observe_us=76613 max_observe_us=12699 d_paints=0 d_skips=50 d_ticks=4 window_ms=1175
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=849 d_raster_us=0 d_observe_us=74495 max_observe_us=12435 d_paints=0 d_skips=50 d_ticks=3 window_ms=1173
+[host] slot liveuu9iqn_0: d_loop_us=1101 d_raster_us=0 d_observe_us=85691 max_observe_us=11969 d_paints=0 d_skips=50 d_ticks=4 window_ms=1157
+[host] slot liveuu9iqn_1: d_loop_us=1165 d_raster_us=0 d_observe_us=78274 max_observe_us=12062 d_paints=0 d_skips=50 d_ticks=4 window_ms=1176
+[host] slot liveuu9iqn_0: d_loop_us=1119 d_raster_us=0 d_observe_us=89848 max_observe_us=14954 d_paints=0 d_skips=50 d_ticks=4 window_ms=1176
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=928 d_raster_us=0 d_observe_us=78184 max_observe_us=12030 d_paints=0 d_skips=50 d_ticks=4 window_ms=1190
+[host] slot liveuu9iqn_0: d_loop_us=764 d_raster_us=0 d_observe_us=76342 max_observe_us=12000 d_paints=0 d_skips=50 d_ticks=4 window_ms=1181
+[host] slot liveuu9iqn_1: d_loop_us=942 d_raster_us=0 d_observe_us=68801 max_observe_us=10137 d_paints=0 d_skips=50 d_ticks=4 window_ms=1186
+[host] slot liveuu9iqn_0: d_loop_us=944 d_raster_us=0 d_observe_us=86027 max_observe_us=14392 d_paints=0 d_skips=50 d_ticks=4 window_ms=1156
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=1126 d_raster_us=0 d_observe_us=80671 max_observe_us=12211 d_paints=0 d_skips=50 d_ticks=4 window_ms=1155
+[host] slot liveuu9iqn_0: d_loop_us=1387 d_raster_us=0 d_observe_us=82396 max_observe_us=11710 d_paints=0 d_skips=50 d_ticks=4 window_ms=1169
+[host] slot liveuu9iqn_1: d_loop_us=907 d_raster_us=0 d_observe_us=76058 max_observe_us=11619 d_paints=0 d_skips=50 d_ticks=4 window_ms=1180
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_0: d_loop_us=899 d_raster_us=0 d_observe_us=86553 max_observe_us=12616 d_paints=0 d_skips=50 d_ticks=4 window_ms=1167
+[host] slot liveuu9iqn_1: d_loop_us=779 d_raster_us=0 d_observe_us=69770 max_observe_us=10988 d_paints=0 d_skips=50 d_ticks=4 window_ms=1176
+[host] slot liveuu9iqn_0: d_loop_us=627 d_raster_us=0 d_observe_us=64888 max_observe_us=11655 d_paints=0 d_skips=50 d_ticks=4 window_ms=1193
+[host] slot liveuu9iqn_1: d_loop_us=917 d_raster_us=0 d_observe_us=73582 max_observe_us=14057 d_paints=0 d_skips=50 d_ticks=4 window_ms=1190
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_0: d_loop_us=849 d_raster_us=0 d_observe_us=84704 max_observe_us=15561 d_paints=0 d_skips=50 d_ticks=4 window_ms=1179
+[host] slot liveuu9iqn_1: d_loop_us=950 d_raster_us=0 d_observe_us=77650 max_observe_us=12191 d_paints=0 d_skips=50 d_ticks=4 window_ms=1170
+[host] slot liveuu9iqn_0: d_loop_us=778 d_raster_us=0 d_observe_us=69277 max_observe_us=13118 d_paints=0 d_skips=50 d_ticks=4 window_ms=1147
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=1961 d_raster_us=0 d_observe_us=71642 max_observe_us=11939 d_paints=0 d_skips=50 d_ticks=4 window_ms=1167
+[host] slot liveuu9iqn_0: d_loop_us=704 d_raster_us=0 d_observe_us=69657 max_observe_us=13937 d_paints=0 d_skips=50 d_ticks=3 window_ms=1159
+[host] slot liveuu9iqn_1: d_loop_us=864 d_raster_us=0 d_observe_us=71235 max_observe_us=13182 d_paints=0 d_skips=50 d_ticks=4 window_ms=1176
+[host] slot liveuu9iqn_0: d_loop_us=861 d_raster_us=0 d_observe_us=82352 max_observe_us=11891 d_paints=0 d_skips=50 d_ticks=4 window_ms=1170
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=799 d_raster_us=0 d_observe_us=75123 max_observe_us=12450 d_paints=0 d_skips=50 d_ticks=4 window_ms=1195
+[host] slot liveuu9iqn_0: d_loop_us=983 d_raster_us=0 d_observe_us=94029 max_observe_us=15312 d_paints=0 d_skips=50 d_ticks=4 window_ms=1188
+[host] slot liveuu9iqn_1: d_loop_us=960 d_raster_us=0 d_observe_us=67926 max_observe_us=13397 d_paints=0 d_skips=50 d_ticks=4 window_ms=1173
+[host] slot liveuu9iqn_0: d_loop_us=908 d_raster_us=0 d_observe_us=87223 max_observe_us=15138 d_paints=0 d_skips=50 d_ticks=4 window_ms=1173
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=824 d_raster_us=0 d_observe_us=66526 max_observe_us=10447 d_paints=0 d_skips=50 d_ticks=3 window_ms=1179
+[host] slot liveuu9iqn_0: d_loop_us=1013 d_raster_us=0 d_observe_us=81765 max_observe_us=13276 d_paints=0 d_skips=50 d_ticks=4 window_ms=1186
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=867 d_raster_us=0 d_observe_us=81142 max_observe_us=13481 d_paints=0 d_skips=50 d_ticks=4 window_ms=1167
+[host] slot liveuu9iqn_0: d_loop_us=971 d_raster_us=0 d_observe_us=99816 max_observe_us=13144 d_paints=0 d_skips=50 d_ticks=4 window_ms=1171
+[host] slot liveuu9iqn_1: d_loop_us=920 d_raster_us=0 d_observe_us=81317 max_observe_us=12880 d_paints=0 d_skips=50 d_ticks=4 window_ms=1160
+[host] slot liveuu9iqn_0: d_loop_us=944 d_raster_us=0 d_observe_us=88842 max_observe_us=13491 d_paints=0 d_skips=50 d_ticks=4 window_ms=1165
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=843 d_raster_us=0 d_observe_us=76016 max_observe_us=11817 d_paints=0 d_skips=50 d_ticks=4 window_ms=1171
+[host] slot liveuu9iqn_0: d_loop_us=831 d_raster_us=0 d_observe_us=83500 max_observe_us=12077 d_paints=0 d_skips=50 d_ticks=4 window_ms=1194
+[host] slot liveuu9iqn_1: d_loop_us=944 d_raster_us=0 d_observe_us=76229 max_observe_us=10801 d_paints=0 d_skips=50 d_ticks=4 window_ms=1169
+[host] slot liveuu9iqn_0: d_loop_us=1004 d_raster_us=0 d_observe_us=78667 max_observe_us=11377 d_paints=0 d_skips=50 d_ticks=4 window_ms=1179
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=986 d_raster_us=0 d_observe_us=73027 max_observe_us=13305 d_paints=0 d_skips=50 d_ticks=4 window_ms=1183
+[host] slot liveuu9iqn_0: d_loop_us=1147 d_raster_us=0 d_observe_us=73916 max_observe_us=11934 d_paints=0 d_skips=50 d_ticks=4 window_ms=1195
+[host] slot liveuu9iqn_1: d_loop_us=927 d_raster_us=0 d_observe_us=78902 max_observe_us=13010 d_paints=0 d_skips=50 d_ticks=4 window_ms=1166
+[host] slot liveuu9iqn_0: d_loop_us=872 d_raster_us=0 d_observe_us=77830 max_observe_us=9125 d_paints=0 d_skips=50 d_ticks=4 window_ms=1177
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=1156 d_raster_us=0 d_observe_us=77915 max_observe_us=11059 d_paints=0 d_skips=50 d_ticks=4 window_ms=1184
+[host] slot liveuu9iqn_0: d_loop_us=1131 d_raster_us=0 d_observe_us=85779 max_observe_us=12795 d_paints=0 d_skips=50 d_ticks=4 window_ms=1183
+[host] slot liveuu9iqn_1: d_loop_us=905 d_raster_us=0 d_observe_us=74491 max_observe_us=15156 d_paints=0 d_skips=50 d_ticks=4 window_ms=1175
+[host] slot liveuu9iqn_0: d_loop_us=1170 d_raster_us=0 d_observe_us=82089 max_observe_us=11299 d_paints=0 d_skips=50 d_ticks=4 window_ms=1186
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=1103 d_raster_us=0 d_observe_us=65164 max_observe_us=11707 d_paints=0 d_skips=50 d_ticks=4 window_ms=1167
+[host] slot liveuu9iqn_0: d_loop_us=736 d_raster_us=0 d_observe_us=55928 max_observe_us=8993 d_paints=0 d_skips=50 d_ticks=3 window_ms=1140
+[host] slot liveuu9iqn_1: d_loop_us=847 d_raster_us=0 d_observe_us=73104 max_observe_us=11421 d_paints=0 d_skips=50 d_ticks=4 window_ms=1190
+[host] slot liveuu9iqn_0: d_loop_us=730 d_raster_us=0 d_observe_us=73482 max_observe_us=11199 d_paints=0 d_skips=50 d_ticks=4 window_ms=1186
+[host] hitch liveuu9iqn_1: observe_us=16008 paints=0 skips=5662 ticks=457
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=1257 d_raster_us=0 d_observe_us=78148 max_observe_us=16008 d_paints=0 d_skips=50 d_ticks=3 window_ms=1156
+[host] slot liveuu9iqn_0: d_loop_us=942 d_raster_us=0 d_observe_us=90306 max_observe_us=15438 d_paints=0 d_skips=50 d_ticks=4 window_ms=1178
+[host] slot liveuu9iqn_1: d_loop_us=1051 d_raster_us=0 d_observe_us=81137 max_observe_us=14039 d_paints=0 d_skips=50 d_ticks=4 window_ms=1171
+[host] slot liveuu9iqn_0: d_loop_us=940 d_raster_us=0 d_observe_us=80746 max_observe_us=11401 d_paints=0 d_skips=50 d_ticks=4 window_ms=1180
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=820 d_raster_us=0 d_observe_us=80982 max_observe_us=12602 d_paints=0 d_skips=50 d_ticks=4 window_ms=1163
+[host] slot liveuu9iqn_0: d_loop_us=852 d_raster_us=0 d_observe_us=84931 max_observe_us=14625 d_paints=0 d_skips=50 d_ticks=4 window_ms=1172
+[host] slot liveuu9iqn_1: d_loop_us=988 d_raster_us=0 d_observe_us=83656 max_observe_us=13817 d_paints=0 d_skips=50 d_ticks=4 window_ms=1166
+[host] hitch liveuu9iqn_1: observe_us=16841 paints=0 skips=5855 ticks=472
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_0: d_loop_us=1062 d_raster_us=0 d_observe_us=92386 max_observe_us=15578 d_paints=0 d_skips=50 d_ticks=4 window_ms=1155
+[host] slot liveuu9iqn_1: d_loop_us=1033 d_raster_us=0 d_observe_us=91110 max_observe_us=16841 d_paints=0 d_skips=50 d_ticks=4 window_ms=1163
+[host] slot liveuu9iqn_0: d_loop_us=859 d_raster_us=0 d_observe_us=87821 max_observe_us=12925 d_paints=0 d_skips=50 d_ticks=4 window_ms=1172
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=838 d_raster_us=0 d_observe_us=82807 max_observe_us=11766 d_paints=0 d_skips=50 d_ticks=4 window_ms=1158
+[host] slot liveuu9iqn_0: d_loop_us=965 d_raster_us=0 d_observe_us=82576 max_observe_us=11308 d_paints=0 d_skips=50 d_ticks=4 window_ms=1145
+[host] slot liveuu9iqn_1: d_loop_us=633 d_raster_us=0 d_observe_us=67098 max_observe_us=11325 d_paints=0 d_skips=50 d_ticks=4 window_ms=1175
+[host] slot liveuu9iqn_0: d_loop_us=883 d_raster_us=0 d_observe_us=72549 max_observe_us=11223 d_paints=0 d_skips=50 d_ticks=4 window_ms=1186
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=1181 d_raster_us=0 d_observe_us=86628 max_observe_us=12854 d_paints=0 d_skips=50 d_ticks=4 window_ms=1174
+[host] slot liveuu9iqn_0: d_loop_us=906 d_raster_us=0 d_observe_us=75679 max_observe_us=14455 d_paints=0 d_skips=50 d_ticks=4 window_ms=1157
+[host] slot liveuu9iqn_1: d_loop_us=824 d_raster_us=0 d_observe_us=79770 max_observe_us=12371 d_paints=0 d_skips=50 d_ticks=4 window_ms=1176
+[host] slot liveuu9iqn_0: d_loop_us=794 d_raster_us=0 d_observe_us=85111 max_observe_us=11697 d_paints=0 d_skips=50 d_ticks=3 window_ms=1158
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=816 d_raster_us=0 d_observe_us=66684 max_observe_us=11690 d_paints=0 d_skips=50 d_ticks=4 window_ms=1164
+[host] slot liveuu9iqn_0: d_loop_us=762 d_raster_us=0 d_observe_us=76514 max_observe_us=12577 d_paints=0 d_skips=50 d_ticks=4 window_ms=1166
+[host] slot liveuu9iqn_1: d_loop_us=884 d_raster_us=0 d_observe_us=90316 max_observe_us=15190 d_paints=0 d_skips=50 d_ticks=3 window_ms=1184
+[host] slot liveuu9iqn_0: d_loop_us=1052 d_raster_us=0 d_observe_us=83987 max_observe_us=14048 d_paints=0 d_skips=50 d_ticks=4 window_ms=1182
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=878 d_raster_us=0 d_observe_us=79883 max_observe_us=13863 d_paints=0 d_skips=50 d_ticks=4 window_ms=1174
+[host] slot liveuu9iqn_0: d_loop_us=960 d_raster_us=0 d_observe_us=80595 max_observe_us=13575 d_paints=0 d_skips=50 d_ticks=4 window_ms=1166
+[host] slot liveuu9iqn_1: d_loop_us=1307 d_raster_us=0 d_observe_us=84425 max_observe_us=12783 d_paints=0 d_skips=50 d_ticks=4 window_ms=1175
+[host] slot liveuu9iqn_0: d_loop_us=831 d_raster_us=0 d_observe_us=76194 max_observe_us=11986 d_paints=0 d_skips=50 d_ticks=4 window_ms=1167
+[host] slot liveuu9iqn_1: d_loop_us=806 d_raster_us=0 d_observe_us=77014 max_observe_us=12427 d_paints=0 d_skips=50 d_ticks=4 window_ms=1192
+[script liveuu9iqn_1] runner: dropping Uncut ruby
+[script liveuu9iqn_1] interact Held { name: "Uncut ruby", action: "Drop" }
+[shim-held] Uncut ruby Drop slot=25 -> sent
+[host] slot liveuu9iqn_0: d_loop_us=1102 d_raster_us=0 d_observe_us=81957 max_observe_us=15213 d_paints=0 d_skips=50 d_ticks=4 window_ms=1169
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=1216 d_raster_us=0 d_observe_us=91309 max_observe_us=14666 d_paints=0 d_skips=50 d_ticks=4 window_ms=1168
+[host] slot liveuu9iqn_0: d_loop_us=1039 d_raster_us=0 d_observe_us=92629 max_observe_us=12605 d_paints=0 d_skips=50 d_ticks=4 window_ms=1155
+[host] slot liveuu9iqn_1: d_loop_us=882 d_raster_us=0 d_observe_us=85127 max_observe_us=12783 d_paints=0 d_skips=50 d_ticks=4 window_ms=1164
+[host] slot liveuu9iqn_0: d_loop_us=1079 d_raster_us=0 d_observe_us=88409 max_observe_us=12443 d_paints=0 d_skips=50 d_ticks=4 window_ms=1171
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=1165 d_raster_us=0 d_observe_us=77705 max_observe_us=14486 d_paints=0 d_skips=50 d_ticks=4 window_ms=1174
+[host] slot liveuu9iqn_0: d_loop_us=799 d_raster_us=0 d_observe_us=78933 max_observe_us=13249 d_paints=0 d_skips=50 d_ticks=4 window_ms=1190
+[host] slot liveuu9iqn_1: d_loop_us=994 d_raster_us=0 d_observe_us=80663 max_observe_us=11436 d_paints=0 d_skips=50 d_ticks=4 window_ms=1158
+[host] slot liveuu9iqn_0: d_loop_us=937 d_raster_us=0 d_observe_us=83285 max_observe_us=13204 d_paints=0 d_skips=50 d_ticks=3 window_ms=1151
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=1049 d_raster_us=0 d_observe_us=81770 max_observe_us=12440 d_paints=0 d_skips=50 d_ticks=4 window_ms=1154
+[host] slot liveuu9iqn_0: d_loop_us=799 d_raster_us=0 d_observe_us=84380 max_observe_us=14960 d_paints=0 d_skips=50 d_ticks=4 window_ms=1185
+[host] slot liveuu9iqn_1: d_loop_us=918 d_raster_us=0 d_observe_us=65726 max_observe_us=11753 d_paints=0 d_skips=50 d_ticks=4 window_ms=1154
+[host] slot liveuu9iqn_0: d_loop_us=743 d_raster_us=0 d_observe_us=75665 max_observe_us=12057 d_paints=0 d_skips=50 d_ticks=4 window_ms=1175
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=757 d_raster_us=0 d_observe_us=55019 max_observe_us=9528 d_paints=0 d_skips=50 d_ticks=4 window_ms=1190
+[host] slot liveuu9iqn_0: d_loop_us=789 d_raster_us=0 d_observe_us=55714 max_observe_us=7920 d_paints=0 d_skips=50 d_ticks=4 window_ms=1158
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=735 d_raster_us=0 d_observe_us=63557 max_observe_us=8819 d_paints=0 d_skips=50 d_ticks=3 window_ms=1177
+[host] slot liveuu9iqn_0: d_loop_us=742 d_raster_us=0 d_observe_us=66795 max_observe_us=10646 d_paints=0 d_skips=50 d_ticks=4 window_ms=1179
+[host] slot liveuu9iqn_1: d_loop_us=751 d_raster_us=0 d_observe_us=58105 max_observe_us=10496 d_paints=0 d_skips=50 d_ticks=4 window_ms=1165
+[host] slot liveuu9iqn_0: d_loop_us=743 d_raster_us=0 d_observe_us=59423 max_observe_us=9734 d_paints=0 d_skips=50 d_ticks=4 window_ms=1187
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=668 d_raster_us=0 d_observe_us=59766 max_observe_us=11735 d_paints=0 d_skips=50 d_ticks=4 window_ms=1182
+[host] slot liveuu9iqn_0: d_loop_us=682 d_raster_us=0 d_observe_us=58921 max_observe_us=10380 d_paints=0 d_skips=50 d_ticks=4 window_ms=1183
+[host] slot liveuu9iqn_1: d_loop_us=732 d_raster_us=0 d_observe_us=63015 max_observe_us=12623 d_paints=0 d_skips=50 d_ticks=4 window_ms=1180
+[host] slot liveuu9iqn_0: d_loop_us=791 d_raster_us=0 d_observe_us=69974 max_observe_us=11824 d_paints=0 d_skips=50 d_ticks=4 window_ms=1184
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=644 d_raster_us=0 d_observe_us=61608 max_observe_us=13941 d_paints=0 d_skips=50 d_ticks=4 window_ms=1186
+[host] slot liveuu9iqn_0: d_loop_us=697 d_raster_us=0 d_observe_us=56426 max_observe_us=8134 d_paints=0 d_skips=50 d_ticks=4 window_ms=1191
+[host] slot liveuu9iqn_1: d_loop_us=638 d_raster_us=0 d_observe_us=58129 max_observe_us=9960 d_paints=0 d_skips=50 d_ticks=4 window_ms=1179
+[host] slot liveuu9iqn_0: d_loop_us=662 d_raster_us=0 d_observe_us=60322 max_observe_us=11665 d_paints=0 d_skips=50 d_ticks=4 window_ms=1199
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=968 d_raster_us=0 d_observe_us=78302 max_observe_us=12970 d_paints=0 d_skips=50 d_ticks=4 window_ms=1186
+[host] slot liveuu9iqn_0: d_loop_us=1005 d_raster_us=0 d_observe_us=81209 max_observe_us=12996 d_paints=0 d_skips=50 d_ticks=4 window_ms=1179
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=787 d_raster_us=0 d_observe_us=67978 max_observe_us=11314 d_paints=0 d_skips=50 d_ticks=4 window_ms=1174
+[host] slot liveuu9iqn_0: d_loop_us=787 d_raster_us=0 d_observe_us=75238 max_observe_us=12220 d_paints=0 d_skips=50 d_ticks=4 window_ms=1168
+[host] slot liveuu9iqn_1: d_loop_us=682 d_raster_us=0 d_observe_us=65236 max_observe_us=12994 d_paints=0 d_skips=50 d_ticks=4 window_ms=1183
+[host] slot liveuu9iqn_0: d_loop_us=764 d_raster_us=0 d_observe_us=63577 max_observe_us=11452 d_paints=0 d_skips=50 d_ticks=4 window_ms=1181
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=678 d_raster_us=0 d_observe_us=58679 max_observe_us=11977 d_paints=0 d_skips=50 d_ticks=4 window_ms=1200
+[host] slot liveuu9iqn_0: d_loop_us=660 d_raster_us=0 d_observe_us=61883 max_observe_us=11438 d_paints=0 d_skips=50 d_ticks=4 window_ms=1185
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=780 d_raster_us=0 d_observe_us=63020 max_observe_us=10621 d_paints=0 d_skips=50 d_ticks=4 window_ms=1191
+[host] slot liveuu9iqn_0: d_loop_us=798 d_raster_us=0 d_observe_us=58426 max_observe_us=9295 d_paints=0 d_skips=50 d_ticks=4 window_ms=1181
+[host] slot liveuu9iqn_1: d_loop_us=736 d_raster_us=0 d_observe_us=64103 max_observe_us=11449 d_paints=0 d_skips=50 d_ticks=4 window_ms=1168
+[host] slot liveuu9iqn_0: d_loop_us=714 d_raster_us=0 d_observe_us=56746 max_observe_us=10322 d_paints=0 d_skips=50 d_ticks=4 window_ms=1172
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=752 d_raster_us=0 d_observe_us=62089 max_observe_us=12009 d_paints=0 d_skips=50 d_ticks=4 window_ms=1177
+[host] slot liveuu9iqn_0: d_loop_us=716 d_raster_us=0 d_observe_us=68271 max_observe_us=12238 d_paints=0 d_skips=50 d_ticks=3 window_ms=1191
+[host] slot liveuu9iqn_1: d_loop_us=804 d_raster_us=0 d_observe_us=64409 max_observe_us=13048 d_paints=0 d_skips=50 d_ticks=4 window_ms=1161
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_0: d_loop_us=718 d_raster_us=0 d_observe_us=67739 max_observe_us=11533 d_paints=0 d_skips=50 d_ticks=4 window_ms=1171
+[host] slot liveuu9iqn_1: d_loop_us=704 d_raster_us=0 d_observe_us=62683 max_observe_us=12936 d_paints=0 d_skips=50 d_ticks=4 window_ms=1191
+[host] slot liveuu9iqn_0: d_loop_us=703 d_raster_us=0 d_observe_us=59446 max_observe_us=10100 d_paints=0 d_skips=50 d_ticks=4 window_ms=1188
+[host] slot liveuu9iqn_1: d_loop_us=751 d_raster_us=0 d_observe_us=73248 max_observe_us=13755 d_paints=0 d_skips=50 d_ticks=3 window_ms=1176
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_0: d_loop_us=913 d_raster_us=0 d_observe_us=77986 max_observe_us=13036 d_paints=0 d_skips=50 d_ticks=4 window_ms=1177
+[host] slot liveuu9iqn_1: d_loop_us=803 d_raster_us=0 d_observe_us=71386 max_observe_us=13592 d_paints=0 d_skips=50 d_ticks=4 window_ms=1181
+[host] slot liveuu9iqn_0: d_loop_us=796 d_raster_us=0 d_observe_us=70701 max_observe_us=11632 d_paints=0 d_skips=50 d_ticks=4 window_ms=1183
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_1: d_loop_us=787 d_raster_us=0 d_observe_us=64690 max_observe_us=13036 d_paints=0 d_skips=50 d_ticks=4 window_ms=1182
+[host] slot liveuu9iqn_0: d_loop_us=756 d_raster_us=0 d_observe_us=72813 max_observe_us=15628 d_paints=0 d_skips=50 d_ticks=4 window_ms=1177
+[host] slot liveuu9iqn_1: d_loop_us=2144 d_raster_us=0 d_observe_us=85960 max_observe_us=13895 d_paints=0 d_skips=50 d_ticks=4 window_ms=1164
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+[host] slot liveuu9iqn_0: d_loop_us=1271 d_raster_us=0 d_observe_us=102120 max_observe_us=15628 d_paints=0 d_skips=50 d_ticks=4 window_ms=1162
+[host] slot liveuu9iqn_1: d_loop_us=1354 d_raster_us=0 d_observe_us=98792 max_observe_us=14521 d_paints=0 d_skips=50 d_ticks=4 window_ms=1142
+[host] slot liveuu9iqn_0: d_loop_us=1098 d_raster_us=0 d_observe_us=98218 max_observe_us=13811 d_paints=0 d_skips=50 d_ticks=4 window_ms=1151
+[host] slot liveuu9iqn_1: d_loop_us=1198 d_raster_us=0 d_observe_us=83281 max_observe_us=14051 d_paints=0 d_skips=50 d_ticks=4 window_ms=1167
+[host] slot liveuu9iqn_0: d_loop_us=995 d_raster_us=0 d_observe_us=84031 max_observe_us=15875 d_paints=0 d_skips=50 d_ticks=4 window_ms=1154
+[script liveuu9iqn_1] interact Player { name: "Liveuu9iqn 0", action: "Trade" }
+{"phase":"witness","air_a":{"role":"master","account":"liveuu9iqn_0","expected_player":"Liveuu9iqn 0","partner":"Liveuu9iqn 1","settings":{"rune":"Air runes","mode":"Master","partner":"Liveuu9iqn 1","bankEvery":60.0,"withdrawEss":0.0,"withdrawCoins":10000.0,"stayInAltar":false},"baseline":{"ingame":true,"scene_state":2,"inventory_tab_available":true,"player":"Liveuu9iqn 0","tile":[2983,3288,0],"tick":8,"runecraft":1,"runecraft_xp":0,"essence_unnoted":0,"essence_noted":0,"air_runes":0,"air_talisman":1,"bank_open":false,"bank_loaded":false,"bank_session_generation":0,"bank_essence_unnoted":0,"trade_offer_open":false,"trade_confirm_open":false,"trade_partner":null,"trade_accept_id":-1,"trade_mine_essence":0,"trade_theirs_essence":0,"in_temple":false},"latest":{"ingame":true,"scene_state":2,"inventory_tab_available":true,"player":"Liveuu9iqn 0","tile":[2983,3288,0],"tick":621,"runecraft":1,"runecraft_xp":0,"essence_unnoted":0,"essence_noted":0,"air_runes":0,"air_talisman":1,"bank_open":false,"bank_loaded":false,"bank_session_generation":0,"bank_essence_unnoted":0,"trade_offer_open":false,"trade_confirm_open":false,"trade_partner":null,"trade_accept_id":-1,"trade_mine_essence":0,"trade_theirs_essence":0,"in_temple":false},"post_start":7663,"mixed_identity":false,"saw_offer_with_partner":false,"saw_confirm_with_partner":false,"saw_wrong_partner":false,"peak_essence":0,"min_essence_after_start":0,"transferred_out":0,"transferred_in":0,"saw_bank_open_loaded":false,"saw_bank_at_falador":false,"restock_withdraw":false,"returned_to_ruins":false,"air_from_script":0,"xp_from_script":0},"air_b":{"role":"runner","account":"liveuu9iqn_1","expected_player":"Liveuu9iqn 1","partner":"Liveuu9iqn 0","settings":{"rune":"Air runes","mode":"Runner","partner":"Liveuu9iqn 0","bankEvery":60.0,"withdrawEss":0.0,"withdrawCoins":10000.0,"stayInAltar":false},"baseline":{"ingame":true,"scene_state":2,"inventory_tab_available":true,"player":"Liveuu9iqn 1","tile":[2983,3288,0],"tick":20,"runecraft":1,"runecraft_xp":0,"essence_unnoted":25,"essence_noted":0,"air_runes":0,"air_talisman":0,"bank_open":false,"bank_loaded":false,"bank_session_generation":4,"bank_essence_unnoted":0,"trade_offer_open":false,"trade_confirm_open":false,"trade_partner":null,"trade_accept_id":-1,"trade_mine_essence":0,"trade_theirs_essence":0,"in_temple":false},"latest":{"ingame":true,"scene_state":2,"inventory_tab_available":true,"player":"Liveuu9iqn 1","tile":[2983,3288,0],"tick":621,"runecraft":1,"runecraft_xp":0,"essence_unnoted":25,"essence_noted":0,"air_runes":0,"air_talisman":0,"bank_open":false,"bank_loaded":false,"bank_session_generation":6,"bank_essence_unnoted":0,"trade_offer_open":false,"trade_confirm_open":false,"trade_partner":null,"trade_accept_id":-1,"trade_mine_essence":0,"trade_theirs_essence":0,"in_temple":false},"post_start":7654,"mixed_identity":false,"saw_offer_with_partner":false,"saw_confirm_with_partner":false,"saw_wrong_partner":false,"peak_essence":25,"min_essence_after_start":25,"transferred_out":0,"transferred_in":0,"saw_bank_open_loaded":false,"saw_bank_at_falador":false,"restock_withdraw":false,"returned_to_ruins":false,"air_from_script":0,"xp_from_script":0},"mule_a":null,"mule_b":null,"duel_a":null,"duel_b":null}
+FAIL: paired_catalog_air_live: one-sided confirmation: both actors never observed the offer phase with the partner

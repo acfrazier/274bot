@@ -1,0 +1,27 @@
+{
+  "mode": "native",
+  "command": [
+    "cargo",
+    "build",
+    "-p",
+    "panel",
+    "--example",
+    "catalog_watch",
+    "--message-format=json"
+  ],
+  "started_at": "2026-09-11T12:18:47.589175+00:00",
+  "elapsed_seconds": 11.175,
+  "exit_code": 0,
+  "isolated_build": true,
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target",
+  "target_started_empty": false,
+  "cache_reuse": "Completed combat99 compiler cache transferred exclusively to root; reused sequentially for root exports; not empty-started",
+  "host_commit": "3ba5175595947f055b26d8100e38189a2b379fe6",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "source_root": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/3ba51755",
+  "binary": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-watch-3ba51755",
+  "binary_sha256": "efc0cd25fd9a571e97d8ea58e456257a063a421df9c8e4a3cd24fc33560ed046",
+  "binary_bytes": 189870832,
+  "source_files_verified": 4179,
+  "elapsed_is_not_performance_measurement": true
+}

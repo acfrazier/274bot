@@ -1,0 +1,17 @@
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-96ff5ff1/crates/script)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.67s
+     Running tests/special.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/special-5e7c6619721034dd)
+
+running 9 tests
+test missing_controls_throw_and_do_not_send ... ok
+test arm_clicks_bar_then_posted_armed_state ... ok
+test energy_without_posted_varp_still_throws ... ok
+test already_armed_is_idempotent ... ok
+test timeout_without_armed_returns_false ... ok
+test pause_and_hold_freeze_mid_arm_without_late_click ... ok
+test weapon_change_selects_the_posted_combat_bar ... ok
+test no_bar_refuses_without_send ... ok
+test costs_ready_and_wielded_on_both_selected_caches ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+

@@ -1,0 +1,42 @@
+{
+  "worker_session_id": "20260911_084046_83e338",
+  "actual_models": [
+    "grok-4.6"
+  ],
+  "api_call_count": 33,
+  "matching_model_log_lines": [
+    "2026-09-11 08:40:57,849 INFO [20260911_084046_83e338] agent.conversation_loop: API call #1: model=grok-4.6 provider=xai-oauth in=22210 out=276 total=22486 latency=6.3s cache=768/22210 (3%) id=877a1304-3cdf-982f-95e3-904d91dc4231",
+    "2026-09-11 08:41:06,521 INFO [20260911_084046_83e338] agent.conversation_loop: API call #2: model=grok-4.6 provider=xai-oauth in=33150 out=483 total=33633 latency=8.2s cache=22144/33150 (67%) id=07a9462d-eb2d-9b66-a586-f7d044fb090a",
+    "2026-09-11 08:41:17,021 INFO [20260911_084046_83e338] agent.conversation_loop: API call #3: model=grok-4.6 provider=xai-oauth in=34425 out=474 total=34899 latency=9.3s cache=512/34425 (1%) id=8151c46d-657a-991e-ac7e-a2caacf61e39",
+    "2026-09-11 08:41:23,166 INFO [20260911_084046_83e338] agent.conversation_loop: API call #4: model=grok-4.6 provider=xai-oauth in=41041 out=268 total=41309 latency=4.4s cache=34304/41041 (84%) id=bd852694-f58d-92f6-9a02-5b2e79c12293",
+    "2026-09-11 08:41:39,793 INFO [20260911_084046_83e338] agent.conversation_loop: API call #5: model=grok-4.6 provider=xai-oauth in=48928 out=609 total=49537 latency=10.9s cache=40960/48928 (84%) id=897c68df-32f8-95c8-86d7-ca36111b08ea",
+    "2026-09-11 08:41:54,229 INFO [20260911_084046_83e338] agent.conversation_loop: API call #6: model=grok-4.6 provider=xai-oauth in=52389 out=440 total=52829 latency=7.1s cache=48896/52389 (93%) id=124158b3-ff0f-9097-8433-f1ae7af56d7e",
+    "2026-09-11 08:42:07,289 INFO [20260911_084046_83e338] agent.conversation_loop: API call #7: model=grok-4.6 provider=xai-oauth in=58502 out=791 total=59293 latency=11.7s cache=52352/58502 (89%) id=49e0c6c4-96d8-9442-ba53-af191583a291",
+    "2026-09-11 08:42:27,303 INFO [20260911_084046_83e338] agent.conversation_loop: API call #8: model=grok-4.6 provider=xai-oauth in=64777 out=1280 total=66057 latency=18.5s cache=58496/64777 (90%) id=8596b575-af79-988f-978f-7ce8969ec83b",
+    "2026-09-11 08:42:45,553 INFO [20260911_084046_83e338] agent.conversation_loop: API call #9: model=grok-4.6 provider=xai-oauth in=71952 out=888 total=72840 latency=13.8s cache=64768/71952 (90%) id=7290c658-466e-9791-8feb-9c4aa2b64c11",
+    "2026-09-11 08:42:56,195 INFO [20260911_084046_83e338] agent.conversation_loop: API call #10: model=grok-4.6 provider=xai-oauth in=72965 out=611 total=73576 latency=9.2s cache=71936/72965 (99%) id=8154db60-8558-904c-a88b-b196241c1ccc",
+    "2026-09-11 08:43:08,115 INFO [20260911_084046_83e338] agent.conversation_loop: API call #11: model=grok-4.6 provider=xai-oauth in=74293 out=297 total=74590 latency=5.1s cache=72960/74293 (98%) id=cbbd89f5-ac9d-9234-8f30-89901dd6daf9",
+    "2026-09-11 08:43:15,363 INFO [20260911_084046_83e338] agent.conversation_loop: API call #12: model=grok-4.6 provider=xai-oauth in=84046 out=257 total=84303 latency=5.1s cache=74240/84046 (88%) id=cf6b4523-c532-9267-997a-70ed7ea87152",
+    "2026-09-11 08:43:33,227 INFO [20260911_084046_83e338] agent.conversation_loop: API call #13: model=grok-4.6 provider=xai-oauth in=88026 out=1032 total=89058 latency=16.6s cache=83968/88026 (95%) id=5b4c68cb-63bd-99a8-93d5-ea61a2569bd1",
+    "2026-09-11 08:43:45,081 INFO [20260911_084046_83e338] agent.conversation_loop: API call #14: model=grok-4.6 provider=xai-oauth in=95775 out=716 total=96491 latency=11.4s cache=87936/95775 (92%) id=218fb738-4922-9361-897f-f69d4a9ccc23",
+    "2026-09-11 08:44:02,396 INFO [20260911_084046_83e338] agent.conversation_loop: API call #15: model=grok-4.6 provider=xai-oauth in=103756 out=1136 total=104892 latency=17.2s cache=95744/103756 (92%) id=a49de0b1-2e6b-9201-b6cc-30cf0e18ce0a",
+    "2026-09-11 08:44:18,381 INFO [20260911_084046_83e338] agent.conversation_loop: API call #16: model=grok-4.6 provider=xai-oauth in=109021 out=911 total=109932 latency=14.9s cache=103680/109021 (95%) id=49c97605-4ad6-9e62-ba00-2256186206fd",
+    "2026-09-11 08:44:40,395 INFO [20260911_084046_83e338] agent.conversation_loop: API call #17: model=grok-4.6 provider=xai-oauth in=113922 out=1103 total=115025 latency=19.7s cache=108928/113922 (96%) id=e9f4593d-f020-9d97-ae70-e097c3869884",
+    "2026-09-11 08:45:21,188 INFO [20260911_084046_83e338] agent.conversation_loop: API call #18: model=grok-4.6 provider=xai-oauth in=121297 out=2222 total=123519 latency=40.5s cache=113920/121297 (94%) id=96baff75-4ada-964d-a168-c1af6387d4c8",
+    "2026-09-11 08:45:43,745 INFO [20260911_084046_83e338] agent.conversation_loop: API call #19: model=grok-4.6 provider=xai-oauth in=128861 out=1191 total=130052 latency=22.2s cache=121216/128861 (94%) id=5ae0d635-086b-903b-b68f-9b4138819fc0",
+    "2026-09-11 08:45:48,541 INFO [20260911_084046_83e338] agent.conversation_loop: API call #20: model=grok-4.6 provider=xai-oauth in=133833 out=164 total=133997 latency=4.4s cache=128768/133833 (96%) id=930d69f4-1e7c-9297-8c5f-a1acfa517dc7",
+    "2026-09-11 08:45:52,459 INFO [20260911_084046_83e338] agent.conversation_loop: API call #21: model=grok-4.6 provider=xai-oauth in=136936 out=206 total=137142 latency=3.9s cache=133760/136936 (98%) id=5dcd592d-510f-9c68-a4fa-6123582e8b6b",
+    "2026-09-11 08:46:30,702 INFO [20260911_084046_83e338] agent.conversation_loop: API call #22: model=grok-4.6 provider=xai-oauth in=138424 out=2175 total=140599 latency=38.2s cache=136832/138424 (99%) id=6309bb4b-eef5-9466-9ff0-52749a49c684",
+    "2026-09-11 08:47:12,558 INFO [20260911_084046_83e338] agent.conversation_loop: API call #23: model=grok-4.6 provider=xai-oauth in=144737 out=2701 total=147438 latency=41.5s cache=138368/144737 (96%) id=d33a49dd-c147-9a58-931b-837e08864a03",
+    "2026-09-11 08:47:24,927 INFO [20260911_084046_83e338] agent.conversation_loop: API call #24: model=grok-4.6 provider=xai-oauth in=147529 out=832 total=148361 latency=12.2s cache=144640/147529 (98%) id=a25c3b58-7ae5-9738-af28-f0c6669beed0",
+    "2026-09-11 08:47:29,526 INFO [20260911_084046_83e338] agent.conversation_loop: API call #25: model=grok-4.6 provider=xai-oauth in=148461 out=212 total=148673 latency=4.6s cache=147456/148461 (99%) id=e646df08-342a-9ee4-9b9b-b1be28edf623",
+    "2026-09-11 08:47:37,830 INFO [20260911_084046_83e338] agent.conversation_loop: API call #26: model=grok-4.6 provider=xai-oauth in=148856 out=647 total=149503 latency=8.2s cache=148352/148856 (100%) id=69bb7af5-04d4-9a6d-882e-df4900375604",
+    "2026-09-11 08:47:46,324 INFO [20260911_084046_83e338] agent.conversation_loop: API call #27: model=grok-4.6 provider=xai-oauth in=149627 out=528 total=150155 latency=8.3s cache=148736/149627 (99%) id=24229c9d-9afa-9cda-a659-5fff5a5328ec",
+    "2026-09-11 08:49:10,255 INFO [20260911_084046_83e338] agent.conversation_loop: API call #28: model=grok-4.6 provider=xai-oauth in=150734 out=6037 total=156771 latency=83.6s cache=149504/150734 (99%) id=929c5a0d-859e-9f1c-b0a2-c28ea1686769",
+    "2026-09-11 08:49:29,931 INFO [20260911_084046_83e338] agent.conversation_loop: API call #29: model=grok-4.6 provider=xai-oauth in=157154 out=1057 total=158211 latency=19.5s cache=150656/157154 (96%) id=c6a6dd9f-0bba-9bf1-8c8c-d1607ef0c37c",
+    "2026-09-11 08:49:35,195 INFO [20260911_084046_83e338] agent.conversation_loop: API call #30: model=grok-4.6 provider=xai-oauth in=158417 out=301 total=158718 latency=5.0s cache=157056/158417 (99%) id=5221ae17-225e-9c97-940e-f41cf17cd28a",
+    "2026-09-11 08:49:38,802 INFO [20260911_084046_83e338] agent.conversation_loop: API call #31: model=grok-4.6 provider=xai-oauth in=158902 out=216 total=159118 latency=3.4s cache=158336/158902 (100%) id=68eadfe3-f3d0-9c12-9eed-04b9936f3229",
+    "2026-09-11 08:49:43,858 INFO [20260911_084046_83e338] agent.conversation_loop: API call #32: model=grok-4.6 provider=xai-oauth in=159302 out=211 total=159513 latency=4.8s cache=158848/159302 (100%) id=b8aaa228-6dbb-965a-b7a5-c2dba1db1c2f",
+    "2026-09-11 08:49:53,196 INFO [20260911_084046_83e338] agent.conversation_loop: API call #33: model=grok-4.6 provider=xai-oauth in=159769 out=476 total=160245 latency=9.2s cache=159232/159769 (100%) id=72051ae7-c3dc-9a23-9557-48c0d1191a2e"
+  ]
+}
