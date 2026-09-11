@@ -10,7 +10,7 @@
   },
   "covered_named_scenarios": {
     "ChickenKiller": ["chicken_killer default melee Off buryBones=true (f6 Strength 12 / Prayer 4 / Hitpoints 3)", "chicken_killer_bank bankStrategy=Loot count lootMatch=feather (b1)"],
-    "Thiever": ["thiever default Man Pickpocket banking=None (f6 Thieving 46)"],
+    "Thiever": ["thiever Guard Pickpocket banking=None at Ardougne (f6 Thieving 46; catalog default Man is name substitution)", "thiever banking=Auto food restock on exact ThievingBot via fleet N1/N32 6d750e65 (not catalog-harness isolated cells)"],
     "GnomeCourse": ["gnome_course default searchRadius=20 complete lap + next log (3be/b1)"],
     "DoorOpener": ["door_opener closed door -> open loc (6401)", "door_opener_gate closed gate -> open loc (6401)"],
     "ArdyThiever": ["ardy_thiever_knight Flee + bank cycle (912 all 4)", "ardy_thiever Guard Flee + bank cycle (912 289 both catalogs only)"],
@@ -23,6 +23,18 @@
     "ardy_cakes": "all isolated rows FAIL (4cc/912/214/native942); audit142 native guard LOS, keep enabled",
     "wildy_agility": "8c 289 old FAIL after rope fall HP10 retained; 15e/cd49 FAIL retained",
     "combat_cores": "04d7 and 214 FAILs retained. b18: MossGiant274 PASS diagnostic, both ChaosDruid FAIL. cff unfinished: see named chaos diagnostics only"
+  },
+  "fleet_thiever_auto_not_catalog_harness": {
+  "script": "src/bot/scripts/ThievingBot/ThievingBot.ts",
+  "script_sha256": "5cff25a75db3166a3bf3ab6ca1a8ba37ed77e0e9d48292178f79767316b66ad9",
+  "controller": "TUI IsolatedEnv overlay + crates/host-play/src/memory.rs start_script when BOT_MEMORY_SUSTAIN=1",
+  "settings": {"target": "Guard", "banking": "Auto", "loadout": "Memory food", "foodWithdraw": 22, "bankAtFood": 3},
+  "host_commit": "6d750e65a227aa8a39f2bb6fdc1e5ceb5a452338",
+  "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+  "n1": "PASS both revisions",
+  "n32": "PASS 32/32 both revisions",
+  "not_four_extra_isolated_cells": true,
+  "integrated_n32_refresh_remains_campaign_wide": true
   },
   "named_cff_diagnostics_not_acceptance": {
     "file": "docs/compat/evidence/combat-ground-serialization/fresh-chaos-diagnostics.json",

@@ -1,0 +1,22 @@
+{
+  "preserved_from": "c9331e833bad40c4c7e94872efaf3a88e1e41af3",
+  "written_utc": "2026-09-11 16:42 UTC",
+  "kanban_task": "t_46d26f49",
+  "brief": "143-combat-utility-option-audit.md",
+  "note": "Prior audit143 machine copy. Root did not accept this as the complete remaining set. See remaining-cells.json for the 145 correction.",
+  "still_needed_named_scenarios": [
+    "thiever_bank",
+    "chaos_druid_tower",
+    "chaos_druid_yanille",
+    "ardy_cakes_fight",
+    "ardy_thiever_fight"
+  ],
+  "cell_count": 20,
+  "later_branches_incorrectly_excluded": [
+    "AutoFighter banking=Auto",
+    "RockCrab ammo/bank",
+    "GreenDragon special/potions",
+    "FireGiant approach/barrel/bank",
+    "ArdyFighter Loot-count"
+  ]
+}
