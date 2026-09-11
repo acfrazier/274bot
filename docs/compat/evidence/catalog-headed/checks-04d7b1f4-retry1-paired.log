@@ -1,0 +1,34 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.19s
+     Running tests/paired_catalog_live.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/paired_catalog_live-a24a53ad9cc32cea)
+
+running 27 tests
+test paired_catalog_air_live ... ignored, requires LIVE=1, PAIRED_CATALOG_REVISION/NAV_PACK/ROOT/COMMIT, and local engine
+test paired_catalog_duel_live ... ignored, requires LIVE=1, PAIRED_CATALOG_REVISION/NAV_PACK/ROOT/COMMIT, and local engine
+test tests::bank_seed_is_not_acknowledgement_without_open_loaded_count_at_falador ... ok
+test tests::duel_accepts_first_combat ... ok
+test tests::air_prepared_current_rejects_master_essence_and_runner_short_load ... ok
+test tests::duel_rejects_full_cycle_without_reset ... ok
+test tests::duel_rejects_queued_challenge_without_combat ... ok
+test tests::duel_rejects_seed_only_xp ... ok
+test tests::duel_rejects_one_sided_confirmation ... ok
+test tests::duel_rejects_seeded_modal ... ok
+test tests::duel_rejects_wrong_partner ... ok
+test tests::mismatched_readiness_does_not_start ... ok
+test tests::one_barrier_starts_both_only_when_prepared ... ok
+test tests::missing_booth_at_ruins_reports_target_absence ... ok
+test tests::operation_gates_name_foreign_owners_and_do_not_claim_shop_named_bank ... ok
+test tests::stale_pre_logout_scene2_is_not_relog_admission ... ok
+test tests::air_accepts_first_transfer_craft ... ok
+test tests::air_rejects_seed_only_inventory ... ok
+test tests::air_rejects_stale_trade ... ok
+test tests::air_rejects_one_sided_confirmation ... ok
+test tests::air_rejects_missing_conservation ... ok
+test tests::air_rejects_wrong_partner ... ok
+test tests::air_rejects_full_cycle_without_bank_restock ... ok
+test tests::air_rejects_full_cycle_without_second_transfer ... ok
+test tests::serializes_complete_air_and_duel_witnesses ... ok
+test tests::generated_duel_controls_match_both_caches ... ok
+test tests::frozen_catalog_hashes_match_both_revisions ... ok
+
+test result: ok. 25 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.29s
+

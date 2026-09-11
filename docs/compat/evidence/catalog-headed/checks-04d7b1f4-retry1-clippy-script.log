@@ -1,0 +1,12 @@
+    Checking simd-adler32 v0.3.10
+    Checking image v0.25.10
+    Checking vault v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-04d7b1f4/crates/vault)
+    Checking miniz_oxide v0.8.9
+    Checking flate2 v1.1.9
+    Checking deno_web v0.244.0
+    Checking client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-04d7b1f4/vendor/fr-client-rust/crates/client)
+    Checking deno_crypto v0.227.0
+    Checking rustyscript v0.12.3
+    Checking api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-04d7b1f4/crates/api)
+    Checking script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-04d7b1f4/crates/script)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.29s

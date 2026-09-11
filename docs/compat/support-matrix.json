@@ -25492,7 +25492,7 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Isolated4cc: ardy_thiever=FAIL, ardy_thiever_knight=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "fixture_readiness": "Isolated912: ardy_thiever=FAIL, ardy_thiever_knight=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "observable_proof_requirement": "after Start, script-caused Thieving progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -25510,12 +25510,15 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Isolated4cc: ardy_thiever=FAIL, ardy_thiever_knight=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "status_detail": "Isolated912: ardy_thiever=FAIL, ardy_thiever_knight=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-ardy-thiever-100adccc-4cc6cc27.json",
         "docs/compat/evidence/catalog-harness/live/r274-ardy-thiever-knight-100adccc-4cc6cc27.json",
-        "docs/compat/evidence/catalog-harness/runes-ardy-4cc6cc27.json"
+        "docs/compat/evidence/catalog-harness/runes-ardy-4cc6cc27.json",
+        "docs/compat/evidence/catalog-harness/live/r274-ardy-thiever-100adccc-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-ardy-thiever-knight-100adccc-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json"
       ]
     },
     {
@@ -26131,7 +26134,7 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Isolated4cc: ardy_thiever=FAIL, ardy_thiever_knight=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "fixture_readiness": "Isolated912: ardy_thiever=PASS, ardy_thiever_knight=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "observable_proof_requirement": "after Start, script-caused Thieving progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -26149,12 +26152,15 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Isolated4cc: ardy_thiever=FAIL, ardy_thiever_knight=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "status_detail": "Isolated912: ardy_thiever=PASS, ardy_thiever_knight=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-ardy-thiever-100adccc-4cc6cc27.json",
         "docs/compat/evidence/catalog-harness/live/r289-ardy-thiever-knight-100adccc-4cc6cc27.json",
-        "docs/compat/evidence/catalog-harness/runes-ardy-4cc6cc27.json"
+        "docs/compat/evidence/catalog-harness/runes-ardy-4cc6cc27.json",
+        "docs/compat/evidence/catalog-harness/live/r289-ardy-thiever-100adccc-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-ardy-thiever-knight-100adccc-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json"
       ]
     },
     {
@@ -26506,7 +26512,7 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Isolated4cc: ardy_cakes=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "fixture_readiness": "Isolated912: ardy_cakes=FAIL. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "observable_proof_requirement": "after Start, script-caused Thieving progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -26520,11 +26526,13 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Isolated4cc: ardy_cakes=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "status_detail": "Isolated912: ardy_cakes=FAIL. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-ardy-cakes-100adccc-4cc6cc27.json",
-        "docs/compat/evidence/catalog-harness/runes-ardy-4cc6cc27.json"
+        "docs/compat/evidence/catalog-harness/runes-ardy-4cc6cc27.json",
+        "docs/compat/evidence/catalog-harness/live/r274-ardy-cakes-100adccc-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json"
       ]
     },
     {
@@ -26876,7 +26884,7 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Isolated4cc: ardy_cakes=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "fixture_readiness": "Isolated912: ardy_cakes=FAIL. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "observable_proof_requirement": "after Start, script-caused Thieving progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -26890,11 +26898,13 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Isolated4cc: ardy_cakes=FAIL. Exact item/XP/bank-return/further-work witnesses verified for passes. Failures retained; full supported branches/frontends remain separate.",
+      "status_detail": "Isolated912: ardy_cakes=FAIL. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-ardy-cakes-100adccc-4cc6cc27.json",
-        "docs/compat/evidence/catalog-harness/runes-ardy-4cc6cc27.json"
+        "docs/compat/evidence/catalog-harness/runes-ardy-4cc6cc27.json",
+        "docs/compat/evidence/catalog-harness/live/r289-ardy-cakes-100adccc-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json"
       ]
     },
     {
@@ -29910,13 +29920,18 @@
         "fire placement/light operations and completion observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated912: cook_bot=FAIL, cook_bot_lobster=FAIL. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "observable_proof_requirement": "Cooking XP plus raw-to-cooked inventory transition and bank cycle",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Isolated912: cook_bot=FAIL, cook_bot_lobster=FAIL. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-cook-bot-100adccc-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-cook-bot-lobster-100adccc-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json"
+      ]
     },
     {
       "display_name": "CookBot",
@@ -30393,13 +30408,18 @@
         "fire placement/light operations and completion observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated912: cook_bot=FAIL, cook_bot_lobster=FAIL. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "observable_proof_requirement": "Cooking XP plus raw-to-cooked inventory transition and bank cycle",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Isolated912: cook_bot=FAIL, cook_bot_lobster=FAIL. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-cook-bot-100adccc-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-cook-bot-lobster-100adccc-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json"
+      ]
     },
     {
       "display_name": "BankFletcher",
@@ -33888,13 +33908,18 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated912: smelter_bot=PASS, smelter_bot_steel=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "observable_proof_requirement": "Smithing XP plus ore-to-bar transition and bank return",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Isolated912: smelter_bot=PASS, smelter_bot_steel=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-smelter-bot-100adccc-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-smelter-bot-steel-100adccc-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json"
+      ]
     },
     {
       "display_name": "SmelterBot",
@@ -34189,13 +34214,18 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated912: smelter_bot=PASS, smelter_bot_steel=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "observable_proof_requirement": "Smithing XP plus ore-to-bar transition and bank return",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Isolated912: smelter_bot=PASS, smelter_bot_steel=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-smelter-bot-100adccc-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-smelter-bot-steel-100adccc-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json"
+      ]
     },
     {
       "display_name": "Superheater",
@@ -36798,13 +36828,17 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated912: flax_spinner=FAIL. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "observable_proof_requirement": "Crafting XP plus flax-to-bow-string transition and bank cycle",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Isolated912: flax_spinner=FAIL. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-flax-spinner-100adccc-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json"
+      ]
     },
     {
       "display_name": "FlaxSpinner",
@@ -37177,13 +37211,17 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated912: flax_spinner=FAIL. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "observable_proof_requirement": "Crafting XP plus flax-to-bow-string transition and bank cycle",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Isolated912: flax_spinner=FAIL. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-flax-spinner-100adccc-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json"
+      ]
     },
     {
       "display_name": "FlaxAIO",
@@ -60394,7 +60432,7 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated912: ardy_thiever_knight=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "observable_proof_requirement": "after Start, script-caused Thieving progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -60411,9 +60449,13 @@
           "source_evidence": "src/bot/scripts/ArdyThiever/ArdyThiever.ts constructs SolveClue; crates/script/src/shim/solve_clue.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing periodic bank execution",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Isolated912: ardy_thiever_knight=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-ardy-thiever-knight-8e7d965b-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json"
+      ]
     },
     {
       "display_name": "ArdyThiever",
@@ -61028,7 +61070,7 @@
         "thieving target/stall operations and stun/result observation"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated912: ardy_thiever=PASS, ardy_thiever_knight=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "observable_proof_requirement": "after Start, script-caused Thieving progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [
@@ -61045,9 +61087,14 @@
           "source_evidence": "src/bot/scripts/ArdyThiever/ArdyThiever.ts constructs SolveClue; crates/script/src/shim/solve_clue.js validate() returns false"
         }
       ],
-      "status": "BLOCKED",
-      "status_detail": "BLOCKED: missing periodic bank execution",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Isolated912: ardy_thiever=PASS, ardy_thiever_knight=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-ardy-thiever-8e7d965b-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-ardy-thiever-knight-8e7d965b-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json"
+      ]
     },
     {
       "display_name": "ArdyCakes",
@@ -68776,13 +68823,18 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated912: smelter_bot=PASS, smelter_bot_steel=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "observable_proof_requirement": "Smithing XP plus ore-to-bar transition and bank return",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Isolated912: smelter_bot=PASS, smelter_bot_steel=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-smelter-bot-8e7d965b-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/live/r274-smelter-bot-steel-8e7d965b-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json"
+      ]
     },
     {
       "display_name": "SmelterBot",
@@ -69077,13 +69129,18 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated912: smelter_bot=PASS, smelter_bot_steel=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
       "observable_proof_requirement": "Smithing XP plus ore-to-bar transition and bank return",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Isolated912: smelter_bot=PASS, smelter_bot_steel=PASS. Passed cells include ordered work, bank deposit, closed return and further work. Failed cells retained; full options/frontends separate.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-smelter-bot-8e7d965b-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/live/r289-smelter-bot-steel-8e7d965b-91289e9b.json",
+        "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json"
+      ]
     },
     {
       "display_name": "Superheater",

@@ -1,0 +1,27 @@
+{
+  "outcome": "PASS",
+  "scope": "Native Windows289 newer-catalog steel-smelting with bank return and further production; not full options/platform acceptance or performance",
+  "screenshot_read": true,
+  "visual": "Scene2 at furnace3275,3185; one Steel bar and restocked ores. Paint Smelted9 and Bank trips2. Chat shows prior pack exhausted and further steel production.",
+  "runtime_errors": [],
+  "responsive_probes": 225,
+  "timeouts": [
+    {
+      "elapsed_seconds": 1.468,
+      "pid": 16908,
+      "hwnd": 1835024,
+      "responsive": false,
+      "probe_ms": 506.156,
+      "error": 1460
+    },
+    {
+      "elapsed_seconds": 3.923,
+      "pid": 16908,
+      "hwnd": 1835024,
+      "responsive": false,
+      "probe_ms": 506.653,
+      "error": 1460
+    }
+  ],
+  "process_exit_code": 0
+}

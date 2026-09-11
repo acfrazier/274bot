@@ -1,0 +1,314 @@
+{
+  "outcome": "PASS",
+  "scope": "Windows289 newer catalog solo MuleCrafter Air full core; no paired trade or all-options acceptance",
+  "ordered": [
+    {
+      "tick": 29,
+      "tile": [
+        3012,
+        3355,
+        0
+      ],
+      "item_ids": {},
+      "bank_ids": {},
+      "bank_generation": 2,
+      "bank_open": false,
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 0
+      }
+    },
+    {
+      "tick": 43,
+      "tile": [
+        3011,
+        3355,
+        0
+      ],
+      "item_ids": {
+        "1436": 27,
+        "1438": 1
+      },
+      "bank_ids": {
+        "1436": 173
+      },
+      "bank_generation": 3,
+      "bank_open": true,
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 0
+      }
+    },
+    {
+      "tick": 95,
+      "tile": [
+        2841,
+        4830,
+        0
+      ],
+      "item_ids": {
+        "1436": 27,
+        "1438": 1
+      },
+      "bank_ids": {},
+      "bank_generation": 4,
+      "bank_open": false,
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 0
+      }
+    },
+    {
+      "tick": 100,
+      "tile": [
+        2843,
+        4832,
+        0
+      ],
+      "item_ids": {
+        "556": 27,
+        "1438": 1
+      },
+      "bank_ids": {},
+      "bank_generation": 4,
+      "bank_open": false,
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 135,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 0
+      }
+    },
+    {
+      "tick": 110,
+      "tile": [
+        2983,
+        3288,
+        0
+      ],
+      "item_ids": {
+        "556": 27,
+        "1438": 1
+      },
+      "bank_ids": {},
+      "bank_generation": 4,
+      "bank_open": false,
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 135,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 0
+      }
+    },
+    {
+      "tick": 168,
+      "tile": [
+        3011,
+        3355,
+        0
+      ],
+      "item_ids": {
+        "1438": 1
+      },
+      "bank_ids": {
+        "556": 27,
+        "1436": 173
+      },
+      "bank_generation": 5,
+      "bank_open": true,
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 135,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 0
+      }
+    },
+    {
+      "tick": 178,
+      "tile": [
+        3011,
+        3355,
+        0
+      ],
+      "item_ids": {
+        "1436": 27,
+        "1438": 1
+      },
+      "bank_ids": {
+        "556": 27,
+        "1436": 146
+      },
+      "bank_generation": 5,
+      "bank_open": true,
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 135,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 0
+      }
+    },
+    {
+      "tick": 235,
+      "tile": [
+        2843,
+        4832,
+        0
+      ],
+      "item_ids": {
+        "556": 27,
+        "1438": 1
+      },
+      "bank_ids": {},
+      "bank_generation": 6,
+      "bank_open": false,
+      "xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 0,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 270,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 0
+      }
+    }
+  ]
+}

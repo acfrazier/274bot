@@ -1,0 +1,78 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling log v0.4.34
+   Compiling thiserror v2.0.20
+   Compiling generic-array v0.14.7
+   Compiling allocator-api2 v0.2.21
+   Compiling gl_generator v0.14.0
+   Compiling hashbrown v0.16.1
+   Compiling syn v2.0.119
+   Compiling syn v3.0.3
+   Compiling indexmap v2.14.0
+   Compiling glutin_wgl_sys v0.6.1
+   Compiling smallvec v1.15.2
+   Compiling arrayvec v0.7.8
+   Compiling once_cell v1.21.4
+   Compiling parking_lot_core v0.9.12
+   Compiling cc v1.4.4
+   Compiling parking_lot v0.12.5
+   Compiling bytemuck_derive v1.12.0
+   Compiling thiserror-impl v2.0.20
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling zerocopy-derive v0.8.56
+   Compiling windows-interface v0.59.3
+   Compiling windows-implement v0.60.2
+   Compiling bytemuck v1.25.2
+   Compiling bzip2-sys v0.1.13+1.0.8
+   Compiling windows-core v0.62.2
+   Compiling wgpu-types v29.0.4
+   Compiling digest v0.10.7
+   Compiling windows-sys v0.61.2
+   Compiling zerocopy v0.8.56
+   Compiling windows-collections v0.3.2
+   Compiling windows-numerics v0.3.1
+   Compiling windows-future v0.3.2
+   Compiling windows v0.62.2
+   Compiling half v2.7.1
+   Compiling ppv-lite86 v0.2.21
+   Compiling naga v29.0.4
+   Compiling rand_chacha v0.3.1
+   Compiling schannel v0.1.29
+   Compiling thiserror-impl v1.0.69
+   Compiling simd-adler32 v0.3.10
+   Compiling miniz_oxide v0.8.9
+   Compiling thiserror v1.0.69
+   Compiling serde v1.0.219
+   Compiling native-tls v0.2.18
+   Compiling rand v0.8.5
+   Compiling sha1 v0.10.7
+   Compiling serde_derive v1.0.219
+   Compiling tungstenite v0.24.0
+   Compiling image v0.25.10
+   Compiling wgpu-naga-bridge v29.0.4
+   Compiling serde_json v1.0.140
+   Compiling num-bigint v0.4.8
+   Compiling gpu-allocator v0.28.0
+   Compiling wgpu-hal v29.0.4
+   Compiling flate2 v1.1.9
+   Compiling bzip2 v0.4.4
+   Compiling windows-sys v0.59.0
+   Compiling sha2 v0.10.9
+   Compiling memchr v2.8.3
+   Compiling wgpu-core-deps-windows-linux-android v29.0.4
+   Compiling wgpu-core v29.0.4
+   Compiling wgpu v29.0.4
+   Compiling client v0.1.0 (C:\Users\Austen\274bot-campaign\multirevision-20260910\platform-isolated-04d7b1f4\source\vendor\fr-client-rust\crates\client)
+   Compiling api v0.1.0 (C:\Users\Austen\274bot-campaign\multirevision-20260910\platform-isolated-04d7b1f4\source\crates\api)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 39.23s
+     Running unittests src\lib.rs (C:\Users\Austen\274bot-campaign\multirevision-20260910\target-isolated-b1cff8a7\debug\deps\api-abdb5e497b6315b9.exe)
+
+running 4 tests
+test gather_tools::tests::best_axe_has_no_woodcutting_gate_and_keeps_black ... ok
+test gather_tools::tests::best_pickaxe_uses_mining_level_and_available_only ... ok
+test gather_tools::tests::can_wield_is_attack_gate_and_unknown_is_unavailable ... ok
+test gather_tools::tests::selected_274_289_ids_names_and_wearpos_agree ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.03s
+

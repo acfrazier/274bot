@@ -1,0 +1,14 @@
+   Compiling image v0.25.10
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-04d7b1f4/vendor/fr-client-rust/crates/client)
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-04d7b1f4/crates/api)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.44s
+     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/api-386f1453e56ad78b)
+
+running 4 tests
+test gather_tools::tests::best_pickaxe_uses_mining_level_and_available_only ... ok
+test gather_tools::tests::best_axe_has_no_woodcutting_gate_and_keeps_black ... ok
+test gather_tools::tests::can_wield_is_attack_gate_and_unknown_is_unavailable ... ok
+test gather_tools::tests::selected_274_289_ids_names_and_wearpos_agree ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.04s
+

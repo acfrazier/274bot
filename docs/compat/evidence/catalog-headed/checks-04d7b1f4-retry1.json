@@ -1,0 +1,116 @@
+{
+  "host_commit": "04d7b1f48180ab9b93bbd6fec45a655df4385233",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "source_files_verified": 3903,
+  "checks": [
+    {
+      "label": "catalog",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "host-play",
+        "--features",
+        "memory-profile",
+        "--test",
+        "catalog_boundary_live"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.291,
+      "log": "docs/compat/evidence/catalog-headed/checks-04d7b1f4-retry1-catalog.log",
+      "log_sha256": "7298e6a491d29daf0e84d3f4757bd4e485181b3ca94b6e3fd301b3de00e1fa3c"
+    },
+    {
+      "label": "scenario",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "scenario",
+        "--lib"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 9.57,
+      "log": "docs/compat/evidence/catalog-headed/checks-04d7b1f4-retry1-scenario.log",
+      "log_sha256": "13fbbceed5187b3668e0f4e4a43b88c7cf279b5af5f81165ac2db19b1349aefe"
+    },
+    {
+      "label": "paired",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "host-play",
+        "--test",
+        "paired_catalog_live"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.525,
+      "log": "docs/compat/evidence/catalog-headed/checks-04d7b1f4-retry1-paired.log",
+      "log_sha256": "477c37e36e7e6a4898c244d2459487d50bf5be65b49a055f36201f4c04bbb8d1"
+    },
+    {
+      "label": "clippy-script",
+      "command": [
+        "cargo",
+        "clippy",
+        "-p",
+        "script",
+        "--lib",
+        "--test",
+        "resource_tool_facts",
+        "--test",
+        "tick_subscriber",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 4.363,
+      "log": "docs/compat/evidence/catalog-headed/checks-04d7b1f4-retry1-clippy-script.log",
+      "log_sha256": "411d9960c2a3f02eaf994bd725cfeff9880d8722786cf69202bbd47e3c23f988"
+    },
+    {
+      "label": "clippy-catalog",
+      "command": [
+        "cargo",
+        "clippy",
+        "-p",
+        "host-play",
+        "--features",
+        "memory-profile",
+        "--test",
+        "catalog_boundary_live",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 4.833,
+      "log": "docs/compat/evidence/catalog-headed/checks-04d7b1f4-retry1-clippy-catalog.log",
+      "log_sha256": "c362701f68f808de935cc83b3f194a443ef938c7badc97ea106ea0ca4b5d0623"
+    },
+    {
+      "label": "clippy-paired",
+      "command": [
+        "cargo",
+        "clippy",
+        "-p",
+        "host-play",
+        "--test",
+        "paired_catalog_live",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 1.585,
+      "log": "docs/compat/evidence/catalog-headed/checks-04d7b1f4-retry1-clippy-paired.log",
+      "log_sha256": "c5272317e98201ff5e15484deaf87d62d6a61d9a288550d6157233966256e5f3"
+    }
+  ],
+  "all_passed": true,
+  "isolated_build": true,
+  "target_started_empty": false,
+  "cache_reuse": "Completed exclusive combat99 target transferred to root; exact04d source"
+}

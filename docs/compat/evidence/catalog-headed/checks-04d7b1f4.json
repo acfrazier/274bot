@@ -1,0 +1,73 @@
+{
+  "host_commit": "04d7b1f48180ab9b93bbd6fec45a655df4385233",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "source_files_verified": 3903,
+  "checks": [
+    {
+      "label": "api-tools",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "api",
+        "--lib",
+        "gather_tools"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 9.526,
+      "log": "docs/compat/evidence/catalog-headed/checks-04d7b1f4-api-tools.log",
+      "log_sha256": "8faa3962a6fcccf2dff3eb7b90193e77f77ff5084a09d747b2b78106cdf87b3e"
+    },
+    {
+      "label": "script-tools",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "script",
+        "--test",
+        "resource_tool_facts"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.782,
+      "log": "docs/compat/evidence/catalog-headed/checks-04d7b1f4-script-tools.log",
+      "log_sha256": "1ec293e09611ac7b896a7f66f4a9ba0d1f02fa3bb7623b13d90d5f8003000a51"
+    },
+    {
+      "label": "tick",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "script",
+        "--test",
+        "tick_subscriber"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.846,
+      "log": "docs/compat/evidence/catalog-headed/checks-04d7b1f4-tick.log",
+      "log_sha256": "9a3fd439e0f36a64493be84695c6d85df3226335b31c03f5a839fabf9da1ea9e"
+    },
+    {
+      "label": "catalog",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "host-play",
+        "--features",
+        "memory-profile",
+        "--test",
+        "catalog_boundary_live"
+      ],
+      "exit_code": 101,
+      "elapsed_seconds": 0.264,
+      "log": "docs/compat/evidence/catalog-headed/checks-04d7b1f4-catalog.log",
+      "log_sha256": "c76b5c214351f2619ddeb49aafa1909566985c131bcadb7be536ddee1d158e66"
+    }
+  ],
+  "all_passed": false,
+  "isolated_build": true,
+  "target_started_empty": false,
+  "cache_reuse": "Completed exclusive combat99 target transferred to root; exact04d source"
+}

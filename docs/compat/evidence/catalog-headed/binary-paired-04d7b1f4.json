@@ -1,0 +1,28 @@
+{
+  "mode": "paired",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "host-play",
+    "--test",
+    "paired_catalog_live",
+    "--no-run",
+    "--message-format=json"
+  ],
+  "started_at": "2026-09-11T11:14:02.225261+00:00",
+  "elapsed_seconds": 11.452,
+  "exit_code": 0,
+  "isolated_build": true,
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target",
+  "target_started_empty": false,
+  "cache_reuse": "Completed reviewed combat99 compiler cache transferred exclusively to root for exact04d source; lsof empty before reuse; not empty-started",
+  "host_commit": "04d7b1f48180ab9b93bbd6fec45a655df4385233",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "source_root": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-04d7b1f4",
+  "binary": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/paired-catalog-04d7b1f4",
+  "binary_sha256": "3811e85fb323b5187658c1cc27b188de5ce315ad984729e4e9eeae4dc18a6d58",
+  "binary_bytes": 176580664,
+  "source_files_verified": 3903,
+  "elapsed_is_not_performance_measurement": true
+}
