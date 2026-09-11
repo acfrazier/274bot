@@ -1,0 +1,22 @@
+{
+  "card": "t_fd3a8b47",
+  "reviewer_profile": "branchreviewer",
+  "model": "grok-4.6",
+  "provider": "xai-oauth",
+  "verdict": "approve",
+  "kind": "first-incremental-integration-foundation",
+  "publication": false,
+  "host_base": "b2bd5023489ab2e0b6ba690f228217e8984ac91b",
+  "host_candidate": "940531c3f7a4fe392f8ee5688702fe1f617d28b0",
+  "docs_evidence_commit": "36e2fc44d509c9c18ea7fcf3b71631871d65d104",
+  "client_base": "9b41e6e06b9fd42dc2247fc813a303c3fcb92941",
+  "client_candidate": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "branch": "codex/rs2b0t-stage-1",
+  "validation_ready": "docs/compat/evidence/stage-1/validation-ready.json",
+  "validation_ready_sha256": "a0587b2f35f7ec63d323344646e46346c29fa4e797389ea7e3d635ef54beb49e",
+  "report": "docs/compat/08a-stage1-whole-branch-review.md",
+  "live_passed": 8,
+  "retained_old_fixture_failure": "docs/compat/evidence/stage-1/r274-nav_door.log",
+  "no_cake_bank_js_policy": true,
+  "no_product_edits_by_reviewer": true
+}
