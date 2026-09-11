@@ -4511,11 +4511,12 @@ const WILDY_STONE_DEST: WorldTile = WorldTile {
     z: 3960,
     level: 0,
 };
-/// Selected level-1 m46_61 loc 2297 at (3001,3945); the moves land x-7.
+/// Selected m46_61 loc 2297 is raw plane 1 over a LinkBelow bridge; the
+/// player remains on observed scene plane 0 while the moves land x-7.
 const WILDY_LOG_DEST: WorldTile = WorldTile {
     x: 2994,
     z: 3945,
-    level: 1,
+    level: 0,
 };
 /// Centre tile of the selected three-wide rocks 2328; rs2 lands three south.
 const WILDY_ROCKS_DEST: WorldTile = WorldTile {
@@ -11949,7 +11950,7 @@ mod tests {
     }
 
     #[test]
-    fn wildy_agility_registers_the_full_ordered_course_and_further_pipe() {
+    fn wildy_agility_registers_the_full_ordered_course_on_the_observed_player_plane() {
         let wildy = get("wildy_agility").expect("wildy_agility");
         assert_eq!(wildy.settings.start_script, Some("WildyAgility"));
         assert_eq!(wildy.settings.deadline, SCRIPT_GOLD_DEADLINE);
@@ -12031,7 +12032,7 @@ mod tests {
                 Proof::ArrivedNear {
                     x: 2994,
                     z: 3945,
-                    level: 1,
+                    level: 0,
                     radius: 3,
                 },
                 Proof::StatXpGain {

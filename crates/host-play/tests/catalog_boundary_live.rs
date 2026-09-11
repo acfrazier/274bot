@@ -76,7 +76,8 @@ const WILDY_START: (i32, i32, i32) = (2998, 3916, 0);
 const WILDY_PIPE_DEST: (i32, i32, i32) = (3004, 3947, 0);
 const WILDY_ROPE_DEST: (i32, i32, i32) = (3005, 3958, 0);
 const WILDY_STONE_DEST: (i32, i32, i32) = (2996, 3960, 0);
-const WILDY_LOG_DEST: (i32, i32, i32) = (2994, 3945, 1);
+// Loc 2297 is stored on raw map plane 1, but LinkBelow exposes player plane 0.
+const WILDY_LOG_DEST: (i32, i32, i32) = (2994, 3945, 0);
 const WILDY_ROCKS_DEST: (i32, i32, i32) = (2994, 3933, 0);
 const WILDY_LAP_XP: i32 = 586;
 const WILDY_FURTHER_XP: i32 = 598;
@@ -6736,7 +6737,8 @@ mod tests {
         let pipe = wildy_obs((3004, 3947, 0), 1_027);
         let rope = wildy_obs((3005, 3958, 0), 1_047);
         let stone = wildy_obs((2996, 3960, 0), 1_067);
-        let log = wildy_obs((2994, 3945, 1), 1_087);
+        let log = wildy_obs((2994, 3945, 0), 1_087);
+        let raw_scenery_plane_log = wildy_obs((2994, 3945, 1), 1_087);
         let rocks = wildy_obs((2994, 3933, 0), 1_586);
         let second_pipe = wildy_obs((3004, 3947, 0), 1_598);
 
@@ -6747,6 +6749,21 @@ mod tests {
         )
         .qualify()
         .is_ok());
+        assert!(witness(
+            CoreCase::WildyAgility,
+            &baseline,
+            [
+                &ridge,
+                &pipe,
+                &rope,
+                &stone,
+                &raw_scenery_plane_log,
+                &rocks,
+                &second_pipe,
+            ]
+        )
+        .qualify()
+        .is_err());
         assert!(witness(CoreCase::WildyAgility, &baseline, [&ridge])
             .qualify()
             .is_err());
