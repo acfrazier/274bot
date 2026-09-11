@@ -1,0 +1,16 @@
+{
+  "outcome": "FAIL",
+  "source": "Observed foreground SSH startup output from root tool session35194",
+  "engine": "/home/acfrazier/274bot-campaign/server-4c95f87",
+  "command": [
+    "/usr/bin/node",
+    "--import",
+    "tsx",
+    "src/app.ts"
+  ],
+  "world_ready": true,
+  "process_exit": 1,
+  "error": "listen EACCES: permission denied 127.0.0.1:80",
+  "cause": "Foreground acfrazier lacks the stopped system service privileged-port capability.",
+  "qualification": "No actor was launched. Use an explicit process-local HTTP8080 override and matching TUI profile; leave saved config and system service unchanged."
+}

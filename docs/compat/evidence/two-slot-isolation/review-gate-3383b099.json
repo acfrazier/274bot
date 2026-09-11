@@ -1,0 +1,16 @@
+{
+  "review_task": "t_03bc820a",
+  "review_run": 1237,
+  "review_session": {
+    "id": "20260911_012856_3456a0",
+    "model": "grok-4.5",
+    "profile_name": "reviewer",
+    "ended_at": 1789105325.835582
+  },
+  "reviewed_source": "3383b09980e481be10a3ca287a1e3ebf54b8e3e2",
+  "client": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "verdict": "approved",
+  "scope": "Post-Stop peer progress anchor and full raw N2 witness",
+  "source_files_verified": 2473,
+  "verified_at": "2026-09-11T05:44:25.128140+00:00"
+}
