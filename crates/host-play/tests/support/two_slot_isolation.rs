@@ -99,6 +99,7 @@ impl SlotKind {
 pub struct Observation {
     pub ingame: bool,
     pub scene_state: i32,
+    pub inventory_tab_available: bool,
     pub player: Option<String>,
     pub tile: Option<(i32, i32, i32)>,
     pub tick: u32,
@@ -123,6 +124,10 @@ impl Observation {
         Self {
             ingame: snapshot.ingame() && snapshot.attached(),
             scene_state: snapshot.scene_state(),
+            inventory_tab_available: snapshot
+                .side_tabs()
+                .iter()
+                .any(|tab| tab.index == 3 && tab.available),
             player: snapshot
                 .local_player()
                 .and_then(|local| local.player.actor.name.clone()),

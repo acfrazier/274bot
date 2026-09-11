@@ -35,7 +35,6 @@ enum Prep {
     TutSkip,
     WaitTutorial,
     Relog,
-    WaitLoggedOut,
     WaitRelog,
     Seed,
     WaitSeed,
@@ -91,6 +90,9 @@ impl SlotLive {
             return Err(format!(
                 "Start baseline is not attached ingame scene2: {observation:?}"
             ));
+        }
+        if !observation.inventory_tab_available {
+            return Err("Start baseline inventory tab is not bound after relog".into());
         }
         let player = observation
             .player
@@ -216,20 +218,39 @@ impl SlotLive {
                 if !Self::send_ok(hold) {
                     return Ok(());
                 }
+                println!(
+                    "{}",
+                    json!({
+                        "phase": "before-relog",
+                        "account": self.account,
+                        "kind": self.kind,
+                        "observation": observation,
+                    })
+                );
                 let ifaces = Arc::clone(&client.ifaces);
                 if !interact::logout(client, &ifaces) {
                     return Err("logout iface missing (side icons still tutorial-locked?)".into());
                 }
                 self.last_action = now;
-                self.prep = Prep::WaitLoggedOut;
-            }
-            Prep::WaitLoggedOut => {
-                if !observation.ingame {
-                    self.prep = Prep::WaitRelog;
-                }
+                self.prep = Prep::WaitRelog;
             }
             Prep::WaitRelog => {
-                if observation.ingame && observation.scene_state == 2 {
+                // ScenarioRunner / loadout 8dc534b6: Play frames need not
+                // arrive during the off-world interval. Relog is ready when
+                // inventory side-tab 3 is bound on attached ingame scene2.
+                if observation.ingame
+                    && observation.scene_state == 2
+                    && observation.inventory_tab_available
+                {
+                    println!(
+                        "{}",
+                        json!({
+                            "phase": "after-relog",
+                            "account": self.account,
+                            "kind": self.kind,
+                            "observation": observation,
+                        })
+                    );
                     self.prep = Prep::Seed;
                 }
             }
@@ -857,6 +878,7 @@ mod tests {
         Observation {
             ingame: true,
             scene_state: 2,
+            inventory_tab_available: true,
             player: Some(player.into()),
             tile: Some(VARROCK_WEST),
             tick: 10,

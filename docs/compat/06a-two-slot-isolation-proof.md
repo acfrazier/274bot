@@ -21,8 +21,13 @@ edited. Catalog harness `catalog_boundary_live.rs` was not edited.
 
 The live cell requires `LIVE=1`. Missing `LIVE` skips. Once `LIVE=1` is set,
 failure prints `FAIL:` and exits 1. Seed and Start happen only after
-`ingame && scene_state == 2`. Off-world relog observations are processed
-under production hold; gameplay sends are not issued under hold.
+`ingame && scene_state == 2`. Relog readiness matches ScenarioRunner / loadout
+`8dc534b6`: after IF logout, wait for attached `ingame && scene_state == 2`
+and inventory side-tab index 3 `available`. Play frames need not arrive during
+the off-world interval; the fixture does not require a durable `!ingame`
+observation. Before-relog and after-relog JSON evidence is emitted. Off-world
+relog observations are processed under production hold; gameplay sends are not
+issued under hold. Start baseline requires the inventory tab bound.
 
 Required environment:
 
@@ -59,14 +64,14 @@ leave A `Idle` while B continues.
 
 ## Verification
 
-Export base: host `08235c6460241787e31cbf9eb09f97442bc9f5b0` (host-play lib
-identical to `637ee0e3c275a03ee86e78d6c4253b6bfc31c7e0`), client
+Export base: host `5a28d839d0724fdbb2ea6d3a04fad72086562ef6` (host-play lib
+last changed at `5612b2652968ebcfa6577bf4439f183de1fd5e21`), client
 `56d80272bcbda3eb1e22db096c1c5e21d3497de4`, plus this owned overlay.
 Frozen export:
-`/Users/acfrazier/experiments/274bot/.worktrees/t_4eb51061-src-20260911041819`
-(committed host checkout-index plus client checkout-index plus owned overlay).
+`/Users/acfrazier/experiments/274bot/.worktrees/t_4eb51061-src-20260911044211`
+(committed host archive plus client archive plus owned overlay).
 Isolated empty target:
-`/Users/acfrazier/experiments/274bot/.worktrees/t_4eb51061-target-20260911041819`
+`/Users/acfrazier/experiments/274bot/.worktrees/t_4eb51061-target-20260911044211`
 (`isolated_build=true`). Shared campaign target was not used.
 
 - `rustfmt --check -- crates/host-play/tests/two_slot_isolation_live.rs crates/host-play/tests/support/two_slot_isolation.rs` — pass.
