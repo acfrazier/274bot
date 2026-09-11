@@ -41,9 +41,35 @@ class SettingsStoreImpl {
         return out;
     }
 
+    displayString(_name, key, def) {
+        const bag = (globalThis.__rs2b0t_host || {}).settingsBag || {};
+        if (Object.prototype.hasOwnProperty.call(bag, key)) return settingToString(bag[key]);
+        return settingToString(def?.default ?? '');
+    }
+
+    saved(_name, key) {
+        const bag = (globalThis.__rs2b0t_host || {}).settingsBag || {};
+        return Object.prototype.hasOwnProperty.call(bag, key) ? settingToString(bag[key]) : undefined;
+    }
+
     globalBag() {
         throw new Error('not impl: SettingsStore.globalBag');
     }
+}
+
+function settingToString(value) {
+    if (typeof value === 'boolean') return value ? 'true' : 'false';
+    if (Array.isArray(value)) return value.join(', ');
+    if (
+        value &&
+        typeof value === 'object' &&
+        Object.prototype.hasOwnProperty.call(value, 'x') &&
+        Object.prototype.hasOwnProperty.call(value, 'z') &&
+        Object.prototype.hasOwnProperty.call(value, 'level')
+    ) {
+        return `${value.x},${value.z},${value.level}`;
+    }
+    return String(value);
 }
 
 export const SettingsStore = new SettingsStoreImpl();
