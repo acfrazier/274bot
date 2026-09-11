@@ -19,7 +19,7 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const SUPPORT_MATRIX: &str = include_str!("../../../docs/compat/support-matrix.json");
-const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_thiever|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks";
+const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_thiever|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner";
 const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -131,6 +131,32 @@ const GNOME_BANK_STAIR_SOUTH: (i32, i32, i32) = (2444, 3416, 0);
 const COAL_MINE: (i32, i32, i32) = (2582, 3481, 0);
 const COAL_MINE_TRUCK_STAND: (i32, i32, i32) = (2575, 3486, 0);
 const SEERS_BANK: (i32, i32, i32) = (2725, 3491, 0);
+const RAW_SALMON_ID: i32 = 331;
+const SALMON_ID: i32 = 329;
+const NOTED_RAW_SALMON_ID: i32 = 332;
+const NOTED_SALMON_ID: i32 = 330;
+const RAW_LOBSTER_ID: i32 = 377;
+const LOBSTER_ID: i32 = 379;
+const NOTED_RAW_LOBSTER_ID: i32 = 378;
+const NOTED_LOBSTER_ID: i32 = 380;
+const BURNT_FISH_1_ID: i32 = 323;
+const BURNT_FISH_2_ID: i32 = 343;
+const BURNT_LOBSTER_ID: i32 = 381;
+const NOTED_COPPER_ORE_ID: i32 = 437;
+const NOTED_TIN_ORE_ID: i32 = 439;
+const NOTED_IRON_ORE_ID: i32 = 441;
+const NOTED_BRONZE_BAR_ID: i32 = 2350;
+const NOTED_STEEL_BAR_ID: i32 = 2354;
+const BOW_STRING_ID: i32 = 1777;
+const NOTED_FLAX_ID: i32 = 1780;
+const NOTED_BOW_STRING_ID: i32 = 1778;
+const BALL_OF_WOOL_ID: i32 = 1759;
+const COOKING_FIXTURE_LEVEL: i32 = 80;
+const CATHERBY_BANK: (i32, i32, i32) = (2809, 3441, 0);
+const CATHERBY_RANGE_STAND: (i32, i32, i32) = (2817, 3443, 0);
+const AL_KHARID_FURNACE: (i32, i32, i32) = (3275, 3185, 0);
+const FLAX_SPINNER_BANK: (i32, i32, i32) = (2722, 3493, 0);
+const FLAX_SPINNER_WHEEL: (i32, i32, i32) = (2711, 3471, 1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -178,6 +204,11 @@ enum CoreCase {
     GnomeFletchShort,
     GnomeFletchLong,
     CoalTrucks,
+    CookBot,
+    CookBotLobster,
+    SmelterBot,
+    SmelterBotSteel,
+    FlaxSpinner,
 }
 
 impl CoreCase {
@@ -226,6 +257,11 @@ impl CoreCase {
             "gnome_fletch_short" => Ok(Self::GnomeFletchShort),
             "gnome_fletch_long" => Ok(Self::GnomeFletchLong),
             "coal_trucks" => Ok(Self::CoalTrucks),
+            "cook_bot" => Ok(Self::CookBot),
+            "cook_bot_lobster" => Ok(Self::CookBotLobster),
+            "smelter_bot" => Ok(Self::SmelterBot),
+            "smelter_bot_steel" => Ok(Self::SmelterBotSteel),
+            "flax_spinner" => Ok(Self::FlaxSpinner),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -277,6 +313,11 @@ impl CoreCase {
             Self::GnomeFletchShort => "gnome_fletch_short",
             Self::GnomeFletchLong => "gnome_fletch_long",
             Self::CoalTrucks => "coal_trucks",
+            Self::CookBot => "cook_bot",
+            Self::CookBotLobster => "cook_bot_lobster",
+            Self::SmelterBot => "smelter_bot",
+            Self::SmelterBotSteel => "smelter_bot_steel",
+            Self::FlaxSpinner => "flax_spinner",
         }
     }
 
@@ -312,6 +353,9 @@ impl CoreCase {
             Self::ArdyThiever | Self::ArdyThieverKnight => "ArdyThiever",
             Self::GnomeChop | Self::GnomeFletchShort | Self::GnomeFletchLong => "GnomeMagicChopper",
             Self::CoalTrucks => "CoalTrucks",
+            Self::CookBot | Self::CookBotLobster => "CookBot",
+            Self::SmelterBot | Self::SmelterBotSteel => "SmelterBot",
+            Self::FlaxSpinner => "FlaxSpinner",
         }
     }
 }
@@ -749,6 +793,88 @@ fn coal_trucks_baseline_ready(baseline: &Observation) -> bool {
         && baseline.bank_item_id(COAL_ID) == 0
 }
 
+fn cook_wrong_or_burnt(observation: &Observation, wrong: i32) -> bool {
+    observation.item_id(wrong) > 0
+        || observation.bank_item_id(wrong) > 0
+        || observation.item_id(BURNT_FISH_1_ID) > 0
+        || observation.bank_item_id(BURNT_FISH_1_ID) > 0
+        || observation.item_id(BURNT_FISH_2_ID) > 0
+        || observation.bank_item_id(BURNT_FISH_2_ID) > 0
+        || observation.item_id(BURNT_LOBSTER_ID) > 0
+        || observation.bank_item_id(BURNT_LOBSTER_ID) > 0
+}
+
+fn cook_noted(observation: &Observation, noted_raw: i32, noted_product: i32) -> bool {
+    observation.item_id(noted_raw) > 0
+        || observation.bank_item_id(noted_raw) > 0
+        || observation.item_id(noted_product) > 0
+        || observation.bank_item_id(noted_product) > 0
+}
+
+fn cook_bot_baseline_ready(
+    baseline: &Observation,
+    raw: i32,
+    product: i32,
+    wrong: i32,
+    noted_raw: i32,
+    noted_product: i32,
+) -> bool {
+    near(baseline.tile, CATHERBY_BANK, 6)
+        && baseline.level("cooking") >= COOKING_FIXTURE_LEVEL
+        && baseline.item_id(raw) == 0
+        && baseline.item_id(product) == 0
+        && !cook_wrong_or_burnt(baseline, wrong)
+        && !cook_noted(baseline, noted_raw, noted_product)
+}
+
+fn smelter_noted(
+    observation: &Observation,
+    noted_primary: i32,
+    noted_secondary: i32,
+    noted_product: i32,
+) -> bool {
+    observation.item_id(noted_primary) > 0
+        || observation.bank_item_id(noted_primary) > 0
+        || observation.item_id(noted_secondary) > 0
+        || observation.bank_item_id(noted_secondary) > 0
+        || observation.item_id(noted_product) > 0
+        || observation.bank_item_id(noted_product) > 0
+}
+
+fn smelter_bot_baseline_ready(
+    baseline: &Observation,
+    primary: i32,
+    secondary: i32,
+    product: i32,
+    wrong: i32,
+    smithing: i32,
+) -> bool {
+    near(baseline.tile, AL_KHARID_BANK, 6)
+        && baseline.level("smithing") >= smithing
+        && baseline.item_id(primary) == 0
+        && baseline.item_id(secondary) == 0
+        && baseline.item_id(product) == 0
+        && baseline.item_id(wrong) == 0
+        && baseline.item_id(IRON_BAR_ID) == 0
+        && !smelter_noted(baseline, primary + 1, secondary + 1, product + 1)
+}
+
+fn flax_spinner_noted(observation: &Observation) -> bool {
+    observation.item_id(NOTED_FLAX_ID) > 0
+        || observation.bank_item_id(NOTED_FLAX_ID) > 0
+        || observation.item_id(NOTED_BOW_STRING_ID) > 0
+        || observation.bank_item_id(NOTED_BOW_STRING_ID) > 0
+}
+
+fn flax_spinner_baseline_ready(baseline: &Observation) -> bool {
+    near(baseline.tile, FLAX_SPINNER_BANK, 8)
+        && baseline.level("crafting") >= 1
+        && baseline.item_id(FLAX_ID) == 0
+        && baseline.item_id(BOW_STRING_ID) == 0
+        && baseline.item_id(BALL_OF_WOOL_ID) == 0
+        && !flax_spinner_noted(baseline)
+}
+
 fn superheater_baseline_ready(
     baseline: &Observation,
     bar: i32,
@@ -1011,6 +1137,39 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         CoreCase::GnomeFletchShort => gnome_fletch_baseline_ready(baseline, 80, Some(84)),
         CoreCase::GnomeFletchLong => gnome_fletch_baseline_ready(baseline, 85, None),
         CoreCase::CoalTrucks => coal_trucks_baseline_ready(baseline),
+        CoreCase::CookBot => cook_bot_baseline_ready(
+            baseline,
+            RAW_SALMON_ID,
+            SALMON_ID,
+            LOBSTER_ID,
+            NOTED_RAW_SALMON_ID,
+            NOTED_SALMON_ID,
+        ),
+        CoreCase::CookBotLobster => cook_bot_baseline_ready(
+            baseline,
+            RAW_LOBSTER_ID,
+            LOBSTER_ID,
+            SALMON_ID,
+            NOTED_RAW_LOBSTER_ID,
+            NOTED_LOBSTER_ID,
+        ),
+        CoreCase::SmelterBot => smelter_bot_baseline_ready(
+            baseline,
+            COPPER_ORE_ID,
+            TIN_ORE_ID,
+            BRONZE_BAR_ID,
+            STEEL_BAR_ID,
+            1,
+        ),
+        CoreCase::SmelterBotSteel => smelter_bot_baseline_ready(
+            baseline,
+            IRON_ORE_ID,
+            COAL_ID,
+            STEEL_BAR_ID,
+            BRONZE_BAR_ID,
+            30,
+        ),
+        CoreCase::FlaxSpinner => flax_spinner_baseline_ready(baseline),
     };
     if ready {
         return Ok(());
@@ -1112,6 +1271,21 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         CoreCase::CoalTrucks => {
             "coal mine (2582,3481,0), Mining 30, steel pickaxe 1269, and empty pack of 453"
         }
+        CoreCase::CookBot => {
+            "Catherby bank (2809,3441,0), Cooking 80, empty pack of 331/329"
+        }
+        CoreCase::CookBotLobster => {
+            "Catherby bank (2809,3441,0), Cooking 80, empty pack of 377/379"
+        }
+        CoreCase::SmelterBot => {
+            "Al-Kharid bank (3269,3167,0), Smithing 1, empty pack of 436/438/2349"
+        }
+        CoreCase::SmelterBotSteel => {
+            "Al-Kharid bank (3269,3167,0), Smithing 30, empty pack of 440/453/2353"
+        }
+        CoreCase::FlaxSpinner => {
+            "Seers flax bank (2722,3493,0), Crafting 1, empty pack of 1779/1777"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -1150,6 +1324,7 @@ struct CoreWitness {
     gnome_chop_cycle: GnomeChopCycle,
     gnome_fletch_cycle: GnomeFletchCycle,
     coal_trucks_cycle: CoalTrucksCycle,
+    station_production_cycle: StationProductionCycle,
     ordered_first_exhausted: bool,
 }
 
@@ -2492,6 +2667,201 @@ impl CoalTrucksCycle {
     }
 }
 
+/// Produce exact unnoted output with relevant XP after Start, deposit into a
+/// fresh loaded bank, restock the raw input, close, return to the station,
+/// and produce again. Seeded/name-only/noted/wrong products fail.
+#[derive(Debug, Clone, Default, Serialize)]
+struct StationProductionCycle {
+    withdrawn: Option<Observation>,
+    produced: Option<Observation>,
+    deposited: Option<Observation>,
+    restocked: Option<Observation>,
+    returned: bool,
+    further: bool,
+    wrong_product: bool,
+    noted: bool,
+}
+
+struct StationProductionSpec {
+    product: i32,
+    input: i32,
+    extra_input: Option<i32>,
+    wrong: i32,
+    extra_wrong: Option<i32>,
+    skill: &'static str,
+    station: (i32, i32, i32),
+    station_radius: i32,
+    noted: bool,
+}
+
+impl StationProductionCycle {
+    fn observe(&mut self, spec: StationProductionSpec, baseline: &Observation, now: &Observation) {
+        let StationProductionSpec {
+            product,
+            input,
+            extra_input,
+            wrong,
+            extra_wrong,
+            skill,
+            station,
+            station_radius,
+            noted,
+        } = spec;
+        self.wrong_product |= now.item_id(wrong) > 0
+            || now.bank_item_id(wrong) > 0
+            || extra_wrong.is_some_and(|id| now.item_id(id) > 0 || now.bank_item_id(id) > 0);
+        self.noted |= noted;
+        if self.withdrawn.is_none()
+            && now.item_id(input) >= 1
+            && now.item_id(product) == 0
+            && baseline.item_id(input) == 0
+            && extra_input.is_none_or(|id| now.item_id(id) >= 1)
+            && now.item_id(wrong) == 0
+            && extra_wrong.is_none_or(|id| now.item_id(id) == 0)
+            && !noted
+        {
+            self.withdrawn = Some(now.clone());
+        }
+        if let Some(withdrawn) = &self.withdrawn {
+            if self.produced.is_none()
+                && now.item_id(product) >= 1
+                && now.item_id(input) < withdrawn.item_id(input)
+                && extra_input.is_none_or(|id| now.item_id(id) < withdrawn.item_id(id))
+                && now.skill_xp(skill) > baseline.skill_xp(skill)
+                && near(now.tile, station, station_radius)
+                && now.item_id(wrong) == 0
+                && extra_wrong.is_none_or(|id| now.item_id(id) == 0)
+                && !noted
+            {
+                self.produced = Some(now.clone());
+            }
+        }
+        if self.produced.is_some()
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(product) == 0
+            && now.bank_item_id(product) >= 1
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            if self.restocked.is_none()
+                && now.bank_open
+                && now.bank_loaded
+                && now.bank_generation == deposited.bank_generation
+                && now.item_id(input) >= 1
+                && now.bank_item_id(input) < deposited.bank_item_id(input)
+                && extra_input.is_none_or(|id| now.item_id(id) >= 1)
+            {
+                self.restocked = Some(now.clone());
+            }
+        }
+        if let Some(deposited) = &self.deposited {
+            self.returned |= self.restocked.is_some()
+                && !now.bank_open
+                && !now.bank_loaded
+                && now.bank_generation > deposited.bank_generation
+                && near(now.tile, station, station_radius);
+        }
+        if let Some(produced) = &self.produced {
+            self.further |= self.returned
+                && !now.bank_open
+                && now.item_id(product) >= 1
+                && now.item_id(wrong) == 0
+                && extra_wrong.is_none_or(|id| now.item_id(id) == 0)
+                && now.skill_xp(skill) > produced.skill_xp(skill);
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.further
+            && self.withdrawn.is_some()
+            && self.produced.is_some()
+            && self.deposited.is_some()
+            && self.restocked.is_some()
+            && !self.wrong_product
+            && !self.noted
+    }
+}
+
+fn station_production_spec(
+    case: CoreCase,
+    observation: &Observation,
+) -> Option<StationProductionSpec> {
+    match case {
+        CoreCase::CookBot => Some(StationProductionSpec {
+            product: SALMON_ID,
+            input: RAW_SALMON_ID,
+            extra_input: None,
+            wrong: LOBSTER_ID,
+            extra_wrong: None,
+            skill: "cooking",
+            station: CATHERBY_RANGE_STAND,
+            station_radius: 8,
+            noted: cook_noted(observation, NOTED_RAW_SALMON_ID, NOTED_SALMON_ID)
+                || cook_wrong_or_burnt(observation, LOBSTER_ID),
+        }),
+        CoreCase::CookBotLobster => Some(StationProductionSpec {
+            product: LOBSTER_ID,
+            input: RAW_LOBSTER_ID,
+            extra_input: None,
+            wrong: SALMON_ID,
+            extra_wrong: None,
+            skill: "cooking",
+            station: CATHERBY_RANGE_STAND,
+            station_radius: 8,
+            noted: cook_noted(observation, NOTED_RAW_LOBSTER_ID, NOTED_LOBSTER_ID)
+                || cook_wrong_or_burnt(observation, SALMON_ID),
+        }),
+        CoreCase::SmelterBot => Some(StationProductionSpec {
+            product: BRONZE_BAR_ID,
+            input: COPPER_ORE_ID,
+            extra_input: Some(TIN_ORE_ID),
+            wrong: STEEL_BAR_ID,
+            extra_wrong: Some(IRON_BAR_ID),
+            skill: "smithing",
+            station: AL_KHARID_FURNACE,
+            station_radius: 8,
+            noted: smelter_noted(
+                observation,
+                NOTED_COPPER_ORE_ID,
+                NOTED_TIN_ORE_ID,
+                NOTED_BRONZE_BAR_ID,
+            ),
+        }),
+        CoreCase::SmelterBotSteel => Some(StationProductionSpec {
+            product: STEEL_BAR_ID,
+            input: IRON_ORE_ID,
+            extra_input: Some(COAL_ID),
+            wrong: BRONZE_BAR_ID,
+            extra_wrong: Some(IRON_BAR_ID),
+            skill: "smithing",
+            station: AL_KHARID_FURNACE,
+            station_radius: 8,
+            noted: smelter_noted(
+                observation,
+                NOTED_IRON_ORE_ID,
+                NOTED_COAL_ID,
+                NOTED_STEEL_BAR_ID,
+            ),
+        }),
+        CoreCase::FlaxSpinner => Some(StationProductionSpec {
+            product: BOW_STRING_ID,
+            input: FLAX_ID,
+            extra_input: None,
+            wrong: BALL_OF_WOOL_ID,
+            extra_wrong: None,
+            skill: "crafting",
+            station: FLAX_SPINNER_WHEEL,
+            station_radius: 8,
+            noted: flax_spinner_noted(observation),
+        }),
+        _ => None,
+    }
+}
+
 impl CoreWitness {
     fn new(case: CoreCase, baseline: Observation) -> Self {
         Self {
@@ -2524,6 +2894,7 @@ impl CoreWitness {
             gnome_chop_cycle: GnomeChopCycle::default(),
             gnome_fletch_cycle: GnomeFletchCycle::default(),
             coal_trucks_cycle: CoalTrucksCycle::default(),
+            station_production_cycle: StationProductionCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -2788,6 +3159,10 @@ impl CoreWitness {
         if matches!(self.case, CoreCase::CoalTrucks) {
             self.coal_trucks_cycle.observe(&self.baseline, observation);
         }
+        if let Some(spec) = station_production_spec(self.case, observation) {
+            self.station_production_cycle
+                .observe(spec, &self.baseline, observation);
+        }
         let baseline_sequence = self
             .baseline
             .chat
@@ -2917,6 +3292,11 @@ impl CoreWitness {
                 self.gnome_fletch_cycle.qualified()
             }
             CoreCase::CoalTrucks => self.coal_trucks_cycle.qualified(),
+            CoreCase::CookBot
+            | CoreCase::CookBotLobster
+            | CoreCase::SmelterBot
+            | CoreCase::SmelterBotSteel
+            | CoreCase::FlaxSpinner => self.station_production_cycle.qualified(),
         };
         if !ok {
             return Err(format!(
@@ -2954,6 +3334,7 @@ impl CoreWitness {
             "gnome_chop_cycle": self.gnome_chop_cycle,
             "gnome_fletch_cycle": self.gnome_fletch_cycle,
             "coal_trucks_cycle": self.coal_trucks_cycle,
+            "station_production_cycle": self.station_production_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -6482,6 +6863,662 @@ mod tests {
     }
 
     #[test]
+    fn station_production_requires_xp_product_deposit_restock_return_and_further() {
+        let cook_levels = [("cooking", COOKING_FIXTURE_LEVEL)];
+        let baseline = resource_obs(
+            CATHERBY_BANK,
+            &[],
+            &[],
+            &[],
+            &[("cooking", 0)],
+            &cook_levels,
+        );
+        validate_case_baseline(CoreCase::CookBot, &baseline).unwrap();
+
+        let withdrawn = resource_obs(
+            CATHERBY_BANK,
+            &[(RAW_SALMON_ID, 28)],
+            &[(RAW_SALMON_ID, 28)],
+            &[],
+            &[("cooking", 0)],
+            &cook_levels,
+        );
+        let produced = resource_obs(
+            CATHERBY_RANGE_STAND,
+            &[(SALMON_ID, 28)],
+            &[(RAW_SALMON_ID, 28)],
+            &[],
+            &[("cooking", 250)],
+            &cook_levels,
+        );
+        let mut deposited = resource_obs(
+            CATHERBY_BANK,
+            &[],
+            &[(SALMON_ID, 28), (RAW_SALMON_ID, 28)],
+            &[],
+            &[("cooking", 250)],
+            &cook_levels,
+        );
+        deposited.bank_open = true;
+        deposited.bank_loaded = true;
+        deposited.bank_generation = 1;
+        let mut restocked = resource_obs(
+            CATHERBY_BANK,
+            &[(RAW_SALMON_ID, 28)],
+            &[(SALMON_ID, 28)],
+            &[],
+            &[("cooking", 250)],
+            &cook_levels,
+        );
+        restocked.bank_open = true;
+        restocked.bank_loaded = true;
+        restocked.bank_generation = 1;
+        let mut returned = resource_obs(
+            CATHERBY_RANGE_STAND,
+            &[(RAW_SALMON_ID, 28)],
+            &[],
+            &[],
+            &[("cooking", 250)],
+            &cook_levels,
+        );
+        returned.bank_generation = 2;
+        let mut further = resource_obs(
+            CATHERBY_RANGE_STAND,
+            &[(SALMON_ID, 1)],
+            &[],
+            &[],
+            &[("cooking", 500)],
+            &cook_levels,
+        );
+        further.bank_generation = 2;
+
+        assert!(witness(
+            CoreCase::CookBot,
+            &baseline,
+            [&withdrawn, &produced, &deposited, &restocked, &returned, &further]
+        )
+        .qualify()
+        .is_ok());
+        assert!(witness(CoreCase::CookBot, &baseline, [&baseline])
+            .qualify()
+            .is_err());
+        assert!(witness(CoreCase::CookBot, &baseline, [&withdrawn])
+            .qualify()
+            .is_err());
+        assert!(
+            witness(CoreCase::CookBot, &baseline, [&withdrawn, &produced])
+                .qualify()
+                .is_err()
+        );
+        assert!(witness(
+            CoreCase::CookBot,
+            &baseline,
+            [&withdrawn, &produced, &deposited, &restocked, &returned]
+        )
+        .qualify()
+        .is_err());
+
+        let mut unclosed_return = returned.clone();
+        unclosed_return.bank_generation = deposited.bank_generation;
+        let mut unclosed_further = further.clone();
+        unclosed_further.bank_generation = deposited.bank_generation;
+        assert!(witness(
+            CoreCase::CookBot,
+            &baseline,
+            [
+                &withdrawn,
+                &produced,
+                &deposited,
+                &restocked,
+                &unclosed_return,
+                &unclosed_further
+            ]
+        )
+        .qualify()
+        .is_err());
+
+        let mut name_only = produced.clone();
+        name_only.item_ids.clear();
+        name_only.items.insert("Salmon".into(), 28);
+        assert!(witness(
+            CoreCase::CookBot,
+            &baseline,
+            [&withdrawn, &name_only, &deposited, &restocked, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut stale = deposited.clone();
+        stale.bank_loaded = false;
+        assert!(witness(
+            CoreCase::CookBot,
+            &baseline,
+            [&withdrawn, &produced, &stale, &restocked, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+        let mut closed = deposited.clone();
+        closed.bank_open = false;
+        assert!(witness(
+            CoreCase::CookBot,
+            &baseline,
+            [&withdrawn, &produced, &closed, &restocked, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let xp_only = resource_obs(
+            CATHERBY_RANGE_STAND,
+            &[],
+            &[],
+            &[],
+            &[("cooking", 250)],
+            &cook_levels,
+        );
+        assert!(witness(
+            CoreCase::CookBot,
+            &baseline,
+            [&withdrawn, &xp_only, &deposited, &restocked, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let no_consume = resource_obs(
+            CATHERBY_RANGE_STAND,
+            &[(RAW_SALMON_ID, 28), (SALMON_ID, 1)],
+            &[],
+            &[],
+            &[("cooking", 250)],
+            &cook_levels,
+        );
+        assert!(witness(
+            CoreCase::CookBot,
+            &baseline,
+            [
+                &withdrawn,
+                &no_consume,
+                &deposited,
+                &restocked,
+                &returned,
+                &further
+            ]
+        )
+        .qualify()
+        .is_err());
+
+        let mut wrong = produced.clone();
+        wrong.item_ids.insert(LOBSTER_ID, 1);
+        assert!(witness(
+            CoreCase::CookBot,
+            &baseline,
+            [&withdrawn, &wrong, &deposited, &restocked, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut noted = produced.clone();
+        noted.item_ids.insert(NOTED_SALMON_ID, 1);
+        assert!(witness(
+            CoreCase::CookBot,
+            &baseline,
+            [&withdrawn, &noted, &deposited, &restocked, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut burnt = produced.clone();
+        burnt.item_ids.insert(BURNT_FISH_2_ID, 1);
+        assert!(witness(
+            CoreCase::CookBot,
+            &baseline,
+            [&withdrawn, &burnt, &deposited, &restocked, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut seeded = baseline.clone();
+        seeded.item_ids.insert(SALMON_ID, 1);
+        assert!(validate_case_baseline(CoreCase::CookBot, &seeded).is_err());
+        let low = resource_obs(
+            CATHERBY_BANK,
+            &[],
+            &[],
+            &[],
+            &[("cooking", 0)],
+            &[("cooking", 79)],
+        );
+        assert!(validate_case_baseline(CoreCase::CookBot, &low).is_err());
+        let wrong_stand = resource_obs(
+            CATHERBY_RANGE_STAND,
+            &[],
+            &[],
+            &[],
+            &[("cooking", 0)],
+            &cook_levels,
+        );
+        assert!(validate_case_baseline(CoreCase::CookBot, &wrong_stand).is_err());
+
+        let lobster_levels = [("cooking", COOKING_FIXTURE_LEVEL)];
+        let lobster_baseline = resource_obs(
+            CATHERBY_BANK,
+            &[],
+            &[],
+            &[],
+            &[("cooking", 0)],
+            &lobster_levels,
+        );
+        validate_case_baseline(CoreCase::CookBotLobster, &lobster_baseline).unwrap();
+        let lobster_withdrawn = resource_obs(
+            CATHERBY_BANK,
+            &[(RAW_LOBSTER_ID, 28)],
+            &[],
+            &[],
+            &[("cooking", 0)],
+            &lobster_levels,
+        );
+        let lobster_produced = resource_obs(
+            CATHERBY_RANGE_STAND,
+            &[(LOBSTER_ID, 28)],
+            &[],
+            &[],
+            &[("cooking", 250)],
+            &lobster_levels,
+        );
+        let mut lobster_deposited = resource_obs(
+            CATHERBY_BANK,
+            &[],
+            &[(LOBSTER_ID, 28), (RAW_LOBSTER_ID, 28)],
+            &[],
+            &[("cooking", 250)],
+            &lobster_levels,
+        );
+        lobster_deposited.bank_open = true;
+        lobster_deposited.bank_loaded = true;
+        lobster_deposited.bank_generation = 1;
+        let mut lobster_restocked = resource_obs(
+            CATHERBY_BANK,
+            &[(RAW_LOBSTER_ID, 28)],
+            &[(LOBSTER_ID, 28)],
+            &[],
+            &[("cooking", 250)],
+            &lobster_levels,
+        );
+        lobster_restocked.bank_open = true;
+        lobster_restocked.bank_loaded = true;
+        lobster_restocked.bank_generation = 1;
+        let mut lobster_returned = resource_obs(
+            CATHERBY_RANGE_STAND,
+            &[(RAW_LOBSTER_ID, 28)],
+            &[],
+            &[],
+            &[("cooking", 250)],
+            &lobster_levels,
+        );
+        lobster_returned.bank_generation = 2;
+        let mut lobster_further = resource_obs(
+            CATHERBY_RANGE_STAND,
+            &[(LOBSTER_ID, 1)],
+            &[],
+            &[],
+            &[("cooking", 500)],
+            &lobster_levels,
+        );
+        lobster_further.bank_generation = 2;
+        assert!(witness(
+            CoreCase::CookBotLobster,
+            &lobster_baseline,
+            [
+                &lobster_withdrawn,
+                &lobster_produced,
+                &lobster_deposited,
+                &lobster_restocked,
+                &lobster_returned,
+                &lobster_further
+            ]
+        )
+        .qualify()
+        .is_ok());
+        let mut lobster_cross = lobster_produced.clone();
+        lobster_cross.item_ids.insert(SALMON_ID, 1);
+        assert!(witness(
+            CoreCase::CookBotLobster,
+            &lobster_baseline,
+            [
+                &lobster_withdrawn,
+                &lobster_cross,
+                &lobster_deposited,
+                &lobster_restocked,
+                &lobster_returned,
+                &lobster_further
+            ]
+        )
+        .qualify()
+        .is_err());
+
+        let bronze_levels = [("smithing", 1)];
+        let bronze_baseline = resource_obs(
+            AL_KHARID_BANK,
+            &[],
+            &[],
+            &[],
+            &[("smithing", 0)],
+            &bronze_levels,
+        );
+        validate_case_baseline(CoreCase::SmelterBot, &bronze_baseline).unwrap();
+        let bronze_withdrawn = resource_obs(
+            AL_KHARID_BANK,
+            &[(COPPER_ORE_ID, 14), (TIN_ORE_ID, 14)],
+            &[],
+            &[],
+            &[("smithing", 0)],
+            &bronze_levels,
+        );
+        let bronze_produced = resource_obs(
+            AL_KHARID_FURNACE,
+            &[(BRONZE_BAR_ID, 14)],
+            &[],
+            &[],
+            &[("smithing", 87)],
+            &bronze_levels,
+        );
+        let mut bronze_deposited = resource_obs(
+            AL_KHARID_BANK,
+            &[],
+            &[(BRONZE_BAR_ID, 14), (COPPER_ORE_ID, 42), (TIN_ORE_ID, 42)],
+            &[],
+            &[("smithing", 87)],
+            &bronze_levels,
+        );
+        bronze_deposited.bank_open = true;
+        bronze_deposited.bank_loaded = true;
+        bronze_deposited.bank_generation = 1;
+        let mut bronze_restocked = resource_obs(
+            AL_KHARID_BANK,
+            &[(COPPER_ORE_ID, 14), (TIN_ORE_ID, 14)],
+            &[(BRONZE_BAR_ID, 14), (COPPER_ORE_ID, 28), (TIN_ORE_ID, 28)],
+            &[],
+            &[("smithing", 87)],
+            &bronze_levels,
+        );
+        bronze_restocked.bank_open = true;
+        bronze_restocked.bank_loaded = true;
+        bronze_restocked.bank_generation = 1;
+        let mut bronze_returned = resource_obs(
+            AL_KHARID_FURNACE,
+            &[(COPPER_ORE_ID, 14), (TIN_ORE_ID, 14)],
+            &[],
+            &[],
+            &[("smithing", 87)],
+            &bronze_levels,
+        );
+        bronze_returned.bank_generation = 2;
+        let mut bronze_further = resource_obs(
+            AL_KHARID_FURNACE,
+            &[(BRONZE_BAR_ID, 1)],
+            &[],
+            &[],
+            &[("smithing", 93)],
+            &bronze_levels,
+        );
+        bronze_further.bank_generation = 2;
+        assert!(witness(
+            CoreCase::SmelterBot,
+            &bronze_baseline,
+            [
+                &bronze_withdrawn,
+                &bronze_produced,
+                &bronze_deposited,
+                &bronze_restocked,
+                &bronze_returned,
+                &bronze_further
+            ]
+        )
+        .qualify()
+        .is_ok());
+        let mut bronze_wrong = bronze_produced.clone();
+        bronze_wrong.item_ids.insert(STEEL_BAR_ID, 1);
+        assert!(witness(
+            CoreCase::SmelterBot,
+            &bronze_baseline,
+            [
+                &bronze_withdrawn,
+                &bronze_wrong,
+                &bronze_deposited,
+                &bronze_restocked,
+                &bronze_returned,
+                &bronze_further
+            ]
+        )
+        .qualify()
+        .is_err());
+        let low_smith = resource_obs(
+            AL_KHARID_BANK,
+            &[],
+            &[],
+            &[],
+            &[("smithing", 0)],
+            &[("smithing", 0)],
+        );
+        assert!(validate_case_baseline(CoreCase::SmelterBot, &low_smith).is_err());
+        assert!(validate_case_baseline(CoreCase::SmelterBotSteel, &low_smith).is_err());
+        validate_case_baseline(CoreCase::SmelterBot, &bronze_baseline).unwrap();
+        assert!(validate_case_baseline(CoreCase::SmelterBotSteel, &bronze_baseline).is_err());
+
+        let steel_levels = [("smithing", 30)];
+        let steel_baseline = resource_obs(
+            AL_KHARID_BANK,
+            &[],
+            &[],
+            &[],
+            &[("smithing", 0)],
+            &steel_levels,
+        );
+        validate_case_baseline(CoreCase::SmelterBotSteel, &steel_baseline).unwrap();
+        let steel_withdrawn = resource_obs(
+            AL_KHARID_BANK,
+            &[(IRON_ORE_ID, 9), (COAL_ID, 18)],
+            &[],
+            &[],
+            &[("smithing", 0)],
+            &steel_levels,
+        );
+        let steel_produced = resource_obs(
+            AL_KHARID_FURNACE,
+            &[(STEEL_BAR_ID, 9)],
+            &[],
+            &[],
+            &[("smithing", 157)],
+            &steel_levels,
+        );
+        let mut steel_deposited = resource_obs(
+            AL_KHARID_BANK,
+            &[],
+            &[(STEEL_BAR_ID, 9), (IRON_ORE_ID, 47), (COAL_ID, 94)],
+            &[],
+            &[("smithing", 157)],
+            &steel_levels,
+        );
+        steel_deposited.bank_open = true;
+        steel_deposited.bank_loaded = true;
+        steel_deposited.bank_generation = 1;
+        let mut steel_restocked = resource_obs(
+            AL_KHARID_BANK,
+            &[(IRON_ORE_ID, 9), (COAL_ID, 18)],
+            &[(STEEL_BAR_ID, 9), (IRON_ORE_ID, 38), (COAL_ID, 76)],
+            &[],
+            &[("smithing", 157)],
+            &steel_levels,
+        );
+        steel_restocked.bank_open = true;
+        steel_restocked.bank_loaded = true;
+        steel_restocked.bank_generation = 1;
+        let mut steel_returned = resource_obs(
+            AL_KHARID_FURNACE,
+            &[(IRON_ORE_ID, 9), (COAL_ID, 18)],
+            &[],
+            &[],
+            &[("smithing", 157)],
+            &steel_levels,
+        );
+        steel_returned.bank_generation = 2;
+        let mut steel_further = resource_obs(
+            AL_KHARID_FURNACE,
+            &[(STEEL_BAR_ID, 1)],
+            &[],
+            &[],
+            &[("smithing", 175)],
+            &steel_levels,
+        );
+        steel_further.bank_generation = 2;
+        assert!(witness(
+            CoreCase::SmelterBotSteel,
+            &steel_baseline,
+            [
+                &steel_withdrawn,
+                &steel_produced,
+                &steel_deposited,
+                &steel_restocked,
+                &steel_returned,
+                &steel_further
+            ]
+        )
+        .qualify()
+        .is_ok());
+
+        let spin_levels = [("crafting", 1)];
+        let spin_baseline = resource_obs(
+            FLAX_SPINNER_BANK,
+            &[],
+            &[],
+            &[],
+            &[("crafting", 0)],
+            &spin_levels,
+        );
+        validate_case_baseline(CoreCase::FlaxSpinner, &spin_baseline).unwrap();
+        let spin_withdrawn = resource_obs(
+            FLAX_SPINNER_BANK,
+            &[(FLAX_ID, 28)],
+            &[],
+            &[],
+            &[("crafting", 0)],
+            &spin_levels,
+        );
+        let spin_produced = resource_obs(
+            FLAX_SPINNER_WHEEL,
+            &[(BOW_STRING_ID, 28)],
+            &[],
+            &[],
+            &[("crafting", 420)],
+            &spin_levels,
+        );
+        let mut spin_deposited = resource_obs(
+            FLAX_SPINNER_BANK,
+            &[],
+            &[(BOW_STRING_ID, 28), (FLAX_ID, 28)],
+            &[],
+            &[("crafting", 420)],
+            &spin_levels,
+        );
+        spin_deposited.bank_open = true;
+        spin_deposited.bank_loaded = true;
+        spin_deposited.bank_generation = 1;
+        let mut spin_restocked = resource_obs(
+            FLAX_SPINNER_BANK,
+            &[(FLAX_ID, 28)],
+            &[(BOW_STRING_ID, 28)],
+            &[],
+            &[("crafting", 420)],
+            &spin_levels,
+        );
+        spin_restocked.bank_open = true;
+        spin_restocked.bank_loaded = true;
+        spin_restocked.bank_generation = 1;
+        let mut spin_returned = resource_obs(
+            FLAX_SPINNER_WHEEL,
+            &[(FLAX_ID, 28)],
+            &[],
+            &[],
+            &[("crafting", 420)],
+            &spin_levels,
+        );
+        spin_returned.bank_generation = 2;
+        let mut spin_further = resource_obs(
+            FLAX_SPINNER_WHEEL,
+            &[(BOW_STRING_ID, 1)],
+            &[],
+            &[],
+            &[("crafting", 435)],
+            &spin_levels,
+        );
+        spin_further.bank_generation = 2;
+        assert!(witness(
+            CoreCase::FlaxSpinner,
+            &spin_baseline,
+            [
+                &spin_withdrawn,
+                &spin_produced,
+                &spin_deposited,
+                &spin_restocked,
+                &spin_returned,
+                &spin_further
+            ]
+        )
+        .qualify()
+        .is_ok());
+        let mut wool = spin_produced.clone();
+        wool.item_ids.insert(BALL_OF_WOOL_ID, 1);
+        assert!(witness(
+            CoreCase::FlaxSpinner,
+            &spin_baseline,
+            [
+                &spin_withdrawn,
+                &wool,
+                &spin_deposited,
+                &spin_restocked,
+                &spin_returned,
+                &spin_further
+            ]
+        )
+        .qualify()
+        .is_err());
+        let mut ground_return = resource_obs(
+            FLAX_SPINNER_BANK,
+            &[(FLAX_ID, 28)],
+            &[],
+            &[],
+            &[("crafting", 420)],
+            &spin_levels,
+        );
+        ground_return.bank_generation = 2;
+        let mut ground_further = resource_obs(
+            FLAX_SPINNER_BANK,
+            &[(BOW_STRING_ID, 1)],
+            &[],
+            &[],
+            &[("crafting", 435)],
+            &spin_levels,
+        );
+        ground_further.bank_generation = 2;
+        assert!(witness(
+            CoreCase::FlaxSpinner,
+            &spin_baseline,
+            [
+                &spin_withdrawn,
+                &spin_produced,
+                &spin_deposited,
+                &spin_restocked,
+                &ground_return,
+                &ground_further
+            ]
+        )
+        .qualify()
+        .is_err());
+        let mut seeded_string = spin_baseline.clone();
+        seeded_string.item_ids.insert(BOW_STRING_ID, 1);
+        assert!(validate_case_baseline(CoreCase::FlaxSpinner, &seeded_string).is_err());
+    }
+
+    #[test]
     fn old_catalog_explicitly_refuses_cut_string_mode() {
         let error =
             validate_case_catalog(CoreCase::BankFletcherCutString, CATALOG_COMMIT_A).unwrap_err();
@@ -6531,6 +7568,11 @@ mod tests {
             CoreCase::GnomeFletchShort,
             CoreCase::GnomeFletchLong,
             CoreCase::CoalTrucks,
+            CoreCase::CookBot,
+            CoreCase::CookBotLobster,
+            CoreCase::SmelterBot,
+            CoreCase::SmelterBotSteel,
+            CoreCase::FlaxSpinner,
         ] {
             validate_case_catalog(case, CATALOG_COMMIT_A).unwrap();
             validate_case_catalog(case, CATALOG_COMMIT_B).unwrap();

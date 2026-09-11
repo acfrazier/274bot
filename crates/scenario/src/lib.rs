@@ -427,6 +427,11 @@ pub fn get(name: &str) -> Option<Scenario> {
         "gnome_fletch_short" => Some(gnome_fletch_short_scenario()),
         "gnome_fletch_long" => Some(gnome_fletch_long_scenario()),
         "coal_trucks" => Some(coal_trucks_scenario()),
+        "cook_bot" => Some(cook_bot_scenario()),
+        "cook_bot_lobster" => Some(cook_bot_lobster_scenario()),
+        "smelter_bot" => Some(smelter_bot_scenario()),
+        "smelter_bot_steel" => Some(smelter_bot_steel_scenario()),
+        "flax_spinner" => Some(flax_spinner_scenario()),
         "script_trade" => Some(script_trade_scenario()),
         _ => None,
     }
@@ -489,6 +494,11 @@ pub fn names() -> Vec<&'static str> {
         "gnome_fletch_short",
         "gnome_fletch_long",
         "coal_trucks",
+        "cook_bot",
+        "cook_bot_lobster",
+        "smelter_bot",
+        "smelter_bot_steel",
+        "flax_spinner",
         "script_trade",
     ]
 }
@@ -6934,6 +6944,789 @@ fn coal_trucks_scenario() -> Scenario {
     }
 }
 
+const COOKING_STAT: i32 = 7;
+const RAW_SALMON_ID: i32 = 331;
+const SALMON_ID: i32 = 329;
+const NOTED_RAW_SALMON_ID: i32 = 332;
+const NOTED_SALMON_ID: i32 = 330;
+const RAW_LOBSTER_ID: i32 = 377;
+const LOBSTER_ID: i32 = 379;
+const NOTED_RAW_LOBSTER_ID: i32 = 378;
+const NOTED_LOBSTER_ID: i32 = 380;
+const BURNT_LOBSTER_ID: i32 = 381;
+const BURNT_FISH_1_ID: i32 = 323;
+const BURNT_FISH_2_ID: i32 = 343;
+const NOTED_COPPER_ORE_ID: i32 = 437;
+const NOTED_TIN_ORE_ID: i32 = 439;
+const NOTED_IRON_ORE_ID: i32 = 441;
+const NOTED_BRONZE_BAR_ID: i32 = 2350;
+const NOTED_STEEL_BAR_ID: i32 = 2354;
+const NOTED_FLAX_ID: i32 = 1780;
+const NOTED_BOW_STRING_ID: i32 = 1778;
+const BALL_OF_WOOL_ID: i32 = 1759;
+const COOKING_FIXTURE_LEVEL: i32 = 80;
+const COOK_RAW_SEED: i32 = 56;
+const SMELT_ORE_SEED: i32 = 56;
+const STEEL_COAL_SEED: i32 = 112;
+const FLAX_SPIN_SEED: i32 = 56;
+
+const CATHERBY_BANK: WorldTile = WorldTile {
+    x: 2809,
+    z: 3441,
+    level: 0,
+};
+const CATHERBY_RANGE_STAND: WorldTile = WorldTile {
+    x: 2817,
+    z: 3443,
+    level: 0,
+};
+const AL_KHARID_FURNACE: WorldTile = WorldTile {
+    x: 3275,
+    z: 3185,
+    level: 0,
+};
+const FLAX_SPINNER_BANK: WorldTile = WorldTile {
+    x: 2722,
+    z: 3493,
+    level: 0,
+};
+const FLAX_SPINNER_WHEEL: WorldTile = WorldTile {
+    x: 2711,
+    z: 3471,
+    level: 1,
+};
+
+const COOK_BOT_SALMON_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "fish",
+        value: ScriptInjectValue::Str("Raw salmon"),
+    },
+    ScriptSettingInject {
+        id: "location",
+        value: ScriptInjectValue::Str("Catherby"),
+    },
+    ScriptSettingInject {
+        id: "surface",
+        value: ScriptInjectValue::Str("Range"),
+    },
+];
+
+const COOK_BOT_LOBSTER_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "fish",
+        value: ScriptInjectValue::Str("Raw lobster"),
+    },
+    ScriptSettingInject {
+        id: "location",
+        value: ScriptInjectValue::Str("Catherby"),
+    },
+    ScriptSettingInject {
+        id: "surface",
+        value: ScriptInjectValue::Str("Range"),
+    },
+];
+
+const SMELTER_BOT_BRONZE_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "bar",
+    value: ScriptInjectValue::Str("Bronze"),
+}];
+
+const SMELTER_BOT_STEEL_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "bar",
+    value: ScriptInjectValue::Str("Steel"),
+}];
+
+fn cook_bot_scenario() -> Scenario {
+    cook_bot_variant(CookSpec {
+        name: "cook_bot",
+        inject: COOK_BOT_SALMON_INJECT,
+        raw_alias: "raw_salmon",
+        raw_id: RAW_SALMON_ID,
+        product_id: SALMON_ID,
+        wrong_product_id: LOBSTER_ID,
+        noted_raw_id: NOTED_RAW_SALMON_ID,
+        noted_product_id: NOTED_SALMON_ID,
+    })
+}
+
+fn cook_bot_lobster_scenario() -> Scenario {
+    cook_bot_variant(CookSpec {
+        name: "cook_bot_lobster",
+        inject: COOK_BOT_LOBSTER_INJECT,
+        raw_alias: "raw_lobster",
+        raw_id: RAW_LOBSTER_ID,
+        product_id: LOBSTER_ID,
+        wrong_product_id: SALMON_ID,
+        noted_raw_id: NOTED_RAW_LOBSTER_ID,
+        noted_product_id: NOTED_LOBSTER_ID,
+    })
+}
+
+struct CookSpec {
+    name: &'static str,
+    inject: &'static [ScriptSettingInject],
+    raw_alias: &'static str,
+    raw_id: i32,
+    product_id: i32,
+    wrong_product_id: i32,
+    noted_raw_id: i32,
+    noted_product_id: i32,
+}
+
+/// Empty pack at Catherby bank. Banked raw fish, never cooked/burnt/noted.
+/// Cooking 80 is a fixture seed so ordinary burn randomness does not replace
+/// the product contract; the script encodes no cook level. Range only — Fire
+/// stays behind native fire work. Script withdraws, cooks on the Catherby
+/// Range, deposits the exact product, restocks raw, returns and cooks again.
+fn cook_bot_variant(spec: CookSpec) -> Scenario {
+    let CookSpec {
+        name,
+        inject,
+        raw_alias,
+        raw_id,
+        product_id,
+        wrong_product_id,
+        noted_raw_id,
+        noted_product_id,
+    } = spec;
+    let range = Proof::ArrivedNear {
+        x: CATHERBY_RANGE_STAND.x,
+        z: CATHERBY_RANGE_STAND.z,
+        level: CATHERBY_RANGE_STAND.level,
+        radius: 8,
+    };
+    let product = Proof::ItemId {
+        id: product_id,
+        count: 1,
+    };
+    let bank = CATHERBY_BANK;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed cooking, banked raw fish, and tele to Catherby bank before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, &format!("setstat cooking {COOKING_FIXTURE_LEVEL}"));
+                cheat(c, &format!("givebank {raw_alias} {COOK_RAW_SEED}"));
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm Cooking 80 before Start",
+            Proof::Stat {
+                id: COOKING_STAT,
+                min: COOKING_FIXTURE_LEVEL,
+            },
+        ),
+        (
+            "confirm no seeded raw fish in pack before Start",
+            Proof::ItemIdAtMost {
+                id: raw_id,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded cooked product in pack before Start",
+            Proof::ItemIdAtMost {
+                id: product_id,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded wrong cooked fish in pack before Start",
+            Proof::ItemIdAtMost {
+                id: wrong_product_id,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded burnt fish 323 in pack before Start",
+            Proof::ItemIdAtMost {
+                id: BURNT_FISH_1_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded burnt fish in pack before Start",
+            Proof::ItemIdAtMost {
+                id: BURNT_FISH_2_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded burnt lobster in pack before Start",
+            Proof::ItemIdAtMost {
+                id: BURNT_LOBSTER_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded noted raw in pack before Start",
+            Proof::ItemIdAtMost {
+                id: noted_raw_id,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded noted product in pack before Start",
+            Proof::ItemIdAtMost {
+                id: noted_product_id,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(tanner_open_seed_bank(
+        "open and acknowledge the exact raw-fish seed bank",
+        Proof::BankItemId {
+            id: raw_id,
+            count: COOK_RAW_SEED,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge no seeded cooked product in bank",
+        Proof::BankItemIdAtMost {
+            id: product_id,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge no seeded noted raw in bank",
+        Proof::BankItemIdAtMost {
+            id: noted_raw_id,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        ("watch arrival at the Catherby Range after Start", range),
+        (
+            "watch Cooking XP from the Catherby Range after Start",
+            Proof::StatXpGain {
+                id: COOKING_STAT,
+                min: 1,
+            },
+        ),
+        ("watch exact unnoted cooked fish after Start", product),
+        (
+            "watch the withdrawn raw finish converting",
+            Proof::ItemIdAtMost {
+                id: raw_id,
+                count: 0,
+            },
+        ),
+        (
+            "watch script-cooked fish enter a fresh Catherby bank",
+            Proof::BankItemId {
+                id: product_id,
+                count: 1,
+            },
+        ),
+        (
+            "watch the pack empty of cooked fish after deposit",
+            Proof::ItemIdAtMost {
+                id: product_id,
+                count: 0,
+            },
+        ),
+        (
+            "watch a restock of exact raw fish",
+            Proof::ItemId {
+                id: raw_id,
+                count: 1,
+            },
+        ),
+        ("watch the script close its cook bank", Proof::BankClosed),
+        ("watch return to the Catherby Range after restock", range),
+        ("watch another exact cooked fish after restock", product),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: product,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("CookBot"),
+            script_settings_inject: Some(inject),
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+fn smelter_bot_scenario() -> Scenario {
+    smelter_bot_variant(SmelterSpec {
+        name: "smelter_bot",
+        inject: SMELTER_BOT_BRONZE_INJECT,
+        smithing: 1,
+        primary_alias: "copper_ore",
+        primary_id: COPPER_ORE_ID,
+        primary_seed: SMELT_ORE_SEED,
+        secondary_alias: "tin_ore",
+        secondary_id: TIN_ORE_ID,
+        secondary_seed: SMELT_ORE_SEED,
+        product_id: BRONZE_BAR_ID,
+        wrong_product_id: STEEL_BAR_ID,
+        noted_primary_id: NOTED_COPPER_ORE_ID,
+        noted_secondary_id: NOTED_TIN_ORE_ID,
+        noted_product_id: NOTED_BRONZE_BAR_ID,
+    })
+}
+
+fn smelter_bot_steel_scenario() -> Scenario {
+    smelter_bot_variant(SmelterSpec {
+        name: "smelter_bot_steel",
+        inject: SMELTER_BOT_STEEL_INJECT,
+        smithing: 30,
+        primary_alias: "iron_ore",
+        primary_id: IRON_ORE_ID,
+        primary_seed: SMELT_ORE_SEED,
+        secondary_alias: "coal",
+        secondary_id: COAL_ID,
+        secondary_seed: STEEL_COAL_SEED,
+        product_id: STEEL_BAR_ID,
+        wrong_product_id: BRONZE_BAR_ID,
+        noted_primary_id: NOTED_IRON_ORE_ID,
+        noted_secondary_id: NOTED_COAL_ID,
+        noted_product_id: NOTED_STEEL_BAR_ID,
+    })
+}
+
+struct SmelterSpec {
+    name: &'static str,
+    inject: &'static [ScriptSettingInject],
+    smithing: i32,
+    primary_alias: &'static str,
+    primary_id: i32,
+    primary_seed: i32,
+    secondary_alias: &'static str,
+    secondary_id: i32,
+    secondary_seed: i32,
+    product_id: i32,
+    wrong_product_id: i32,
+    noted_primary_id: i32,
+    noted_secondary_id: i32,
+    noted_product_id: i32,
+}
+
+/// Empty pack at Al-Kharid bank. Banked ores, never bars. Script withdraws
+/// the recipe, smelts at the real furnace, deposits the exact bar, restocks
+/// ore, returns and smelts again. Smithing main panel is not this hop.
+fn smelter_bot_variant(spec: SmelterSpec) -> Scenario {
+    let SmelterSpec {
+        name,
+        inject,
+        smithing,
+        primary_alias,
+        primary_id,
+        primary_seed,
+        secondary_alias,
+        secondary_id,
+        secondary_seed,
+        product_id,
+        wrong_product_id,
+        noted_primary_id,
+        noted_secondary_id,
+        noted_product_id,
+    } = spec;
+    let furnace = Proof::ArrivedNear {
+        x: AL_KHARID_FURNACE.x,
+        z: AL_KHARID_FURNACE.z,
+        level: AL_KHARID_FURNACE.level,
+        radius: 8,
+    };
+    let product = Proof::ItemId {
+        id: product_id,
+        count: 1,
+    };
+    let bank = AL_KHARID_BANK;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed smithing, banked ores, and tele to Al-Kharid bank before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, &format!("setstat smithing {smithing}"));
+                cheat(c, &format!("givebank {primary_alias} {primary_seed}"));
+                cheat(c, &format!("givebank {secondary_alias} {secondary_seed}"));
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm Smithing before Start",
+            Proof::Stat {
+                id: SMITHING_STAT,
+                min: smithing,
+            },
+        ),
+        (
+            "confirm no seeded primary ore in pack before Start",
+            Proof::ItemIdAtMost {
+                id: primary_id,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded secondary ore in pack before Start",
+            Proof::ItemIdAtMost {
+                id: secondary_id,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded bars in pack before Start",
+            Proof::ItemIdAtMost {
+                id: product_id,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded wrong bars in pack before Start",
+            Proof::ItemIdAtMost {
+                id: wrong_product_id,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded iron bars in pack before Start",
+            Proof::ItemIdAtMost {
+                id: IRON_BAR_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded noted product in pack before Start",
+            Proof::ItemIdAtMost {
+                id: noted_product_id,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(tanner_open_seed_bank(
+        "open and acknowledge the exact primary-ore seed bank",
+        Proof::BankItemId {
+            id: primary_id,
+            count: primary_seed,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge the exact secondary-ore seed bank",
+        Proof::BankItemId {
+            id: secondary_id,
+            count: secondary_seed,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge no seeded bars in bank",
+        Proof::BankItemIdAtMost {
+            id: product_id,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge no seeded noted primary in bank",
+        Proof::BankItemIdAtMost {
+            id: noted_primary_id,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge no seeded noted secondary in bank",
+        Proof::BankItemIdAtMost {
+            id: noted_secondary_id,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        (
+            "watch arrival at the Al-Kharid furnace after Start",
+            furnace,
+        ),
+        (
+            "watch Smithing XP from the furnace after Start",
+            Proof::StatXpGain {
+                id: SMITHING_STAT,
+                min: 1,
+            },
+        ),
+        ("watch exact unnoted bar after Start", product),
+        (
+            "watch the withdrawn primary ore finish converting",
+            Proof::ItemIdAtMost {
+                id: primary_id,
+                count: 0,
+            },
+        ),
+        (
+            "watch script-smelted bars enter a fresh Al-Kharid bank",
+            Proof::BankItemId {
+                id: product_id,
+                count: 1,
+            },
+        ),
+        (
+            "watch the pack empty of bars after deposit",
+            Proof::ItemIdAtMost {
+                id: product_id,
+                count: 0,
+            },
+        ),
+        (
+            "watch a restock of exact primary ore",
+            Proof::ItemId {
+                id: primary_id,
+                count: 1,
+            },
+        ),
+        ("watch the script close its smelt bank", Proof::BankClosed),
+        (
+            "watch return to the Al-Kharid furnace after restock",
+            furnace,
+        ),
+        ("watch another exact bar after restock", product),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: product,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("SmelterBot"),
+            script_settings_inject: Some(inject),
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+/// Empty pack at the Seers flax bank. Banked flax 1779, never bow string.
+/// Script withdraws, climbs to the wheel, spins Flax into 1777 with Crafting
+/// XP, deposits, restocks, returns upstairs and spins again. Wool is not this
+/// core.
+fn flax_spinner_scenario() -> Scenario {
+    let wheel = Proof::ArrivedNear {
+        x: FLAX_SPINNER_WHEEL.x,
+        z: FLAX_SPINNER_WHEEL.z,
+        level: FLAX_SPINNER_WHEEL.level,
+        radius: 8,
+    };
+    let product = Proof::ItemId {
+        id: BOW_STRING_ID,
+        count: 1,
+    };
+    let bank = FLAX_SPINNER_BANK;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed crafting, banked flax, and tele to the Seers flax bank before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "setstat crafting 1");
+                cheat(c, &format!("givebank flax {FLAX_SPIN_SEED}"));
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm Crafting 1 before Start",
+            Proof::Stat {
+                id: CRAFTING_STAT,
+                min: 1,
+            },
+        ),
+        (
+            "confirm no seeded flax in pack before Start",
+            Proof::ItemIdAtMost {
+                id: FLAX_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded bow string in pack before Start",
+            Proof::ItemIdAtMost {
+                id: BOW_STRING_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded ball of wool in pack before Start",
+            Proof::ItemIdAtMost {
+                id: BALL_OF_WOOL_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded noted flax in pack before Start",
+            Proof::ItemIdAtMost {
+                id: NOTED_FLAX_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded noted bow string in pack before Start",
+            Proof::ItemIdAtMost {
+                id: NOTED_BOW_STRING_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(tanner_open_seed_bank(
+        "open and acknowledge the exact flax seed bank",
+        Proof::BankItemId {
+            id: FLAX_ID,
+            count: FLAX_SPIN_SEED,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge no seeded bow string in bank",
+        Proof::BankItemIdAtMost {
+            id: BOW_STRING_ID,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge no seeded noted flax in bank",
+        Proof::BankItemIdAtMost {
+            id: NOTED_FLAX_ID,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        (
+            "watch arrival at the upstairs spinning wheel after Start",
+            wheel,
+        ),
+        (
+            "watch Crafting XP from the spinning wheel after Start",
+            Proof::StatXpGain {
+                id: CRAFTING_STAT,
+                min: 1,
+            },
+        ),
+        ("watch exact unnoted bow string 1777 after Start", product),
+        (
+            "watch the withdrawn flax finish converting",
+            Proof::ItemIdAtMost {
+                id: FLAX_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch script-spun bow string enter a fresh Seers bank",
+            Proof::BankItemId {
+                id: BOW_STRING_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch the pack empty of bow string after deposit",
+            Proof::ItemIdAtMost {
+                id: BOW_STRING_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch a restock of exact flax 1779",
+            Proof::ItemId {
+                id: FLAX_ID,
+                count: 1,
+            },
+        ),
+        ("watch the script close its spin bank", Proof::BankClosed),
+        (
+            "watch return to the upstairs spinning wheel after restock",
+            wheel,
+        ),
+        ("watch another exact bow string after restock", product),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name: "flax_spinner",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: product,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("FlaxSpinner"),
+            terminal_shot: Some("flax_spinner"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
 /// Lumbridge courtyard stand where the two-bot trade meets.
 const TRADE_COURTYARD: WorldTile = WorldTile {
     x: 3220,
@@ -7476,6 +8269,11 @@ mod tests {
                 "gnome_fletch_short",
                 "gnome_fletch_long",
                 "coal_trucks",
+                "cook_bot",
+                "cook_bot_lobster",
+                "smelter_bot",
+                "smelter_bot_steel",
+                "flax_spinner",
                 "script_trade",
             ]
         );
@@ -9976,6 +10774,284 @@ mod tests {
     }
 
     #[test]
+    fn station_production_cases_register_cook_smelt_and_spin_cycles() {
+        let cook = get("cook_bot").expect("cook_bot");
+        assert_eq!(cook.settings.start_script, Some("CookBot"));
+        assert_eq!(cook.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        let inject = settings_inject_map(cook.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("fish"),
+            Some(&Value::String("Raw salmon".into()))
+        );
+        assert_eq!(
+            inject.get("location"),
+            Some(&Value::String("Catherby".into()))
+        );
+        assert_eq!(inject.get("surface"), Some(&Value::String("Range".into())));
+        let start = cook
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let seed = cook.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::ArrivedNear {
+            x: 2809,
+            z: 3441,
+            level: 0,
+            radius: 6,
+        }));
+        assert!(seed.contains(&Proof::Stat {
+            id: COOKING_STAT,
+            min: COOKING_FIXTURE_LEVEL,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: RAW_SALMON_ID,
+            count: 0,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: SALMON_ID,
+            count: 0,
+        }));
+        assert!(seed.contains(&Proof::BankItemId {
+            id: RAW_SALMON_ID,
+            count: COOK_RAW_SEED,
+        }));
+        let watch = cook.steps[start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        let salmon = Proof::ItemId {
+            id: SALMON_ID,
+            count: 1,
+        };
+        let raw = Proof::ItemId {
+            id: RAW_SALMON_ID,
+            count: 1,
+        };
+        let range = Proof::ArrivedNear {
+            x: CATHERBY_RANGE_STAND.x,
+            z: CATHERBY_RANGE_STAND.z,
+            level: CATHERBY_RANGE_STAND.level,
+            radius: 8,
+        };
+        let cooking_xp = Proof::StatXpGain {
+            id: COOKING_STAT,
+            min: 1,
+        };
+        assert_eq!(watch[0], range);
+        assert_eq!(watch[1], cooking_xp);
+        assert_eq!(watch[2], salmon);
+        let first_xp = watch.iter().position(|arm| *arm == cooking_xp).unwrap();
+        let first_product = watch.iter().position(|arm| *arm == salmon).unwrap();
+        let bank_product = watch
+            .iter()
+            .position(|arm| {
+                *arm == Proof::BankItemId {
+                    id: SALMON_ID,
+                    count: 1,
+                }
+            })
+            .unwrap();
+        let restock = watch.iter().position(|arm| *arm == raw).unwrap();
+        let further = watch.iter().rposition(|arm| *arm == salmon).unwrap();
+        assert!(first_xp < first_product);
+        assert!(first_product < bank_product);
+        assert!(bank_product < restock);
+        assert!(restock < further);
+        assert_ne!(first_product, further);
+        assert_eq!(cook.proof, salmon);
+
+        let lobster = get("cook_bot_lobster").expect("cook_bot_lobster");
+        assert_eq!(lobster.settings.start_script, Some("CookBot"));
+        let inject = settings_inject_map(lobster.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("fish"),
+            Some(&Value::String("Raw lobster".into()))
+        );
+        assert_eq!(inject.get("surface"), Some(&Value::String("Range".into())));
+        let lobster_start = lobster
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let lobster_watch = lobster.steps[lobster_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(lobster_watch.contains(&Proof::ItemId {
+            id: LOBSTER_ID,
+            count: 1,
+        }));
+        assert!(lobster_watch.contains(&Proof::BankItemId {
+            id: LOBSTER_ID,
+            count: 1,
+        }));
+        assert!(!lobster_watch.contains(&salmon));
+        assert_eq!(
+            lobster.proof,
+            Proof::ItemId {
+                id: LOBSTER_ID,
+                count: 1,
+            }
+        );
+
+        let bronze = get("smelter_bot").expect("smelter_bot");
+        assert_eq!(bronze.settings.start_script, Some("SmelterBot"));
+        let inject = settings_inject_map(bronze.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("bar"), Some(&Value::String("Bronze".into())));
+        let bronze_start = bronze
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let bronze_seed = bronze.steps[..bronze_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(bronze_seed.contains(&Proof::Stat {
+            id: SMITHING_STAT,
+            min: 1,
+        }));
+        assert!(bronze_seed.contains(&Proof::BankItemId {
+            id: COPPER_ORE_ID,
+            count: SMELT_ORE_SEED,
+        }));
+        assert!(bronze_seed.contains(&Proof::BankItemId {
+            id: TIN_ORE_ID,
+            count: SMELT_ORE_SEED,
+        }));
+        let bronze_watch = bronze.steps[bronze_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        let bar = Proof::ItemId {
+            id: BRONZE_BAR_ID,
+            count: 1,
+        };
+        let smith_xp = Proof::StatXpGain {
+            id: SMITHING_STAT,
+            min: 1,
+        };
+        let first_xp = bronze_watch
+            .iter()
+            .position(|arm| *arm == smith_xp)
+            .unwrap();
+        let first_bar = bronze_watch.iter().position(|arm| *arm == bar).unwrap();
+        assert!(first_xp < first_bar);
+        assert!(bronze_watch.contains(&Proof::ArrivedNear {
+            x: AL_KHARID_FURNACE.x,
+            z: AL_KHARID_FURNACE.z,
+            level: AL_KHARID_FURNACE.level,
+            radius: 8,
+        }));
+        assert_eq!(bronze.proof, bar);
+
+        let steel = get("smelter_bot_steel").expect("smelter_bot_steel");
+        let inject = settings_inject_map(steel.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("bar"), Some(&Value::String("Steel".into())));
+        let steel_start = steel
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let steel_seed = steel.steps[..steel_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(steel_seed.contains(&Proof::Stat {
+            id: SMITHING_STAT,
+            min: 30,
+        }));
+        assert!(steel_seed.contains(&Proof::BankItemId {
+            id: IRON_ORE_ID,
+            count: SMELT_ORE_SEED,
+        }));
+        assert!(steel_seed.contains(&Proof::BankItemId {
+            id: COAL_ID,
+            count: STEEL_COAL_SEED,
+        }));
+        let steel_watch = steel.steps[steel_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(steel_watch.contains(&Proof::ItemId {
+            id: STEEL_BAR_ID,
+            count: 1,
+        }));
+        assert!(!steel_watch.contains(&bar));
+        assert_eq!(
+            steel.proof,
+            Proof::ItemId {
+                id: STEEL_BAR_ID,
+                count: 1,
+            }
+        );
+
+        let spin = get("flax_spinner").expect("flax_spinner");
+        assert_eq!(spin.settings.start_script, Some("FlaxSpinner"));
+        assert!(spin.settings.script_settings_inject.is_none());
+        let spin_start = spin
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let spin_seed = spin.steps[..spin_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(spin_seed.contains(&Proof::ArrivedNear {
+            x: 2722,
+            z: 3493,
+            level: 0,
+            radius: 8,
+        }));
+        assert!(spin_seed.contains(&Proof::Stat {
+            id: CRAFTING_STAT,
+            min: 1,
+        }));
+        assert!(spin_seed.contains(&Proof::BankItemId {
+            id: FLAX_ID,
+            count: FLAX_SPIN_SEED,
+        }));
+        let spin_watch = spin.steps[spin_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        let string = Proof::ItemId {
+            id: BOW_STRING_ID,
+            count: 1,
+        };
+        let craft_xp = Proof::StatXpGain {
+            id: CRAFTING_STAT,
+            min: 1,
+        };
+        let wheel = Proof::ArrivedNear {
+            x: FLAX_SPINNER_WHEEL.x,
+            z: FLAX_SPINNER_WHEEL.z,
+            level: FLAX_SPINNER_WHEEL.level,
+            radius: 8,
+        };
+        assert_eq!(spin_watch[0], wheel);
+        assert_eq!(spin_watch[1], craft_xp);
+        assert_eq!(spin_watch[2], string);
+        assert_eq!(FLAX_SPINNER_WHEEL.level, 1);
+        assert_eq!(spin.proof, string);
+
+        for name in [
+            "cook_bot",
+            "cook_bot_lobster",
+            "smelter_bot",
+            "smelter_bot_steel",
+            "flax_spinner",
+        ] {
+            assert!(names().contains(&name));
+        }
+    }
+
+    #[test]
     fn bone_burier_requires_banking_between_burial_cycles() {
         let s = get("bone_burier").unwrap();
         assert_eq!(s.settings.start_script, Some("BoneBurier"));
@@ -10061,6 +11137,11 @@ mod tests {
             "gnome_fletch_short",
             "gnome_fletch_long",
             "coal_trucks",
+            "cook_bot",
+            "cook_bot_lobster",
+            "smelter_bot",
+            "smelter_bot_steel",
+            "flax_spinner",
             "script_trade",
         ] {
             let s = get(name).unwrap_or_else(|| panic!("{name} registered"));

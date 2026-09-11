@@ -1,0 +1,26 @@
+isolated_build=true
+empty_started=true
+export=/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_6faf0ef6-station
+cargo_target_dir=/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_6faf0ef6-station-target
+export_host=7c2eef6eb8db6b01933c333aa64cf5f68169d8d2
+client=9d090ed04957e4efc254f073cda97bc5510ca72b
+inputs_symlink=.superpowers/inputs -> campaign .superpowers/inputs
+shared_campaign_target=false
+
+CARGO_TARGET_DIR=$cargo_target_dir cargo test --manifest-path $export/Cargo.toml -p scenario --lib --offline
+  95 passed; 0 failed; 0 ignored
+
+CARGO_TARGET_DIR=$cargo_target_dir cargo test --manifest-path $export/Cargo.toml -p host-play --features memory-profile --test catalog_boundary_live --offline
+  32 passed; 0 failed; 1 ignored (LIVE)
+
+CARGO_TARGET_DIR=$cargo_target_dir cargo clippy --manifest-path $export/Cargo.toml -p scenario --offline -- -D warnings
+  pass
+
+CARGO_TARGET_DIR=$cargo_target_dir cargo clippy --manifest-path $export/Cargo.toml -p host-play --features memory-profile --test catalog_boundary_live --offline -- -D warnings
+  pass
+
+rustfmt --check crates/scenario/src/lib.rs crates/host-play/tests/catalog_boundary_live.rs
+  clean
+
+live=false
+target_size=4.9G
