@@ -1,0 +1,57 @@
+{
+  "checked_at": "2026-09-11T08:13:43.705962+00:00",
+  "completed_tasks": [
+    [
+      "t_0c5ce97f",
+      "done",
+      1789106106
+    ],
+    [
+      "t_246e320b",
+      "done",
+      1789098377
+    ],
+    [
+      "t_7dd2b216",
+      "done",
+      1789108977
+    ]
+  ],
+  "deleted_compiler_caches": [
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_1a213450",
+      "allocated_kib": 4862264,
+      "prior_partial_cleanup": true
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_246e320b",
+      "allocated_kib": 4789772,
+      "children": [
+        ".rustc_info.json",
+        "tmp",
+        "debug"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_0c5ce97f",
+      "allocated_kib": 3945768,
+      "children": [
+        ".rustc_info.json",
+        "tmp",
+        "debug"
+      ]
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_7dd2b216",
+      "allocated_kib": 5091496,
+      "children": [
+        ".rustc_info.json",
+        "tmp",
+        "debug"
+      ]
+    }
+  ],
+  "open_file_or_process_references": [],
+  "prior_attempt": "First cache removed after completed/no-reference/CACHEDIR validation; stopped at second cache because manually created Cargo target lacks CACHEDIR.TAG. Verified only rustc/debug/tmp contents before continuing.",
+  "scope": "Only completed task Cargo targets. Reports, verification receipts, source exports and root binaries retained."
+}
