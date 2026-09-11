@@ -4898,9 +4898,10 @@ fn brimhaven_agility_scenario() -> Scenario {
     };
     let mut steps = script_live_seed_steps();
     steps.push(Step {
-        name: "seed 1000 Coins and ten Lobsters, then tele to the arena entrance",
+        name: "seed Agility 52, 1000 Coins and ten Lobsters, then tele to the arena entrance",
         kind: StepKind::Perform {
             send: Box::new(|c, _| {
+                cheat(c, "advancestat agility 52");
                 cheat(c, "give coins 1000");
                 cheat(c, "give lobster 10");
                 cheat(
@@ -4924,6 +4925,7 @@ fn brimhaven_agility_scenario() -> Scenario {
             budget_ticks: 200,
         },
     });
+    steps.push(drain_advancestat());
     for (name, arm) in [
         (
             "confirm 1000 exact Coins before Start",
@@ -12081,6 +12083,9 @@ mod tests {
             .iter()
             .map(|step| step.wait.arm)
             .collect::<Vec<_>>();
+        assert!(brim.steps[..start].iter().any(|step| step.name
+            == "seed Agility 52, 1000 Coins and ten Lobsters, then tele to the arena entrance"));
+        assert!(seed.contains(&Proof::ChatClosed));
         assert!(seed.contains(&Proof::ItemId {
             id: 995,
             count: 1000,

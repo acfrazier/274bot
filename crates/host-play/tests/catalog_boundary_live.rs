@@ -661,7 +661,10 @@ struct Observation {
     bank_open: bool,
     bank_loaded: bool,
     bank_generation: u64,
+    /// Native base skill levels from the snapshot stat table.
     levels: BTreeMap<String, i32>,
+    /// Native effective skill levels, retained separately for fixture gates.
+    effective_levels: BTreeMap<String, i32>,
     xp: BTreeMap<String, i32>,
     /// Only varps explicitly used by a core witness; do not clone the full table.
     varps: BTreeMap<i32, i32>,
@@ -869,6 +872,11 @@ impl Observation {
             .iter()
             .map(|stat| (stat.name.to_ascii_lowercase(), stat.base))
             .collect();
+        let effective_levels = snapshot
+            .stats()
+            .iter()
+            .map(|stat| (stat.name.to_ascii_lowercase(), stat.effective))
+            .collect();
         let varps = snapshot
             .varps()
             .iter()
@@ -978,6 +986,7 @@ impl Observation {
             bank_loaded: snapshot.bank_loaded(),
             bank_generation: snapshot.bank_session_generation(),
             levels,
+            effective_levels,
             xp,
             varps,
             chat,
@@ -1020,6 +1029,10 @@ impl Observation {
 
     fn level(&self, name: &str) -> i32 {
         self.levels.get(name).copied().unwrap_or(0)
+    }
+
+    fn effective_level(&self, name: &str) -> i32 {
+        self.effective_levels.get(name).copied().unwrap_or(0)
     }
 
     fn varp(&self, index: i32) -> i32 {
@@ -1512,6 +1525,8 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         }
         CoreCase::BrimhavenAgility => {
             near(baseline.tile, BRIMHAVEN_START, 2)
+                && baseline.level("agility") >= 52
+                && baseline.effective_level("agility") >= 52
                 && baseline.item_id(COINS_ID) >= 200
                 && baseline.item_id(LOBSTER_ID) >= 10
                 && baseline.item_id(BRIMHAVEN_TICKET_ID) == 0
@@ -1733,7 +1748,7 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
             "south ridge stand (2998,3916,0), Agility 52, and five Lobsters 379"
         }
         CoreCase::BrimhavenAgility => {
-            "surface entrance (2804,3193,0), at least 200 coins, ten Lobsters 379, no ticket 2996, and unpaid varp 309"
+            "surface entrance (2804,3193,0), Agility 52, at least 200 coins, ten Lobsters 379, no ticket 2996, and unpaid varp 309"
         }
         CoreCase::FlaxPicker => "Seers flax field (2741,3444,0) with empty pack of 1779",
         CoreCase::Superheater => {
@@ -5496,6 +5511,14 @@ mod tests {
             ]
             .into_iter()
             .collect(),
+            effective_levels: [
+                ("thieving".to_string(), 99),
+                ("hitpoints".to_string(), 99),
+                ("magic".to_string(), 99),
+                ("fletching".to_string(), 99),
+            ]
+            .into_iter()
+            .collect(),
             xp: xp
                 .iter()
                 .map(|(name, value)| ((*name).to_string(), *value))
@@ -6810,6 +6833,8 @@ mod tests {
         ]
         .into_iter()
         .collect();
+        observation.levels.insert("agility".into(), 52);
+        observation.effective_levels.insert("agility".into(), 52);
         observation.varps.insert(BRIMHAVEN_ARENA_VARP, varp);
         observation
     }
@@ -6834,6 +6859,12 @@ mod tests {
         let mut underfunded = baseline.clone();
         underfunded.item_ids.insert(COINS_ID, 199);
         assert!(validate_case_baseline(CoreCase::BrimhavenAgility, &underfunded).is_err());
+        let mut underqualified = baseline.clone();
+        underqualified.levels.insert("agility".into(), 51);
+        assert!(validate_case_baseline(CoreCase::BrimhavenAgility, &underqualified).is_err());
+        let mut drained = baseline.clone();
+        drained.effective_levels.insert("agility".into(), 51);
+        assert!(validate_case_baseline(CoreCase::BrimhavenAgility, &drained).is_err());
 
         let paid = brimhaven_obs(BRIMHAVEN_START, 1_000, 800, 0, 2, &[]);
         let entered = brimhaven_obs((2805, 9590, 3), 1_000, 800, 0, 2, &[]);
