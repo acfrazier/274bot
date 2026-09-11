@@ -1,0 +1,81 @@
+{
+  "task": "t_11ec797b",
+  "run": 1365,
+  "session": "20260911_110024_770176",
+  "model": "grok-4.5",
+  "provider": "xai-oauth",
+  "api_calls": 13,
+  "actual_model_verified": true,
+  "verdict": "Reviewed and approved 0e7ba119b86d74cc04818c3f621d7835ddb4dbb4 (evidence 121aaba94) for brief 134 native sequencing observation projection (R1 artifact cold read + independent exclusive-target re-run). Bank/cake/autocast project compact facts from SnapshotReader before JS tick; shims no longer send locs/banks/inv/side-tab/varp bulk observations. 126 focused tests, strict Clippy, rustfmt, and scoped diff --check passed on reviewer-r1 target. Not LIVE.",
+  "review_metadata": {
+    "review_outcome": "approved",
+    "review_round": 1,
+    "lens": "artifact",
+    "brief": "docs/compat/briefs/134-native-sequencing-observation-projection.md",
+    "brief_sha256": "d9bc8268198b22a99bc1b4a507b39833e83dd9b7c9d4649529c06d19d5a4514b",
+    "implementation_commit": "0e7ba119b86d74cc04818c3f621d7835ddb4dbb4",
+    "implementation_parent": "a6c34270cb77668bc0e506722df2252f38c434d8",
+    "evidence_commit": "121aaba949bdefa19ae97ecdfb85a8a3b3ff059d",
+    "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+    "export": ".superpowers/review-exports/native-sequencing-observation-projection-t_11ec797b-0e7ba119b",
+    "cargo_target_dir": ".superpowers/review-targets/native-sequencing-observation-projection-t_11ec797b-reviewer-r1",
+    "evidence": "docs/compat/evidence/native-sequencing-observation-projection/verification.json",
+    "report": "docs/compat/09c-native-sequencing-observation-projection.md",
+    "changed_files": [
+      "crates/script/src/bank_open.rs",
+      "crates/script/src/cake_stall.rs",
+      "crates/script/src/autocast.rs",
+      "crates/script/src/load.rs",
+      "crates/script/src/shim/bank.js",
+      "crates/script/src/shim/cake_stall.js",
+      "crates/script/src/shim/autocast.js",
+      "crates/script/tests/named_bank_approach.rs",
+      "crates/script/tests/cake_stall_native_mapping.rs",
+      "crates/script/tests/autocast.rs"
+    ],
+    "hotspots": [
+      "crates/script/src/load.rs \u2014 shared decoded-snapshot lifecycle hook; downstream tasks dependency-gated"
+    ],
+    "limits": [
+      "not LIVE acceptance",
+      "no client/schema/host producer/navigation/scenario/catalog changes"
+    ],
+    "live": false,
+    "blocking_defects": [],
+    "tests_passed": 126,
+    "tests_run": [
+      "cargo test --locked --offline -p api --lib cake_stall -- --test-threads=1 (5)",
+      "cargo test --locked --offline -p script --lib --test named_bank_approach --test cake_stall_native_mapping --test autocast -- --test-threads=1 (112 = 83+9+8+12)",
+      "cargo test --locked --offline -p host-play --lib script_snapshot -- --test-threads=1 (9)",
+      "cargo clippy --locked --offline --no-deps -p script --lib --test named_bank_approach --test cake_stall_native_mapping --test autocast -- -D warnings",
+      "rustfmt --edition 2021 --check affected Rust",
+      "git diff --check parent..impl"
+    ],
+    "reviewer_checks": [
+      "cold read of brief 134 then 0e7ba119b diff before handoff narrative",
+      "brief sha256 d9bc8268 matches workspace",
+      "impl parent a6c34270c; exactly 10 owned paths; no client/nav/schema/opcode/fixture/LIVE edits",
+      "export blob hashes for all 10 owned paths match 0e7ba119b Git blobs (not nested export git rev-parse identity)",
+      "HEAD still carries same owned blobs; no later commits on owned paths",
+      "client submodule aef3952d matches evidence; no client tree edits in impl",
+      "load.rs posts bank_open/cake_stall/autocast on_snapshot before JS tick; autocast::configure on runtime wire; existing pause/hold/reset fan-out retained",
+      "JS shims drop locs/banks/inv/side-tab/varp observation payloads; only options/tokens/callback results (cake facts_valid boolean)",
+      "projection uses has_* delta presence; empty vectors clear; !ingame and on_reset clear facts",
+      "bank filters bank-named loc candidates; cake keeps single select_baker_stall target + carried/inv_len; autocast keeps tab/root/varp",
+      "fail-closed missing-facts/missing-booth/no-progress and identity retention across omitted locs delta covered by tests",
+      "JS getter traps prove no bulk collection roundtrips on bank/cake/autocast polls",
+      "checks.log preserves wrong expanded host hash with immediate git-rev-parse correction to 0e7ba119b86d74cc04818c3f621d7835ddb4dbb4",
+      "independent exclusive target reviewer-r1: 5+112+9=126; clippy -D warnings; rustfmt; git diff --check",
+      "non-blocking: cake facts_valid is content baker_stall non-null rather than full pin equality; stall selection still uses api::select_baker_stall",
+      "downstream children t_1bf9a22e and t_95823e19 released by completion; not LIVE; disk free ~263GiB"
+    ],
+    "semantics": [
+      "decoded SnapshotReader is the sole world/inventory observation source for bank/cake/autocast sequencing",
+      "JS may send options/tokens/callback results only \u2014 not bulk locs/banks/inv arrays",
+      "delta omissions retain last projected facts; present empty collections clear derived state",
+      "logout and session reset clear projected observations; pause/hold freeze clocks without clearing projection",
+      "candidate selection and phase order remain Rust-owned with existing bounds (60s/5s bank, 2400ms cake, 3s autocast)"
+    ],
+    "worker_session_id": "20260911_110024_770176"
+  }
+}
