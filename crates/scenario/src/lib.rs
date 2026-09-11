@@ -396,6 +396,12 @@ pub fn get(name: &str) -> Option<Scenario> {
         "bank_fletcher" => Some(bank_fletcher_scenario()),
         "bank_fletcher_string" => Some(bank_fletcher_string_scenario()),
         "bank_fletcher_cut_string" => Some(bank_fletcher_cut_string_scenario()),
+        "dart_fletcher" => Some(dart_fletcher_scenario()),
+        "dart_fletcher_iron" => Some(dart_fletcher_iron_scenario()),
+        "herb_cleaner" => Some(herb_cleaner_scenario()),
+        "herb_cleaner_named" => Some(herb_cleaner_named_scenario()),
+        "gem_cutter" => Some(gem_cutter_scenario()),
+        "gem_cutter_named" => Some(gem_cutter_named_scenario()),
         "script_trade" => Some(script_trade_scenario()),
         _ => None,
     }
@@ -427,6 +433,12 @@ pub fn names() -> Vec<&'static str> {
         "bank_fletcher",
         "bank_fletcher_string",
         "bank_fletcher_cut_string",
+        "dart_fletcher",
+        "dart_fletcher_iron",
+        "herb_cleaner",
+        "herb_cleaner_named",
+        "gem_cutter",
+        "gem_cutter_named",
         "script_trade",
     ]
 }
@@ -3002,6 +3014,696 @@ fn bank_fletcher_cut_string_scenario() -> Scenario {
     }
 }
 
+const BRONZE_DART_TIP_ID: i32 = 819;
+const BRONZE_DART_ID: i32 = 806;
+const IRON_DART_TIP_ID: i32 = 820;
+const IRON_DART_ID: i32 = 807;
+const FEATHER_ID: i32 = 314;
+const UNIDENTIFIED_GUAM_ID: i32 = 199;
+const GUAM_LEAF_ID: i32 = 249;
+const UNIDENTIFIED_MARENTILL_ID: i32 = 201;
+const MARRENTILL_ID: i32 = 251;
+const UNCUT_SAPPHIRE_ID: i32 = 1623;
+const SAPPHIRE_ID: i32 = 1607;
+const UNCUT_OPAL_ID: i32 = 1625;
+const CHISEL_ID: i32 = 1755;
+const CRUSHED_GEMSTONE_ID: i32 = 1633;
+const FLETCHING_STAT: i32 = 9;
+const CRAFTING_STAT: i32 = 12;
+const HERBLORE_STAT: i32 = 15;
+const LUMBRIDGE_COURTYARD: WorldTile = WorldTile {
+    x: 3220,
+    z: 3212,
+    level: 0,
+};
+
+const DART_FLETCHER_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "tier",
+    value: ScriptInjectValue::Str("Bronze"),
+}];
+
+const DART_FLETCHER_IRON_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "tier",
+    value: ScriptInjectValue::Str("Iron"),
+}];
+
+const HERB_CLEANER_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "herbs",
+    value: ScriptInjectValue::StrList(&[]),
+}];
+
+const HERB_CLEANER_NAMED_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "herbs",
+    value: ScriptInjectValue::StrList(&["Guam leaf"]),
+}];
+
+const GEM_CUTTER_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "gems",
+    value: ScriptInjectValue::StrList(&[]),
+}];
+
+const GEM_CUTTER_NAMED_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "gems",
+    value: ScriptInjectValue::StrList(&["Sapphire"]),
+}];
+
+fn dart_fletcher_scenario() -> Scenario {
+    dart_fletcher_variant(
+        "dart_fletcher",
+        DART_FLETCHER_INJECT,
+        1,
+        "bronze_dart_tip",
+        BRONZE_DART_TIP_ID,
+        BRONZE_DART_ID,
+        IRON_DART_ID,
+    )
+}
+
+fn dart_fletcher_iron_scenario() -> Scenario {
+    dart_fletcher_variant(
+        "dart_fletcher_iron",
+        DART_FLETCHER_IRON_INJECT,
+        22,
+        "iron_dart_tip",
+        IRON_DART_TIP_ID,
+        IRON_DART_ID,
+        BRONZE_DART_ID,
+    )
+}
+
+/// No bank. Spam Feather on the selected tip; one action is 10 darts.
+fn dart_fletcher_variant(
+    name: &'static str,
+    inject: &'static [ScriptSettingInject],
+    level: i32,
+    tip_alias: &'static str,
+    tip_id: i32,
+    product_id: i32,
+    wrong_product_id: i32,
+) -> Scenario {
+    let first_xp = Proof::StatXpGain {
+        id: FLETCHING_STAT,
+        min: 1,
+    };
+    let further_xp = Proof::StatXpGain {
+        id: FLETCHING_STAT,
+        min: 2,
+    };
+    let courtyard = LUMBRIDGE_COURTYARD;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed Fletching and exact dart stacks before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, &format!("setstat fletching {level}"));
+                cheat(c, &format!("give {tip_alias} 100"));
+                cheat(c, "give feather 100");
+                cheat(c, &tele_args(courtyard.level, courtyard.x, courtyard.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: courtyard.x,
+                z: courtyard.z,
+                level: courtyard.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm Fletching before Start",
+            Proof::Stat {
+                id: FLETCHING_STAT,
+                min: level,
+            },
+        ),
+        (
+            "confirm exact dart tips before Start",
+            Proof::ItemId {
+                id: tip_id,
+                count: 100,
+            },
+        ),
+        (
+            "confirm exact feathers before Start",
+            Proof::ItemId {
+                id: FEATHER_ID,
+                count: 100,
+            },
+        ),
+        (
+            "confirm no seeded dart product before Start",
+            Proof::ItemIdAtMost {
+                id: product_id,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no wrong-tier dart product before Start",
+            Proof::ItemIdAtMost {
+                id: wrong_product_id,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        ("watch Fletching XP from dart fletching", first_xp),
+        (
+            "watch at least one ten-dart action by exact product id",
+            Proof::ItemId {
+                id: product_id,
+                count: 10,
+            },
+        ),
+        (
+            "watch exact dart tips consumed",
+            Proof::ItemIdAtMost {
+                id: tip_id,
+                count: 90,
+            },
+        ),
+        (
+            "watch exact feathers consumed",
+            Proof::ItemIdAtMost {
+                id: FEATHER_ID,
+                count: 90,
+            },
+        ),
+        (
+            "watch further exact product progress",
+            Proof::ItemId {
+                id: product_id,
+                count: 20,
+            },
+        ),
+        (
+            "watch no wrong-tier dart product",
+            Proof::ItemIdAtMost {
+                id: wrong_product_id,
+                count: 0,
+            },
+        ),
+        ("watch Fletching XP beyond one dart action", further_xp),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: further_xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("DartFletcher"),
+            script_settings_inject: Some(inject),
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+fn herb_cleaner_scenario() -> Scenario {
+    herb_cleaner_variant("herb_cleaner", HERB_CLEANER_INJECT, 3, false)
+}
+
+fn herb_cleaner_named_scenario() -> Scenario {
+    herb_cleaner_variant("herb_cleaner_named", HERB_CLEANER_NAMED_INJECT, 5, true)
+}
+
+/// Empty pack, banked unidentified guam. Named also banks marrentill unids
+/// that must stay put. Identify fills the pack, then deposit-all restocks.
+fn herb_cleaner_variant(
+    name: &'static str,
+    inject: &'static [ScriptSettingInject],
+    level: i32,
+    named: bool,
+) -> Scenario {
+    let first_xp = Proof::StatXpGain {
+        id: HERBLORE_STAT,
+        min: 1,
+    };
+    let further_xp = Proof::StatXpGain {
+        id: HERBLORE_STAT,
+        min: 2,
+    };
+    let bank = VARROCK_WEST_BANK;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed Herblore and unidentified bank stock before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, &format!("setstat herblore {level}"));
+                cheat(c, "givebank unidentified_guam 30");
+                if named {
+                    cheat(c, "givebank unidentified_marentill 4");
+                }
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm Herblore before Start",
+            Proof::Stat {
+                id: HERBLORE_STAT,
+                min: level,
+            },
+        ),
+        (
+            "confirm no seeded unidentified guam in pack before Start",
+            Proof::ItemIdAtMost {
+                id: UNIDENTIFIED_GUAM_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded clean guam before Start",
+            Proof::ItemIdAtMost {
+                id: GUAM_LEAF_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded unidentified marrentill in pack before Start",
+            Proof::ItemIdAtMost {
+                id: UNIDENTIFIED_MARENTILL_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded clean marrentill before Start",
+            Proof::ItemIdAtMost {
+                id: MARRENTILL_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(bank_fletcher_open_seed_bank(
+        "open and acknowledge the exact unidentified guam seed bank",
+        Proof::BankItemId {
+            id: UNIDENTIFIED_GUAM_ID,
+            count: 30,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge no seeded clean guam in bank",
+        Proof::BankItemIdAtMost {
+            id: GUAM_LEAF_ID,
+            count: 0,
+        },
+    ));
+    if named {
+        steps.push(bank_fletcher_watch(
+            "acknowledge the exact untouched marrentill seed bank",
+            Proof::BankItemId {
+                id: UNIDENTIFIED_MARENTILL_ID,
+                count: 4,
+            },
+        ));
+        steps.push(bank_fletcher_watch(
+            "acknowledge no seeded clean marrentill in bank",
+            Proof::BankItemIdAtMost {
+                id: MARRENTILL_ID,
+                count: 0,
+            },
+        ));
+    }
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    let mut watch = vec![
+        ("watch Herblore XP from identifying guam", first_xp),
+        (
+            "watch a full pack of exact clean guam before the bank cycle",
+            Proof::ItemId {
+                id: GUAM_LEAF_ID,
+                count: 28,
+            },
+        ),
+        (
+            "watch exact unidentified guam consumed",
+            Proof::ItemIdAtMost {
+                id: UNIDENTIFIED_GUAM_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch the script-created clean guam enter a fresh bank",
+            Proof::BankItemId {
+                id: GUAM_LEAF_ID,
+                count: 28,
+            },
+        ),
+        (
+            "watch a restock of exact unidentified guam",
+            Proof::ItemId {
+                id: UNIDENTIFIED_GUAM_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch exact unidentified guam bank stock decrease",
+            Proof::BankItemIdAtMost {
+                id: UNIDENTIFIED_GUAM_ID,
+                count: 2,
+            },
+        ),
+    ];
+    if named {
+        watch.push((
+            "watch the filtered marrentill unids stay in bank",
+            Proof::BankItemId {
+                id: UNIDENTIFIED_MARENTILL_ID,
+                count: 4,
+            },
+        ));
+        watch.push((
+            "watch no filtered marrentill enter the pack",
+            Proof::ItemIdAtMost {
+                id: UNIDENTIFIED_MARENTILL_ID,
+                count: 0,
+            },
+        ));
+    }
+    watch.extend([
+        ("watch the script close its herb bank", Proof::BankClosed),
+        (
+            "watch another exact clean guam after restock",
+            Proof::ItemId {
+                id: GUAM_LEAF_ID,
+                count: 1,
+            },
+        ),
+        ("watch Herblore XP beyond the first pack", further_xp),
+    ]);
+    for (step_name, arm) in watch {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: further_xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("HerbCleaner"),
+            script_settings_inject: Some(inject),
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+fn gem_cutter_scenario() -> Scenario {
+    gem_cutter_variant("gem_cutter", GEM_CUTTER_INJECT, false)
+}
+
+fn gem_cutter_named_scenario() -> Scenario {
+    gem_cutter_variant("gem_cutter_named", GEM_CUTTER_NAMED_INJECT, true)
+}
+
+/// Empty pack, banked chisel plus uncut sapphires. Named also banks uncut
+/// opal that must stay put. Deposit keeps the chisel.
+fn gem_cutter_variant(
+    name: &'static str,
+    inject: &'static [ScriptSettingInject],
+    named: bool,
+) -> Scenario {
+    let first_xp = Proof::StatXpGain {
+        id: CRAFTING_STAT,
+        min: 1,
+    };
+    let further_xp = Proof::StatXpGain {
+        id: CRAFTING_STAT,
+        min: 2,
+    };
+    let bank = VARROCK_WEST_BANK;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed Crafting and uncut sapphire bank stock before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "setstat crafting 20");
+                cheat(c, "givebank chisel 1");
+                cheat(c, "givebank uncut_sapphire 28");
+                if named {
+                    cheat(c, "givebank uncut_opal 4");
+                }
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm Crafting 20 before Start",
+            Proof::Stat {
+                id: CRAFTING_STAT,
+                min: 20,
+            },
+        ),
+        (
+            "confirm no seeded chisel in pack before Start",
+            Proof::ItemIdAtMost {
+                id: CHISEL_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded uncut sapphire in pack before Start",
+            Proof::ItemIdAtMost {
+                id: UNCUT_SAPPHIRE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded cut sapphire before Start",
+            Proof::ItemIdAtMost {
+                id: SAPPHIRE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no crushed gemstone before Start",
+            Proof::ItemIdAtMost {
+                id: CRUSHED_GEMSTONE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded uncut opal in pack before Start",
+            Proof::ItemIdAtMost {
+                id: UNCUT_OPAL_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(bank_fletcher_open_seed_bank(
+        "open and acknowledge the exact uncut sapphire seed bank",
+        Proof::BankItemId {
+            id: UNCUT_SAPPHIRE_ID,
+            count: 28,
+        },
+    ));
+    for (step_name, arm) in [
+        (
+            "acknowledge the exact chisel seed bank",
+            Proof::BankItemId {
+                id: CHISEL_ID,
+                count: 1,
+            },
+        ),
+        (
+            "acknowledge no seeded cut sapphire in bank",
+            Proof::BankItemIdAtMost {
+                id: SAPPHIRE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "acknowledge no crushed gemstone in bank",
+            Proof::BankItemIdAtMost {
+                id: CRUSHED_GEMSTONE_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    if named {
+        steps.push(bank_fletcher_watch(
+            "acknowledge the exact untouched uncut opal seed bank",
+            Proof::BankItemId {
+                id: UNCUT_OPAL_ID,
+                count: 4,
+            },
+        ));
+    }
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    let mut watch = vec![
+        ("watch Crafting XP from cutting sapphire", first_xp),
+        (
+            "watch a chisel-kept pack of exact cut sapphires",
+            Proof::ItemId {
+                id: SAPPHIRE_ID,
+                count: 27,
+            },
+        ),
+        (
+            "watch the chisel remain in pack",
+            Proof::ItemId {
+                id: CHISEL_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch exact uncut sapphires consumed",
+            Proof::ItemIdAtMost {
+                id: UNCUT_SAPPHIRE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch no crushed gemstone from sapphire",
+            Proof::ItemIdAtMost {
+                id: CRUSHED_GEMSTONE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch the script-created sapphires enter a fresh bank",
+            Proof::BankItemId {
+                id: SAPPHIRE_ID,
+                count: 27,
+            },
+        ),
+        (
+            "watch a restock of exact uncut sapphire",
+            Proof::ItemId {
+                id: UNCUT_SAPPHIRE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch the chisel stay out of the deposit",
+            Proof::ItemId {
+                id: CHISEL_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch exact uncut sapphire bank stock decrease",
+            Proof::BankItemIdAtMost {
+                id: UNCUT_SAPPHIRE_ID,
+                count: 1,
+            },
+        ),
+    ];
+    if named {
+        watch.push((
+            "watch the filtered uncut opal stay in bank",
+            Proof::BankItemId {
+                id: UNCUT_OPAL_ID,
+                count: 4,
+            },
+        ));
+        watch.push((
+            "watch no filtered uncut opal enter the pack",
+            Proof::ItemIdAtMost {
+                id: UNCUT_OPAL_ID,
+                count: 0,
+            },
+        ));
+    }
+    watch.extend([
+        ("watch the script close its gem bank", Proof::BankClosed),
+        (
+            "watch another exact cut sapphire after restock",
+            Proof::ItemId {
+                id: SAPPHIRE_ID,
+                count: 1,
+            },
+        ),
+        ("watch Crafting XP beyond the first pack", further_xp),
+        (
+            "watch crushed gemstone stay empty",
+            Proof::ItemIdAtMost {
+                id: CRUSHED_GEMSTONE_ID,
+                count: 0,
+            },
+        ),
+    ]);
+    for (step_name, arm) in watch {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: further_xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("GemCutter"),
+            script_settings_inject: Some(inject),
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
 /// Lumbridge courtyard stand where the two-bot trade meets.
 const TRADE_COURTYARD: WorldTile = WorldTile {
     x: 3220,
@@ -3513,6 +4215,12 @@ mod tests {
                 "bank_fletcher",
                 "bank_fletcher_string",
                 "bank_fletcher_cut_string",
+                "dart_fletcher",
+                "dart_fletcher_iron",
+                "herb_cleaner",
+                "herb_cleaner_named",
+                "gem_cutter",
+                "gem_cutter_named",
                 "script_trade",
             ]
         );
@@ -4016,6 +4724,298 @@ mod tests {
     }
 
     #[test]
+    fn inventory_production_cases_register_exact_ids_and_bank_cycles() {
+        let bronze = get("dart_fletcher").expect("dart_fletcher");
+        assert_eq!(bronze.settings.start_script, Some("DartFletcher"));
+        assert_eq!(bronze.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        let inject = settings_inject_map(bronze.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("tier"), Some(&Value::String("Bronze".into())));
+        let bronze_start = bronze
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        assert_ne!(bronze.steps[bronze_start - 1].wait.arm, Proof::BankClosed);
+        let bronze_seed = bronze.steps[..bronze_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(bronze_seed.contains(&Proof::ItemId {
+            id: BRONZE_DART_TIP_ID,
+            count: 100,
+        }));
+        assert!(bronze_seed.contains(&Proof::ItemId {
+            id: FEATHER_ID,
+            count: 100,
+        }));
+        assert!(bronze_seed.contains(&Proof::ItemIdAtMost {
+            id: BRONZE_DART_ID,
+            count: 0,
+        }));
+        let bronze_watch = bronze.steps[bronze_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            bronze_watch[0],
+            Proof::StatXpGain {
+                id: FLETCHING_STAT,
+                min: 1
+            }
+        );
+        assert!(bronze_watch.contains(&Proof::ItemId {
+            id: BRONZE_DART_ID,
+            count: 10,
+        }));
+        assert!(bronze_watch.contains(&Proof::ItemId {
+            id: BRONZE_DART_ID,
+            count: 20,
+        }));
+        assert!(bronze_watch.contains(&Proof::ItemIdAtMost {
+            id: BRONZE_DART_TIP_ID,
+            count: 90,
+        }));
+        assert!(bronze_watch.contains(&Proof::ItemIdAtMost {
+            id: FEATHER_ID,
+            count: 90,
+        }));
+        assert!(bronze_watch.contains(&Proof::ItemIdAtMost {
+            id: IRON_DART_ID,
+            count: 0,
+        }));
+        assert_eq!(
+            bronze.proof,
+            Proof::StatXpGain {
+                id: FLETCHING_STAT,
+                min: 2
+            }
+        );
+
+        let iron = get("dart_fletcher_iron").expect("dart_fletcher_iron");
+        let inject = settings_inject_map(iron.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("tier"), Some(&Value::String("Iron".into())));
+        let iron_start = iron
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let iron_seed = iron.steps[..iron_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(iron_seed.contains(&Proof::Stat {
+            id: FLETCHING_STAT,
+            min: 22,
+        }));
+        assert!(iron_seed.contains(&Proof::ItemId {
+            id: IRON_DART_TIP_ID,
+            count: 100,
+        }));
+        let iron_watch = iron.steps[iron_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(iron_watch.contains(&Proof::ItemId {
+            id: IRON_DART_ID,
+            count: 10,
+        }));
+        assert!(iron_watch.contains(&Proof::ItemIdAtMost {
+            id: BRONZE_DART_ID,
+            count: 0,
+        }));
+
+        let herb = get("herb_cleaner").expect("herb_cleaner");
+        assert_eq!(herb.settings.start_script, Some("HerbCleaner"));
+        let inject = settings_inject_map(herb.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("herbs"), Some(&Value::Array(vec![])));
+        let herb_start = herb
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        assert_eq!(herb.steps[herb_start - 1].wait.arm, Proof::BankClosed);
+        let herb_seed = herb.steps[..herb_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(herb_seed.contains(&Proof::Stat {
+            id: HERBLORE_STAT,
+            min: 3,
+        }));
+        assert!(herb_seed.contains(&Proof::BankItemId {
+            id: UNIDENTIFIED_GUAM_ID,
+            count: 30,
+        }));
+        assert!(herb_seed.contains(&Proof::ItemIdAtMost {
+            id: GUAM_LEAF_ID,
+            count: 0,
+        }));
+        let herb_watch = herb.steps[herb_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            herb_watch[0],
+            Proof::StatXpGain {
+                id: HERBLORE_STAT,
+                min: 1
+            }
+        );
+        assert!(herb_watch.contains(&Proof::ItemId {
+            id: GUAM_LEAF_ID,
+            count: 28,
+        }));
+        assert!(herb_watch.contains(&Proof::BankItemId {
+            id: GUAM_LEAF_ID,
+            count: 28,
+        }));
+        assert!(herb_watch.contains(&Proof::ItemId {
+            id: UNIDENTIFIED_GUAM_ID,
+            count: 1,
+        }));
+        assert_eq!(
+            herb.proof,
+            Proof::StatXpGain {
+                id: HERBLORE_STAT,
+                min: 2
+            }
+        );
+
+        let named_herb = get("herb_cleaner_named").expect("herb_cleaner_named");
+        let inject = settings_inject_map(named_herb.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("herbs"),
+            Some(&Value::Array(vec![Value::String("Guam leaf".into())]))
+        );
+        let named_herb_start = named_herb
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let named_herb_seed = named_herb.steps[..named_herb_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(named_herb_seed.contains(&Proof::Stat {
+            id: HERBLORE_STAT,
+            min: 5,
+        }));
+        assert!(named_herb_seed.contains(&Proof::BankItemId {
+            id: UNIDENTIFIED_MARENTILL_ID,
+            count: 4,
+        }));
+        let named_herb_watch = named_herb.steps[named_herb_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(named_herb_watch.contains(&Proof::BankItemId {
+            id: UNIDENTIFIED_MARENTILL_ID,
+            count: 4,
+        }));
+        assert!(named_herb_watch.contains(&Proof::ItemIdAtMost {
+            id: UNIDENTIFIED_MARENTILL_ID,
+            count: 0,
+        }));
+
+        let gems = get("gem_cutter").expect("gem_cutter");
+        assert_eq!(gems.settings.start_script, Some("GemCutter"));
+        let inject = settings_inject_map(gems.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("gems"), Some(&Value::Array(vec![])));
+        let gems_start = gems
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        assert_eq!(gems.steps[gems_start - 1].wait.arm, Proof::BankClosed);
+        let gems_seed = gems.steps[..gems_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(gems_seed.contains(&Proof::Stat {
+            id: CRAFTING_STAT,
+            min: 20,
+        }));
+        assert!(gems_seed.contains(&Proof::BankItemId {
+            id: UNCUT_SAPPHIRE_ID,
+            count: 28,
+        }));
+        assert!(gems_seed.contains(&Proof::BankItemId {
+            id: CHISEL_ID,
+            count: 1,
+        }));
+        let gems_watch = gems.steps[gems_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(gems_watch.contains(&Proof::ItemId {
+            id: SAPPHIRE_ID,
+            count: 27,
+        }));
+        assert!(gems_watch.contains(&Proof::BankItemId {
+            id: SAPPHIRE_ID,
+            count: 27,
+        }));
+        assert!(gems_watch.contains(&Proof::ItemId {
+            id: CHISEL_ID,
+            count: 1,
+        }));
+        assert!(gems_watch.contains(&Proof::ItemIdAtMost {
+            id: CRUSHED_GEMSTONE_ID,
+            count: 0,
+        }));
+        assert_eq!(
+            gems.proof,
+            Proof::StatXpGain {
+                id: CRAFTING_STAT,
+                min: 2
+            }
+        );
+
+        let named_gems = get("gem_cutter_named").expect("gem_cutter_named");
+        let inject = settings_inject_map(named_gems.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("gems"),
+            Some(&Value::Array(vec![Value::String("Sapphire".into())]))
+        );
+        let named_gems_start = named_gems
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let named_gems_seed = named_gems.steps[..named_gems_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(named_gems_seed.contains(&Proof::BankItemId {
+            id: UNCUT_OPAL_ID,
+            count: 4,
+        }));
+        let named_gems_watch = named_gems.steps[named_gems_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(named_gems_watch.contains(&Proof::BankItemId {
+            id: UNCUT_OPAL_ID,
+            count: 4,
+        }));
+        assert!(named_gems_watch.contains(&Proof::ItemIdAtMost {
+            id: UNCUT_OPAL_ID,
+            count: 0,
+        }));
+
+        for name in [
+            "dart_fletcher",
+            "dart_fletcher_iron",
+            "herb_cleaner",
+            "herb_cleaner_named",
+            "gem_cutter",
+            "gem_cutter_named",
+        ] {
+            assert!(names().contains(&name));
+        }
+    }
+
+    #[test]
     fn bone_burier_requires_banking_between_burial_cycles() {
         let s = get("bone_burier").unwrap();
         assert_eq!(s.settings.start_script, Some("BoneBurier"));
@@ -4070,6 +5070,12 @@ mod tests {
             "bank_fletcher",
             "bank_fletcher_string",
             "bank_fletcher_cut_string",
+            "dart_fletcher",
+            "dart_fletcher_iron",
+            "herb_cleaner",
+            "herb_cleaner_named",
+            "gem_cutter",
+            "gem_cutter_named",
             "script_trade",
         ] {
             let s = get(name).unwrap_or_else(|| panic!("{name} registered"));

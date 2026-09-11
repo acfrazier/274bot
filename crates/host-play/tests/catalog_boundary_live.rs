@@ -19,7 +19,7 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const SUPPORT_MATRIX: &str = include_str!("../../../docs/compat/support-matrix.json");
-const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string";
+const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named";
 const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -29,6 +29,19 @@ const COINS_ID: i32 = 995;
 /// High Level Alchemy pays 60% of shop cost: floor(2560 * 0.6) = 1536.
 const ADAMANT_SCIMITAR_ALCH_COINS: i32 = 1536;
 const HIGH_ALCH_MAGIC_XP: i32 = 65;
+const BRONZE_DART_TIP_ID: i32 = 819;
+const BRONZE_DART_ID: i32 = 806;
+const IRON_DART_TIP_ID: i32 = 820;
+const IRON_DART_ID: i32 = 807;
+const FEATHER_ID: i32 = 314;
+const UNIDENTIFIED_GUAM_ID: i32 = 199;
+const GUAM_LEAF_ID: i32 = 249;
+const UNIDENTIFIED_MARENTILL_ID: i32 = 201;
+const UNCUT_SAPPHIRE_ID: i32 = 1623;
+const SAPPHIRE_ID: i32 = 1607;
+const UNCUT_OPAL_ID: i32 = 1625;
+const CHISEL_ID: i32 = 1755;
+const CRUSHED_GEMSTONE_ID: i32 = 1633;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -45,6 +58,12 @@ enum CoreCase {
     BankFletcher,
     BankFletcherString,
     BankFletcherCutString,
+    DartFletcher,
+    DartFletcherIron,
+    HerbCleaner,
+    HerbCleanerNamed,
+    GemCutter,
+    GemCutterNamed,
 }
 
 impl CoreCase {
@@ -62,6 +81,12 @@ impl CoreCase {
             "bank_fletcher" => Ok(Self::BankFletcher),
             "bank_fletcher_string" => Ok(Self::BankFletcherString),
             "bank_fletcher_cut_string" => Ok(Self::BankFletcherCutString),
+            "dart_fletcher" => Ok(Self::DartFletcher),
+            "dart_fletcher_iron" => Ok(Self::DartFletcherIron),
+            "herb_cleaner" => Ok(Self::HerbCleaner),
+            "herb_cleaner_named" => Ok(Self::HerbCleanerNamed),
+            "gem_cutter" => Ok(Self::GemCutter),
+            "gem_cutter_named" => Ok(Self::GemCutterNamed),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -82,6 +107,12 @@ impl CoreCase {
             Self::BankFletcher => "bank_fletcher",
             Self::BankFletcherString => "bank_fletcher_string",
             Self::BankFletcherCutString => "bank_fletcher_cut_string",
+            Self::DartFletcher => "dart_fletcher",
+            Self::DartFletcherIron => "dart_fletcher_iron",
+            Self::HerbCleaner => "herb_cleaner",
+            Self::HerbCleanerNamed => "herb_cleaner_named",
+            Self::GemCutter => "gem_cutter",
+            Self::GemCutterNamed => "gem_cutter_named",
         }
     }
 
@@ -99,6 +130,9 @@ impl CoreCase {
             Self::BankFletcher | Self::BankFletcherString | Self::BankFletcherCutString => {
                 "BankFletcher"
             }
+            Self::DartFletcher | Self::DartFletcherIron => "DartFletcher",
+            Self::HerbCleaner | Self::HerbCleanerNamed => "HerbCleaner",
+            Self::GemCutter | Self::GemCutterNamed => "GemCutter",
         }
     }
 }
@@ -414,6 +448,52 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
                 && baseline.item_id(1777) == 0
                 && baseline.level("fletching") >= 35
         }
+        CoreCase::DartFletcher => {
+            near(baseline.tile, (3220, 3212, 0), 8)
+                && baseline.item_id(BRONZE_DART_TIP_ID) == 100
+                && baseline.item_id(FEATHER_ID) == 100
+                && baseline.item_id(BRONZE_DART_ID) == 0
+                && baseline.item_id(IRON_DART_ID) == 0
+                && baseline.level("fletching") >= 1
+        }
+        CoreCase::DartFletcherIron => {
+            near(baseline.tile, (3220, 3212, 0), 8)
+                && baseline.item_id(IRON_DART_TIP_ID) == 100
+                && baseline.item_id(FEATHER_ID) == 100
+                && baseline.item_id(IRON_DART_ID) == 0
+                && baseline.item_id(BRONZE_DART_ID) == 0
+                && baseline.level("fletching") >= 22
+        }
+        CoreCase::HerbCleaner => {
+            near(baseline.tile, (3185, 3440, 0), 6)
+                && baseline.item_id(UNIDENTIFIED_GUAM_ID) == 0
+                && baseline.item_id(GUAM_LEAF_ID) == 0
+                && baseline.level("herblore") >= 3
+        }
+        CoreCase::HerbCleanerNamed => {
+            near(baseline.tile, (3185, 3440, 0), 6)
+                && baseline.item_id(UNIDENTIFIED_GUAM_ID) == 0
+                && baseline.item_id(GUAM_LEAF_ID) == 0
+                && baseline.item_id(UNIDENTIFIED_MARENTILL_ID) == 0
+                && baseline.level("herblore") >= 5
+        }
+        CoreCase::GemCutter => {
+            near(baseline.tile, (3185, 3440, 0), 6)
+                && baseline.item_id(CHISEL_ID) == 0
+                && baseline.item_id(UNCUT_SAPPHIRE_ID) == 0
+                && baseline.item_id(SAPPHIRE_ID) == 0
+                && baseline.item_id(CRUSHED_GEMSTONE_ID) == 0
+                && baseline.level("crafting") >= 20
+        }
+        CoreCase::GemCutterNamed => {
+            near(baseline.tile, (3185, 3440, 0), 6)
+                && baseline.item_id(CHISEL_ID) == 0
+                && baseline.item_id(UNCUT_SAPPHIRE_ID) == 0
+                && baseline.item_id(SAPPHIRE_ID) == 0
+                && baseline.item_id(UNCUT_OPAL_ID) == 0
+                && baseline.item_id(CRUSHED_GEMSTONE_ID) == 0
+                && baseline.level("crafting") >= 20
+        }
     };
     if ready {
         return Ok(());
@@ -438,6 +518,22 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         CoreCase::BankFletcherCutString => {
             "Varrock West bank, Knife, exact id 1519x2, no bow/string ids, and Fletching 35"
         }
+        CoreCase::DartFletcher => {
+            "Lumbridge courtyard, exact ids 819x100 and 314x100, no darts, and Fletching 1"
+        }
+        CoreCase::DartFletcherIron => {
+            "Lumbridge courtyard, exact ids 820x100 and 314x100, no darts, and Fletching 22"
+        }
+        CoreCase::HerbCleaner => "Varrock West bank, empty pack of 199/249, and Herblore 3",
+        CoreCase::HerbCleanerNamed => {
+            "Varrock West bank, empty pack of 199/201/249, and Herblore 5"
+        }
+        CoreCase::GemCutter => {
+            "Varrock West bank, empty pack of 1755/1623/1607/1633, and Crafting 20"
+        }
+        CoreCase::GemCutterNamed => {
+            "Varrock West bank, empty pack of 1755/1623/1625/1607/1633, and Crafting 20"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -459,6 +555,9 @@ struct CoreWitness {
     bank_fletcher_string_cycle: BankFletcherStringCycle,
     bank_fletcher_cut_string_cycle: BankFletcherCutStringCycle,
     alcher_generated_custom_cycle: AlcherGeneratedCustomCycle,
+    dart_fletcher_cycle: DartFletcherCycle,
+    herb_cleaner_cycle: HerbCleanerCycle,
+    gem_cutter_cycle: GemCutterCycle,
     ordered_first_exhausted: bool,
 }
 
@@ -693,6 +792,177 @@ impl AlcherGeneratedCustomCycle {
     }
 }
 
+/// Two observed dart actions: exact product id, both inputs down, XP, no wrong tier.
+#[derive(Debug, Clone, Default, Serialize)]
+struct DartFletcherCycle {
+    first: Option<Observation>,
+    further: bool,
+    wrong_tier: bool,
+}
+
+impl DartFletcherCycle {
+    fn observe(
+        &mut self,
+        tips: i32,
+        feathers: i32,
+        product: i32,
+        wrong: i32,
+        baseline: &Observation,
+        now: &Observation,
+    ) {
+        self.wrong_tier |= now.item_id(wrong) > 0;
+        if self.first.is_none()
+            && now.item_id(product) >= 10
+            && now.item_id(tips) < baseline.item_id(tips)
+            && now.item_id(feathers) < baseline.item_id(feathers)
+            && now.skill_xp("fletching") > baseline.skill_xp("fletching")
+            && now.item_id(wrong) == 0
+        {
+            self.first = Some(now.clone());
+        }
+        if let Some(first) = &self.first {
+            self.further |= now.item_id(product) > first.item_id(product)
+                && now.item_id(tips) < first.item_id(tips)
+                && now.item_id(feathers) < first.item_id(feathers)
+                && now.skill_xp("fletching") > first.skill_xp("fletching")
+                && now.item_id(wrong) == 0;
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.further && !self.wrong_tier
+    }
+}
+
+/// Identify a full pack, deposit script-created output, restock, then identify again.
+#[derive(Debug, Clone, Default, Serialize)]
+struct HerbCleanerCycle {
+    first_pack: bool,
+    deposited: Option<Observation>,
+    withdrawn: Option<Observation>,
+    cleaned_after_withdrawal: bool,
+    filter_violated: bool,
+}
+
+impl HerbCleanerCycle {
+    fn observe(&mut self, named: bool, baseline: &Observation, now: &Observation) {
+        if named
+            && (now.item_id(UNIDENTIFIED_MARENTILL_ID) > 0
+                || now.bank_item_id(UNIDENTIFIED_MARENTILL_ID) < 4
+                    && now.bank_open
+                    && now.bank_loaded)
+        {
+            self.filter_violated = true;
+        }
+        self.first_pack |= now.item_id(GUAM_LEAF_ID) >= 28
+            && now.item_id(UNIDENTIFIED_GUAM_ID) == 0
+            && now.skill_xp("herblore") > baseline.skill_xp("herblore")
+            && baseline.item_id(GUAM_LEAF_ID) == 0;
+        if self.first_pack
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(GUAM_LEAF_ID) == 0
+            && now.bank_item_id(GUAM_LEAF_ID) == 28
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            if self.withdrawn.is_none()
+                && now.bank_open
+                && now.bank_loaded
+                && now.bank_generation == deposited.bank_generation
+                && now.item_id(UNIDENTIFIED_GUAM_ID) >= 1
+                && now.bank_item_id(UNIDENTIFIED_GUAM_ID)
+                    < deposited.bank_item_id(UNIDENTIFIED_GUAM_ID)
+                && (!named || now.bank_item_id(UNIDENTIFIED_MARENTILL_ID) == 4)
+            {
+                self.withdrawn = Some(now.clone());
+            }
+        }
+        if let Some(withdrawn) = &self.withdrawn {
+            self.cleaned_after_withdrawal |= !now.bank_open
+                && !now.bank_loaded
+                && now.item_id(GUAM_LEAF_ID) > 0
+                && now.item_id(UNIDENTIFIED_GUAM_ID) < withdrawn.item_id(UNIDENTIFIED_GUAM_ID)
+                && now.skill_xp("herblore") > withdrawn.skill_xp("herblore");
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.cleaned_after_withdrawal && !self.filter_violated
+    }
+}
+
+/// Cut a chisel-kept pack, deposit except chisel, restock, then cut again.
+#[derive(Debug, Clone, Default, Serialize)]
+struct GemCutterCycle {
+    first_pack: bool,
+    deposited: Option<Observation>,
+    withdrawn: Option<Observation>,
+    cut_after_withdrawal: bool,
+    filter_violated: bool,
+}
+
+impl GemCutterCycle {
+    fn observe(&mut self, named: bool, baseline: &Observation, now: &Observation) {
+        if now.item_id(CRUSHED_GEMSTONE_ID) > 0 || now.bank_item_id(CRUSHED_GEMSTONE_ID) > 0 {
+            self.filter_violated = true;
+        }
+        if named
+            && (now.item_id(UNCUT_OPAL_ID) > 0
+                || (now.bank_open
+                    && now.bank_loaded
+                    && now.bank_item_id(UNCUT_OPAL_ID) < 4
+                    && now.bank_generation > baseline.bank_generation))
+        {
+            self.filter_violated = true;
+        }
+        self.first_pack |= now.item_id(SAPPHIRE_ID) >= 27
+            && now.item_id(UNCUT_SAPPHIRE_ID) == 0
+            && now.item_id(CHISEL_ID) == 1
+            && now.skill_xp("crafting") > baseline.skill_xp("crafting")
+            && baseline.item_id(SAPPHIRE_ID) == 0;
+        if self.first_pack
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(SAPPHIRE_ID) == 0
+            && now.item_id(CHISEL_ID) == 1
+            && now.bank_item_id(SAPPHIRE_ID) == 27
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            if self.withdrawn.is_none()
+                && now.bank_open
+                && now.bank_loaded
+                && now.bank_generation == deposited.bank_generation
+                && now.item_id(UNCUT_SAPPHIRE_ID) >= 1
+                && now.item_id(CHISEL_ID) == 1
+                && now.bank_item_id(UNCUT_SAPPHIRE_ID) < deposited.bank_item_id(UNCUT_SAPPHIRE_ID)
+                && (!named || now.bank_item_id(UNCUT_OPAL_ID) == 4)
+            {
+                self.withdrawn = Some(now.clone());
+            }
+        }
+        if let Some(withdrawn) = &self.withdrawn {
+            self.cut_after_withdrawal |= !now.bank_open
+                && !now.bank_loaded
+                && now.item_id(SAPPHIRE_ID) > 0
+                && now.item_id(CHISEL_ID) == 1
+                && now.item_id(UNCUT_SAPPHIRE_ID) < withdrawn.item_id(UNCUT_SAPPHIRE_ID)
+                && now.skill_xp("crafting") > withdrawn.skill_xp("crafting");
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.cut_after_withdrawal && !self.filter_violated
+    }
+}
+
 impl CoreWitness {
     fn new(case: CoreCase, baseline: Observation) -> Self {
         Self {
@@ -708,6 +978,9 @@ impl CoreWitness {
             bank_fletcher_string_cycle: BankFletcherStringCycle::default(),
             bank_fletcher_cut_string_cycle: BankFletcherCutStringCycle::default(),
             alcher_generated_custom_cycle: AlcherGeneratedCustomCycle::default(),
+            dart_fletcher_cycle: DartFletcherCycle::default(),
+            herb_cleaner_cycle: HerbCleanerCycle::default(),
+            gem_cutter_cycle: GemCutterCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -740,6 +1013,43 @@ impl CoreWitness {
         ) {
             self.alcher_generated_custom_cycle
                 .observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::DartFletcher) {
+            self.dart_fletcher_cycle.observe(
+                BRONZE_DART_TIP_ID,
+                FEATHER_ID,
+                BRONZE_DART_ID,
+                IRON_DART_ID,
+                &self.baseline,
+                observation,
+            );
+        }
+        if matches!(self.case, CoreCase::DartFletcherIron) {
+            self.dart_fletcher_cycle.observe(
+                IRON_DART_TIP_ID,
+                FEATHER_ID,
+                IRON_DART_ID,
+                BRONZE_DART_ID,
+                &self.baseline,
+                observation,
+            );
+        }
+        if matches!(
+            self.case,
+            CoreCase::HerbCleaner | CoreCase::HerbCleanerNamed
+        ) {
+            self.herb_cleaner_cycle.observe(
+                matches!(self.case, CoreCase::HerbCleanerNamed),
+                &self.baseline,
+                observation,
+            );
+        }
+        if matches!(self.case, CoreCase::GemCutter | CoreCase::GemCutterNamed) {
+            self.gem_cutter_cycle.observe(
+                matches!(self.case, CoreCase::GemCutterNamed),
+                &self.baseline,
+                observation,
+            );
         }
         let baseline_sequence = self
             .baseline
@@ -837,6 +1147,13 @@ impl CoreWitness {
             CoreCase::BankFletcherCutString => {
                 self.bank_fletcher_cut_string_cycle.string_pair_created
             }
+            CoreCase::DartFletcher | CoreCase::DartFletcherIron => {
+                self.dart_fletcher_cycle.qualified()
+            }
+            CoreCase::HerbCleaner | CoreCase::HerbCleanerNamed => {
+                self.herb_cleaner_cycle.qualified()
+            }
+            CoreCase::GemCutter | CoreCase::GemCutterNamed => self.gem_cutter_cycle.qualified(),
         };
         if !ok {
             return Err(format!(
@@ -857,6 +1174,9 @@ impl CoreWitness {
             "bank_fletcher_string_cycle": self.bank_fletcher_string_cycle,
             "bank_fletcher_cut_string_cycle": self.bank_fletcher_cut_string_cycle,
             "alcher_generated_custom_cycle": self.alcher_generated_custom_cycle,
+            "dart_fletcher_cycle": self.dart_fletcher_cycle,
+            "herb_cleaner_cycle": self.herb_cleaner_cycle,
+            "gem_cutter_cycle": self.gem_cutter_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -1481,6 +1801,9 @@ mod tests {
                 CoreCase::Thiever,
                 CoreCase::Alcher,
                 CoreCase::BankFletcher,
+                CoreCase::DartFletcher,
+                CoreCase::HerbCleaner,
+                CoreCase::GemCutter,
             ] {
                 let row = ledger_card(&matrix, commit, 274, case).unwrap();
                 verify_source_identity(&root, &row).unwrap();
@@ -2030,6 +2353,302 @@ mod tests {
         }
     }
 
+    fn dart_obs(item_ids: &[(i32, i32)], fletching_xp: i32) -> Observation {
+        let mut observation = observation(&[], &[("fletching", fletching_xp)], &[]);
+        observation.item_ids = item_ids.iter().copied().collect();
+        observation
+    }
+
+    fn herb_obs(item_ids: &[(i32, i32)], bank_ids: &[(i32, i32)], herblore_xp: i32) -> Observation {
+        let mut observation = observation(&[], &[("herblore", herblore_xp)], &[]);
+        observation.tile = Some((3185, 3440, 0));
+        observation.levels.insert("herblore".into(), 5);
+        observation.item_ids = item_ids.iter().copied().collect();
+        observation.bank_ids = bank_ids.iter().copied().collect();
+        observation
+    }
+
+    fn gem_obs(item_ids: &[(i32, i32)], bank_ids: &[(i32, i32)], crafting_xp: i32) -> Observation {
+        let mut observation = observation(&[], &[("crafting", crafting_xp)], &[]);
+        observation.tile = Some((3185, 3440, 0));
+        observation.levels.insert("crafting".into(), 20);
+        observation.item_ids = item_ids.iter().copied().collect();
+        observation.bank_ids = bank_ids.iter().copied().collect();
+        observation
+    }
+
+    #[test]
+    fn dart_fletcher_requires_two_observed_actions_and_both_inputs() {
+        for (case, tips, product, wrong) in [
+            (
+                CoreCase::DartFletcher,
+                BRONZE_DART_TIP_ID,
+                BRONZE_DART_ID,
+                IRON_DART_ID,
+            ),
+            (
+                CoreCase::DartFletcherIron,
+                IRON_DART_TIP_ID,
+                IRON_DART_ID,
+                BRONZE_DART_ID,
+            ),
+        ] {
+            let baseline = dart_obs(&[(tips, 100), (FEATHER_ID, 100)], 10_000);
+            validate_case_baseline(case, &baseline).unwrap();
+
+            let first = dart_obs(&[(tips, 90), (FEATHER_ID, 90), (product, 10)], 10_018);
+            let further = dart_obs(&[(tips, 80), (FEATHER_ID, 80), (product, 20)], 10_036);
+            assert!(witness(case, &baseline, [&first, &further])
+                .qualify()
+                .is_ok());
+            assert!(witness(case, &baseline, [&baseline]).qualify().is_err());
+            assert!(witness(case, &baseline, [&first]).qualify().is_err());
+
+            let xp_only = dart_obs(&[(tips, 100), (FEATHER_ID, 100)], 10_018);
+            assert!(witness(case, &baseline, [&xp_only, &xp_only])
+                .qualify()
+                .is_err());
+
+            let mut name_only = first.clone();
+            name_only.item_ids.clear();
+            name_only.items.insert("Bronze dart".into(), 10);
+            name_only.items.insert("Iron dart".into(), 10);
+            let mut name_only_further = further.clone();
+            name_only_further.item_ids.clear();
+            name_only_further.items.insert("Bronze dart".into(), 20);
+            assert!(witness(case, &baseline, [&name_only, &name_only_further])
+                .qualify()
+                .is_err());
+
+            let wrong_tier = dart_obs(&[(tips, 90), (FEATHER_ID, 90), (wrong, 10)], 10_018);
+            let wrong_further = dart_obs(&[(tips, 80), (FEATHER_ID, 80), (wrong, 20)], 10_036);
+            assert!(witness(case, &baseline, [&wrong_tier, &wrong_further])
+                .qualify()
+                .is_err());
+
+            let no_tips = dart_obs(&[(tips, 100), (FEATHER_ID, 90), (product, 10)], 10_018);
+            let no_tips_further = dart_obs(&[(tips, 100), (FEATHER_ID, 80), (product, 20)], 10_036);
+            assert!(witness(case, &baseline, [&no_tips, &no_tips_further])
+                .qualify()
+                .is_err());
+
+            let mut seeded = baseline.clone();
+            seeded.item_ids.insert(product, 10);
+            assert!(validate_case_baseline(case, &seeded).is_err());
+        }
+    }
+
+    #[test]
+    fn herb_cleaner_requires_deposit_restock_and_exact_unid_ids() {
+        for (case, named) in [
+            (CoreCase::HerbCleaner, false),
+            (CoreCase::HerbCleanerNamed, true),
+        ] {
+            let mut baseline = herb_obs(&[], &[(UNIDENTIFIED_GUAM_ID, 30)], 1_000);
+            if named {
+                baseline.bank_ids.insert(UNIDENTIFIED_MARENTILL_ID, 4);
+            }
+            validate_case_baseline(case, &baseline).unwrap();
+
+            let first = herb_obs(&[(GUAM_LEAF_ID, 28)], &[], 1_070);
+            let mut deposited = herb_obs(
+                &[],
+                &[
+                    (GUAM_LEAF_ID, 28),
+                    (UNIDENTIFIED_GUAM_ID, 2),
+                    (UNIDENTIFIED_MARENTILL_ID, if named { 4 } else { 0 }),
+                ],
+                1_070,
+            );
+            deposited.bank_open = true;
+            deposited.bank_loaded = true;
+            deposited.bank_generation = 1;
+            let mut withdrawn = herb_obs(
+                &[(UNIDENTIFIED_GUAM_ID, 2)],
+                &[
+                    (GUAM_LEAF_ID, 28),
+                    (UNIDENTIFIED_MARENTILL_ID, if named { 4 } else { 0 }),
+                ],
+                1_070,
+            );
+            withdrawn.bank_open = true;
+            withdrawn.bank_loaded = true;
+            withdrawn.bank_generation = 1;
+            let cleaned = herb_obs(&[(GUAM_LEAF_ID, 2)], &[], 1_075);
+
+            assert!(
+                witness(case, &baseline, [&first, &deposited, &withdrawn, &cleaned])
+                    .qualify()
+                    .is_ok()
+            );
+            assert!(witness(case, &baseline, [&baseline]).qualify().is_err());
+            assert!(witness(case, &baseline, [&first]).qualify().is_err());
+            assert!(witness(case, &baseline, [&first, &deposited, &withdrawn])
+                .qualify()
+                .is_err());
+
+            let mut name_only = first.clone();
+            name_only.item_ids.clear();
+            name_only.items.insert("Guam leaf".into(), 28);
+            assert!(witness(
+                case,
+                &baseline,
+                [&name_only, &deposited, &withdrawn, &cleaned]
+            )
+            .qualify()
+            .is_err());
+
+            let mut stale = deposited.clone();
+            stale.bank_loaded = false;
+            assert!(
+                witness(case, &baseline, [&first, &stale, &withdrawn, &cleaned])
+                    .qualify()
+                    .is_err()
+            );
+            let mut closed_deposit = deposited.clone();
+            closed_deposit.bank_open = false;
+            assert!(witness(
+                case,
+                &baseline,
+                [&first, &closed_deposit, &withdrawn, &cleaned]
+            )
+            .qualify()
+            .is_err());
+            withdrawn.bank_generation = 2;
+            assert!(
+                witness(case, &baseline, [&first, &deposited, &withdrawn, &cleaned])
+                    .qualify()
+                    .is_err()
+            );
+            withdrawn.bank_generation = 1;
+
+            if named {
+                let mut took_filter = withdrawn.clone();
+                took_filter.item_ids.insert(UNIDENTIFIED_MARENTILL_ID, 4);
+                took_filter.bank_ids.insert(UNIDENTIFIED_MARENTILL_ID, 0);
+                assert!(witness(
+                    case,
+                    &baseline,
+                    [&first, &deposited, &took_filter, &cleaned]
+                )
+                .qualify()
+                .is_err());
+            }
+
+            let mut seeded = baseline.clone();
+            seeded.item_ids.insert(GUAM_LEAF_ID, 28);
+            assert!(validate_case_baseline(case, &seeded).is_err());
+        }
+    }
+
+    #[test]
+    fn gem_cutter_requires_chisel_preservation_and_no_crush() {
+        for (case, named) in [
+            (CoreCase::GemCutter, false),
+            (CoreCase::GemCutterNamed, true),
+        ] {
+            let mut baseline = gem_obs(&[], &[(CHISEL_ID, 1), (UNCUT_SAPPHIRE_ID, 28)], 20_000);
+            if named {
+                baseline.bank_ids.insert(UNCUT_OPAL_ID, 4);
+            }
+            validate_case_baseline(case, &baseline).unwrap();
+
+            let first = gem_obs(&[(CHISEL_ID, 1), (SAPPHIRE_ID, 27)], &[], 33_500);
+            let mut deposited = gem_obs(
+                &[(CHISEL_ID, 1)],
+                &[
+                    (SAPPHIRE_ID, 27),
+                    (UNCUT_SAPPHIRE_ID, 1),
+                    (UNCUT_OPAL_ID, if named { 4 } else { 0 }),
+                ],
+                33_500,
+            );
+            deposited.bank_open = true;
+            deposited.bank_loaded = true;
+            deposited.bank_generation = 1;
+            let mut withdrawn = gem_obs(
+                &[(CHISEL_ID, 1), (UNCUT_SAPPHIRE_ID, 1)],
+                &[
+                    (SAPPHIRE_ID, 27),
+                    (UNCUT_OPAL_ID, if named { 4 } else { 0 }),
+                ],
+                33_500,
+            );
+            withdrawn.bank_open = true;
+            withdrawn.bank_loaded = true;
+            withdrawn.bank_generation = 1;
+            let cut = gem_obs(&[(CHISEL_ID, 1), (SAPPHIRE_ID, 1)], &[], 34_000);
+
+            assert!(
+                witness(case, &baseline, [&first, &deposited, &withdrawn, &cut])
+                    .qualify()
+                    .is_ok()
+            );
+            assert!(witness(case, &baseline, [&baseline]).qualify().is_err());
+            assert!(witness(case, &baseline, [&first]).qualify().is_err());
+            assert!(witness(case, &baseline, [&first, &deposited, &withdrawn])
+                .qualify()
+                .is_err());
+
+            let mut name_only = first.clone();
+            name_only.item_ids.clear();
+            name_only.items.insert("Sapphire".into(), 27);
+            name_only.items.insert("Chisel".into(), 1);
+            assert!(
+                witness(case, &baseline, [&name_only, &deposited, &withdrawn, &cut])
+                    .qualify()
+                    .is_err()
+            );
+
+            let crushed = gem_obs(
+                &[(CHISEL_ID, 1), (SAPPHIRE_ID, 27), (CRUSHED_GEMSTONE_ID, 1)],
+                &[],
+                33_500,
+            );
+            assert!(
+                witness(case, &baseline, [&crushed, &deposited, &withdrawn, &cut])
+                    .qualify()
+                    .is_err()
+            );
+
+            let mut no_chisel = first.clone();
+            no_chisel.item_ids.remove(&CHISEL_ID);
+            assert!(
+                witness(case, &baseline, [&no_chisel, &deposited, &withdrawn, &cut])
+                    .qualify()
+                    .is_err()
+            );
+
+            let mut stale = deposited.clone();
+            stale.bank_loaded = false;
+            assert!(witness(case, &baseline, [&first, &stale, &withdrawn, &cut])
+                .qualify()
+                .is_err());
+            withdrawn.bank_generation = 2;
+            assert!(
+                witness(case, &baseline, [&first, &deposited, &withdrawn, &cut])
+                    .qualify()
+                    .is_err()
+            );
+            withdrawn.bank_generation = 1;
+
+            if named {
+                let mut took_opal = withdrawn.clone();
+                took_opal.item_ids.insert(UNCUT_OPAL_ID, 4);
+                took_opal.bank_ids.insert(UNCUT_OPAL_ID, 0);
+                assert!(
+                    witness(case, &baseline, [&first, &deposited, &took_opal, &cut])
+                        .qualify()
+                        .is_err()
+                );
+            }
+
+            let mut seeded = baseline.clone();
+            seeded.item_ids.insert(SAPPHIRE_ID, 27);
+            assert!(validate_case_baseline(case, &seeded).is_err());
+        }
+    }
+
     #[test]
     fn old_catalog_explicitly_refuses_cut_string_mode() {
         let error =
@@ -2037,7 +2656,16 @@ mod tests {
         assert!(error.contains("has no mode setting"), "{error}");
         validate_case_catalog(CoreCase::BankFletcherCutString, CATALOG_COMMIT_B).unwrap();
         validate_case_catalog(CoreCase::BankFletcherString, CATALOG_COMMIT_A).unwrap();
-        for case in [CoreCase::AlcherCustomAlias, CoreCase::AlcherCustomName] {
+        for case in [
+            CoreCase::AlcherCustomAlias,
+            CoreCase::AlcherCustomName,
+            CoreCase::DartFletcher,
+            CoreCase::DartFletcherIron,
+            CoreCase::HerbCleaner,
+            CoreCase::HerbCleanerNamed,
+            CoreCase::GemCutter,
+            CoreCase::GemCutterNamed,
+        ] {
             validate_case_catalog(case, CATALOG_COMMIT_A).unwrap();
             validate_case_catalog(case, CATALOG_COMMIT_B).unwrap();
         }
