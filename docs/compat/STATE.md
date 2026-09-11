@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 00:54 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 01:17 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -85,10 +85,15 @@ Catalog and frontend acceptance remain separate.
   item metadata integration t_f1572cf0, its corrective review t_e6ec9679,
   and loading progress t_42263bfd. It also
   covers root profile/harness, script Stop and frontend/world changes.
-- BankFletcher option harness t_ac56c0b5 is active in actual Sol run 1171
-  (session 20260910_202755_cb370a). Brief 48 adds ID-preserving stringing and
-  cut+string witnesses; it owns only scenario/proof/harness files and must
-  receive same-card Grok 4.5 review before root LIVE.
+- BankFletcher option harness t_ac56c0b5 source 857fda52 passed actual
+  Grok 4.5 review 1177/session 20260910_210605_d083be. Root will run four
+  stringing cells and two new-catalog cut+string cells on the latest reviewed
+  source. No stringing LIVE result is claimed yet.
+- Generated custom-item Alcher fixtures t_1a24382e are running in actual
+  Grok 4.6 run 1178/session 20260910_211105_7af2b0. Brief 51 adds custom
+  alias/display-name cases for Adamant scimitar, with exact noted-ID, rune,
+  coin and XP witnesses. It requires same-card review before eight root LIVE
+  cells. The earlier custom chainbody cases remain valid bounded evidence.
 - Loadout t_3737503d waits for integration review, then targeted spell facts
   t_63138b8b, PeriodicBank t_51452e47 and DeathRecovery t_0c5ce97f follow.
   Design reports are guidance, not implemented/live acceptance.
@@ -176,9 +181,10 @@ bba5179c after actual Grok 4.5 run 1156 requested changes. Final Grok 4.5 review
 Runtime consumer t_f1572cf0 committed 7852b5a0 in Sol run 1169, then
 incorrectly completed without same-card review. Root restored corrective gate
 t_e6ec9679 because the board refuses review from done. Actual Grok 4.5 run 1175,
-session 20260910_204657_d5690f, is reviewing it. This source publishes shared,
-immutable, selected-revision item metadata, fixed food heals and pickpocket
-requirements through serde; ordered Alcher LIVE waits for review. Briefs 26-29 and 34-40 require extending this pipeline for
+session 20260910_204657_d5690f, approved frozen 7852b5a0; report
+04a-item-metadata-review.md at 8c6689c1. This source publishes shared, immutable,
+selected-revision item metadata, fixed food heals and pickpocket requirements
+through serde. All four ordered Alcher LIVE cells now pass at 1a2f2dcf. Briefs 26-29 and 34-40 require extending this pipeline for
 large game-fact tables; host policy stays separately owned. Quester parser
 feasibility was discussed against the existing native Quester plan; it remains
 a separate future implementation scope.
@@ -186,9 +192,11 @@ a separate future implementation scope.
 Twelve basic Alcher/ChickenKiller/Thiever headless cells passed across both
 revisions and both catalog sources. Eight custom/large-batch Alcher option
 cells passed; large-batch proves the 1,000-item noted representation and one
-cast, not 1,000 sustained casts. Ordered selection fails because runtime item
-metadata lists only the chainbody; generator plus consumer addresses that
-source gap; source commit 7852b5a0 is awaiting independent review.
+cast, not 1,000 sustained casts. The earlier ordered-selection failure exposed the old single-item metadata.
+Reviewed generated metadata corrects it: four fresh ordered cells at 1a2f2dcf
+prove platebody exhaustion, bank deposit, chainbody acquisition/cast, 39,000 and
+30,000 coins, and 130 Magic XP across both catalogs and revisions. Original
+failure evidence is retained; 28914fce records the four passing receipts.
 All twelve basic matrix rows remain PARTIAL, with branch and
 frontend qualification outstanding. Raw failures and exact hashes are retained
 in 05-catalog-proof.md and its evidence, including failed BoneBurier travel.
@@ -232,10 +240,13 @@ been performed by this campaign.
 ## Current UI follow-ups and remaining fixtures
 
 The operator requested a classic text loading bar with plain stage descriptions
-and the existing bright text accent, `theme::ACCENT` / #FFB000. Brief 50 is being
-implemented in Sol run 1174, session 20260910_204357_6fa300. It preserves all
-resource checks and reports actual processed work through bounded per-generation
-state. Native proof and same-card review remain required.
+and the existing bright text accent, `theme::ACCENT` / #FFB000. Brief 50 source 79f86973, lint fix 0bfb28ad and stage correction d321908c
+were implemented in Sol run 1174/session 20260910_204357_6fa300. Actual
+Grok 4.5 review 1179/session 20260910_211405_8e47f2 is active. It preserves
+all resource checks and reports actual processed work through bounded
+per-generation state. Native proof remains required. Frozen 30193c3b binaries
+include the final stage correction; earlier 28914fce binaries are build
+evidence only and will not be used as the final native progress proof.
 
 Root fixed the newly reported first-run Browse picker at 1a2f2dcf: correct
 window order, clear purpose text, and working Cancel/Not now dismissal. Three
@@ -244,10 +255,13 @@ all three internal F12 captures were read. `evidence/browse-ux/README.md` record
 the exact source/private entry and UI-only limits. Its source review is grouped
 with t_42263bfd and integration.
 
-Two source-grounded Grok 4.6 fixture designs cover the remaining 40 cards:
-t_a88cd22e / run 1172 / session 20260910_203957_1e123e and
-t_c8c317d0 / run 1173 / session 20260910_203957_c7b349. Brief 49 supplements
-the accepted capability architecture; reports are design, not LIVE acceptance.
+Grok 4.6 fixture design B completed at 14c3e58a: t_c8c317d0/run 1173/
+session 20260910_203957_c7b349 covers sixteen combat/world cards. Design A
+run 1172 failed after provider timeouts without a saved report; the failure is
+retained. Same-card retry t_a88cd22e/run 1176/session 20260910_210303_cf443d
+is saving the remaining twenty-four production fixtures incrementally. Brief
+49 supplements the accepted capability architecture; reports are design, not
+LIVE acceptance.
 
 Operator quota direction at 01:00 UTC moves the next four implementation cards
 (t_3737503d loadouts, t_63138b8b spells, t_51452e47 periodic banking, and
