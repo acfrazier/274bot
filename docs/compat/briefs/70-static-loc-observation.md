@@ -51,3 +51,21 @@ commits and source manifest; same-card reviewer must inspect the explicit
 client commit/export because root alone updates the host gitlink after review.
 Request SAME-card reviewer with those identities and focused test evidence,
 then STOP. Root owns LIVE requalification after actual Grok 4.5 approval.
+
+Root follow-up audit (05:14 UTC): client packet reception does bump gens.scene
+for LOC_DEL/ADD, but deferred loc_change_do_queue application itself does not.
+The reproduction must consume the packet-side scene gen before native queued
+application, then verify the post-application list, rather than claiming no
+packet bump exists. Preserve that distinction in diagnosis/report.
+
+Also inspect scalar loc distance freshness in the same snapshot-owned seam:
+loc_view computes distance using local_world_tile only on loc rebuild;
+host-play publishes loc.distance verbatim. If a focused player-movement test
+shows stale distances while scenery is unchanged, refresh only those cached
+scalar distances on actual local-tile change (or another bounded native
+solution); preserve names/actions allocations and no-op read reuse. Do not
+solve this by rebuilding/cloning static loc definitions on every player tick.
+This supports honest radius-query behavior, but does not establish the
+Gnome radius8 failure is our bug: the true pipe exit is >8 tiles from the
+next log and the foreign script may resync to the exit pipe. Root owns that
+separate diagnosis. Keep tests and implementation within the same named files.
