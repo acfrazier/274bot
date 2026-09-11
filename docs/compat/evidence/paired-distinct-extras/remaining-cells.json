@@ -1,0 +1,86 @@
+{
+  "brief": "158-paired-distinct-extras.md",
+  "brief_sha256": "3525f7487b349d226da48f62d427b77b3b9a047584b7ee483598fc6caf63fa22",
+  "kanban_task": "t_acea973c",
+  "kind": "source-verified proposals, not LIVE evidence",
+  "cell_count": 12,
+  "scenario_count": 3,
+  "operator_mid_run": "do not infer UNAVAILABLE from members label or long route; keep every distinct enabled branch; equivalent altars are not extra cells; unimplemented host travel is a native gap",
+  "generated_ids_274_eq_289": {
+    "blankrune": 1436,
+    "cert_blankrune": 1437,
+    "airrune": 556,
+    "naturerune": 561,
+    "air_talisman": 1438,
+    "nature_talisman": 1462,
+    "coins": 995
+  },
+  "native_ops": {
+    "38": ["Shop.sell noted pick id!==1436", "Shop.buy 10/5/1 settle", "Shop.close"],
+    "126": ["Trade.request", "offerAll name-only", "accept/decline posted ids"],
+    "127": ["Mule crafter first unnoted bootstrap; reused by bankFill=false"],
+    "156": ["driveActivePartnerTrade unused by these extras"],
+    "157": ["headed default pairs; Paint.buttons; shared Start"],
+    "unassigned_for_three_extras": [],
+    "implemented_host_travel": ["Captain Barnaby npc 381 fare 995x30", "Customs officer 380 return", "Entrana monks 657/658", "Zanaris shed door Lost City+Dramen"],
+    "mapped_already": ["ChatDialog.chooseOption/continue", "Bank.setNoteMode", "talisman useOn", "Portal Use", "ladder Climb-up/down"]
+  },
+  "non_air_mule": {
+    "disposition": "equivalent_altar_content",
+    "extra_cells": 0,
+    "why": "MuleCrafter has no rune-name branch. runeCraftLocations substitutes tile/bank/talisman/level only.",
+    "f2p_represented_by": "queued Air pair",
+    "members_same_loop": ["Cosmic", "Chaos", "Nature", "Law"],
+    "do_not_substitute_mule_nature_for_jiminua": true,
+    "death_table_tile": {
+      "coord": [3221, 3218, 0],
+      "host_identity": "Lumbridge walk_destinations[0]",
+      "use_as_representative": false,
+      "not_unavailable_from_members": true
+    }
+  },
+  "still_needed_named_scenarios": [
+    {
+      "name": "nature_island",
+      "card": "NatureCrafter",
+      "disposition": "required_gated",
+      "gated_after": ["157", "38", "126"],
+      "why": "Default Nature unnote=Jiminua is noted restock + Talk-to shop + Shop.sell/buy + spider-safe + Barnaby. Air unnote=null cannot accept this.",
+      "inject": {"rune": "Nature runes", "stayInAltar": false},
+      "seed": "Master RC 44, nature_talisman 1462, ruins (2865,3022,0), no 561/1436. Runner Ardougne East ack cert_blankrune 1437 x200 + coins 995 x10000, then Jiminua (2767,3122,0) with noted 1437 x25 and coins>=3000, no unnoted 1436.",
+      "witness": "Talk-to shop (not Trade), 1437 down and 1436 up from Shop.sell/buy, bilateral transfer, master 561>=1 and RC XP>=1, then Ardougne note-mode new 1437 withdraw, second Jiminua unnote, second transfer/craft. Seeded 561 or pre-Start 1436 fails. If gold expires after first shop+craft print IslandFirstUnnoteCraft partial, not full.",
+      "decomposition_if_return_exceeds_180s": "serial second cell: runner empty at Ardougne East with banked 1437; witness note-withdraw + boat + second unnote + second transfer. Neither cell alone qualifies.",
+      "cells": "both catalogs x 274 and 289"
+    },
+    {
+      "name": "nature_stay_in_altar",
+      "card": "NatureCrafter",
+      "disposition": "required_gated",
+      "gated_after": ["157", "126"],
+      "why": "stayInAltar=true trades at z>4000, runner needs conf.talisman, master skips portal, runner ExitAltarForRestock. Air representative; do not cartesian with island.",
+      "inject": {"rune": "Air runes", "stayInAltar": true},
+      "seed": "Master RC 1, air_talisman 1438, ruins (2983,3288,0), no essence. Runner air_talisman 1438 required, Falador East ack blankrune 1436 x200, firstload 25 unnoted at ruins. Do not seed 556.",
+      "witness": "offer+confirm inside z>4000, 1436 left runner, master 556>=1 and RC XP>=1 without master portal-out before that craft, runner portals after empty, Falador new 1436 restock, runner re-enters, second inside trade/craft. Overworld Air pair fails this cell.",
+      "cells": "both catalogs x 274 and 289"
+    },
+    {
+      "name": "mule_bankfill_false",
+      "card": "MuleCrafter",
+      "disposition": "required_gated",
+      "gated_after": ["157", "126", "127"],
+      "why": "CrafterGoBank only resetTradedMules when bankFill=false. Crafter must not bank. Mule still deposits runes and restocks.",
+      "inject": {"rune": "Air rune", "bankFill": false},
+      "seed": "Crafter at ruins, talisman 1438, 127 first unnoted 1436 x27, no 556. Mule Falador East ack 1436 x200, firstload 27 at ruins. Do not start crafter at bank (CrafterAtBank would still withdraw).",
+      "witness": "bilateral rune-for-essence after crafter already holds script 556, conservation, crafter does not open Falador East after Start, mule deposits 556 and new 1436 withdraw, second transfer, further craft. Seeded 556 or first-transfer-only fails. Seed craft is not the pair cycle.",
+      "cells": "both catalogs x 274 and 289"
+    }
+  ],
+  "excluded": [
+    "Flax minFlaxCapacity / Nature bankEvery withdrawEss withdrawCoins numeric knobs",
+    "Mule Nature as Jiminua stand-in",
+    "non-Air Mule extra cells (equivalent altar content)",
+    "shopdb.junglestore / shopOpBatch / boat NPC table copies",
+    "dim NatureCrafter or MuleCrafter",
+    "remaining-production Nature-as-core (superseded by 05w/158 Air representative)"
+  ]
+}
