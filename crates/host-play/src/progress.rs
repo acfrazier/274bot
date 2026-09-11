@@ -18,10 +18,10 @@ impl ProfileProgressStage {
         match self {
             Self::SelectingServerProfile => "Selecting server profile",
             Self::CheckingGameFiles => "Checking game files",
-            Self::CheckingNavigationFiles => "Checking navigation files",
+            Self::CheckingNavigationFiles => "Verifying custom navigation",
             Self::ReadingCacheArchives => "Reading cache archives",
             Self::LoadingGameData => "Loading game data",
-            Self::PreparingNavigation => "Preparing navigation",
+            Self::PreparingNavigation => "Loading navigation",
             Self::FinalChecks => "Final checks",
         }
     }

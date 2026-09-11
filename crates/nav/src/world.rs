@@ -17,7 +17,7 @@ use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
 use crate::grid::StepGrid;
-use crate::pack::{decode, load_grid, BankStand, PackError};
+use crate::pack::{decode, decode_grid, BankStand, PackError};
 use crate::transport::{TransportEdge, TransportGraph, TransportKind};
 
 /// A fully-blocked stamp: every directional `PL_WALK_*` mask, so the
@@ -40,19 +40,25 @@ impl NavWorld {
         &self.banks
     }
 
-    /// Load the baked nav pack (`$NAV_PACK` or the default path) into the
-    /// router's world. Whole-world packs (collision + transport graph +
-    /// bank stands) load directly; legacy 274N grid packs fall back to
-    /// [`Self::from_grid`]. The fallback triggers on bad magic only — a
-    /// `274V` pack with a stale version stays [`PackError::BadVersion`]
-    /// so the operator rebakes.
-    pub fn load_pack(path: &Path) -> Result<Self, PackError> {
-        let bytes = std::fs::read(path).map_err(PackError::Io)?;
-        match decode(&bytes) {
+    /// Decode already-read pack bytes into the router's world. Whole-world
+    /// packs (collision + transport graph + bank stands) load directly;
+    /// legacy 274N grid packs fall back to [`Self::from_grid`] on the same
+    /// buffer. The fallback triggers on bad magic only — a `274V` pack with
+    /// a stale version stays [`PackError::BadVersion`] so the operator
+    /// rebakes. This never rereads a pathname.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, PackError> {
+        match decode(bytes) {
             Ok((collision, graph, banks)) => Ok(Self::from_parts(collision, graph, banks)),
-            Err(PackError::BadMagic) => Ok(Self::from_grid(&load_grid(path)?)),
+            Err(PackError::BadMagic) => Ok(Self::from_grid(&decode_grid(bytes)?)),
             Err(e) => Err(e),
         }
+    }
+
+    /// Load the baked nav pack (`$NAV_PACK` or the default path) into the
+    /// router's world. One filesystem read plus [`Self::from_bytes`].
+    pub fn load_pack(path: &Path) -> Result<Self, PackError> {
+        let bytes = std::fs::read(path).map_err(PackError::Io)?;
+        Self::from_bytes(&bytes)
     }
 
     /// Build the router's world from already-decoded parts (the pack
@@ -401,7 +407,39 @@ mod tests {
             NavWorld::load_pack(&path),
             Err(PackError::BadVersion(5))
         ));
+        assert!(matches!(
+            NavWorld::from_bytes(&bytes),
+            Err(PackError::BadVersion(5))
+        ));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn from_bytes_decodes_v8_and_legacy_grid_without_a_path() {
+        let mut plane = vec![0u32; 4];
+        plane[0] = BLOCKED;
+        let mut flags = vec![0u32; 4 * plane.len()];
+        flags[..plane.len()].copy_from_slice(&plane);
+        let (walk, blocked) = crate::collision::pack_walk(&flags);
+        let collision = WorldCollision {
+            origin: tile(0, 0, 0),
+            width: 2,
+            height: 2,
+            walk,
+            blocked,
+            flags: None,
+        };
+        let v8 = encode(&collision, &TransportGraph::default(), &[]);
+        let packed = NavWorld::from_bytes(&v8).expect("v8 bytes decode");
+        assert_eq!(packed.collision.width, 2);
+        assert!(!packed.collision.walkable(tile(0, 0, 0)));
+
+        let grid_bytes = encode_grid(&StepGrid::fixture_door_corridor());
+        let grid = NavWorld::from_bytes(&grid_bytes).expect("legacy grid bytes decode");
+        assert_eq!(grid.collision.width, 5);
+        assert_eq!(grid.graph.edges.len(), 1);
+        assert!(grid.collision.walkable(tile(1, 0, 0)));
+        assert!(!grid.collision.walkable(tile(2, 0, 0)));
     }
 
     #[test]

@@ -81,15 +81,27 @@ struct FlagSidecar {
     flags: Arc<[u32]>,
 }
 
-/// The session's decoded flags sidecar; `None` while no collision paint
+/// The session's decoded flags sidecar; `Unloaded` until paint-on.
+enum FlagsSlot {
+    Unloaded,
+    Missing,
+    Refused(#[allow(dead_code)] &'static str),
+    Loaded(FlagSidecar),
+}
+
+/// The session's decoded flags sidecar; `Unloaded` while no collision paint
 /// is on (see [`FlagSidecar`]).
-static FLAGS: Mutex<Option<FlagSidecar>> = Mutex::new(None);
+static FLAGS: Mutex<FlagsSlot> = Mutex::new(FlagsSlot::Unloaded);
 /// Immutable process-profile path installed before any panel session starts.
 static BOUND_NAV_FLAGS: Mutex<Option<PathBuf>> = Mutex::new(None);
+/// Expected flags digest from the selected nav identity. `None` means the
+/// identity does not name flags, so a sidecar cannot be applied.
+static EXPECTED_FLAGS_SHA256: Mutex<Option<String>> = Mutex::new(None);
 
-pub(crate) fn set_navflags_path(path: PathBuf) {
+pub(crate) fn set_navflags_binding(path: PathBuf, flags_sha256: Option<String>) {
     *BOUND_NAV_FLAGS.lock().unwrap() = Some(path);
-    *FLAGS.lock().unwrap() = None;
+    *EXPECTED_FLAGS_SHA256.lock().unwrap() = flags_sha256;
+    drop_flags_sidecar();
 }
 
 /// The flags sidecar path: `$NAV_FLAGS`, else the pack path with its
@@ -104,12 +116,9 @@ pub(crate) fn navflags_path() -> PathBuf {
     }
 }
 
-/// Decode the sidecar file at `path` into a [`FlagSidecar`]; `None` when
-/// the file is missing or fails the sidecar decode (the paint then falls
-/// back to the walk word).
-fn decode_sidecar_file(path: &PathBuf) -> Option<FlagSidecar> {
-    let bytes = std::fs::read(path).ok()?;
-    let (origin, width, height, flags) = nav::pack::decode_flags_sidecar(&bytes).ok()?;
+/// Decode sidecar bytes into a [`FlagSidecar`]; `None` when decode fails.
+fn decode_sidecar_bytes(bytes: &[u8]) -> Option<FlagSidecar> {
+    let (origin, width, height, flags) = nav::pack::decode_flags_sidecar(bytes).ok()?;
     Some(FlagSidecar {
         origin,
         width,
@@ -118,21 +127,67 @@ fn decode_sidecar_file(path: &PathBuf) -> Option<FlagSidecar> {
     })
 }
 
+/// Decode the sidecar file at `path` into a [`FlagSidecar`]; `None` when
+/// the file is missing or fails the sidecar decode (the paint then falls
+/// back to the walk word).
+#[cfg(test)]
+fn decode_sidecar_file(path: &PathBuf) -> Option<FlagSidecar> {
+    let bytes = std::fs::read(path).ok()?;
+    decode_sidecar_bytes(&bytes)
+}
+
 /// Decode the flags sidecar once while a collision paint is on; no-op
-/// when already loaded or the file is missing/unreadable (the paint then
-/// falls back to the walk word).
+/// when already attempted for this paint-on. Missing, unknown, or
+/// mismatched identity falls back to the walk word and is not retried
+/// until the sidecar is dropped.
 pub(crate) fn ensure_flags_sidecar() {
-    let mut guard = FLAGS.lock().unwrap();
-    if guard.is_some() {
+    if !matches!(*FLAGS.lock().unwrap(), FlagsSlot::Unloaded) {
         return;
     }
-    *guard = decode_sidecar_file(&navflags_path());
+    let expected = EXPECTED_FLAGS_SHA256.lock().unwrap().clone();
+    let path = navflags_path();
+    let slot = match expected {
+        None => FlagsSlot::Refused("flags identity is unknown"),
+        Some(expected) => match std::fs::read(&path) {
+            Err(_) => FlagsSlot::Missing,
+            Ok(bytes) if nav::manifest::hash_bytes(&bytes) != expected => {
+                FlagsSlot::Refused("flags sidecar hash mismatch")
+            }
+            Ok(bytes) => match decode_sidecar_bytes(&bytes) {
+                Some(sidecar) => FlagsSlot::Loaded(sidecar),
+                None => FlagsSlot::Refused("flags sidecar is unreadable"),
+            },
+        },
+    };
+    let mut guard = FLAGS.lock().unwrap();
+    if matches!(*guard, FlagsSlot::Unloaded) {
+        *guard = slot;
+    }
 }
 
 /// Drop the decoded sidecar (both collision toggles off); the next
 /// paint-on re-decodes.
 pub(crate) fn drop_flags_sidecar() {
-    *FLAGS.lock().unwrap() = None;
+    *FLAGS.lock().unwrap() = FlagsSlot::Unloaded;
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FlagsSidecarState {
+    Unloaded,
+    Missing,
+    Refused(&'static str),
+    Applied,
+}
+
+#[cfg(test)]
+pub(crate) fn flags_sidecar_state() -> FlagsSidecarState {
+    match &*FLAGS.lock().unwrap() {
+        FlagsSlot::Unloaded => FlagsSidecarState::Unloaded,
+        FlagsSlot::Missing => FlagsSidecarState::Missing,
+        FlagsSlot::Refused(reason) => FlagsSidecarState::Refused(reason),
+        FlagsSlot::Loaded(_) => FlagsSidecarState::Applied,
+    }
 }
 
 /// The decoded sidecar flags when they match the world's grid header (a
@@ -143,9 +198,10 @@ pub(crate) fn flags_sidecar_for(
     height: usize,
 ) -> Option<Arc<[u32]>> {
     let guard = FLAGS.lock().unwrap();
-    guard
-        .as_ref()
-        .and_then(|s| sidecar_for_grid(s, origin, width, height))
+    match &*guard {
+        FlagsSlot::Loaded(s) => sidecar_for_grid(s, origin, width, height),
+        _ => None,
+    }
 }
 
 /// The sidecar's flags only when its decoded grid header matches the
@@ -978,9 +1034,11 @@ mod tests {
     use std::sync::Arc;
 
     use super::{
-        available_levels, click_to_tile, decode_sidecar_file, pack, pack_map_tiles, pan_by,
-        picker_map_window, right_align_x, set_pack, sidecar_for_grid, snap, walkto_canvas_flags,
-        walkto_footer_labels, walkto_window_flags, FlagSidecar, PackView,
+        available_levels, click_to_tile, decode_sidecar_file, drop_flags_sidecar,
+        ensure_flags_sidecar, flags_sidecar_for, flags_sidecar_state, pack, pack_map_tiles, pan_by,
+        picker_map_window, right_align_x, set_navflags_binding, set_pack, sidecar_for_grid, snap,
+        walkto_canvas_flags, walkto_footer_labels, walkto_window_flags, FlagSidecar,
+        FlagsSidecarState, PackView,
     };
     use crate::nav_settings::NavSettings;
     use crate::session::Session;
@@ -1649,5 +1707,52 @@ mod tests {
         // Leave the global detached so parallel tests cannot observe it.
         set_pack(None);
         assert!(pack().is_none(), "set_pack(None) must detach the world");
+    }
+
+    #[test]
+    fn flags_sidecar_requires_exact_identity_and_drops_on_toggle_off() {
+        let path = std::env::temp_dir().join(format!(
+            "274bot-panel-flags-identity-{}.navflags",
+            std::process::id()
+        ));
+        let origin = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let flags = vec![CollisionFlag::W_N as u32, 0, 0, 0];
+        let bytes = nav::pack::encode_flags_sidecar(origin, 1, 1, &flags);
+        std::fs::write(&path, &bytes).unwrap();
+        let digest = nav::manifest::hash_bytes(&bytes);
+
+        set_navflags_binding(path.clone(), None);
+        ensure_flags_sidecar();
+        assert_eq!(
+            flags_sidecar_state(),
+            FlagsSidecarState::Refused("flags identity is unknown")
+        );
+        assert!(flags_sidecar_for(origin, 1, 1).is_none());
+
+        drop_flags_sidecar();
+        set_navflags_binding(path.clone(), Some("00".repeat(32)));
+        ensure_flags_sidecar();
+        assert_eq!(
+            flags_sidecar_state(),
+            FlagsSidecarState::Refused("flags sidecar hash mismatch")
+        );
+        assert!(flags_sidecar_for(origin, 1, 1).is_none());
+
+        drop_flags_sidecar();
+        set_navflags_binding(path.clone(), Some(digest));
+        ensure_flags_sidecar();
+        assert_eq!(flags_sidecar_state(), FlagsSidecarState::Applied);
+        assert_eq!(
+            flags_sidecar_for(origin, 1, 1).as_deref(),
+            Some(flags.as_slice())
+        );
+        drop_flags_sidecar();
+        assert_eq!(flags_sidecar_state(), FlagsSidecarState::Unloaded);
+        assert!(flags_sidecar_for(origin, 1, 1).is_none());
+        let _ = std::fs::remove_file(path);
     }
 }

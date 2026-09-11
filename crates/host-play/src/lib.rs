@@ -3,8 +3,12 @@
 //! this library so it can poll per-slot state instead of scraping logs.
 
 pub mod audio;
+pub mod nav_identity;
 pub mod profile;
 pub mod progress;
+pub use nav_identity::{
+    bundled_nav_identities, install_resource_root, BundledNavIdentity, NavLoadCounters, NavOrigin,
+};
 pub use profile::{
     parse_profile_args, parse_revision, ProfileOptions, ProfileSelection, ServerProfile,
 };
@@ -256,24 +260,7 @@ impl SharedClientTemplate {
             4,
             4,
         ));
-        let world = match profile.nav_availability() {
-            profile::NavAvailability::Unavailable(_) => None,
-            profile::NavAvailability::Legacy274 | profile::NavAvailability::Bound => {
-                observer.report(progress::ProfileProgress::steps(
-                    progress::ProfileProgressStage::PreparingNavigation,
-                    0,
-                    1,
-                ));
-                let world = NavWorld::load_pack(profile.nav_pack())
-                    .map_err(|e| format!("navigation {}: {e}", profile.nav_pack().display()))?;
-                observer.report(progress::ProfileProgress::steps(
-                    progress::ProfileProgressStage::PreparingNavigation,
-                    1,
-                    1,
-                ));
-                Some(Arc::new(world))
-            }
-        };
+        let world = profile.world();
         Ok(Arc::new(Self {
             profile,
             game_data,
@@ -295,8 +282,9 @@ impl SharedClientTemplate {
         self.world.clone()
     }
 
-    /// Revalidate the selected cache and navigation bytes and return the
-    /// consuming handoff required by [`run_prepared_template`].
+    /// Revalidate the selected cache identity and return the consuming
+    /// handoff required by [`run_prepared_template`]. Navigation is the
+    /// already-loaded world; a post-load disk edit does not replace it.
     pub fn validate_for_play(self: &Arc<Self>) -> Result<ValidatedTemplate, String> {
         self.validate_for_play_with_progress(&progress::ProfileProgressObserver::default())
     }

@@ -1194,7 +1194,12 @@ impl Session {
 
     fn install_prepared_template(&mut self, template: Arc<SharedClientTemplate>) {
         let profile = Arc::clone(template.profile());
-        crate::picker::set_navflags_path(profile.nav_flags().to_path_buf());
+        crate::picker::set_navflags_binding(
+            profile.nav_flags().to_path_buf(),
+            profile
+                .nav_identity()
+                .and_then(|identity| identity.flags_sha256.clone()),
+        );
         self.options = PlayOptions {
             host: profile.client().game_host().to_string(),
             port: profile.client().game_port(),

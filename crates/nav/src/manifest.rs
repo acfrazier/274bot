@@ -129,6 +129,27 @@ impl NavManifest {
         }
         Ok(())
     }
+
+    /// Compare revision, cache identity and pack digest only. Flags stay
+    /// optional and are checked later at paint-on against `flags_sha256`.
+    pub fn verify_pack(
+        &self,
+        revision: u16,
+        cache: &CacheManifest,
+        nav_sha256: &str,
+    ) -> Result<(), String> {
+        validate_revision(revision)?;
+        if self.revision != revision
+            || self.cache_id != cache.identity()
+            || self.nav_sha256 != nav_sha256
+        {
+            return Err(
+                "navigation/profile mismatch: revision, cache identity or pack/flags content differs"
+                    .into(),
+            );
+        }
+        Ok(())
+    }
 }
 
 pub fn nav_manifest_path(pack: &Path) -> std::path::PathBuf {
@@ -173,7 +194,27 @@ pub fn hash_file_with_progress(
 }
 
 pub fn hash_bytes(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    hash_bytes_with_progress(bytes, |_, _| {})
+}
+
+/// Hash an already-read buffer in the same 1 MiB chunks as [`hash_file_with_progress`].
+pub fn hash_bytes_with_progress(bytes: &[u8], mut progress: impl FnMut(u64, u64)) -> String {
+    let total = bytes.len() as u64;
+    if total > 0 {
+        progress(0, total);
+    }
+    let mut digest = Sha256::new();
+    let mut completed = 0_u64;
+    for chunk in bytes.chunks(HASH_CHUNK_SIZE) {
+        digest.update(chunk);
+        completed = completed.saturating_add(chunk.len() as u64);
+        if completed < total {
+            progress(completed, total);
+        }
+    }
+    let hash = format!("{:x}", digest.finalize());
+    progress(completed, completed);
+    hash
 }
 
 fn validate_revision(revision: u16) -> Result<(), String> {
@@ -185,7 +226,7 @@ fn validate_revision(revision: u16) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{hash_bytes, hash_file_with_progress, HASH_CHUNK_SIZE};
+    use super::{hash_bytes, hash_bytes_with_progress, hash_file_with_progress, HASH_CHUNK_SIZE};
 
     #[test]
     fn streamed_hash_matches_bytes_at_a_chunk_boundary_without_early_completion() {
@@ -229,5 +270,25 @@ mod tests {
         let error = hash_file_with_progress(&path, |_, _| {}).unwrap_err();
 
         assert!(error.starts_with(&format!("resource {}:", path.display())));
+    }
+
+    #[test]
+    fn in_memory_hash_matches_streamed_file_hash_without_early_completion() {
+        let bytes: Vec<u8> = (0..HASH_CHUNK_SIZE + 7)
+            .map(|index| (index % 251) as u8)
+            .collect();
+        let mut updates = Vec::new();
+        let digest = hash_bytes_with_progress(&bytes, |completed, total| {
+            updates.push((completed, total));
+        });
+        assert_eq!(digest, hash_bytes(&bytes));
+        assert_eq!(updates.first(), Some(&(0, bytes.len() as u64)));
+        assert_eq!(
+            updates.last(),
+            Some(&(bytes.len() as u64, bytes.len() as u64))
+        );
+        assert!(updates[..updates.len() - 1]
+            .iter()
+            .all(|(completed, total)| completed < total));
     }
 }

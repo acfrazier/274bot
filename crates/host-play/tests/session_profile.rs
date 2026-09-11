@@ -6,7 +6,9 @@ use std::sync::{Arc, Mutex};
 use client::{io::ClientRevision, BotTarget};
 use host_play::profile::{CacheManifest, NavAvailability, NavManifest, ProfileEnvironment};
 use host_play::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
-use host_play::{parse_profile_args, ProfileOptions, SharedClientTemplate};
+use host_play::{
+    parse_profile_args, BundledNavIdentity, NavOrigin, ProfileOptions, SharedClientTemplate,
+};
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 static CLIENTS: Mutex<()> = Mutex::new(());
@@ -535,7 +537,7 @@ fn catalog_is_a_default_path_while_cache_identity_remains_revision_bound() {
 }
 
 #[test]
-fn navigation_and_scatter_use_the_selected_shared_world_and_validate_its_sidecar() {
+fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_edits() {
     use api::snapshot::WorldTile;
     use nav::collision::{pack_walk, WorldCollision};
     use nav::transport::{TransportEdge, TransportGraph, TransportKind};
@@ -592,34 +594,60 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_validate_its_sidecar
     .unwrap();
     options.nav_pack = Some(pack.clone());
     options.nav_flags = Some(flags_path.clone());
-    let profile = options
-        .resolve_with_env(None, &fixture.env())
-        .unwrap()
-        .bind()
-        .unwrap();
+    let selection = options.resolve_with_env(None, &fixture.env()).unwrap();
+    let updates = Arc::new(Mutex::new(Vec::<ProfileProgress>::new()));
+    let worker_updates = Arc::clone(&updates);
+    let observer = ProfileProgressObserver::new(move |progress| {
+        worker_updates.lock().unwrap().push(progress);
+    });
+    let profile = selection.bind_with_progress(&observer).unwrap();
     assert_eq!(profile.nav_availability(), &NavAvailability::Bound);
+    assert!(!profile.nav_origin().is_bundled());
+    assert_eq!(profile.nav_load_counters().pack_reads, 1);
+    assert_eq!(profile.nav_load_counters().pack_hashes, 1);
+    assert_eq!(profile.nav_load_counters().pack_decodes, 1);
+    let stages: Vec<_> = updates
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|progress| progress.stage)
+        .collect();
+    assert!(stages.contains(&ProfileProgressStage::CheckingNavigationFiles));
+    assert!(stages.contains(&ProfileProgressStage::PreparingNavigation));
     let template = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
     let first = template.world().unwrap();
     let second = template.world().unwrap();
     assert!(Arc::ptr_eq(&first, &second));
+    assert!(Arc::ptr_eq(&first, &profile.world().unwrap()));
     assert_eq!(first.collision.origin, origin);
     for uid in [0, 1, -5, i32::MIN] {
         assert!([origin, adjacent].contains(&template.scatter_tile_for(uid)));
     }
-    std::fs::write(flags_path, b"different flags").unwrap();
-    let error = match template.validate_for_play() {
-        Ok(_) => panic!("changed flags must fail final validation"),
-        Err(error) => error,
-    };
-    assert!(error.contains("flags changed"));
-    std::fs::write(options.nav_flags.unwrap(), &flags).unwrap();
-    template.validate_for_play().unwrap();
-    std::fs::write(pack, b"different navigation").unwrap();
-    let error = match template.validate_for_play() {
-        Ok(_) => panic!("changed navigation must fail final validation"),
-        Err(error) => error,
-    };
-    assert!(error.contains("navigation changed"));
+    std::fs::write(&flags_path, b"different flags").unwrap();
+    std::fs::write(&pack, b"different navigation").unwrap();
+    template
+        .validate_for_play()
+        .expect("already-loaded world is not rehashed at Play");
+    assert!(Arc::ptr_eq(&first, &template.world().unwrap()));
+
+    let mut rebound = fixture.options(289);
+    rebound.nav_pack = Some(pack.clone());
+    rebound.nav_flags = Some(flags_path);
+    let error = rebound
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind()
+        .unwrap_err();
+    assert!(error.contains("navigation/profile mismatch") || error.contains("navigation"));
+    std::fs::write(&pack, &bytes).unwrap();
+    let rebound_profile = rebound
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind()
+        .unwrap();
+    let rebound_world = rebound_profile.world().unwrap();
+    assert!(!Arc::ptr_eq(&first, &rebound_world));
+    assert_eq!(rebound_world.collision.origin, origin);
 }
 
 #[test]
@@ -655,4 +683,237 @@ fn checked_play_entry_revalidates_while_a_consuming_ticket_does_not_hash_again()
         host_play::run_prepared_template(ticket, false, vec![], |_| (None, None), |_, _, _| {})
             .unwrap();
     assert!(Arc::ptr_eq(play.server_profile().unwrap(), &profile));
+}
+
+fn tiny_v8_pack() -> Vec<u8> {
+    use api::snapshot::WorldTile;
+    use nav::collision::{pack_walk, WorldCollision};
+    use nav::transport::TransportGraph;
+    let (walk, blocked) = pack_walk(&[0; 8]);
+    nav::pack::encode(
+        &WorldCollision {
+            origin: WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+            width: 2,
+            height: 1,
+            walk,
+            blocked,
+            flags: None,
+        },
+        &TransportGraph::default(),
+        &[],
+    )
+}
+
+fn write_nav_sidecar(pack: &std::path::Path, revision: u16, cache_id: String, bytes: &[u8]) {
+    let manifest = NavManifest {
+        revision,
+        cache_id,
+        nav_sha256: nav::manifest::hash_bytes(bytes),
+        flags_sha256: None,
+    };
+    std::fs::write(
+        host_play::profile::nav_manifest_path(pack),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn bundled_identity_decodes_once_without_hashing_and_shares_the_world() {
+    let fixture = Fixture::new();
+    let bytes = tiny_v8_pack();
+    let root = fixture.0.join("Resources");
+    std::fs::create_dir_all(&root).unwrap();
+    let pack = root.join("274bot.navpack");
+    std::fs::write(&pack, &bytes).unwrap();
+    let cache_id = CacheManifest::capture(289, &fixture.0).unwrap().identity();
+    let table = [BundledNavIdentity {
+        revision: 289,
+        cache_id: cache_id.clone(),
+        format: "274V8".into(),
+        nav_sha256: nav::manifest::hash_bytes(&bytes),
+        flags_sha256: None,
+        relative_path: "274bot.navpack".into(),
+    }];
+    let mut options = fixture.options(289);
+    options.nav_pack = None;
+    let selection = options.resolve_with_env(None, &fixture.env()).unwrap();
+    let updates = Arc::new(Mutex::new(Vec::<ProfileProgress>::new()));
+    let worker_updates = Arc::clone(&updates);
+    let observer = ProfileProgressObserver::new(move |progress| {
+        worker_updates.lock().unwrap().push(progress);
+    });
+    let profile = selection
+        .bind_with_nav_identities(&observer, &table, Some(root.as_path()))
+        .unwrap();
+    assert!(matches!(profile.nav_origin(), NavOrigin::Bundled { .. }));
+    assert_eq!(profile.nav_load_counters().pack_reads, 1);
+    assert_eq!(profile.nav_load_counters().pack_hashes, 0);
+    assert_eq!(profile.nav_load_counters().pack_decodes, 1);
+    assert!(updates
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|progress| progress.stage != ProfileProgressStage::CheckingNavigationFiles));
+    assert!(updates.lock().unwrap().iter().any(|progress| {
+        progress.stage == ProfileProgressStage::PreparingNavigation && progress.completed == 1
+    }));
+    let first = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
+    let second = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
+    assert!(Arc::ptr_eq(
+        &first.world().unwrap(),
+        &second.world().unwrap()
+    ));
+    std::fs::write(&pack, b"tampered").unwrap();
+    first.validate_for_play().unwrap();
+    assert!(Arc::ptr_eq(
+        &first.world().unwrap(),
+        &profile.world().unwrap()
+    ));
+}
+
+#[test]
+fn nav_pack_override_defeats_bundle_selection_and_hashes_once() {
+    let fixture = Fixture::new();
+    let bytes = tiny_v8_pack();
+    let root = fixture.0.join("Resources");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("274bot.navpack"), &bytes).unwrap();
+    let custom = fixture.0.join("custom.navpack");
+    std::fs::write(&custom, &bytes).unwrap();
+    let cache_id = CacheManifest::capture(289, &fixture.0).unwrap().identity();
+    write_nav_sidecar(&custom, 289, cache_id.clone(), &bytes);
+    let table = [BundledNavIdentity {
+        revision: 289,
+        cache_id,
+        format: "274V8".into(),
+        nav_sha256: nav::manifest::hash_bytes(&bytes),
+        flags_sha256: None,
+        relative_path: "274bot.navpack".into(),
+    }];
+    let mut options = fixture.options(289);
+    options.nav_pack = Some(custom);
+    let profile = options
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind_with_nav_identities(
+            &ProfileProgressObserver::default(),
+            &table,
+            Some(root.as_path()),
+        )
+        .unwrap();
+    assert!(!profile.nav_origin().is_bundled());
+    assert_eq!(profile.nav_load_counters().pack_hashes, 1);
+    assert_eq!(profile.nav_load_counters().pack_decodes, 1);
+}
+
+#[test]
+fn external_wrong_hash_revision_or_corrupt_bytes_are_rejected() {
+    let fixture = Fixture::new();
+    let bytes = tiny_v8_pack();
+    let pack = fixture.0.join("bad.navpack");
+    std::fs::write(&pack, &bytes).unwrap();
+    let cache_id = CacheManifest::capture(289, &fixture.0).unwrap().identity();
+    let mut options = fixture.options(289);
+    options.nav_pack = Some(pack.clone());
+    let selection = options.resolve_with_env(None, &fixture.env()).unwrap();
+    assert!(selection
+        .bind()
+        .unwrap_err()
+        .contains("navigation/profile mismatch"));
+
+    let mut wrong = NavManifest {
+        revision: 289,
+        cache_id: cache_id.clone(),
+        nav_sha256: "00".repeat(32),
+        flags_sha256: None,
+    };
+    std::fs::write(
+        host_play::profile::nav_manifest_path(&pack),
+        serde_json::to_vec(&wrong).unwrap(),
+    )
+    .unwrap();
+    assert!(selection
+        .bind()
+        .unwrap_err()
+        .contains("navigation/profile mismatch"));
+
+    wrong.nav_sha256 = nav::manifest::hash_bytes(&bytes);
+    wrong.revision = 274;
+    std::fs::write(
+        host_play::profile::nav_manifest_path(&pack),
+        serde_json::to_vec(&wrong).unwrap(),
+    )
+    .unwrap();
+    assert!(selection
+        .bind()
+        .unwrap_err()
+        .contains("navigation/profile mismatch"));
+
+    wrong.revision = 289;
+    std::fs::write(
+        host_play::profile::nav_manifest_path(&pack),
+        serde_json::to_vec(&wrong).unwrap(),
+    )
+    .unwrap();
+    let mut corrupt = bytes.clone();
+    corrupt[4] = 5;
+    std::fs::write(&pack, &corrupt).unwrap();
+    let error = selection.bind().unwrap_err();
+    assert!(
+        error.contains("navigation/profile mismatch") || error.contains("unsupported pack version"),
+        "{error}"
+    );
+}
+
+#[test]
+fn missing_289_sidecar_and_missing_pack_keep_existing_refusals() {
+    let fixture = Fixture::new();
+    let bytes = tiny_v8_pack();
+    let pack = fixture.0.join("orphan.navpack");
+    std::fs::write(&pack, &bytes).unwrap();
+    let mut options = fixture.options(289);
+    options.nav_pack = Some(pack);
+    assert!(options
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind()
+        .unwrap_err()
+        .contains("revision 289 requires"));
+
+    let missing = fixture
+        .options(274)
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind()
+        .unwrap();
+    assert!(matches!(
+        missing.nav_availability(),
+        NavAvailability::Unavailable(_)
+    ));
+    assert_eq!(missing.nav_load_counters().pack_reads, 0);
+}
+
+#[test]
+fn revision_274_without_sidecar_is_legacy_and_decodes_once() {
+    let fixture = Fixture::new();
+    let bytes = nav::pack::encode_grid(&nav::grid::StepGrid::fixture_door_corridor());
+    let pack = fixture.0.join("legacy.navpack");
+    std::fs::write(&pack, &bytes).unwrap();
+    let mut options = fixture.options(274);
+    options.nav_pack = Some(pack);
+    let profile = options
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind()
+        .unwrap();
+    assert_eq!(profile.nav_availability(), &NavAvailability::Legacy274);
+    assert_eq!(profile.nav_load_counters().pack_reads, 1);
+    assert_eq!(profile.nav_load_counters().pack_hashes, 1);
+    assert_eq!(profile.nav_load_counters().pack_decodes, 1);
+    assert_eq!(profile.world().unwrap().collision.width, 5);
 }

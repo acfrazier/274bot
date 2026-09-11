@@ -11,9 +11,14 @@ use client::client::ClientConfig;
 use client::io::{ClientRevision, Packet};
 use client::session::{ClientSessionConfig, ClientSessionProfile};
 use client::BotTarget;
-use nav::manifest::hash_file_with_progress;
+use nav::manifest::hash_bytes_with_progress;
 pub use nav::manifest::{nav_manifest_path, CacheManifest, NavManifest};
+use nav::world::NavWorld;
 
+use crate::nav_identity::{
+    bundled_nav_identities, install_resource_root, select_nav_origin, BundledNavIdentity,
+    NavLoadCounters, NavOrigin,
+};
 use crate::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
 
 const JAGS: [&str; 8] = CacheManifest::ARCHIVES;
@@ -223,6 +228,8 @@ pub struct ProfileSelection {
     cache_manifest: Option<PathBuf>,
     rsa_modulus: Option<String>,
     rsa_exponent: Option<String>,
+    nav_pack_overridden: bool,
+    nav_flags_overridden: bool,
 }
 
 impl ProfileOptions {
@@ -340,6 +347,8 @@ impl ProfileOptions {
         if game_port == 0 || asset_port == 0 {
             return Err("profile ports must be nonzero".into());
         }
+        let nav_pack_overridden = self.nav_pack.is_some() || env.nav_pack.is_some();
+        let nav_flags_overridden = self.nav_flags.is_some() || env.nav_flags.is_some();
         let nav_pack = self
             .nav_pack
             .clone()
@@ -407,6 +416,8 @@ impl ProfileOptions {
                 .map(absolute),
             rsa_modulus: env.rsa_modulus.clone(),
             rsa_exponent: env.rsa_exponent.clone(),
+            nav_pack_overridden,
+            nav_flags_overridden,
         })
     }
 }
@@ -426,12 +437,32 @@ pub struct ServerProfile {
     cache_manifest: CacheManifest,
     nav_pack: PathBuf,
     nav_flags: PathBuf,
-    nav_hash: Option<String>,
-    flags_hash: Option<String>,
+    nav_origin: NavOrigin,
+    nav_identity: Option<NavManifest>,
+    nav_load: NavLoadCounters,
+    world: SharedWorld,
     nav: NavAvailability,
     content_dir: PathBuf,
     vault_path: PathBuf,
     catalog_root: Option<PathBuf>,
+}
+
+struct LoadedNav {
+    availability: NavAvailability,
+    identity: Option<NavManifest>,
+    world: Option<Arc<NavWorld>>,
+    counters: NavLoadCounters,
+}
+
+#[derive(Clone)]
+struct SharedWorld(Option<Arc<NavWorld>>);
+
+impl std::fmt::Debug for SharedWorld {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("SharedWorld")
+            .field(&self.0.is_some())
+            .finish()
+    }
 }
 
 impl ProfileSelection {
@@ -499,6 +530,25 @@ impl ProfileSelection {
         &self,
         observer: &ProfileProgressObserver,
     ) -> Result<Arc<ServerProfile>, String> {
+        self.bind_with_nav_identities(
+            observer,
+            bundled_nav_identities(),
+            std::env::current_exe()
+                .ok()
+                .map(|exe| install_resource_root(&exe))
+                .as_deref(),
+        )
+    }
+
+    /// Bind using an explicit identity table and install root. Production
+    /// uses the compile-time table (empty in git). Tests cover the nonempty
+    /// bundled path without claiming a released app.
+    pub fn bind_with_nav_identities(
+        &self,
+        observer: &ProfileProgressObserver,
+        table: &[BundledNavIdentity],
+        resource_root: Option<&Path>,
+    ) -> Result<Arc<ServerProfile>, String> {
         let actual = CacheManifest::capture_with_progress(
             self.revision().as_i32() as u16,
             &self.cache_dir,
@@ -530,7 +580,6 @@ impl ProfileSelection {
             ));
         }
         let cache_id = actual.identity();
-        let (nav, nav_hash, flags_hash) = self.validate_nav(&cache_id, observer)?;
         let (rsa_modulus, rsa_exponent) = if self.target() == BotTarget::Prod {
             (
                 client::PROD_LOGIN_RSAN.into(),
@@ -570,6 +619,21 @@ impl ProfileSelection {
                 JAGS.len() as u64,
             ));
         }
+        let origin = select_nav_origin(
+            table,
+            resource_root,
+            self.revision().as_i32() as u16,
+            &cache_id,
+            self.nav_pack_overridden,
+            &self.nav_pack,
+        )?;
+        let nav_pack = origin.path().to_path_buf();
+        let nav_flags = if origin.is_bundled() && !self.nav_flags_overridden {
+            nav_pack.with_extension("navflags")
+        } else {
+            self.nav_flags.clone()
+        };
+        let loaded = self.load_nav(&origin, &actual, &nav_pack, observer)?;
         let binding = Arc::new(ClientSessionProfile::new(ClientSessionConfig {
             revision: self.revision(),
             target: self.target(),
@@ -588,11 +652,13 @@ impl ProfileSelection {
             selection: self.selection,
             client: binding,
             cache_manifest: actual,
-            nav_pack: self.nav_pack.clone(),
-            nav_flags: self.nav_flags.clone(),
-            nav_hash,
-            flags_hash,
-            nav,
+            nav_pack,
+            nav_flags,
+            nav_origin: origin,
+            nav_identity: loaded.identity,
+            nav_load: loaded.counters,
+            world: SharedWorld(loaded.world),
+            nav: loaded.availability,
             content_dir: self.content_dir.clone(),
             vault_path: self.vault_path.clone(),
             catalog_root: self.catalog_root.clone(),
@@ -615,49 +681,98 @@ impl ProfileSelection {
         )
     }
 
-    fn validate_nav(
+    fn load_nav(
         &self,
-        cache_id: &str,
+        origin: &NavOrigin,
+        cache: &CacheManifest,
+        pack_path: &Path,
         observer: &ProfileProgressObserver,
-    ) -> Result<(NavAvailability, Option<String>, Option<String>), String> {
-        if !self.nav_pack.exists() {
-            return Ok((
-                NavAvailability::Unavailable(format!(
-                    "navigation unavailable: {} has not been prepared",
-                    self.nav_pack.display()
-                )),
-                None,
-                None,
-            ));
-        }
-        let nav_hash = hash_navigation_file(&self.nav_pack, observer)?;
-        let flags_hash = self
-            .nav_flags
-            .is_file()
-            .then(|| hash_navigation_file(&self.nav_flags, observer))
-            .transpose()?;
-        let manifest_path = nav_manifest_path(&self.nav_pack);
-        if !manifest_path.exists() {
-            if self.revision() == ClientRevision::R274 {
-                return Ok((NavAvailability::Legacy274, Some(nav_hash), flags_hash));
+    ) -> Result<LoadedNav, String> {
+        let revision = self.revision().as_i32() as u16;
+        let mut counters = NavLoadCounters::default();
+        if !pack_path.exists() {
+            if origin.is_bundled() {
+                return Err(format!(
+                    "bundled navigation {} is missing",
+                    pack_path.display()
+                ));
             }
-            return Err(format!(
-                "navigation/profile mismatch: revision 289 requires {} (prepare in step 5)",
-                manifest_path.display()
-            ));
+            return Ok(LoadedNav {
+                availability: NavAvailability::Unavailable(format!(
+                    "navigation unavailable: {} has not been prepared",
+                    pack_path.display()
+                )),
+                identity: None,
+                world: None,
+                counters,
+            });
         }
-        let bytes = std::fs::read(&manifest_path)
-            .map_err(|e| format!("nav manifest {}: {e}", manifest_path.display()))?;
-        let manifest: NavManifest =
-            serde_json::from_slice(&bytes).map_err(|e| format!("nav manifest: {e}"))?;
-        if i32::from(manifest.revision) != self.revision().as_i32()
-            || manifest.cache_id != cache_id
-            || manifest.nav_sha256 != nav_hash
-            || manifest.flags_sha256 != flags_hash
-        {
-            return Err("navigation/profile mismatch: revision, cache identity or pack/flags content differs".into());
-        }
-        Ok((NavAvailability::Bound, Some(nav_hash), flags_hash))
+        let bytes = std::fs::read(pack_path)
+            .map_err(|e| format!("navigation {}: {e}", pack_path.display()))?;
+        counters.pack_reads = 1;
+        let identity = match origin {
+            NavOrigin::Bundled { identity, .. } => {
+                if i32::from(identity.revision) != self.revision().as_i32()
+                    || identity.cache_id != cache.identity()
+                {
+                    return Err(
+                        "navigation/profile mismatch: revision, cache identity or pack/flags content differs"
+                            .into(),
+                    );
+                }
+                NavManifest {
+                    revision: identity.revision,
+                    cache_id: identity.cache_id.clone(),
+                    nav_sha256: identity.nav_sha256.clone(),
+                    flags_sha256: identity.flags_sha256.clone(),
+                }
+            }
+            NavOrigin::External { .. } => {
+                let nav_hash = hash_bytes_with_progress(&bytes, |completed, total| {
+                    observer.report(ProfileProgress::bytes(
+                        ProfileProgressStage::CheckingNavigationFiles,
+                        completed,
+                        total,
+                    ));
+                });
+                counters.pack_hashes = 1;
+                let manifest_path = nav_manifest_path(pack_path);
+                if !manifest_path.exists() {
+                    if self.revision() == ClientRevision::R274 {
+                        let world = decode_nav_world(&bytes, pack_path, observer, &mut counters)?;
+                        let identity = NavManifest {
+                            revision,
+                            cache_id: cache.identity(),
+                            nav_sha256: nav_hash,
+                            flags_sha256: None,
+                        };
+                        return Ok(LoadedNav {
+                            availability: NavAvailability::Legacy274,
+                            identity: Some(identity),
+                            world: Some(world),
+                            counters,
+                        });
+                    }
+                    return Err(format!(
+                        "navigation/profile mismatch: revision 289 requires {} (prepare in step 5)",
+                        manifest_path.display()
+                    ));
+                }
+                let manifest_bytes = std::fs::read(&manifest_path)
+                    .map_err(|e| format!("nav manifest {}: {e}", manifest_path.display()))?;
+                let manifest: NavManifest = serde_json::from_slice(&manifest_bytes)
+                    .map_err(|e| format!("nav manifest: {e}"))?;
+                manifest.verify_pack(revision, cache, &nav_hash)?;
+                manifest
+            }
+        };
+        let world = decode_nav_world(&bytes, pack_path, observer, &mut counters)?;
+        Ok(LoadedNav {
+            availability: NavAvailability::Bound,
+            identity: Some(identity),
+            world: Some(world),
+            counters,
+        })
     }
 }
 
@@ -685,6 +800,18 @@ impl ServerProfile {
     }
     pub fn nav_availability(&self) -> &NavAvailability {
         &self.nav
+    }
+    pub fn nav_origin(&self) -> &NavOrigin {
+        &self.nav_origin
+    }
+    pub fn nav_identity(&self) -> Option<&NavManifest> {
+        self.nav_identity.as_ref()
+    }
+    pub fn nav_load_counters(&self) -> NavLoadCounters {
+        self.nav_load
+    }
+    pub fn world(&self) -> Option<Arc<NavWorld>> {
+        self.world.0.clone()
     }
     pub fn content_dir(&self) -> &Path {
         &self.content_dir
@@ -736,30 +863,30 @@ impl ServerProfile {
                 "cache changed after profile binding; restart with the prepared profile".into(),
             );
         }
-        if let Some(hash) = &self.nav_hash {
-            if hash_navigation_file(&self.nav_pack, observer)? != *hash {
-                return Err("navigation changed after profile binding; restart required".into());
-            }
-        }
-        if let Some(hash) = &self.flags_hash {
-            if hash_navigation_file(&self.nav_flags, observer)? != *hash {
-                return Err(
-                    "navigation flags changed after profile binding; restart required".into(),
-                );
-            }
-        }
         Ok(())
     }
 }
 
-fn hash_navigation_file(path: &Path, observer: &ProfileProgressObserver) -> Result<String, String> {
-    hash_file_with_progress(path, |completed, total| {
-        observer.report(ProfileProgress::bytes(
-            ProfileProgressStage::CheckingNavigationFiles,
-            completed,
-            total,
-        ));
-    })
+fn decode_nav_world(
+    bytes: &[u8],
+    pack_path: &Path,
+    observer: &ProfileProgressObserver,
+    counters: &mut NavLoadCounters,
+) -> Result<Arc<NavWorld>, String> {
+    observer.report(ProfileProgress::steps(
+        ProfileProgressStage::PreparingNavigation,
+        0,
+        1,
+    ));
+    let world = NavWorld::from_bytes(bytes)
+        .map_err(|e| format!("navigation {}: {e}", pack_path.display()))?;
+    counters.pack_decodes = 1;
+    observer.report(ProfileProgress::steps(
+        ProfileProgressStage::PreparingNavigation,
+        1,
+        1,
+    ));
+    Ok(Arc::new(world))
 }
 
 fn require_bot_operation(revision: ClientRevision) -> Result<(), String> {
