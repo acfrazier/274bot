@@ -980,3 +980,5 @@ Root reconciled the active campaign through equivalent history (68bcf3659 ->7abc
 144 NPC projection approved actualGrok4.5 run1389/session20260911_135632_d3016b (14calls). Root verified all12 owned export blobs against real e05ecafb806b5af7f1d729b6f9c23c780956c118/client52c37f9 and corrected a transcribed nonresolving suffix in report/verification; raw correction receipt retained.153 started Sol1391 at18:05;127 remains active Sol1390. No new LIVE until shared full witness review.
 
 Root cleanup reclaimed35.28GiB from eight compiler caches owned by completed139/144/152 tasks after DONE and lsof checks. Source exports/raw proof/frozen binaries preserved; receipt evidence/worktree-cleanup/completed-caches-1810.json. Active127/153 caches and root integration cache untouched.
+
+158 t_acea973c is a read-only grok46 audit of the remaining distinct paired extras beyond157's defaults (Nature island/stayInAltar, Mule bankFill=false/non-Air equivalence). No new LIVE/product changes; root retains scope/fixture decisions.
