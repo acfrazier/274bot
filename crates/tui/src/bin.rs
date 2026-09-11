@@ -1484,12 +1484,18 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
         }
         {
             let _profile_frame = client::profiling::UI_FRAME.start();
+            let params_data = session.template.as_ref().and_then(|t| t.game_data());
             terminal
                 .draw(|frame| {
                     let _profile_draw = client::profiling::UI_DRAW.start();
                     app.draw(frame);
                     app.draw_loadouts_overlay(frame, &mut session.loadouts);
-                    app.draw_params_overlay(frame, &mut session.script_settings, &session.loadouts);
+                    app.draw_params_overlay(
+                        frame,
+                        &mut session.script_settings,
+                        &session.loadouts,
+                        params_data.as_deref(),
+                    );
                 })
                 .map_err(|e| e.to_string())?;
         }
@@ -1497,7 +1503,13 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
             match event::read().map_err(|e| e.to_string())? {
                 Event::Key(k) if k.kind == KeyEventKind::Press => {
                     if app.params_state.open {
-                        app.params_on_key(&mut session.script_settings, &session.loadouts, k);
+                        let params_data = session.template.as_ref().and_then(|t| t.game_data());
+                        app.params_on_key(
+                            &mut session.script_settings,
+                            &session.loadouts,
+                            params_data.as_deref(),
+                            k,
+                        );
                     } else if app.loadouts_on_key(&mut session.loadouts, k) {
                     } else {
                         let action = app.on_key(k);

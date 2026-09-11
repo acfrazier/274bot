@@ -1,0 +1,23 @@
+{
+  "task": "t_f8ca5ed7",
+  "brief": "94-selected-item-choices-ui.md",
+  "campaign_head_at_writeup": "7c2eef6eb8db6b01933c333aa64cf5f68169d8d2",
+  "parent_brief90": "8bd34675b61c94707e6c5ed07a943102bf06cac5",
+  "client_gitlink": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "branch": "codex/rs2b0t-multirevision",
+  "retry_label": "r1289-after-disk-full",
+  "prior_run": {"id": 1284, "outcome": "crashed", "note": "disk-full; no owned edits retained"},
+  "overlay_sha256": {
+    "crates/script/src/rs2b0t_registry.rs": "f30c25de5c23aa5c2ea517ee80483b68f94d3c71d10fa5767403336fb8673f71",
+    "crates/script/src/loadouts_store.rs": "9cdb1db538e2de2176abc20b63c8c5eb21b99a752da998fe9d28b73e859d7b0d",
+    "crates/script/src/lib.rs": "febb8a6847400129650407b8a351adfaa37c064de85bf0881d43443eeda25313",
+    "crates/script/src/settings_store.rs": "41ff622511d7d40cfd124842d07d64376ab80dbfd31a8127ae0810985d6e7a69",
+    "crates/script/tests/rs2b0t_registry.rs": "ba2550c3e35f1c55b43ce9ff1c8071c9d46a18b68819bae97ab5f4c70e5701ba",
+    "crates/script/tests/loadouts_bag.rs": "50a0efd09be9cc68d17bdd0eece7f80b91db40ec7d338856b386551e4857b582",
+    "crates/script/tests/settings_bag.rs": "827e8f5327f77f1f286f7494e5bd34848950a9ce30682961c9e06a1318655297",
+    "crates/tui/src/script_params.rs": "5053c8c8761dbd3d205fb3443fffc6449857e252b68b1b96864de882652d8d0a",
+    "crates/tui/src/app.rs": "16a1106804e2497b61dbfb825193b37a3b79c892b62041055fd27bc3eae31dba",
+    "crates/tui/src/bin.rs": "c011176825ad014878029975fb06744e133910c97cf28bd7326ea2d739716c9c",
+    "crates/panel/src/app.rs": "c4980375ef0edba0750a7aff26336935ae90f056a32ad9795423c0fa5500abf5"
+  }
+}

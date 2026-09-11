@@ -370,6 +370,7 @@ mod tests {
             options_from: None,
             csv_toggle: None,
             help: None,
+            item_option_spec: None,
         }];
         let mut overrides = Map::new();
         overrides.insert("buryBones".into(), Value::Bool(false));

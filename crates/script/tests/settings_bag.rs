@@ -57,6 +57,7 @@ fn settings_store_round_trips_overrides_at_private_mode() {
             options_from: None,
             csv_toggle: None,
             help: None,
+            item_option_spec: None,
         },
         SettingDef {
             id: "leashRadius".into(),
@@ -73,6 +74,7 @@ fn settings_store_round_trips_overrides_at_private_mode() {
             options_from: None,
             csv_toggle: None,
             help: None,
+            item_option_spec: None,
         },
     ];
 
@@ -172,6 +174,7 @@ fn tile_and_list_schema_defaults_round_trip_through_prelude() {
             options_from: None,
             csv_toggle: None,
             help: None,
+            item_option_spec: None,
         },
         SettingDef {
             id: "targets".into(),
@@ -188,6 +191,7 @@ fn tile_and_list_schema_defaults_round_trip_through_prelude() {
             options_from: None,
             csv_toggle: None,
             help: None,
+            item_option_spec: None,
         },
     ];
     let mut bag = script::merge_bag(&schema, &serde_json::Map::new(), None);
@@ -276,6 +280,7 @@ fn merge_bag_coerces_string_array_default_to_json_array() {
         options_from: None,
         csv_toggle: None,
         help: None,
+        item_option_spec: None,
     }];
     let bag = script::merge_bag(&schema, &serde_json::Map::new(), None);
     assert_eq!(

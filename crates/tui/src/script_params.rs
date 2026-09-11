@@ -6,8 +6,9 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
 use script::{
-    coerce_setting_value, format_setting_value, resolve_setting_options, setting_visible,
-    LoadoutsStore, ScriptSettingsStore, ScriptSource, SettingDef,
+    coerce_setting_value, format_setting_value, resolve_setting_options_with_labels,
+    setting_visible, LoadoutsStore, ResolvedSettingOptions, ScriptSettingsStore, ScriptSource,
+    SettingDef,
 };
 
 /// Mutable params-pane state: form open, cursor, and in-progress edit.
@@ -43,6 +44,7 @@ pub struct ParamsPane<'a> {
     pub bag: &'a mut serde_json::Map<String, serde_json::Value>,
     pub store: &'a mut ScriptSettingsStore,
     pub loadouts: &'a LoadoutsStore,
+    pub game_data: Option<&'a api::game_data::SelectedGameData>,
     pub source: ScriptSource,
     pub name: &'a str,
     pub state: &'a mut ParamsState,
@@ -54,6 +56,10 @@ impl<'a> ParamsPane<'a> {
             .iter()
             .filter(|d| setting_visible(d.show_if.as_deref(), self.bag))
             .collect()
+    }
+
+    fn resolved_options(&self, def: &SettingDef) -> ResolvedSettingOptions {
+        resolve_setting_options_with_labels(def, self.loadouts, self.game_data)
     }
 
     /// Centered overlay; leaves the surrounding map/status cells alone.
@@ -150,7 +156,7 @@ impl<'a> ParamsPane<'a> {
         let Some(def) = rows.get(self.state.cursor) else {
             return ParamsKey::None;
         };
-        let opts = resolve_setting_options(def, self.loadouts);
+        let opts = self.resolved_options(def);
         if opts.is_empty() {
             self.cancel_edit();
             return ParamsKey::Cancel;
@@ -168,13 +174,13 @@ impl<'a> ParamsPane<'a> {
                 ParamsKey::Up
             }
             crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
-                if self.state.choice_cursor + 1 < opts.len() {
+                if self.state.choice_cursor + 1 < opts.values.len() {
                     self.state.choice_cursor += 1;
                 }
                 ParamsKey::Down
             }
             crossterm::event::KeyCode::Char(' ') => {
-                let Some(opt) = opts.get(self.state.choice_cursor) else {
+                let Some(opt) = opts.values.get(self.state.choice_cursor) else {
                     return ParamsKey::None;
                 };
                 if let Some(i) = self.state.choice_selected.iter().position(|s| s == opt) {
@@ -204,7 +210,7 @@ impl<'a> ParamsPane<'a> {
                 ParamsKey::None
             };
         }
-        let opts = resolve_setting_options(def, self.loadouts);
+        let opts = self.resolved_options(def);
         if def.ty == "string" && !opts.is_empty() {
             let cur = self
                 .bag
@@ -214,10 +220,11 @@ impl<'a> ParamsPane<'a> {
                 .unwrap_or("")
                 .to_string();
             let next = opts
+                .values
                 .iter()
                 .position(|o| o == &cur)
-                .map(|i| opts[(i + 1) % opts.len()].clone())
-                .unwrap_or_else(|| opts[0].clone());
+                .map(|i| opts.values[(i + 1) % opts.values.len()].clone())
+                .unwrap_or_else(|| opts.values[0].clone());
             return if self.persist(&def.id, serde_json::json!(next)) {
                 ParamsKey::Toggle
             } else {
@@ -438,11 +445,14 @@ impl Widget for ParamsPane<'_> {
         let mut cursor_line = 0usize;
         if self.state.editing && self.state.multi_select {
             if let Some(def) = rows.get(self.state.cursor) {
-                let opts = resolve_setting_options(def, self.loadouts);
+                let opts = self.resolved_options(def);
                 let label = def.label.as_deref().unwrap_or(&def.id);
                 lines.push(Line::from(format!("{label} choices")));
-                cursor_line = 1 + self.state.choice_cursor.min(opts.len().saturating_sub(1));
-                for (i, opt) in opts.iter().enumerate() {
+                cursor_line = 1 + self
+                    .state
+                    .choice_cursor
+                    .min(opts.values.len().saturating_sub(1));
+                for (i, opt) in opts.values.iter().enumerate() {
                     let mark = if i == self.state.choice_cursor {
                         "> "
                     } else {
@@ -453,7 +463,8 @@ impl Widget for ParamsPane<'_> {
                     } else {
                         "[ ]"
                     };
-                    lines.push(Line::from(format!("{mark}{tick} {opt}")));
+                    let shown = opts.labels.get(i).map(String::as_str).unwrap_or(opt);
+                    lines.push(Line::from(format!("{mark}{tick} {shown}")));
                 }
             }
         } else {
@@ -552,6 +563,7 @@ mod tests {
             options_from: None,
             csv_toggle: None,
             help: None,
+            item_option_spec: None,
         }
     }
 
@@ -600,6 +612,7 @@ mod tests {
             bag: &mut bag,
             store: &mut store,
             loadouts: &loadouts,
+            game_data: None,
             source: ScriptSource::Catalog,
             name: "ChickenKiller",
             state: &mut state,
@@ -631,6 +644,7 @@ mod tests {
             bag: &mut bag,
             store: &mut store,
             loadouts: &loadouts,
+            game_data: None,
             source: ScriptSource::Catalog,
             name: "Thiever",
             state: &mut state,
@@ -657,6 +671,7 @@ mod tests {
             bag: &mut bag,
             store: &mut store,
             loadouts: &loadouts,
+            game_data: None,
             source: ScriptSource::Catalog,
             name: "Alcher",
             state: &mut state,
@@ -699,6 +714,7 @@ mod tests {
             bag: &mut bag,
             store: &mut store,
             loadouts: &loadouts,
+            game_data: None,
             source: ScriptSource::Catalog,
             name: "Alcher",
             state: &mut state,
@@ -744,6 +760,7 @@ mod tests {
             bag: &mut bag,
             store: &mut store,
             loadouts: &loadouts,
+            game_data: None,
             source: ScriptSource::Catalog,
             name: "Alcher",
             state: &mut state,
@@ -789,6 +806,7 @@ mod tests {
             bag: &mut bag,
             store: &mut store,
             loadouts: &loadouts,
+            game_data: None,
             source: ScriptSource::Catalog,
             name: "Gatherer",
             state: &mut state,
@@ -845,6 +863,7 @@ mod tests {
                 bag: &mut alcher_bag,
                 store: &mut store,
                 loadouts: &loadouts,
+                game_data: None,
                 source: ScriptSource::Catalog,
                 name: "Alcher",
                 state: &mut state,
@@ -865,6 +884,7 @@ mod tests {
                 bag: &mut other_bag,
                 store: &mut store,
                 loadouts: &loadouts,
+                game_data: None,
                 source: ScriptSource::Catalog,
                 name: "MuleAlcher",
                 state: &mut state,
@@ -911,6 +931,7 @@ mod tests {
                     bag: &mut bag,
                     store: &mut store,
                     loadouts: &loadouts,
+                    game_data: None,
                     source: ScriptSource::Catalog,
                     name: "LongCard",
                     state: &mut state,
@@ -972,6 +993,7 @@ mod tests {
             bag: &mut bag,
             store: &mut store,
             loadouts: &loadouts,
+            game_data: None,
             source: ScriptSource::Catalog,
             name: "Alcher",
             state: &mut state,
@@ -982,5 +1004,109 @@ mod tests {
         assert_eq!(pane.state.scratch, "j");
         pane.on_key(KeyCode::Enter);
         assert_eq!(pane.bag.get("customItem"), Some(&serde_json::json!("j")));
+    }
+
+    #[test]
+    fn item_choices_paint_identity_label_and_persist_key() {
+        let dir = temp_dir("item-labels");
+        let mut store = ScriptSettingsStore::at(dir.join("script-settings.json"));
+        let loadouts = LoadoutsStore::at(dir.join("loadouts.json"));
+        let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+        let schema = vec![SettingDef {
+            id: "items".into(),
+            ty: "string[]".into(),
+            default: None,
+            label: Some("Items".into()),
+            min: None,
+            max: None,
+            step: None,
+            options: Vec::new(),
+            option_labels: Vec::new(),
+            group: None,
+            show_if: None,
+            options_from: None,
+            csv_toggle: None,
+            help: None,
+            item_option_spec: Some(script::ItemOptionSpec {
+                prefix: vec!["custom".into()],
+                candidates: vec![script::ItemOptionCandidate {
+                    key: "dragonhide_body".into(),
+                    label: Some("Green d'hide body".into()),
+                }],
+            }),
+        }];
+        let mut bag = store.merged_bag(ScriptSource::Catalog, "Alcher", &schema, None);
+        let mut state = ParamsState {
+            open: true,
+            cursor: 0,
+            ..Default::default()
+        };
+        {
+            let mut pane = ParamsPane {
+                schema: &schema,
+                bag: &mut bag,
+                store: &mut store,
+                loadouts: &loadouts,
+                game_data: Some(data.as_ref()),
+                source: ScriptSource::Catalog,
+                name: "Alcher",
+                state: &mut state,
+            };
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+            pane.on_key(KeyCode::Down);
+            assert_eq!(pane.on_key(KeyCode::Char(' ')), ParamsKey::Toggle);
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Saved);
+            assert_eq!(
+                pane.bag.get("items"),
+                Some(&serde_json::json!(["dragonhide_body"])),
+                "choice must persist the key, not the identity label"
+            );
+        }
+
+        let mut bag = store.merged_bag(ScriptSource::Catalog, "Alcher", &schema, None);
+        let mut state = ParamsState {
+            open: true,
+            cursor: 0,
+            editing: true,
+            multi_select: true,
+            choice_cursor: 1,
+            choice_selected: vec!["dragonhide_body".into()],
+            ..Default::default()
+        };
+        let mut terminal = Terminal::new(TestBackend::new(48, 12)).unwrap();
+        terminal
+            .draw(|frame| {
+                let pane = ParamsPane {
+                    schema: &schema,
+                    bag: &mut bag,
+                    store: &mut store,
+                    loadouts: &loadouts,
+                    game_data: Some(data.as_ref()),
+                    source: ScriptSource::Catalog,
+                    name: "Alcher",
+                    state: &mut state,
+                };
+                frame.render_widget(pane, frame.area());
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(
+            text.contains("Green d'hide body"),
+            "identity label must paint: {text:?}"
+        );
+        assert!(
+            !text.contains("Dragonhide body"),
+            "shared client name must not paint: {text:?}"
+        );
+        assert!(
+            text.contains("custom"),
+            "prefix chip must remain first: {text:?}"
+        );
     }
 }

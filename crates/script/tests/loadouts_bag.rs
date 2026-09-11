@@ -51,9 +51,10 @@ fn loadout_combo_resolves_from_store_names_in_script_crate() {
         options_from: Some("loadouts".into()),
         csv_toggle: None,
         help: None,
+        item_option_spec: None,
     };
     assert_eq!(
-        resolve_setting_options(&def, &store),
+        resolve_setting_options(&def, &store, None),
         vec!["a".to_string(), "b".to_string()]
     );
 }

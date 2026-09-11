@@ -24,6 +24,22 @@ pub enum ScriptSource {
     Builtin,
 }
 
+/// One catalog-declared selected-item candidate. `key` is the persisted
+/// alias; `label` is an optional identity override from the source table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ItemOptionCandidate {
+    pub key: String,
+    pub label: Option<String>,
+}
+
+/// High-alchemy selected-item choice descriptor. Prefix keys are always
+/// published; candidates are filtered/sorted later from borrowed facts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ItemOptionSpec {
+    pub prefix: Vec<String>,
+    pub candidates: Vec<ItemOptionCandidate>,
+}
+
 /// One setting field from a script's `settingsSchema` export.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingDef {
@@ -41,6 +57,7 @@ pub struct SettingDef {
     pub options_from: Option<String>,
     pub csv_toggle: Option<String>,
     pub help: Option<String>,
+    pub item_option_spec: Option<ItemOptionSpec>,
 }
 
 /// One catalog card: register metadata plus the `./…` import path of the
@@ -1125,6 +1142,12 @@ fn parse_settings_object(obj: &str, file_src: &str) -> Vec<SettingDef> {
 }
 
 fn parse_setting_def(id: &str, obj: &str, file_src: &str) -> SettingDef {
+    let options = scan_key_options(obj, "options", file_src);
+    let item_option_spec = if options.is_empty() {
+        scan_item_option_spec(obj, file_src)
+    } else {
+        None
+    };
     SettingDef {
         id: id.to_string(),
         ty: scan_key_quoted(obj, "type").unwrap_or_default(),
@@ -1133,7 +1156,7 @@ fn parse_setting_def(id: &str, obj: &str, file_src: &str) -> SettingDef {
         min: scan_key_number(obj, "min"),
         max: scan_key_number(obj, "max"),
         step: scan_key_number(obj, "step"),
-        options: scan_key_options(obj, "options", file_src),
+        options,
         option_labels: scan_key_string_array(obj, "optionLabels").unwrap_or_default(),
         group: scan_key_quoted(obj, "group"),
         show_if: scan_key_show_if(obj, file_src),
@@ -1141,6 +1164,7 @@ fn parse_setting_def(id: &str, obj: &str, file_src: &str) -> SettingDef {
             .or_else(|| scan_key_ident(obj, "optionsFrom")),
         csv_toggle: scan_key_raw_value(obj, "csvToggle"),
         help: scan_key_quoted(obj, "help"),
+        item_option_spec,
     }
 }
 
@@ -1254,4 +1278,230 @@ fn scan_key_raw_value(block: &str, key: &str) -> Option<String> {
         rest = after;
     }
     None
+}
+
+/// Recognized high-alchemy `options: IDENT` whose sibling RHS is
+/// `[prefix, ...items.map(i => i.key)]` and `items` is the FODDER.flatMap
+/// / ITEM_DB / Math.floor(cost * 0.6) / sort chain. Unknown maps stay
+/// unresolved. Never evaluates TypeScript.
+fn scan_item_option_spec(block: &str, file_src: &str) -> Option<ItemOptionSpec> {
+    let ident = options_ident(block)?;
+    let rhs = const_eq_rhs(file_src, ident)?;
+    let (prefix_token, items_ident) = parse_alch_options_rhs(rhs)?;
+    let prefix = match prefix_token {
+        AlchPrefix::Quoted(value) => value,
+        AlchPrefix::Ident(name) => resolve_string_const_ident(file_src, &name)?,
+    };
+    if prefix.is_empty() {
+        return None;
+    }
+    let items_rhs = const_eq_rhs(file_src, &items_ident)?;
+    let fodder_ident = high_alchemy_fodder_ident(file_src, items_rhs)?;
+    let fodder_rhs = const_eq_rhs(file_src, fodder_ident)?;
+    let candidates = parse_fodder_candidates(fodder_rhs)?;
+    Some(ItemOptionSpec {
+        prefix: vec![prefix],
+        candidates,
+    })
+}
+
+fn options_ident(block: &str) -> Option<&str> {
+    let mut rest = block;
+    while let Some(idx) = rest.find("options") {
+        let after = &rest[idx + "options".len()..];
+        let after = after.trim_start();
+        let after = match after.strip_prefix(':') {
+            Some(a) => a.trim_start(),
+            None => {
+                rest = after;
+                continue;
+            }
+        };
+        if after.starts_with('[') || after.starts_with("Object.keys(") {
+            return None;
+        }
+        let (ident, _) = take_ident(after)?;
+        return Some(ident);
+    }
+    None
+}
+
+enum AlchPrefix {
+    Quoted(String),
+    Ident(String),
+}
+
+/// `[PREFIX, ...ITEMS.map(param => param.key)]` with optional parens on param.
+fn parse_alch_options_rhs(rhs: &str) -> Option<(AlchPrefix, String)> {
+    let s = rhs.trim_start();
+    if !s.starts_with('[') {
+        return None;
+    }
+    let end = find_matching_bracket(s, '[', ']')?;
+    let mut inner = s[1..end].trim_start();
+    let prefix = if let Some((value, n)) = scan_quoted(inner) {
+        inner = inner[n..].trim_start();
+        AlchPrefix::Quoted(value)
+    } else {
+        let (ident, after) = take_ident(inner)?;
+        inner = after.trim_start();
+        AlchPrefix::Ident(ident.to_string())
+    };
+    inner = inner.strip_prefix(',')?.trim_start();
+    inner = inner.strip_prefix("...")?.trim_start();
+    let (items, after) = take_ident(inner)?;
+    inner = after.trim_start();
+    inner = inner.strip_prefix('.')?.trim_start();
+    inner = inner.strip_prefix("map")?.trim_start();
+    inner = inner.strip_prefix('(')?.trim_start();
+    inner = inner.strip_prefix('(').unwrap_or(inner).trim_start();
+    let (param, after) = take_ident(inner)?;
+    inner = after.trim_start();
+    inner = inner.strip_prefix(')').unwrap_or(inner).trim_start();
+    inner = inner.strip_prefix("=>")?.trim_start();
+    let (recv, after) = take_ident(inner)?;
+    if recv != param {
+        return None;
+    }
+    inner = after.trim_start();
+    inner = inner.strip_prefix('.')?.trim_start();
+    inner = inner.strip_prefix("key")?.trim_start();
+    inner = inner.strip_prefix(')').unwrap_or(inner).trim_start();
+    inner = inner.strip_prefix(')').unwrap_or(inner).trim_start();
+    if !inner.is_empty() {
+        return None;
+    }
+    Some((prefix, items.to_string()))
+}
+
+/// `FODDER.flatMap(... ITEM_DB.find ... Math.floor(rec.cost * ALCH_RATE|0.6) ...).sort(...)`.
+fn high_alchemy_fodder_ident<'a>(file_src: &str, rhs: &'a str) -> Option<&'a str> {
+    let rhs = rhs.trim_start();
+    let (fodder, rest) = take_ident(rhs)?;
+    if fodder == "ITEM_DB" || fodder == "Object" {
+        return None;
+    }
+    if !rest.trim_start().starts_with('.') {
+        return None;
+    }
+    let compact: String = rhs.chars().filter(|c| !c.is_whitespace()).collect();
+    if !compact.contains(".flatMap(") {
+        return None;
+    }
+    if !compact.contains("ITEM_DB.find") {
+        return None;
+    }
+    if !compact.contains(".obj===") && !compact.contains(".obj==") {
+        return None;
+    }
+    if !compact.contains("Math.floor(") {
+        return None;
+    }
+    if !compact.contains(".sort(") {
+        return None;
+    }
+    if !flat_map_mentions_obj(&compact) {
+        return None;
+    }
+    if !high_alchemy_rate_operand(file_src, &compact) {
+        return None;
+    }
+    Some(fodder)
+}
+
+fn flat_map_mentions_obj(compact: &str) -> bool {
+    let Some(start) = compact.find(".flatMap(") else {
+        return false;
+    };
+    let after = &compact[start + ".flatMap(".len()..];
+    after.contains("obj")
+}
+
+fn high_alchemy_rate_operand(file_src: &str, compact: &str) -> bool {
+    if compact.contains(".cost*0.6") {
+        return rate_token_is_point_six(compact);
+    }
+    if compact.contains(".cost*ALCH_RATE") {
+        let Some(rhs) = const_eq_rhs(file_src, "ALCH_RATE") else {
+            return false;
+        };
+        return number_is_point_six(rhs.trim_start());
+    }
+    false
+}
+
+fn rate_token_is_point_six(compact: &str) -> bool {
+    let Some(idx) = compact.find(".cost*0.6") else {
+        return false;
+    };
+    number_is_point_six(&compact[idx + ".cost*".len()..])
+}
+
+fn number_is_point_six(s: &str) -> bool {
+    let s = s.trim_start();
+    let Some(rest) = s.strip_prefix("0.6") else {
+        return false;
+    };
+    !rest.starts_with(|c: char| c.is_ascii_digit())
+}
+
+fn parse_fodder_candidates(rhs: &str) -> Option<Vec<ItemOptionCandidate>> {
+    let s = rhs.trim_start();
+    if !s.starts_with('[') {
+        return None;
+    }
+    let end = find_matching_bracket(s, '[', ']')?;
+    let mut rest = s[1..end].trim_start();
+    let mut out = Vec::new();
+    while !rest.is_empty() {
+        if rest.starts_with(',') {
+            rest = rest[1..].trim_start();
+            continue;
+        }
+        if !rest.starts_with('{') {
+            return None;
+        }
+        let obj_end = find_matching_bracket(rest, '{', '}')?;
+        out.push(parse_fodder_object(&rest[..=obj_end])?);
+        rest = rest[obj_end + 1..].trim_start();
+        if rest.starts_with(',') {
+            rest = rest[1..].trim_start();
+        } else if rest.is_empty() {
+            break;
+        } else {
+            return None;
+        }
+    }
+    Some(out)
+}
+
+fn parse_fodder_object(obj: &str) -> Option<ItemOptionCandidate> {
+    let inner = obj.trim();
+    let inner = inner.strip_prefix('{')?;
+    let inner = inner.strip_suffix('}')?;
+    let mut rest = inner.trim();
+    let mut key = None;
+    let mut label = None;
+    while !rest.is_empty() {
+        let (ident, after) = take_ident(rest)?;
+        let after = after.trim_start().strip_prefix(':')?.trim_start();
+        let (value, n) = scan_quoted(after)?;
+        match ident {
+            "obj" if key.is_none() => key = Some(value),
+            "label" if label.is_none() => label = Some(value),
+            _ => return None,
+        }
+        rest = after[n..].trim_start();
+        if rest.starts_with(',') {
+            rest = rest[1..].trim_start();
+        } else if rest.is_empty() {
+            break;
+        } else {
+            return None;
+        }
+    }
+    Some(ItemOptionCandidate {
+        key: key.filter(|k| !k.is_empty())?,
+        label,
+    })
 }
