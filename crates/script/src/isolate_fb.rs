@@ -155,7 +155,7 @@ const VT_SNAP_BANK_OP_RESULT_SEQ: VOffsetT = 130;
 const VT_SNAP_BANK_OP_RESULT: VOffsetT = 132;
 const VT_SNAP_REACH: VOffsetT = 134;
 
-// Reach: { available, base_x, base_z, level, width, height, walkable, reachable, reachable_adj }
+// Reach: { available, base_x, base_z, level, width, height, walkable, reachable, reachable_adj, step }
 const VT_REACH_AVAILABLE: VOffsetT = 4;
 const VT_REACH_BASE_X: VOffsetT = 6;
 const VT_REACH_BASE_Z: VOffsetT = 8;
@@ -165,6 +165,7 @@ const VT_REACH_HEIGHT: VOffsetT = 14;
 const VT_REACH_WALKABLE: VOffsetT = 16;
 const VT_REACH_REACHABLE: VOffsetT = 18;
 const VT_REACH_REACHABLE_ADJ: VOffsetT = 20;
+const VT_REACH_STEP: VOffsetT = 22;
 
 // SideTabIface: { index, id }
 const VT_STI_INDEX: VOffsetT = 4;
@@ -265,6 +266,7 @@ pub struct ReachViewInput<'a> {
     pub walkable: &'a [u32],
     pub reachable: &'a [u32],
     pub reachable_adj: &'a [u32],
+    pub step: &'a [u8],
 }
 
 impl ReachViewInput<'static> {
@@ -279,6 +281,7 @@ impl ReachViewInput<'static> {
         walkable: &[],
         reachable: &[],
         reachable_adj: &[],
+        step: &[],
     };
 }
 
@@ -586,6 +589,9 @@ impl ReachReader<'_> {
     pub fn reachable_adj(&self) -> Vec<u32> {
         u32_vec(&self.tab, VT_REACH_REACHABLE_ADJ)
     }
+    pub fn step(&self) -> Vec<u8> {
+        u8_vec(&self.tab, VT_REACH_STEP)
+    }
 }
 
 impl Verifiable for ReachReader<'_> {
@@ -604,6 +610,7 @@ impl Verifiable for ReachReader<'_> {
                 VT_REACH_REACHABLE_ADJ,
                 false,
             )?
+            .visit_field::<ForwardsUOffset<Vector<u8>>>("step", VT_REACH_STEP, false)?
             .finish();
         Ok(())
     }
@@ -1530,6 +1537,13 @@ fn u32_vec(tab: &Table<'_>, slot: VOffsetT) -> Vec<u32> {
     }
 }
 
+fn u8_vec(tab: &Table<'_>, slot: VOffsetT) -> Vec<u8> {
+    match unsafe { tab.get::<ForwardsUOffset<Vector<u8>>>(slot, None) } {
+        Some(v) => v.iter().collect(),
+        None => Vec::new(),
+    }
+}
+
 /// Whether the buffer carries the vector at `slot` — a delta omits an
 /// unchanged table entirely, and absent must stay distinct from empty
 /// (the isolate keeps its last JS rows for an omitted table).
@@ -1653,6 +1667,7 @@ pub struct ReachViewFp {
     pub walkable: Vec<u32>,
     pub reachable: Vec<u32>,
     pub reachable_adj: Vec<u32>,
+    pub step: Vec<u8>,
 }
 
 /// The per-slot last-post fingerprint: an owned copy of the snapshot
@@ -1901,6 +1916,7 @@ impl SnapshotFingerprint {
                 walkable: input.reach.walkable.to_vec(),
                 reachable: input.reach.reachable.to_vec(),
                 reachable_adj: input.reach.reachable_adj.to_vec(),
+                step: input.reach.step.to_vec(),
             },
         }
     }
@@ -2716,6 +2732,7 @@ fn reach_off<'b>(
     let walkable = b.create_vector(r.walkable);
     let reachable = b.create_vector(r.reachable);
     let reachable_adj = b.create_vector(r.reachable_adj);
+    let step = b.create_vector(r.step);
     let tab = b.start_table();
     b.push_slot_always(VT_REACH_AVAILABLE, r.available);
     b.push_slot_always(VT_REACH_BASE_X, r.base_x);
@@ -2726,6 +2743,7 @@ fn reach_off<'b>(
     b.push_slot_always(VT_REACH_WALKABLE, walkable);
     b.push_slot_always(VT_REACH_REACHABLE, reachable);
     b.push_slot_always(VT_REACH_REACHABLE_ADJ, reachable_adj);
+    b.push_slot_always(VT_REACH_STEP, step);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -4357,6 +4375,7 @@ pub(crate) mod tests {
             walkable: &walkable,
             reachable: &reachable,
             reachable_adj: &adj,
+            step: &[],
         };
         let bytes = encode_snapshot(&input);
         let view = decode_snapshot(&bytes).expect("snapshot decodes");
@@ -4376,6 +4395,7 @@ pub(crate) mod tests {
         assert_eq!(reach.walkable(), walkable);
         assert_eq!(reach.reachable(), reachable);
         assert_eq!(reach.reachable_adj(), adj);
+        assert_eq!(reach.step(), Vec::<u8>::new());
         assert_eq!(reach.walkable()[0] & (1 << 31), 1 << 31, "bit 31 in word 0");
         assert_eq!(reach.walkable()[1] & 1, 1, "bit 32 in word 1");
         assert_eq!(reach.walkable()[1] & (1 << 21), 1 << 21, "bit 53 in word 1");
@@ -4387,6 +4407,7 @@ pub(crate) mod tests {
     fn omitted_reach_is_absent_when_unchanged() {
         let mut input = empty_input(1);
         let walkable = reach_words(&[1]);
+        let step = vec![0u8, 2, 0];
         input.reach = ReachViewInput {
             available: true,
             base_x: 1,
@@ -4397,10 +4418,12 @@ pub(crate) mod tests {
             walkable: &walkable,
             reachable: &walkable,
             reachable_adj: &walkable,
+            step: &step,
         };
         let (keyframe, fp) = encode_snapshot_delta(None, &input, false);
         let kf = decode_snapshot(&keyframe).expect("keyframe");
         assert!(kf.has_reach());
+        assert_eq!(kf.reach().expect("reach").step(), step);
         let (delta, _) = encode_snapshot_delta(Some(&fp), &input, false);
         let view = decode_snapshot(&delta).expect("delta");
         assert!(!view.has_reach(), "unchanged reach omitted from delta");
@@ -4421,6 +4444,7 @@ pub(crate) mod tests {
             walkable: &walkable,
             reachable: &walkable,
             reachable_adj: &walkable,
+            step: &[2],
         };
         let (_keyframe, fp) = encode_snapshot_delta(None, &input, false);
         input.reach = ReachViewInput::UNAVAILABLE;
@@ -4431,5 +4455,6 @@ pub(crate) mod tests {
         assert!(!reach.available());
         assert_eq!(reach.width(), 0);
         assert!(reach.walkable().is_empty());
+        assert!(reach.step().is_empty());
     }
 }

@@ -48,6 +48,19 @@ function bitAt(words, reach, tile) {
     return ((word >>> (i & 31)) & 1) === 1;
 }
 
+// Posted step mask bit i matches native DIRS: W E N S NW NE SW SE.
+function stepDirBit(dx, dz) {
+    if (dx === -1 && dz === 0) return 0;
+    if (dx === 1 && dz === 0) return 1;
+    if (dx === 0 && dz === -1) return 2;
+    if (dx === 0 && dz === 1) return 3;
+    if (dx === -1 && dz === -1) return 4;
+    if (dx === 1 && dz === -1) return 5;
+    if (dx === -1 && dz === 1) return 6;
+    if (dx === 1 && dz === 1) return 7;
+    return -1;
+}
+
 export const Reachability = proxy('Reachability', {
     walkable(target) {
         const tile = resolveTile(target);
@@ -67,5 +80,24 @@ export const Reachability = proxy('Reachability', {
         if (!reach) return false;
         const words = opts.adjacentOk ? reach.reachable_adj : reach.reachable;
         return bitAt(words, reach, tile);
+    },
+    canStep(from, to) {
+        const a = resolveTile(from);
+        const b = resolveTile(to);
+        if (!a || !b) return false;
+        if (a.level !== b.level) return false;
+        const bit = stepDirBit(b.x - a.x, b.z - a.z);
+        if (bit < 0) return false;
+        const reach = reachView();
+        if (!reach) return false;
+        if (a.level !== reach.level) return false;
+        const lx = a.x - reach.base_x;
+        const lz = a.z - reach.base_z;
+        if (lx < 0 || lz < 0 || lx >= reach.width || lz >= reach.height) return false;
+        const masks = reach.step;
+        if (!masks) return false;
+        const mask = masks[lx * reach.height + lz];
+        if (mask == null) return false;
+        return ((mask >>> bit) & 1) === 1;
     },
 });

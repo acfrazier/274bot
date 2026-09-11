@@ -1645,7 +1645,7 @@ pub struct SceneReachOptions {
 }
 
 /// The eight walk directions (N/E/S/W then the diagonals), the m8aq
-/// `DIRS`.
+/// `DIRS`. Posted `step` mask bit `i` is this entry: W E N S NW NE SW SE.
 const DIRS: [(i32, i32); 8] = [
     (-1, 0),
     (1, 0),
@@ -1656,6 +1656,10 @@ const DIRS: [(i32, i32); 8] = [
     (-1, 1),
     (1, 1),
 ];
+
+fn step_dir_bit(dx: i32, dz: i32) -> Option<u32> {
+    DIRS.iter().position(|&d| d == (dx, dz)).map(|i| i as u32)
+}
 
 fn local_in_bounds(scene: &SceneView, tile: LocalTile) -> bool {
     tile.lx >= 0 && tile.lz >= 0 && tile.lx < scene.width && tile.lz < scene.height
@@ -2051,6 +2055,9 @@ pub struct ReachQueryView {
     pub walkable: Vec<u32>,
     pub reachable: Vec<u32>,
     pub reachable_adj: Vec<u32>,
+    /// One byte per in-scene tile (`lx * height + lz`); bit `i` is
+    /// DIRS[i] from that tile. Empty when unavailable.
+    pub step: Vec<u8>,
 }
 
 impl ReachQueryView {
@@ -2068,6 +2075,7 @@ impl ReachQueryView {
             walkable: Vec::new(),
             reachable: Vec::new(),
             reachable_adj: Vec::new(),
+            step: Vec::new(),
         }
     }
 
@@ -2078,6 +2086,16 @@ impl ReachQueryView {
             .saturating_add(self.reachable.len())
             .saturating_add(self.reachable_adj.len())
             .saturating_mul(4)
+    }
+
+    /// Adjacent-step mask bytes (one per in-scene tile).
+    pub fn step_bytes(&self) -> usize {
+        self.step.len()
+    }
+
+    /// Bitsets plus step masks. Design bound, not a measured win.
+    pub fn view_bytes(&self) -> usize {
+        self.bitset_bytes().saturating_add(self.step_bytes())
     }
 
     pub fn bit_at(
@@ -2101,6 +2119,28 @@ impl ReachQueryView {
         let word = i / 32;
         let bit = i % 32;
         words.get(word).is_some_and(|w| w & (1u32 << bit) != 0)
+    }
+
+    /// Posted `canStep` lookup: same level, Chebyshev 1, then the native
+    /// adjacent-step bit. Unavailable, zero-distance, off-scene `from`,
+    /// and missing masks are false.
+    pub fn can_step(&self, from: WorldTile, to: WorldTile) -> bool {
+        if !self.available {
+            return false;
+        }
+        if from.level != to.level || from.level != self.level {
+            return false;
+        }
+        let Some(bit) = step_dir_bit(to.x - from.x, to.z - from.z) else {
+            return false;
+        };
+        let lx = from.x - self.base_x;
+        let lz = from.z - self.base_z;
+        if lx < 0 || lz < 0 || lx >= self.width || lz >= self.height {
+            return false;
+        }
+        let i = (lx as usize) * (self.height as usize) + (lz as usize);
+        self.step.get(i).is_some_and(|m| m & (1u8 << bit) != 0)
     }
 }
 
@@ -2130,11 +2170,48 @@ pub fn pack_walkable_u32(scene: &SceneView) -> Vec<u32> {
     words
 }
 
+/// One byte per in-scene tile: bit `i` is `can_step_local` along
+/// `DIRS[i]`. Same borrowed [`SceneView`] as walkable packing; no
+/// flood and no extra scene retain. Off-scene destinations stay unset
+/// (`flags_open` on a missing flag).
+pub fn pack_step_masks(scene: &SceneView) -> Vec<u8> {
+    if !scene.available || scene.width <= 0 || scene.height <= 0 {
+        return Vec::new();
+    }
+    let width = scene.width;
+    let height = scene.height;
+    let n = (width as usize).saturating_mul(height as usize);
+    let mut masks = vec![0u8; n];
+    let flags = |lx: i32, lz: i32| -> Option<i32> {
+        if lx < 0 || lz < 0 || lx >= width || lz >= height {
+            return None;
+        }
+        scene
+            .collision_flags
+            .get((lx as usize) * (height as usize) + (lz as usize))
+            .copied()
+    };
+    for lx in 0..width {
+        for lz in 0..height {
+            let i = (lx as usize) * (height as usize) + (lz as usize);
+            let mut mask = 0u8;
+            for (bit, &(dx, dz)) in DIRS.iter().enumerate() {
+                if can_step_local(&flags, lx, lz, dx, dz) {
+                    mask |= 1u8 << (bit as u32);
+                }
+            }
+            masks[i] = mask;
+        }
+    }
+    masks
+}
+
 /// One compact query view from the scene + the flood already computed
 /// for entity row bits. `flood == None` posts unavailable / empty dims.
 /// Posted `level` is the flood/scene plane (the same `here.level` observe
 /// already bound, including `minusedlevel`); this is not a new player-plane
-/// decode.
+/// decode. Adjacent-step masks are packed from the same scene; they are
+/// not a second flood.
 pub fn pack_reach_query(scene: &SceneView, flood: Option<&ReachFlood>) -> ReachQueryView {
     let Some(flood) = flood else {
         return ReachQueryView::unavailable();
@@ -2153,6 +2230,7 @@ pub fn pack_reach_query(scene: &SceneView, flood: Option<&ReachFlood>) -> ReachQ
         walkable: pack_walkable_u32(scene),
         reachable,
         reachable_adj,
+        step: pack_step_masks(scene),
     }
 }
 
