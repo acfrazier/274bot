@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 14:31 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 14:48 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -27,16 +27,19 @@ primary and active campaign worktrees remain. See10-worktree-cleanup.md.
 
 Native hint117, Agility118 R2, preparation120, native sequencing123,
 retaliate128 and TUI130 have completed verified reviews. Exact21446414 batch
-continues; current raw harness outcomes include19 PASS and7 FAIL, plus four
-new15e Wildy FAILs. The369-row ledger is append-only. Current combat PASSs
+is complete:19 raw PASS and19 FAIL, with18 newer-catalog cells held after
+older-catalog failure. Four additional15e Wildy FAILs remain retained. The381-row
+ledger is append-only. Current combat PASSs
 are diagnostic pending corrected observer136; do not promote them as final
 acceptance. Bone/default Alcher/shaft/headless fletching cycles passed across
 four cells with real work. ArdyCakes214 fails after isolate termination.
 
-Fixture lane: resource125 active -> trained Brimhaven131 -> Wildy plane135
+Fixture lane: resource125 reviewed (Grok4.5 run1361); root20-cell resource batch
+is running on exact2d589c7ba. Trained Brimhaven131 active -> Wildy plane135
 -> combat observer/Coal bounded preparation136 -> mage132 -> Mule bootstrap127.
 Native lane: observation projection134 active after audit133/retaliate128 ->
-teleport -> shop -> Make-X -> fire -> trade126. Existing parent gates remain.
+quest status transport137 -> teleport -> shop -> Make-X -> fire -> trade126.
+Existing parent gates remain.
 No new main publication beyond76b2016b7 yet; stage2 needs native correction
 and reviewed/live-qualified scope.
 
@@ -49,11 +52,13 @@ against raw scenery and corrects both fixture/oracle; one274 newer run fell at
 the ridge and died. All four remain FAIL. See06ac and agility-wildy15e.json.
 Brimhaven still awaits trained52 preparation131; all original clocks stay.
 
-Native274 real CUA and TUI289 real PTY controls2 now pass paint Go bank/Resume,
+Native274/289 real CUA and TUI274/289 real PTY controls2 now pass paint callbacks,
 host Pause/Resume/Stop, and paused-click rejection. TUI also rejects body clicks
 and displays the button. Original private Alcher watches still FAIL; these are
 UI-only results with canonical Air runes, not NatureCrafter gameplay acceptance.
-The first manual TUI attempt was incomplete and remains retained. See06af.
+The first manual TUI attempt was incomplete and remains retained. Native289
+records three running clicks/three callbacks, including a queued click surviving
+pause, rather than exactly one each. See06af and per-run UI receipts.
 
 Audit133 actual Grok4.6 confirms repeated bulk world/inventory roundtrips in
 native123 bank/cake polling;134 is replacing them with compact native facts.
@@ -870,3 +875,18 @@ gap. First289 ChickenBank failed the180s deadline on the return route; root
 will inspect the full log and preserve it before resuming unrelated Gnome cells.
 Other live cells remain pending. Full options/frontend/control/integrated
 regression and final whole-branch Grok review remain required.
+
+
+## 14:48 UTC verification boundary
+
+The completed214 batch contains16 qualified noncombat cycle cells (BoneBurier,
+default Alcher, shaft/headless-arrow BankFletcher across both catalogs/revisions)
+and3 provisional combat harness passes; all combat outcomes require136's
+corrected observer. The19 failures include cake isolate termination (134),
+Wildy plane is separately15e (135), combat observation/preparation/Coal (136),
+and FireGiant missing quest_statuses transport (137). No current full-card or
+performance claim is inferred from a raw process exit. Resource125 live starts
+14:46 on2d589; newt shopping remains for native shop completion rather than
+retesting its already known missing capability. Source2d589 build4687 hashes
+verified; runtime source remains prior to134, so future seam requalification
+must follow its review. Main remains76b2016b7; no stage2 merge/push yet.

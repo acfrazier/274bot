@@ -51,3 +51,12 @@ that reviewed TUI fix beyond the reviewed runtime dependencies. Raw frame,
 input and callback receipts are in evidence/paint-input-ui-025. Private vault
 and unpack directories are excluded from commits. The previous cd49 clipped
 button failure and noncanonical setting limitation remain intact.
+
+
+The reciprocal native289 and TUI274 controls2 runs also completed their UI
+sequence. TUI274 gives exactly one callback each and rejects body/paused input.
+Native289 issued three running paint clicks and one paused click, producing
+three callbacks (Go bank, Resume, Go bank): a running click queued immediately
+before Pause survived until Resume. Root visually read paused/running/idle
+states and paint removal, and preserves that ordering rather than claiming
+exactly one callback each. All private original gameplay watches later FAIL.

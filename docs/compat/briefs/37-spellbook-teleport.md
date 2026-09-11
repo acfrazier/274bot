@@ -54,3 +54,15 @@ profile reviewer (Grok 4.5). Dependency gates remain unchanged. All acceptance
 checks must use a new empty Cargo target for an exact frozen source export
 with owned overlay and recorded hashes, following evidence/build-isolation/README.md.
 Do not reuse the shared campaign Cargo target.
+
+
+Current ownership clarification (2026-09-11): audit133 and correction134 forbid
+bulk snapshot roundtrips for native polling. Reuse the compact Rust-owned
+observation seam introduced by134 or borrow existing host observations; do not
+send complete loc/NPC/inventory/bank/widget arrays V8-to-JSON-to-Rust on each
+poll, retain a world clone, or move candidate selection back into JavaScript.
+JS sends caller arguments/callback projections and dispatches returned verbs.
+Preserve delta/reset/session/hold behavior and native deadlines. This applies
+to the new capability's implementation and same-card review. Exact frozen
+source with one exclusive reusable Cargo cache is permitted by current
+execution policy; no shared-target or empty-started claim if reused.

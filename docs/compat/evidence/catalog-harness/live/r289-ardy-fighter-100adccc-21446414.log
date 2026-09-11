@@ -1,0 +1,62 @@
+
+running 1 test
+{"phase":"identity","revision":289,"profile":"local-289 · 127.0.0.1:44594 · revision 289","cache_id":"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack","nav_sha256":"131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924","catalog_commit":"100adccc037d9f6898080e1cad58fcfc43364775","catalog_identity":"pre-289 frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"ArdyFighter","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/ArdyFighter/ArdyFighter.ts","source_sha256":"54d57cd5d161c0179cfd9c2d780ddfd4108ad1c857f85f631c6c02bd450e5a6d","compiled_sha256":"e7465eeadddb953d10c7a4dbabf99a2972083a63188b139e6828dce585c9bcfa","siblings":[],"settings":{"leashRadius":12.0,"target":"Guard","combatStyle":"strength","panicHp":25.0,"restUntilHp":60.0,"foodTarget":8.0,"bankAtLootSlots":12.0,"loot":["clue scroll","blood rune","nature rune","chaos rune","body talisman","steel arrow","iron ore"],"solveClues":false,"bankStrategy":"Off","bankEveryItems":15.0,"bankEveryMinutes":10.0,"bankCommonJunk":true}},"account":"liveapus44_0","engine_speed_ms":null}
+[host-play] slot liveapus44_0: thread up
+289bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+[host-play] slot liveapus44_0: handshake begin reconnect=false
+[host-play] slot liveapus44_0: handshake ok
+[host] slot liveapus44_0: d_loop_us=2761 d_raster_us=0 d_observe_us=31270 max_observe_us=2196 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot liveapus44_0: queued mainland tele+setvar (scene 2)
+[host-play] slot liveapus44_0: handshake begin reconnect=true
+[host-play] slot liveapus44_0: handshake ok
+[host] slot liveapus44_0: d_loop_us=686 d_raster_us=0 d_observe_us=30557 max_observe_us=1861 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot liveapus44_0: queued mainland tele+setvar (scene 2)
+{"phase":"baseline-after-preparation","scenario":"ardy_fighter","account":"liveapus44_0","observation":{"ingame":true,"scene_state":2,"player":"Liveapus44 0","tile":[2661,3306,0],"combat_level":36,"tick":23,"items":{"Adamant scimitar":1},"item_ids":{"1331":1},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":40,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":40,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":40,"thieving":5,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":37224,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":37224,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":37224,"thieving":388,"woodcutting":0},"varps":{"309":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[],"npc_facts":[{"index":3563,"name":"Guard","health":0,"total_health":0,"animation":-1,"in_combat":false,"targeting_local":false,"tile":[2655,3308,0],"distance":6},{"index":3564,"name":"Guard","health":0,"total_health":0,"animation":-1,"in_combat":false,"targeting_local":false,"tile":[2660,3305,0],"distance":1},{"index":3565,"name":"Guard","health":0,"total_health":0,"animation":-1,"in_combat":false,"targeting_local":false,"tile":[2664,3304,0],"distance":3}],"ground_loot":[],"local_in_combat":false,"local_target_npc":null,"local_health":0,"local_animation":-1,"equipment_ids":{},"main_modal":-1,"widget_ids":[3213,3214]}}
+[script liveapus44_0] start load
+{"phase":"start","account":"liveapus44_0","count":1}
+[host] hitch liveapus44_0: observe_us=101256 paints=0 skips=97 ticks=23
+[host] slot liveapus44_0: d_loop_us=19882 d_raster_us=0 d_observe_us=197099 max_observe_us=101256 d_paints=0 d_skips=50 d_ticks=23 window_ms=13874
+[script liveapus44_0] ArdyFighter starting, anchor (2661, 3306, 0) r12, target 'Guard', stall via shared driver, bank (2655, 3286, 0)
+[script liveapus44_0] slow tick 34: 273.49825ms
+[script liveapus44_0] interact WalkTo { x: 2668, z: 3312, level: 0 }
+[host] hitch liveapus44_0: observe_us=23088 paints=0 skips=121 ticks=25
+[script liveapus44_0] slow tick 35: 89.228625ms
+[host] hitch liveapus44_0: observe_us=31729 paints=0 skips=148 ticks=26
+[host] slot liveapus44_0: d_loop_us=1441 d_raster_us=0 d_observe_us=103234 max_observe_us=31729 d_paints=0 d_skips=50 d_ticks=2 window_ms=1159
+[script liveapus44_0] slow tick 36: 91.462667ms
+[host] hitch liveapus44_0: observe_us=35258 paints=0 skips=173 ticks=27
+[script liveapus44_0] slow tick 37: 91.413625ms
+[host] hitch liveapus44_0: observe_us=34370 paints=0 skips=198 ticks=28
+[host] slot liveapus44_0: d_loop_us=1434 d_raster_us=0 d_observe_us=129176 max_observe_us=35258 d_paints=0 d_skips=50 d_ticks=2 window_ms=1198
+[script liveapus44_0] slow tick 38: 266.811417ms
+[script liveapus44_0] interact Loc { x: 2667, z: 3310, level: 0, action: "Steal from", id: Some(2561) }
+[host] hitch liveapus44_0: observe_us=17199 paints=0 skips=222 ticks=29
+[script liveapus44_0] slow tick 39: 102.960292ms
+[host] slot liveapus44_0: d_loop_us=1905 d_raster_us=0 d_observe_us=85737 max_observe_us=17199 d_paints=0 d_skips=50 d_ticks=2 window_ms=1175
+[script liveapus44_0] slow tick 40: 103.449875ms
+[script liveapus44_0] slow tick 41: 98.162042ms
+[host] slot liveapus44_0: d_loop_us=1479 d_raster_us=0 d_observe_us=66759 max_observe_us=14753 d_paints=0 d_skips=50 d_ticks=1 window_ms=1154
+[script liveapus44_0] slow tick 42: 97.109792ms
+[host] hitch liveapus44_0: observe_us=16655 paints=0 skips=326 ticks=33
+[script liveapus44_0] slow tick 43: 189.510791ms
+[host] slot liveapus44_0: d_loop_us=1295 d_raster_us=0 d_observe_us=85302 max_observe_us=16655 d_paints=0 d_skips=50 d_ticks=2 window_ms=1174
+[script liveapus44_0] slow tick 44: 283.196375ms
+[script liveapus44_0] interact Loc { x: 2667, z: 3310, level: 0, action: "Steal from", id: Some(2561) }
+[script liveapus44_0] slow tick 45: 97.731459ms
+[script liveapus44_0] slow tick 46: 92.324667ms
+[host] slot liveapus44_0: d_loop_us=1195 d_raster_us=0 d_observe_us=92404 max_observe_us=14752 d_paints=0 d_skips=50 d_ticks=4 window_ms=1143
+[script liveapus44_0] slow tick 47: 94.862625ms
+[script liveapus44_0] slow tick 48: 93.471292ms
+[script liveapus44_0] slow tick 49: 93.215542ms
+[script liveapus44_0] slow tick 50: 91.099042ms
+[script liveapus44_0] slow tick 51: 93.084167ms
+[script liveapus44_0] slow tick 52: 91.46475ms
+[host] slot liveapus44_0: d_loop_us=1203 d_raster_us=0 d_observe_us=96987 max_observe_us=11105 d_paints=0 d_skips=50 d_ticks=6 window_ms=1158
+[script liveapus44_0] slow tick 53: 86.827458ms
+[script liveapus44_0] slow tick 54: 92.875959ms
+[script liveapus44_0] slow tick 55: 89.360666ms
+[script liveapus44_0] slow tick 56: 180.677292ms
+[script liveapus44_0] interrupted slow tick 57 (203.301167ms)
+[script liveapus44_0] tick 57: Unknown error
+[script liveapus44_0] slow tick 57: 262.60825ms
+FAIL: catalog_boundary_live: script error: tick 57: Unknown error

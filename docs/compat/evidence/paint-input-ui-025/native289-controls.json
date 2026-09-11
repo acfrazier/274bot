@@ -1,0 +1,34 @@
+{
+  "host_commit": "025e31281aae64a3ec944bef532b42eabfd8dbd2",
+  "client_commit": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "source_files_verified": 4515,
+  "actual_cua_clicks": true,
+  "callbacks": [
+    {
+      "elapsed_seconds": 43.808006,
+      "line": "[script live0m57t0_0] Go bank pressed \u2014 heading to the bank to park"
+    },
+    {
+      "elapsed_seconds": 86.981613,
+      "line": "[script live0m57t0_0] Resume pressed \u2014 back to the loop"
+    },
+    {
+      "elapsed_seconds": 87.585301,
+      "line": "[script live0m57t0_0] Go bank pressed \u2014 heading to the bank to park"
+    }
+  ],
+  "visually_read_states": [
+    "canonical Air runes Runner paint; Go bank button",
+    "Resume paint label after Go bank callback",
+    "host paused with Resume control; runtime46s frozen",
+    "host running after Resume",
+    "paint label changes after callbacks",
+    "host idle and paint removed after Stop"
+  ],
+  "existing_walk_note": "An already-issued native route continued during pause/after stop; no claim that these cancel host navigation.",
+  "gameplay_acceptance": false,
+  "process_scope": "Private UI diagnostic preserves original Alcher watch. Await original watchdog/exit; no route/trade qualification.",
+  "input_order_note": "Three clicks were issued while running and one while paused. The second running click was immediately followed by Pause; it remained pending and ran after host Resume. The later third running click toggled again. Three callbacks total (Go bank, Resume, Go bank), not an exactly-one-each claim. No fourth callback for the paused click.",
+  "paused_input_rejection_scope": "Four physical paint clicks, three issued while running; three callbacks total. A previously queued running click may survive pause.",
+  "ui_controls": "PASS with pending-running-click behavior recorded"
+}

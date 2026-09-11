@@ -1,0 +1,10 @@
+{
+  "task": "t_73717ee8",
+  "run": 1361,
+  "session": "20260911_103917_f2aa8b",
+  "model": "grok-4.5",
+  "provider": "xai-oauth",
+  "api_calls": 15,
+  "actual_model_verified": true,
+  "verdict": "Reviewed and approved 2d589c7ba (evidence 7415a6013) for brief 125 resource fixture corrections (R1 artifact cold read + independent exclusive export/target re-run). Herblore eggs uses exact Edgeville booth 2213@(3096,3493) Repeat open + fresh lobster seed bank; Gnome chop/fletch seed and retain Rune axe\u00d71 + Knife\u00d726 with cycle proofs; FlaxAioPick failure diagnostics only (scoped locs + native flood_reach adj) without production changes. scenario 104, catalog 41/1 ignored LIVE, clippy -D warnings, rustfmt, gold 180s/150 all green on hash-matched overlay."
+}
