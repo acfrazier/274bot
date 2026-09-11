@@ -5,18 +5,21 @@
   "branch": "codex/rs2b0t-multirevision",
   "client": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
   "isolated_build": true,
-  "cargo_target_dir": "target-t_51452e47",
-  "base_head_at_verification": "cc57adca72783f8e718163ab877bb6617dc67090",
+  "cargo_target_dir": "target-t_51452e47-corrective",
+  "base_head_at_verification": "2b1d4d7bf5135626b9860f85029ce50f9dc5980a",
+  "implementation_commit": "41cf8eac843475feb8f36e3b4e7ca77c3cbc319d",
+  "corrective_round": "Interrupted attempt retained; root separated accidental Tile hunks. Exact 922dac24 cold corrective review pending.",
   "tests": {
-    "script_lib_periodic_bank": "6 passed",
-    "script_periodic_bank": "8 passed",
-    "script_gold_stubs": "12 passed, 1 ignored",
-    "clippy_script": "pass"
+    "script_lib_periodic_bank": "pending",
+    "script_periodic_bank": "pending",
+    "script_gold_stubs": "pending",
+    "clippy_script": "pending"
   },
   "limits": [
     "No live client run.",
     "Queued open/deposit/walk is not a completed bank trip.",
     "Foreign 120s return timeout is not adopted; host walk bound remains 60000 ms.",
-    "crates/script/src/load.rs is a hotspot (periodic-bank register plus Pause/hold/reset hooks only)."
-  ]
+    "load.rs Tile hunks were removed from the committed PeriodicBank composition at 922dac24 without removing them from the working file. They are separately committed with Tile at 6401d3a4."
+  ],
+  "corrected_periodic_commit": "922dac2481dfa42619c3edf74f36e06d93e908a4"
 }
