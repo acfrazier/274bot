@@ -69,6 +69,8 @@ mod death_recovery;
 mod periodic_bank;
 #[cfg(feature = "load")]
 mod special;
+#[cfg(feature = "load")]
+mod teleport;
 
 #[cfg(feature = "memory-profile")]
 pub mod memory_profile;
