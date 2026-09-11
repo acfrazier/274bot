@@ -26,8 +26,6 @@ pub const WARN: [f32; 4] = [224.0 / 255.0, 215.0 / 255.0, 91.0 / 255.0, 1.0];
 pub const ERROR: [f32; 4] = [1.0, 123.0 / 255.0, 123.0 / 255.0, 1.0];
 /// Running cap dot (#4cd964), the green cap state.
 pub const GREEN: [f32; 4] = [76.0 / 255.0, 217.0 / 255.0, 100.0 / 255.0, 1.0];
-/// Panel window title.
-pub const TITLE: &str = "274bot";
 /// Dim build line under the title is [`crate::build_info::build_line`]
 /// (`alpha 1 ·` git stamp; hover is crate version + full commit).
 /// Right-hand chrome width, matching rs2b0t's 330px panel. Locked: the

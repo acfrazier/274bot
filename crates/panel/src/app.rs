@@ -57,7 +57,7 @@ use crate::session::{
 use crate::theme::{
     applet_offset, apply_amber, apply_amber_current, fit_applet, game_window_title,
     integer_ui_scale, native_applet, panel_split_ratio, ACCENT, ACCENT_HOVER, BG, ERROR,
-    PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW, TEXT, TEXT_DIM, TITLE,
+    PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW, TEXT, TEXT_DIM,
 };
 
 /// Runner configuration: docking on, viewports off, amber CRT, 50 fps cap.
@@ -67,7 +67,7 @@ use crate::theme::{
 pub fn runner_config() -> window::PanelConfig {
     // Viewports stay off: the panel renders into the single main viewport only.
     window::PanelConfig {
-        window_title: "274bot".into(),
+        window_title: "bot".into(),
         window_size: (BASE_WINDOW_W as f64, BASE_WINDOW_H as f64),
         clear_color: BG,
         theme: Some(Theme::Dark),
@@ -1638,7 +1638,8 @@ fn capture_keys(ui: &Ui) -> Vec<(bool, i32)> {
 /// Right panel: rs2b0t chrome squished into the 330px strip. Vertical scroll
 /// only — wrap/clip, never a horizontal bar.
 fn panel_window(ui: &Ui, session: &mut Session, progress: Option<StartupProgressView>) {
-    ui.window(PANEL_WINDOW)
+    // The ### suffix preserves the existing docking identity across revisions.
+    ui.window(format!("{}###{PANEL_WINDOW}", session.app_title()))
         .flags(WindowFlags::NO_RESIZE | WindowFlags::NO_COLLAPSE)
         .build(|| {
             let _width = ui.push_item_width(-1.0);
@@ -1671,7 +1672,7 @@ fn panel_window(ui: &Ui, session: &mut Session, progress: Option<StartupProgress
 }
 
 fn title_row(ui: &Ui, session: &mut Session) {
-    ui.text_colored(ACCENT, TITLE);
+    ui.text_colored(ACCENT, session.app_title());
     ui.same_line();
     let avail = ui.content_region_avail()[0];
     let (w, stack) = button_row_layout(avail, 2);
@@ -3577,7 +3578,7 @@ fn slot_capture_section(ui: &Ui, session: &mut Session) {
 fn rail_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     state.sample_resources();
     let mut open = true;
-    ui.window(RAIL_WINDOW)
+    ui.window(format!("{}-rail###{RAIL_WINDOW}", state.session.app_title()))
         .opened(&mut open)
         .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_RESIZE)
         .build(|| {
@@ -4327,7 +4328,9 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     let mut startup = StartupPreparation::new(boot);
     let mut presented = false;
 
-    let cfg = runner_config();
+    let mut cfg = runner_config();
+    let mut window_title = state.session.app_title();
+    cfg.window_title.clone_from(&window_title);
     let os_window: Arc<Mutex<Option<Arc<winit::window::Window>>>> = Arc::new(Mutex::new(None));
     let os_window_init = Arc::clone(&os_window);
     window::run(
@@ -4357,6 +4360,13 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
             presented = true;
             if state.os_window.is_none() {
                 state.os_window = os_window.lock().unwrap().clone();
+            }
+            let title = state.session.app_title();
+            if title != window_title {
+                if let Some(window) = state.os_window.as_ref() {
+                    window.set_title(&title);
+                    window_title = title;
+                }
             }
             if startup.in_flight() {
                 if let Some(w) = state.os_window.as_ref() {

@@ -148,7 +148,7 @@ pub struct PanelConfig {
 impl Default for PanelConfig {
     fn default() -> Self {
         Self {
-            window_title: "274bot".into(),
+            window_title: "bot".into(),
             window_size: (1280.0, 720.0),
             present_mode: wgpu::PresentMode::Fifo,
             clear_color: [0.1, 0.2, 0.3, 1.0],

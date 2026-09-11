@@ -1341,6 +1341,11 @@ impl Session {
         )
     }
 
+    pub fn app_title(&self) -> String {
+        self.effective_revision_label()
+            .map_or_else(|_| "bot".into(), |revision| format!("{revision}bot"))
+    }
+
     pub fn effective_revision_label(&self) -> Result<String, String> {
         if let Some(profile) = &self.server_profile {
             return Ok(profile.revision().as_i32().to_string());

@@ -457,6 +457,14 @@ impl TuiSession {
             .map_or_else(client::bot_target, |profile| profile.target())
     }
 
+    fn app_title(&self) -> String {
+        let revision = self
+            .server_profile
+            .as_ref()
+            .map_or(274, |profile| profile.revision().as_i32());
+        format!("{revision}bot")
+    }
+
     fn profile_label(&self) -> String {
         self.server_profile.as_ref().map_or_else(
             || "legacy local-274 · revision 274".into(),
@@ -1326,7 +1334,8 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         session.spawn_all();
         session.focus(&run.names[0]);
         let mut app = TuiApp::new(format!(
-            "274bot memory benchmark · {}",
+            "{} memory benchmark · {}",
+            session.app_title(),
             session.profile_label()
         ));
         app.names = run.names.clone();
@@ -1389,7 +1398,11 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             };
             session.spawn(&focus);
             session.focus(&focus);
-            let mut app = TuiApp::new(format!("274bot headless · {}", session.profile_label()));
+            let mut app = TuiApp::new(format!(
+                "{} headless · {}",
+                session.app_title(),
+                session.profile_label()
+            ));
             app.names = session.names.clone();
             app.focused = session.names.iter().position(|n| n == &focus);
             run_loop(session, app)
