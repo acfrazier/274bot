@@ -389,12 +389,15 @@ pub fn get(name: &str) -> Option<Scenario> {
         "chicken_killer_bank" => Some(chicken_killer_bank_scenario()),
         "thiever" => Some(thiever_scenario()),
         "alcher" => Some(alcher_scenario()),
+        "alcher_defaults" => Some(alcher_defaults_scenario()),
         "alcher_custom" => Some(alcher_custom_scenario()),
         "alcher_custom_alias" => Some(alcher_custom_alias_scenario()),
         "alcher_custom_name" => Some(alcher_custom_name_scenario()),
         "alcher_ordered" => Some(alcher_ordered_scenario()),
         "alcher_large_batch" => Some(alcher_large_batch_scenario()),
         "bank_fletcher" => Some(bank_fletcher_scenario()),
+        "bank_fletcher_shafts" => Some(bank_fletcher_shafts_scenario()),
+        "bank_fletcher_headless" => Some(bank_fletcher_headless_scenario()),
         "bank_fletcher_string" => Some(bank_fletcher_string_scenario()),
         "bank_fletcher_cut_string" => Some(bank_fletcher_cut_string_scenario()),
         "dart_fletcher" => Some(dart_fletcher_scenario()),
@@ -471,12 +474,15 @@ pub fn names() -> Vec<&'static str> {
         "chicken_killer_bank",
         "thiever",
         "alcher",
+        "alcher_defaults",
         "alcher_custom",
         "alcher_custom_alias",
         "alcher_custom_name",
         "alcher_ordered",
         "alcher_large_batch",
         "bank_fletcher",
+        "bank_fletcher_shafts",
+        "bank_fletcher_headless",
         "bank_fletcher_string",
         "bank_fletcher_cut_string",
         "dart_fletcher",
@@ -2221,6 +2227,17 @@ const ALCHER_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
     value: ScriptInjectValue::StrList(&["rune_chainbody"]),
 }];
 
+const ALCHER_DEFAULTS_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "items",
+        value: ScriptInjectValue::StrList(&[]),
+    },
+    ScriptSettingInject {
+        id: "alchs",
+        value: ScriptInjectValue::Num(1.0),
+    },
+];
+
 const ALCHER_CUSTOM_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "items",
@@ -2416,11 +2433,15 @@ fn alcher_large_batch_scenario() -> Scenario {
 
 const ADAMANT_SCIMITAR_ID: i32 = 1331;
 const CERT_ADAMANT_SCIMITAR_ID: i32 = 1332;
+const YEW_LONGBOW_ID: i32 = 855;
+const CERT_YEW_LONGBOW_ID: i32 = 856;
 const NATURE_RUNE_ID: i32 = 561;
 const COINS_ID: i32 = 995;
 const STAFF_OF_FIRE_ID: i32 = 1387;
 /// High Level Alchemy pays 60% of shop cost: floor(2560 * 0.6) = 1536.
 const ADAMANT_SCIMITAR_ALCH_COINS: i32 = 1536;
+/// High Level Alchemy pays 60% of shop cost: floor(1280 * 0.6) = 768.
+const YEW_LONGBOW_ALCH_COINS: i32 = 768;
 const HIGH_ALCH_MAGIC_XP: i32 = 65;
 
 fn alcher_custom_alias_scenario() -> Scenario {
@@ -2429,6 +2450,184 @@ fn alcher_custom_alias_scenario() -> Scenario {
 
 fn alcher_custom_name_scenario() -> Scenario {
     alcher_generated_custom_scenario("alcher_custom_name", ALCHER_CUSTOM_NAME_INJECT)
+}
+
+/// Empty `items` selects the frozen catalog's DEFAULT_ALCH_ITEMS. Only one
+/// default target is banked, so the noted withdrawal proves fallback selection.
+fn alcher_defaults_scenario() -> Scenario {
+    let xp = Proof::StatXpGain {
+        id: 6,
+        min: HIGH_ALCH_MAGIC_XP,
+    };
+    let bank = VARROCK_WEST_BANK;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed only one default Alcher target at Varrock West before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "setstat magic 55");
+                cheat(c, "givebank yew_longbow 1");
+                cheat(c, "givebank naturerune 1");
+                cheat(c, "givebank staff_of_fire 1");
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm Magic 55 before Start",
+            Proof::Stat { id: 6, min: 55 },
+        ),
+        (
+            "confirm no seeded unnoted Yew longbow in pack before Start",
+            Proof::ItemIdAtMost {
+                id: YEW_LONGBOW_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded noted Yew longbow in pack before Start",
+            Proof::ItemIdAtMost {
+                id: CERT_YEW_LONGBOW_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded coins before Start",
+            Proof::ItemIdAtMost {
+                id: COINS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded Nature rune outcome before Start",
+            Proof::ItemIdAtMost {
+                id: NATURE_RUNE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no Rune chainbody fallback confounder before Start",
+            Proof::ItemAtMost {
+                name: "Rune chainbody",
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(bank_fletcher_open_seed_bank(
+        "open and acknowledge the sole unnoted default target seed",
+        Proof::BankItemId {
+            id: YEW_LONGBOW_ID,
+            count: 1,
+        },
+    ));
+    for (step_name, arm) in [
+        (
+            "acknowledge the exact Nature rune seed bank",
+            Proof::BankItemId {
+                id: NATURE_RUNE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "acknowledge the exact staff of fire seed bank",
+            Proof::BankItemId {
+                id: STAFF_OF_FIRE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "acknowledge no seeded noted Yew longbow in bank",
+            Proof::BankItemIdAtMost {
+                id: CERT_YEW_LONGBOW_ID,
+                count: 0,
+            },
+        ),
+        (
+            "acknowledge no Rune chainbody in bank",
+            Proof::BankItemAtMost {
+                name: "Rune chainbody",
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        (
+            "watch default fallback withdraw the noted Yew longbow id",
+            Proof::ItemId {
+                id: CERT_YEW_LONGBOW_ID,
+                count: 1,
+            },
+        ),
+        ("watch Magic XP from the default High Alchemy cast", xp),
+        (
+            "watch the noted default target consumed",
+            Proof::ItemIdAtMost {
+                id: CERT_YEW_LONGBOW_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch the Nature rune consumed",
+            Proof::ItemIdAtMost {
+                id: NATURE_RUNE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch the exact default High Alchemy coin increase",
+            Proof::ItemId {
+                id: COINS_ID,
+                count: YEW_LONGBOW_ALCH_COINS,
+            },
+        ),
+        (
+            "confirm Rune chainbody never entered the fallback path",
+            Proof::ItemAtMost {
+                name: "Rune chainbody",
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name: "alcher_defaults",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("Alcher"),
+            script_settings_inject: Some(ALCHER_DEFAULTS_INJECT),
+            terminal_shot: Some("alcher_defaults"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
 }
 
 /// Select the frozen Alcher Custom sentinel for a generated item that was
@@ -2679,6 +2878,28 @@ const BANK_FLETCHER_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 
+const BANK_FLETCHER_SHAFTS_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "material",
+        value: ScriptInjectValue::Str("Logs"),
+    },
+    ScriptSettingInject {
+        id: "product",
+        value: ScriptInjectValue::Str("Arrow shafts"),
+    },
+];
+
+const BANK_FLETCHER_HEADLESS_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "material",
+        value: ScriptInjectValue::Str("Logs"),
+    },
+    ScriptSettingInject {
+        id: "product",
+        value: ScriptInjectValue::Str("Headless arrows"),
+    },
+];
+
 const BANK_FLETCHER_STRING_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "material",
@@ -2705,7 +2926,10 @@ const BANK_FLETCHER_CUT_STRING_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 
+const LOGS_ID: i32 = 1511;
 const WILLOW_LOGS_ID: i32 = 1519;
+const ARROW_SHAFT_ID: i32 = 52;
+const HEADLESS_ARROW_ID: i32 = 53;
 const UNSTRUNG_WILLOW_SHORTBOW_ID: i32 = 60;
 const STRUNG_WILLOW_SHORTBOW_ID: i32 = 849;
 const BOW_STRING_ID: i32 = 1777;
@@ -2861,6 +3085,265 @@ fn bank_fletcher_scenario() -> Scenario {
             ..Default::default()
         },
     }
+}
+
+#[derive(Clone, Copy)]
+struct BankFletcherOption {
+    name: &'static str,
+    inject: &'static [ScriptSettingInject],
+    primary_alias: &'static str,
+    primary_id: i32,
+    primary_carried: i32,
+    primary_banked: i32,
+    primary_restocked: i32,
+    secondary: Option<(&'static str, i32, i32, i32, i32)>,
+    product_id: i32,
+    first_product_count: i32,
+    keep_knife: bool,
+}
+
+fn bank_fletcher_option_scenario(option: BankFletcherOption) -> Scenario {
+    let BankFletcherOption {
+        name,
+        inject,
+        primary_alias,
+        primary_id,
+        primary_carried,
+        primary_banked,
+        primary_restocked,
+        secondary,
+        product_id,
+        first_product_count,
+        keep_knife,
+    } = option;
+    let bank = VARROCK_WEST_BANK;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed exact BankFletcher option inputs and bank stock before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "setstat fletching 1");
+                if keep_knife {
+                    cheat(c, "give knife 1");
+                }
+                cheat(c, &format!("give {primary_alias} {primary_carried}"));
+                cheat(c, &format!("givebank {primary_alias} {primary_banked}"));
+                if let Some((alias, _, carried, banked, _)) = secondary {
+                    cheat(c, &format!("give {alias} {carried}"));
+                    cheat(c, &format!("givebank {alias} {banked}"));
+                }
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(bank_fletcher_watch(
+        "confirm Fletching 1 before Start",
+        Proof::Stat { id: 9, min: 1 },
+    ));
+    if keep_knife {
+        steps.push(bank_fletcher_watch(
+            "confirm the knife before Start",
+            Proof::ItemId {
+                id: KNIFE_ID,
+                count: 1,
+            },
+        ));
+    }
+    steps.push(bank_fletcher_watch(
+        "confirm the exact primary input before Start",
+        Proof::ItemId {
+            id: primary_id,
+            count: primary_carried,
+        },
+    ));
+    if let Some((_, id, carried, _, _)) = secondary {
+        steps.push(bank_fletcher_watch(
+            "confirm the exact secondary input before Start",
+            Proof::ItemId { id, count: carried },
+        ));
+    }
+    steps.push(bank_fletcher_watch(
+        "confirm no seeded product in pack before Start",
+        Proof::ItemIdAtMost {
+            id: product_id,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_open_seed_bank(
+        "open and acknowledge the exact primary seed bank",
+        Proof::BankItemId {
+            id: primary_id,
+            count: primary_banked,
+        },
+    ));
+    if let Some((_, id, _, banked, _)) = secondary {
+        steps.push(bank_fletcher_watch(
+            "acknowledge the exact secondary seed bank",
+            Proof::BankItemId { id, count: banked },
+        ));
+    }
+    steps.push(bank_fletcher_watch(
+        "acknowledge no seeded product in bank",
+        Proof::BankItemIdAtMost {
+            id: product_id,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        (
+            "watch Fletching XP from the first exact input batch",
+            Proof::StatXpGain { id: 9, min: 1 },
+        ),
+        (
+            "watch the exact first product batch",
+            Proof::ItemId {
+                id: product_id,
+                count: first_product_count,
+            },
+        ),
+        (
+            "watch the primary input consumed",
+            Proof::ItemIdAtMost {
+                id: primary_id,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    if let Some((_, id, _, _, _)) = secondary {
+        steps.push(bank_fletcher_watch(
+            "watch the secondary input consumed",
+            Proof::ItemIdAtMost { id, count: 0 },
+        ));
+    }
+    steps.push(bank_fletcher_watch(
+        "watch the exact product batch enter a fresh bank",
+        Proof::BankItemId {
+            id: product_id,
+            count: first_product_count,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "watch the product leave the pack after deposit",
+        Proof::ItemIdAtMost {
+            id: product_id,
+            count: 0,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "watch fresh primary input restocked",
+        Proof::ItemId {
+            id: primary_id,
+            count: primary_restocked,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "watch primary bank stock decrease on restock",
+        Proof::BankItemIdAtMost {
+            id: primary_id,
+            count: primary_banked - primary_restocked,
+        },
+    ));
+    if let Some((_, id, _, banked, restocked)) = secondary {
+        steps.push(bank_fletcher_watch(
+            "watch fresh secondary input restocked",
+            Proof::ItemId {
+                id,
+                count: restocked,
+            },
+        ));
+        steps.push(bank_fletcher_watch(
+            "watch secondary bank stock decrease on restock",
+            Proof::BankItemIdAtMost {
+                id,
+                count: banked - restocked,
+            },
+        ));
+    }
+    steps.push(bank_fletcher_watch(
+        "watch the script close its production bank",
+        Proof::BankClosed,
+    ));
+    steps.push(bank_fletcher_watch(
+        "watch fresh Fletching XP after the restock and closed return",
+        Proof::FreshStatXpGain { id: 9, min: 1 },
+    ));
+    steps.push(bank_fletcher_watch(
+        "watch further exact product after restock",
+        Proof::ItemId {
+            id: product_id,
+            count: 1,
+        },
+    ));
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: Proof::ItemId {
+            id: product_id,
+            count: 1,
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("BankFletcher"),
+            script_settings_inject: Some(inject),
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+fn bank_fletcher_shafts_scenario() -> Scenario {
+    bank_fletcher_option_scenario(BankFletcherOption {
+        name: "bank_fletcher_shafts",
+        inject: BANK_FLETCHER_SHAFTS_INJECT,
+        primary_alias: "logs",
+        primary_id: LOGS_ID,
+        primary_carried: 27,
+        primary_banked: 54,
+        primary_restocked: 27,
+        secondary: None,
+        product_id: ARROW_SHAFT_ID,
+        first_product_count: 405,
+        keep_knife: true,
+    })
+}
+
+fn bank_fletcher_headless_scenario() -> Scenario {
+    bank_fletcher_option_scenario(BankFletcherOption {
+        name: "bank_fletcher_headless",
+        inject: BANK_FLETCHER_HEADLESS_INJECT,
+        primary_alias: "feather",
+        primary_id: FEATHER_ID,
+        primary_carried: 30,
+        primary_banked: 60,
+        primary_restocked: 60,
+        secondary: Some(("arrow_shaft", ARROW_SHAFT_ID, 30, 60, 60)),
+        product_id: HEADLESS_ARROW_ID,
+        first_product_count: 30,
+        keep_knife: false,
+    })
 }
 
 /// String two carried pairs, bank the exact id-849 products, withdraw a fresh
@@ -6842,6 +7325,9 @@ const KNIFE_ID: i32 = 946;
 const STEEL_AXE_ID: i32 = 1353;
 const STEEL_PICKAXE_ID: i32 = 1269;
 const NOTED_COAL_ID: i32 = 454;
+/// With the ordinary prayer/ranged/magic defaults, 48 in each melee/HP stat
+/// yields native combat level 55 without over-leveling the fixture.
+const COAL_MELEE_LEVEL: i32 = 48;
 
 const GNOME_WEST_MAGICS: WorldTile = WorldTile {
     x: 2372,
@@ -7260,7 +7746,8 @@ fn gnome_fletch_variant(spec: GnomeFletchSpec) -> Scenario {
     }
 }
 
-/// Seed Mining 30 and steel pickaxe 1269 at the coal mine. Observe real
+/// Seed Mining 30, ordinary combat-55 melee stats, and steel pickaxe 1269 on
+/// the safe initial tile before entering the bat mine. Observe real
 /// mining XP and exact coal 453, then a mine-truck deposit (pack empty of
 /// coal at the truck stand, not a Seers bank), then further mining.
 /// Filling truck 120 then Seers haul/bank/return cannot fit
@@ -7278,27 +7765,56 @@ fn coal_trucks_scenario() -> Scenario {
     };
     let mut steps = script_live_seed_steps();
     steps.push(Step {
-        name: "seed mining, steel pickaxe, empty pack and coal mine before Start",
+        name: "seed mining, combat-safe melee stats and steel pickaxe before the mine tele",
         kind: StepKind::Perform {
-            send: Box::new(move |c, _| {
+            send: Box::new(|c, _| {
                 cheat(c, "~clearinv");
                 cheat(c, "setstat mining 30");
+                cheat(c, &format!("setstat attack {COAL_MELEE_LEVEL}"));
+                cheat(c, &format!("setstat strength {COAL_MELEE_LEVEL}"));
+                cheat(c, &format!("setstat defence {COAL_MELEE_LEVEL}"));
+                cheat(c, &format!("setstat hitpoints {COAL_MELEE_LEVEL}"));
                 cheat(c, "give steel_pickaxe 1");
-                cheat(c, &tele_args(stand.level, stand.x, stand.z));
                 true
             }),
         },
         wait: Wait {
-            arm: Proof::ArrivedNear {
-                x: stand.x,
-                z: stand.z,
-                level: stand.level,
-                radius: 8,
+            arm: Proof::Stat {
+                id: 0,
+                min: COAL_MELEE_LEVEL,
             },
             budget_ticks: 200,
         },
     });
     for (step_name, arm) in [
+        (
+            "confirm Attack 48 on the safe tile before the bat mine",
+            Proof::Stat {
+                id: 0,
+                min: COAL_MELEE_LEVEL,
+            },
+        ),
+        (
+            "confirm Strength 48 on the safe tile before the bat mine",
+            Proof::Stat {
+                id: STRENGTH_STAT,
+                min: COAL_MELEE_LEVEL,
+            },
+        ),
+        (
+            "confirm Defence 48 on the safe tile before the bat mine",
+            Proof::Stat {
+                id: 1,
+                min: COAL_MELEE_LEVEL,
+            },
+        ),
+        (
+            "confirm Hitpoints 48 on the safe tile before the bat mine",
+            Proof::Stat {
+                id: 3,
+                min: COAL_MELEE_LEVEL,
+            },
+        ),
         (
             "confirm Mining 30 before Start",
             Proof::Stat {
@@ -7330,6 +7846,24 @@ fn coal_trucks_scenario() -> Scenario {
     ] {
         steps.push(bank_fletcher_watch(step_name, arm));
     }
+    steps.push(Step {
+        name: "teleport into the giant-bat mine after combat readiness is acknowledged",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, &tele_args(stand.level, stand.x, stand.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: stand.x,
+                z: stand.z,
+                level: stand.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
     steps.push(start_catalog_step());
     for (step_name, arm) in [
         ("watch Mining XP from coal rocks after Start", first_xp),
@@ -9278,7 +9812,7 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
         });
     }
     steps.push(Step {
-        name: "prepare melee stats, food, gear and field before Start",
+        name: "prepare melee stats, food and gear on the safe tile before Start",
         kind: StepKind::Perform {
             send: Box::new(move |c, _| {
                 cheat(c, &format!("setstat attack {COMBAT_ATTACK_LEVEL}"));
@@ -9295,16 +9829,13 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
                 for &(alias, _, count) in extra_give {
                     cheat(c, &format!("give {alias} {count}"));
                 }
-                cheat(c, &tele_args(tele.level, tele.x, tele.z));
                 true
             }),
         },
         wait: Wait {
-            arm: Proof::ArrivedNear {
-                x: tele.x,
-                z: tele.z,
-                level: tele.level,
-                radius,
+            arm: Proof::Stat {
+                id: 0,
+                min: COMBAT_ATTACK_LEVEL,
             },
             budget_ticks: 200,
         },
@@ -9367,6 +9898,24 @@ fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
             Proof::ItemIdAtMost { id, count: 0 },
         ));
     }
+    steps.push(Step {
+        name: "teleport into the hostile field only after preparation is acknowledged",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, &tele_args(tele.level, tele.x, tele.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: tele.x,
+                z: tele.z,
+                level: tele.level,
+                radius,
+            },
+            budget_ticks: 200,
+        },
+    });
     steps.push(start_catalog_step());
     steps.push(bank_fletcher_watch(
         "watch Strength XP from the selected melee style after Start",
@@ -10073,12 +10622,15 @@ mod tests {
                 "chicken_killer_bank",
                 "thiever",
                 "alcher",
+                "alcher_defaults",
                 "alcher_custom",
                 "alcher_custom_alias",
                 "alcher_custom_name",
                 "alcher_ordered",
                 "alcher_large_batch",
                 "bank_fletcher",
+                "bank_fletcher_shafts",
+                "bank_fletcher_headless",
                 "bank_fletcher_string",
                 "bank_fletcher_cut_string",
                 "dart_fletcher",
@@ -10564,6 +11116,201 @@ mod tests {
         assert_eq!(combined.proof, Proof::ItemId { id: 849, count: 2 });
         assert!(names().contains(&"bank_fletcher_string"));
         assert!(names().contains(&"bank_fletcher_cut_string"));
+    }
+
+    #[test]
+    fn remaining_production_options_are_registered_with_ordered_exact_proofs() {
+        let defaults = get("alcher_defaults").expect("default Alcher scenario registered");
+        assert_eq!(defaults.settings.start_script, Some("Alcher"));
+        assert_eq!(defaults.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        let inject = settings_inject_map(defaults.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("items"), Some(&Value::Array(vec![])));
+        assert_eq!(inject.get("alchs"), Some(&Value::from(1.0)));
+        let start = defaults
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let seed = defaults.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::BankItemId { id: 855, count: 1 }));
+        assert!(seed.contains(&Proof::BankItemIdAtMost { id: 856, count: 0 }));
+        assert!(seed.contains(&Proof::ItemAtMost {
+            name: "Rune chainbody",
+            count: 0,
+        }));
+        assert_eq!(defaults.steps[start - 1].wait.arm, Proof::BankClosed);
+        assert_eq!(
+            defaults.steps[start + 1..]
+                .iter()
+                .map(|step| step.wait.arm)
+                .collect::<Vec<_>>(),
+            vec![
+                Proof::ItemId { id: 856, count: 1 },
+                Proof::StatXpGain { id: 6, min: 65 },
+                Proof::ItemIdAtMost { id: 856, count: 0 },
+                Proof::ItemIdAtMost { id: 561, count: 0 },
+                Proof::ItemId {
+                    id: 995,
+                    count: 768
+                },
+                Proof::ItemAtMost {
+                    name: "Rune chainbody",
+                    count: 0,
+                },
+            ]
+        );
+
+        for (name, material, product, first_product, first_count) in [
+            ("bank_fletcher_shafts", "Logs", "Arrow shafts", 52, 405),
+            ("bank_fletcher_headless", "Logs", "Headless arrows", 53, 30),
+        ] {
+            let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
+            assert_eq!(scenario.settings.start_script, Some("BankFletcher"));
+            assert_eq!(scenario.settings.deadline, SCRIPT_GOLD_DEADLINE);
+            let inject = settings_inject_map(scenario.settings.script_settings_inject).unwrap();
+            assert_eq!(
+                inject.get("material"),
+                Some(&Value::String(material.into()))
+            );
+            assert_eq!(inject.get("product"), Some(&Value::String(product.into())));
+            assert!(!inject.contains_key("mode"));
+            let start = scenario
+                .steps
+                .iter()
+                .position(|step| matches!(step.kind, StepKind::StartScript))
+                .unwrap();
+            assert_eq!(scenario.steps[start - 1].wait.arm, Proof::BankClosed);
+            let watch = scenario.steps[start + 1..]
+                .iter()
+                .map(|step| step.wait.arm)
+                .collect::<Vec<_>>();
+            assert_eq!(watch[0], Proof::StatXpGain { id: 9, min: 1 });
+            assert!(watch.contains(&Proof::ItemId {
+                id: first_product,
+                count: first_count,
+            }));
+            let closed = watch
+                .iter()
+                .position(|arm| *arm == Proof::BankClosed)
+                .unwrap();
+            assert!(matches!(
+                watch[closed + 1],
+                Proof::FreshStatXpGain { id: 9, min: 1 }
+            ));
+            assert_eq!(
+                scenario.proof,
+                Proof::ItemId {
+                    id: first_product,
+                    count: 1
+                }
+            );
+            assert!(names().contains(&name));
+        }
+    }
+
+    #[test]
+    fn hostile_fields_follow_safe_pretele_precondition_acknowledgements() {
+        for name in [
+            "chaos_druid",
+            "moss_giant",
+            "hill_giant",
+            "auto_fighter",
+            "rock_crab",
+            "green_dragon",
+            "fire_giant",
+            "ardy_fighter",
+        ] {
+            let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
+            let start = scenario
+                .steps
+                .iter()
+                .position(|step| matches!(step.kind, StepKind::StartScript))
+                .unwrap();
+            let arrival = scenario.steps[..start]
+                .iter()
+                .position(|step| matches!(step.wait.arm, Proof::ArrivedNear { .. }))
+                .unwrap_or_else(|| panic!("{name} field arrival"));
+            for proof in [
+                Proof::Stat {
+                    id: 0,
+                    min: COMBAT_ATTACK_LEVEL,
+                },
+                Proof::Stat {
+                    id: STRENGTH_STAT,
+                    min: COMBAT_ATTACK_LEVEL,
+                },
+                Proof::Stat {
+                    id: 3,
+                    min: COMBAT_ATTACK_LEVEL,
+                },
+            ] {
+                let ack = scenario.steps[..start]
+                    .iter()
+                    .position(|step| step.wait.arm == proof)
+                    .unwrap_or_else(|| panic!("{name} missing {proof:?}"));
+                assert!(
+                    ack < arrival,
+                    "{name} must acknowledge {proof:?} on the safe tile"
+                );
+            }
+            for step in &scenario.steps[arrival + 1..start] {
+                assert!(
+                    !matches!(
+                        step.wait.arm,
+                        Proof::Stat { .. }
+                            | Proof::Item { .. }
+                            | Proof::ItemId { .. }
+                            | Proof::ItemIdAtMost { .. }
+                    ),
+                    "{name} leaves a precondition acknowledgement after the hostile-field tele: {}",
+                    step.name
+                );
+            }
+        }
+
+        let coal = get("coal_trucks").expect("coal_trucks");
+        let start = coal
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let arrival = coal.steps[..start]
+            .iter()
+            .position(|step| matches!(step.wait.arm, Proof::ArrivedNear { .. }))
+            .expect("coal-mine arrival");
+        for proof in [
+            Proof::Stat { id: 0, min: 48 },
+            Proof::Stat {
+                id: STRENGTH_STAT,
+                min: 48,
+            },
+            Proof::Stat { id: 1, min: 48 },
+            Proof::Stat { id: 3, min: 48 },
+            Proof::Stat {
+                id: MINING_STAT,
+                min: 30,
+            },
+            Proof::ItemId {
+                id: STEEL_PICKAXE_ID,
+                count: 1,
+            },
+            Proof::ItemIdAtMost {
+                id: COAL_ID,
+                count: 0,
+            },
+        ] {
+            let ack = coal.steps[..start]
+                .iter()
+                .position(|step| step.wait.arm == proof)
+                .unwrap_or_else(|| panic!("coal_trucks missing {proof:?}"));
+            assert!(
+                ack < arrival,
+                "coal_trucks must acknowledge {proof:?} before the bat mine"
+            );
+        }
     }
 
     #[test]
