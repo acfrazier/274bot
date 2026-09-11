@@ -446,6 +446,7 @@ pub fn get(name: &str) -> Option<Scenario> {
         "moss_giant" => Some(moss_giant_scenario()),
         "hill_giant" => Some(hill_giant_scenario()),
         "auto_fighter" => Some(auto_fighter_scenario()),
+        "auto_fighter_mage" => Some(auto_fighter_mage_scenario()),
         "rock_crab" => Some(rock_crab_scenario()),
         "green_dragon" => Some(green_dragon_scenario()),
         "fire_giant" => Some(fire_giant_scenario()),
@@ -531,6 +532,7 @@ pub fn names() -> Vec<&'static str> {
         "moss_giant",
         "hill_giant",
         "auto_fighter",
+        "auto_fighter_mage",
         "rock_crab",
         "green_dragon",
         "fire_giant",
@@ -8105,6 +8107,7 @@ const HERBLORE_NEWT_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
 
 const TROUT_ID: i32 = 333;
 const COMBAT_SCIMITAR_ID: i32 = 1331;
+const MIND_RUNE_ID: i32 = 558;
 const BIG_BONES_ID: i32 = 532;
 const NOTED_BIG_BONES_ID: i32 = 533;
 const LIMPWURT_ROOT_ID: i32 = 225;
@@ -8117,6 +8120,11 @@ const CHAOS_DRUID_FOOD: i32 = 12;
 const MOSS_GIANT_FOOD: i32 = 10;
 const HILL_GIANT_FOOD: i32 = 8;
 const AUTO_FIGHTER_FOOD: i32 = 8;
+const AUTO_FIGHTER_MAGE_LEVEL: i32 = 13;
+const AUTO_FIGHTER_MAGE_CASTS: i32 = 150;
+const AUTO_FIGHTER_MAGE_AIR_RUNES: i32 = AUTO_FIGHTER_MAGE_CASTS * 2;
+const AUTOCAST_MAGIC_VARP: i32 = 108;
+const AUTOCAST_ARMED_VALUE: i32 = 3;
 const ROCK_CRAB_FOOD: i32 = 8;
 const GREEN_DRAGON_FOOD: i32 = 12;
 const FIRE_GIANT_FOOD: i32 = 12;
@@ -8227,6 +8235,52 @@ const AUTO_FIGHTER_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "meleeStyle",
         value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+];
+const AUTO_FIGHTER_MAGE_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "target",
+        value: ScriptInjectValue::Str("Guard"),
+    },
+    ScriptSettingInject {
+        id: "spot",
+        value: ScriptInjectValue::Str("Start position"),
+    },
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("mage"),
+    },
+    ScriptSettingInject {
+        id: "spell",
+        value: ScriptInjectValue::Str("Fire Strike"),
+    },
+    ScriptSettingInject {
+        id: "runesWithdraw",
+        value: ScriptInjectValue::Num(AUTO_FIGHTER_MAGE_CASTS as f64),
+    },
+    ScriptSettingInject {
+        id: "food",
+        value: ScriptInjectValue::Str("Trout"),
+    },
+    ScriptSettingInject {
+        id: "foodWithdraw",
+        value: ScriptInjectValue::Num(AUTO_FIGHTER_FOOD as f64),
+    },
+    ScriptSettingInject {
+        id: "banking",
+        value: ScriptInjectValue::Str("None"),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "useSpecial",
+        value: ScriptInjectValue::Bool(false),
     },
     ScriptSettingInject {
         id: "buryBones",
@@ -10143,6 +10197,165 @@ fn auto_fighter_scenario() -> Scenario {
     })
 }
 
+/// AutoFighter's supported Fire Strike branch. Staff and exact cast supplies
+/// are prepared and acknowledged on a safe tile before the Guard teleport.
+/// Post-Start arms require native autocast state, Magic XP, and both paid rune
+/// types to be consumed; the catalog witness adds death and further-combat proof.
+fn auto_fighter_mage_scenario() -> Scenario {
+    let magic_xp = Proof::StatXpGain {
+        id: MAGIC_STAT,
+        min: 1,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "prepare Fire Strike stats, food, staff and runes on the safe tile",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                cheat(c, &format!("setstat magic {AUTO_FIGHTER_MAGE_LEVEL}"));
+                cheat(c, &format!("setstat hitpoints {COMBAT_ATTACK_LEVEL}"));
+                cheat(c, "~clearinv");
+                cheat(c, "give staff_of_fire 1");
+                cheat(c, &format!("give trout {AUTO_FIGHTER_FOOD}"));
+                cheat(c, &format!("give mindrune {AUTO_FIGHTER_MAGE_CASTS}"));
+                cheat(c, &format!("give airrune {AUTO_FIGHTER_MAGE_AIR_RUNES}"));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Stat {
+                id: MAGIC_STAT,
+                min: AUTO_FIGHTER_MAGE_LEVEL,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (name, arm) in [
+        (
+            "acknowledge prepared Hitpoints 40 before Start",
+            Proof::Stat {
+                id: 3,
+                min: COMBAT_ATTACK_LEVEL,
+            },
+        ),
+        (
+            "acknowledge eight Trout before Start",
+            Proof::ItemId {
+                id: TROUT_ID,
+                count: AUTO_FIGHTER_FOOD,
+            },
+        ),
+        (
+            "acknowledge 150 Mind runes before Start",
+            Proof::ItemId {
+                id: MIND_RUNE_ID,
+                count: AUTO_FIGHTER_MAGE_CASTS,
+            },
+        ),
+        (
+            "acknowledge 300 Air runes before Start",
+            Proof::ItemId {
+                id: AIR_RUNE_ID,
+                count: AUTO_FIGHTER_MAGE_AIR_RUNES,
+            },
+        ),
+        (
+            "acknowledge Staff of fire before wielding",
+            Proof::ItemId {
+                id: STAFF_OF_FIRE_ID,
+                count: 1,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(name, arm));
+    }
+    steps.push(Step {
+        name: "wield and acknowledge Staff of fire before hostile-field teleport",
+        kind: StepKind::Repeat {
+            send: Box::new(|c, snapshot| {
+                matches!(
+                    Interactions::new(snapshot, c).wear(STAFF_OF_FIRE_ID),
+                    SendResult::Sent { .. }
+                )
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ItemIdAtMost {
+                id: STAFF_OF_FIRE_ID,
+                count: 0,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(Step {
+        name: "teleport to the Ardougne Guard only after mage preparation is acknowledged",
+        kind: StepKind::Perform {
+            send: Box::new(|c, _| {
+                cheat(
+                    c,
+                    &tele_args(ARDOUGNE_GUARD.level, ARDOUGNE_GUARD.x, ARDOUGNE_GUARD.z),
+                );
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: ARDOUGNE_GUARD.x,
+                z: ARDOUGNE_GUARD.z,
+                level: ARDOUGNE_GUARD.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(start_catalog_step());
+    for (name, arm) in [
+        (
+            "watch native Fire Strike autocast become armed",
+            Proof::Varp {
+                id: AUTOCAST_MAGIC_VARP,
+                min: AUTOCAST_ARMED_VALUE,
+            },
+        ),
+        ("watch Magic XP from real Fire Strike combat", magic_xp),
+        (
+            "watch a Mind rune consumed by Fire Strike",
+            Proof::ItemIdAtMost {
+                id: MIND_RUNE_ID,
+                count: AUTO_FIGHTER_MAGE_CASTS - 1,
+            },
+        ),
+        (
+            "watch two Air runes consumed by Fire Strike",
+            Proof::ItemIdAtMost {
+                id: AIR_RUNE_ID,
+                count: AUTO_FIGHTER_MAGE_AIR_RUNES - 2,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(name, arm));
+    }
+    Scenario {
+        name: "auto_fighter_mage",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: magic_xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("AutoFighter"),
+            script_settings_inject: Some(AUTO_FIGHTER_MAGE_INJECT),
+            terminal_shot: Some("auto_fighter_mage"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
 /// RockCrab default melee/strength at spot 1. Ordinary bank policy Off.
 /// Catalog requires native Rocks activation into Rock Crab. Banking is not
 /// this cell. SolveClue stays injected off.
@@ -10800,6 +11013,7 @@ mod tests {
                 "moss_giant",
                 "hill_giant",
                 "auto_fighter",
+                "auto_fighter_mage",
                 "rock_crab",
                 "green_dragon",
                 "fire_giant",
@@ -14668,6 +14882,76 @@ mod tests {
     }
 
     #[test]
+    fn auto_fighter_mage_prepares_and_observes_real_autocast_combat() {
+        let mage = get("auto_fighter_mage").expect("auto_fighter_mage");
+        assert_eq!(mage.settings.start_script, Some("AutoFighter"));
+        assert_eq!(mage.settings.deadline, SCRIPT_GOLD_DEADLINE);
+
+        let inject = settings_inject_map(mage.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("target"), Some(&Value::String("Guard".into())));
+        assert_eq!(
+            inject.get("spot"),
+            Some(&Value::String("Start position".into()))
+        );
+        assert_eq!(
+            inject.get("combatStyle"),
+            Some(&Value::String("mage".into()))
+        );
+        assert_eq!(
+            inject.get("spell"),
+            Some(&Value::String("Fire Strike".into()))
+        );
+        assert_eq!(inject.get("runesWithdraw"), Some(&Value::from(150.0)));
+        assert_eq!(inject.get("banking"), Some(&Value::String("None".into())));
+        assert_eq!(inject.get("solveClues"), Some(&Value::Bool(false)));
+        assert_eq!(inject.get("useSpecial"), Some(&Value::Bool(false)));
+
+        let start = mage
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let before = mage.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(before.contains(&Proof::Stat { id: 6, min: 13 }));
+        assert!(before.contains(&Proof::Stat { id: 3, min: 40 }));
+        assert!(before.contains(&Proof::ItemId { id: 333, count: 8 }));
+        assert!(before.contains(&Proof::ItemId {
+            id: 558,
+            count: 150,
+        }));
+        assert!(before.contains(&Proof::ItemId {
+            id: 556,
+            count: 300,
+        }));
+        assert!(before.contains(&Proof::ItemIdAtMost { id: 1387, count: 0 }));
+        assert!(before.contains(&Proof::ArrivedNear {
+            x: 2661,
+            z: 3306,
+            level: 0,
+            radius: 8,
+        }));
+
+        let after = mage.steps[start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(after.contains(&Proof::Varp { id: 108, min: 3 }));
+        assert!(after.contains(&Proof::StatXpGain { id: 6, min: 1 }));
+        assert!(after.contains(&Proof::ItemIdAtMost {
+            id: 558,
+            count: 149,
+        }));
+        assert!(after.contains(&Proof::ItemIdAtMost {
+            id: 556,
+            count: 298,
+        }));
+        assert_eq!(mage.proof, Proof::StatXpGain { id: 6, min: 1 });
+    }
+
+    #[test]
     fn bone_burier_requires_banking_between_burial_cycles() {
         let s = get("bone_burier").unwrap();
         assert_eq!(s.settings.start_script, Some("BoneBurier"));
@@ -14767,6 +15051,7 @@ mod tests {
             "moss_giant",
             "hill_giant",
             "auto_fighter",
+            "auto_fighter_mage",
             "rock_crab",
             "green_dragon",
             "fire_giant",
