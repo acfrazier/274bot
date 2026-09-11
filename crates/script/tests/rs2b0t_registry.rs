@@ -149,6 +149,7 @@ fn rs2b0t_root_prefers_env_then_persisted_file() {
 
 #[test]
 fn js_library_registers_rs2b0t_cards_without_isolates() {
+    let _env = script::IsolatedEnv::enter("registry-persisted-root");
     let dir = scratch("rs2b0t_fill");
     let root = dir.join("rs2b0t");
     let scripts = root.join("src/bot/scripts");

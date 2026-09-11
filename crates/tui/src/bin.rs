@@ -172,9 +172,11 @@ fn temp_live_vault(entries: &[(String, String)], vault_pass: &str) -> PathBuf {
 /// hop is sent once per server tick, not every 20 ms frame.
 type NavStepLatch = HashMap<String, (u64, (i32, i32, i32))>;
 
+type SlotTravellers = Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>;
+
 fn reset_frontend_slot_session(
     name: &str,
-    travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    travellers: &SlotTravellers,
     tick_latch: &Arc<Mutex<NavStepLatch>>,
 ) -> bool {
     tick_latch.lock().unwrap().remove(name);
@@ -185,7 +187,7 @@ fn reset_frontend_slot_lifetime(
     name: &str,
     gens: &Arc<Mutex<HashMap<String, client::client::ClientGens>>>,
     snapshots: &Arc<Mutex<HashMap<String, api::snapshot::GameSnapshot>>>,
-    travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    travellers: &SlotTravellers,
     tick_latch: &Arc<Mutex<NavStepLatch>>,
 ) -> bool {
     gens.lock().unwrap().remove(name);
@@ -198,7 +200,7 @@ fn publish_frontend_slot(
     client: &client::client::Client,
     gens: &Arc<Mutex<HashMap<String, client::client::ClientGens>>>,
     snapshots: &Arc<Mutex<HashMap<String, api::snapshot::GameSnapshot>>>,
-    travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    travellers: &SlotTravellers,
     tick_latch: &Arc<Mutex<NavStepLatch>>,
 ) -> bool {
     let mut gens_guard = gens.lock().unwrap();
@@ -337,7 +339,7 @@ pub struct TuiSession {
     frontend_gens: Arc<Mutex<HashMap<String, client::client::ClientGens>>>,
     /// Per-username walk arms; the focused arm's route paints the map and
     /// the per-frame hook steps it via `Traveller::follow`.
-    travellers: Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    travellers: SlotTravellers,
     /// Last `(player gen, here)` ticked per username, so a walk hop is
     /// sent once per server tick, not every 20 ms frame.
     tick_latch: Arc<Mutex<NavStepLatch>>,
@@ -1662,12 +1664,14 @@ mod tests {
         server.join().unwrap();
     }
 
-    fn frontend_fixture() -> (
+    type FrontendFixture = (
         Arc<Mutex<HashMap<String, client::client::ClientGens>>>,
         Arc<Mutex<HashMap<String, api::snapshot::GameSnapshot>>>,
-        Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+        SlotTravellers,
         Arc<Mutex<NavStepLatch>>,
-    ) {
+    );
+
+    fn frontend_fixture() -> FrontendFixture {
         (
             Arc::new(Mutex::new(HashMap::new())),
             Arc::new(Mutex::new(HashMap::new())),

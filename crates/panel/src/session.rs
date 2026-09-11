@@ -766,7 +766,7 @@ pub struct Session {
     /// Per-username walk arms; the focused slot's arm carries the armed
     /// whole-world route (polled from `start_play` `per_frame` via
     /// [`nav::traveller::Traveller::follow`]).
-    pub travellers: Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    pub travellers: SlotTravellers,
     /// Catalog `walk` overlay; filled after [`Session::start_play`].
     script_nav_paint: Arc<Mutex<Option<ScriptNavPaint>>>,
     /// Per-username gating facts for WalkTo routing: each slot thread
@@ -970,9 +970,11 @@ fn nav_snapshot_for_follow<'a>(
     states.get(name).map(|(snap, _)| snap)
 }
 
+type SlotTravellers = Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>;
+
 fn reset_frontend_slot_session(
     name: &str,
-    travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    travellers: &SlotTravellers,
     tick_latch: &Arc<Mutex<HashMap<String, (u64, Tile)>>>,
 ) -> bool {
     tick_latch.lock().unwrap().remove(name);
@@ -986,7 +988,7 @@ fn reset_frontend_slot_lifetime(
     name: &str,
     gens: &Arc<Mutex<HashMap<String, ClientGens>>>,
     states: &Arc<Mutex<HashMap<String, (GameSnapshot, WorldState)>>>,
-    travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    travellers: &SlotTravellers,
     tick_latch: &Arc<Mutex<HashMap<String, (u64, Tile)>>>,
 ) -> bool {
     gens.lock().unwrap().remove(name);
@@ -1001,7 +1003,7 @@ fn publish_frontend_slot(
     client: &Client,
     gens: &Arc<Mutex<HashMap<String, ClientGens>>>,
     states: &Arc<Mutex<HashMap<String, (GameSnapshot, WorldState)>>>,
-    travellers: &Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>>,
+    travellers: &SlotTravellers,
     tick_latch: &Arc<Mutex<HashMap<String, (u64, Tile)>>>,
 ) -> bool {
     let mut gens_guard = gens.lock().unwrap();
@@ -4524,12 +4526,14 @@ mod tests {
         server.join().unwrap();
     }
 
-    fn frontend_fixture() -> (
+    type FrontendFixture = (
         Arc<Mutex<std::collections::HashMap<String, client::client::ClientGens>>>,
         Arc<Mutex<std::collections::HashMap<String, (GameSnapshot, WorldState)>>>,
-        Arc<Mutex<std::collections::HashMap<String, Arc<Mutex<WalkArm>>>>>,
+        super::SlotTravellers,
         Arc<Mutex<std::collections::HashMap<String, (u64, Tile)>>>,
-    ) {
+    );
+
+    fn frontend_fixture() -> FrontendFixture {
         (
             Arc::new(Mutex::new(std::collections::HashMap::new())),
             Arc::new(Mutex::new(std::collections::HashMap::new())),

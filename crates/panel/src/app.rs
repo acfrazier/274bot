@@ -3578,15 +3578,18 @@ fn slot_capture_section(ui: &Ui, session: &mut Session) {
 fn rail_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     state.sample_resources();
     let mut open = true;
-    ui.window(format!("{}-rail###{RAIL_WINDOW}", state.session.app_title()))
-        .opened(&mut open)
-        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_RESIZE)
-        .build(|| {
-            rail_bulk_row(ui, state);
-            rail_tiles(ui, gpu, state);
-            add_bot_button(ui, state);
-            resource_card(ui, state);
-        });
+    ui.window(format!(
+        "{}-rail###{RAIL_WINDOW}",
+        state.session.app_title()
+    ))
+    .opened(&mut open)
+    .flags(WindowFlags::NO_COLLAPSE | WindowFlags::NO_RESIZE)
+    .build(|| {
+        rail_bulk_row(ui, state);
+        rail_tiles(ui, gpu, state);
+        add_bot_button(ui, state);
+        resource_card(ui, state);
+    });
     if !open {
         state.session.set_multibox(false);
     }
