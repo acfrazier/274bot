@@ -1,0 +1,89 @@
+{
+  "source": "frozen catalog TypeScript SETTINGS plus sibling option arrays, not support-matrix scanner output",
+  "scanner_caveat": "support-matrix still says BLOCKED missing PeriodicBank/DeathRecovery on newer-catalog rows and PARTIAL remaining-settings on others. Native PeriodicBank, DeathRecovery and Autocast.arm already exist (04-capabilities-periodic-bank/recovery/autocast). Scanner BLOCKED/PENDING text is not capability proof.",
+  "catalogs_equal_for_all_fifteen": true,
+  "identity": {
+    "Thiever": "registered display_name Thiever; source src/bot/scripts/ThievingBot/ThievingBot.ts",
+    "GnomeCourse": "registered display_name GnomeCourse; source src/bot/scripts/AgilityBot/AgilityBot.ts"
+  },
+  "cards": {
+    "ChickenKiller": {
+      "combatStyle": {"default": "melee", "options": ["melee", "mage", "range"]},
+      "meleeStyle": {"default": "strength", "options": ["attack", "strength", "controlled", "defence"], "showIf": "melee"},
+      "spell": {"default": "Wind Strike", "n_options": 16, "showIf": "mage"},
+      "rangeStyle": {"default": "rapid", "options": ["accurate", "rapid", "longrange"], "showIf": "range"},
+      "bankStrategy": {"default": "Off", "options": ["Off", "Loot count", "Time", "Either"], "parse": "bankRules.ts Off/items/time/either; Time/Either only change shouldBankNow predicate, same PeriodicBank trip"},
+      "buryBones": {"default": true},
+      "constructs": ["DeathRecovery", "PeriodicBank", "ArmAutocast"]
+    },
+    "Thiever": {
+      "target": {"default": "Man", "options": ["Man", "Woman", "Farmer", "Warrior woman", "Al-Kharid warrior", "Rogue", "Guard", "Knight of Ardougne", "Watchman", "Paladin", "Hero"]},
+      "action": {"default": "Pickpocket", "type": "free-text"},
+      "banking": {"default": "None", "options": ["None", "Auto"], "help": "Auto = bank non-food, withdraw food, return"},
+      "suicide": {"default": false, "help": "keep pickpocketing when out of food"}
+    },
+    "ChaosDruidKiller": {
+      "location": {"default": "Edgeville Dungeon", "source_options": ["Edgeville Dungeon", "Chaos Druid Tower", "Yanille Dungeon"], "note": "schema location is free-text; DRUID_SPOTS in ChaosDruidLogic.ts is the real set. Tower requires Thieving 46. Yanille is npc Chaos druid warrior and Agility 40."},
+      "combatStyleIndex": {"default": "1", "options": ["0", "1", "2", "3"]}
+    },
+    "MossGiant": {
+      "combatStyle": {"default": "melee", "options": ["melee", "mage", "range"]},
+      "constructs": ["DeathRecovery", "Autocast"]
+    },
+    "HillGiant": {
+      "meleeStyle": {"default": "strength", "options": ["attack", "strength", "controlled", "defence"]},
+      "no_combatStyle": true,
+      "shouldBank": "always-on trip end in HillGiantLogic, not Off/Auto setting",
+      "constructs": ["DeathRecovery walkBack travelToPit"]
+    },
+    "AutoFighter": {
+      "combatStyle": {"default": "melee", "options": ["melee", "mage", "range"]},
+      "banking": {"default": "Auto", "options": ["Auto", "None"], "core_injects": "None"},
+      "useSpecial": {"default": true},
+      "solveClues": {"default": true, "stub": true},
+      "constructs": ["DeathRecovery", "SolveClue", "Autocast"]
+    },
+    "RockCrab": {
+      "combatStyle": {"default": "melee", "options": ["melee", "mage", "range"]},
+      "constructs": ["DeathRecovery", "PeriodicBank", "SolveClue", "Autocast", "AmmoLogic.sweepPlan"]
+    },
+    "GreenDragon": {
+      "combatStyle": {"default": "melee", "options": ["melee", "mage"]},
+      "escape": {"default": "Flee to bank", "options": ["Flee to bank", "Teleport to Varrock"]},
+      "useSpecial": {"default": true},
+      "usePotions": {"default": true},
+      "solveClues": {"default": true, "stub": true}
+    },
+    "FireGiant": {
+      "combatStyle": {"default": "melee", "options": ["melee", "mage", "range"]},
+      "escapeTele": {"default": "Barrel (free)", "options": ["Barrel (free)", "Camelot", "Ardougne", "Falador", "Varrock"]}
+    },
+    "ArdyFighter": {
+      "combatStyle": {"default": "strength", "options": ["attack", "strength", "controlled", "defence"]},
+      "bankStrategy": {"default": "Off", "options": ["Off", "Loot count", "Time", "Either"]},
+      "solveClues": {"default": true, "stub": true}
+    },
+    "ArdyCakes": {
+      "guardResponse": {"default": "Flee", "options": ["Flee", "Fight"], "dispatch": "Flee task vs FightBack task"},
+      "solveClues": {"default": true, "stub": true}
+    },
+    "ArdyThiever": {
+      "thieveTarget": {"default": "Guard", "options": ["Guard", "Knight of Ardougne", "Paladin", "Hero"]},
+      "guardResponse": {"default": "Flee", "options": ["Flee", "Fight"]},
+      "bankStrategy": {"default": "Off", "options": ["Off", "Loot count", "Time", "Either"]},
+      "solveClues": {"default": true, "stub": true}
+    },
+    "GnomeCourse": {
+      "obstacles": {"default": "Log balance,Obstacle net,Tree branch,Balancing rope,Tree branch,Obstacle net,Obstacle pipe"},
+      "searchRadius": {"default": 20}
+    },
+    "WildyAgility": {
+      "food": {"default": "", "n_options": 25, "substitution": true},
+      "acquireFoodAtStart": {"default": true},
+      "constructs": ["DeathRecovery"]
+    },
+    "DoorOpener": {
+      "obstacle": {"default": null, "witnessed": ["door", "gate"]}
+    }
+  }
+}
