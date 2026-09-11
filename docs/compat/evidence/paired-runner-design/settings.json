@@ -1,0 +1,68 @@
+{
+  "NatureCrafter": {
+    "source": "NatureCrafter/{NatureCrafter,NatureRunnerLogic}.ts",
+    "identical_on_both_catalogs": true,
+    "settings": {
+      "rune": {"default": "Nature runes", "options": ["Nature runes", "Air runes"], "group": "Air is pair representative; Nature island is extra after shop"},
+      "mode": {"default": "Master", "options": ["Master", "Runner"], "group": "pair roles, not independent options"},
+      "partner": {"default": "", "required": true, "note": "empty throws at onStart"},
+      "bankEvery": {"default": 60, "group": "ancillary; will not fire in 180s"},
+      "withdrawEss": {"default": 0, "group": "ancillary; 0 = TRADE_CAP 25 on Air"},
+      "withdrawCoins": {"default": 10000, "group": "ancillary; unused by Air"},
+      "stayInAltar": {"default": false, "group": "genuine extra gameplay"}
+    },
+    "air": {
+      "ruins": [2983, 3288, 0],
+      "runnerBank": [3013, 3355, 0],
+      "masterBank": [3013, 3355, 0],
+      "unnote": null,
+      "trade_cap": 25,
+      "essence_unnoted": 1436,
+      "air_rune": 556,
+      "talisman": 1438,
+      "rc": 1
+    },
+    "paint_buttons": {"mode": "Runner", "id": "gobank", "owner": "108"}
+  },
+  "MuleCrafter": {
+    "source": "MuleCrafter/{MuleCrafter,MuleCrafterLogic}.ts + data/runeCraftLocations.ts",
+    "identical_on_both_catalogs": true,
+    "settings": {
+      "rune": {"default": "Air rune", "options": ["Air rune", "Mind rune", "Water rune", "Earth rune", "Fire rune", "Body rune", "Cosmic rune", "Chaos rune", "Nature rune", "Law rune", "Death rune"], "group": "Air is pair representative; other F2P runes equivalent loop; members extras"},
+      "mode": {"default": "Crafter", "options": ["Crafter", "Mule"], "group": "pair roles; blank partner = solo Crafter, not trade"},
+      "partner": {"default": "", "required_for": "Mule"},
+      "bankFill": {"default": true, "group": "true is pair core; false is extra"}
+    },
+    "air": {
+      "ruins": [2983, 3288, 0],
+      "bank": "Falador East",
+      "bank_tile": [3013, 3355, 0],
+      "trade_cap": 27,
+      "essence_unnoted": 1436,
+      "air_rune": 556,
+      "talisman": 1438,
+      "rc": 1
+    },
+    "solo_does_not_qualify_trade": true
+  },
+  "FlaxRunner": {
+    "source": "FlaxRunner/{FlaxRunner,FlaxRunnerLogic}.ts",
+    "identical_on_both_catalogs": true,
+    "settings": {
+      "mode": {"default": "Runner", "options": ["Runner", "Spinner"], "group": "pair roles"},
+      "partner": {"default": "", "required": true},
+      "minFlaxCapacity": {"default": 24, "min": 1, "max": 28, "group": "ancillary; empty-pack core does not junk-bank"}
+    },
+    "tiles": {
+      "field": [2741, 3444, 0],
+      "meet": [2719, 3471, 0],
+      "trade_range": 2,
+      "bank_stand": [2725, 3493, 0],
+      "wheel": [2711, 3471, 1]
+    },
+    "items": {"flax": 1779, "bow_string": 1777},
+    "missing_op": "driveActivePartnerTrade",
+    "full_cycle_also_needs": "ChatDialog.makeX (Make-X t_4b04cb5f)",
+    "not_flax_aio": true
+  }
+}
