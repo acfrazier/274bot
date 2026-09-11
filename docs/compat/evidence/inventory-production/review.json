@@ -1,0 +1,455 @@
+{
+  "task": {
+    "id": "t_3317197c",
+    "title": "Qualify inventory production catalog loops",
+    "body": "Implement docs/compat/briefs/52-inventory-production-fixtures.md with grok46 defaults after parent review. Add six shared DartFletcher, HerbCleaner and GemCutter scenarios with exact-ID production and full banking witnesses where applicable. Preserve runtime, catalogs and existing evidence. No LIVE. Commit owned files, request SAME-card reviewer review, then STOP; do not self-complete.",
+    "assignee": "reviewer",
+    "status": "done",
+    "priority": 0,
+    "tenant": null,
+    "workspace_kind": "dir",
+    "workspace_path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision",
+    "branch_name": null,
+    "project_id": null,
+    "created_by": "orch",
+    "created_at": 1789089477,
+    "started_at": 1789090029,
+    "completed_at": 1789091600,
+    "result": null,
+    "skills": [],
+    "max_retries": 1,
+    "model_override": null,
+    "provider_override": null,
+    "session_id": null,
+    "workflow_template_id": null,
+    "current_step_key": null,
+    "completion_contract": "local-only",
+    "last_failure_error": null
+  },
+  "latest_summary": "Reviewed and approved commit 58b7e6f7 for brief 52 inventory production fixtures. Round-1 artifact review plus independent re-runs confirm six shared DartFletcher/HerbCleaner/GemCutter cases with exact-ID production, full bank-cycle witnesses where applicable, both catalogs, rejection tests, owned paths only, no LIVE.",
+  "parents": [
+    "t_1a24382e"
+  ],
+  "children": [
+    "t_42719b42"
+  ],
+  "comments": [
+    {
+      "author": "orch",
+      "body": "Operator clarification 01:41 UTC now recorded at top of docs/compat/STATE.md and active plan: do not alter host behavior to accommodate a broken imported JS script. Diagnose ownership; dim an evidenced broken foreign card with a clear reason, preserving frozen inventory/failure evidence. Our shim/API bugs and authorized Rust capabilities remain in scope. BankFletcher currently selects IDs correctly; our useOn identity loss remains our bug, so continue that fix. Preserve named task boundaries and actual same-card reviewer handoff. This comment does not expand your task.",
+      "created_at": 1789091043
+    },
+    {
+      "author": "orch",
+      "body": "Operator follow-up: the bad-script dim rule DOES NOT change the ancillary-feature stub plan. Calls such as solve clues that depend on whale scripts or importing their world/policy remain bounded stubs with honest unavailable behavior. An unavailable ancillary feature does not dim an otherwise working card. Preserve existing branch refusal; do not import foreign systems or fake successful completion. Both separate rules are recorded at top of docs/compat/STATE.md. Named task scope unchanged.",
+      "created_at": 1789091114
+    },
+    {
+      "author": "orch",
+      "body": "Final operator clarification: ancillary stubs are temporary integration points for native host features. Each such feature is its own future project, and the shim will connect when the host implementation is ready. This campaign does not implement those separate projects. Recorded in docs/compat/STATE.md and active plan; no change to your named scope.",
+      "created_at": 1789091143
+    }
+  ],
+  "events": [
+    {
+      "kind": "created",
+      "payload": {
+        "assignee": "grok46",
+        "status": "todo",
+        "parents": [
+          "t_1a24382e"
+        ],
+        "creator_task_id": null,
+        "tenant": null,
+        "workspace_kind": "dir",
+        "workspace_path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision",
+        "branch_name": null,
+        "project_id": null,
+        "skills": null,
+        "goal_mode": null,
+        "model_override": null,
+        "provider_override": null
+      },
+      "created_at": 1789089477,
+      "run_id": null
+    },
+    {
+      "kind": "promoted",
+      "payload": null,
+      "created_at": 1789090001,
+      "run_id": null
+    },
+    {
+      "kind": "claimed",
+      "payload": {
+        "lock": "merlot.local:28215",
+        "expires": 1789090929,
+        "run_id": 1183
+      },
+      "created_at": 1789090029,
+      "run_id": 1183
+    },
+    {
+      "kind": "spawned",
+      "payload": {
+        "pid": 88228
+      },
+      "created_at": 1789090029,
+      "run_id": 1183
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090030,
+      "run_id": 1183
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090092,
+      "run_id": 1183
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090152,
+      "run_id": 1183
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090232,
+      "run_id": 1183
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090298,
+      "run_id": 1183
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090361,
+      "run_id": 1183
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090422,
+      "run_id": 1183
+    },
+    {
+      "kind": "heartbeat",
+      "payload": {
+        "note": "Implementing six DartFletcher/HerbCleaner/GemCutter fixtures from brief 52."
+      },
+      "created_at": 1789090423,
+      "run_id": 1183
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090493,
+      "run_id": 1183
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090559,
+      "run_id": 1183
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090635,
+      "run_id": 1183
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090700,
+      "run_id": 1183
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090761,
+      "run_id": 1183
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090821,
+      "run_id": 1183
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090885,
+      "run_id": 1183
+    },
+    {
+      "kind": "heartbeat",
+      "payload": {
+        "note": "Formatting done; running scenario and catalog_boundary_live tests."
+      },
+      "created_at": 1789090932,
+      "run_id": 1183
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090945,
+      "run_id": 1183
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091007,
+      "run_id": 1183
+    },
+    {
+      "kind": "commented",
+      "payload": {
+        "author": "orch",
+        "len": 575
+      },
+      "created_at": 1789091043,
+      "run_id": null
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091074,
+      "run_id": 1183
+    },
+    {
+      "kind": "commented",
+      "payload": {
+        "author": "orch",
+        "len": 495
+      },
+      "created_at": 1789091114,
+      "run_id": null
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091142,
+      "run_id": 1183
+    },
+    {
+      "kind": "commented",
+      "payload": {
+        "author": "orch",
+        "len": 353
+      },
+      "created_at": 1789091143,
+      "run_id": null
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091205,
+      "run_id": 1183
+    },
+    {
+      "kind": "review_requested",
+      "payload": {
+        "summary": "Added six shared DartFletcher, HerbCleaner and GemCutter scenarios with exact-ID production and full banking witnesses where applicable. Commit 58b7e6f7; scenario 84 passed; catalog_boundary_live 16 passed 1 ignored LIVE; clippy/fmt clean on an export of committed host plus owned files. No LIVE.",
+        "implementer": "grok46",
+        "reviewer": "reviewer"
+      },
+      "created_at": 1789091205,
+      "run_id": 1183
+    },
+    {
+      "kind": "claimed",
+      "payload": {
+        "lock": "merlot.local:28215",
+        "expires": 1789092133,
+        "run_id": 1189,
+        "source_status": "review"
+      },
+      "created_at": 1789091233,
+      "run_id": 1189
+    },
+    {
+      "kind": "spawned",
+      "payload": {
+        "pid": 4787
+      },
+      "created_at": 1789091233,
+      "run_id": 1189
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091234,
+      "run_id": 1189
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091296,
+      "run_id": 1189
+    },
+    {
+      "kind": "heartbeat",
+      "payload": {
+        "note": "Round-1 artifact review; running independent scenario and catalog_boundary_live tests"
+      },
+      "created_at": 1789091328,
+      "run_id": 1189
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091359,
+      "run_id": 1189
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091422,
+      "run_id": 1189
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091491,
+      "run_id": 1189
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091552,
+      "run_id": 1189
+    },
+    {
+      "kind": "completed",
+      "payload": {
+        "result_len": 0,
+        "summary": "Reviewed and approved commit 58b7e6f7 for brief 52 inventory production fixtures. Round-1 artifact review plus independent re-runs confirm six shared DartFletcher/HerbCleaner/GemCutter cases with exact-ID production, full bank-cycle witnesses where applicable, both catalogs, rejection tests, owned paths only, no LIVE."
+      },
+      "created_at": 1789091600,
+      "run_id": 1189
+    }
+  ],
+  "runs": [
+    {
+      "id": 1183,
+      "profile": "grok46",
+      "step_key": null,
+      "status": "review",
+      "outcome": "review_requested",
+      "summary": "Added six shared DartFletcher, HerbCleaner and GemCutter scenarios with exact-ID production and full banking witnesses where applicable. Commit 58b7e6f7; scenario 84 passed; catalog_boundary_live 16 passed 1 ignored LIVE; clippy/fmt clean on an export of committed host plus owned files. No LIVE.",
+      "error": null,
+      "metadata": {
+        "commit": "58b7e6f74dd712ee15a36451ceaa58e51102fa41",
+        "head": "58b7e6f74dd712ee15a36451ceaa58e51102fa41",
+        "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+        "baseline_host": "62d5b524adffb5dfe772dc574c1b2076c6e87fad",
+        "owned_files": [
+          "crates/scenario/src/lib.rs",
+          "crates/host-play/tests/catalog_boundary_live.rs",
+          "docs/compat/05d-inventory-production-fixtures.md"
+        ],
+        "new_cases": [
+          "dart_fletcher",
+          "dart_fletcher_iron",
+          "herb_cleaner",
+          "herb_cleaner_named",
+          "gem_cutter",
+          "gem_cutter_named"
+        ],
+        "no_live": true,
+        "checks": [
+          "cargo test -p scenario \u2014 84 passed",
+          "cargo test -p host-play --features memory-profile --test catalog_boundary_live \u2014 16 passed, 1 ignored LIVE (export of committed host + owned files; worktree script crate uncommitted)",
+          "cargo clippy -p scenario -- -D warnings \u2014 passed",
+          "cargo clippy -p host-play --features memory-profile --test catalog_boundary_live -- -D warnings \u2014 passed",
+          "cargo fmt --check -p scenario \u2014 clean"
+        ],
+        "report": "docs/compat/05d-inventory-production-fixtures.md",
+        "notes": [
+          "Darts have no bank; require two observed actions with both input IDs consumed and Fletching XP",
+          "Herb/gem use Varrock West booth helper rather than guessing East booth tile; remaining-production named East",
+          "Named herb keeps unidentified_marentill 201; named gem keeps uncut_opal 1625; chisel preserved; crushed 1633 stays 0"
+        ],
+        "worker_session_id": "20260910_212709_01dc8f"
+      },
+      "worker_pid": null,
+      "started_at": 1789090029,
+      "ended_at": 1789091205
+    },
+    {
+      "id": 1189,
+      "profile": "reviewer",
+      "step_key": null,
+      "status": "done",
+      "outcome": "completed",
+      "summary": "Reviewed and approved commit 58b7e6f7 for brief 52 inventory production fixtures. Round-1 artifact review plus independent re-runs confirm six shared DartFletcher/HerbCleaner/GemCutter cases with exact-ID production, full bank-cycle witnesses where applicable, both catalogs, rejection tests, owned paths only, no LIVE.",
+      "error": null,
+      "metadata": {
+        "review_outcome": "approved",
+        "review_round": 1,
+        "lens": "artifact",
+        "commit": "58b7e6f74dd712ee15a36451ceaa58e51102fa41",
+        "head": "58b7e6f74dd712ee15a36451ceaa58e51102fa41",
+        "baseline_host": "62d5b524adffb5dfe772dc574c1b2076c6e87fad",
+        "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+        "owned_files": [
+          "crates/scenario/src/lib.rs",
+          "crates/host-play/tests/catalog_boundary_live.rs",
+          "docs/compat/05d-inventory-production-fixtures.md"
+        ],
+        "new_cases": [
+          "dart_fletcher",
+          "dart_fletcher_iron",
+          "herb_cleaner",
+          "herb_cleaner_named",
+          "gem_cutter",
+          "gem_cutter_named"
+        ],
+        "no_live": true,
+        "reviewer_checks": [
+          "brief 52 AC: six shared cases dart_fletcher(+iron), herb_cleaner(+named), gem_cutter(+named) registered in scenario get/names and CORE_SCENARIOS",
+          "injects: tier Bronze/Iron; herbs=[] / ['Guam leaf']; gems=[] / ['Sapphire']; start_script DartFletcher/HerbCleaner/GemCutter; SCRIPT_GOLD_DEADLINE preserved",
+          "exact IDs match generated 274 rows and script tables: 819/806, 820/807, 314; 199/249; 201; 1623/1607; 1625; 1755; 1633",
+          "dart: no bank; two observations product>=10 then further with both tip+feather down and Fletching XP; wrong-tier rejected; seed-before-Start product banned",
+          "herb/gem: empty pack pre-Start, bank seed ack via open_booth_at Varrock West (3185,3440,0), full pack exact product, deposit script-created output in fresh bank_generation, same-gen restock input, BankClosed, further product+XP",
+          "named herb keeps unid 201x4 bank/out of pack; named gem keeps uncut opal 1625; gem keeps chisel 1755 and crushed 1633==0",
+          "CoreWitness DartFletcherCycle/HerbCleanerCycle/GemCutterCycle with seed-only, name-only, XP-only, wrong tier, missing tip consumption, stale/closed bank, wrong generation, filter take, no-chisel, crushed, missing next production rejects",
+          "both catalogs A/B accepted for all six cases; ledger source identity includes DartFletcher/HerbCleaner/GemCutter",
+          "no runtime/catalog/UI edits; commit owned paths only; report 05d present",
+          "independent export of 58b7e6f7: cargo test -p scenario \u2014 84 passed",
+          "independent export: cargo test -p host-play --features memory-profile --test catalog_boundary_live \u2014 16 passed, 1 ignored LIVE",
+          "independent export: cargo clippy -p scenario -- -D warnings \u2014 passed",
+          "independent export: cargo clippy -p host-play --features memory-profile --test catalog_boundary_live -- -D warnings \u2014 passed",
+          "independent export: cargo fmt --check -p scenario \u2014 clean"
+        ],
+        "caveats": [
+          "report cites implementation baseline host 62d5b524; proof content is on 58b7e6f7 (ancestor of dirty worktree HEAD)",
+          "remaining-production names Varrock East; fixtures intentionally use West booth helper path, documented in 05d",
+          "herb named filter_violated bank check lacks gem's bank_generation>baseline guard \u2014 unit witnesses pass; LIVE flakiness if any is root-owned",
+          "dirty concurrent script-crate edits in campaign worktree do not compile host-play; verification used git archive export of 58b7e6f7"
+        ],
+        "worker_session_id": "20260910_214713_dde5b9"
+      },
+      "worker_pid": null,
+      "started_at": 1789091233,
+      "ended_at": 1789091600
+    }
+  ],
+  "actual_session": {
+    "id": "20260910_214713_dde5b9",
+    "model": "grok-4.5",
+    "billing_provider": "xai-oauth",
+    "started_at": 1789091234.2734048,
+    "ended_at": 1789091601.429129,
+    "title": "Work kanban task t_3317197c"
+  },
+  "observed_at": "2026-09-11T01:55:52.198713+00:00"
+}

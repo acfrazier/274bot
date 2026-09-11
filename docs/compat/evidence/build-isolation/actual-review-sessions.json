@@ -1,0 +1,29 @@
+{
+  "observed_at": "2026-09-11T02:26:35.772972+00:00",
+  "sessions": [
+    {
+      "id": "20260910_220818_88e7da",
+      "model": "grok-4.5",
+      "billing_provider": "xai-oauth",
+      "started_at": 1789092499.705525,
+      "ended_at": 1789092730.013968,
+      "title": "Work kanban task t_3737503d"
+    },
+    {
+      "id": "20260910_221321_57a8f1",
+      "model": "grok-4.5",
+      "billing_provider": "xai-oauth",
+      "started_at": 1789092802.156982,
+      "ended_at": 1789093261.194471,
+      "title": "Work kanban task t_90e850ab"
+    },
+    {
+      "id": "20260910_222128_b81b7d",
+      "model": "grok-4.5",
+      "billing_provider": "xai-oauth",
+      "started_at": 1789093289.275655,
+      "ended_at": null,
+      "title": "Work kanban task t_42719b42"
+    }
+  ]
+}

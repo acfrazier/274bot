@@ -1,0 +1,14 @@
+{"phase":"progress","stage":"Checking game files","completed":0,"total":8}
+{"phase":"progress","stage":"Checking game files","completed":8,"total":8}
+{"phase":"progress","stage":"Reading cache archives","completed":0,"total":8}
+{"phase":"progress","stage":"Reading cache archives","completed":8,"total":8}
+{"phase":"progress","stage":"Loading navigation","completed":0,"total":1}
+{"phase":"progress","stage":"Loading navigation","completed":1,"total":1}
+{"phase":"progress","stage":"Checking game files","completed":0,"total":8}
+{"phase":"progress","stage":"Checking game files","completed":8,"total":8}
+{"phase":"progress","stage":"Loading game data","completed":0,"total":4}
+{"phase":"progress","stage":"Loading game data","completed":4,"total":4}
+{"phase":"progress","stage":"Checking game files","completed":0,"total":8}
+{"phase":"progress","stage":"Checking game files","completed":8,"total":8}
+{"phase":"progress","stage":"Final checks","completed":1,"total":1}
+PASS: nav_origin_probe: {"revision":289,"cache_id":"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09","origin":"bundled","pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/Nav Bundled Proof.app/Contents/Resources/nav/289/274bot.navpack","pack_reads":1,"pack_hashes":0,"pack_decodes":1,"hash_stage_starts":0,"same_world_arc":true,"preserved_after_disk_edit":true,"new_bind_refusal":"navigation /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/Nav Bundled Proof.app/Contents/Resources/nav/289/274bot.navpack: bad pack magic (expected b\"274N\" or b\"274V\")"}

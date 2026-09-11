@@ -1,0 +1,10 @@
+
+running 5 tests
+test app::tests::loadout_combo_lists_store_names ... ok
+test loadouts::tests::invalid_empty_name_preserves_store ... ok
+test loadouts::tests::save_renames_in_place_without_dropping_supplies ... ok
+test loadouts::tests::failed_save_restores_store_and_does_not_report_saved ... ok
+test loadouts::tests::copy_equipment_helper_keeps_supplies ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 392 filtered out; finished in 0.05s
+

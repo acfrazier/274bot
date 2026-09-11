@@ -1,0 +1,12 @@
+{
+  "detected_at": "2026-09-11T02:11:47.895211+00:00",
+  "intended_host_commit": "d2372fe018f3fdaf69b90fe25ba25247ef74ff53",
+  "failed_build": "docs/compat/evidence/navigation-load/build-external-nav_origin_probe.jsonl",
+  "shared_target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target",
+  "compiler_errors": [
+    "UseOn expected four fields absent in intended source",
+    "ItemRowInput expected slot absent in intended source"
+  ],
+  "effect": "Binary-level observations remain; intended source snapshot is not exact compiled-source provenance for shared-target builds.",
+  "resolution": "New empty Cargo target per immutable candidate/variant; preserve artifacts and rerun source-qualified acceptance."
+}

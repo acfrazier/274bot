@@ -8,7 +8,8 @@
     "walk_to": "WalkTo remains native 274bot navigation and is not a JsLibrary card",
     "script_suitability": "Script loading and starting are revision agnostic. Users determine suitability for their chosen revision and platform; host/client boundaries refuse unsupported operations. This evidence ledger is not a loading or starting allowlist.",
     "foreign_script_defects": "Operator clarified 2026-09-11: preserve host behavior; dim a demonstrably broken imported script with source identity, failure evidence and a clear reason. Keep the original inventory/history. Do not dim a host/shim bug or alter host semantics to accommodate foreign-script defects.",
-    "ancillary_feature_stubs": "Ancillary dependencies such as clue solving remain honest stubs for separate future native host feature projects; integrate through the shim when those host features exist. Such unavailable ancillary scope alone does not dim an otherwise working card. Preserve the deferred branch refusal policy; no imported foreign planners or fabricated completion."
+    "ancillary_feature_stubs": "Ancillary dependencies such as clue solving remain honest stubs for separate future native host feature projects; integrate through the shim when those host features exist. Such unavailable ancillary scope alone does not dim an otherwise working card. Preserve the deferred branch refusal policy; no imported foreign planners or fabricated completion.",
+    "build_provenance": "Historical shared-target runs remain binary observations. Root detected compiled dependency reuse on 2026-09-11; exact-source acceptance requires isolated-build receipts and fresh qualification. See docs/compat/evidence/build-isolation/README.md."
   },
   "catalogs": [
     {
@@ -10528,7 +10529,7 @@
           "help": "Allow equipped staffs to provide elemental runes (Air staff, Fire staff, etc.)"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -10727,7 +10728,7 @@
           "help": "Allow equipped staffs to provide elemental runes (Air staff, Fire staff, etc.)"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -11161,7 +11162,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -11855,7 +11856,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -12290,7 +12291,7 @@
           "help": "opt in above 1; the equipped weapon must offer exact Attack, Strength, and Defensive styles"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -12550,7 +12551,7 @@
           "help": "opt in above 1; the equipped weapon must offer exact Attack, Strength, and Defensive styles"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -12847,7 +12848,7 @@
           "help": "leave the dungeon when food is gone and HP reaches this threshold"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -13243,7 +13244,7 @@
           "help": "leave the dungeon when food is gone and HP reaches this threshold"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -13994,7 +13995,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -14915,7 +14916,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -15705,7 +15706,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -16447,7 +16448,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -17249,7 +17250,7 @@
           "help": "Verbose adds task-switch and decision traces (pack census, loot skips, slot freeing, escape reasons)"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -18177,7 +18178,7 @@
           "help": "Verbose adds task-switch and decision traces (pack census, loot skips, slot freeing, escape reasons)"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -19125,7 +19126,7 @@
           "help": "left at the Seers default, this follows the escape teleport"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -19979,7 +19980,7 @@
           "help": "left at the Seers default, this follows the escape teleport"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -20710,7 +20711,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -21397,7 +21398,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -22009,7 +22010,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/combat/food.js",
@@ -22573,7 +22574,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/combat/food.js",
@@ -23398,7 +23399,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -24349,7 +24350,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -25053,7 +25054,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -25687,7 +25688,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -26151,7 +26152,7 @@
           "help": "Fight mode kills guards, which drop medium clues \u2014 solve them on the spot"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -26517,7 +26518,7 @@
           "help": "Fight mode kills guards, which drop medium clues \u2014 solve them on the spot"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -26864,7 +26865,7 @@
           "help": "When on: fletch magic shortbows at 80 / longbows at 85 (needs a Knife), then bank those. When off: bank the logs. Missing Knife at the gnome bank stops the script."
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/acquisition/Tools.js",
@@ -27162,7 +27163,7 @@
           "help": "When on: fletch magic shortbows at 80 / longbows at 85 (needs a Knife), then bank those. When off: bank the logs. Missing Knife at the gnome bank stops the script."
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/acquisition/Tools.js",
@@ -27443,7 +27444,7 @@
       "revision": 274,
       "content_identity": "274",
       "settings_and_behavior_branches": [],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -27685,7 +27686,7 @@
       "revision": 289,
       "content_identity": "289",
       "settings_and_behavior_branches": [],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -27980,7 +27981,7 @@
           "help": "the Mule Recipient this runner delivers essence to"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -28269,7 +28270,7 @@
           "help": "the Mule Recipient this runner delivers essence to"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -28621,7 +28622,7 @@
           "help": "Master and runner wait and trade inside the altar. Runners need a nature talisman."
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -29039,7 +29040,7 @@
           "help": "Master and runner wait and trade inside the altar. Runners need a nature talisman."
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -29518,7 +29519,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bank/Bank.js",
@@ -30001,7 +30002,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bank/Bank.js",
@@ -30408,7 +30409,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -30632,12 +30633,15 @@
       "source_version_difference": "baseline modes are selected by product; direct Bank.openBooth/openNearest; leashRadius setting present",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Full core bank cycle passed on a frozen build; supported option branches and integrated/frontend qualification remain outstanding.",
+      "status_detail": "Reviewed a4157243 isolated build passes the full string-only bank/restock/further-output loop on both catalogs and cut-and-string on the newer catalog. Earlier core-cut evidence retains its shared-target provenance qualification. Other supported product/material options and integrated/frontend qualification remain outstanding.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-100adccc-6c6bb2d5.json",
         "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-100adccc-6c6bb2d5.log",
-        "docs/compat/05-catalog-proof.md"
+        "docs/compat/05-catalog-proof.md",
+        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-string-100adccc-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-string-100adccc-a4157243.log",
+        "docs/compat/evidence/inventory-use-on/review.json"
       ]
     },
     {
@@ -30750,7 +30754,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -30974,12 +30978,15 @@
       "source_version_difference": "baseline modes are selected by product; direct Bank.openBooth/openNearest; leashRadius setting present",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Full core bank cycle passed on a frozen build; supported option branches and integrated/frontend qualification remain outstanding.",
+      "status_detail": "Reviewed a4157243 isolated build passes the full string-only bank/restock/further-output loop on both catalogs and cut-and-string on the newer catalog. Earlier core-cut evidence retains its shared-target provenance qualification. Other supported product/material options and integrated/frontend qualification remain outstanding.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-100adccc-6c6bb2d5.json",
         "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-100adccc-6c6bb2d5.log",
-        "docs/compat/05-catalog-proof.md"
+        "docs/compat/05-catalog-proof.md",
+        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-string-100adccc-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-string-100adccc-a4157243.log",
+        "docs/compat/evidence/inventory-use-on/review.json"
       ]
     },
     {
@@ -31040,7 +31047,7 @@
           "help": "withdraws and drops them. There is no bank-side destroy, and a drop cannot be undone"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -31259,7 +31266,7 @@
           "help": "withdraws and drops them. There is no bank-side destroy, and a drop cannot be undone"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -31446,7 +31453,7 @@
           "help": "Feathers are spam-used on this tier of stackable dart tips; runs anywhere and stops when either stack is empty"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -31589,7 +31596,7 @@
           "help": "Feathers are spam-used on this tier of stackable dart tips; runs anywhere and stops when either stack is empty"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -31764,7 +31771,7 @@
           "help": "0 = never withdraw food"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -32051,7 +32058,7 @@
           "help": "0 = never withdraw food"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -32306,7 +32313,7 @@
           "help": "check specific herbs to restrict the run; leave all unchecked to clean every herb your Herblore level allows \u2014 the bot deposits everything from your pack into the bank each cycle, including non-herbs, so start with nothing valuable carried"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -32490,7 +32497,7 @@
           "help": "check specific herbs to restrict the run; leave all unchecked to clean every herb your Herblore level allows \u2014 the bot deposits everything from your pack into the bank each cycle, including non-herbs, so start with nothing valuable carried"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -32722,7 +32729,7 @@
           "help": "Shown when Secondary is Custom \u2014 a secondary name like \"eye of newt\" or \"snape\"."
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -32952,7 +32959,7 @@
           "help": "Shown when Secondary is Custom \u2014 a secondary name like \"eye of newt\" or \"snape\"."
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -33134,7 +33141,7 @@
           "help": "the exact bank item to withdraw and bury, e.g. Bones, Big bones, or Dragon bones"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bank/Banking.js",
@@ -33296,7 +33303,7 @@
           "help": "the exact bank item to withdraw and bury, e.g. Bones, Big bones, or Dragon bones"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bank/Banking.js",
@@ -33554,7 +33561,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -33855,7 +33862,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -34076,7 +34083,7 @@
           "help": "topped up whenever the pack count drops below this; keep it above the casts-per-trip so a short bank stock never stalls the run"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -34284,7 +34291,7 @@
           "help": "topped up whenever the pack count drops below this; keep it above the casts-per-trip so a short bank stock never stalls the run"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -34508,7 +34515,7 @@
           "help": "how many notes + nature runes to withdraw each trip; both stack in a single slot each, so even 1000 fits in 2 pack slots"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -34772,7 +34779,7 @@
           "help": "how many notes + nature runes to withdraw each trip; both stack in a single slot each, so even 1000 fits in 2 pack slots"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -35115,7 +35122,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -35426,7 +35433,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -35722,7 +35729,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -36022,7 +36029,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -36405,7 +36412,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -36784,7 +36791,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -37000,7 +37007,7 @@
           "help": "spin flax at the Seers wheel into bow strings"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -37160,7 +37167,7 @@
           "help": "spin flax at the Seers wheel into bow strings"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -37304,7 +37311,7 @@
           "help": "check specific gems to restrict the run; leave all unchecked to cut every gem your Crafting level allows \u2014 the bot deposits everything from your pack into the bank each cycle, including non-gems, so start with nothing valuable carried"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -37484,7 +37491,7 @@
           "help": "check specific gems to restrict the run; leave all unchecked to cut every gem your Crafting level allows \u2014 the bot deposits everything from your pack into the bank each cycle, including non-gems, so start with nothing valuable carried"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -37680,7 +37687,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -37891,7 +37898,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -38192,7 +38199,7 @@
           "help": "max ticks to wait for XP or a known-delaying event before treating as timeout"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/combat/food.js",
@@ -38629,7 +38636,7 @@
           "help": "max ticks to wait for XP or a known-delaying event before treating as timeout"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/combat/food.js",
@@ -39008,7 +39015,7 @@
           "help": "Thieving 20: Baker's stall cakes when the selected food is gone. Thieving 40: pickpocket Ardougne guards for boat/entrance coins, eating cakes after stuns"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -39440,7 +39447,7 @@
           "help": "Thieving 20: Baker's stall cakes when the selected food is gone. Thieving 40: pickpocket Ardougne guards for boat/entrance coins, eating cakes after stuns"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -39875,7 +39882,7 @@
           "help": "When enabled, crafter withdraws essence from bank. When disabled, mules bring all essence (blank rune mode). Only applies to Crafter mode."
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -40176,7 +40183,7 @@
           "help": "When enabled, crafter withdraws essence from bank. When disabled, mules bring all essence (blank rune mode). Only applies to Crafter mode."
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -40506,7 +40513,7 @@
           "help": "wait between buy passes once the stock is drained (elemental runes restock 1/30s, law/nature 1/3min)"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -40794,7 +40801,7 @@
           "help": "wait between buy passes once the stock is drained (elemental runes restock 1/30s, law/nature 1/3min)"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -41034,7 +41041,7 @@
           "help": "comma-separated name fragments, e.g. door, gate"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -41217,7 +41224,7 @@
           "help": "comma-separated name fragments, e.g. door, gate"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -41439,7 +41446,7 @@
           "help": "tanning is charged per hide, so the bot keeps a coin float in the pack"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -41685,7 +41692,7 @@
           "help": "tanning is charged per hide, so the bot keeps a coin float in the pack"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -41977,7 +41984,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -42453,7 +42460,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -42878,7 +42885,7 @@
           "help": "only withdrawn on a shop run"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -43119,7 +43126,7 @@
           "help": "only withdrawn on a shop run"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -43310,7 +43317,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -43501,7 +43508,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -43692,7 +43699,7 @@
           "help": "each spot is a bank plus the longest clear west-running ground next to it"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bank/Banking.js",
@@ -44030,7 +44037,7 @@
           "help": "each spot is a bank plus the longest clear west-running ground next to it"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bank/Banking.js",
@@ -44387,7 +44394,7 @@
           "help": "Runner only: bank non-flax junk (keeps flax) when a full pack still has trash, or mid-trip when junk leaves room for fewer than this many flax"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -44716,7 +44723,7 @@
           "help": "Runner only: bank non-flax junk (keeps flax) when a full pack still has trash, or mid-trip when junk leaves room for fewer than this many flax"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -45066,7 +45073,7 @@
           "help": "Allow equipped staffs to provide elemental runes (Air staff, Fire staff, etc.)"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -45265,7 +45272,7 @@
           "help": "Allow equipped staffs to provide elemental runes (Air staff, Fire staff, etc.)"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -45699,7 +45706,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -46393,7 +46400,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -46828,7 +46835,7 @@
           "help": "opt in above 1; the equipped weapon must offer exact Attack, Strength, and Defensive styles"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -47088,7 +47095,7 @@
           "help": "opt in above 1; the equipped weapon must offer exact Attack, Strength, and Defensive styles"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -47385,7 +47392,7 @@
           "help": "leave the dungeon when food is gone and HP reaches this threshold"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -47781,7 +47788,7 @@
           "help": "leave the dungeon when food is gone and HP reaches this threshold"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -48532,7 +48539,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -49453,7 +49460,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -50243,7 +50250,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -50985,7 +50992,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -51787,7 +51794,7 @@
           "help": "Verbose adds task-switch and decision traces (pack census, loot skips, slot freeing, escape reasons)"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -52715,7 +52722,7 @@
           "help": "Verbose adds task-switch and decision traces (pack census, loot skips, slot freeing, escape reasons)"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -53663,7 +53670,7 @@
           "help": "left at the Seers default, this follows the escape teleport"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -54517,7 +54524,7 @@
           "help": "left at the Seers default, this follows the escape teleport"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -55248,7 +55255,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -55935,7 +55942,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -56547,7 +56554,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/combat/food.js",
@@ -57111,7 +57118,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/combat/food.js",
@@ -57936,7 +57943,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -58887,7 +58894,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -59591,7 +59598,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -60225,7 +60232,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -60689,7 +60696,7 @@
           "help": "Fight mode kills guards, which drop medium clues \u2014 solve them on the spot"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -61055,7 +61062,7 @@
           "help": "Fight mode kills guards, which drop medium clues \u2014 solve them on the spot"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -61402,7 +61409,7 @@
           "help": "When on: fletch magic shortbows at 80 / longbows at 85 (needs a Knife), then bank those. When off: bank the logs. Missing Knife at the gnome bank stops the script."
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/acquisition/Tools.js",
@@ -61700,7 +61707,7 @@
           "help": "When on: fletch magic shortbows at 80 / longbows at 85 (needs a Knife), then bank those. When off: bank the logs. Missing Knife at the gnome bank stops the script."
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/acquisition/Tools.js",
@@ -61981,7 +61988,7 @@
       "revision": 274,
       "content_identity": "274",
       "settings_and_behavior_branches": [],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -62223,7 +62230,7 @@
       "revision": 289,
       "content_identity": "289",
       "settings_and_behavior_branches": [],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -62518,7 +62525,7 @@
           "help": "the Mule Recipient this runner delivers essence to"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -62807,7 +62814,7 @@
           "help": "the Mule Recipient this runner delivers essence to"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -63159,7 +63166,7 @@
           "help": "Master and runner wait and trade inside the altar. Runners need a nature talisman."
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -63577,7 +63584,7 @@
           "help": "Master and runner wait and trade inside the altar. Runners need a nature talisman."
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -64056,7 +64063,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bank/Bank.js",
@@ -64539,7 +64546,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bank/Bank.js",
@@ -64951,7 +64958,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -65184,12 +65191,17 @@
       "source_version_difference": "adds mode=auto|cut|string|cut+string, uses Banking.open({stand,boothName,boothOp}), removes leashRadius, and adds combined cut-then-string behavior",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Full core bank cycle passed on a frozen build; supported option branches and integrated/frontend qualification remain outstanding.",
+      "status_detail": "Reviewed a4157243 isolated build passes the full string-only bank/restock/further-output loop on both catalogs and cut-and-string on the newer catalog. Earlier core-cut evidence retains its shared-target provenance qualification. Other supported product/material options and integrated/frontend qualification remain outstanding.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-8e7d965b-6c6bb2d5.json",
         "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-8e7d965b-6c6bb2d5.log",
-        "docs/compat/05-catalog-proof.md"
+        "docs/compat/05-catalog-proof.md",
+        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-string-8e7d965b-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-string-8e7d965b-a4157243.log",
+        "docs/compat/evidence/inventory-use-on/review.json",
+        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-cut-string-8e7d965b-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-cut-string-8e7d965b-a4157243.log"
       ]
     },
     {
@@ -65307,7 +65319,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -65540,12 +65552,17 @@
       "source_version_difference": "adds mode=auto|cut|string|cut+string, uses Banking.open({stand,boothName,boothOp}), removes leashRadius, and adds combined cut-then-string behavior",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Full core bank cycle passed on a frozen build; supported option branches and integrated/frontend qualification remain outstanding.",
+      "status_detail": "Reviewed a4157243 isolated build passes the full string-only bank/restock/further-output loop on both catalogs and cut-and-string on the newer catalog. Earlier core-cut evidence retains its shared-target provenance qualification. Other supported product/material options and integrated/frontend qualification remain outstanding.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-8e7d965b-6c6bb2d5.json",
         "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-8e7d965b-6c6bb2d5.log",
-        "docs/compat/05-catalog-proof.md"
+        "docs/compat/05-catalog-proof.md",
+        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-string-8e7d965b-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-string-8e7d965b-a4157243.log",
+        "docs/compat/evidence/inventory-use-on/review.json",
+        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-cut-string-8e7d965b-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-cut-string-8e7d965b-a4157243.log"
       ]
     },
     {
@@ -65606,7 +65623,7 @@
           "help": "withdraws and drops them. There is no bank-side destroy, and a drop cannot be undone"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -65825,7 +65842,7 @@
           "help": "withdraws and drops them. There is no bank-side destroy, and a drop cannot be undone"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -66012,7 +66029,7 @@
           "help": "Feathers are spam-used on this tier of stackable dart tips; runs anywhere and stops when either stack is empty"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -66155,7 +66172,7 @@
           "help": "Feathers are spam-used on this tier of stackable dart tips; runs anywhere and stops when either stack is empty"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -66330,7 +66347,7 @@
           "help": "0 = never withdraw food"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -66617,7 +66634,7 @@
           "help": "0 = never withdraw food"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -66872,7 +66889,7 @@
           "help": "check specific herbs to restrict the run; leave all unchecked to clean every herb your Herblore level allows \u2014 the bot deposits everything from your pack into the bank each cycle, including non-herbs, so start with nothing valuable carried"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -67056,7 +67073,7 @@
           "help": "check specific herbs to restrict the run; leave all unchecked to clean every herb your Herblore level allows \u2014 the bot deposits everything from your pack into the bank each cycle, including non-herbs, so start with nothing valuable carried"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -67288,7 +67305,7 @@
           "help": "Shown when Secondary is Custom \u2014 a secondary name like \"eye of newt\" or \"snape\"."
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -67518,7 +67535,7 @@
           "help": "Shown when Secondary is Custom \u2014 a secondary name like \"eye of newt\" or \"snape\"."
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -67700,7 +67717,7 @@
           "help": "the exact bank item to withdraw and bury, e.g. Bones, Big bones, or Dragon bones"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bank/Banking.js",
@@ -67862,7 +67879,7 @@
           "help": "the exact bank item to withdraw and bury, e.g. Bones, Big bones, or Dragon bones"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bank/Banking.js",
@@ -68120,7 +68137,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -68421,7 +68438,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -68642,7 +68659,7 @@
           "help": "topped up whenever the pack count drops below this; keep it above the casts-per-trip so a short bank stock never stalls the run"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -68851,7 +68868,7 @@
           "help": "topped up whenever the pack count drops below this; keep it above the casts-per-trip so a short bank stock never stalls the run"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -69076,7 +69093,7 @@
           "help": "how many notes + nature runes to withdraw each trip; both stack in a single slot each, so even 1000 fits in 2 pack slots"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -69340,7 +69357,7 @@
           "help": "how many notes + nature runes to withdraw each trip; both stack in a single slot each, so even 1000 fits in 2 pack slots"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -69683,7 +69700,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -69994,7 +70011,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -70290,7 +70307,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -70590,7 +70607,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -70973,7 +70990,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -71352,7 +71369,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -71568,7 +71585,7 @@
           "help": "spin flax at the Seers wheel into bow strings"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -71728,7 +71745,7 @@
           "help": "spin flax at the Seers wheel into bow strings"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -71872,7 +71889,7 @@
           "help": "check specific gems to restrict the run; leave all unchecked to cut every gem your Crafting level allows \u2014 the bot deposits everything from your pack into the bank each cycle, including non-gems, so start with nothing valuable carried"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -72052,7 +72069,7 @@
           "help": "check specific gems to restrict the run; leave all unchecked to cut every gem your Crafting level allows \u2014 the bot deposits everything from your pack into the bank each cycle, including non-gems, so start with nothing valuable carried"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -72248,7 +72265,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -72459,7 +72476,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -72760,7 +72777,7 @@
           "help": "max ticks to wait for XP or a known-delaying event before treating as timeout"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/combat/food.js",
@@ -73197,7 +73214,7 @@
           "help": "max ticks to wait for XP or a known-delaying event before treating as timeout"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/combat/food.js",
@@ -73576,7 +73593,7 @@
           "help": "Thieving 20: Baker's stall cakes when the selected food is gone. Thieving 40: pickpocket Ardougne guards for boat/entrance coins, eating cakes after stuns"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -74008,7 +74025,7 @@
           "help": "Thieving 20: Baker's stall cakes when the selected food is gone. Thieving 40: pickpocket Ardougne guards for boat/entrance coins, eating cakes after stuns"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -74443,7 +74460,7 @@
           "help": "When enabled, crafter withdraws essence from bank. When disabled, mules bring all essence (blank rune mode). Only applies to Crafter mode."
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -74744,7 +74761,7 @@
           "help": "When enabled, crafter withdraws essence from bank. When disabled, mules bring all essence (blank rune mode). Only applies to Crafter mode."
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -75074,7 +75091,7 @@
           "help": "wait between buy passes once the stock is drained (elemental runes restock 1/30s, law/nature 1/3min)"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -75362,7 +75379,7 @@
           "help": "wait between buy passes once the stock is drained (elemental runes restock 1/30s, law/nature 1/3min)"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -75602,7 +75619,7 @@
           "help": "comma-separated name fragments, e.g. door, gate"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -75785,7 +75802,7 @@
           "help": "comma-separated name fragments, e.g. door, gate"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -76007,7 +76024,7 @@
           "help": "tanning is charged per hide, so the bot keeps a coin float in the pack"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -76253,7 +76270,7 @@
           "help": "tanning is charged per hide, so the bot keeps a coin float in the pack"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -76545,7 +76562,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -77021,7 +77038,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -77446,7 +77463,7 @@
           "help": "only withdrawn on a shop run"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -77687,7 +77704,7 @@
           "help": "only withdrawn on a shop run"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -77878,7 +77895,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -78069,7 +78086,7 @@
           "help": null
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -78260,7 +78277,7 @@
           "help": "each spot is a bank plus the longest clear west-running ground next to it"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bank/Banking.js",
@@ -78598,7 +78615,7 @@
           "help": "each spot is a bank plus the longest clear west-running ground next to it"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bank/Banking.js",
@@ -78955,7 +78972,7 @@
           "help": "Runner only: bank non-flax junk (keeps flax) when a full pack still has trash, or mid-trip when junk leaves room for fewer than this many flax"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",
@@ -79284,7 +79301,7 @@
           "help": "Runner only: bank non-flax junk (keeps flax) when a full pack still has trash, or mid-trip when junk leaves room for fewer than this many flax"
         }
       ],
-      "branch_coverage_contract": "all enumerated/default/conditional settings remain in scope unless an explicit deferred branch is listed; no option reduction is authorized",
+      "branch_coverage_contract": "All enumerated/default/conditional settings remain in scope except explicitly deferred branches or a diagnosed foreign-script defect under the operator dim policy; host/shim bugs remain in scope.",
       "imported_api_members": [
         {
           "specifier": "../../api/bot/Bot.js",

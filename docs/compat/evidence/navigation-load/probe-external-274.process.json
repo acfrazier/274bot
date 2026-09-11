@@ -1,0 +1,27 @@
+{
+  "command": [
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/Nav External Proof.app/Contents/MacOS/nav_origin_probe",
+    "--profile",
+    "local-274",
+    "--revision",
+    "274",
+    "--engine",
+    "/Users/acfrazier/experiments/Server/engine",
+    "--unpack",
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/unpack-external-274",
+    "--nav-pack",
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/Nav External Proof.app/Contents/Resources/nav/274/274bot.navpack"
+  ],
+  "started_at": "2026-09-11T02:13:58.069350+00:00",
+  "binary_sha256": "9474fddc3858ad3d9e80f7ecb2b95d396daa2d53b99c68ffd90a57008fecc50c",
+  "isolated_build": true,
+  "variant": "external",
+  "revision": 274,
+  "source_receipt": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/navigation-load/private-source-external.json",
+  "private_environment": {
+    "PROBE_EXPECT_ORIGIN": "external",
+    "PROBE_MUTATE_OWNED_PACK": "1"
+  },
+  "elapsed_is_not_performance_measurement": true,
+  "pid": 60623
+}
