@@ -527,6 +527,14 @@ pub struct MapFlagView {
     pub lz: i32,
 }
 
+/// The native coordinate hint target. The client normalizes wire hint
+/// types 2–6 to type 2 before the snapshot reads these world coordinates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct HintTileView {
+    pub x: i32,
+    pub z: i32,
+}
+
 /// Generation-stamped read model. `rebuild_family` copies only the family
 /// whose gen moved; `npcs()` returns the last rebuild without allocating.
 /// Serializes to the whole-window shot sidecar JSON (the terminal state).
@@ -537,6 +545,10 @@ pub struct GameSnapshot {
     gens: ClientGens,
     npc: Vec<NpcView>,
     player: Option<LocalPlayerView>,
+    /// The local actor's native overhead text. This is refreshed on every
+    /// snapshot read because local send/expiry changes do not bump a family.
+    #[serde(skip)]
+    local_overhead_text: Option<String>,
     // Native observation history; deliberately absent from serialized snapshots.
     #[serde(skip)]
     thieving_stun_tick: Option<u32>,
@@ -583,6 +595,10 @@ pub struct GameSnapshot {
     /// The minimap flag from the last map-flag rebuild; `None` while no
     /// flag is set.
     map_flag: Option<MapFlagView>,
+    /// The client's current coordinate hint. NPC/player/no hint kinds are
+    /// absent; this is refreshed on every snapshot read because HINT_ARROW
+    /// has no dedicated generation family.
+    hint_tile: Option<HintTileView>,
     /// Scene gen the loc/ground-item views were rebuilt up to. Loc and
     /// ground-item changes bump `gens.scene`, so both track it here
     /// (separately from the scene family's own counter).
@@ -699,6 +715,7 @@ impl Default for GameSnapshot {
             gens: ClientGens::default(),
             npc: Vec::new(),
             player: None,
+            local_overhead_text: None,
             thieving_stun_tick: None,
             thieving_stun_stamp: None,
             players: Vec::new(),
@@ -719,6 +736,7 @@ impl Default for GameSnapshot {
             world: WorldStateView::default(),
             camera: CameraView::default(),
             map_flag: None,
+            hint_tile: None,
             loc_gen: 0,
             loc_model_stamp: empty_loc_model_stamp(),
             loc_static_gen: 0,
@@ -912,6 +930,7 @@ impl GameSnapshot {
     /// gate and the cheap scalar reads that can change without a packet.
     /// Only a real PLAYER_INFO observation advances the host tick.
     pub fn rebuild_from_drain(&mut self, client: &Client, player_info: bool) -> bool {
+        self.refresh_native_facts(client);
         let mut dirty = false;
         dirty |= self.rebuild_family(client, Family::Npc);
         dirty |= self.rebuild_player(client, player_info);
@@ -961,6 +980,14 @@ impl GameSnapshot {
     /// the first `PLAYER_INFO` decodes one.
     pub fn local_player(&self) -> Option<&LocalPlayerView> {
         self.player.as_ref()
+    }
+
+    /// The local actor's current native overhead text. This deliberately
+    /// does not fall back to the game-chat ring or another player's bubble.
+    pub fn local_overhead_text(&self) -> Option<&str> {
+        self.ingame
+            .then_some(self.local_overhead_text.as_deref())
+            .flatten()
     }
 
     /// Remote player views from the last player rebuild, in `player_ids`
@@ -1091,6 +1118,12 @@ impl GameSnapshot {
     /// flag is set.
     pub fn map_flag(&self) -> Option<&MapFlagView> {
         self.map_flag.as_ref()
+    }
+
+    /// The current normalized coordinate hint, absent for other hint kinds
+    /// and outside an active game session.
+    pub fn hint_tile(&self) -> Option<&HintTileView> {
+        self.ingame.then_some(self.hint_tile.as_ref()).flatten()
     }
 
     /// Inventory item views from the last inventory rebuild, in slot
@@ -1358,6 +1391,22 @@ impl GameSnapshot {
         }
         self.refresh_loc_distances(client);
         true
+    }
+
+    /// Refresh native scalar facts that may change without a packet-family
+    /// generation. Clone the overhead string only when its value changes.
+    fn refresh_native_facts(&mut self, client: &Client) {
+        let local_overhead_text = client
+            .ingame
+            .then(|| client.local_player.as_ref()?.entity.chat_message.as_deref())
+            .flatten();
+        if self.local_overhead_text.as_deref() != local_overhead_text {
+            self.local_overhead_text = local_overhead_text.map(str::to_owned);
+        }
+        self.hint_tile = (client.ingame && client.hint_type == 2).then_some(HintTileView {
+            x: client.hint_tile_x,
+            z: client.hint_tile_z,
+        });
     }
 
     /// Rewrite cached loc Chebyshev distances when the local player tile
@@ -2178,6 +2227,10 @@ impl<'a> ReadContext<'a> {
         self.0.local_player()
     }
 
+    pub fn local_overhead_text(&self) -> Option<&str> {
+        self.0.local_overhead_text()
+    }
+
     /// The local player's slot index.
     pub fn self_slot(&self) -> i32 {
         self.0.self_slot()
@@ -2319,6 +2372,10 @@ impl<'a> ReadContext<'a> {
     /// flag is set.
     pub fn map_flag(&self) -> Option<&MapFlagView> {
         self.0.map_flag()
+    }
+
+    pub fn hint_tile(&self) -> Option<&HintTileView> {
+        self.0.hint_tile()
     }
 
     /// The trade offer screen's own items.

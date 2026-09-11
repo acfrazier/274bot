@@ -644,9 +644,26 @@ impl SlotScript {
         input: &crate::isolate_fb::SnapshotInput<'_>,
         force_banks: bool,
     ) -> Vec<u8> {
-        let (bytes, fp) =
-            self.ipc
-                .encode_snapshot_delta(self.last_snapshot.as_ref(), input, force_banks);
+        self.encode_snapshot_delta_with_native(
+            input,
+            crate::isolate_fb::NativeFactsInput::default(),
+            force_banks,
+        )
+    }
+
+    #[cfg(feature = "load")]
+    pub fn encode_snapshot_delta_with_native(
+        &mut self,
+        input: &crate::isolate_fb::SnapshotInput<'_>,
+        native: crate::isolate_fb::NativeFactsInput<'_>,
+        force_banks: bool,
+    ) -> Vec<u8> {
+        let (bytes, fp) = self.ipc.encode_snapshot_delta_with_native(
+            self.last_snapshot.as_ref(),
+            input,
+            native,
+            force_banks,
+        );
         self.last_snapshot = Some(fp);
         bytes
     }

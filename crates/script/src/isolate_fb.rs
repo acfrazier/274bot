@@ -158,6 +158,9 @@ const VT_SNAP_BANK_OP_RESULT: VOffsetT = 132;
 const VT_SNAP_REACH: VOffsetT = 134;
 const VT_SNAP_ATTACKED_BY_PLAYER: VOffsetT = 136;
 const VT_SNAP_WIDGETS: VOffsetT = 138;
+const VT_SNAP_SELF_CHAT: VOffsetT = 140;
+const VT_SNAP_HINT_TILE_X: VOffsetT = 142;
+const VT_SNAP_HINT_TILE_Z: VOffsetT = 144;
 
 // WidgetText: { component_id, text }
 const VT_WT_COMPONENT: VOffsetT = 4;
@@ -522,6 +525,14 @@ pub struct SnapshotInput<'a> {
     pub attacked_by_player: bool,
     /// Selected-world widget text rows. Absent id is not a stale IfType label.
     pub widgets: &'a [WidgetTextInput<'a>],
+}
+
+/// Optional native facts appended to the isolate snapshot. Kept separate
+/// from [`SnapshotInput`] so existing one-shot callers remain source-compatible.
+#[derive(Clone, Copy, Default)]
+pub struct NativeFactsInput<'a> {
+    pub self_chat: Option<&'a str>,
+    pub hint_tile: Option<(i32, i32)>,
 }
 
 /// One currently posted widget text row (`reader.ifText`).
@@ -1053,6 +1064,9 @@ impl Verifiable for SnapshotReader<'_> {
                 VT_SNAP_WIDGETS,
                 false,
             )?
+            .visit_field::<ForwardsUOffset<&str>>("self_chat", VT_SNAP_SELF_CHAT, false)?
+            .visit_field::<i32>("hint_tile_x", VT_SNAP_HINT_TILE_X, false)?
+            .visit_field::<i32>("hint_tile_z", VT_SNAP_HINT_TILE_Z, false)?
             .finish();
         Ok(())
     }
@@ -1375,6 +1389,30 @@ impl SnapshotReader<'_> {
     }
     pub fn widgets(&self) -> Vec<WidgetTextReader<'_>> {
         rows::<WidgetTextReader>(&self.tab, VT_SNAP_WIDGETS)
+    }
+    pub fn has_self_chat(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<&str>>(VT_SNAP_SELF_CHAT, None)
+                .is_some()
+        }
+    }
+    pub fn self_chat(&self) -> Option<&str> {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<&str>>(VT_SNAP_SELF_CHAT, None)
+        }
+    }
+    pub fn has_hint_tile(&self) -> bool {
+        unsafe {
+            self.tab.get::<i32>(VT_SNAP_HINT_TILE_X, None).is_some()
+                || self.tab.get::<i32>(VT_SNAP_HINT_TILE_Z, None).is_some()
+        }
+    }
+    pub fn hint_tile(&self) -> Option<(i32, i32)> {
+        let x = unsafe { self.tab.get::<i32>(VT_SNAP_HINT_TILE_X, None) }.unwrap_or(-1);
+        let z = unsafe { self.tab.get::<i32>(VT_SNAP_HINT_TILE_Z, None) }.unwrap_or(-1);
+        (x >= 0 && z >= 0).then_some((x, z))
     }
     pub fn has_hold(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_HOLD, None).is_some() }
@@ -1789,11 +1827,20 @@ pub struct SnapshotFingerprint {
     pub reach: ReachViewFp,
     pub attacked_by_player: bool,
     pub widgets: Vec<(i32, String)>,
+    pub self_chat: Option<String>,
+    pub hint_tile: Option<(i32, i32)>,
 }
 
 impl SnapshotFingerprint {
     /// Own the input's field values (names cloned) for later comparison.
     pub fn from_input(input: &SnapshotInput<'_>) -> SnapshotFingerprint {
+        Self::from_input_with_native(input, NativeFactsInput::default())
+    }
+
+    pub fn from_input_with_native(
+        input: &SnapshotInput<'_>,
+        native: NativeFactsInput<'_>,
+    ) -> SnapshotFingerprint {
         fn item_row_fp(r: &ItemRowInput<'_>) -> ItemRowFp {
             ItemRowFp {
                 name: r.name.map(str::to_string),
@@ -1972,6 +2019,8 @@ impl SnapshotFingerprint {
                 .iter()
                 .map(|w| (w.component_id, w.text.to_string()))
                 .collect(),
+            self_chat: native.self_chat.map(str::to_string),
+            hint_tile: native.hint_tile,
         }
     }
 }
@@ -2050,6 +2099,8 @@ pub struct DeltaMask {
     pub reach: bool,
     pub attacked_by_player: bool,
     pub widgets: bool,
+    pub self_chat: bool,
+    pub hint_tile: bool,
 }
 
 impl DeltaMask {
@@ -2123,6 +2174,8 @@ impl DeltaMask {
             reach: true,
             attacked_by_player: true,
             widgets: true,
+            self_chat: true,
+            hint_tile: true,
         }
     }
 
@@ -2206,6 +2259,8 @@ impl DeltaMask {
             reach: next.reach != last.reach,
             attacked_by_player: next.attacked_by_player != last.attacked_by_player,
             widgets: next.widgets != last.widgets,
+            self_chat: next.self_chat != last.self_chat,
+            hint_tile: next.hint_tile != last.hint_tile,
         }
     }
 }
@@ -2243,8 +2298,16 @@ impl IsolateBuf {
     /// Encode `input` as a root-`Snapshot` FlatBuffer carrying every field
     /// — the keyframe posted on Start / isolate spawn.
     pub fn encode_snapshot(&mut self, input: &SnapshotInput<'_>) -> Vec<u8> {
+        self.encode_snapshot_with_native(input, NativeFactsInput::default())
+    }
+
+    pub fn encode_snapshot_with_native(
+        &mut self,
+        input: &SnapshotInput<'_>,
+        native: NativeFactsInput<'_>,
+    ) -> Vec<u8> {
         self.builder.reset();
-        encode_snapshot_masked_into(&mut self.builder, input, &DeltaMask::all());
+        encode_snapshot_masked_into(&mut self.builder, input, native, &DeltaMask::all());
         self.copy_finished()
     }
 
@@ -2258,13 +2321,28 @@ impl IsolateBuf {
         input: &SnapshotInput<'_>,
         force_banks: bool,
     ) -> (Vec<u8>, SnapshotFingerprint) {
-        let fp = SnapshotFingerprint::from_input(input);
+        self.encode_snapshot_delta_with_native(
+            last,
+            input,
+            NativeFactsInput::default(),
+            force_banks,
+        )
+    }
+
+    pub fn encode_snapshot_delta_with_native(
+        &mut self,
+        last: Option<&SnapshotFingerprint>,
+        input: &SnapshotInput<'_>,
+        native: NativeFactsInput<'_>,
+        force_banks: bool,
+    ) -> (Vec<u8>, SnapshotFingerprint) {
+        let fp = SnapshotFingerprint::from_input_with_native(input, native);
         let mask = match last {
             None => DeltaMask::all(),
             Some(prev) => DeltaMask::changed(prev, &fp, force_banks),
         };
         self.builder.reset();
-        encode_snapshot_masked_into(&mut self.builder, input, &mask);
+        encode_snapshot_masked_into(&mut self.builder, input, native, &mask);
         (self.copy_finished(), fp)
     }
 
@@ -2290,6 +2368,13 @@ pub fn encode_snapshot(input: &SnapshotInput<'_>) -> Vec<u8> {
     IsolateBuf::new().encode_snapshot(input)
 }
 
+pub fn encode_snapshot_with_native(
+    input: &SnapshotInput<'_>,
+    native: NativeFactsInput<'_>,
+) -> Vec<u8> {
+    IsolateBuf::new().encode_snapshot_with_native(input, native)
+}
+
 /// Encode a delta snapshot: `tick` always; every other field only when it
 /// differs from `last` (all fields when `last` is `None` — the keyframe).
 /// Omitted tables are absent from the buffer, never empty: the isolate
@@ -2307,11 +2392,21 @@ pub fn encode_snapshot_delta(
     IsolateBuf::new().encode_snapshot_delta(last, input, force_banks)
 }
 
+pub fn encode_snapshot_delta_with_native(
+    last: Option<&SnapshotFingerprint>,
+    input: &SnapshotInput<'_>,
+    native: NativeFactsInput<'_>,
+    force_banks: bool,
+) -> (Vec<u8>, SnapshotFingerprint) {
+    IsolateBuf::new().encode_snapshot_delta_with_native(last, input, native, force_banks)
+}
+
 /// Encode `input` carrying exactly the masked fields (`tick` is always
 /// carried).
 fn encode_snapshot_masked_into(
     b: &mut FlatBufferBuilder<'_>,
     input: &SnapshotInput<'_>,
+    native: NativeFactsInput<'_>,
     mask: &DeltaMask,
 ) {
     // Children (strings, sub-tables, vectors) are written before the root
@@ -2558,6 +2653,11 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let self_chat_off = if mask.self_chat {
+        Some(b.create_string(native.self_chat.unwrap_or("")))
+    } else {
+        None
+    };
     let tab = b.start_table();
     b.push_slot_always(VT_SNAP_TICK, input.tick);
     if mask.here {
@@ -2788,6 +2888,14 @@ fn encode_snapshot_masked_into(
     }
     if mask.widgets {
         b.push_slot_always(VT_SNAP_WIDGETS, widgets_off.expect("mask checked"));
+    }
+    if mask.self_chat {
+        b.push_slot_always(VT_SNAP_SELF_CHAT, self_chat_off.expect("mask checked"));
+    }
+    if mask.hint_tile {
+        let (x, z) = native.hint_tile.unwrap_or((-1, -1));
+        b.push_slot_always(VT_SNAP_HINT_TILE_X, x);
+        b.push_slot_always(VT_SNAP_HINT_TILE_Z, z);
     }
     let root = b.end_table(tab);
     b.finish(root, None);

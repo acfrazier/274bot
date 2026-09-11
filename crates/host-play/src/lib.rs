@@ -1036,7 +1036,9 @@ fn script_observe(
                     withdraw_load_result,
                     bank_op_result_seq,
                     bank_op_result,
-                    |input| slot.encode_snapshot_delta(input, force_banks),
+                    |input, native| {
+                        slot.encode_snapshot_delta_with_native(input, native, force_banks)
+                    },
                 );
                 slot.post_snapshot(bytes);
                 slot.store_last_world_id(world_id);
@@ -2316,7 +2318,9 @@ fn script_snapshot_fb(
         false,
         0,
         false,
-        |input| script::isolate_fb::encode_snapshot_delta(last, input, force_banks),
+        |input, native| {
+            script::isolate_fb::encode_snapshot_delta_with_native(last, input, native, force_banks)
+        },
     )
 }
 
@@ -2362,12 +2366,16 @@ fn with_script_snapshot_input<R>(
     withdraw_load_result: bool,
     bank_op_result_seq: u64,
     bank_op_result: bool,
-    f: impl FnOnce(&script::isolate_fb::SnapshotInput<'_>) -> R,
+    f: impl FnOnce(
+        &script::isolate_fb::SnapshotInput<'_>,
+        script::isolate_fb::NativeFactsInput<'_>,
+    ) -> R,
 ) -> R {
     use script::isolate_fb::{
         BankStandInput, ChatLineInput, ChatOptionInput, CombatStyleInput, ItemRowInput,
-        MakeButtonInput, MakeProductInput, NearestBoothInput, ReachViewInput, SceneEntityInput,
-        SideTabIfaceInput, SnapshotInput, StatInput, TileInput, VarpInput, WidgetTextInput,
+        MakeButtonInput, MakeProductInput, NativeFactsInput, NearestBoothInput, ReachViewInput,
+        SceneEntityInput, SideTabIfaceInput, SnapshotInput, StatInput, TileInput, VarpInput,
+        WidgetTextInput,
     };
 
     let flood = snapshot.and_then(|s| {
@@ -3205,7 +3213,13 @@ fn with_script_snapshot_input<R>(
         attacked_by_player,
         widgets: &widgets,
     };
-    f(&input)
+    let native = NativeFactsInput {
+        self_chat: snapshot.and_then(GameSnapshot::local_overhead_text),
+        hint_tile: snapshot
+            .and_then(GameSnapshot::hint_tile)
+            .map(|tile| (tile.x, tile.z)),
+    };
+    f(&input, native)
 }
 /// Whether this observe pass needs a [`WorldState`] from the slot snapshot.
 /// Built only for a Running script (walk arm) or an armed nav bot (route /
@@ -10409,6 +10423,78 @@ export default class T extends LoopingBot {
         assert!(bare.stats().is_empty());
         assert!(!bare.bank_open());
         assert!(bare.ours(), "ours rides the blob for EventSignal");
+    }
+
+    #[test]
+    fn script_snapshot_posts_current_local_overhead_and_coordinate_hint() {
+        let mut c = prepare_client(
+            ClientConfig {
+                host: "127.0.0.1".into(),
+                port: 1,
+                cache_dir: String::new(),
+                members: true,
+                lowmem: true,
+            },
+            1,
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+        );
+        c.ingame = true;
+        let mut local = client::dash3d::ClientPlayer::at(0, 0);
+        local.entity.chat_message = Some("FIGHT!".into());
+        c.local_player = Some(local);
+        c.chat_text[0] = "latest ring line".into();
+        c.hint_type = 2;
+        c.hint_tile_x = 2761;
+        c.hint_tile_z = 9546;
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        c.bump_gens(ServerProt::MESSAGE_GAME);
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let (first_bytes, first_fp) = script_snapshot_fb(
+            None,
+            false,
+            1,
+            Some((3200, 3200, 0)),
+            true,
+            None,
+            Some(&snap),
+            None,
+            None,
+            false,
+            false,
+            false,
+        );
+        let first = script::isolate_fb::decode_snapshot(&first_bytes).expect("first snapshot");
+        assert_eq!(first.self_chat(), Some("FIGHT!"));
+        assert_eq!(first.hint_tile(), Some((2761, 9546)));
+        assert_eq!(first.chat_text(), Some("latest ring line"));
+
+        c.local_player.as_mut().unwrap().entity.chat_message = None;
+        c.hint_type = 0;
+        assert!(!snap.rebuild(&c));
+        let (second_bytes, _) = script_snapshot_fb(
+            Some(&first_fp),
+            false,
+            2,
+            Some((3200, 3200, 0)),
+            true,
+            None,
+            Some(&snap),
+            None,
+            None,
+            false,
+            false,
+            false,
+        );
+        let second = script::isolate_fb::decode_snapshot(&second_bytes).expect("second snapshot");
+        assert!(second.has_self_chat(), "clear must be present in the delta");
+        assert_eq!(second.self_chat(), Some(""));
+        assert!(second.has_hint_tile(), "clear must be present in the delta");
+        assert_eq!(second.hint_tile(), None);
     }
 
     #[test]
