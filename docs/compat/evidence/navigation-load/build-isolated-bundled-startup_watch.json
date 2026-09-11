@@ -1,0 +1,25 @@
+{
+  "variant": "bundled",
+  "example": "startup_watch",
+  "command": [
+    "cargo",
+    "build",
+    "-p",
+    "panel",
+    "--example",
+    "startup_watch",
+    "--message-format=json"
+  ],
+  "started_at": "2026-09-11T02:11:46.758504+00:00",
+  "elapsed_seconds": 18.23,
+  "exit_code": 0,
+  "source": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/source-d2372fe0-bundled",
+  "source_identity": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/navigation-load/private-source-bundled.json",
+  "elapsed_is_not_performance_measurement": true,
+  "isolated_build": true,
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/target-isolated-bundled",
+  "binary": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/startup_watch-bundled-d2372fe0",
+  "binary_sha256": "ddc558373298ad9ded1b7ded08c1e314bc85c08277a0d9616ab3a63d4e798a56",
+  "binary_bytes": 187861648,
+  "source_files_verified": 1587
+}

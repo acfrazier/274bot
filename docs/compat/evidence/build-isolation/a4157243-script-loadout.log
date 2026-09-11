@@ -1,0 +1,24 @@
+   Compiling deno_web v0.244.0
+   Compiling image v0.25.10
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-a4157243-56d8027/vendor/fr-client-rust/crates/client)
+   Compiling deno_crypto v0.227.0
+   Compiling rustyscript v0.12.3
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-a4157243-56d8027/crates/api)
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-a4157243-56d8027/crates/script)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.00s
+     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/target-isolated-a4157243/debug/deps/script-3c6f978d22f78410)
+
+running 10 tests
+test loadouts_store::tests::unique_loadout_name_avoids_collisions ... ok
+test loadouts_store::tests::resolve_setting_options_lists_loadout_names ... ok
+test loadouts_store::compatibility_tests::selected_loadout_matches_case_and_falls_back_to_first ... ok
+test loadouts_store::tests::replace_at_renames_without_duplicating ... ok
+test loadouts_store::compatibility_tests::accessors_read_righthand_qty_and_unassigned_gear ... ok
+test loadouts_store::tests::explicit_slots_and_quantities_survive_file_round_trip ... ok
+test loadouts_store::tests::store_round_trips_at_private_mode ... ok
+test loadouts_store::tests::copy_equipment_keeps_supplies_and_unknown_gear ... ok
+test loadouts_store::tests::legacy_array_worn_and_carry_are_preserved_without_guessing_slots ... ok
+test loadouts_store::tests::failed_save_can_restore_the_previous_file_image ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 40 filtered out; finished in 0.03s
+

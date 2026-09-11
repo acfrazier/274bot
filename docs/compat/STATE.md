@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 01:46 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 02:34 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -37,6 +37,51 @@ set when they would require accommodating broken imported script behavior.
 The current BankFletcher useOn investigation identifies identity loss in our
 bridge; both frozen scripts select input IDs, so no foreign-script defect or
 card-dimming decision has been established there.
+
+## Build provenance requalification (02:09 UTC)
+
+Root found cross-build reuse of a script rlib in the shared Cargo target while
+compiling a hash-verified d2372fe0 source export. The compiler exposed a shape
+from concurrent source. Earlier shared-target receipts identify actual binary
+observations and an intended source snapshot, but do not establish the exact
+compiled-source combination. See evidence/build-isolation/README.md and the
+retained failed compiler output. This qualification supersedes exact-source
+claims below where the builder shared a target.
+
+New catalog launches now require isolated-build receipts. Existing cells finish
+and are retained; their batch stops before a next cell. Root is rebuilding
+reviewed candidates in separate empty targets and will repeat source-qualified
+catalog/native acceptance. No gameplay observation or failure is deleted, and
+source reviews remain independently assessed. This is a build-tool correction,
+not a product behavior change.
+
+## Latest isolated acceptance (02:34 UTC)
+
+- Navigation d2372fe0 passed same-card Grok 4.5 review 1191 and all four isolated
+  274/289 external/bundled probes. One read/decode each; external hashes once,
+  bundled hashes zero times; same Arc across template/Play, old Arc survives
+  owned disk damage, new bind rejects it. Native 289 startup reaches ready in
+  both variants. `evidence/navigation-load/README.md` states private-bundle and
+  screenshot limits; no release/performance claim.
+- Loadout source 89767527 passed Grok 4.5 review 1192. Root repeated the affected
+  checks in isolated a4157243: all pass. Native UI exposed layout clipping;
+  bounded fix 50f2be8a and five existing tests pass. Native search, slot/quantity
+  Save, Duplicate and reopen are verified against private on-disk JSON. Actual
+  completed bank provisioning remains outstanding.
+- Inventory identity a4157243 passed same-card Grok 4.5 review 1194 using an
+  empty target. The isolated binary passes string-only on all four catalog/
+  revision cells and cut-and-string on both newer-catalog cells. Native 289
+  newer-catalog stringing also completes a bank trip and further output.
+  Two old-catalog cut-and-string invocations were root matrix errors: that
+  catalog has no mode setting, and preflight refused before starting an actor.
+  Keep those exit-1 receipts; do not classify them as gameplay/card defects.
+- Inventory-production source 58b7e6f7 passed Grok 4.5 review 1189. Its twenty
+  earlier runtime passes are historical shared-target diagnostics. The isolated
+  a4157243 24-cell darts/herbs/gems requalification is underway.
+- Location/world fixtures 58ec089e passed same-card Grok 4.5 review 1195 with
+  independent empty-target checks. Root has frozen and built 50f2be8a (same
+  fixtures plus the layout correction) for the twenty live cells. Gnome plane
+  facts and radius-8 behavior remain explicit uncertainties to diagnose.
 
 ## Accepted milestones
 

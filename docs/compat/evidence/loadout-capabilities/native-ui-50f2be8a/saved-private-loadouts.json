@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Native slot proofloadout",
+    "worn": {
+      "righthand": "Rune scimitar"
+    },
+    "carry": [
+      {
+        "item": "Lobster",
+        "qty": 17
+      }
+    ]
+  },
+  {
+    "name": "Native slot proofloadout copy",
+    "worn": {
+      "righthand": "Rune scimitar"
+    },
+    "carry": [
+      {
+        "item": "Lobster",
+        "qty": 17
+      }
+    ]
+  }
+]

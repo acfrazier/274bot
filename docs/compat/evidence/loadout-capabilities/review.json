@@ -1,0 +1,593 @@
+{
+  "task": {
+    "id": "t_3737503d",
+    "title": "Preserve loadout slots and quantities through provisioning",
+    "body": "After the reviewed bank matching/fill parent, implement docs/compat/briefs/26-loadout-provisioning.md with sol defaults. Preserve legacy loadout items and editor round trips, explicit slots/quantities, Rust-owned accessors and required observed provisioning. Verify actual enabled callers, keep unsupported scope honest, and do not clone foreign planners or touch operator files. Complete focused composed and migration checks, commit scoped changes/report/raw evidence, hand this same card to reviewer, then stop. No live or remote actions.",
+    "assignee": "reviewer",
+    "status": "done",
+    "priority": 0,
+    "tenant": null,
+    "workspace_kind": "dir",
+    "workspace_path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision",
+    "branch_name": null,
+    "project_id": null,
+    "created_by": "orch",
+    "created_at": 1789074046,
+    "started_at": 1789090450,
+    "completed_at": 1789092729,
+    "result": null,
+    "skills": [],
+    "max_retries": 1,
+    "model_override": null,
+    "provider_override": null,
+    "session_id": null,
+    "workflow_template_id": null,
+    "current_step_key": null,
+    "completion_contract": "local-only",
+    "last_failure_error": null
+  },
+  "latest_summary": "Reviewed and approved 89767527 for brief 26 loadout slots/quantities. Round-1 cold artifact review plus independent re-runs confirm legacy unassigned migration, slot-keyed worn/{item,qty} carry, Rust gear/supplies/weapon accessors, panel/TUI editor save-error paths, and composed fresh-bank withdraw+wear queueing. No foreign planner; live deferred to root.",
+  "parents": [
+    "t_41b2f50e",
+    "t_dde220ef"
+  ],
+  "children": [
+    "t_63138b8b"
+  ],
+  "comments": [
+    {
+      "author": "orch",
+      "body": "Operator explicitly requested moving implementation to Grok 4.6 to use remaining quota. This card now uses profile grok46 defaults (grok-4.6 / xai-oauth, high), superseding original Sol wording. Brief updated. This is implementation, not architecture-only. Preserve named scope and all dependency/review gates. Commit only owned paths with git commit --only; never reset/unstage other contributors files. Request SAME-card profile reviewer review, then STOP; never self-complete.",
+      "created_at": 1789088463
+    },
+    {
+      "author": "orch",
+      "body": "Operator explicitly accepted first-pass Loadouts UX after discussing source comparison. Brief 26 now includes native labeled equipment layout, selected-world item search with exact identity, quantity supply rows, Copy current equipment preserving supplies, New/Duplicate/Rename/Delete and real save/error feedback. Use existing generated wear_position facts and existing icon path where straightforward, no new sprite/cache work. Minimal editor fields in panel/session.rs now allowed after the parent loading/integration gate. Bank previews and extra automation deferred. Implement this accepted scope with grok46 defaults and SAME-card reviewer handoff.",
+      "created_at": 1789088805
+    },
+    {
+      "author": "orch",
+      "body": "Operator clarification 01:41 UTC now recorded at top of docs/compat/STATE.md and active plan: do not alter host behavior to accommodate a broken imported JS script. Diagnose ownership; dim an evidenced broken foreign card with a clear reason, preserving frozen inventory/failure evidence. Our shim/API bugs and authorized Rust capabilities remain in scope. BankFletcher currently selects IDs correctly; our useOn identity loss remains our bug, so continue that fix. Preserve named task boundaries and actual same-card reviewer handoff. This comment does not expand your task.",
+      "created_at": 1789091043
+    },
+    {
+      "author": "orch",
+      "body": "Operator follow-up: the bad-script dim rule DOES NOT change the ancillary-feature stub plan. Calls such as solve clues that depend on whale scripts or importing their world/policy remain bounded stubs with honest unavailable behavior. An unavailable ancillary feature does not dim an otherwise working card. Preserve existing branch refusal; do not import foreign systems or fake successful completion. Both separate rules are recorded at top of docs/compat/STATE.md. Named task scope unchanged.",
+      "created_at": 1789091114
+    },
+    {
+      "author": "orch",
+      "body": "Final operator clarification: ancillary stubs are temporary integration points for native host features. Each such feature is its own future project, and the shim will connect when the host implementation is ready. This campaign does not implement those separate projects. Recorded in docs/compat/STATE.md and active plan; no change to your named scope.",
+      "created_at": 1789091142
+    },
+    {
+      "author": "orch",
+      "body": "Root progress check: please post a brief current phase and any concrete blocker to this card. Related inventory fixture LIVE is now passing on the frozen baseline; bundled navigation source d2372fe0 has completed same-card review. Keep your owned source boundaries and finish the exact-source checks, then SAME-card reviewer handoff. Do not broaden testing after appropriate checks pass.",
+      "created_at": 1789092438
+    },
+    {
+      "author": "grok46",
+      "body": "Phase: implementation complete except the commit/review handoff. Store, accessors, editors, and focused api/script/tui/panel checks passed in this run. Exact-source commit is next (`git commit --only` of owned paths), then SAME-card reviewer. Concurrent `crates/scenario` WIP currently blocks a tui/panel rerun; earlier tui 6 / panel 5 already passed. Hotspot: `crates/script/src/load.rs` also has a staged inventory-row `slot` publish from another card. No live/remote.",
+      "created_at": 1789092455
+    },
+    {
+      "author": "grok46",
+      "body": "hotspot: crates/script/src/load.rs \u2014 this commit also includes a concurrent 4-line inventory-row `slot` publish that was already staged on the shared file; this task only added the three loadout accessor registers.",
+      "created_at": 1789092461
+    },
+    {
+      "author": "orch",
+      "body": "Root found a concrete shared Cargo target artifact-reuse failure: frozen d2372fe0 sources lacked UseOn identity/ItemRowInput slot fields, but Cargo reused a fresh script rlib with concurrent shapes. Source hashing alone does not prove compiled-source identity. Please run acceptance checks in a NEW EMPTY target for your exact frozen export, not the shared campaign target or a copied target. Preserve older evidence, report actual isolated target and source refs. Root is correcting its private builders and qualifying exact-source LIVE anew; see docs/compat/evidence/build-isolation/README.md. If source composition needs the imminent useOn commit to compile, name that explicitly and review the combined frozen candidate. Do not alter unrelated source to hide a partial-commit mismatch.",
+      "created_at": 1789092735
+    }
+  ],
+  "events": [
+    {
+      "kind": "created",
+      "payload": {
+        "assignee": "sol",
+        "status": "todo",
+        "parents": [
+          "t_41b2f50e"
+        ],
+        "creator_task_id": null,
+        "tenant": null,
+        "workspace_kind": "dir",
+        "workspace_path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision",
+        "branch_name": null,
+        "project_id": null,
+        "skills": null,
+        "goal_mode": null,
+        "model_override": null,
+        "provider_override": null
+      },
+      "created_at": 1789074046,
+      "run_id": null
+    },
+    {
+      "kind": "linked",
+      "payload": {
+        "parent": "t_dde220ef",
+        "child": "t_3737503d"
+      },
+      "created_at": 1789075422,
+      "run_id": null
+    },
+    {
+      "kind": "commented",
+      "payload": {
+        "author": "orch",
+        "len": 479
+      },
+      "created_at": 1789088463,
+      "run_id": null
+    },
+    {
+      "kind": "assigned",
+      "payload": {
+        "assignee": "grok46"
+      },
+      "created_at": 1789088463,
+      "run_id": null
+    },
+    {
+      "kind": "commented",
+      "payload": {
+        "author": "orch",
+        "len": 654
+      },
+      "created_at": 1789088805,
+      "run_id": null
+    },
+    {
+      "kind": "promoted",
+      "payload": null,
+      "created_at": 1789090408,
+      "run_id": null
+    },
+    {
+      "kind": "claimed",
+      "payload": {
+        "lock": "merlot.local:28215",
+        "expires": 1789091350,
+        "run_id": 1186
+      },
+      "created_at": 1789090450,
+      "run_id": 1186
+    },
+    {
+      "kind": "spawned",
+      "payload": {
+        "pid": 90455
+      },
+      "created_at": 1789090450,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090452,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090512,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090575,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090636,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090698,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": {
+        "note": "Auditing wearpos mapping, enabled callers, and existing store/editor before implementing loadout slots/qty."
+      },
+      "created_at": 1789090726,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090761,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090824,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090887,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789090948,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091010,
+      "run_id": 1186
+    },
+    {
+      "kind": "commented",
+      "payload": {
+        "author": "orch",
+        "len": 575
+      },
+      "created_at": 1789091043,
+      "run_id": null
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091073,
+      "run_id": 1186
+    },
+    {
+      "kind": "commented",
+      "payload": {
+        "author": "orch",
+        "len": 495
+      },
+      "created_at": 1789091114,
+      "run_id": null
+    },
+    {
+      "kind": "commented",
+      "payload": {
+        "author": "orch",
+        "len": 353
+      },
+      "created_at": 1789091142,
+      "run_id": null
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091166,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091229,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091289,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091357,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091417,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091498,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091558,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091628,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091698,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": {
+        "note": "Wiring editors and isolate accessor/provision tests after the slot/qty store change."
+      },
+      "created_at": 1789091742,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091758,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091818,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091883,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789091943,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789092003,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789092064,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789092129,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789092195,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789092261,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789092326,
+      "run_id": 1186
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789092386,
+      "run_id": 1186
+    },
+    {
+      "kind": "commented",
+      "payload": {
+        "author": "orch",
+        "len": 387
+      },
+      "created_at": 1789092438,
+      "run_id": null
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789092447,
+      "run_id": 1186
+    },
+    {
+      "kind": "commented",
+      "payload": {
+        "author": "grok46",
+        "len": 470
+      },
+      "created_at": 1789092455,
+      "run_id": null
+    },
+    {
+      "kind": "commented",
+      "payload": {
+        "author": "grok46",
+        "len": 214
+      },
+      "created_at": 1789092461,
+      "run_id": null
+    },
+    {
+      "kind": "review_requested",
+      "payload": {
+        "summary": "Implemented brief 26 in 89767527: slot-keyed worn gear, {item,qty} carry, legacy unassigned migration, Rust-owned gear/supplies/weapon accessors, and native panel/TUI editors with real save/error feedback. Focused api/script checks and clippy passed; tui 6 and panel 5 passed before concurrent scenario WIP blocked a rerun. No live run.",
+        "implementer": "grok46",
+        "reviewer": "reviewer"
+      },
+      "created_at": 1789092469,
+      "run_id": 1186
+    },
+    {
+      "kind": "claimed",
+      "payload": {
+        "lock": "merlot.local:28215",
+        "expires": 1789093398,
+        "run_id": 1192,
+        "source_status": "review"
+      },
+      "created_at": 1789092498,
+      "run_id": 1192
+    },
+    {
+      "kind": "spawned",
+      "payload": {
+        "pid": 43041
+      },
+      "created_at": 1789092498,
+      "run_id": 1192
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789092499,
+      "run_id": 1192
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789092560,
+      "run_id": 1192
+    },
+    {
+      "kind": "heartbeat",
+      "payload": {
+        "note": "Round-1 artifact review in progress; re-running focused api/script checks independently."
+      },
+      "created_at": 1789092591,
+      "run_id": 1192
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789092623,
+      "run_id": 1192
+    },
+    {
+      "kind": "heartbeat",
+      "payload": null,
+      "created_at": 1789092683,
+      "run_id": 1192
+    },
+    {
+      "kind": "completed",
+      "payload": {
+        "result_len": 0,
+        "summary": "Reviewed and approved 89767527 for brief 26 loadout slots/quantities. Round-1 cold artifact review plus independent re-runs confirm legacy unassigned migration, slot-keyed worn/{item,qty} carry, Rust gear/supplies/weapon accessors, panel/TUI editor save-error paths, and composed fresh-bank withdraw+wear queueing. No foreign planner; live deferred to root."
+      },
+      "created_at": 1789092729,
+      "run_id": 1192
+    },
+    {
+      "kind": "commented",
+      "payload": {
+        "author": "orch",
+        "len": 789
+      },
+      "created_at": 1789092735,
+      "run_id": null
+    }
+  ],
+  "runs": [
+    {
+      "id": 1186,
+      "profile": "grok46",
+      "step_key": null,
+      "status": "review",
+      "outcome": "review_requested",
+      "summary": "Implemented brief 26 in 89767527: slot-keyed worn gear, {item,qty} carry, legacy unassigned migration, Rust-owned gear/supplies/weapon accessors, and native panel/TUI editors with real save/error feedback. Focused api/script checks and clippy passed; tui 6 and panel 5 passed before concurrent scenario WIP blocked a rerun. No live run.",
+      "error": null,
+      "metadata": {
+        "commit": "89767527eb7d9fc9948b7a10dfdca8015c18bfd3",
+        "branch": "codex/rs2b0t-multirevision",
+        "client": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+        "report": "docs/compat/04-capabilities-loadouts.md",
+        "evidence": "docs/compat/evidence/loadout-capabilities/verification.json",
+        "tests": {
+          "api_wearpos": "pass",
+          "script_lib_loadout": "10 passed",
+          "script_loadouts_bag": "4 passed",
+          "script_gold_stubs": "12 passed, 1 ignored",
+          "tui_loadout": "6 passed earlier this run",
+          "panel_loadout": "5 passed earlier this run",
+          "clippy_api_script": "pass"
+        },
+        "hotspots": [
+          "crates/script/src/load.rs \u2014 concurrent inventory-row slot publish included with accessor registers"
+        ],
+        "limits": [
+          "no live run",
+          "later tui/panel rerun blocked by concurrent crates/scenario WIP"
+        ],
+        "worker_session_id": "20260910_213411_28720e"
+      },
+      "worker_pid": null,
+      "started_at": 1789090450,
+      "ended_at": 1789092469
+    },
+    {
+      "id": 1192,
+      "profile": "reviewer",
+      "step_key": null,
+      "status": "done",
+      "outcome": "completed",
+      "summary": "Reviewed and approved 89767527 for brief 26 loadout slots/quantities. Round-1 cold artifact review plus independent re-runs confirm legacy unassigned migration, slot-keyed worn/{item,qty} carry, Rust gear/supplies/weapon accessors, panel/TUI editor save-error paths, and composed fresh-bank withdraw+wear queueing. No foreign planner; live deferred to root.",
+      "error": null,
+      "metadata": {
+        "review_outcome": "approved",
+        "reviewer_profile": "reviewer",
+        "reviewer_model": "grok-4.5",
+        "commit": "89767527eb7d9fc9948b7a10dfdca8015c18bfd3",
+        "branch": "codex/rs2b0t-multirevision",
+        "client": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+        "report": "docs/compat/04-capabilities-loadouts.md",
+        "evidence": "docs/compat/evidence/loadout-capabilities/verification.json",
+        "brief": "docs/compat/briefs/26-loadout-provisioning.md",
+        "brief_sha256": "691f71fb09e3a659d9cca364be546251b7a51965aa3a82960383dc7a42a5e7bb",
+        "reviewer_checks": [
+          "cold read of commit 89767527 vs brief 26 (store migration, accessors, wearpos, panel/TUI UX, provisioning bounds)",
+          "api generated_wearpos: pass",
+          "script --lib loadout: 10 passed",
+          "script --test loadouts_bag: 4 passed (accessors + stale/fresh provision queue)",
+          "script --test gold_stubs: 12 passed, 1 ignored",
+          "clippy -p api -p script --no-deps -D warnings: pass",
+          "tui loadout: 6 passed",
+          "panel loadout: 5 passed (after script touch/rebuild; earlier false stale-rmeta failure discarded)",
+          "no foreign planner/AcquireTask/LoadoutPanel clone; operator ~/.274bot/loadouts.json not touched",
+          "hotspot acknowledged: load.rs concurrent inventory-row slot publish bundled with accessor registers"
+        ],
+        "limits": [
+          "no live client run",
+          "provision proof is isolate composition of Bank.ready/withdrawX/Equipment.equip queue requests, not settled inventory/equipment outcomes",
+          "quest-only gearOf/weaponOf callers remain out of family",
+          "bank previews/acquisition automation deferred"
+        ],
+        "blocking_defects": [],
+        "child_released_expected": [
+          "t_63138b8b"
+        ],
+        "worker_session_id": "20260910_220818_88e7da"
+      },
+      "worker_pid": null,
+      "started_at": 1789092498,
+      "ended_at": 1789092729
+    }
+  ]
+}

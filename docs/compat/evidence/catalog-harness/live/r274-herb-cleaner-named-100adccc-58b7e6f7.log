@@ -1,0 +1,910 @@
+
+running 1 test
+{"phase":"identity","revision":274,"profile":"local-274 · 127.0.0.1:43594 · revision 274","cache_id":"4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/274/274bot.navpack","nav_sha256":"05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4","catalog_commit":"100adccc037d9f6898080e1cad58fcfc43364775","catalog_identity":"pre-289 frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"HerbCleaner","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/HerbCleaner/HerbCleaner.ts","source_sha256":"34f1f02c7c72d47d4936ab886df50a714ab94ff831c1054188c68f4d162ea0b6","compiled_sha256":"cf26c2aca0cfc280400342b8d9f5ddcde4a1ef275b1aa231a67808125489b031","siblings":[{"module":"/rs2b0t/bot/scripts/bot/HerbCleanerLogic.js","compiled_sha256":"07462ec17e2c681b524e4b9c19fc91937c7cab081fa8aa06cbab7917bd04287c"}],"settings":{"herbs":["Guam leaf"]}},"account":"livec6523q_0","engine_speed_ms":null}
+[host-play] slot livec6523q_0: thread up
+274bot: loaded snapshot (4556 models, 336 anim records)
+[host-play] slot livec6523q_0: handshake begin reconnect=false
+[host-play] slot livec6523q_0: handshake ok
+[host-play] slot livec6523q_0: queued mainland tele+setvar (scene 2)
+[host] slot livec6523q_0: d_loop_us=7703 d_raster_us=0 d_observe_us=30729 max_observe_us=2675 d_paints=0 d_skips=50 d_ticks=4 window_ms=0
+[host-play] slot livec6523q_0: handshake begin reconnect=true
+[host-play] slot livec6523q_0: handshake ok
+[host] slot livec6523q_0: d_loop_us=618 d_raster_us=0 d_observe_us=29833 max_observe_us=2702 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot livec6523q_0: queued mainland tele+setvar (scene 2)
+test catalog_boundary_live has been running for over 60 seconds
+[host] slot livec6523q_0: d_loop_us=26788 d_raster_us=0 d_observe_us=105924 max_observe_us=9832 d_paints=0 d_skips=50 d_ticks=26 window_ms=16165
+{"phase":"baseline-after-preparation","scenario":"herb_cleaner_named","account":"livec6523q_0","observation":{"ingame":true,"scene_state":2,"player":"Livec6523q 0","tile":[3185,3440,0],"tick":30,"items":{},"item_ids":{},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":2,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":5,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":388,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]]}}
+[script livec6523q_0] start load
+{"phase":"start","account":"livec6523q_0","count":1}
+[host] hitch livec6523q_0: observe_us=91387 paints=0 skips=104 ticks=30
+[script livec6523q_0] HerbCleaner — clean Guam leaf (Herblore 5)
+[script livec6523q_0] interact OpenBooth { x: 3186, z: 3440, level: 0, id: 2213, name: None, action: None }
+[host] slot livec6523q_0: d_loop_us=866 d_raster_us=0 d_observe_us=143411 max_observe_us=91387 d_paints=0 d_skips=50 d_ticks=5 window_ms=2933
+[script livec6523q_0] bank opened, starting withdraw/deposit cycle
+[script livec6523q_0] trying to withdraw 28 Guam leaf (have 0)
+[host] slot livec6523q_0: d_loop_us=668 d_raster_us=0 d_observe_us=36830 max_observe_us=6428 d_paints=0 d_skips=50 d_ticks=2 window_ms=1186
+[script livec6523q_0] withdrew 28 Guam leaf
+[script livec6523q_0] got herbs, closing bank
+[script livec6523q_0] interact Close
+[shim-close] sent
+[script livec6523q_0] banked @ Bank booth: gave 0 items, took 28 grimy herbs
+[host] slot livec6523q_0: d_loop_us=718 d_raster_us=0 d_observe_us=34947 max_observe_us=6607 d_paints=0 d_skips=50 d_ticks=2 window_ms=1210
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+[host] slot livec6523q_0: d_loop_us=696 d_raster_us=0 d_observe_us=33486 max_observe_us=6452 d_paints=0 d_skips=50 d_ticks=2 window_ms=1208
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[shim-held] Herb Identify slot=1 -> sent
+[host] slot livec6523q_0: d_loop_us=500 d_raster_us=0 d_observe_us=27884 max_observe_us=4012 d_paints=0 d_skips=50 d_ticks=2 window_ms=1215
+[host] slot livec6523q_0: d_loop_us=618 d_raster_us=0 d_observe_us=31715 max_observe_us=6624 d_paints=0 d_skips=50 d_ticks=2 window_ms=1206
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[shim-held] Herb Identify slot=2 -> sent
+[host] slot livec6523q_0: d_loop_us=637 d_raster_us=0 d_observe_us=32898 max_observe_us=6757 d_paints=0 d_skips=50 d_ticks=2 window_ms=1209
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[shim-held] Herb Identify slot=3 -> sent
+[host] slot livec6523q_0: d_loop_us=490 d_raster_us=0 d_observe_us=27255 max_observe_us=3863 d_paints=0 d_skips=50 d_ticks=2 window_ms=1201
+[host] slot livec6523q_0: d_loop_us=466 d_raster_us=0 d_observe_us=29035 max_observe_us=6313 d_paints=0 d_skips=50 d_ticks=2 window_ms=1215
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[shim-held] Herb Identify slot=4 -> sent
+[host] slot livec6523q_0: d_loop_us=639 d_raster_us=0 d_observe_us=32165 max_observe_us=6363 d_paints=0 d_skips=50 d_ticks=3 window_ms=1209
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=5 -> sent
+[shim-held] Herb Identify slot=5 -> sent
+[shim-held] Herb Identify slot=5 -> sent
+[shim-held] Herb Identify slot=5 -> sent
+[shim-held] Herb Identify slot=5 -> sent
+[shim-held] Herb Identify slot=5 -> sent
+[shim-held] Herb Identify slot=5 -> sent
+[shim-held] Herb Identify slot=5 -> sent
+[shim-held] Herb Identify slot=5 -> sent
+[shim-held] Herb Identify slot=5 -> sent
+[shim-held] Herb Identify slot=5 -> sent
+[shim-held] Herb Identify slot=5 -> sent
+[shim-held] Herb Identify slot=5 -> sent
+[shim-held] Herb Identify slot=5 -> sent
+[shim-held] Herb Identify slot=5 -> sent
+[shim-held] Herb Identify slot=5 -> sent
+[shim-held] Herb Identify slot=5 -> sent
+[shim-held] Herb Identify slot=5 -> sent
+[shim-held] Herb Identify slot=5 -> sent
+[shim-held] Herb Identify slot=5 -> sent
+[shim-held] Herb Identify slot=5 -> sent
+[shim-held] Herb Identify slot=5 -> sent
+[shim-held] Herb Identify slot=5 -> sent
+[host] slot livec6523q_0: d_loop_us=541 d_raster_us=0 d_observe_us=34102 max_observe_us=6132 d_paints=0 d_skips=50 d_ticks=2 window_ms=1222
+[host] slot livec6523q_0: d_loop_us=468 d_raster_us=0 d_observe_us=27350 max_observe_us=3960 d_paints=0 d_skips=50 d_ticks=2 window_ms=1212
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=6 -> sent
+[shim-held] Herb Identify slot=6 -> sent
+[shim-held] Herb Identify slot=6 -> sent
+[shim-held] Herb Identify slot=6 -> sent
+[shim-held] Herb Identify slot=6 -> sent
+[shim-held] Herb Identify slot=6 -> sent
+[shim-held] Herb Identify slot=6 -> sent
+[shim-held] Herb Identify slot=6 -> sent
+[shim-held] Herb Identify slot=6 -> sent
+[shim-held] Herb Identify slot=6 -> sent
+[shim-held] Herb Identify slot=6 -> sent
+[shim-held] Herb Identify slot=6 -> sent
+[shim-held] Herb Identify slot=6 -> sent
+[shim-held] Herb Identify slot=6 -> sent
+[shim-held] Herb Identify slot=6 -> sent
+[shim-held] Herb Identify slot=6 -> sent
+[shim-held] Herb Identify slot=6 -> sent
+[shim-held] Herb Identify slot=6 -> sent
+[shim-held] Herb Identify slot=6 -> sent
+[shim-held] Herb Identify slot=6 -> sent
+[shim-held] Herb Identify slot=6 -> sent
+[shim-held] Herb Identify slot=6 -> sent
+[host] slot livec6523q_0: d_loop_us=549 d_raster_us=0 d_observe_us=32234 max_observe_us=6775 d_paints=0 d_skips=50 d_ticks=2 window_ms=1200
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=7 -> sent
+[shim-held] Herb Identify slot=7 -> sent
+[shim-held] Herb Identify slot=7 -> sent
+[shim-held] Herb Identify slot=7 -> sent
+[shim-held] Herb Identify slot=7 -> sent
+[shim-held] Herb Identify slot=7 -> sent
+[shim-held] Herb Identify slot=7 -> sent
+[shim-held] Herb Identify slot=7 -> sent
+[shim-held] Herb Identify slot=7 -> sent
+[shim-held] Herb Identify slot=7 -> sent
+[shim-held] Herb Identify slot=7 -> sent
+[shim-held] Herb Identify slot=7 -> sent
+[shim-held] Herb Identify slot=7 -> sent
+[shim-held] Herb Identify slot=7 -> sent
+[shim-held] Herb Identify slot=7 -> sent
+[shim-held] Herb Identify slot=7 -> sent
+[shim-held] Herb Identify slot=7 -> sent
+[shim-held] Herb Identify slot=7 -> sent
+[shim-held] Herb Identify slot=7 -> sent
+[shim-held] Herb Identify slot=7 -> sent
+[shim-held] Herb Identify slot=7 -> sent
+[host] slot livec6523q_0: d_loop_us=607 d_raster_us=0 d_observe_us=31788 max_observe_us=6613 d_paints=0 d_skips=50 d_ticks=2 window_ms=1219
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=8 -> sent
+[shim-held] Herb Identify slot=8 -> sent
+[shim-held] Herb Identify slot=8 -> sent
+[shim-held] Herb Identify slot=8 -> sent
+[shim-held] Herb Identify slot=8 -> sent
+[shim-held] Herb Identify slot=8 -> sent
+[shim-held] Herb Identify slot=8 -> sent
+[shim-held] Herb Identify slot=8 -> sent
+[shim-held] Herb Identify slot=8 -> sent
+[shim-held] Herb Identify slot=8 -> sent
+[shim-held] Herb Identify slot=8 -> sent
+[shim-held] Herb Identify slot=8 -> sent
+[shim-held] Herb Identify slot=8 -> sent
+[shim-held] Herb Identify slot=8 -> sent
+[shim-held] Herb Identify slot=8 -> sent
+[shim-held] Herb Identify slot=8 -> sent
+[shim-held] Herb Identify slot=8 -> sent
+[shim-held] Herb Identify slot=8 -> sent
+[shim-held] Herb Identify slot=8 -> sent
+[shim-held] Herb Identify slot=8 -> sent
+[host] slot livec6523q_0: d_loop_us=607 d_raster_us=0 d_observe_us=29433 max_observe_us=3992 d_paints=0 d_skips=50 d_ticks=2 window_ms=1210
+[host] slot livec6523q_0: d_loop_us=615 d_raster_us=0 d_observe_us=30541 max_observe_us=6442 d_paints=0 d_skips=50 d_ticks=2 window_ms=1209
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=9 -> sent
+[shim-held] Herb Identify slot=9 -> sent
+[shim-held] Herb Identify slot=9 -> sent
+[shim-held] Herb Identify slot=9 -> sent
+[shim-held] Herb Identify slot=9 -> sent
+[shim-held] Herb Identify slot=9 -> sent
+[shim-held] Herb Identify slot=9 -> sent
+[shim-held] Herb Identify slot=9 -> sent
+[shim-held] Herb Identify slot=9 -> sent
+[shim-held] Herb Identify slot=9 -> sent
+[shim-held] Herb Identify slot=9 -> sent
+[shim-held] Herb Identify slot=9 -> sent
+[shim-held] Herb Identify slot=9 -> sent
+[shim-held] Herb Identify slot=9 -> sent
+[shim-held] Herb Identify slot=9 -> sent
+[shim-held] Herb Identify slot=9 -> sent
+[shim-held] Herb Identify slot=9 -> sent
+[shim-held] Herb Identify slot=9 -> sent
+[shim-held] Herb Identify slot=9 -> sent
+[host] slot livec6523q_0: d_loop_us=603 d_raster_us=0 d_observe_us=31241 max_observe_us=6363 d_paints=0 d_skips=50 d_ticks=2 window_ms=1200
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=10 -> sent
+[shim-held] Herb Identify slot=10 -> sent
+[shim-held] Herb Identify slot=10 -> sent
+[shim-held] Herb Identify slot=10 -> sent
+[shim-held] Herb Identify slot=10 -> sent
+[shim-held] Herb Identify slot=10 -> sent
+[shim-held] Herb Identify slot=10 -> sent
+[shim-held] Herb Identify slot=10 -> sent
+[shim-held] Herb Identify slot=10 -> sent
+[shim-held] Herb Identify slot=10 -> sent
+[shim-held] Herb Identify slot=10 -> sent
+[shim-held] Herb Identify slot=10 -> sent
+[shim-held] Herb Identify slot=10 -> sent
+[shim-held] Herb Identify slot=10 -> sent
+[shim-held] Herb Identify slot=10 -> sent
+[shim-held] Herb Identify slot=10 -> sent
+[shim-held] Herb Identify slot=10 -> sent
+[shim-held] Herb Identify slot=10 -> sent
+[host] slot livec6523q_0: d_loop_us=512 d_raster_us=0 d_observe_us=28549 max_observe_us=3945 d_paints=0 d_skips=50 d_ticks=2 window_ms=1204
+[host] slot livec6523q_0: d_loop_us=545 d_raster_us=0 d_observe_us=30250 max_observe_us=6786 d_paints=0 d_skips=50 d_ticks=2 window_ms=1209
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=11 -> sent
+[shim-held] Herb Identify slot=11 -> sent
+[shim-held] Herb Identify slot=11 -> sent
+[shim-held] Herb Identify slot=11 -> sent
+[shim-held] Herb Identify slot=11 -> sent
+[shim-held] Herb Identify slot=11 -> sent
+[shim-held] Herb Identify slot=11 -> sent
+[shim-held] Herb Identify slot=11 -> sent
+[shim-held] Herb Identify slot=11 -> sent
+[shim-held] Herb Identify slot=11 -> sent
+[shim-held] Herb Identify slot=11 -> sent
+[shim-held] Herb Identify slot=11 -> sent
+[shim-held] Herb Identify slot=11 -> sent
+[shim-held] Herb Identify slot=11 -> sent
+[shim-held] Herb Identify slot=11 -> sent
+[shim-held] Herb Identify slot=11 -> sent
+[shim-held] Herb Identify slot=11 -> sent
+[host] slot livec6523q_0: d_loop_us=507 d_raster_us=0 d_observe_us=30090 max_observe_us=6543 d_paints=0 d_skips=50 d_ticks=2 window_ms=1200
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=12 -> sent
+[shim-held] Herb Identify slot=12 -> sent
+[shim-held] Herb Identify slot=12 -> sent
+[shim-held] Herb Identify slot=12 -> sent
+[shim-held] Herb Identify slot=12 -> sent
+[shim-held] Herb Identify slot=12 -> sent
+[shim-held] Herb Identify slot=12 -> sent
+[shim-held] Herb Identify slot=12 -> sent
+[shim-held] Herb Identify slot=12 -> sent
+[shim-held] Herb Identify slot=12 -> sent
+[shim-held] Herb Identify slot=12 -> sent
+[shim-held] Herb Identify slot=12 -> sent
+[shim-held] Herb Identify slot=12 -> sent
+[shim-held] Herb Identify slot=12 -> sent
+[shim-held] Herb Identify slot=12 -> sent
+[shim-held] Herb Identify slot=12 -> sent
+[host] slot livec6523q_0: d_loop_us=491 d_raster_us=0 d_observe_us=27567 max_observe_us=3899 d_paints=0 d_skips=50 d_ticks=2 window_ms=1204
+[host] slot livec6523q_0: d_loop_us=604 d_raster_us=0 d_observe_us=30925 max_observe_us=6583 d_paints=0 d_skips=50 d_ticks=2 window_ms=1208
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=13 -> sent
+[shim-held] Herb Identify slot=13 -> sent
+[shim-held] Herb Identify slot=13 -> sent
+[shim-held] Herb Identify slot=13 -> sent
+[shim-held] Herb Identify slot=13 -> sent
+[shim-held] Herb Identify slot=13 -> sent
+[shim-held] Herb Identify slot=13 -> sent
+[shim-held] Herb Identify slot=13 -> sent
+[shim-held] Herb Identify slot=13 -> sent
+[shim-held] Herb Identify slot=13 -> sent
+[shim-held] Herb Identify slot=13 -> sent
+[shim-held] Herb Identify slot=13 -> sent
+[shim-held] Herb Identify slot=13 -> sent
+[shim-held] Herb Identify slot=13 -> sent
+[shim-held] Herb Identify slot=13 -> sent
+[host] slot livec6523q_0: d_loop_us=621 d_raster_us=0 d_observe_us=35276 max_observe_us=6454 d_paints=0 d_skips=50 d_ticks=2 window_ms=1204
+[host] slot livec6523q_0: d_loop_us=833 d_raster_us=0 d_observe_us=31306 max_observe_us=4089 d_paints=0 d_skips=50 d_ticks=2 window_ms=1224
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=14 -> sent
+[shim-held] Herb Identify slot=14 -> sent
+[shim-held] Herb Identify slot=14 -> sent
+[shim-held] Herb Identify slot=14 -> sent
+[shim-held] Herb Identify slot=14 -> sent
+[shim-held] Herb Identify slot=14 -> sent
+[shim-held] Herb Identify slot=14 -> sent
+[shim-held] Herb Identify slot=14 -> sent
+[shim-held] Herb Identify slot=14 -> sent
+[shim-held] Herb Identify slot=14 -> sent
+[shim-held] Herb Identify slot=14 -> sent
+[shim-held] Herb Identify slot=14 -> sent
+[shim-held] Herb Identify slot=14 -> sent
+[shim-held] Herb Identify slot=14 -> sent
+[host] slot livec6523q_0: d_loop_us=862 d_raster_us=0 d_observe_us=34970 max_observe_us=6684 d_paints=0 d_skips=50 d_ticks=2 window_ms=1200
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=15 -> sent
+[shim-held] Herb Identify slot=15 -> sent
+[shim-held] Herb Identify slot=15 -> sent
+[shim-held] Herb Identify slot=15 -> sent
+[shim-held] Herb Identify slot=15 -> sent
+[shim-held] Herb Identify slot=15 -> sent
+[shim-held] Herb Identify slot=15 -> sent
+[shim-held] Herb Identify slot=15 -> sent
+[shim-held] Herb Identify slot=15 -> sent
+[shim-held] Herb Identify slot=15 -> sent
+[shim-held] Herb Identify slot=15 -> sent
+[shim-held] Herb Identify slot=15 -> sent
+[shim-held] Herb Identify slot=15 -> sent
+[host] slot livec6523q_0: d_loop_us=676 d_raster_us=0 d_observe_us=29831 max_observe_us=4025 d_paints=0 d_skips=50 d_ticks=2 window_ms=1208
+[host] slot livec6523q_0: d_loop_us=609 d_raster_us=0 d_observe_us=31433 max_observe_us=6308 d_paints=0 d_skips=50 d_ticks=2 window_ms=1224
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=16 -> sent
+[shim-held] Herb Identify slot=16 -> sent
+[shim-held] Herb Identify slot=16 -> sent
+[shim-held] Herb Identify slot=16 -> sent
+[shim-held] Herb Identify slot=16 -> sent
+[shim-held] Herb Identify slot=16 -> sent
+[shim-held] Herb Identify slot=16 -> sent
+[shim-held] Herb Identify slot=16 -> sent
+[shim-held] Herb Identify slot=16 -> sent
+[shim-held] Herb Identify slot=16 -> sent
+[shim-held] Herb Identify slot=16 -> sent
+[shim-held] Herb Identify slot=16 -> sent
+[host] slot livec6523q_0: d_loop_us=586 d_raster_us=0 d_observe_us=31296 max_observe_us=6627 d_paints=0 d_skips=50 d_ticks=2 window_ms=1222
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=17 -> sent
+[shim-held] Herb Identify slot=17 -> sent
+[shim-held] Herb Identify slot=17 -> sent
+[shim-held] Herb Identify slot=17 -> sent
+[shim-held] Herb Identify slot=17 -> sent
+[shim-held] Herb Identify slot=17 -> sent
+[shim-held] Herb Identify slot=17 -> sent
+[shim-held] Herb Identify slot=17 -> sent
+[shim-held] Herb Identify slot=17 -> sent
+[shim-held] Herb Identify slot=17 -> sent
+[shim-held] Herb Identify slot=17 -> sent
+[host] slot livec6523q_0: d_loop_us=513 d_raster_us=0 d_observe_us=29769 max_observe_us=4026 d_paints=0 d_skips=50 d_ticks=2 window_ms=1202
+[host] slot livec6523q_0: d_loop_us=582 d_raster_us=0 d_observe_us=31156 max_observe_us=6823 d_paints=0 d_skips=50 d_ticks=2 window_ms=1208
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=18 -> sent
+[shim-held] Herb Identify slot=18 -> sent
+[shim-held] Herb Identify slot=18 -> sent
+[shim-held] Herb Identify slot=18 -> sent
+[shim-held] Herb Identify slot=18 -> sent
+[shim-held] Herb Identify slot=18 -> sent
+[shim-held] Herb Identify slot=18 -> sent
+[shim-held] Herb Identify slot=18 -> sent
+[shim-held] Herb Identify slot=18 -> sent
+[shim-held] Herb Identify slot=18 -> sent
+[host] slot livec6523q_0: d_loop_us=653 d_raster_us=0 d_observe_us=31574 max_observe_us=6471 d_paints=0 d_skips=50 d_ticks=2 window_ms=1189
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=19 -> sent
+[shim-held] Herb Identify slot=19 -> sent
+[shim-held] Herb Identify slot=19 -> sent
+[shim-held] Herb Identify slot=19 -> sent
+[shim-held] Herb Identify slot=19 -> sent
+[shim-held] Herb Identify slot=19 -> sent
+[shim-held] Herb Identify slot=19 -> sent
+[shim-held] Herb Identify slot=19 -> sent
+[shim-held] Herb Identify slot=19 -> sent
+[host] slot livec6523q_0: d_loop_us=672 d_raster_us=0 d_observe_us=30548 max_observe_us=4124 d_paints=0 d_skips=50 d_ticks=2 window_ms=1193
+[host] slot livec6523q_0: d_loop_us=580 d_raster_us=0 d_observe_us=28959 max_observe_us=6480 d_paints=0 d_skips=50 d_ticks=2 window_ms=1224
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=20 -> sent
+[shim-held] Herb Identify slot=20 -> sent
+[shim-held] Herb Identify slot=20 -> sent
+[shim-held] Herb Identify slot=20 -> sent
+[shim-held] Herb Identify slot=20 -> sent
+[shim-held] Herb Identify slot=20 -> sent
+[shim-held] Herb Identify slot=20 -> sent
+[shim-held] Herb Identify slot=20 -> sent
+[host] slot livec6523q_0: d_loop_us=790 d_raster_us=0 d_observe_us=32912 max_observe_us=6599 d_paints=0 d_skips=50 d_ticks=2 window_ms=1217
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=21 -> sent
+[shim-held] Herb Identify slot=21 -> sent
+[shim-held] Herb Identify slot=21 -> sent
+[shim-held] Herb Identify slot=21 -> sent
+[shim-held] Herb Identify slot=21 -> sent
+[shim-held] Herb Identify slot=21 -> sent
+[shim-held] Herb Identify slot=21 -> sent
+[host] slot livec6523q_0: d_loop_us=800 d_raster_us=0 d_observe_us=30785 max_observe_us=3928 d_paints=0 d_skips=50 d_ticks=2 window_ms=1206
+[host] slot livec6523q_0: d_loop_us=730 d_raster_us=0 d_observe_us=33204 max_observe_us=6522 d_paints=0 d_skips=50 d_ticks=2 window_ms=1205
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=22 -> sent
+[shim-held] Herb Identify slot=22 -> sent
+[shim-held] Herb Identify slot=22 -> sent
+[shim-held] Herb Identify slot=22 -> sent
+[shim-held] Herb Identify slot=22 -> sent
+[shim-held] Herb Identify slot=22 -> sent
+[host] slot livec6523q_0: d_loop_us=746 d_raster_us=0 d_observe_us=33623 max_observe_us=6530 d_paints=0 d_skips=50 d_ticks=2 window_ms=1200
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=23 -> sent
+[shim-held] Herb Identify slot=23 -> sent
+[shim-held] Herb Identify slot=23 -> sent
+[shim-held] Herb Identify slot=23 -> sent
+[shim-held] Herb Identify slot=23 -> sent
+[host] slot livec6523q_0: d_loop_us=671 d_raster_us=0 d_observe_us=30663 max_observe_us=4043 d_paints=0 d_skips=50 d_ticks=2 window_ms=1211
+[host] slot livec6523q_0: d_loop_us=707 d_raster_us=0 d_observe_us=33771 max_observe_us=6622 d_paints=0 d_skips=50 d_ticks=2 window_ms=1207
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=24 -> sent
+[shim-held] Herb Identify slot=24 -> sent
+[shim-held] Herb Identify slot=24 -> sent
+[shim-held] Herb Identify slot=24 -> sent
+[host] slot livec6523q_0: d_loop_us=745 d_raster_us=0 d_observe_us=43083 max_observe_us=8593 d_paints=0 d_skips=50 d_ticks=2 window_ms=1207
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=25 -> sent
+[shim-held] Herb Identify slot=25 -> sent
+[shim-held] Herb Identify slot=25 -> sent
+[host] slot livec6523q_0: d_loop_us=846 d_raster_us=0 d_observe_us=38896 max_observe_us=5685 d_paints=0 d_skips=50 d_ticks=2 window_ms=1184
+[host] slot livec6523q_0: d_loop_us=1214 d_raster_us=0 d_observe_us=66005 max_observe_us=12738 d_paints=0 d_skips=50 d_ticks=2 window_ms=1208
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=26 -> sent
+[shim-held] Herb Identify slot=26 -> sent
+[host] slot livec6523q_0: d_loop_us=1097 d_raster_us=0 d_observe_us=69959 max_observe_us=14848 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=27 -> sent
+[host] slot livec6523q_0: d_loop_us=947 d_raster_us=0 d_observe_us=66367 max_observe_us=11513 d_paints=0 d_skips=50 d_ticks=2 window_ms=1204
+[host] slot livec6523q_0: d_loop_us=2058 d_raster_us=0 d_observe_us=72184 max_observe_us=14900 d_paints=0 d_skips=50 d_ticks=2 window_ms=1197
+[script livec6523q_0] interact OpenBooth { x: 3186, z: 3440, level: 0, id: 2213, name: None, action: None }
+[host] slot livec6523q_0: d_loop_us=740 d_raster_us=0 d_observe_us=43134 max_observe_us=7947 d_paints=0 d_skips=50 d_ticks=2 window_ms=1203
+[script livec6523q_0] bank opened, starting withdraw/deposit cycle
+[script livec6523q_0] pack full, need to deposit before withdrawing Guam leaf
+[script livec6523q_0] pack full, depositing everything
+[host] slot livec6523q_0: d_loop_us=964 d_raster_us=0 d_observe_us=63892 max_observe_us=9445 d_paints=0 d_skips=50 d_ticks=2 window_ms=1195
+[host] slot livec6523q_0: d_loop_us=946 d_raster_us=0 d_observe_us=46682 max_observe_us=4673 d_paints=0 d_skips=50 d_ticks=2 window_ms=1209
+[script livec6523q_0] deposited 28 items
+[script livec6523q_0] trying to withdraw 28 Guam leaf (have 0)
+[host] slot livec6523q_0: d_loop_us=1332 d_raster_us=0 d_observe_us=76779 max_observe_us=6908 d_paints=0 d_skips=50 d_ticks=2 window_ms=1169
+[script livec6523q_0] withdrew 2 Guam leaf
+[script livec6523q_0] got herbs, closing bank
+[script livec6523q_0] interact Close
+[shim-close] sent
+[script livec6523q_0] banked @ Bank booth: gave 28 items, took 2 grimy herbs
+[host] slot livec6523q_0: d_loop_us=872 d_raster_us=0 d_observe_us=46274 max_observe_us=6617 d_paints=0 d_skips=50 d_ticks=2 window_ms=1185
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[script livec6523q_0] interact Held { name: "Herb", action: "Identify" }
+[shim-held] Herb Identify slot=0 -> sent
+[shim-held] Herb Identify slot=0 -> sent
+PASS: catalog_boundary_live: {"scenario":"herb_cleaner_named","runner":"Some(Evidence { scenario: \"herb_cleaner_named\", outcome: \"PASS\", predicate: \"stat_xp_gain(15)>=2\", ticks: 164, elapsed_ms: 102236, message: None, tile: Some([3185, 3440, 0]), inv: [InvRow { id: 249, name: Some(\"Guam leaf\"), count: 1 }, InvRow { id: 199, name: Some(\"Herb\"), count: 1 }], stat: Some(StatRow { runenergy: 100 }), chat: [ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"This herb is a Guam Leaf.\", username: None }, ChatRow { text: \"Inventory wiped.\", username: None }, ChatRow { text: \"set tutorial: to 1000\", username: None }, ChatRow { text: \"Welcome to RuneScape.\", username: None }], scene: 2 })","core":{"case":"herb_cleaner_named","baseline":{"ingame":true,"scene_state":2,"player":"Livec6523q 0","tile":[3185,3440,0],"tick":30,"items":{},"item_ids":{},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":2,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":5,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":388,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]]},"latest":{"ingame":true,"scene_state":2,"player":"Livec6523q 0","tile":[3185,3440,0],"tick":133,"items":{"Guam leaf":1,"Herb":1},"item_ids":{"199":1,"249":1},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":6,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":5,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":460,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[36,"This herb is a Guam Leaf."],[35,"This herb is a Guam Leaf."],[34,"This herb is a Guam Leaf."],[33,"This herb is a Guam Leaf."],[32,"This herb is a Guam Leaf."],[31,"This herb is a Guam Leaf."],[30,"This herb is a Guam Leaf."],[29,"This herb is a Guam Leaf."],[28,"This herb is a Guam Leaf."],[27,"This herb is a Guam Leaf."],[26,"This herb is a Guam Leaf."],[25,"This herb is a Guam Leaf."],[24,"This herb is a Guam Leaf."],[23,"This herb is a Guam Leaf."],[22,"This herb is a Guam Leaf."],[21,"This herb is a Guam Leaf."],[20,"This herb is a Guam Leaf."],[19,"This herb is a Guam Leaf."],[18,"This herb is a Guam Leaf."],[17,"This herb is a Guam Leaf."],[16,"This herb is a Guam Leaf."],[15,"This herb is a Guam Leaf."],[14,"This herb is a Guam Leaf."],[13,"This herb is a Guam Leaf."],[12,"This herb is a Guam Leaf."],[11,"This herb is a Guam Leaf."],[10,"This herb is a Guam Leaf."],[9,"This herb is a Guam Leaf."],[8,"This herb is a Guam Leaf."],[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]]},"max_items":{"Guam leaf":28,"Herb":28},"max_xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":460,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"saw_bury_chat":false,"post_start_observations":2537,"bone_bank_cycle":{"first_batch_buried":false,"opened":null,"withdrawn":null,"buried_after_withdrawal":false},"bank_fletcher_cycle":{"first_pack_created":false,"deposited":null,"withdrawn":null,"crafted_after_withdrawal":false},"bank_fletcher_string_cycle":{"initial_pairs_strung":false,"deposited":null,"withdrawn":null,"strung_after_withdrawal":false},"bank_fletcher_cut_string_cycle":{"cut_pair_created":false,"deposited":null,"withdrawn":null,"string_pair_created":false},"alcher_generated_custom_cycle":{"withdrawn":null,"consumed":false},"dart_fletcher_cycle":{"first":null,"further":false,"wrong_tier":false},"herb_cleaner_cycle":{"first_pack":true,"deposited":{"ingame":true,"scene_state":2,"player":"Livec6523q 0","tile":[3185,3440,0],"tick":125,"items":{},"item_ids":{},"bank":{"Guam leaf":28,"Herb":6},"bank_ids":{"199":2,"201":4,"249":28},"bank_open":true,"bank_loaded":true,"bank_generation":5,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":5,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":458,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[35,"This herb is a Guam Leaf."],[34,"This herb is a Guam Leaf."],[33,"This herb is a Guam Leaf."],[32,"This herb is a Guam Leaf."],[31,"This herb is a Guam Leaf."],[30,"This herb is a Guam Leaf."],[29,"This herb is a Guam Leaf."],[28,"This herb is a Guam Leaf."],[27,"This herb is a Guam Leaf."],[26,"This herb is a Guam Leaf."],[25,"This herb is a Guam Leaf."],[24,"This herb is a Guam Leaf."],[23,"This herb is a Guam Leaf."],[22,"This herb is a Guam Leaf."],[21,"This herb is a Guam Leaf."],[20,"This herb is a Guam Leaf."],[19,"This herb is a Guam Leaf."],[18,"This herb is a Guam Leaf."],[17,"This herb is a Guam Leaf."],[16,"This herb is a Guam Leaf."],[15,"This herb is a Guam Leaf."],[14,"This herb is a Guam Leaf."],[13,"This herb is a Guam Leaf."],[12,"This herb is a Guam Leaf."],[11,"This herb is a Guam Leaf."],[10,"This herb is a Guam Leaf."],[9,"This herb is a Guam Leaf."],[8,"This herb is a Guam Leaf."],[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]]},"withdrawn":{"ingame":true,"scene_state":2,"player":"Livec6523q 0","tile":[3185,3440,0],"tick":130,"items":{"Herb":2},"item_ids":{"199":2},"bank":{"Guam leaf":28,"Herb":4},"bank_ids":{"201":4,"249":28},"bank_open":true,"bank_loaded":true,"bank_generation":5,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":5,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":458,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":0},"chat":[[35,"This herb is a Guam Leaf."],[34,"This herb is a Guam Leaf."],[33,"This herb is a Guam Leaf."],[32,"This herb is a Guam Leaf."],[31,"This herb is a Guam Leaf."],[30,"This herb is a Guam Leaf."],[29,"This herb is a Guam Leaf."],[28,"This herb is a Guam Leaf."],[27,"This herb is a Guam Leaf."],[26,"This herb is a Guam Leaf."],[25,"This herb is a Guam Leaf."],[24,"This herb is a Guam Leaf."],[23,"This herb is a Guam Leaf."],[22,"This herb is a Guam Leaf."],[21,"This herb is a Guam Leaf."],[20,"This herb is a Guam Leaf."],[19,"This herb is a Guam Leaf."],[18,"This herb is a Guam Leaf."],[17,"This herb is a Guam Leaf."],[16,"This herb is a Guam Leaf."],[15,"This herb is a Guam Leaf."],[14,"This herb is a Guam Leaf."],[13,"This herb is a Guam Leaf."],[12,"This herb is a Guam Leaf."],[11,"This herb is a Guam Leaf."],[10,"This herb is a Guam Leaf."],[9,"This herb is a Guam Leaf."],[8,"This herb is a Guam Leaf."],[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]]},"cleaned_after_withdrawal":true,"filter_violated":false},"gem_cutter_cycle":{"first_pack":false,"deposited":null,"withdrawn":null,"cut_after_withdrawal":false,"filter_violated":false},"ordered_first_exhausted":false}}
+test catalog_boundary_live ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 127.15s
+

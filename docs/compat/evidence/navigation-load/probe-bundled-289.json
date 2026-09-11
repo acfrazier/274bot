@@ -1,0 +1,29 @@
+{
+  "command": [
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/Nav Bundled Proof.app/Contents/MacOS/nav_origin_probe",
+    "--profile",
+    "local-289",
+    "--revision",
+    "289",
+    "--engine",
+    "/Users/acfrazier/experiments/lostcity-289/engine",
+    "--unpack",
+    "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/unpack-bundled-289"
+  ],
+  "started_at": "2026-09-11T02:13:59.233532+00:00",
+  "binary_sha256": "058b2465422fe76fd6d490baae4d3b69645ac7198e301597a23e8129668c574a",
+  "isolated_build": true,
+  "variant": "bundled",
+  "revision": 289,
+  "source_receipt": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/navigation-load/private-source-bundled.json",
+  "private_environment": {
+    "PROBE_EXPECT_ORIGIN": "bundled",
+    "PROBE_MUTATE_OWNED_PACK": "1"
+  },
+  "elapsed_is_not_performance_measurement": true,
+  "pid": 60703,
+  "exit_code": 0,
+  "finished_at": "2026-09-11T02:13:59.893866+00:00",
+  "elapsed_seconds": 0.66,
+  "log_sha256": "a1cf8a0da563b594e4b253778450947795b700a578b21b001981b803b104d078"
+}

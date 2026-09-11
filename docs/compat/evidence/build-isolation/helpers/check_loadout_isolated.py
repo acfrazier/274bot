@@ -1,0 +1,11 @@
+import datetime,hashlib,json,os,pathlib,subprocess,time
+root=pathlib.Path(__file__).resolve().parents[2]; evidence=root/'docs/compat/evidence/build-isolation'; identity=json.loads((root/'docs/compat/evidence/catalog-headed/binary-a4157243.json').read_text()); manifest=json.loads((root/'docs/compat/evidence/catalog-headed/source-a4157243.json').read_text()); source=pathlib.Path(identity['source_root']); target=pathlib.Path(identity['cargo_target_dir']); assert identity['isolated_build'] and identity['target_started_empty']
+for name,h in manifest['files'].items(): assert hashlib.sha256((source/name).read_bytes()).hexdigest()==h,name
+env=dict(os.environ); env.update(CARGO_TARGET_DIR=str(target),GIT_COMMIT=manifest['host_commit'],GIT_DIRTY='0'); jobs=[('api-wearpos',['test','-p','api','generated_wearpos']),('script-loadout',['test','-p','script','--lib','loadout']),('script-loadouts-bag',['test','-p','script','--test','loadouts_bag']),('script-gold-stubs',['test','-p','script','--test','gold_stubs']),('tui-loadout',['test','-p','tui','loadout']),('panel-loadout',['test','-p','panel','loadout'])]
+for label,args in jobs:
+ stem=evidence/('a4157243-'+label); assert not stem.with_suffix('.log').exists(); command=['cargo']+args; start=time.monotonic(); record=dict(command=command,source_root=str(source),host_commit=manifest['host_commit'],client_commit=manifest['client_commit'],cargo_target_dir=str(target),target_origin='Started empty for immutable a4157243 export, reused only within that unchanged export',started_at=datetime.datetime.now(datetime.timezone.utc).isoformat())
+ with stem.with_suffix('.log').open('w') as log:
+  p=subprocess.Popen(command,cwd=source,env=env,stdout=log,stderr=subprocess.STDOUT); print(json.dumps(dict(label=label,pid=p.pid,command=command)),flush=True); code=p.wait()
+ for name,h in manifest['files'].items(): assert hashlib.sha256((source/name).read_bytes()).hexdigest()==h,name
+ record.update(exit_code=code,elapsed_seconds=round(time.monotonic()-start,3),log_sha256=hashlib.sha256(stem.with_suffix('.log').read_bytes()).hexdigest(),source_files_verified=len(manifest['files'])); stem.with_suffix('.json').write_text(json.dumps(record,indent=2)+'\n'); print(json.dumps(record),flush=True)
+ if code: raise SystemExit(code)

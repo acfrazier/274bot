@@ -1,0 +1,20 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "script",
+    "--test",
+    "gold_stubs"
+  ],
+  "source_root": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-a4157243-56d8027",
+  "host_commit": "a4157243817d8606f6c22a5ca2583f106d98bb85",
+  "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/target-isolated-a4157243",
+  "target_origin": "Started empty for immutable a4157243 export, reused only within that unchanged export",
+  "started_at": "2026-09-11T02:21:13.650718+00:00",
+  "exit_code": 0,
+  "elapsed_seconds": 1.039,
+  "log_sha256": "66153e6b3ec94f611bc63b662f236088905c662a978d37ebdca85946a167ee91",
+  "source_files_verified": 1596
+}

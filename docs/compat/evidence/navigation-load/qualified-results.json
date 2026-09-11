@@ -1,0 +1,72 @@
+{
+  "host_commit": "d2372fe018f3fdaf69b90fe25ba25247ef74ff53",
+  "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "isolated_build": true,
+  "scope": "Private instrumented origin probes and native startup only. Local unsigned bundle with manifest-derived compiled table; not a shipped release.",
+  "probes": [
+    {
+      "receipt": "probe-external-274.json",
+      "facts": {
+        "revision": 274,
+        "cache_id": "4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c",
+        "origin": "external",
+        "pack": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/Nav External Proof.app/Contents/Resources/nav/274/274bot.navpack",
+        "pack_reads": 1,
+        "pack_hashes": 1,
+        "pack_decodes": 1,
+        "hash_stage_starts": 1,
+        "same_world_arc": true,
+        "preserved_after_disk_edit": true,
+        "new_bind_refusal": "navigation/profile mismatch: revision, cache identity or pack/flags content differs"
+      }
+    },
+    {
+      "receipt": "probe-external-289.json",
+      "facts": {
+        "revision": 289,
+        "cache_id": "c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09",
+        "origin": "external",
+        "pack": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/Nav External Proof.app/Contents/Resources/nav/289/274bot.navpack",
+        "pack_reads": 1,
+        "pack_hashes": 1,
+        "pack_decodes": 1,
+        "hash_stage_starts": 1,
+        "same_world_arc": true,
+        "preserved_after_disk_edit": true,
+        "new_bind_refusal": "navigation/profile mismatch: revision, cache identity or pack/flags content differs"
+      }
+    },
+    {
+      "receipt": "probe-bundled-274.json",
+      "facts": {
+        "revision": 274,
+        "cache_id": "4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c",
+        "origin": "bundled",
+        "pack": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/Nav Bundled Proof.app/Contents/Resources/nav/274/274bot.navpack",
+        "pack_reads": 1,
+        "pack_hashes": 0,
+        "pack_decodes": 1,
+        "hash_stage_starts": 0,
+        "same_world_arc": true,
+        "preserved_after_disk_edit": true,
+        "new_bind_refusal": "navigation /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/Nav Bundled Proof.app/Contents/Resources/nav/274/274bot.navpack: bad pack magic (expected b\"274N\" or b\"274V\")"
+      }
+    },
+    {
+      "receipt": "probe-bundled-289.json",
+      "facts": {
+        "revision": 289,
+        "cache_id": "c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09",
+        "origin": "bundled",
+        "pack": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/Nav Bundled Proof.app/Contents/Resources/nav/289/274bot.navpack",
+        "pack_reads": 1,
+        "pack_hashes": 0,
+        "pack_decodes": 1,
+        "hash_stage_starts": 0,
+        "same_world_arc": true,
+        "preserved_after_disk_edit": true,
+        "new_bind_refusal": "navigation /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/Nav Bundled Proof.app/Contents/Resources/nav/289/274bot.navpack: bad pack magic (expected b\"274N\" or b\"274V\")"
+      }
+    }
+  ]
+}

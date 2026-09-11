@@ -1,0 +1,25 @@
+{
+  "variant": "external",
+  "example": "nav_origin_probe",
+  "command": [
+    "cargo",
+    "build",
+    "-p",
+    "host-play",
+    "--example",
+    "nav_origin_probe",
+    "--message-format=json"
+  ],
+  "started_at": "2026-09-11T02:10:39.932113+00:00",
+  "elapsed_seconds": 23.418,
+  "exit_code": 0,
+  "source": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/source-d2372fe0-external",
+  "source_identity": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/navigation-load/private-source-external.json",
+  "elapsed_is_not_performance_measurement": true,
+  "isolated_build": true,
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/target-isolated-external",
+  "binary": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/nav_origin_probe-external-d2372fe0",
+  "binary_sha256": "9474fddc3858ad3d9e80f7ecb2b95d396daa2d53b99c68ffd90a57008fecc50c",
+  "binary_bytes": 45920688,
+  "source_files_verified": 1587
+}
