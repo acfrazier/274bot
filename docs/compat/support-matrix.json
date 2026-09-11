@@ -31562,13 +31562,20 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Controlled local fixture qualified for the linked core/named option on an isolated build; full branch and frontend acceptance remains separate.",
       "observable_proof_requirement": "Fletching XP plus feather/tip consumption and dart production",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Reviewed isolated a4157243 passes this catalog/revision core proof. Bronze and Iron branches consume exact inputs and produce the selected dart tier with further Fletching XP. Remaining supported settings and integrated/frontend qualification remain outstanding.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-dart-fletcher-100adccc-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r274-dart-fletcher-100adccc-a4157243.log",
+        "docs/compat/evidence/catalog-harness/live/r274-dart-fletcher-iron-100adccc-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r274-dart-fletcher-iron-100adccc-a4157243.log",
+        "docs/compat/evidence/inventory-production/isolated-results-a4157243.json"
+      ]
     },
     {
       "display_name": "DartFletcher",
@@ -31705,13 +31712,20 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Controlled local fixture qualified for the linked core/named option on an isolated build; full branch and frontend acceptance remains separate.",
       "observable_proof_requirement": "Fletching XP plus feather/tip consumption and dart production",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Reviewed isolated a4157243 passes this catalog/revision core proof. Bronze and Iron branches consume exact inputs and produce the selected dart tier with further Fletching XP. Remaining supported settings and integrated/frontend qualification remain outstanding.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-dart-fletcher-100adccc-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r289-dart-fletcher-100adccc-a4157243.log",
+        "docs/compat/evidence/catalog-harness/live/r289-dart-fletcher-iron-100adccc-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r289-dart-fletcher-iron-100adccc-a4157243.log",
+        "docs/compat/evidence/inventory-production/isolated-results-a4157243.json"
+      ]
     },
     {
       "display_name": "HerbloreSecondaries",
@@ -32463,13 +32477,20 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Controlled local fixture qualified for the linked core/named option on an isolated build; full branch and frontend acceptance remains separate.",
       "observable_proof_requirement": "Herblore XP plus unidentified-to-clean herb transition and bank cycle",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Reviewed isolated a4157243 passes this catalog/revision core proof. Default and named-filter branches clean a full pack, deposit, restock and clean further exact guam leaves with Herblore XP. Remaining supported settings and integrated/frontend qualification remain outstanding.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-herb-cleaner-100adccc-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r274-herb-cleaner-100adccc-a4157243.log",
+        "docs/compat/evidence/catalog-harness/live/r274-herb-cleaner-named-100adccc-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r274-herb-cleaner-named-100adccc-a4157243.log",
+        "docs/compat/evidence/inventory-production/isolated-results-a4157243.json"
+      ]
     },
     {
       "display_name": "HerbCleaner",
@@ -32647,13 +32668,20 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Controlled local fixture qualified for the linked core/named option on an isolated build; full branch and frontend acceptance remains separate.",
       "observable_proof_requirement": "Herblore XP plus unidentified-to-clean herb transition and bank cycle",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Reviewed isolated a4157243 passes this catalog/revision core proof. Default and named-filter branches clean a full pack, deposit, restock and clean further exact guam leaves with Herblore XP. Remaining supported settings and integrated/frontend qualification remain outstanding.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-herb-cleaner-100adccc-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r289-herb-cleaner-100adccc-a4157243.log",
+        "docs/compat/evidence/catalog-harness/live/r289-herb-cleaner-named-100adccc-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r289-herb-cleaner-named-100adccc-a4157243.log",
+        "docs/compat/evidence/inventory-production/isolated-results-a4157243.json"
+      ]
     },
     {
       "display_name": "PotionMaker",
@@ -37457,13 +37485,20 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Controlled local fixture qualified for the linked core/named option on an isolated build; full branch and frontend acceptance remains separate.",
       "observable_proof_requirement": "Crafting XP plus uncut-to-cut gem transition and bank cycle",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Reviewed isolated a4157243 passes this catalog/revision core proof. Default and named-filter branches cut a full pack, deposit, restock and cut further exact sapphires with Crafting XP. Remaining supported settings and integrated/frontend qualification remain outstanding.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-gem-cutter-100adccc-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r274-gem-cutter-100adccc-a4157243.log",
+        "docs/compat/evidence/catalog-harness/live/r274-gem-cutter-named-100adccc-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r274-gem-cutter-named-100adccc-a4157243.log",
+        "docs/compat/evidence/inventory-production/isolated-results-a4157243.json"
+      ]
     },
     {
       "display_name": "GemCutter",
@@ -37637,13 +37672,20 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Controlled local fixture qualified for the linked core/named option on an isolated build; full branch and frontend acceptance remains separate.",
       "observable_proof_requirement": "Crafting XP plus uncut-to-cut gem transition and bank cycle",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Reviewed isolated a4157243 passes this catalog/revision core proof. Default and named-filter branches cut a full pack, deposit, restock and cut further exact sapphires with Crafting XP. Remaining supported settings and integrated/frontend qualification remain outstanding.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-gem-cutter-100adccc-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r289-gem-cutter-100adccc-a4157243.log",
+        "docs/compat/evidence/catalog-harness/live/r289-gem-cutter-named-100adccc-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r289-gem-cutter-named-100adccc-a4157243.log",
+        "docs/compat/evidence/inventory-production/isolated-results-a4157243.json"
+      ]
     },
     {
       "display_name": "GnomeCourse",
@@ -37848,13 +37890,18 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Controlled local fixture qualified for the linked core/named option on an isolated build; full branch and frontend acceptance remains separate.",
       "observable_proof_requirement": "Agility XP and completed obstacle/lap displacement",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Reviewed isolated 50f2be8a passes this catalog/revision core proof. Default radius completes ordered log, ground-return and pipe milestones, then further Agility XP on the next lap. Radius-8 old-catalog cells on both revisions fail at our missing Reachability.walkable mapping; no foreign-script defect is established. Remaining supported settings and integrated/frontend qualification remain outstanding.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-gnome-course-100adccc-50f2be8a.json",
+        "docs/compat/evidence/catalog-harness/live/r274-gnome-course-100adccc-50f2be8a.log",
+        "docs/compat/evidence/location-world/isolated-results-50f2be8a.json"
+      ]
     },
     {
       "display_name": "GnomeCourse",
@@ -38059,13 +38106,18 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Controlled local fixture qualified for the linked core/named option on an isolated build; full branch and frontend acceptance remains separate.",
       "observable_proof_requirement": "Agility XP and completed obstacle/lap displacement",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Reviewed isolated 50f2be8a passes this catalog/revision core proof. Default radius completes ordered log, ground-return and pipe milestones, then further Agility XP on the next lap. Radius-8 old-catalog cells on both revisions fail at our missing Reachability.walkable mapping; no foreign-script defect is established. Remaining supported settings and integrated/frontend qualification remain outstanding.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-gnome-course-100adccc-50f2be8a.json",
+        "docs/compat/evidence/catalog-harness/live/r289-gnome-course-100adccc-50f2be8a.log",
+        "docs/compat/evidence/location-world/isolated-results-50f2be8a.json"
+      ]
     },
     {
       "display_name": "WildyAgility",
@@ -66138,13 +66190,20 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Controlled local fixture qualified for the linked core/named option on an isolated build; full branch and frontend acceptance remains separate.",
       "observable_proof_requirement": "Fletching XP plus feather/tip consumption and dart production",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Reviewed isolated a4157243 passes this catalog/revision core proof. Bronze and Iron branches consume exact inputs and produce the selected dart tier with further Fletching XP. Remaining supported settings and integrated/frontend qualification remain outstanding.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-dart-fletcher-8e7d965b-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r274-dart-fletcher-8e7d965b-a4157243.log",
+        "docs/compat/evidence/catalog-harness/live/r274-dart-fletcher-iron-8e7d965b-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r274-dart-fletcher-iron-8e7d965b-a4157243.log",
+        "docs/compat/evidence/inventory-production/isolated-results-a4157243.json"
+      ]
     },
     {
       "display_name": "DartFletcher",
@@ -66281,13 +66340,20 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Controlled local fixture qualified for the linked core/named option on an isolated build; full branch and frontend acceptance remains separate.",
       "observable_proof_requirement": "Fletching XP plus feather/tip consumption and dart production",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Reviewed isolated a4157243 passes this catalog/revision core proof. Bronze and Iron branches consume exact inputs and produce the selected dart tier with further Fletching XP. Remaining supported settings and integrated/frontend qualification remain outstanding.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-dart-fletcher-8e7d965b-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r289-dart-fletcher-8e7d965b-a4157243.log",
+        "docs/compat/evidence/catalog-harness/live/r289-dart-fletcher-iron-8e7d965b-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r289-dart-fletcher-iron-8e7d965b-a4157243.log",
+        "docs/compat/evidence/inventory-production/isolated-results-a4157243.json"
+      ]
     },
     {
       "display_name": "HerbloreSecondaries",
@@ -67039,13 +67105,20 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Controlled local fixture qualified for the linked core/named option on an isolated build; full branch and frontend acceptance remains separate.",
       "observable_proof_requirement": "Herblore XP plus unidentified-to-clean herb transition and bank cycle",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Reviewed isolated a4157243 passes this catalog/revision core proof. Default and named-filter branches clean a full pack, deposit, restock and clean further exact guam leaves with Herblore XP. Remaining supported settings and integrated/frontend qualification remain outstanding.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-herb-cleaner-8e7d965b-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r274-herb-cleaner-8e7d965b-a4157243.log",
+        "docs/compat/evidence/catalog-harness/live/r274-herb-cleaner-named-8e7d965b-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r274-herb-cleaner-named-8e7d965b-a4157243.log",
+        "docs/compat/evidence/inventory-production/isolated-results-a4157243.json"
+      ]
     },
     {
       "display_name": "HerbCleaner",
@@ -67223,13 +67296,20 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Controlled local fixture qualified for the linked core/named option on an isolated build; full branch and frontend acceptance remains separate.",
       "observable_proof_requirement": "Herblore XP plus unidentified-to-clean herb transition and bank cycle",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Reviewed isolated a4157243 passes this catalog/revision core proof. Default and named-filter branches clean a full pack, deposit, restock and clean further exact guam leaves with Herblore XP. Remaining supported settings and integrated/frontend qualification remain outstanding.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-herb-cleaner-8e7d965b-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r289-herb-cleaner-8e7d965b-a4157243.log",
+        "docs/compat/evidence/catalog-harness/live/r289-herb-cleaner-named-8e7d965b-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r289-herb-cleaner-named-8e7d965b-a4157243.log",
+        "docs/compat/evidence/inventory-production/isolated-results-a4157243.json"
+      ]
     },
     {
       "display_name": "PotionMaker",
@@ -72035,13 +72115,20 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Controlled local fixture qualified for the linked core/named option on an isolated build; full branch and frontend acceptance remains separate.",
       "observable_proof_requirement": "Crafting XP plus uncut-to-cut gem transition and bank cycle",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Reviewed isolated a4157243 passes this catalog/revision core proof. Default and named-filter branches cut a full pack, deposit, restock and cut further exact sapphires with Crafting XP. Remaining supported settings and integrated/frontend qualification remain outstanding.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-gem-cutter-8e7d965b-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r274-gem-cutter-8e7d965b-a4157243.log",
+        "docs/compat/evidence/catalog-harness/live/r274-gem-cutter-named-8e7d965b-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r274-gem-cutter-named-8e7d965b-a4157243.log",
+        "docs/compat/evidence/inventory-production/isolated-results-a4157243.json"
+      ]
     },
     {
       "display_name": "GemCutter",
@@ -72215,13 +72302,20 @@
         "host-owned navigation and movement completion"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Controlled local fixture qualified for the linked core/named option on an isolated build; full branch and frontend acceptance remains separate.",
       "observable_proof_requirement": "Crafting XP plus uncut-to-cut gem transition and bank cycle",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Reviewed isolated a4157243 passes this catalog/revision core proof. Default and named-filter branches cut a full pack, deposit, restock and cut further exact sapphires with Crafting XP. Remaining supported settings and integrated/frontend qualification remain outstanding.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-gem-cutter-8e7d965b-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r289-gem-cutter-8e7d965b-a4157243.log",
+        "docs/compat/evidence/catalog-harness/live/r289-gem-cutter-named-8e7d965b-a4157243.json",
+        "docs/compat/evidence/catalog-harness/live/r289-gem-cutter-named-8e7d965b-a4157243.log",
+        "docs/compat/evidence/inventory-production/isolated-results-a4157243.json"
+      ]
     },
     {
       "display_name": "GnomeCourse",
@@ -72426,13 +72520,18 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Controlled local fixture qualified for the linked core/named option on an isolated build; full branch and frontend acceptance remains separate.",
       "observable_proof_requirement": "Agility XP and completed obstacle/lap displacement",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Reviewed isolated 50f2be8a passes this catalog/revision core proof. Default radius completes ordered log, ground-return and pipe milestones, then further Agility XP on the next lap. Radius-8 old-catalog cells on both revisions fail at our missing Reachability.walkable mapping; no foreign-script defect is established. Remaining supported settings and integrated/frontend qualification remain outstanding.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-gnome-course-8e7d965b-50f2be8a.json",
+        "docs/compat/evidence/catalog-harness/live/r274-gnome-course-8e7d965b-50f2be8a.log",
+        "docs/compat/evidence/location-world/isolated-results-50f2be8a.json"
+      ]
     },
     {
       "display_name": "GnomeCourse",
@@ -72637,13 +72736,18 @@
         "dialogue/widget/modal snapshot and revision-correct button operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Controlled local fixture qualified for the linked core/named option on an isolated build; full branch and frontend acceptance remains separate.",
       "observable_proof_requirement": "Agility XP and completed obstacle/lap displacement",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Reviewed isolated 50f2be8a passes this catalog/revision core proof. Default radius completes ordered log, ground-return and pipe milestones, then further Agility XP on the next lap. Radius-8 old-catalog cells on both revisions fail at our missing Reachability.walkable mapping; no foreign-script defect is established. Remaining supported settings and integrated/frontend qualification remain outstanding.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-gnome-course-8e7d965b-50f2be8a.json",
+        "docs/compat/evidence/catalog-harness/live/r289-gnome-course-8e7d965b-50f2be8a.log",
+        "docs/compat/evidence/location-world/isolated-results-50f2be8a.json"
+      ]
     },
     {
       "display_name": "WildyAgility",
