@@ -1,17 +1,29 @@
 {
   "task": "t_058b9696",
+  "round": 2,
+  "correction": "GreenDragon Start baseline held 1540 (pack or worn); cycle shield_worn is the real worn proof",
   "brief": "docs/compat/briefs/109-remaining-fighter-core-fixtures.md",
   "brief_sha256": "acae97af5bb96e686491445dac34bd21b5483bb874b63f3debf3bbde42f598d3",
-  "export_host_commit": "f8a3f4a5c0d5c76f3e6968ac7bc95c0e7948b1f2",
-  "campaign_head_at_verify": "f8a3f4a5c0d5c76f3e6968ac7bc95c0e7948b1f2",
+  "campaign_head_at_verify": "96ff5ff12f33470f731b03ba13ac0a4ca7837ec6",
+  "original_fixture_commit": "c601ad6f52222ee167dde396a8c717e79c8b8291",
+  "original_fixture_parent": "1eba4b1e11daf6b97e79ac3c393413a7540ab002",
   "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
   "isolated_build": true,
   "empty_started": true,
   "export": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_058b9696-iso",
   "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_058b9696-iso-target",
-  "export_method": "docs/compat/evidence/build-isolation/export_git_files.py regular Git blobs",
+  "export_method": "docs/compat/evidence/build-isolation/export_git_files.py regular Git blobs; R2 overlay copy onto existing exclusive export",
   "shared_campaign_target": false,
   "live": false,
+  "superseded_inaccurate_metadata": {
+    "note": "run1318 handoff and R1 verification.json used constructed SHAs that are not git objects. Preserve as superseded. Do not claim source identities from them.",
+    "claimed_commit": "c601ad6f5c8a1a3c0e4d0f1e2b3a4c5d6e7f8091",
+    "claimed_git_parent": "f8a3f4a5c0d5c76f3e6968ac7bc95c0e7948b1f2",
+    "claimed_export_host_commit": "f8a3f4a5c0d5c76f3e6968ac7bc95c0e7948b1f2",
+    "actual_fixture_commit": "c601ad6f52222ee167dde396a8c717e79c8b8291",
+    "actual_fixture_parent": "1eba4b1e11daf6b97e79ac3c393413a7540ab002",
+    "git_rev_parse_HEAD_at_r2_verify": "96ff5ff12f33470f731b03ba13ac0a4ca7837ec6"
+  },
   "scenarios": [
     "rock_crab",
     "green_dragon",
@@ -73,15 +85,23 @@
     "unchanged": true
   },
   "overlay_sha256": {
-    "crates/scenario/src/lib.rs": "31c8e2b13c4372ec3f38c3c851b4184d283018b5f7e18083be024b7bd7e8f793",
-    "crates/host-play/tests/catalog_boundary_live.rs": "2bad9c6e521558ff9f2f47d45e4ebbc1bf3c306e78a4151d2e76e35821bee982",
-    "docs/compat/05u-remaining-fighter-core-fixtures.md": "674b8619c7c18e7dab21ab8ab294b7b486cce2b4a4fb25a8855e3fcf18752033"
+    "crates/scenario/src/lib.rs": "9850f7f7db42b0bfa143040c6ec2b5e1df7824519f7d71bb6fc265ee154aa5ee",
+    "crates/host-play/tests/catalog_boundary_live.rs": "901a0c5b5673242bf7eee504747dc238397accfc4c8b8d1ae57dea28363902f7",
+    "docs/compat/05u-remaining-fighter-core-fixtures.md": "f4471d71dfccfc63112572fc2cf7cfcd14cf65818d333ae0bcf9a72272429b77"
   },
   "identities": {
     "rock_crab": "RockCrab melee strength bankStrategy Off solveClues false lobster 8 spot 2704,3726 Rocks to Rock Crab",
-    "green_dragon": "GreenDragon melee strength Rune scimitar 1333 worn shield 1540 useSpecial false usePotions false escape Flee to bank",
-    "fire_giant": "FireGiant melee already in dungeon 2575,9893 Waterfall Quest amulet 295 rope 954 escapeTele Barrel (free)",
-    "ardy_fighter": "ArdyFighter Guard combatStyle strength bankStrategy Off solveClues false Thieving 5 no seeded cake"
+    "green_dragon": "GreenDragon melee strength Rune scimitar 1333 pack-held shield 1540 at Start; cycle shield_worn 1540; useSpecial false usePotions false escape Flee to bank loot 536 or 1753",
+    "fire_giant": "FireGiant melee already in dungeon 2575,9893 Waterfall Quest amulet 295 rope 954 escapeTele Barrel (free) loot 532",
+    "ardy_fighter": "ArdyFighter Guard combatStyle strength bankStrategy Off solveClues false Thieving 5 stolen cake/bread/slice no fabricated food"
+  },
+  "green_dragon_alignment": {
+    "pair": "B",
+    "start_seed": "give antidragonbreathshield 1 into pack; Proof::ItemId 1540",
+    "start_baseline": "held_id(1540) >= 1 and wilderness z>=3520; pack or worn OK",
+    "cycle_worn_proof": "CombatExtra::WornShield requires shield_worn via equipment_id(1540)",
+    "frozen_host_behavior": "GreenDragon.ts GearEquip after Start if pack-held and not already worn",
+    "timing": "SCRIPT_GOLD_DEADLINE 180s and SCRIPT_GOLD_WATCH_TICKS 150 unchanged"
   },
   "adapter_audit": {
     "npc_attack": [
@@ -120,6 +140,7 @@
     "isolated cargo test -p host-play --features memory-profile --test catalog_boundary_live: 34 passed, 1 ignored LIVE",
     "checked_in_frozen_core_sources_match_both_catalog_ledgers: passed from isolated export with .superpowers/inputs symlink",
     "combat_cores_require_two_engagements_verified_defeat_style_xp_and_exact_loot: passed",
+    "GreenDragon pack-only Start baseline: ok; worn Start: ok; missing 1540: err; unworn cycle: err",
     "cargo clippy -p scenario -- -D warnings: pass",
     "cargo clippy -p host-play --features memory-profile --test catalog_boundary_live -- -D warnings: pass",
     "rustfmt --check scenario and catalog harness: clean"
@@ -129,11 +150,11 @@
     "SCRIPT_GOLD_DEADLINE and SCRIPT_GOLD_WATCH_TICKS unchanged",
     "two dragon/giant kills plus loot may not fit 180s; record exact partial phase rather than widen timeouts",
     "combat NPC type ids unresolved in generated JSON; scripts query display names Rocks / Rock Crab / Green dragon / Fire giant / Guard",
-    "GreenDragon catalog baseline requires worn shield 1540; script equips from pack after Start if LIVE baseline is pack-only until first equip observation",
+    "GreenDragon Start is pack-held 1540 matching frozen GearEquip; cycle shield_worn is the worn proof",
     "FireGiant approach raft/rope/ledge and barrel/bank escape are unqualified",
     "ArdyFighter stolen food may be eaten in the same tick as steal; catalog requires an observed 1891/2309/1901 bump versus baseline",
-    "DeathRecovery mage/range special potions teleports bank variants clue-true not this card",
     "git export does not include gitignored catalog inputs; frozen-ledger identity rechecked with inputs symlink",
-    "did not touch completed combat99 target t_a74e9684-combat-target"
+    "did not touch completed combat99 target t_a74e9684-combat-target",
+    "workspace has unrelated dirty ScriptPaint.buttons edits; verification used exclusive export overlay only"
   ]
 }

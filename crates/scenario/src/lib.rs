@@ -9095,9 +9095,10 @@ fn rock_crab_scenario() -> Scenario {
     })
 }
 
-/// GreenDragon melee in the wilderness field. Shield 1540 is prepared;
-/// special and potions stay off. Catalog requires worn 1540 and dragon
-/// bones 536 or green hide 1753. Escape/bank is not this cell.
+/// GreenDragon melee in the wilderness field. Shield 1540 is prepared in
+/// pack before Start; frozen GearEquip wears it after Start. Catalog Start
+/// baseline is held 1540; cycle `shield_worn` is the real worn proof plus
+/// dragon bones 536 or green hide 1753. Escape/bank is not this cell.
 fn green_dragon_scenario() -> Scenario {
     combat_core_scenario(CombatCorePlan {
         name: "green_dragon",

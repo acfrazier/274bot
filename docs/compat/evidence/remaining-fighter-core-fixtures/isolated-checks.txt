@@ -1,9 +1,13 @@
 isolated export: /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_058b9696-iso
-host: f8a3f4a5c0d5c76f3e6968ac7bc95c0e7948b1f2
-client: 9d090ed04957e4efc254f073cda97bc5510ca72b
-owned target (empty-started): /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_058b9696-iso-target
+campaign HEAD at R2 verify (git rev-parse HEAD): 96ff5ff12f33470f731b03ba13ac0a4ca7837ec6
+original fixture commit (git rev-parse c601ad6f5): c601ad6f52222ee167dde396a8c717e79c8b8291
+original fixture parent: 1eba4b1e11daf6b97e79ac3c393413a7540ab002
+client (git -C vendor/fr-client-rust rev-parse HEAD): 9d090ed04957e4efc254f073cda97bc5510ca72b
+owned target (empty-started, reused): /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_058b9696-iso-target
 overlay: crates/scenario/src/lib.rs crates/host-play/tests/catalog_boundary_live.rs docs/compat/05u-remaining-fighter-core-fixtures.md
 inputs symlink for frozen ledger identity
+R2 GreenDragon pair B: Start held 1540; cycle shield_worn is worn proof
+superseded inaccurate SHAs: c601ad6f5c8a1a3c0e4d0f1e2b3a4c5d6e7f8091 and f8a3f4a5c0d5c76f3e6968ac7bc95c0e7948b1f2
 
 cargo test -p scenario --lib
   98 passed; 0 failed

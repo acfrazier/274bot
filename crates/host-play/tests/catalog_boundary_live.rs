@@ -2595,8 +2595,7 @@ fn combat_baseline_ready(baseline: &Observation, spec: CombatSpec) -> bool {
     let extra_ok = match spec.extra {
         CombatExtra::None | CombatExtra::RockActivation => true,
         CombatExtra::WornShield => {
-            baseline.equipment_id(DRAGONFIRE_SHIELD_ID) >= 1
-                && held_id(baseline, DRAGONFIRE_SHIELD_ID) >= 1
+            held_id(baseline, DRAGONFIRE_SHIELD_ID) >= 1
                 && baseline.tile.is_some_and(|tile| tile.1 >= WILDERNESS_MIN_Z)
         }
         CombatExtra::DungeonAmulet => {
@@ -9306,7 +9305,7 @@ mod tests {
 
         let mut dragon_base = combat_obs(
             GREEN_DRAGON_FIELD,
-            &[(LOBSTER_ID, GREEN_DRAGON_FOOD)],
+            &[(LOBSTER_ID, GREEN_DRAGON_FOOD), (DRAGONFIRE_SHIELD_ID, 1)],
             &[("strength", 90)],
             &levels,
             &[],
@@ -9315,12 +9314,16 @@ mod tests {
         );
         dragon_base.equipment_ids.clear();
         dragon_base.equipment_ids.insert(RUNE_SCIMITAR_ID, 1);
-        dragon_base.equipment_ids.insert(DRAGONFIRE_SHIELD_ID, 1);
         validate_case_baseline(CoreCase::GreenDragon, &dragon_base).unwrap();
-        let mut pack_only = dragon_base.clone();
-        pack_only.equipment_ids.remove(&DRAGONFIRE_SHIELD_ID);
-        pack_only.item_ids.insert(DRAGONFIRE_SHIELD_ID, 1);
-        assert!(validate_case_baseline(CoreCase::GreenDragon, &pack_only).is_err());
+        let mut worn_start = dragon_base.clone();
+        worn_start.item_ids.remove(&DRAGONFIRE_SHIELD_ID);
+        worn_start.equipment_ids.insert(DRAGONFIRE_SHIELD_ID, 1);
+        validate_case_baseline(CoreCase::GreenDragon, &worn_start).unwrap();
+        let mut no_shield = dragon_base.clone();
+        no_shield.item_ids.remove(&DRAGONFIRE_SHIELD_ID);
+        assert!(validate_case_baseline(CoreCase::GreenDragon, &no_shield).is_err());
+        let mut worn_eq = dragon_base.equipment_ids.clone();
+        worn_eq.insert(DRAGONFIRE_SHIELD_ID, 1);
         let dragon_first = {
             let mut observation = combat_obs(
                 GREEN_DRAGON_FIELD,
@@ -9331,7 +9334,7 @@ mod tests {
                 true,
                 Some(2),
             );
-            observation.equipment_ids = dragon_base.equipment_ids.clone();
+            observation.equipment_ids = worn_eq.clone();
             observation
         };
         let dragon_second = {
@@ -9347,7 +9350,7 @@ mod tests {
                 true,
                 Some(4),
             );
-            observation.equipment_ids = dragon_base.equipment_ids.clone();
+            observation.equipment_ids = worn_eq.clone();
             observation
         };
         assert!(witness(
@@ -9389,7 +9392,7 @@ mod tests {
                 true,
                 Some(2),
             );
-            observation.equipment_ids = dragon_base.equipment_ids.clone();
+            observation.equipment_ids = worn_eq.clone();
             observation
         };
         assert!(
