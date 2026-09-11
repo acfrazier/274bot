@@ -117,6 +117,14 @@ export const reader = proxy('reader', {
     localPlayerName() {
         return optionalText(snap().my_name);
     },
+    selfChat() {
+        return optionalText(snap().self_chat);
+    },
+    hintTile() {
+        const tile = snap().hint_tile;
+        if (!tile || !finiteInt(tile.x) || !finiteInt(tile.z)) return null;
+        return { x: tile.x, z: tile.z };
+    },
     inCombat() {
         return snap().in_combat === true;
     },
@@ -218,6 +226,10 @@ export const actions = proxy('actions', {
     },
     setRetaliate(on) {
         queue({ op: 'set-retaliate', on: !!on });
+        return true;
+    },
+    setRun(on) {
+        queue({ op: 'set-run', on: !!on });
         return true;
     },
     walkTo(lx, lz) {

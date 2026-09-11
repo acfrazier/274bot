@@ -2320,6 +2320,31 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         } else if !had {
             set(&mut scope, obj, "widgets", empty_rows)?;
         }
+        if snap.has_self_chat() {
+            let self_chat = match snap.self_chat() {
+                Some("") | None => v8::null(&mut scope).into(),
+                Some(text) => js_string(&mut scope, text)?,
+            };
+            set(&mut scope, obj, "self_chat", self_chat)?;
+        } else if !had {
+            set(&mut scope, obj, "self_chat", none)?;
+        }
+        if snap.has_hint_tile() {
+            let hint = match snap.hint_tile() {
+                Some((x, z)) => {
+                    let tile = v8::Object::new(&mut scope);
+                    let x = num(&mut scope, x as f64);
+                    set(&mut scope, tile, "x", x)?;
+                    let z = num(&mut scope, z as f64);
+                    set(&mut scope, tile, "z", z)?;
+                    tile.into()
+                }
+                None => v8::null(&mut scope).into(),
+            };
+            set(&mut scope, obj, "hint_tile", hint)?;
+        } else if !had {
+            set(&mut scope, obj, "hint_tile", none)?;
+        }
         if snap.has_hold() {
             let hold = v8::Boolean::new(&mut scope, snap.hold());
             set(&mut scope, obj, "hold", hold.into())?;

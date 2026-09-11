@@ -234,6 +234,9 @@ table Snapshot {
   reach: Reach;
   attacked_by_player: bool;
   widgets: [WidgetText];
+  self_chat: string;
+  hint_tile_x: int = -1;
+  hint_tile_z: int = -1;
 }
 
 // One shim interact request, tagged by `op`:
