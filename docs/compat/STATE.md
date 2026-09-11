@@ -1,64 +1,80 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 07:01 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 07:48 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
 Read `docs/execution.md` for dispatch/review rules. Reports below preserve dated
 results and failed cells; this state identifies current work.
 
-## Current follow-ups (07:01 UTC)
+## Current follow-ups (07:48 UTC)
 
-- Frozen B1 host b1cff8a7/client9d090ed core harvest is complete: 25 cells,
-  18 PASS and seven retained FAIL; ledger206. Chicken banking four, Flax289
-  two, default Gnome four and default/named PotionMaker eight pass their
-  full exact-item/XP/bank-return/further-work witnesses. Full options/frontends
-  remain separate. Core and platform harvest scripts reproduce these results.
-- Actual Grok4.6 audit1245/session20260911_022018_8b4982 confirms Flax274
-  drops the selected loc identity and dispatches colocated Wall980 instead of
-  Flax2646. Loc identity t_c35281b3 is now actual Grok4.6 run1250/session
-  20260911_025232_e82b54 after autocast review. Flax remains enabled.
-- The same audit assigns radius8/default Gnome course resync to the imported
-  script. Four bounded branch limits are recorded with source/evidence;
-  default Gnome remains enabled. Original45card/180row inventory, raw failures
-  and product Start policy are preserved. No blanket claim for custom courses.
-- Root2f1bd9cf places West vial preparation adjacent to its seed booth. Its
-  original scenario check caught an old3369 test literal; root1694cec68 corrects
-  that expectation in a separate test-only export. The frozen2f source/binary
-  is unchanged. Catalog24, corrected scenario90 and strict catalog Clippy pass;
-  Tanner3a34f879f passed actual Grok4.5 review1246/session20260911_023420_812675.
-  Isolated2f LIVE now runs West vial and soft/hard Tanner on both revisions,
-  stopping each case family at first failure. No new success assumed yet.
-- Vial East B1 fills28 water vials then fails bank return/open on both revisions.
-  Read-only Grok audit t_715971a2/brief76 is running against frozenB1 and raw
-  evidence; classification/fix remains pending. No runtime workaround or new
-  deadline is authorized by that audit.
-- Six Mac B1 native runs are harvested with read internal scene2 PNGs and
-  paired snapshots: five Alcher PASS, one diagnostic Flax FAIL. Actual Metal
-  GPU texture and CPU pixmap counters qualify those presentation routes.
-  Native Pause stable after drain, Resume fresh work, Stop idle/paint clear,
-  Start fresh work were observed; first incomplete control run is retained.
-- Windows B1 native289 Alcher and Linux headless289 Alcher pass actual core
-  work. Windows RTX5060/Vulkan adapter and internal PNG are verified, but
-  client frame routing remains unsampled. Two startup responsiveness timeouts
-  are retained; owned Windows one-off task was removed.
-- Concord B1 TUI289 core passed twice in an actual PTY. Actual terminal mouse
-  Pause kept7notes/7runes/600000coins stable across two observations, Resume
-  reached780000coins, Stop idle/paint clear reached810000 after one in-flight
-  action. Start/Browse/settings/reconnect remain separate. Raw ANSI, interpreted
-  screens and three forwarded inputs are retained. PASS stdout corrupts the
-  active TUI; bounded TUI fix t_35ee61ac runs as Grok4.6 run1247/session
-  20260911_023822_0f6b95. The owned Concord289 engine is stopped; original274
-  system service remains inactive. No Concord compilation or Xvfb.
-- Autocast90d5fb039 passed actual Grok4.5 review1249/session
-  20260911_024527_952a0d. RuneCrafter/MuleCrafter fixture t_942179cc runs as
-  Grok4.6 run1248/session20260911_024329_558edd. Named dependencies and
-  same-card review gates remain in force. Browser usage at06:55 is71%used,
-  29%remaining, reset07:40 Eastern. Continue useful authorized work.
-- N2 source3383b099 passed actual Grok4.5 review1237 and both isolated revision
-  live proofs including new peer XP/items after the actual Stop boundary.
-  Earlier587 passes remain unqualified for post-Stop work. Final integrated
-  source, full option/frontend coverage and whole-branch review remain required.
+- Full45card/180row plan remains active. Root6750713b/client9d090ed is exported
+  from2822 exact Git blobs and built in a new empty target. Catalog24/scenario91
+  and strict affected catalog Clippy pass. It includes selected-loc identity
+  feacb79a3, approved by actual Grok4.5 review1254/session20260911_031641_4d9083,
+  and Rune/Mule fixtures6750713b, approved by actual Grok4.5 review1257/session
+  20260911_032746_e78f08. No current worker WIP is in those binaries.
+- All four675 FlaxPicker cells pass both catalogs/revisions through fresh
+  acquisition, bank deposit, return and further flax. The host now preserves
+  selected Flax2646 instead of dispatching colocated Wall980. Native274 GPU
+  repeat is active. First two Air/Solo RuneCrafter cells pass; remaining newer
+  Air, Earth/Solo and blank-partner Air MuleCrafter cells are active. Root
+  harvest and support ledger updates follow completion; current core ledger214.
+- Root2f production proof is complete: West VialFiller passes all four cells
+  (28filled/deposit28/restock28/return/further water). Both revisions and soft/
+  hard Tanner fail after Start on missing Input.invButton; newer catalog waits
+  after family failure. Native289/newer West Vial also passes with read scene2
+  PNG and actual GPU texture routing. verify_production_2f.py recomputes results.
+- East Vial remains a host mapping issue, not an imported-script defect. Actual
+  Grok4.6 audit1253/session20260911_031440_1f7fb0 (04k) replaces05l ownership
+  verdict: selected named Bank.openNearest needs existing packed WalkNear radius1
+  before same named OpenBooth. Low-level geometric OpenBooth stays unchanged.
+  t_4948af53/brief81 actual Grok4.6 run1258/session20260911_033247_74f14d implements
+  this bounded mapping in bank.js plus a unique integration test. No East dim.
+- CAF6b809 TUI fix passed actual Grok4.5 review1252/session20260911_025733_bcddb2.
+  New Mac/Linux isolated builds verify6292package files. Mac builder relative
+  target resolves under its exclusively new source package; actual-target.json
+  preserves that correction without editing the raw receipt. Five actual PTY
+  runs pass core Alcher and PASS-after-terminal-restore: Mac274 twice, Mac289,
+  Concord274/289. Four Pause/Resume/Stop paths and Mac274/Concord289 Browse,
+  selection and fresh Start are observed. harvest_caf.py verifies raw hashes,
+  proof ordering and inventory observations. No full parameter acceptance yet.
+- Actual Concord289 Params exposed uneditable numeric/string-array fields and
+  background text bleed. t_32400aa2/brief82 actual Grok4.6 run1260/session
+  20260911_033448_c98db0 owns TUI params/app only. Existing panel-supported
+  setting types must be editable with shared coercion/store and visible scroll.
+  Preserve CAF bin.rs output fix. Review then fresh PTY editing/Start proof.
+- Concord274 got transient login5 at fixture relog, recovered through existing
+  retry and passed with actual casts. Raw response remains retained. Both owned
+  Concord engines are now stopped, four ports absent, original274 system service
+  inactive. No Concord compilation or Xvfb. TUI elapsed times are not performance.
+- Input.invButton t_af045121/brief77 actual Grok4.6 run1256/session
+  20260911_032344_09ecb1 owns selected component/item/generation mapping; same-card
+  review remains pending. It gates the four overnight runtime assignments:
+  hostile/duel t_eeea20f0, special t_68de6f48, spellbook teleport t_1bf9a22e,
+  followed by existing Sol shop, Make-X/smithing and fire tasks.
+- Ardy stall/Guard/Knight fixtures t_464d9c4c/brief78 actual Grok4.6 run1259/session
+  20260911_033349_8b552c owns scenario/catalog files after Rune review. Resource
+  fixtures t_aa061a28/brief83 queue behind its review: Gnome log/short/long and
+  CoalTrucks full cycle, preserving gold bounds and honest seeded-state limits.
+- BankSorter read-only design04l completed actual Grok4.6 run1255/session
+  20260911_032145_827dd9. Packet/identity/order-settlement gaps are useful findings,
+  but value-descending/id-ascending ordering is a new native policy, different
+  from imported category ordering. Root asked the operator whether to keep this
+  card explicitly blocked for a separate native sorter or implement that simpler
+  policy. Decision pending; do not silently adopt it, ignore category options,
+  or claim compatibility from any reorder. Ancillary quest-junk helpers remain
+  honest stubs under the explicit operator policy; no empty successful finder.
+- FrozenB1 core25 (18PASS/7FAIL), native/platform observations and prior N2
+  isolation remain retained. Gnome radius8/default-course resync is the imported
+  branch defect established by04/05k audit; four explicit branch limits preserve
+  default Gnome support. Full options/frontends/reconnect/final integrated N32
+  and final whole-branch Grok review remain required.
+- Browser Grok usage refreshed07:36:72%used/28%remaining, reset11:40UTC/07:40Eastern.
+  Continue useful authorized assignments and same-card reviews. Completed root
+  compiler caches2f/6c/B1 were cleaned only after no-open-file and retained-binary
+  verification; raw evidence/source/binaries remain. No main/remotes/release changes.
 
 ## Imported-script ownership (operator clarification, 01:41 UTC)
 

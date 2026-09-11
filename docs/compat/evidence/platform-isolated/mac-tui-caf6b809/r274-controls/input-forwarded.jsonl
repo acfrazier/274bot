@@ -1,0 +1,4 @@
+{"elapsed_seconds": 57.85, "request": {"action": "click", "x": 29, "y": 39, "label": "stop-initial", "requested_at": "2026-09-11T07:26:30.351112+00:00"}, "terminal_bytes_hex": "1b5b3c303b32393b33394d1b5b3c303b32393b33396d"}
+{"elapsed_seconds": 77.92, "request": {"action": "click", "x": 5, "y": 39, "label": "browse", "requested_at": "2026-09-11T07:26:50.415566+00:00"}, "terminal_bytes_hex": "1b5b3c303b353b33394d1b5b3c303b353b33396d"}
+{"elapsed_seconds": 91.774, "request": {"action": "click", "x": 7, "y": 31, "label": "choose-alcher", "requested_at": "2026-09-11T07:27:04.307272+00:00"}, "terminal_bytes_hex": "1b5b3c303b373b33314d1b5b3c303b373b33316d"}
+{"elapsed_seconds": 109.782, "request": {"action": "click", "x": 13, "y": 25, "label": "start-selected", "requested_at": "2026-09-11T07:27:22.269191+00:00"}, "terminal_bytes_hex": "1b5b3c303b31333b32354d1b5b3c303b31333b32356d"}

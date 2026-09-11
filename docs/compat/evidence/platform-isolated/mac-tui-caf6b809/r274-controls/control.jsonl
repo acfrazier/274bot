@@ -1,0 +1,4 @@
+{"action": "click", "x": 29, "y": 39, "label": "stop-initial", "requested_at": "2026-09-11T07:26:30.351112+00:00"}
+{"action": "click", "x": 5, "y": 39, "label": "browse", "requested_at": "2026-09-11T07:26:50.415566+00:00"}
+{"action": "click", "x": 7, "y": 31, "label": "choose-alcher", "requested_at": "2026-09-11T07:27:04.307272+00:00"}
+{"action": "click", "x": 13, "y": 25, "label": "start-selected", "requested_at": "2026-09-11T07:27:22.269191+00:00"}

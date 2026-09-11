@@ -1,0 +1,49 @@
+{
+  "verified_at": "2026-09-11T07:09:54.311141+00:00",
+  "reason": "Mac disk filled during fresh caf platform archive; remove only two completed root-owned compiler caches after no-open-file and saved-binary checks.",
+  "b1_target_left_open": [],
+  "cleaned": [
+    {
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/target-isolated-2f1bd9cf",
+      "command": [
+        "cargo",
+        "clean",
+        "--target-dir",
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/target-isolated-2f1bd9cf"
+      ],
+      "exit_code": 0,
+      "output": "     Removed 18668 files, 7.5GiB total\n",
+      "retained_binaries": [
+        {
+          "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-watch-2f1bd9cf",
+          "sha256": "2c86dda2b10fb5376136902822a1cc354a0688529040146f68738b49fa91b363"
+        },
+        {
+          "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-2f1bd9cf",
+          "sha256": "34a4c5f3418898a78832859dab8b268d3129e5a179659b1f2475fc9706cf9d20"
+        }
+      ]
+    },
+    {
+      "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/target-isolated-6c7075ce",
+      "command": [
+        "cargo",
+        "clean",
+        "--target-dir",
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/target-isolated-6c7075ce"
+      ],
+      "exit_code": 0,
+      "output": "     Removed 12907 files, 6.0GiB total\n",
+      "retained_binaries": [
+        {
+          "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-watch-6c7075ce",
+          "sha256": "f43b884cd7cfc42f808648a4250a1a396841b6b9196c90ef3ceacfd52896fd63"
+        },
+        {
+          "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-6c7075ce",
+          "sha256": "1a6b30bda2eddc0f0bcc0ed6b0f6600d50cc09160189be32d4f6f36b2154a4a3"
+        }
+      ]
+    }
+  ]
+}

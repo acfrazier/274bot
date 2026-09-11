@@ -41817,13 +41817,20 @@
         "shop snapshot, buy/sell and stock-settlement operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated2f old-catalog soft/hard bothrevisions fail after Start at missing Input.invButton. t_af045121 maps existing native item operation; no Tanner gameplay support claim yet. buyThread separately awaits Shop.",
       "observable_proof_requirement": "after Start, script-caused Crafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "BLOCKED",
+      "status_detail": "Isolated2f old-catalog soft/hard bothrevisions fail after Start at missing Input.invButton. t_af045121 maps existing native item operation; no Tanner gameplay support claim yet. buyThread separately awaits Shop.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-100adccc-2f1bd9cf.json",
+        "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-100adccc-2f1bd9cf.log",
+        "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-hard-100adccc-2f1bd9cf.json",
+        "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-hard-100adccc-2f1bd9cf.log",
+        "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json"
+      ]
     },
     {
       "display_name": "TannerBot",
@@ -42063,13 +42070,20 @@
         "shop snapshot, buy/sell and stock-settlement operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated2f old-catalog soft/hard bothrevisions fail after Start at missing Input.invButton. t_af045121 maps existing native item operation; no Tanner gameplay support claim yet. buyThread separately awaits Shop.",
       "observable_proof_requirement": "after Start, script-caused Crafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "BLOCKED",
+      "status_detail": "Isolated2f old-catalog soft/hard bothrevisions fail after Start at missing Input.invButton. t_af045121 maps existing native item operation; no Tanner gameplay support claim yet. buyThread separately awaits Shop.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-100adccc-2f1bd9cf.json",
+        "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-100adccc-2f1bd9cf.log",
+        "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-hard-100adccc-2f1bd9cf.json",
+        "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-hard-100adccc-2f1bd9cf.log",
+        "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json"
+      ]
     },
     {
       "display_name": "HillGiant",
@@ -43256,19 +43270,22 @@
         "shop snapshot, buy/sell and stock-settlement operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "B1 West fails pre-Start on one-shot approach fixture; corrected adjacent seed is pending LIVE. East fills28 water vials but fails bank return/open, with ownership unresolved. Shop branch remains separately pending.",
+      "fixture_readiness": "Isolated2f West fill/deposit28/empty-vial restock/return/further fill passes allfourcatalog/revisioncells after adjacent pre-Start preparation. East bank-return audit t_715971a2 and shop branch remain pending.",
       "observable_proof_requirement": "after Start, script-caused Herblore progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "B1 West fails pre-Start on one-shot approach fixture; corrected adjacent seed is pending LIVE. East fills28 water vials but fails bank return/open, with ownership unresolved. Shop branch remains separately pending.",
+      "status_detail": "Isolated2f West fill/deposit28/empty-vial restock/return/further fill passes allfourcatalog/revisioncells after adjacent pre-Start preparation. East bank-return audit t_715971a2 and shop branch remain pending.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-vial-filler-100adccc-b1cff8a7.json",
         "docs/compat/evidence/catalog-harness/live/r274-vial-filler-100adccc-b1cff8a7.log",
         "docs/compat/evidence/catalog-harness/live/r274-vial-filler-east-100adccc-b1cff8a7.json",
         "docs/compat/evidence/catalog-harness/live/r274-vial-filler-east-100adccc-b1cff8a7.log",
-        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json"
+        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r274-vial-filler-100adccc-2f1bd9cf.json",
+        "docs/compat/evidence/catalog-harness/live/r274-vial-filler-100adccc-2f1bd9cf.log",
+        "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json"
       ]
     },
     {
@@ -43504,19 +43521,22 @@
         "shop snapshot, buy/sell and stock-settlement operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "B1 West fails pre-Start on one-shot approach fixture; corrected adjacent seed is pending LIVE. East fills28 water vials but fails bank return/open, with ownership unresolved. Shop branch remains separately pending.",
+      "fixture_readiness": "Isolated2f West fill/deposit28/empty-vial restock/return/further fill passes allfourcatalog/revisioncells after adjacent pre-Start preparation. East bank-return audit t_715971a2 and shop branch remain pending.",
       "observable_proof_requirement": "after Start, script-caused Herblore progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "B1 West fails pre-Start on one-shot approach fixture; corrected adjacent seed is pending LIVE. East fills28 water vials but fails bank return/open, with ownership unresolved. Shop branch remains separately pending.",
+      "status_detail": "Isolated2f West fill/deposit28/empty-vial restock/return/further fill passes allfourcatalog/revisioncells after adjacent pre-Start preparation. East bank-return audit t_715971a2 and shop branch remain pending.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-vial-filler-100adccc-b1cff8a7.json",
         "docs/compat/evidence/catalog-harness/live/r289-vial-filler-100adccc-b1cff8a7.log",
         "docs/compat/evidence/catalog-harness/live/r289-vial-filler-east-100adccc-b1cff8a7.json",
         "docs/compat/evidence/catalog-harness/live/r289-vial-filler-east-100adccc-b1cff8a7.log",
-        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json"
+        "docs/compat/evidence/catalog-harness/combined-b1cff8a7.json",
+        "docs/compat/evidence/catalog-harness/live/r289-vial-filler-100adccc-2f1bd9cf.json",
+        "docs/compat/evidence/catalog-harness/live/r289-vial-filler-100adccc-2f1bd9cf.log",
+        "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json"
       ]
     },
     {
@@ -76628,13 +76648,16 @@
         "shop snapshot, buy/sell and stock-settlement operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated2f old-catalog soft/hard bothrevisions fail after Start at missing Input.invButton. t_af045121 maps existing native item operation; no Tanner gameplay support claim yet. buyThread separately awaits Shop.",
       "observable_proof_requirement": "after Start, script-caused Crafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "BLOCKED",
+      "status_detail": "Isolated2f old-catalog soft/hard bothrevisions fail after Start at missing Input.invButton. t_af045121 maps existing native item operation; no Tanner gameplay support claim yet. buyThread separately awaits Shop.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json"
+      ]
     },
     {
       "display_name": "TannerBot",
@@ -76874,13 +76897,16 @@
         "shop snapshot, buy/sell and stock-settlement operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated2f old-catalog soft/hard bothrevisions fail after Start at missing Input.invButton. t_af045121 maps existing native item operation; no Tanner gameplay support claim yet. buyThread separately awaits Shop.",
       "observable_proof_requirement": "after Start, script-caused Crafting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "BLOCKED",
+      "status_detail": "Isolated2f old-catalog soft/hard bothrevisions fail after Start at missing Input.invButton. t_af045121 maps existing native item operation; no Tanner gameplay support claim yet. buyThread separately awaits Shop.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json"
+      ]
     },
     {
       "display_name": "HillGiant",
@@ -78067,13 +78093,18 @@
         "shop snapshot, buy/sell and stock-settlement operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/0",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated2f West fill/deposit28/empty-vial restock/return/further fill passes allfourcatalog/revisioncells after adjacent pre-Start preparation. East bank-return audit t_715971a2 and shop branch remain pending.",
       "observable_proof_requirement": "after Start, script-caused Herblore progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-274"
+      "status": "PARTIAL",
+      "status_detail": "Isolated2f West fill/deposit28/empty-vial restock/return/further fill passes allfourcatalog/revisioncells after adjacent pre-Start preparation. East bank-return audit t_715971a2 and shop branch remain pending.",
+      "fixture_id": "local-274",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r274-vial-filler-8e7d965b-2f1bd9cf.json",
+        "docs/compat/evidence/catalog-harness/live/r274-vial-filler-8e7d965b-2f1bd9cf.log",
+        "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json"
+      ]
     },
     {
       "display_name": "VialFiller",
@@ -78308,13 +78339,18 @@
         "shop snapshot, buy/sell and stock-settlement operations"
       ],
       "fixture_identity_ref": "docs/compat/fixture-inputs.json#/fixtures/1",
-      "fixture_readiness": "Source/cache identity frozen by step 1; live fixture qualification remains pending.",
+      "fixture_readiness": "Isolated2f West fill/deposit28/empty-vial restock/return/further fill passes allfourcatalog/revisioncells after adjacent pre-Start preparation. East bank-return audit t_715971a2 and shop branch remain pending.",
       "observable_proof_requirement": "after Start, script-caused Herblore progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Isolated2f West fill/deposit28/empty-vial restock/return/further fill passes allfourcatalog/revisioncells after adjacent pre-Start preparation. East bank-return audit t_715971a2 and shop branch remain pending.",
+      "fixture_id": "local-289",
+      "proof_refs": [
+        "docs/compat/evidence/catalog-harness/live/r289-vial-filler-8e7d965b-2f1bd9cf.json",
+        "docs/compat/evidence/catalog-harness/live/r289-vial-filler-8e7d965b-2f1bd9cf.log",
+        "docs/compat/evidence/catalog-harness/production-2f1bd9cf.json"
+      ]
     },
     {
       "display_name": "LeatherCrafter",

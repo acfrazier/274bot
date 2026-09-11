@@ -1,0 +1,35 @@
+{
+  "written_utc": "2026-09-11 07:20 UTC",
+  "campaign_head": "f79a4aa2cdd83977ae9b826d965a82d3d3f6424c",
+  "branch": "codex/rs2b0t-multirevision",
+  "frozen_b1_host": "b1cff8a7fdf6d18a5f7a3c7c23c6fa8a020e173b",
+  "frozen_2f_host": "2f1bd9cf75bfcff0900eb9e029deb98433f5a6d3",
+  "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "brief79_sha256": "7b2acfb08531d5dc8f285d831ea899a2d8414e700bedda3d35e999d50aab1224",
+  "report_05l_sha256": "47b9da00468158b39d7ff4803b425fb68f000ca704057afca1cae9e6d9aad787",
+  "bank_js_unchanged_vs_b1": true,
+  "interact_rs_unchanged_vs_b1": true,
+  "files": {
+    "crates/script/src/shim/bank.js": "31d0380098d9c9d1b759447ce832461c3dd9b52069ceb9b6bd96d5181cfb1aeb",
+    "crates/api/src/interact.rs": "7e2e23fabdcf29d82181c14e0b3f9399e21f0f16ae2c3126b0749ca9141deb06",
+    "crates/script/src/shim/banking.js": "e68871ac927e76ec90fd71414ef92bff2089bc77e5587fd66027f478e82851e0",
+    "crates/script/src/shim/reachability.js": "ee4127f41dc18b3a8cdc773b962733e1b41afa8eca21319d6ef6479a711b230c",
+    "crates/script/src/periodic_bank.rs": "1706b769b1357f72ebeabeaf8648b9aa5a6c71fd65d1180147acc4c4723aaa82",
+    "crates/nav/src/pack.rs": "4a6609e7395e3e849050c87517da2a1d1bd292c9308d25a971dbfdf1caafdb96",
+    "Bank.ts_both_catalogs": "3031b0a602209bdf81c33acdffe47aed8666fc4324d9af3c5796a7ce9928f747",
+    "VialFiller.ts_both_catalogs": "58f95dca5a65bfc6048c1da6a3eda8a8153b90979c0a30c237e76ed437c8bd4c"
+  },
+  "east_b1_274_log": "48daff95b339b852a71cfacf8d3608f233ce76e8d2b1db6da6175c430810b3f8",
+  "west_2f_274_log": "0db5f1dd7cbddea7dc8a4d2f0bd72e057977aecdacd6a32a1106e76b2d982c0f",
+  "classification": {
+    "a_caller_bug": false,
+    "b_intentional_low_level_openbooth": true,
+    "c_missing_high_level_as_new_interactions_method": false,
+    "c_missing_shim_composition_of_existing_verbs": true,
+    "d_bridge_chose_wrong_existing_host_op": true,
+    "primary": "d",
+    "05l_imported_defect_withdrawn": true,
+    "dim_vial_filler_east": false,
+    "change_open_named_booth_at": false
+  }
+}

@@ -1,0 +1,3 @@
+{"elapsed_seconds": 59.314, "request": {"action": "click", "x": 22, "y": 39, "requested_at": "2026-09-11T07:35:50.044877+00:00"}, "terminal_bytes_hex": "1b5b3c303b32323b33394d1b5b3c303b32323b33396d"}
+{"elapsed_seconds": 95.285, "request": {"action": "click", "x": 22, "y": 39, "requested_at": "2026-09-11T07:36:26.001447+00:00"}, "terminal_bytes_hex": "1b5b3c303b32323b33394d1b5b3c303b32323b33396d"}
+{"elapsed_seconds": 113.685, "request": {"action": "click", "x": 29, "y": 39, "requested_at": "2026-09-11T07:36:44.442089+00:00"}, "terminal_bytes_hex": "1b5b3c303b32393b33394d1b5b3c303b32393b33396d"}

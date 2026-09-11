@@ -31947,5 +31947,457 @@
     ],
     "failure_class": "bank_return_approach_investigation",
     "diagnosis": "Script withdrew and filled28 water vials, then repeatedly requests booth3011,3354 from outside the bank at3010,3352. Approach/selection ownership remains unresolved."
+  },
+  {
+    "case": "tanner_bot",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "host_commit": "2f1bd9cf75bfcff0900eb9e029deb98433f5a6d3",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "exit_code": 1,
+    "elapsed_seconds": 35.312,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-100adccc-2f1bd9cf.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-100adccc-2f1bd9cf.log",
+    "build_provenance": "Isolated2f binary, all2551originalsource files and required review/check gates verified.",
+    "scope": "Bounded core/options; remaining branches/frontend acceptance separate.",
+    "outcome": "FAIL",
+    "failure_class": "missing_thin_input_invbutton_mapping",
+    "failure_excerpt": [
+      "FAIL: catalog_boundary_live: script error: tick 48: not impl: Input.invButton"
+    ],
+    "diagnosis": "Tanner reaches the frozen script exact-ID Withdraw-X call; Input.invButton is unmapped. Existing Rust component-item action exists. t_af045121/brief77 owns thin identity-preserving mapping; no foreign dim or fixture change."
+  },
+  {
+    "case": "tanner_bot_hard",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "host_commit": "2f1bd9cf75bfcff0900eb9e029deb98433f5a6d3",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "exit_code": 1,
+    "elapsed_seconds": 35.199,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-hard-100adccc-2f1bd9cf.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-tanner-bot-hard-100adccc-2f1bd9cf.log",
+    "build_provenance": "Isolated2f binary, all2551originalsource files and required review/check gates verified.",
+    "scope": "Bounded core/options; remaining branches/frontend acceptance separate.",
+    "outcome": "FAIL",
+    "failure_class": "missing_thin_input_invbutton_mapping",
+    "failure_excerpt": [
+      "FAIL: catalog_boundary_live: script error: tick 48: not impl: Input.invButton"
+    ],
+    "diagnosis": "Tanner reaches the frozen script exact-ID Withdraw-X call; Input.invButton is unmapped. Existing Rust component-item action exists. t_af045121/brief77 owns thin identity-preserving mapping; no foreign dim or fixture change."
+  },
+  {
+    "case": "vial_filler",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "host_commit": "2f1bd9cf75bfcff0900eb9e029deb98433f5a6d3",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "exit_code": 0,
+    "elapsed_seconds": 96.6,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-vial-filler-100adccc-2f1bd9cf.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-vial-filler-100adccc-2f1bd9cf.log",
+    "build_provenance": "Isolated2f binary, all2551originalsource files and required review/check gates verified.",
+    "scope": "Bounded core/options; remaining branches/frontend acceptance separate.",
+    "outcome": "PASS",
+    "observed": {
+      "baseline": {
+        "tick": 20,
+        "tile": [
+          2946,
+          3368,
+          0
+        ],
+        "item_ids": {},
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 2
+      },
+      "filled": {
+        "tick": 39,
+        "tile": [
+          2949,
+          3380,
+          0
+        ],
+        "item_ids": {
+          "227": 1,
+          "229": 27
+        },
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 4
+      },
+      "deposited": {
+        "tick": 124,
+        "tile": [
+          2945,
+          3368,
+          0
+        ],
+        "item_ids": {},
+        "bank_ids": {
+          "227": 28,
+          "229": 28
+        },
+        "bank_open": true,
+        "bank_loaded": true,
+        "bank_generation": 5
+      },
+      "withdrawn": {
+        "tick": 128,
+        "tile": [
+          2945,
+          3368,
+          0
+        ],
+        "item_ids": {
+          "229": 28
+        },
+        "bank_ids": {
+          "227": 28
+        },
+        "bank_open": true,
+        "bank_loaded": true,
+        "bank_generation": 5
+      },
+      "further": {
+        "tick": 138,
+        "tile": [
+          2949,
+          3380,
+          0
+        ],
+        "item_ids": {
+          "227": 1,
+          "229": 27
+        },
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 6
+      }
+    }
+  },
+  {
+    "case": "vial_filler",
+    "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "host_commit": "2f1bd9cf75bfcff0900eb9e029deb98433f5a6d3",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "exit_code": 0,
+    "elapsed_seconds": 100.612,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-vial-filler-8e7d965b-2f1bd9cf.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-vial-filler-8e7d965b-2f1bd9cf.log",
+    "build_provenance": "Isolated2f binary, all2551originalsource files and required review/check gates verified.",
+    "scope": "Bounded core/options; remaining branches/frontend acceptance separate.",
+    "outcome": "PASS",
+    "observed": {
+      "baseline": {
+        "tick": 24,
+        "tile": [
+          2946,
+          3368,
+          0
+        ],
+        "item_ids": {},
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 2
+      },
+      "filled": {
+        "tick": 43,
+        "tile": [
+          2949,
+          3380,
+          0
+        ],
+        "item_ids": {
+          "227": 1,
+          "229": 27
+        },
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 4
+      },
+      "deposited": {
+        "tick": 129,
+        "tile": [
+          2945,
+          3368,
+          0
+        ],
+        "item_ids": {},
+        "bank_ids": {
+          "227": 28,
+          "229": 28
+        },
+        "bank_open": true,
+        "bank_loaded": true,
+        "bank_generation": 5
+      },
+      "withdrawn": {
+        "tick": 134,
+        "tile": [
+          2945,
+          3368,
+          0
+        ],
+        "item_ids": {
+          "229": 28
+        },
+        "bank_ids": {
+          "227": 28
+        },
+        "bank_open": true,
+        "bank_loaded": true,
+        "bank_generation": 5
+      },
+      "further": {
+        "tick": 144,
+        "tile": [
+          2949,
+          3380,
+          0
+        ],
+        "item_ids": {
+          "227": 1,
+          "229": 27
+        },
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 6
+      }
+    }
+  },
+  {
+    "case": "tanner_bot",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "host_commit": "2f1bd9cf75bfcff0900eb9e029deb98433f5a6d3",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "exit_code": 1,
+    "elapsed_seconds": 37.071,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-100adccc-2f1bd9cf.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-100adccc-2f1bd9cf.log",
+    "build_provenance": "Isolated2f binary, all2551originalsource files and required review/check gates verified.",
+    "scope": "Bounded core/options; remaining branches/frontend acceptance separate.",
+    "outcome": "FAIL",
+    "failure_class": "missing_thin_input_invbutton_mapping",
+    "failure_excerpt": [
+      "FAIL: catalog_boundary_live: script error: tick 48: not impl: Input.invButton"
+    ],
+    "diagnosis": "Tanner reaches the frozen script exact-ID Withdraw-X call; Input.invButton is unmapped. Existing Rust component-item action exists. t_af045121/brief77 owns thin identity-preserving mapping; no foreign dim or fixture change."
+  },
+  {
+    "case": "tanner_bot_hard",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "host_commit": "2f1bd9cf75bfcff0900eb9e029deb98433f5a6d3",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "exit_code": 1,
+    "elapsed_seconds": 37.065,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-hard-100adccc-2f1bd9cf.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-tanner-bot-hard-100adccc-2f1bd9cf.log",
+    "build_provenance": "Isolated2f binary, all2551originalsource files and required review/check gates verified.",
+    "scope": "Bounded core/options; remaining branches/frontend acceptance separate.",
+    "outcome": "FAIL",
+    "failure_class": "missing_thin_input_invbutton_mapping",
+    "failure_excerpt": [
+      "FAIL: catalog_boundary_live: script error: tick 48: not impl: Input.invButton"
+    ],
+    "diagnosis": "Tanner reaches the frozen script exact-ID Withdraw-X call; Input.invButton is unmapped. Existing Rust component-item action exists. t_af045121/brief77 owns thin identity-preserving mapping; no foreign dim or fixture change."
+  },
+  {
+    "case": "vial_filler",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "host_commit": "2f1bd9cf75bfcff0900eb9e029deb98433f5a6d3",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "exit_code": 0,
+    "elapsed_seconds": 98.239,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-vial-filler-100adccc-2f1bd9cf.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-vial-filler-100adccc-2f1bd9cf.log",
+    "build_provenance": "Isolated2f binary, all2551originalsource files and required review/check gates verified.",
+    "scope": "Bounded core/options; remaining branches/frontend acceptance separate.",
+    "outcome": "PASS",
+    "observed": {
+      "baseline": {
+        "tick": 22,
+        "tile": [
+          2946,
+          3368,
+          0
+        ],
+        "item_ids": {},
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 2
+      },
+      "filled": {
+        "tick": 41,
+        "tile": [
+          2949,
+          3380,
+          0
+        ],
+        "item_ids": {
+          "227": 1,
+          "229": 27
+        },
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 4
+      },
+      "deposited": {
+        "tick": 126,
+        "tile": [
+          2945,
+          3368,
+          0
+        ],
+        "item_ids": {},
+        "bank_ids": {
+          "227": 28,
+          "229": 28
+        },
+        "bank_open": true,
+        "bank_loaded": true,
+        "bank_generation": 5
+      },
+      "withdrawn": {
+        "tick": 130,
+        "tile": [
+          2945,
+          3368,
+          0
+        ],
+        "item_ids": {
+          "229": 28
+        },
+        "bank_ids": {
+          "227": 28
+        },
+        "bank_open": true,
+        "bank_loaded": true,
+        "bank_generation": 5
+      },
+      "further": {
+        "tick": 140,
+        "tile": [
+          2949,
+          3380,
+          0
+        ],
+        "item_ids": {
+          "227": 1,
+          "229": 27
+        },
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 6
+      }
+    }
+  },
+  {
+    "case": "vial_filler",
+    "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "host_commit": "2f1bd9cf75bfcff0900eb9e029deb98433f5a6d3",
+    "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "exit_code": 0,
+    "elapsed_seconds": 100.047,
+    "revision": 289,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-vial-filler-8e7d965b-2f1bd9cf.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-vial-filler-8e7d965b-2f1bd9cf.log",
+    "build_provenance": "Isolated2f binary, all2551originalsource files and required review/check gates verified.",
+    "scope": "Bounded core/options; remaining branches/frontend acceptance separate.",
+    "outcome": "PASS",
+    "observed": {
+      "baseline": {
+        "tick": 22,
+        "tile": [
+          2946,
+          3368,
+          0
+        ],
+        "item_ids": {},
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 2
+      },
+      "filled": {
+        "tick": 41,
+        "tile": [
+          2949,
+          3380,
+          0
+        ],
+        "item_ids": {
+          "227": 1,
+          "229": 27
+        },
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 4
+      },
+      "deposited": {
+        "tick": 126,
+        "tile": [
+          2945,
+          3368,
+          0
+        ],
+        "item_ids": {},
+        "bank_ids": {
+          "227": 28,
+          "229": 28
+        },
+        "bank_open": true,
+        "bank_loaded": true,
+        "bank_generation": 5
+      },
+      "withdrawn": {
+        "tick": 130,
+        "tile": [
+          2945,
+          3368,
+          0
+        ],
+        "item_ids": {
+          "229": 28
+        },
+        "bank_ids": {
+          "227": 28
+        },
+        "bank_open": true,
+        "bank_loaded": true,
+        "bank_generation": 5
+      },
+      "further": {
+        "tick": 140,
+        "tile": [
+          2949,
+          3380,
+          0
+        ],
+        "item_ids": {
+          "227": 1,
+          "229": 27
+        },
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 6
+      }
+    }
   }
 ]
