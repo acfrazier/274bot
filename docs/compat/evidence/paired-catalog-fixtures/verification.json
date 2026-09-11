@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-09-11T09:42:54Z",
+  "task": "t_435afcb0",
+  "retry_label": "r1288",
+  "prior_attempt": {
+    "run_id": 1282,
+    "outcome": "crashed",
+    "error": "pid 22885 not alive",
+    "note": "disk-full around 05:15; no owned paired_catalog sources or check logs were retained"
+  },
+  "verification_base": {
+    "git_head_at_export": "1d4fb9142caf99dcf7d1c02da119710c35ba4e12",
+    "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+    "mode": "exact Git regular blobs of committed host plus owned overlay; sibling working-tree edits excluded",
+    "export": ".superpowers/review-exports/paired-catalog-t_435afcb0",
+    "target": ".superpowers/review-exports/paired-catalog-t_435afcb0-target",
+    "manifest": ".superpowers/review-exports/paired-catalog-t_435afcb0-manifest.json",
+    "files": 3516,
+    "isolated_build": true
+  },
+  "brief": {
+    "path": "docs/compat/briefs/93-paired-catalog-fixtures.md",
+    "sha256": "f22514d3afa9047ccab981f17c725bfe3f99be6861b76b0b16cc0f8a8f74cae6"
+  },
+  "harness": {
+    "path": "crates/host-play/tests/paired_catalog_live.rs",
+    "sha256": "c3fdd8edb9abd0e6a94daacb59caa2747e3acfb46654050fdf005c81ed8f0c13"
+  },
+  "support": {
+    "path": "crates/host-play/tests/support/paired_catalog.rs",
+    "sha256": "b759083b88c57ea376c517cfc28f95c0fa72bb7f2763434c810870fcaa7ac078"
+  },
+  "report": {
+    "path": "docs/compat/05r-paired-catalog-fixtures.md",
+    "sha256": "805d5c635e99965fb5c1ba85f658aa6b19d5c57128dabdd906ab87c2171ac37f"
+  },
+  "live_launch_performed": false,
+  "limits": [
+    "not LIVE acceptance",
+    "Nature island/unnoting/boat not accepted by Air",
+    "Trade.offer qty/filter arity ignored; Air uses name-only offerAll because shortRouteWithdraw caps at 25",
+    "BANK_LOCATIONS named-bank aliases unused; Air Bank.openBooth uses hardcoded Falador East tile",
+    "shop t_1591d140, named-bank t_bced5c76, special t_68de6f48, teleport t_1bf9a22e remain foreign",
+    "SCRIPT_GOLD_DEADLINE 180s and SCRIPT_GOLD_WATCH_TICKS 150 unchanged",
+    "full Air bank-return/second cycle and further duel after reset are explicit partial claims if they miss the gold window",
+    "seeded modal or queued Challenge is not a duel",
+    "catalog DuelInterface still hardcodes IDs; both caches match generated 6575/6412/6733/6674/6520/6671/6684/6571",
+    "root owns LIVE and ledger updates"
+  ],
+  "checks": [
+    {
+      "command": "rustfmt --check -- crates/host-play/tests/paired_catalog_live.rs crates/host-play/tests/support/paired_catalog.rs",
+      "exit_code": 0,
+      "result": "pass"
+    },
+    {
+      "command": "cargo test -p host-play --test paired_catalog_live",
+      "exit_code": 0,
+      "result": "19 passed; 0 failed; 2 ignored"
+    },
+    {
+      "command": "cargo clippy -p host-play --test paired_catalog_live --no-deps -- -D warnings",
+      "exit_code": 0,
+      "result": "pass"
+    },
+    {
+      "command": "cargo test -p host-play --test paired_catalog_live paired_catalog_air_live -- --exact",
+      "exit_code": 0,
+      "result": "0 passed; 0 failed; 1 ignored; 20 filtered out"
+    }
+  ]
+}
