@@ -1,0 +1,3 @@
+cargo clippy --locked --offline --no-deps -p script --test client_adapter_inventory -- -D warnings
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 35.32s
+exit 0

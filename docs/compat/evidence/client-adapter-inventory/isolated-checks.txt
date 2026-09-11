@@ -1,0 +1,21 @@
+isolated_build=true
+host=7c2eef6eb8db6b01933c333aa64cf5f68169d8d2
+client=9d090ed04957e4efc254f073cda97bc5510ca72b
+export=.superpowers/review-exports/inventory-t_c0a5785e
+target=.superpowers/review-exports/inventory-t_c0a5785e-target
+files=3525
+export_method=Exact Git regular blobs; reject symlinks and path traversal; exclusive new files. No archive extraction, overwrite or deletion.
+
+overlay crates/script/src/shim/client_adapter.js sha256 53cf56b989a0de6c69ba7104f331d050f1be7b10eba1130da5a66e0a5a7a03d7
+overlay crates/script/tests/client_adapter_inventory.rs sha256 5a95e5d7191ef981b43dd1515e5a5dd1d1a7ec549107325bc1241e44609db3e0
+
+cargo test --locked --offline -p script --test client_adapter_inventory -- --test-threads=1: 6 passed
+  sparse_slots_keep_duplicate_names_and_distinct_ids
+  counts_ops_and_component_identity_are_posted_not_invented
+  empty_inventory_does_not_read_bank_or_equipment
+  caller_mutation_does_not_corrupt_posted_snapshot
+  omitted_delta_keeps_last_inventory_replacement_and_clear_update
+  two_isolates_do_not_exchange_inventory_rows
+cargo clippy --locked --offline --no-deps -p script --test client_adapter_inventory -- -D warnings: pass
+rustfmt --edition 2021 --check crates/script/tests/client_adapter_inventory.rs: pass
+not LIVE

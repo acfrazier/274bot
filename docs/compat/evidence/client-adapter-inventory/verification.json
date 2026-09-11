@@ -1,0 +1,48 @@
+{
+  "task": "t_c0a5785e",
+  "brief": "docs/compat/briefs/101-client-adapter-inventory-reader.md",
+  "source_commit": "7c2eef6eb8db6b01933c333aa64cf5f68169d8d2",
+  "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "isolated_build": true,
+  "export": ".superpowers/review-exports/inventory-t_c0a5785e",
+  "cargo_target_dir": ".superpowers/review-exports/inventory-t_c0a5785e-target",
+  "files": 3525,
+  "live": false,
+  "overlay": [
+    "crates/script/src/shim/client_adapter.js",
+    "crates/script/tests/client_adapter_inventory.rs"
+  ],
+  "overlay_sha256": {
+    "crates/script/src/shim/client_adapter.js": "53cf56b989a0de6c69ba7104f331d050f1be7b10eba1130da5a66e0a5a7a03d7",
+    "crates/script/tests/client_adapter_inventory.rs": "5a95e5d7191ef981b43dd1515e5a5dd1d1a7ec549107325bc1241e44609db3e0"
+  },
+  "commands": [
+    {
+      "name": "script-client-adapter-inventory",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/inventory-t_c0a5785e",
+      "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/inventory-t_c0a5785e-target",
+      "cmd": "cargo test --locked --offline -p script --test client_adapter_inventory -- --test-threads=1",
+      "exit": 0,
+      "result": "6 passed (sparse_slots_keep_duplicate_names_and_distinct_ids, counts_ops_and_component_identity_are_posted_not_invented, empty_inventory_does_not_read_bank_or_equipment, caller_mutation_does_not_corrupt_posted_snapshot, omitted_delta_keeps_last_inventory_replacement_and_clear_update, two_isolates_do_not_exchange_inventory_rows)"
+    },
+    {
+      "name": "script-clippy-affected",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/inventory-t_c0a5785e",
+      "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/inventory-t_c0a5785e-target",
+      "cmd": "cargo clippy --locked --offline --no-deps -p script --test client_adapter_inventory -- -D warnings",
+      "exit": 0
+    },
+    {
+      "name": "fmt-check",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision",
+      "cmd": "rustfmt --edition 2021 --check crates/script/tests/client_adapter_inventory.rs",
+      "exit": 0
+    }
+  ],
+  "notes": [
+    "reader.inventory is a thin mapping onto posted snap().inv identity: slot, id, name, count, ops, comId from component_id.",
+    "Missing component identity is -1. No Drop invention. Bank/equipment/bank-side are not substitutes.",
+    "Not LIVE. Root owns MuleCrafter reproduction. Mapping success does not accept Mule.",
+    "Empty-target cache: .superpowers/review-exports/inventory-t_c0a5785e-target (3.4G). Root owns cleanup."
+  ]
+}

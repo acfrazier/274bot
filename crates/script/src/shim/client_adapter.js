@@ -35,12 +35,42 @@ function inScene(lx, lz, reach) {
     return lx >= 0 && lz >= 0 && lx < reach.width && lz < reach.height;
 }
 
+// Posted ordinary-inventory rows only. Fresh objects/ops so a caller
+// cannot mutate the shared snapshot. Missing component identity is -1,
+// never a hardcoded valid component. Occupied native slots include
+// item id 0; empty/malformed rows are omitted.
+function inventoryItems() {
+    const rows = snap().inv;
+    if (!Array.isArray(rows)) return [];
+    const out = [];
+    for (const row of rows) {
+        if (!row || typeof row !== 'object') continue;
+        const slot = row.slot;
+        const id = row.id;
+        if (!finiteInt(slot) || slot < 0 || !finiteInt(id) || id < 0) continue;
+        const count = finiteInt(row.count) ? row.count : 0;
+        const comId = finiteInt(row.component_id) ? row.component_id : -1;
+        out.push({
+            slot,
+            id,
+            name: typeof row.name === 'string' ? row.name : null,
+            count,
+            ops: Array.isArray(row.ops) ? row.ops.slice() : [],
+            comId,
+        });
+    }
+    return out;
+}
+
 export const reader = proxy('reader', {
     worldTile() {
         return host().tile || snap().here || null;
     },
     inventorySize() {
         return typeof host().invSize === 'number' ? host().invSize : 0;
+    },
+    inventory() {
+        return inventoryItems();
     },
     ingame() {
         return snap().ingame === true;
