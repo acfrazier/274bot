@@ -16,9 +16,6 @@ pub use nav::manifest::{nav_manifest_path, CacheManifest, NavManifest};
 
 const JAGS: [&str; 8] = CacheManifest::ARCHIVES;
 
-pub const HOST_BOUNDARY_NOT_QUALIFIED: &str =
-    "host-boundary-not-qualified: revision 289 bot operation awaits host action qualification (plan step 4)";
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServerSelection {
     Local274,
@@ -695,7 +692,9 @@ impl ServerProfile {
 
 fn require_bot_operation(revision: ClientRevision) -> Result<(), String> {
     match revision {
-        ClientRevision::R274 => Ok(()),
-        ClientRevision::R289 => Err(HOST_BOUNDARY_NOT_QUALIFIED.into()),
+        // Both revisions have controlled host action, selected-world navigation,
+        // bank-return and Guardian proof. Retain exhaustive revision dispatch:
+        // a future client revision must make an explicit qualification choice.
+        ClientRevision::R274 | ClientRevision::R289 => Ok(()),
     }
 }
