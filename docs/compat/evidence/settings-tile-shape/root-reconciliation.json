@@ -1,0 +1,18 @@
+{
+  "at": "2026-09-11T03:12:46.569899+00:00",
+  "original_manifest_preserved": true,
+  "actual_log_sha256": {
+    "red-settings-tile.log": "b298842a16de49e9c6506f572a54726e7b1ccf74ea8b975c41b3dd4fe282b702",
+    "red-native-distance.log": "507db5b828eb8047b771b200a7853893a56ebcc013e9f6e8f6fd7ed2cab277b1",
+    "green-settings-tile.log": "326e5c665fbf448ba316a7e7d5cdea9e4cf3a2b553ef29df6dc45e8eeba81594",
+    "settings-bag-tests.log": "15915add26ef74bc271091565d2dc3bf7a80b47dc616db4b88e14c97271bfe10",
+    "settings-bag-clippy.log": "529e88b5bb14d5929855836ab66e300957283af52a257c6b3d41111b5c4da689",
+    "cargo-fmt-check.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "mismatches": [
+    "green-settings-tile.log",
+    "settings-bag-tests.log"
+  ],
+  "frozen_overlay_files_verified": true,
+  "composed_source_requires_cold_review": true
+}

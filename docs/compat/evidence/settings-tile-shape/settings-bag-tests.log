@@ -1,0 +1,11 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running tests/settings_bag.rs (.superpowers/task-exports/t_701d17f4-bc0f05c6/target-t_701d17f4-native/debug/deps/settings_bag-25edbfbdffcece32)
+
+running 5 tests
+test merge_bag_coerces_string_array_default_to_json_array ... ok
+test settings_store_round_trips_overrides_at_private_mode ... ok
+test prelude_reads_posted_settings_bag_not_only_fallback ... ok
+test merged_bag_from_spread_schema_posts_inject_over_defaults ... ok
+test tile_and_list_schema_defaults_round_trip_through_prelude ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s

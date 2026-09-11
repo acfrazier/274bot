@@ -11,11 +11,7 @@ export default class Tile {
     }
 
     distanceTo(other) {
-        const xz = Math.max(Math.abs(this.x - other.x), Math.abs(this.z - other.z));
-        if ((this.level ?? 0) !== (other.level ?? 0)) {
-            return 1_000_000 + xz;
-        }
-        return xz;
+        return globalThis.rustyscript.functions.__rs2b0t_tile_distance(this, other);
     }
 
     translate(dx, dz) {
@@ -30,3 +26,20 @@ export default class Tile {
         return `(${this.x}, ${this.z}, ${this.level})`;
     }
 }
+
+export function tileFromPosted(value) {
+    if (
+        !value ||
+        typeof value !== 'object' ||
+        !Number.isSafeInteger(value.x) || value.x < 0 || value.x > 16_383 ||
+        !Number.isSafeInteger(value.z) || value.z < 0 || value.z > 16_383 ||
+        (value.level !== undefined && (
+            !Number.isSafeInteger(value.level) || value.level < 0 || value.level > 3
+        ))
+    ) {
+        return null;
+    }
+    return value instanceof Tile ? value : Tile.from(value);
+}
+
+globalThis.__rs2b0t_tileFromPosted = tileFromPosted;

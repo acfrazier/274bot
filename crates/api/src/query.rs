@@ -135,8 +135,9 @@ fn wildcard_match(pattern: &str, text: &str) -> bool {
 }
 
 /// Chebyshev distance; a level mismatch is infinitely far (the m8aq
-/// `chebyshevDistance`).
-fn chebyshev_to(a: WorldTile, b: WorldTile) -> i32 {
+/// `chebyshevDistance`). This is public so adapters can reuse the host's
+/// distance policy rather than reimplementing coordinate arithmetic.
+pub fn chebyshev_to(a: WorldTile, b: WorldTile) -> i32 {
     if a.level != b.level {
         i32::MAX
     } else {

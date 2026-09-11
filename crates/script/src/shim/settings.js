@@ -1,4 +1,6 @@
 // Settings types + SettingsStore stub for gold script eval (host bag is separate).
+import { tileFromPosted } from '../geometry/Tile.js';
+
 export class SettingsBag {
     constructor(values = {}) {
         this.values = values;
@@ -22,6 +24,10 @@ export class SettingsBag {
     list(key, fallback = []) {
         const v = this.values[key];
         return Array.isArray(v) ? v : fallback;
+    }
+
+    tile(key, fallback = null) {
+        return tileFromPosted(this.values[key]) ?? fallback;
     }
 }
 
