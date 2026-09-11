@@ -60,25 +60,39 @@ cargo test -p host-play --test two_slot_isolation_live \
 Both actors must show Magic XP, coin and own-fodder deltas with no peer
 item contamination. Pause on slot A must leave A `Paused` and stable after
 drain while B continues; Resume must show further A progress; Stop A must
-leave A `Idle` while B continues.
+leave A `Idle`. The continuing slot must then show strictly later Magic XP
+and coins plus consumed own item/rune versus observations captured at the
+actual Stop boundary, not versus pre-resume `pause_end`. Terminal JSON
+emits the complete `IsolationWitness` / `SlotRecord` observations
+(baseline, first, drain, pause_end, further, stop_boundary, after_stop,
+identities, settings, states) when records exist, including qualification
+failure. Logging does not satisfy the predicate.
+
+Root isolated LIVE receipts for `587a69fd` remain under
+`docs/compat/evidence/two-slot-isolation/r{274,289}-587a69fd/`. Those
+runs compared B after Stop to `pause_end`, so they do not establish
+post-Stop B work. That witness is unqualified; it is not a product
+lifecycle regression. This fixture correction does not relaunch LIVE.
 
 ## Verification
 
-Export base: host `5a28d839d0724fdbb2ea6d3a04fad72086562ef6` (host-play lib
+Export base: host `4d7e87b4bbbcd4610ecdef149863367d9d6ab3c6` (host-play lib
 last changed at `5612b2652968ebcfa6577bf4439f183de1fd5e21`), client
 `56d80272bcbda3eb1e22db096c1c5e21d3497de4`, plus this owned overlay.
 Frozen export:
-`/Users/acfrazier/experiments/274bot/.worktrees/t_4eb51061-src-20260911044211`
-(committed host archive plus client archive plus owned overlay).
-Isolated empty target:
-`/Users/acfrazier/experiments/274bot/.worktrees/t_4eb51061-target-20260911044211`
+`/Users/acfrazier/experiments/274bot/.worktrees/t_03bc820a-src-20260911052042`
+(git archive of that host + client archive + owned overlay). Isolated empty
+target:
+`/Users/acfrazier/experiments/274bot/.worktrees/t_03bc820a-target-20260911052042`
 (`isolated_build=true`). Shared campaign target was not used.
 
 - `rustfmt --check -- crates/host-play/tests/two_slot_isolation_live.rs crates/host-play/tests/support/two_slot_isolation.rs` — pass.
 - `cargo test -p host-play --test two_slot_isolation_live -- --skip two_slot_isolation_live`
-  — 6 passed (mixed identities, queued-only success, no-progress while paused,
+  — 10 passed (mixed identities, queued-only success, no-progress while paused,
   paused slot still progressing, cross-slot contamination, ordered
-  pause/resume/stop isolation).
+  pause/resume/stop isolation, B progress after pause but not after Stop,
+  missing stop-boundary, stale stop-boundary, complete raw witness
+  serialization).
 - `cargo clippy -p host-play --test two_slot_isolation_live --no-deps -- -D warnings`
   — pass.
 - `cargo test -p host-play --test two_slot_isolation_live two_slot_isolation_live`
