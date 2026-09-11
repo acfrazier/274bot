@@ -74,6 +74,48 @@ fn generated_items_food_and_pickpocket_facts_preserve_selected_content() {
 }
 
 #[test]
+fn generated_spell_and_staff_facts_match_selected_content() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected data");
+        let wind = data.spell("Wind Strike").expect("wind strike");
+        assert_eq!(wind.ssb, 0);
+        assert_eq!(wind.level, 1);
+        assert_eq!(wind.runes[0].name, "Mind rune");
+        assert_eq!(wind.runes[0].count, 1);
+        assert_eq!(wind.runes[1].name, "Air rune");
+        let remaining = data
+            .runes_per_cast("Wind Strike", &["Staff of air"])
+            .expect("known spell");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].rune, "Mind rune");
+        assert!(data.runes_per_cast("Not a spell", &[] as &[&str]).is_none());
+        let fire_wave = data
+            .runes_per_cast("Fire Wave", &["Mystic fire staff"])
+            .expect("fire wave");
+        assert_eq!(fire_wave[0].rune, "Blood rune");
+        assert_eq!(fire_wave[1].rune, "Air rune");
+        assert_eq!(data.spell_button_com("Wind Strike"), 1830);
+        assert_eq!(data.spell_button_com("unknown"), -1);
+        let fire: Vec<_> = data
+            .staves()
+            .iter()
+            .filter(|staff| staff.runes.iter().any(|rune| rune.name == "Fire rune"))
+            .map(|staff| staff.name.as_str())
+            .collect();
+        for name in [
+            "Staff of fire",
+            "Fire battlestaff",
+            "Lava battlestaff",
+            "Mystic fire staff",
+            "Mystic lava staff",
+        ] {
+            assert!(fire.contains(&name), "missing fire staff {name}");
+        }
+        assert!(!fire.contains(&"Staff of air"));
+    }
+}
+
+#[test]
 fn generated_wearpos_maps_to_loadout_slots_without_guessing_names() {
     use api::game_data::{loadout_slot_for_wearpos, WEARPOS_QUIVER, WEARPOS_RIGHTHAND};
 

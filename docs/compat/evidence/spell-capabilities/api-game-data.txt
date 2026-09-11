@@ -1,0 +1,11 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running tests/game_data.rs (target-t_63138b8b/debug/deps/game_data-60dd37ca505f0b88)
+
+running 4 tests
+test generated_spell_and_staff_facts_match_selected_content ... ok
+test generated_revision_data_is_static_distinct_and_fail_closed ... ok
+test generated_wearpos_maps_to_loadout_slots_without_guessing_names ... ok
+test generated_items_food_and_pickpocket_facts_preserve_selected_content ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+

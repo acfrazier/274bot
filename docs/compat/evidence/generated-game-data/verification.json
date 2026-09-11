@@ -8,6 +8,15 @@
       "records": 3894,
       "consumption": 250,
       "pickpocket": 12,
+      "spells": 16,
+      "staves": 14,
+      "fire_staff_providers": [
+        "Fire battlestaff",
+        "Lava battlestaff",
+        "Mystic fire staff",
+        "Mystic lava staff",
+        "Staff of fire"
+      ],
       "fixed_food_heals": {
         "chocolaty_milk": 4,
         "cabbage": 1,
@@ -117,7 +126,7 @@
         "seaturtle": 21,
         "mantaray": 22
       },
-      "output_sha256": "e1a95f255022587528008c7b5690d13b0008511e05c22eb4ccffc71b1cb1c192",
+      "output_sha256": "a03e1a471393aaac3cadc22cdb124ddf767d63414f7e40579ec7f9d5a8fcd267",
       "input_hashes": true,
       "content_hashes": true,
       "source_pins": true,
@@ -133,6 +142,15 @@
       "records": 4089,
       "consumption": 250,
       "pickpocket": 12,
+      "spells": 16,
+      "staves": 14,
+      "fire_staff_providers": [
+        "Fire battlestaff",
+        "Lava battlestaff",
+        "Mystic fire staff",
+        "Mystic lava staff",
+        "Staff of fire"
+      ],
       "fixed_food_heals": {
         "chocolaty_milk": 4,
         "cabbage": 1,
@@ -242,7 +260,7 @@
         "seaturtle": 21,
         "mantaray": 22
       },
-      "output_sha256": "baef264dfd146fdc202069bc68e6a144dd0592af8362b1d3f53d27a47a01729c",
+      "output_sha256": "693b1d01d76ef064fcc47ef7926c32cb81a422887fe981d5e4687cfabc82f8e9",
       "input_hashes": true,
       "content_hashes": true,
       "source_pins": true,

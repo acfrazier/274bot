@@ -1,0 +1,32 @@
+{
+  "task": "t_63138b8b",
+  "brief": "docs/compat/briefs/27-spell-facts-targeted-cast.md",
+  "brief_sha256": "213f48c0cdc8ce00dd3e2835595aacb73683d39c52473b63fd89d891a1a63841",
+  "branch": "codex/rs2b0t-multirevision",
+  "client": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "isolated_build": true,
+  "cargo_target_dir": "target-t_63138b8b",
+  "base_head_at_verification": "50f2be8a216bf96691d37454c1d70644e9ed835b",
+  "includes_use_on_commit": "a4157243",
+  "assets": {
+    "274_json_sha256": "a03e1a471393aaac3cadc22cdb124ddf767d63414f7e40579ec7f9d5a8fcd267",
+    "289_json_sha256": "693b1d01d76ef064fcc47ef7926c32cb81a422887fe981d5e4687cfabc82f8e9",
+    "second_generation": "byte-identical"
+  },
+  "tests": {
+    "generate_fixture": "pass",
+    "generate_verify": "pass (16 spells, 14 staves, 5 fire providers)",
+    "api_game_data": "4 passed",
+    "script_spell_facts": "6 passed",
+    "script_gold_stubs": "12 passed, 1 ignored",
+    "script_registry_spell_keys": "pass",
+    "script_cast_on_item": "pass",
+    "clippy_api_script": "pass"
+  },
+  "limits": [
+    "No live client run.",
+    "castOnItem returns dispatch accepted; callers own XP/item wait.",
+    "High alchemy / Superheat Item are posted magic-tab buttons, not SPELL_DB rows.",
+    "crates/script/src/load.rs is a hotspot (loadout registers + concurrent inventory slot publish)."
+  ]
+}

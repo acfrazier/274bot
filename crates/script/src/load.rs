@@ -1578,6 +1578,50 @@ mod isolate {
                 ))
             })
             .map_err(|e| format!("register weapon: {e}"))?;
+        let selected_spells = game_data.clone();
+        runtime
+            .register_function(
+                "__rs2b0t_runes_per_cast",
+                move |args: &[serde_json::Value]| {
+                    let spell = args.first().and_then(|v| v.as_str()).unwrap_or("");
+                    let wielded: Vec<String> = args
+                        .get(1)
+                        .and_then(|v| v.as_array())
+                        .map(|rows| {
+                            rows.iter()
+                                .filter_map(|row| row.as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    Ok(match selected_spells.as_deref() {
+                        Some(data) => match data.runes_per_cast(spell, &wielded) {
+                            Some(costs) => serde_json::json!(costs
+                                .into_iter()
+                                .map(|cost| serde_json::json!({
+                                    "rune": cost.rune,
+                                    "count": cost.count
+                                }))
+                                .collect::<Vec<_>>()),
+                            None => serde_json::Value::Null,
+                        },
+                        None => serde_json::Value::Null,
+                    })
+                },
+            )
+            .map_err(|e| format!("register runes per cast: {e}"))?;
+        let selected_spell_buttons = game_data.clone();
+        runtime
+            .register_function(
+                "__rs2b0t_spell_button_com",
+                move |args: &[serde_json::Value]| {
+                    let spell = args.first().and_then(|v| v.as_str()).unwrap_or("");
+                    Ok(serde_json::json!(selected_spell_buttons
+                        .as_deref()
+                        .map(|data| data.spell_button_com(spell))
+                        .unwrap_or(-1)))
+                },
+            )
+            .map_err(|e| format!("register spell button: {e}"))?;
         runtime
             .eval::<()>(crate::shim::PRELUDE)
             .map_err(|e| format!("shim: {e}"))?;
