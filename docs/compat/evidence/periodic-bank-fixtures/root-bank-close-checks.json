@@ -1,0 +1,63 @@
+{
+  "host_commit": "297b2ea36e67b9407236a3b8a95960440f2ab1dd",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "source_files_verified": 2487,
+  "overlays": {
+    "crates/host-play/tests/catalog_boundary_live.rs": "bd52dd38acaa39b6654805ae967e28734089bdfbaa9517c7c06879fb5cfaf8d1"
+  },
+  "target_started_empty": true,
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/bank-close-root-297b2ea3-target",
+  "checks": [
+    {
+      "name": "catalog",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "host-play",
+        "--features",
+        "memory-profile",
+        "--test",
+        "catalog_boundary_live"
+      ],
+      "exit_code": 0,
+      "log": "docs/compat/evidence/periodic-bank-fixtures/root-bank-close-with-inputs-catalog.log",
+      "sha256": "a3ad3a11970996a3d64265e1feb9f64ae75314f68ff668a591384c232378c6c0"
+    },
+    {
+      "name": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "-p",
+        "host-play",
+        "--features",
+        "memory-profile",
+        "--test",
+        "catalog_boundary_live",
+        "--no-deps",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "log": "docs/compat/evidence/periodic-bank-fixtures/root-bank-close-with-inputs-clippy.log",
+      "sha256": "a53cabdf12e73c188c305279d801151783741e924a92d581609d5d487e9bd817"
+    }
+  ],
+  "verified_at": "2026-09-11T05:41:55.253726+00:00",
+  "initial_attempt": {
+    "exit_code": 101,
+    "passed": 22,
+    "failed": 1,
+    "ignored": 1,
+    "reason": "Missing gitignored catalog inputs in new export; all three changed witnesses passed.",
+    "log": "docs/compat/evidence/periodic-bank-fixtures/root-bank-close-catalog.log",
+    "sha256": "6bd977774ee9606525e902519a7d78247a9aa10c85be8261df5692cd79c76c49"
+  },
+  "supplementary_inputs": {
+    "manifest": "docs/compat/evidence/periodic-bank-fixtures/root-bank-close-inputs.json",
+    "count": 92,
+    "source": "Immutable ledger identities verified before exclusive file copy"
+  }
+}

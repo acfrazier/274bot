@@ -80,3 +80,24 @@ post-preparation baseline. The route, bank policy, script settings, product
 bounds, 180-second scenario deadline and fresh post-return Feather314 witness
 are unchanged. This isolates the banking behavior from slow novice combat;
 LIVE qualification of this correction remains pending.
+
+
+### Closed-bank witness correction (2026-09-11 05:45 UTC)
+
+Both isolated8fd0f138 old-catalog runs reach scenario `Passed` with fresh
+post-return feathers and further melee XP, but the outer catalog witness times
+out. Its return check requires bank generation to remain equal to the open
+bank deposit snapshot. The existing API contract and `snapshot.rs` regression
+show generation1 at open,2 after `IF_CLOSE`,3 after reopen. The fixture therefore
+rejects real returns. `chicken-8fd0f138.json` retains both failures and diagnosis;
+neither is relabeled a pass.
+
+Root changes only the three closed-bank return checks (Chicken, Flax and Vial)
+to require a newer generation. In-bank withdrawal checks retain equality.
+Existing positive tests now model open1/closed2 and reject a fabricated closed
+snapshot with unchanged generation. All23 catalog tests and strict Clippy pass
+on the immutable host297b2ea36/client9d090ed export plus the owned fixture
+patch. Initial full test run had22 passing tests and one missing gitignored
+catalog-input failure;92 verified ledger files were supplied for the passing
+rerun. Source/build/check receipts are `root-bank-close-*`. No runtime policy,
+route, deadline or success outcome was changed. New LIVE remains necessary.
