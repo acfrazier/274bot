@@ -2,7 +2,7 @@
 
 Task: `t_42263bfd`
 Branch: `codex/rs2b0t-multirevision`
-Implementation: `79f86973` plus lint-only `0bfb28ad`
+Implementation: `79f86973`, lint-only `0bfb28ad`, and monotonic-stage follow-up `d321908c`
 Selected-data predecessor review: `8c6689c1`
 Related first-run picker source/proof: `1a2f2dcf` / `c7d7a8ff`
 
