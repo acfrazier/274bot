@@ -1,0 +1,54 @@
+{
+  "preserve": {
+    "no_foreign_ranged_weapon_db": true,
+    "no_foreign_food_db": true,
+    "no_foreign_combat_restock_policy": true,
+    "no_implicit_inventory_fallback": true,
+    "truthful_empty_range_loadout": true,
+    "user_selected_loadout_via_scriptFood": true,
+    "resolve_does_not_pretend_defaults_are_set": true,
+    "display_does_not_overwrite_supplied_values": true,
+    "foodHealAmount_unknown_stays_not_impl": true,
+    "eatAtHpThreshold_stays_not_impl": true,
+    "no_world_deepcopy": true
+  },
+  "accepted_mapping": "rangeLoadoutOf from posted _dart aliases; foodCount slot names plus cake partial_/ _slice aliases; SettingsStore.displayString/saved stringify posted bag or schema fallback",
+  "hypotheses": [
+    {
+      "id": 1,
+      "claim": "imported fighters are broken; dim the cards",
+      "status": "rejected",
+      "falsifier": "Root04d r289/r274 old-catalog cells reach ingame scene_state==2 then throw ranged.rangeLoadoutOf / foodCount / SettingsStore.displayString. Frozen onStart/first-tick callers. Missing host mapping."
+    },
+    {
+      "id": 2,
+      "claim": "fabricate Maple shortbow / Trout / melee when empty",
+      "status": "rejected",
+      "falsifier": "Brief requires truthful empty/inapplicable vs fabricated success. MossGiant melee WEAPON is ''. Do not read worn scimitar or pack food as the selected loadout."
+    },
+    {
+      "id": 3,
+      "claim": "copy foreign DARTS / FOOD_FORMS / FOOD_HEAL",
+      "status": "rejected",
+      "falsifier": "Brief forbids copied foreign ranged-weapon/food databases. Native DARTS/BOWS stay empty SETTINGS stubs. Cake family is generated aliases cake/partial_cake/cake_slice. Unknown foodHealAmount already throws."
+    },
+    {
+      "id": 4,
+      "claim": "recreate health/banking/restock policy in food helpers",
+      "status": "rejected",
+      "falsifier": "shouldEatToUseFood already exists. eatAtHpThreshold stays not impl. foodCount is a slot counter. Bank/panic/restock stay script-owned."
+    },
+    {
+      "id": 5,
+      "claim": "displayString returns schema default even when bag has a value",
+      "status": "rejected",
+      "falsifier": "AutoFighter uses displayString so legacy combatStyle='defence' is not coerced to melee. isolate_settings_store_does_not_return_schema_defaults must keep resolve bag-or-null."
+    },
+    {
+      "id": 6,
+      "claim": "thin projections over posted items/inv/settingsBag",
+      "status": "accepted",
+      "falsifier": "A later patch is wrong if the three LIVE throws remain, empty weapon becomes a bow, foodCount sums stacks or the wrong food, or displayString overwrites a supplied value."
+    }
+  ]
+}
