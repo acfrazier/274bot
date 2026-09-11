@@ -19,7 +19,7 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const SUPPORT_MATRIX: &str = include_str!("../../../docs/compat/support-matrix.json");
-const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter";
+const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_thiever|ardy_thiever_knight";
 const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -103,6 +103,16 @@ const RUNECRAFTER_EARTH_RUINS: (i32, i32, i32) = (3303, 3477, 0);
 const MULECRAFTER_AIR_RUINS: (i32, i32, i32) = (2983, 3288, 0);
 const AIR_ALTAR: (i32, i32, i32) = (2841, 4829, 0);
 const EARTH_ALTAR: (i32, i32, i32) = (2655, 4830, 0);
+const CAKE_ID: i32 = 1891;
+const BREAD_ID: i32 = 2309;
+const CHOCOLATE_SLICE_ID: i32 = 1901;
+const CHOCOLATE_CAKE_ID: i32 = 1897;
+const NOTED_CAKE_ID: i32 = 1892;
+const NOTED_BREAD_ID: i32 = 2310;
+const NOTED_CHOCOLATE_SLICE_ID: i32 = 1902;
+const ARDY_CAKES_STAND: (i32, i32, i32) = (2668, 3312, 0);
+const ARDY_THIEVER_STAND: (i32, i32, i32) = (2661, 3306, 0);
+const ARDY_BANK: (i32, i32, i32) = (2655, 3286, 0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -143,6 +153,9 @@ enum CoreCase {
     RuneCrafter,
     RuneCrafterEarth,
     MuleCrafter,
+    ArdyCakes,
+    ArdyThiever,
+    ArdyThieverKnight,
 }
 
 impl CoreCase {
@@ -184,6 +197,9 @@ impl CoreCase {
             "rune_crafter" => Ok(Self::RuneCrafter),
             "rune_crafter_earth" => Ok(Self::RuneCrafterEarth),
             "mule_crafter" => Ok(Self::MuleCrafter),
+            "ardy_cakes" => Ok(Self::ArdyCakes),
+            "ardy_thiever" => Ok(Self::ArdyThiever),
+            "ardy_thiever_knight" => Ok(Self::ArdyThieverKnight),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -228,6 +244,9 @@ impl CoreCase {
             Self::RuneCrafter => "rune_crafter",
             Self::RuneCrafterEarth => "rune_crafter_earth",
             Self::MuleCrafter => "mule_crafter",
+            Self::ArdyCakes => "ardy_cakes",
+            Self::ArdyThiever => "ardy_thiever",
+            Self::ArdyThieverKnight => "ardy_thiever_knight",
         }
     }
 
@@ -259,6 +278,8 @@ impl CoreCase {
             Self::TannerBot | Self::TannerBotHard => "TannerBot",
             Self::RuneCrafter | Self::RuneCrafterEarth => "RuneCrafter",
             Self::MuleCrafter => "MuleCrafter",
+            Self::ArdyCakes => "ArdyCakes",
+            Self::ArdyThiever | Self::ArdyThieverKnight => "ArdyThiever",
         }
     }
 }
@@ -619,6 +640,34 @@ fn near(tile: Option<(i32, i32, i32)>, target: (i32, i32, i32), radius: i32) -> 
     })
 }
 
+fn stall_food(observation: &Observation) -> i32 {
+    observation.item_id(CAKE_ID)
+        + observation.item_id(BREAD_ID)
+        + observation.item_id(CHOCOLATE_SLICE_ID)
+}
+
+fn bank_stall_food(observation: &Observation) -> i32 {
+    observation.bank_item_id(CAKE_ID)
+        + observation.bank_item_id(BREAD_ID)
+        + observation.bank_item_id(CHOCOLATE_SLICE_ID)
+}
+
+fn noted_stall_food(observation: &Observation) -> i32 {
+    observation.item_id(NOTED_CAKE_ID)
+        + observation.item_id(NOTED_BREAD_ID)
+        + observation.item_id(NOTED_CHOCOLATE_SLICE_ID)
+        + observation.bank_item_id(NOTED_CAKE_ID)
+        + observation.bank_item_id(NOTED_BREAD_ID)
+        + observation.bank_item_id(NOTED_CHOCOLATE_SLICE_ID)
+}
+
+fn ardy_thiever_baseline_ready(baseline: &Observation, thieving: i32) -> bool {
+    near(baseline.tile, ARDY_THIEVER_STAND, 8)
+        && baseline.level("thieving") >= thieving
+        && baseline.item_id(COINS_ID) == 0
+        && baseline.item_id(CAKE_ID) == 0
+}
+
 fn superheater_baseline_ready(
     baseline: &Observation,
     bar: i32,
@@ -868,6 +917,15 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
             AIR_TALISMAN_ID,
             1,
         ),
+        CoreCase::ArdyCakes => {
+            near(baseline.tile, ARDY_CAKES_STAND, 6)
+                && baseline.level("thieving") >= 5
+                && stall_food(baseline) == 0
+                && baseline.item_id(CHOCOLATE_CAKE_ID) == 0
+                && noted_stall_food(baseline) == 0
+        }
+        CoreCase::ArdyThiever => ardy_thiever_baseline_ready(baseline, 40),
+        CoreCase::ArdyThieverKnight => ardy_thiever_baseline_ready(baseline, 55),
     };
     if ready {
         return Ok(());
@@ -948,6 +1006,15 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         CoreCase::MuleCrafter => {
             "Falador East bank (3013,3355,0), Runecraft 1, blank partner, and empty pack of 1436/1437/556/557"
         }
+        CoreCase::ArdyCakes => {
+            "Baker's stall stand (2668,3312,0), Thieving 5, and empty pack of 1891/2309/1901/1897"
+        }
+        CoreCase::ArdyThiever => {
+            "Ardougne Guard stand (2661,3306,0), Thieving 40, and empty pack of 995/1891"
+        }
+        CoreCase::ArdyThieverKnight => {
+            "Ardougne Knight stand (2661,3306,0), Thieving 55, and empty pack of 995/1891"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -981,6 +1048,8 @@ struct CoreWitness {
     potion_maker_cycle: PotionMakerCycle,
     tanner_bot_cycle: TannerBotCycle,
     rune_crafter_cycle: RuneCrafterCycle,
+    ardy_cakes_cycle: ArdyCakesCycle,
+    ardy_thiever_cycle: ArdyThieverCycle,
     ordered_first_exhausted: bool,
 }
 
@@ -2037,6 +2106,109 @@ impl RuneCrafterCycle {
     }
 }
 
+/// Steal cake/bread/chocolate slice with Thieving XP, deposit acquired stock
+/// in a fresh bank, return to STAND, steal again. Chocolate cake 1897 and
+/// noted stall food fail.
+#[derive(Debug, Clone, Default, Serialize)]
+struct ArdyCakesCycle {
+    stolen: Option<Observation>,
+    deposited: Option<Observation>,
+    returned: bool,
+    further: bool,
+    wrong_product: bool,
+    noted: bool,
+}
+
+impl ArdyCakesCycle {
+    fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        self.wrong_product |=
+            now.item_id(CHOCOLATE_CAKE_ID) > 0 || now.bank_item_id(CHOCOLATE_CAKE_ID) > 0;
+        self.noted |= noted_stall_food(now) > 0;
+        if self.stolen.is_none()
+            && stall_food(now) >= 1
+            && stall_food(baseline) == 0
+            && now.skill_xp("thieving") > baseline.skill_xp("thieving")
+            && now.item_id(CHOCOLATE_CAKE_ID) == 0
+            && noted_stall_food(now) == 0
+        {
+            self.stolen = Some(now.clone());
+        }
+        if self.stolen.is_some()
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && stall_food(now) == 0
+            && bank_stall_food(now) >= 1
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            self.returned |= !now.bank_open
+                && !now.bank_loaded
+                && now.bank_generation > deposited.bank_generation
+                && near(now.tile, ARDY_CAKES_STAND, 6);
+        }
+        if self.returned {
+            self.further |= !now.bank_open && stall_food(now) >= 1;
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.further
+            && self.stolen.is_some()
+            && self.deposited.is_some()
+            && !self.wrong_product
+            && !self.noted
+    }
+}
+
+/// Pickpocket coins with Thieving XP, deposit coins at loot-count 1, return
+/// to the market stand, pickpocket again. Stall food without coins cannot
+/// qualify. Fight stays pending.
+#[derive(Debug, Clone, Default, Serialize)]
+struct ArdyThieverCycle {
+    pickpocketed: Option<Observation>,
+    deposited: Option<Observation>,
+    returned: bool,
+    further: bool,
+}
+
+impl ArdyThieverCycle {
+    fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        if self.pickpocketed.is_none()
+            && now.item_id(COINS_ID) >= 1
+            && baseline.item_id(COINS_ID) == 0
+            && now.skill_xp("thieving") > baseline.skill_xp("thieving")
+        {
+            self.pickpocketed = Some(now.clone());
+        }
+        if self.pickpocketed.is_some()
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(COINS_ID) == 0
+            && now.bank_item_id(COINS_ID) >= 1
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            self.returned |= !now.bank_open
+                && !now.bank_loaded
+                && now.bank_generation > deposited.bank_generation
+                && near(now.tile, ARDY_THIEVER_STAND, 6);
+        }
+        if self.returned {
+            self.further |= !now.bank_open && now.item_id(COINS_ID) >= 1;
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.further && self.pickpocketed.is_some() && self.deposited.is_some()
+    }
+}
+
 impl CoreWitness {
     fn new(case: CoreCase, baseline: Observation) -> Self {
         Self {
@@ -2064,6 +2236,8 @@ impl CoreWitness {
             potion_maker_cycle: PotionMakerCycle::default(),
             tanner_bot_cycle: TannerBotCycle::default(),
             rune_crafter_cycle: RuneCrafterCycle::default(),
+            ardy_cakes_cycle: ArdyCakesCycle::default(),
+            ardy_thiever_cycle: ArdyThieverCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -2297,6 +2471,15 @@ impl CoreWitness {
                 observation,
             );
         }
+        if matches!(self.case, CoreCase::ArdyCakes) {
+            self.ardy_cakes_cycle.observe(&self.baseline, observation);
+        }
+        if matches!(
+            self.case,
+            CoreCase::ArdyThiever | CoreCase::ArdyThieverKnight
+        ) {
+            self.ardy_thiever_cycle.observe(&self.baseline, observation);
+        }
         let baseline_sequence = self
             .baseline
             .chat
@@ -2417,6 +2600,10 @@ impl CoreWitness {
             CoreCase::RuneCrafter | CoreCase::RuneCrafterEarth | CoreCase::MuleCrafter => {
                 self.rune_crafter_cycle.qualified()
             }
+            CoreCase::ArdyCakes => self.ardy_cakes_cycle.qualified(),
+            CoreCase::ArdyThiever | CoreCase::ArdyThieverKnight => {
+                self.ardy_thiever_cycle.qualified()
+            }
         };
         if !ok {
             return Err(format!(
@@ -2449,6 +2636,8 @@ impl CoreWitness {
             "potion_maker_cycle": self.potion_maker_cycle,
             "tanner_bot_cycle": self.tanner_bot_cycle,
             "rune_crafter_cycle": self.rune_crafter_cycle,
+            "ardy_cakes_cycle": self.ardy_cakes_cycle,
+            "ardy_thiever_cycle": self.ardy_thiever_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -5175,6 +5364,272 @@ mod tests {
         }
     }
 
+    fn ardy_obs(
+        tile: (i32, i32, i32),
+        item_ids: &[(i32, i32)],
+        bank_ids: &[(i32, i32)],
+        xp: i32,
+        thieving: i32,
+    ) -> Observation {
+        let mut observation = observation(&[], &[("thieving", xp)], &[]);
+        observation.tile = Some(tile);
+        observation.item_ids = item_ids.iter().copied().collect();
+        observation.bank_ids = bank_ids.iter().copied().collect();
+        observation.levels.insert("thieving".into(), thieving);
+        observation.levels.insert("hitpoints".into(), 40);
+        observation
+    }
+
+    #[test]
+    fn ardy_cakes_requires_stall_food_xp_fresh_deposit_return_and_further_steal() {
+        let baseline = ardy_obs(ARDY_CAKES_STAND, &[], &[], 0, 5);
+        validate_case_baseline(CoreCase::ArdyCakes, &baseline).unwrap();
+
+        let stolen = ardy_obs(ARDY_CAKES_STAND, &[(CAKE_ID, 4), (BREAD_ID, 2)], &[], 64, 5);
+        let mut deposited = ardy_obs(ARDY_BANK, &[], &[(CAKE_ID, 4), (BREAD_ID, 2)], 64, 5);
+        deposited.bank_open = true;
+        deposited.bank_loaded = true;
+        deposited.bank_generation = 1;
+        let mut returned = ardy_obs(ARDY_CAKES_STAND, &[], &[], 64, 5);
+        returned.bank_generation = 2;
+        let mut further = ardy_obs(ARDY_CAKES_STAND, &[(CHOCOLATE_SLICE_ID, 1)], &[], 80, 5);
+        further.bank_generation = 2;
+
+        assert!(witness(
+            CoreCase::ArdyCakes,
+            &baseline,
+            [&stolen, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_ok());
+        assert!(witness(CoreCase::ArdyCakes, &baseline, [&baseline])
+            .qualify()
+            .is_err());
+        assert!(witness(CoreCase::ArdyCakes, &baseline, [&stolen])
+            .qualify()
+            .is_err());
+        assert!(witness(
+            CoreCase::ArdyCakes,
+            &baseline,
+            [&stolen, &deposited, &returned]
+        )
+        .qualify()
+        .is_err());
+
+        let mut unclosed_return = returned.clone();
+        unclosed_return.bank_generation = deposited.bank_generation;
+        let mut unclosed_further = further.clone();
+        unclosed_further.bank_generation = deposited.bank_generation;
+        assert!(witness(
+            CoreCase::ArdyCakes,
+            &baseline,
+            [&stolen, &deposited, &unclosed_return, &unclosed_further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut name_only = stolen.clone();
+        name_only.item_ids.clear();
+        name_only.items.insert("Cake".into(), 4);
+        assert!(witness(
+            CoreCase::ArdyCakes,
+            &baseline,
+            [&name_only, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut stale = deposited.clone();
+        stale.bank_loaded = false;
+        assert!(witness(
+            CoreCase::ArdyCakes,
+            &baseline,
+            [&stolen, &stale, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+        let mut closed = deposited.clone();
+        closed.bank_open = false;
+        assert!(witness(
+            CoreCase::ArdyCakes,
+            &baseline,
+            [&stolen, &closed, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let xp_only = ardy_obs(ARDY_CAKES_STAND, &[], &[], 64, 5);
+        assert!(witness(
+            CoreCase::ArdyCakes,
+            &baseline,
+            [&xp_only, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut wrong = stolen.clone();
+        wrong.item_ids.insert(CHOCOLATE_CAKE_ID, 1);
+        assert!(witness(
+            CoreCase::ArdyCakes,
+            &baseline,
+            [&wrong, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut noted = stolen.clone();
+        noted.item_ids.insert(NOTED_CAKE_ID, 1);
+        assert!(witness(
+            CoreCase::ArdyCakes,
+            &baseline,
+            [&noted, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut seeded = baseline.clone();
+        seeded.item_ids.insert(CAKE_ID, 1);
+        assert!(validate_case_baseline(CoreCase::ArdyCakes, &seeded).is_err());
+        let market = ardy_obs(ARDY_THIEVER_STAND, &[], &[], 0, 5);
+        assert!(validate_case_baseline(CoreCase::ArdyCakes, &market).is_err());
+    }
+
+    #[test]
+    fn ardy_thiever_requires_coins_xp_fresh_deposit_return_and_further_pickpocket() {
+        for (case, thieving) in [
+            (CoreCase::ArdyThiever, 40),
+            (CoreCase::ArdyThieverKnight, 55),
+        ] {
+            let baseline = ardy_obs(ARDY_THIEVER_STAND, &[], &[], 0, thieving);
+            validate_case_baseline(case, &baseline).unwrap();
+
+            let cakes_only = ardy_obs(ARDY_THIEVER_STAND, &[(CAKE_ID, 1)], &[], 16, thieving);
+            let pickpocketed = ardy_obs(
+                ARDY_THIEVER_STAND,
+                &[(COINS_ID, 30), (CAKE_ID, 1)],
+                &[],
+                484,
+                thieving,
+            );
+            let mut deposited =
+                ardy_obs(ARDY_BANK, &[(CAKE_ID, 1)], &[(COINS_ID, 30)], 484, thieving);
+            deposited.bank_open = true;
+            deposited.bank_loaded = true;
+            deposited.bank_generation = 1;
+            let mut returned = ardy_obs(ARDY_THIEVER_STAND, &[(CAKE_ID, 1)], &[], 484, thieving);
+            returned.bank_generation = 2;
+            let mut further = ardy_obs(
+                ARDY_THIEVER_STAND,
+                &[(COINS_ID, 30), (CAKE_ID, 1)],
+                &[],
+                952,
+                thieving,
+            );
+            further.bank_generation = 2;
+
+            assert!(witness(
+                case,
+                &baseline,
+                [&pickpocketed, &deposited, &returned, &further]
+            )
+            .qualify()
+            .is_ok());
+            assert!(witness(case, &baseline, [&baseline]).qualify().is_err());
+            assert!(witness(case, &baseline, [&cakes_only]).qualify().is_err());
+            assert!(witness(case, &baseline, [&pickpocketed]).qualify().is_err());
+            assert!(
+                witness(case, &baseline, [&pickpocketed, &deposited, &returned])
+                    .qualify()
+                    .is_err()
+            );
+
+            let mut unclosed_return = returned.clone();
+            unclosed_return.bank_generation = deposited.bank_generation;
+            let mut unclosed_further = further.clone();
+            unclosed_further.bank_generation = deposited.bank_generation;
+            assert!(witness(
+                case,
+                &baseline,
+                [
+                    &pickpocketed,
+                    &deposited,
+                    &unclosed_return,
+                    &unclosed_further
+                ]
+            )
+            .qualify()
+            .is_err());
+
+            let mut name_only = pickpocketed.clone();
+            name_only.item_ids.clear();
+            name_only.items.insert("Coins".into(), 30);
+            assert!(witness(
+                case,
+                &baseline,
+                [&name_only, &deposited, &returned, &further]
+            )
+            .qualify()
+            .is_err());
+
+            let mut stale = deposited.clone();
+            stale.bank_loaded = false;
+            assert!(witness(
+                case,
+                &baseline,
+                [&pickpocketed, &stale, &returned, &further]
+            )
+            .qualify()
+            .is_err());
+            let mut closed = deposited.clone();
+            closed.bank_open = false;
+            assert!(witness(
+                case,
+                &baseline,
+                [&pickpocketed, &closed, &returned, &further]
+            )
+            .qualify()
+            .is_err());
+
+            let xp_only = ardy_obs(ARDY_THIEVER_STAND, &[(CAKE_ID, 1)], &[], 484, thieving);
+            assert!(
+                witness(case, &baseline, [&xp_only, &deposited, &returned, &further])
+                    .qualify()
+                    .is_err()
+            );
+
+            let mut far = ardy_obs((3185, 3440, 0), &[(CAKE_ID, 1)], &[], 484, thieving);
+            far.bank_generation = 2;
+            let mut further_far = further.clone();
+            further_far.tile = Some((3185, 3440, 0));
+            assert!(witness(
+                case,
+                &baseline,
+                [&pickpocketed, &deposited, &far, &further_far]
+            )
+            .qualify()
+            .is_err());
+
+            let mut seeded = baseline.clone();
+            seeded.item_ids.insert(COINS_ID, 1);
+            assert!(validate_case_baseline(case, &seeded).is_err());
+        }
+
+        let guard_low = ardy_obs(ARDY_THIEVER_STAND, &[], &[], 0, 39);
+        assert!(validate_case_baseline(CoreCase::ArdyThiever, &guard_low).is_err());
+        let knight_low = ardy_obs(ARDY_THIEVER_STAND, &[], &[], 0, 54);
+        assert!(validate_case_baseline(CoreCase::ArdyThieverKnight, &knight_low).is_err());
+        validate_case_baseline(
+            CoreCase::ArdyThiever,
+            &ardy_obs(ARDY_THIEVER_STAND, &[], &[], 0, 40),
+        )
+        .unwrap();
+        assert!(validate_case_baseline(
+            CoreCase::ArdyThieverKnight,
+            &ardy_obs(ARDY_THIEVER_STAND, &[], &[], 0, 40)
+        )
+        .is_err());
+    }
+
     #[test]
     fn old_catalog_explicitly_refuses_cut_string_mode() {
         let error =
@@ -5218,6 +5673,9 @@ mod tests {
             CoreCase::RuneCrafter,
             CoreCase::RuneCrafterEarth,
             CoreCase::MuleCrafter,
+            CoreCase::ArdyCakes,
+            CoreCase::ArdyThiever,
+            CoreCase::ArdyThieverKnight,
         ] {
             validate_case_catalog(case, CATALOG_COMMIT_A).unwrap();
             validate_case_catalog(case, CATALOG_COMMIT_B).unwrap();
