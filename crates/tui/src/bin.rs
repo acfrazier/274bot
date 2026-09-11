@@ -838,6 +838,13 @@ impl TuiSession {
                 ChatAction::Answer(option) => {
                     play.queue_wire(&name, WireCmd::Answer(option as i32))
                 }
+                ChatAction::PaintButton(index) => {
+                    if let Some(paint) = app.chat_data.script_paint.as_ref() {
+                        if let Some(id) = paint.buttons.get(index).map(|b| b.id.clone()) {
+                            play.script_paint_click(&name, &id, paint.generation);
+                        }
+                    }
+                }
                 ChatAction::None => {}
             }
         }
@@ -2241,6 +2248,40 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
             session.play.as_ref().unwrap().script_state("alice"),
             script::RunState::Running,
             "Resume while Paused"
+        );
+    }
+
+    #[test]
+    fn paint_button_action_does_not_queue_a_wire_cmd() {
+        let mut play = run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {});
+        play.attach_arm("alice", SlotArm::new(7, false));
+        let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
+        play.script_start_load("alice", src, script::LoadShape::NativeTick, None, vec![])
+            .unwrap();
+        let mut session = TuiSession::new(dummy_options());
+        session.inject_play(play);
+        let mut app = TuiApp::new("274bot headless");
+        app.names = vec!["alice".into()];
+        app.focused = Some(0);
+        app.chat_data.script_paint = Some(script::shim::ScriptPaint {
+            title: Some("NatureCrafter".into()),
+            accent: None,
+            lines: vec!["status".into()],
+            buttons: vec![script::shim::ScriptPaintButton {
+                id: "gobank".into(),
+                label: "Go bank".into(),
+            }],
+            generation: 0,
+        });
+        dispatch(
+            &mut session,
+            &mut app,
+            AppAction::Chat(ChatAction::PaintButton(0)),
+        );
+        assert_eq!(
+            session.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Running,
+            "paint click must not pause or stop"
         );
     }
 

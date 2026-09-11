@@ -911,7 +911,10 @@ fn shape_label(shape: LoadShape) -> &'static str {
 mod isolate {
     use super::*;
     use rustyscript::{json_args, Runtime, RuntimeOptions};
+    use std::sync::atomic::AtomicU64;
     use std::thread::JoinHandle;
+
+    static NEXT_PAINT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
     /// Per-tick budget: ticks taking longer than this are interrupted and
     /// logged, and stale ticks are skipped.
@@ -946,6 +949,12 @@ mod isolate {
         Loadouts(String),
         Pause,
         Resume,
+        /// One-shot script-local paint button, tagged with the isolate
+        /// work generation so a stale overlay cannot land on a later script.
+        PaintClick {
+            id: String,
+            generation: u64,
+        },
         Probe(String, Sender<Result<serde_json::Value, String>>),
         Stop,
     }
@@ -990,6 +999,10 @@ mod isolate {
         #[cfg(feature = "memory-profile")]
         dispatched: std::sync::atomic::AtomicU64,
         work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+        /// Host-owned identity of forwarded paint frames. Unique per spawn
+        /// and bumped on session reset so a stale overlay generation cannot
+        /// match a later isolate that advertises the same button id.
+        paint_generation: std::sync::atomic::AtomicU64,
         stopped: std::sync::atomic::AtomicBool,
         tx: Sender<IsolateCmd>,
         rx: Mutex<Receiver<ThreadMsg>>,
@@ -1078,6 +1091,8 @@ mod isolate {
             let thread_counters = counters.clone();
             let work_generation = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
             let thread_generation = work_generation.clone();
+            let paint_generation =
+                NEXT_PAINT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let handle = std::thread::Builder::new()
                 .name("js-isolate".into())
                 .spawn(move || {
@@ -1109,6 +1124,7 @@ mod isolate {
                 #[cfg(feature = "memory-profile")]
                 dispatched: std::sync::atomic::AtomicU64::new(0),
                 work_generation,
+                paint_generation: std::sync::atomic::AtomicU64::new(paint_generation),
                 stopped: std::sync::atomic::AtomicBool::new(false),
                 tx,
                 rx: Mutex::new(msg_rx),
@@ -1245,6 +1261,22 @@ mod isolate {
             let _ = self.tx.send(IsolateCmd::Resume);
         }
 
+        /// Queue a one-shot paint-button id for the current work generation.
+        /// Consumed on the next paint that advertises that id; dropped on
+        /// pause, generation skip, or an unadvertised leftover after paint.
+        pub fn paint_click(&self, id: &str) {
+            if id.is_empty() {
+                return;
+            }
+            let generation = self
+                .work_generation
+                .load(std::sync::atomic::Ordering::Acquire);
+            let _ = self.tx.send(IsolateCmd::PaintClick {
+                id: id.to_string(),
+                generation,
+            });
+        }
+
         /// Evaluate `expr` in the isolate's global scope and return its
         /// JSON value (test/status read-back; e.g. `"__rs_bot.n"`).
         pub fn probe(&self, expr: &str) -> Result<serde_json::Value, String> {
@@ -1295,7 +1327,14 @@ mod isolate {
                 let mut interacts = self.interacts.lock().unwrap();
                 self.work_generation
                     .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                self.paint_generation
+                    .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
                 interacts.clear();
+            }
+            if let Some(paint) = self.paint.lock().unwrap().as_mut() {
+                paint.generation = self
+                    .paint_generation
+                    .load(std::sync::atomic::Ordering::Acquire);
             }
             *self.in_flight.lock().unwrap() = None;
             let _ = self.tx.send(IsolateCmd::ResetSession);
@@ -1370,7 +1409,10 @@ mod isolate {
                     ThreadMsg::Paint(bytes) => {
                         // Decode the FlatBuffer paint frame (no JSON).
                         match crate::isolate_fb::decode_paint(&bytes) {
-                            Ok(paint) => {
+                            Ok(mut paint) => {
+                                paint.generation = self
+                                    .paint_generation
+                                    .load(std::sync::atomic::Ordering::Acquire);
                                 let mut slot = self.paint.lock().unwrap();
                                 if slot.as_ref() != Some(&paint) {
                                     *slot = Some(paint);
@@ -2965,12 +3007,26 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         let _ = out.send(ThreadMsg::Paint(ipc.encode_paint(&frame)));
     }
 
+    /// Drop an unconsumed one-shot so a later paint cannot return a stale id.
+    fn clear_unconsumed_paint_click(runtime: &mut Runtime) {
+        let _ = runtime.eval::<()>(
+            "if (globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.paintClick != null) { globalThis.__rs2b0t_host.paintClick = null; }",
+        );
+    }
+
+    fn set_paint_click(runtime: &mut Runtime, id: &str) -> Result<(), String> {
+        let json = serde_json::to_string(id).map_err(|e| e.to_string())?;
+        runtime
+            .eval::<()>(&format!("globalThis.__rs2b0t_host.paintClick = {json};"))
+            .map_err(|e| e.to_string())
+    }
+
     /// The tick loop: commands are serialized on this thread; ticks run
     /// with a time budget, slow ticks are logged and stale queued ticks are
     /// skipped, and errors never kill the isolate.
     ///
     /// The stale-skip drain consumes commands with an explicit match so a
-    /// non-Tick command (Pause/Resume/Probe/Stop) that arrives while ticks
+    /// non-Tick command (Pause/Resume/Probe/Stop/PaintClick) that arrives while ticks
     /// are queued is stashed for the next iteration instead of being
     /// dropped (a `while let Ok(IsolateCmd::Tick(..))` pattern would
     /// swallow it).
@@ -3097,6 +3153,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                                 let _ = out.send(ThreadMsg::Log(format!("paint eval: {e}")));
                             }
                         }
+                        clear_unconsumed_paint_click(&mut runtime);
                         let _ = out.send(ThreadMsg::IgnoredRandoms(eval_ignored_randoms(
                             &mut runtime,
                         )));
@@ -3225,6 +3282,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                             let _ = out.send(ThreadMsg::Log(format!("paint eval: {e}")));
                         }
                     }
+                    clear_unconsumed_paint_click(&mut runtime);
                     let _ = out.send(ThreadMsg::IgnoredRandoms(eval_ignored_randoms(
                         &mut runtime,
                     )));
@@ -3289,6 +3347,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     crate::autocast::on_reset();
                     crate::special::on_reset();
                     let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
+                    clear_unconsumed_paint_click(&mut runtime);
                 }
                 IsolateCmd::Pause => {
                     paused = true;
@@ -3296,6 +3355,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     crate::death_recovery::on_pause();
                     crate::autocast::on_pause();
                     crate::special::on_pause();
+                    clear_unconsumed_paint_click(&mut runtime);
                 }
                 IsolateCmd::Resume => {
                     paused = false;
@@ -3303,6 +3363,16 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                     crate::death_recovery::on_resume();
                     crate::autocast::on_resume();
                     crate::special::on_resume();
+                }
+                IsolateCmd::PaintClick { id, generation } => {
+                    if paused
+                        || generation != work_generation.load(std::sync::atomic::Ordering::Acquire)
+                    {
+                        continue;
+                    }
+                    if let Err(e) = set_paint_click(&mut runtime, &id) {
+                        let _ = out.send(ThreadMsg::Log(format!("paintClick: {e}")));
+                    }
                 }
                 IsolateCmd::Probe(expr, reply) => {
                     let value: Result<serde_json::Value, String> =

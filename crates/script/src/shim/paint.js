@@ -8,6 +8,7 @@ export const Paint = {
             title: null,
             accent: (opts && opts.accent) || null,
             lines: [],
+            buttons: [],
             tabs: {},
             selects: {},
         };
@@ -45,11 +46,37 @@ export const Paint = {
                 rec.selects[id] = { label, options, current };
                 return current;
             },
+            buttons(items) {
+                if (!items || items.length === 0) {
+                    return null;
+                }
+                const advertised = [];
+                for (const item of items) {
+                    if (item == null) continue;
+                    advertised.push({
+                        id: String(item.id),
+                        label: String(item.label),
+                    });
+                }
+                if (advertised.length === 0) {
+                    return null;
+                }
+                for (const btn of advertised) {
+                    rec.buttons.push(btn);
+                }
+                const click = host().paintClick;
+                if (typeof click === 'string' && advertised.some((b) => b.id === click)) {
+                    host().paintClick = null;
+                    return click;
+                }
+                return null;
+            },
             end() {
                 host().paint = {
                     title: rec.title,
                     accent: rec.accent,
                     lines: rec.lines,
+                    buttons: rec.buttons,
                 };
             },
         };

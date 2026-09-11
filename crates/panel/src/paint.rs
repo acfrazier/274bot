@@ -38,6 +38,10 @@ pub struct PaintOverlay {
     /// collapsed or when no paint is showing). The GPU-less tests assert
     /// on this mirror of the window text.
     lines: Vec<String>,
+    /// Advertised button labels drawn this frame (empty while collapsed).
+    button_labels: Vec<String>,
+    /// Screen-space button rects `(min, max)` for GPU-less click tests.
+    button_hits: Vec<[f32; 4]>,
 }
 
 impl PaintOverlay {
@@ -45,16 +49,29 @@ impl PaintOverlay {
         Self {
             collapsed: false,
             lines: Vec::new(),
+            button_labels: Vec::new(),
+            button_hits: Vec::new(),
         }
     }
 
     /// Draw the focused slot's paint over the Game Image. `min`/`size`
-    /// are the Image widget's display rect. No-op without a paint.
-    pub fn frame(&mut self, ui: &Ui, paint: Option<&ScriptPaint>, min: [f32; 2], size: [f32; 2]) {
+    /// are the Image widget's display rect. No-op without a paint. Returns
+    /// the advertised button id clicked this frame, if any.
+    pub fn frame(
+        &mut self,
+        ui: &Ui,
+        paint: Option<&ScriptPaint>,
+        min: [f32; 2],
+        size: [f32; 2],
+    ) -> Option<(String, u64)> {
         self.lines.clear();
-        let Some(paint) = paint.filter(|p| p.title.is_some() || !p.lines.is_empty()) else {
+        self.button_labels.clear();
+        self.button_hits.clear();
+        let Some(paint) =
+            paint.filter(|p| p.title.is_some() || !p.lines.is_empty() || !p.buttons.is_empty())
+        else {
             self.collapsed = false;
-            return;
+            return None;
         };
         let [x, y, w, h] = chatbox_rect(min, size);
         let row_h = ui.frame_height().max(16.0);
@@ -81,6 +98,7 @@ impl PaintOverlay {
             None => glyph.to_string(),
         };
         dl.add_text([x + 6.0, y + 2.0], ACCENT, &header);
+        let mut clicked = None;
         if !self.collapsed {
             if let Some(title) = &paint.title {
                 self.lines.push(title.clone());
@@ -93,7 +111,22 @@ impl PaintOverlay {
                     ty += 14.0;
                 }
             }
+            for btn in &paint.buttons {
+                self.button_labels.push(btn.label.clone());
+                if ty + row_h <= y + height {
+                    ui.set_cursor_screen_pos([x + 6.0, ty]);
+                    let hit = [x + 6.0, ty, x + w - 6.0, ty + row_h];
+                    self.button_hits.push(hit);
+                    let pressed = ui.button(format!("{}##paint-{}", btn.label, btn.id));
+                    let hovered = ui.is_mouse_hovering_rect([hit[0], hit[1]], [hit[2], hit[3]]);
+                    if pressed || (hovered && ui.is_mouse_clicked(MouseButton::Left)) {
+                        clicked = Some((btn.id.clone(), paint.generation));
+                    }
+                    ty += row_h;
+                }
+            }
         }
+        clicked
     }
 }
 
@@ -115,7 +148,23 @@ mod tests {
             title: title.map(str::to_string),
             accent: None,
             lines: lines.iter().map(|l| l.to_string()).collect(),
+            buttons: Vec::new(),
+            generation: 0,
         }
+    }
+
+    fn paint_with_button(
+        title: Option<&str>,
+        lines: &[&str],
+        id: &str,
+        label: &str,
+    ) -> ScriptPaint {
+        let mut p = paint(title, lines);
+        p.buttons.push(script::shim::ScriptPaintButton {
+            id: id.to_string(),
+            label: label.to_string(),
+        });
+        p
     }
 
     fn prepare_frame(ctx: &mut dear_imgui_rs::Context) {
@@ -239,5 +288,83 @@ mod tests {
                 "second row".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn advertised_button_is_a_real_control_and_collapsed_hides_it() {
+        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let mut ctx = dear_imgui_rs::Context::create();
+        let mut overlay = PaintOverlay::new();
+        let p = paint_with_button(Some("NatureCrafter"), &["status"], "gobank", "Go bank");
+        prepare_frame(&mut ctx);
+        {
+            let ui = ctx.frame();
+            let _ = ui
+                .window("Game")
+                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    let clicked = overlay.frame(ui, Some(&p), [10.0, 20.0], [765.0, 503.0]);
+                    assert!(clicked.is_none(), "no click this frame");
+                });
+        }
+        ctx.render();
+        assert_eq!(overlay.button_labels, vec!["Go bank".to_string()]);
+        assert_eq!(
+            overlay.button_hits.len(),
+            1,
+            "real ImGui button was laid out"
+        );
+        let hit = overlay.button_hits[0];
+        let center = [(hit[0] + hit[2]) / 2.0, (hit[1] + hit[3]) / 2.0];
+        prepare_frame(&mut ctx);
+        ctx.io_mut().add_mouse_pos_event(center);
+        ctx.io_mut()
+            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, false);
+        {
+            let ui = ctx.frame();
+            let _ = ui
+                .window("Game")
+                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    let _ = overlay.frame(ui, Some(&p), [10.0, 20.0], [765.0, 503.0]);
+                });
+        }
+        ctx.render();
+        prepare_frame(&mut ctx);
+        ctx.io_mut().add_mouse_pos_event(center);
+        ctx.io_mut()
+            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, true);
+        let mut clicked = None;
+        {
+            let ui = ctx.frame();
+            let _ = ui
+                .window("Game")
+                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    clicked = overlay.frame(ui, Some(&p), [10.0, 20.0], [765.0, 503.0]);
+                });
+        }
+        ctx.render();
+        assert_eq!(
+            clicked,
+            Some(("gobank".to_string(), p.generation)),
+            "clicking the button dispatches the advertised id with the rendered generation"
+        );
+        assert!(!overlay.collapsed, "button click is not collapse");
+        paint_click_frame(&mut ctx, &mut overlay, &p, Some(center), false);
+        let title = [30.0, 380.0];
+        paint_click_frame(&mut ctx, &mut overlay, &p, Some(title), true);
+        assert!(overlay.collapsed, "title click still collapses");
+        assert!(
+            overlay.button_labels.is_empty(),
+            "collapsed hides paint widgets"
+        );
+        paint_click_frame(&mut ctx, &mut overlay, &p, Some(title), false);
+        paint_click_frame(&mut ctx, &mut overlay, &p, Some(title), true);
+        assert!(!overlay.collapsed);
+        assert_eq!(overlay.button_labels, vec!["Go bank".to_string()]);
     }
 }

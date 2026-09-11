@@ -687,6 +687,15 @@ impl SlotScript {
         self.load.as_ref().and_then(|iso| iso.paint())
     }
 
+    /// Forward a one-shot paint-button id to the Load isolate. No-op for a
+    /// compiled script or a slot with no isolate.
+    #[cfg(feature = "load")]
+    pub fn paint_click(&self, id: &str) {
+        if let Some(isolate) = &self.load {
+            isolate.paint_click(id);
+        }
+    }
+
     /// The bot instance's random-ignore list (a Load isolate's
     /// `inst.ignoredRandoms?.()`, default `[]`; empty for a compiled
     /// script — there is no instance). Cached on the isolate thread

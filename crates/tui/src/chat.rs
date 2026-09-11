@@ -24,6 +24,8 @@ pub enum ChatAction {
     Continue,
     /// Press the chat modal's `option`-th BUTTON_OK choice (1-based).
     Answer(usize),
+    /// Press the `index`-th advertised script paint button (0-based).
+    PaintButton(usize),
     /// The key/click was ignored.
     None,
 }
@@ -33,6 +35,8 @@ pub enum ChatAction {
 pub struct ChatState {
     /// The operator's focused option (0-based into `chat_options`).
     pub choice: usize,
+    /// The operator's focused paint button (0-based into `buttons`).
+    pub paint_choice: usize,
 }
 
 /// The chat pane's snapshot-backed read view.
@@ -69,7 +73,13 @@ impl<'a> ChatView<'a> {
         !self.show_game_chat
             && self
                 .script_paint
-                .is_some_and(|p| p.title.is_some() || !p.lines.is_empty())
+                .is_some_and(|p| p.title.is_some() || !p.lines.is_empty() || !p.buttons.is_empty())
+    }
+
+    fn paint_buttons(&self) -> &[script::shim::ScriptPaintButton] {
+        self.script_paint
+            .map(|p| p.buttons.as_slice())
+            .unwrap_or(&[])
     }
 }
 
@@ -89,9 +99,19 @@ impl<'a, F: FnMut(ChatAction)> Chat<'a, F> {
     }
 
     /// Space / Enter continue the dialog (answering the focused option
-    /// when one is up); Up/Down and j/k move the option focus; everything
-    /// else is ignored.
+    /// when one is up); Up/Down and j/k move the option focus; paint
+    /// buttons use digits / j/k+Enter while paint-showing. Modal wins.
     pub fn on_key(&mut self, key: KeyEvent) -> ChatAction {
+        if chat_modal_open(&self.view) {
+            return self.on_modal_key(key);
+        }
+        if self.view.paint_showing() && !self.view.paint_buttons().is_empty() {
+            return self.on_paint_key(key);
+        }
+        ChatAction::None
+    }
+
+    fn on_modal_key(&mut self, key: KeyEvent) -> ChatAction {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
                 if self.view.options.len() > 1 {
@@ -118,32 +138,90 @@ impl<'a, F: FnMut(ChatAction)> Chat<'a, F> {
         }
     }
 
+    fn on_paint_key(&mut self, key: KeyEvent) -> ChatAction {
+        let n = self.view.paint_buttons().len();
+        if n == 0 {
+            return ChatAction::None;
+        }
+        self.state.paint_choice = self.state.paint_choice.min(n - 1);
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.state.paint_choice = self.state.paint_choice.saturating_sub(1);
+                ChatAction::None
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.state.paint_choice = (self.state.paint_choice + 1).min(n - 1);
+                ChatAction::None
+            }
+            KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
+                let index = (c as u8 - b'1') as usize;
+                if index < n {
+                    let action = ChatAction::PaintButton(index);
+                    (self.send)(action);
+                    action
+                } else {
+                    ChatAction::None
+                }
+            }
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                let action = ChatAction::PaintButton(self.state.paint_choice);
+                (self.send)(action);
+                action
+            }
+            _ => ChatAction::None,
+        }
+    }
+
     /// A click inside the pane: an option row answers that choice, any
-    /// other row continues the dialog. `area` is the pane's buffer rect;
+    /// other row continues the dialog. Paint-showing clicks hit advertised
+    /// buttons instead of `WireCmd`. `area` is the pane's buffer rect;
     /// `(col, row)` is the click's buffer position.
     pub fn on_click(&mut self, area: Rect, col: u16, row: u16) -> ChatAction {
         if !area.contains(Position::new(col, row)) {
             return ChatAction::None;
         }
-        let action = if self.view.options.is_empty() {
+        let action = if chat_modal_open(&self.view) {
+            if self.view.options.is_empty() {
+                ChatAction::Continue
+            } else {
+                // Options start after the border, the modal text lines, and
+                // one blank row (mirrors the render layout).
+                let text_lines: usize = self
+                    .view
+                    .modal_texts
+                    .iter()
+                    .map(|t| t.split('\n').count())
+                    .sum();
+                let options_start = area.y + 1 + text_lines as u16 + 1;
+                let offset = row.saturating_sub(options_start) as usize;
+                if offset < self.view.options.len() {
+                    self.state.choice = offset;
+                    ChatAction::Answer(offset + 1)
+                } else {
+                    ChatAction::None
+                }
+            }
+        } else if self.view.paint_showing() {
+            let buttons = self.view.paint_buttons();
+            if buttons.is_empty() {
+                ChatAction::None
+            } else {
+                let title_lines =
+                    usize::from(self.view.script_paint.is_some_and(|p| p.title.is_some()));
+                let body_lines = self.view.script_paint.map(|p| p.lines.len()).unwrap_or(0);
+                let buttons_start = area.y + 1 + title_lines as u16 + body_lines as u16 + 1;
+                let offset = row.saturating_sub(buttons_start) as usize;
+                if offset < buttons.len() {
+                    self.state.paint_choice = offset;
+                    ChatAction::PaintButton(offset)
+                } else {
+                    ChatAction::None
+                }
+            }
+        } else if self.view.options.is_empty() {
             ChatAction::Continue
         } else {
-            // Options start after the border, the modal text lines, and
-            // one blank row (mirrors the render layout).
-            let text_lines: usize = self
-                .view
-                .modal_texts
-                .iter()
-                .map(|t| t.split('\n').count())
-                .sum();
-            let options_start = area.y + 1 + text_lines as u16 + 1;
-            let offset = row.saturating_sub(options_start) as usize;
-            if offset < self.view.options.len() {
-                self.state.choice = offset;
-                ChatAction::Answer(offset + 1)
-            } else {
-                ChatAction::None
-            }
+            ChatAction::None
         };
         if action != ChatAction::None {
             (self.send)(action);
@@ -210,6 +288,14 @@ impl<'a, F: FnMut(ChatAction)> Widget for Chat<'a, F> {
             }
             for row in &paint.lines {
                 lines.push(Line::from(row.clone()));
+            }
+            if !paint.buttons.is_empty() {
+                lines.push(Line::from(""));
+                let focus = self.state.paint_choice.min(paint.buttons.len() - 1);
+                for (i, btn) in paint.buttons.iter().enumerate() {
+                    let marker = if i == focus { "> " } else { "  " };
+                    lines.push(Line::from(format!("{marker}[{}] {}", i + 1, btn.label)));
+                }
             }
             Paragraph::new(lines)
                 .wrap(Wrap { trim: false })
@@ -456,6 +542,8 @@ mod tests {
             title: Some("BoneBurier — digging".into()),
             accent: None,
             lines: vec!["Runtime: 1.2m | Buried: 3".into()],
+            buttons: Vec::new(),
+            generation: 0,
         };
         let view = ChatView {
             lines: &lines,
@@ -488,5 +576,76 @@ mod tests {
             text.contains("a game chat line"),
             "the toggle shows the game chat: {text:?}"
         );
+    }
+
+    fn paint_with_button() -> script::shim::ScriptPaint {
+        script::shim::ScriptPaint {
+            title: Some("NatureCrafter".into()),
+            accent: None,
+            lines: vec!["status".into()],
+            buttons: vec![script::shim::ScriptPaintButton {
+                id: "gobank".into(),
+                label: "Go bank".into(),
+            }],
+            generation: 0,
+        }
+    }
+
+    #[test]
+    fn paint_digit_and_enter_dispatch_paint_button() {
+        let paint = paint_with_button();
+        let view = ChatView {
+            lines: &[],
+            modal_texts: &[],
+            options: &[],
+            has_continue: false,
+            script_paint: Some(&paint),
+            show_game_chat: false,
+        };
+        let text = render(view, 60, 8);
+        assert!(text.contains("Go bank"), "reachable control: {text:?}");
+        let mut state = ChatState::default();
+        let mut sent: Vec<ChatAction> = Vec::new();
+        let action = {
+            let mut chat = Chat::new(view, &mut state, |a| sent.push(a));
+            chat.on_key(key(KeyCode::Char('1')))
+        };
+        assert_eq!(action, ChatAction::PaintButton(0));
+        assert_eq!(sent, vec![ChatAction::PaintButton(0)]);
+        sent.clear();
+        let action = {
+            let mut chat = Chat::new(view, &mut state, |a| sent.push(a));
+            chat.on_key(key(KeyCode::Enter))
+        };
+        assert_eq!(action, ChatAction::PaintButton(0));
+    }
+
+    #[test]
+    fn paint_modal_still_wins_over_paint_buttons() {
+        let paint = paint_with_button();
+        let texts = vec!["The stranger waits.".into()];
+        let view = ChatView {
+            lines: &[],
+            modal_texts: &texts,
+            options: &[],
+            has_continue: true,
+            script_paint: Some(&paint),
+            show_game_chat: false,
+        };
+        let mut state = ChatState::default();
+        let mut sent: Vec<ChatAction> = Vec::new();
+        let action = {
+            let mut chat = Chat::new(view, &mut state, |a| sent.push(a));
+            chat.on_key(key(KeyCode::Enter))
+        };
+        assert_eq!(action, ChatAction::Continue);
+        assert_eq!(sent, vec![ChatAction::Continue]);
+        sent.clear();
+        let action = {
+            let mut chat = Chat::new(view, &mut state, |a| sent.push(a));
+            chat.on_key(key(KeyCode::Char('1')))
+        };
+        assert_eq!(action, ChatAction::None);
+        assert!(sent.is_empty());
     }
 }

@@ -690,14 +690,31 @@ pub(crate) fn content_json(
     .to_string()
 }
 
+/// One advertised script-local paint control. `id` is the one-shot click
+/// token; `label` is display-only and never implies a walk, pause, or packet.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct ScriptPaintButton {
+    pub id: String,
+    pub label: String,
+}
+
 /// One recorded paint frame (`Paint.begin(...)` ... `end()`): the title,
-/// the accent colour, and the rows (gap rows are empty lines). No canvas —
-/// the host reads it off `__rs2b0t_host.paint` for the script paint views.
+/// the accent colour, the rows (gap rows are empty lines), and optional
+/// one-shot buttons. No canvas — the host reads it off `__rs2b0t_host.paint`
+/// for the script paint views.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 pub struct ScriptPaint {
     pub title: Option<String>,
     pub accent: Option<String>,
     pub lines: Vec<String>,
+    /// Absent on older `host.paint` objects; empty means no controls.
+    #[serde(default)]
+    pub buttons: Vec<ScriptPaintButton>,
+    /// Host-owned rendered-frame generation. Not a JS field; stamped when
+    /// the isolate forwards the frame so a stale overlay cannot target a
+    /// later script that advertises the same id.
+    #[serde(default)]
+    pub generation: u64,
 }
 
 /// One interact request the shim `Bank`/`Banking` modules queue on the
