@@ -17,8 +17,11 @@ workers' files untouched. Root owns native execution and internal capture proof.
 
 Replace the generic Preparing server profile line with a readable classic-style
 text bar and current stage. Fit the existing narrow panel rail and theme; avoid
-new windows, assets, fonts, logos, dependencies or framework work. Useful plain
-labels include Checking game files, Checking navigation files, Loading game
+new windows, assets, fonts, logos, dependencies or framework work.
+The operator specifically selected the brighter orange used by existing panel
+text: reuse `theme::ACCENT` (`#FFB000`, `[1.0, 176.0/255.0, 0.0, 1.0]`) for the
+loading description and filled bar. Do not introduce another orange value.
+Useful plain labels include Checking game files, Checking navigation files, Loading game
 data, Preparing navigation, and Final checks. Do not show engine paths, Rust
 types, thread details or hashes to end users as loading descriptions.
 
