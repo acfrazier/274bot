@@ -175,6 +175,13 @@ impl Observation {
         self.magic_xp > baseline.magic_xp && self.coins > baseline.coins
     }
 
+    pub fn has_stop_progress_over(&self, boundary: &Self) -> bool {
+        self.tick > boundary.tick
+            && self.has_progress_over(boundary)
+            && self.own_inv() < boundary.own_inv()
+            && self.natures < boundary.natures
+    }
+
     pub fn isolated_from_peer(&self) -> bool {
         self.foreign_inv() == 0 && self.bank_foreign == 0
     }
@@ -204,6 +211,7 @@ pub struct SlotRecord {
     pub drain: Option<Observation>,
     pub pause_end: Option<Observation>,
     pub further: Option<Observation>,
+    pub stop_boundary: Option<Observation>,
     pub after_stop: Option<Observation>,
     pub peak_own: i32,
     pub peak_natures: i32,
@@ -234,6 +242,7 @@ impl SlotRecord {
             drain: None,
             pause_end: None,
             further: None,
+            stop_boundary: None,
             after_stop: None,
             post_start: 0,
             mixed_identity: false,
@@ -395,18 +404,30 @@ impl IsolationWitness {
                 self.stop_b
             ));
         }
+        let Some(a_stop) = self.a.stop_boundary.as_ref() else {
+            return Err("missing stop-boundary snapshot".into());
+        };
+        let Some(b_stop) = self.b.stop_boundary.as_ref() else {
+            return Err("missing stop-boundary snapshot".into());
+        };
         let Some(b_after) = self.b.after_stop.as_ref() else {
             return Err(
                 "no-progress control: continuing slot was not observed after peer Stop".into(),
             );
         };
-        if !b_after.has_progress_over(b_pause) {
+        if b_after.tick <= b_stop.tick {
+            return Err(
+                "stale stop-boundary: after-Stop observation is not later than the Stop boundary"
+                    .into(),
+            );
+        }
+        if !b_after.has_stop_progress_over(b_stop) {
             return Err(
                 "no-progress control: continuing slot did not progress after peer Stop".into(),
             );
         }
         if let Some(a_after) = self.a.after_stop.as_ref() {
-            if a_after.magic_xp > a_further.magic_xp || a_after.coins > a_further.coins {
+            if a_after.magic_xp > a_stop.magic_xp || a_after.coins > a_stop.coins {
                 return Err("stop isolation failed: stopped slot kept progressing".into());
             }
         }

@@ -504,8 +504,8 @@ struct SlotSnapshot {
     a_drain: Option<Observation>,
     b_drain: Option<Observation>,
     a_pause_end: Option<Observation>,
-    b_pause_end: Option<Observation>,
-    a_further: Option<Observation>,
+    a_stop_boundary: Option<Observation>,
+    b_stop_boundary: Option<Observation>,
     a_latest: Option<Observation>,
     b_latest: Option<Observation>,
 }
@@ -614,6 +614,8 @@ fn run_cell() -> Result<(), String> {
     let mut pause_a = None;
     let mut pause_b = None;
     let mut resume_a = None;
+    let mut stop_a = None;
+    let mut stop_b = None;
     let outcome = loop {
         if let Some(error) = play.script_last_error(&names[0]) {
             break Err(format!("script error on {}: {error}", names[0]));
@@ -660,16 +662,16 @@ fn run_cell() -> Result<(), String> {
                     .record
                     .as_ref()
                     .and_then(|record| record.pause_end.clone()),
-                b_pause_end: pair
-                    .1
-                    .record
-                    .as_ref()
-                    .and_then(|record| record.pause_end.clone()),
-                a_further: pair
+                a_stop_boundary: pair
                     .0
                     .record
                     .as_ref()
-                    .and_then(|record| record.further.clone()),
+                    .and_then(|record| record.stop_boundary.clone()),
+                b_stop_boundary: pair
+                    .1
+                    .record
+                    .as_ref()
+                    .and_then(|record| record.stop_boundary.clone()),
                 a_latest: pair.0.latest.clone(),
                 b_latest: pair.1.latest.clone(),
             }
@@ -775,14 +777,26 @@ fn run_cell() -> Result<(), String> {
                     drop(pair);
                     play.script_stop(&names[0]);
                     resume_a = Some(state_a);
+                    stop_a = Some(RecordedState::from(play.script_state(&names[0])));
+                    stop_b = Some(RecordedState::from(play.script_state(&names[1])));
                     println!(
                         "{}",
                         json!({
                             "phase": "stop",
-                            "a": RecordedState::from(play.script_state(&names[0])),
-                            "b": RecordedState::from(play.script_state(&names[1])),
+                            "a": stop_a,
+                            "b": stop_b,
                         })
                     );
+                    let mut pair = state.lock().unwrap();
+                    let stored = store_latest(&mut pair.0, |record, observation| {
+                        record.stop_boundary = Some(observation);
+                    }) && store_latest(&mut pair.1, |record, observation| {
+                        record.stop_boundary = Some(observation);
+                    });
+                    if !stored {
+                        break Err("missing stop-boundary snapshot".into());
+                    }
+                    drop(pair);
                     phase = Phase::AfterStop;
                     deadline = Instant::now() + PROGRESS_DEADLINE;
                 } else if timed_out {
@@ -792,16 +806,18 @@ fn run_cell() -> Result<(), String> {
             Phase::AfterStop => {
                 let state_a = RecordedState::from(play.script_state(&names[0]));
                 let state_b = RecordedState::from(play.script_state(&names[1]));
+                stop_a = Some(state_a);
+                stop_b = Some(state_b);
                 let done = match (
-                    snapshot.b_pause_end.as_ref(),
+                    snapshot.b_stop_boundary.as_ref(),
                     snapshot.b_latest.as_ref(),
-                    snapshot.a_further.as_ref(),
+                    snapshot.a_stop_boundary.as_ref(),
                     snapshot.a_latest.as_ref(),
                 ) {
-                    (Some(b_paused), Some(b_now), Some(a_further), Some(a_now)) => {
-                        b_now.has_progress_over(b_paused)
-                            && a_now.magic_xp <= a_further.magic_xp
-                            && a_now.coins <= a_further.coins
+                    (Some(b_stop), Some(b_now), Some(a_stop), Some(a_now)) => {
+                        b_now.has_stop_progress_over(b_stop)
+                            && a_now.magic_xp <= a_stop.magic_xp
+                            && a_now.coins <= a_stop.coins
                             && state_a == RecordedState::Idle
                             && state_b == RecordedState::Running
                     }
@@ -826,8 +842,8 @@ fn run_cell() -> Result<(), String> {
                     witness.pause_a = pause_a;
                     witness.pause_b = pause_b;
                     witness.resume_a = resume_a;
-                    witness.stop_a = Some(state_a);
-                    witness.stop_b = Some(state_b);
+                    witness.stop_a = stop_a;
+                    witness.stop_b = stop_b;
                     break witness.qualify();
                 } else if timed_out {
                     break Err(format!(
@@ -838,6 +854,25 @@ fn run_cell() -> Result<(), String> {
         }
         std::thread::sleep(Duration::from_millis(20));
     };
+
+    {
+        let pair = state.lock().unwrap();
+        if let (Some(record_a), Some(record_b)) = (pair.0.record.clone(), pair.1.record.clone()) {
+            let mut witness = IsolationWitness::new(record_a, record_b);
+            witness.pause_a = pause_a;
+            witness.pause_b = pause_b;
+            witness.resume_a = resume_a;
+            witness.stop_a = stop_a;
+            witness.stop_b = stop_b;
+            println!(
+                "{}",
+                json!({
+                    "phase": "witness",
+                    "witness": witness,
+                })
+            );
+        }
+    }
 
     play.script_stop(&names[0]);
     play.script_stop(&names[1]);
@@ -942,17 +977,30 @@ mod tests {
         b.drain = Some(b_first.clone());
         a.pause_end = Some(a_first);
         let mut b_pause = b_first.clone();
+        b_pause.tick += 10;
         b_pause.magic_xp += HIGH_ALCH_MAGIC_XP;
         b_pause.coins += ADAMANT_SCIMITAR_ALCH_COINS;
         b.pause_end = Some(b_pause.clone());
         let mut a_further = a.drain.clone().unwrap();
+        a_further.tick += 20;
         a_further.magic_xp += HIGH_ALCH_MAGIC_XP;
         a_further.coins += RUNE_CHAINBODY_ALCH_COINS;
         a.further = Some(a_further.clone());
+        a.stop_boundary = Some(a_further.clone());
         a.after_stop = Some(a_further);
-        let mut b_after = b_pause;
+        let mut b_stop = b_pause;
+        b_stop.tick += 10;
+        b_stop.magic_xp += HIGH_ALCH_MAGIC_XP;
+        b_stop.coins += ADAMANT_SCIMITAR_ALCH_COINS;
+        b_stop.natures = 25;
+        b_stop.own_noted = 25;
+        b.stop_boundary = Some(b_stop.clone());
+        let mut b_after = b_stop;
+        b_after.tick += 10;
         b_after.magic_xp += HIGH_ALCH_MAGIC_XP;
         b_after.coins += ADAMANT_SCIMITAR_ALCH_COINS;
+        b_after.natures = 24;
+        b_after.own_noted = 24;
         b.after_stop = Some(b_after);
         (a, b)
     }
@@ -1020,5 +1068,72 @@ mod tests {
         assert_eq!(core["b"]["kind"], json!("scimitar"));
         assert_eq!(core["stop_a"], json!("idle"));
         assert_eq!(core["stop_b"], json!("running"));
+    }
+
+    #[test]
+    fn rejects_b_progress_after_pause_but_not_after_stop() {
+        let (a, mut b) = seeded_pair();
+        let mut after = b.stop_boundary.clone().unwrap();
+        after.tick += 10;
+        b.after_stop = Some(after);
+        assert!(
+            b.after_stop
+                .as_ref()
+                .unwrap()
+                .has_progress_over(b.pause_end.as_ref().unwrap()),
+            "regression setup must still show B progress after pause"
+        );
+        let error = complete(a, b).qualify().unwrap_err();
+        assert!(error.contains("no-progress"), "{error}");
+        assert!(error.contains("after peer Stop"), "{error}");
+    }
+
+    #[test]
+    fn rejects_missing_stop_boundary() {
+        let (a, mut b) = seeded_pair();
+        b.stop_boundary = None;
+        let error = complete(a, b).qualify().unwrap_err();
+        assert!(error.contains("missing stop-boundary"), "{error}");
+    }
+
+    #[test]
+    fn rejects_stale_stop_boundary() {
+        let (a, mut b) = seeded_pair();
+        let mut after = b.after_stop.clone().unwrap();
+        after.tick = b.stop_boundary.as_ref().unwrap().tick;
+        b.after_stop = Some(after);
+        let error = complete(a, b).qualify().unwrap_err();
+        assert!(error.contains("stale stop-boundary"), "{error}");
+    }
+
+    #[test]
+    fn serializes_complete_slot_observations() {
+        let (a, b) = seeded_pair();
+        let value = serde_json::to_value(complete(a, b)).expect("witness should serialize");
+        for slot in ["a", "b"] {
+            for key in [
+                "baseline",
+                "first",
+                "drain",
+                "pause_end",
+                "further",
+                "stop_boundary",
+                "after_stop",
+                "account",
+                "settings",
+            ] {
+                assert!(
+                    value[slot].get(key).is_some(),
+                    "missing {slot}.{key} in raw witness"
+                );
+            }
+        }
+        for key in ["pause_a", "pause_b", "resume_a", "stop_a", "stop_b"] {
+            assert!(value.get(key).is_some(), "missing {key} in raw witness");
+        }
+        assert!(
+            value["b"]["after_stop"]["tick"].as_u64().unwrap()
+                > value["b"]["stop_boundary"]["tick"].as_u64().unwrap()
+        );
     }
 }
