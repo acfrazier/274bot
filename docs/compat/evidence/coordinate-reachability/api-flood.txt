@@ -1,0 +1,9 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running tests/query.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_246e320b/debug/deps/query-405b71c57002440c)
+
+running 1 test
+test flood_reach_matches_one_shot_can_reach_without_step_cap ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 23 filtered out; finished in 39.38s
+
+API_FLOOD_EXIT:0

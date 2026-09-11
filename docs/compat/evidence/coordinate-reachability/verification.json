@@ -1,0 +1,63 @@
+{
+  "task": "t_246e320b",
+  "isolated_build": true,
+  "host_commit": "1f8737cfa746d98a9a31a74d3b2326abaabe80e9",
+  "client_gitlink": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "design_commit": "cc57adca72783f8e718163ab877bb6617dc67090",
+  "export": ".superpowers/task-exports/t_246e320b-1f8737cf",
+  "target": "target-t_246e320b",
+  "overlay": "owned source only; no concurrent catalog/scenario/Tile WIP copied onto the export",
+  "live": false,
+  "commands": [
+    {
+      "name": "api-query",
+      "cmd": "cargo test --locked --offline -p api --test query -- pack_reach_query",
+      "exit": 0,
+      "result": "2 passed (pack_reach_query_matches_walkable_and_flood, pack_reach_query_word_boundaries_survive_u32_pack)"
+    },
+    {
+      "name": "api-flood",
+      "cmd": "cargo test --locked --offline -p api --test query -- flood_reach_matches",
+      "exit": 0,
+      "result": "1 passed (flood_reach_matches_one_shot_can_reach_without_step_cap)"
+    },
+    {
+      "name": "script-isolate-fb",
+      "cmd": "cargo test --locked --offline -p script --lib -- encode_decode_reach_view omitted_reach unavailable_reach",
+      "exit": 0,
+      "result": "3 passed"
+    },
+    {
+      "name": "script-load-isolate",
+      "cmd": "cargo test --locked --offline -p script --test load_isolate -- isolate_reachability",
+      "exit": 0,
+      "result": "5 passed (2 existing row/Chebyshev + 3 new coordinate/delta/row-parity)"
+    },
+    {
+      "name": "api-clippy",
+      "cmd": "cargo clippy --locked --offline --no-deps -p api --all-targets -- -D warnings",
+      "exit": 0
+    },
+    {
+      "name": "script-clippy",
+      "cmd": "cargo clippy --locked --offline --no-deps -p script --all-targets -- -D warnings",
+      "exit": 0
+    },
+    {
+      "name": "host-play-clippy",
+      "cmd": "cargo clippy --locked --offline --no-deps -p host-play --lib -- -D warnings",
+      "exit": 0
+    },
+    {
+      "name": "fmt-check",
+      "cmd": "rustfmt --edition 2021 --check <owned rust files>",
+      "exit": 0
+    }
+  ],
+  "bitset_bytes_104x104": 4056,
+  "notes": [
+    "Per-view bitset size is 3 * ceil(104*104/32) u32 * 4 bytes = 4056; design fact, not a measured win.",
+    "Posted level is the flood/scene plane already bound by observe here (client.minusedlevel). No new player-plane field.",
+    "Radius-8 Gnome LIVE and DirectNavigator.walkTo remain out of scope."
+  ]
+}
