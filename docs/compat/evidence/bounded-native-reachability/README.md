@@ -5,6 +5,7 @@ Task: `t_25797d04`
 Source provenance:
 
 - implementation base: `f0249f96283c4c4540b7fe308b46972fc24516dc`
+- implementation commit: `bebd2fe8b056b3680f240d5c1bfd66490cb5cf14`
 - client gitlink: `aef3952d1cd7bb3b93d39c497f0f476b68021c59`
 - brief SHA-256: `63778485b398d45ea09ac3b6cc6d44d07533e3b95c894bc5bc46468695b6e001`
 - target: `.superpowers/task-targets/bounded-reachability-t_25797d04`
