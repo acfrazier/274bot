@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 04:06 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 04:24 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -135,8 +135,12 @@ not a product behavior change.
   Grok 4.5 review 1212/session 20260910_232854_63c926, now approved. Root's new
   empty-target 6d750e65 binaries completed the ten Superheater LIVE cells above.
   PeriodicBank fixture t_63524882 committed fe4a7e41 and entered actual review
-  1220; root asked the reviewer to verify isolated-test provenance after a
-  blocked shell command left one earlier check using a default target. Shared
+  1220/session 20260911_000310_756c0e (actual Grok 4.5). Review requested
+  changes: the scenario final Strength XP arm reused an already-satisfied
+  per-skill baseline. Exact catalog witness is sound; native scenario needs
+  new post-return loot/work. Corrective Grok 4.6 run 1222 is active. Root
+  separately verified all 294 exported client files match 56d80272; apparent
+  b2bd5023 client identity was inherited outer-host Git discovery, not a mismatch. Shared
   source is released; next vial/potion fixture t_534895e5 is queued behind the
   same review, with brief 66 and no runtime changes. Root Superheater correction 6c7075ce seeds and separately
   acknowledges Attack 30, validates it at Start and tests missing-stat refusal.
@@ -150,8 +154,8 @@ not a product behavior change.
   baseline, fresh bank, exact 17 Lobsters withdrawn (40 to 23 bank), Rune
   scimitar withdrawn/equipped in slot 3 and supplies preserved. Root reverified
   hashes and ordered observations; component proof only, not catalog/frontend.
-  DirectNavigator mapping t_f7fd9f55 is actual Grok 4.6 run 1216/session
-  20260910_234659_5fde26; canStep t_1a213450 is actual Grok 4.6 run 1217/session
+  DirectNavigator source 5ce85959 passed actual Grok 4.5 review 1221/session
+  20260911_000609_c455f5 with fresh isolated checks; canStep t_1a213450 is actual Grok 4.6 run 1217/session
   20260910_234659_340044. The separate
   missing DirectNavigator.walkTo must also map to existing native walking;
   foreign radius-8 re-sync remains a distinct source finding, not a pass.
@@ -176,7 +180,10 @@ not a product behavior change.
   windows each. 274 records exact bank stock 2,000 to 1,981; the 1 Hz 289 sampler
   misses bank-after stock but captures actual 3-to-22 food restock at the bank,
   return and further XP. The 289 bank trip occurs during warmup. Root started
-  N32 274 on the same isolated binary; every actor still needs qualification. Raw artifacts are in evidence/fleet-prerequisite/.
+  N32 274 on the same isolated binary now passes every actor: depleted food,
+  loaded bank, actual replenishment to 22, return and further XP/coins, with
+  1,965–4,540 observation XP each. N32 289 is now running separately. These
+  qualify this candidate; final integrated-source preservation is still pending. Raw artifacts are in evidence/fleet-prerequisite/.
   These overlapping runs are functional diagnostics, not performance comparisons.
 - Two-slot isolation fixture t_4eb51061 is actual Grok 4.6 run 1219/session
   20260910_235909_d68e23. Brief 65 uses two real frozen catalog scripts through
@@ -491,3 +498,12 @@ Inventory-production fixture card t_3317197c follows custom fixture review
 with Grok4.6 implementation defaults. Brief52 covers DartFletcher, HerbCleaner
 and GemCutter core plus explicit option cases, with full bank cycles where
 applicable; root owns twenty-four subsequent LIVE cells after review.
+
+## Platform candidate preparation (04:22 UTC)
+
+Root exported exact 6c7075ce/client 56d80272 plus hash-verified immutable
+catalog/nav inputs into a new 77,884,042-byte archive. All 5,933 files verified
+on Windows and Linux; each is building in a new empty target. No platform LIVE
+launch yet. This candidate includes canStep 5612b265, whose source review must
+finish first, and the known ChickenKiller fixture correction remains pending.
+Evidence under platform-isolated/. No shared target or source overlay mutation.
