@@ -9,13 +9,16 @@ immutable per-profile data and keep host gameplay policy separate. Audit any
 small protocol constants through the existing client definitions.
 
 
-Use configured sol defaults after the parent card completes its same-card
+Use configured grok46 defaults after the parent card completes its same-card
 review. Campaign branch codex/rs2b0t-multirevision. Read applicable AGENTS.md,
 docs/execution.md, fail-closed-dispatch and the relevant sections of plan step 6
 and 04-combat-production-design.md. Verify design claims against both frozen
 catalog roots and selected cache identities. Design approval is not code or
-LIVE acceptance. Missing capabilities remain explicit failures; do not shrink
-the enabled set or restore foreign JavaScript controllers.
+LIVE acceptance. Missing host capabilities remain explicit Rust work. Apply the
+operator ownership rules in STATE.md: evidenced broken foreign scripts may be
+dimmed with a concrete reason; our host/shim bugs stay in scope. Ancillary
+feature stubs remain future native projects and do not dim working cards. Do
+not restore foreign JavaScript controllers.
 
 Implement the enabled Special API calls against selected-world weapon and
 combat controls. Inspect both frozen Special.ts and actual callers for arm,
@@ -43,3 +46,11 @@ Pause/Guardian freeze/Stop/session abort where operations wait. Use meaningful
 selected-world fixtures and affected existing tests/Clippy, without broad
 repetition. Commit scoped files in new commits; request review on this same
 card with profile reviewer and then stop. No agents or complete-before-review.
+
+Operator routing, 2026-09-11 02:56 UTC: this is one of four additional
+implementation tasks assigned to Grok 4.6 to use the current allowance. Use
+profile grok46 without model/provider overrides; same-card reviewer remains
+profile reviewer (Grok 4.5). Dependency gates remain unchanged. All acceptance
+checks must use a new empty Cargo target for an exact frozen source export
+with owned overlay and recorded hashes, following evidence/build-isolation/README.md.
+Do not reuse the shared campaign Cargo target.
