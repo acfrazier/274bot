@@ -1,0 +1,14 @@
+{
+  "kind": "read-only remaining-option inventory",
+  "brief": "119-qualified-production-option-audit.md",
+  "brief_sha256": "ca2dd6080eeeed211c5bfa9b52c656f2b58a488d9962eab64ccba6df96d01e00",
+  "kanban_task": "t_6f8dec2b",
+  "branch": "codex/rs2b0t-multirevision",
+  "campaign_head_at_writeup": "4a5ba565c75552bca8cb4076288d4f0eb60995ae",
+  "client_gitlink": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "written_utc": "2026-09-11 11:58 UTC",
+  "old_catalog": "100adccc037d9f6898080e1cad58fcfc43364775",
+  "newer_catalog": "8e7d965be2071d6ec65c3265e12af797082d720a",
+  "matrix_status_all_eleven": "PARTIAL",
+  "note": "Campaign HEAD is the working tree at write-up, not a tested isolated binary. Isolated PASS hosts below are the named harvests. Matrix/source/LIVE were not edited."
+}

@@ -1,0 +1,27 @@
+{
+  "rule": "Qualify only named isolated harvests. Do not use lexicographic last host_commit. Historical shared-target rows stay diagnostics.",
+  "harvests": {
+    "f6b9ec4b2e7afe22f4a5bb58a837f3b9a992cb5f": ["alcher", "alcher_custom", "alcher_custom_alias", "alcher_custom_name", "alcher_ordered", "alcher_large_batch", "bank_fletcher", "bone_burier"],
+    "a4157243817d8606f6c22a5ca2583f106d98bb85": ["dart_fletcher", "dart_fletcher_iron", "herb_cleaner", "herb_cleaner_named", "gem_cutter", "gem_cutter_named", "bank_fletcher_string", "bank_fletcher_cut_string(newer PASS; old catalog unsupported FAIL)"],
+    "6d750e65a227aa8a39f2bb6fdc1e5ceb5a452338": ["superheater Bronze", "superheater_steel"],
+    "3be68eafffd586d790e72e8095ddcab457795672": ["superheater_fire_battlestaff newer-catalog only PASS (Attack 30 correction; 6d750e65 Attack1 FAIL retained)"],
+    "b1cff8a7fdf6d18a5f7a3c7c23c6fa8a020e173b": ["potion_maker", "potion_maker_named"],
+    "2f1bd9cf75bfcff0900eb9e029deb98433f5a6d3": ["vial_filler West"],
+    "060e15a0fb065f5e74405116f4b5498445c6a825": ["vial_filler West+East all 8"],
+    "4cc6cc27d7048c4c60e6b0393ae92132d9b88a1f": ["rune_crafter Air+Earth all 8"],
+    "91289e9bac158721849209a301dcae5c26988eb9": ["smelter_bot Bronze+Steel all 8"]
+  },
+  "covered_named_scenarios": {
+    "BoneBurier": ["bone_burier default Bones, no inject"],
+    "DartFletcher": ["dart_fletcher Bronze", "dart_fletcher_iron"],
+    "HerbCleaner": ["herb_cleaner herbs=[]", "herb_cleaner_named Guam leaf"],
+    "GemCutter": ["gem_cutter gems=[]", "gem_cutter_named Sapphire"],
+    "Alcher": ["alcher items=[rune_chainbody]", "alcher_custom", "alcher_custom_alias adamant_scimitar obj", "alcher_custom_name display", "alcher_ordered plate then chain", "alcher_large_batch alchs=1000"],
+    "BankFletcher": ["bank_fletcher Willow Short bow knife", "bank_fletcher_string String short bow", "bank_fletcher_cut_string newer only"],
+    "Superheater": ["superheater Bronze Staff of fire", "superheater_steel", "superheater_fire_battlestaff newer"],
+    "RuneCrafter": ["rune_crafter Air Solo", "rune_crafter_earth Earth Solo"],
+    "PotionMaker": ["potion_maker Custom Guam+newt", "potion_maker_named Ranarr+snape"],
+    "VialFiller": ["vial_filler West buyVials=false", "vial_filler_east buyVials=false"],
+    "SmelterBot": ["smelter_bot Bronze", "smelter_bot_steel"]
+  }
+}
