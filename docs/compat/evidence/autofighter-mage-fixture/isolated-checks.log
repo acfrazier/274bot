@@ -1,0 +1,27 @@
+task: t_70a9e1b5
+branch: codex/rs2b0t-multirevision
+implementation: 7706f053b2a71069e4487cd990784b7258e97552
+serializer parent: cffd62c598ceab2ea80b9bcc29e0eaf58f4dd885
+exact export: .superpowers/review-exports/t_70a9e1b5-r1
+exclusive target: target-t_70a9e1b5-review
+client gitlink: aef3952d1cd7bb3b93d39c497f0f476b68021c59
+
+$ cargo test --manifest-path .superpowers/review-exports/t_70a9e1b5-r1/Cargo.toml -p scenario
+result: PASS; 105 passed, 0 failed; doc-tests 0 failed
+
+$ cargo test --manifest-path .superpowers/review-exports/t_70a9e1b5-r1/Cargo.toml -p api --test game_data generated_spell_and_staff_facts_match_selected_content -- --nocapture
+result: PASS; 1 passed, 0 failed; test loops over ClientRevision::R274 and ClientRevision::R289
+
+$ cargo test --manifest-path .superpowers/review-exports/t_70a9e1b5-r1/Cargo.toml -p host-play --features memory-profile --test catalog_boundary_live -- --nocapture
+result: PASS; 49 passed, 0 failed, 1 ignored LIVE
+
+$ cargo clippy --manifest-path .superpowers/review-exports/t_70a9e1b5-r1/Cargo.toml -p scenario -p host-play --features host-play/memory-profile --tests -- -D warnings
+result: PASS
+
+$ cargo fmt --manifest-path .superpowers/review-exports/t_70a9e1b5-r1/Cargo.toml --all -- --check
+result: PASS
+
+$ git diff --check -- crates/scenario/src/lib.rs crates/host-play/tests/catalog_boundary_live.rs
+result: PASS
+
+No LIVE process was launched. Root owns live acceptance.
