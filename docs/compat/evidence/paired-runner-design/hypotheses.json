@@ -1,0 +1,95 @@
+{
+  "preserve": {
+    "reuse_current_paired_harness": true,
+    "shared_start_barrier_from_103": true,
+    "gold_deadline_180s": true,
+    "gold_watch_ticks_150": true,
+    "prep_deadline_180s": true,
+    "no_fake_partner_or_harness_controller": true,
+    "no_post_start_loot_coins_teleports": true,
+    "no_trade_rewrite": true,
+    "no_foreign_drivePartnerTrade_clone": true,
+    "paint_buttons_owned_by_108": true,
+    "solo_mule_does_not_qualify_trade": true,
+    "seed_is_not_restock": true,
+    "no_world_deepcopy": true
+  },
+  "accepted_mapping": "Three pair cells on paired_catalog_live.rs: keep NatureCrafter Air; add MuleCrafter Air Crafter+Mule; add FlaxRunner Runner+Spinner after a thin host-owned driveActivePartnerTrade. Paint 108, shop, Make-X, tick 106 stay foreign.",
+  "hypotheses": [
+    {
+      "id": 1,
+      "claim": "imported NatureCrafter is broken; dim the card",
+      "status": "rejected",
+      "falsifier": "Root912 r289 Air both-started then live7i68fk_1 tick 27 not impl: Paint.buttons. Design 108 owns the seam. Brief forbids dimming this failure."
+    },
+    {
+      "id": 2,
+      "claim": "solo Mule Air four-cell PASS qualifies mule_pair",
+      "status": "rejected",
+      "falsifier": "Solo Crafter never opens Trade. Root9cc ledger rows remain PARTIAL for paired trade."
+    },
+    {
+      "id": 3,
+      "claim": "harness or fake partner performs the catalog trade",
+      "status": "rejected",
+      "falsifier": "Brief: no fake partner script or hidden harness controller. Harness may prepare actors before shared Start only."
+    },
+    {
+      "id": 4,
+      "claim": "broad Trade rewrite / implement offer qty+id filter arity",
+      "status": "rejected",
+      "falsifier": "Air shortRouteWithdraw caps at TRADE_CAP 25 so name-only offerAll is the used path. Seed unnoted-only. Brief forbids a broad trade rewrite."
+    },
+    {
+      "id": 5,
+      "claim": "clone foreign drivePartnerTrade.ts or revive a JS trade guardian",
+      "status": "rejected",
+      "falsifier": "Ancillary helpers remain stubs. Flax needs a later thin host-owned driver over existing Trade members, not a foreign controller copy."
+    },
+    {
+      "id": 6,
+      "claim": "count seeded first pack as restock or conversion",
+      "status": "rejected",
+      "falsifier": "05r/05s already distinguish givebank firstload from script BankRestock. Full cycle requires a later Falador East / Seers open+loaded withdraw and second transfer."
+    },
+    {
+      "id": 7,
+      "claim": "Nature island, stayInAltar, Mule Mind/Nature, Flax minFlaxCapacity as extra core cells",
+      "status": "rejected",
+      "falsifier": "Air/Falador and Seers flax are the pair representatives. Nature island needs Shop.sell. Extra branches are genuine extra gameplay after shop/Make-X."
+    },
+    {
+      "id": 8,
+      "claim": "three pair cases on the current harness: keep Air, add Mule Air pair, add FlaxRunner after its missing op",
+      "status": "accepted",
+      "note": "Reuse paired_catalog_live.rs and the 103 shared Start barrier. Do not edit catalog_boundary_live.rs."
+    }
+  ],
+  "unsupported_in_this_minimum": [
+    "NatureCrafter default Nature island / Jiminua / Shop.sell",
+    "NatureCrafter stayInAltar=true",
+    "NatureCrafter bankEvery / withdrawEss / withdrawCoins variation",
+    "MuleCrafter bankFill=false",
+    "MuleCrafter non-Air runes as extra pair cells",
+    "FlaxRunner minFlaxCapacity junk-bank variation",
+    "RuneCrafter runner_mule (out of brief 111)",
+    "Paint.buttons (108)",
+    "ChatDialog.makeX qty -1 (Make-X t_4b04cb5f)",
+    "BotHost.addTickListener (tick 106 / Duel)",
+    "foreign drivePartnerTrade.ts copy",
+    "harness auto-click gobank"
+  ],
+  "implementation_falsifiers": [
+    "solo Mule PASS cited as mule_pair acceptance",
+    "NatureCrafter dimmed for Paint.buttons",
+    "harness performs Trade/craft/spin after Start or a fake partner replaces a role",
+    "seeded 25/27 essence or seeded flax/strings/Air 556 counted as restock or conversion",
+    "first-transfer printed as full cycle",
+    "Nature island accepted as Air, or Mule Nature substituted for NatureCrafter",
+    "foreign drivePartnerTrade.ts copied, or Trade.offer arity rewritten as part of these fixtures",
+    "Paint.buttons auto-clicked gobank",
+    "gold/watch/prep constants changed",
+    "catalog_boundary_live.rs or engine/client/nav edited for this",
+    "post-Start teleports, givebank, or player aliases"
+  ]
+}
