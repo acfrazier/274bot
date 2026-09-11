@@ -40175,13 +40175,16 @@
       "observable_proof_requirement": "after Start, script-caused Agility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PARTIAL",
-      "status_detail": "Current native942 attempt failed; original artifacts retained. Brimhaven route audit141 identifies a frozen-script defect; source-specific dim decision pending implementation. ArdyCakes production preparation139 pending; guard-response failure remains separate.",
+      "status": "DIM_FOREIGN_DEFECT",
+      "status_detail": "Audited frozen card/helper pair retries a known broken Brimhaven plank instead of an alternate route. Source-specific loader dim under operator policy; original failures retained and no LIVE PASS claimed. A changed card or helper requires fresh assessment.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-brimhaven-agility-100adccc-cd49e147.json",
         "docs/compat/evidence/catalog-harness/agility-cd49e147.json",
-        "docs/compat/evidence/catalog-harness/live/r274-brimhaven-agility-100adccc-native942.json"
+        "docs/compat/evidence/catalog-harness/live/r274-brimhaven-agility-100adccc-native942.json",
+        "docs/compat/06ah-trained-brimhaven-route-audit.md",
+        "docs/compat/06am-brimhaven-source-dim.md",
+        "docs/compat/evidence/brimhaven-source-dim/hash-gate-results.json"
       ],
       "current_requalification_native942": [
         {
@@ -40189,7 +40192,16 @@
           "outcome": "FAIL",
           "receipt": "docs/compat/evidence/catalog-harness/live/r274-brimhaven-agility-100adccc-native942.json"
         }
-      ]
+      ],
+      "foreign_defect_disposition": {
+        "card_sha256": "771daff07bd4b3d6f2826ab1300d4fd66bcbae0f9d7a76e4a2ad07a4d050e859",
+        "helper_path": "src/bot/scripts/BrimhavenAgility/BrimhavenAgilityLogic.ts",
+        "helper_sha256": "fedf5f8e05fd43642efb0370352e71e5feebf258a784bc503a2e145c33b46d4d",
+        "reason": "dim: known script defect: retries a broken Brimhaven plank instead of an alternate route",
+        "audit": "docs/compat/06ah-trained-brimhaven-route-audit.md",
+        "implementation_report": "docs/compat/06am-brimhaven-source-dim.md",
+        "scope": "Exact source pair only; not a revision or name-wide suitability ban."
+      }
     },
     {
       "display_name": "BrimhavenAgility",
@@ -40619,13 +40631,16 @@
       "observable_proof_requirement": "after Start, script-caused Agility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PARTIAL",
-      "status_detail": "Current native942 attempt failed; original artifacts retained. Brimhaven route audit141 identifies a frozen-script defect; source-specific dim decision pending implementation. ArdyCakes production preparation139 pending; guard-response failure remains separate.",
+      "status": "DIM_FOREIGN_DEFECT",
+      "status_detail": "Audited frozen card/helper pair retries a known broken Brimhaven plank instead of an alternate route. Source-specific loader dim under operator policy; original failures retained and no LIVE PASS claimed. A changed card or helper requires fresh assessment.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-brimhaven-agility-100adccc-cd49e147.json",
         "docs/compat/evidence/catalog-harness/agility-cd49e147.json",
-        "docs/compat/evidence/catalog-harness/live/r289-brimhaven-agility-100adccc-native942.json"
+        "docs/compat/evidence/catalog-harness/live/r289-brimhaven-agility-100adccc-native942.json",
+        "docs/compat/06ah-trained-brimhaven-route-audit.md",
+        "docs/compat/06am-brimhaven-source-dim.md",
+        "docs/compat/evidence/brimhaven-source-dim/hash-gate-results.json"
       ],
       "current_requalification_native942": [
         {
@@ -40633,7 +40648,16 @@
           "outcome": "FAIL",
           "receipt": "docs/compat/evidence/catalog-harness/live/r289-brimhaven-agility-100adccc-native942.json"
         }
-      ]
+      ],
+      "foreign_defect_disposition": {
+        "card_sha256": "771daff07bd4b3d6f2826ab1300d4fd66bcbae0f9d7a76e4a2ad07a4d050e859",
+        "helper_path": "src/bot/scripts/BrimhavenAgility/BrimhavenAgilityLogic.ts",
+        "helper_sha256": "fedf5f8e05fd43642efb0370352e71e5feebf258a784bc503a2e145c33b46d4d",
+        "reason": "dim: known script defect: retries a broken Brimhaven plank instead of an alternate route",
+        "audit": "docs/compat/06ah-trained-brimhaven-route-audit.md",
+        "implementation_report": "docs/compat/06am-brimhaven-source-dim.md",
+        "scope": "Exact source pair only; not a revision or name-wide suitability ban."
+      }
     },
     {
       "display_name": "MuleCrafter",
@@ -75318,13 +75342,25 @@
       "observable_proof_requirement": "after Start, script-caused Agility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PARTIAL",
-      "status_detail": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: scenario failed: step 11 (watch obstacle XP from a real hop before the first Tag): stat_xp_gain(16)>=1 not seen within 150 ticks. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
+      "status": "DIM_FOREIGN_DEFECT",
+      "status_detail": "Audited frozen card/helper pair retries a known broken Brimhaven plank instead of an alternate route. Source-specific loader dim under operator policy; original failures retained and no LIVE PASS claimed. A changed card or helper requires fresh assessment.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-brimhaven-agility-8e7d965b-cd49e147.json",
-        "docs/compat/evidence/catalog-harness/agility-cd49e147.json"
-      ]
+        "docs/compat/evidence/catalog-harness/agility-cd49e147.json",
+        "docs/compat/06ah-trained-brimhaven-route-audit.md",
+        "docs/compat/06am-brimhaven-source-dim.md",
+        "docs/compat/evidence/brimhaven-source-dim/hash-gate-results.json"
+      ],
+      "foreign_defect_disposition": {
+        "card_sha256": "771daff07bd4b3d6f2826ab1300d4fd66bcbae0f9d7a76e4a2ad07a4d050e859",
+        "helper_path": "src/bot/scripts/BrimhavenAgility/BrimhavenAgilityLogic.ts",
+        "helper_sha256": "fedf5f8e05fd43642efb0370352e71e5feebf258a784bc503a2e145c33b46d4d",
+        "reason": "dim: known script defect: retries a broken Brimhaven plank instead of an alternate route",
+        "audit": "docs/compat/06ah-trained-brimhaven-route-audit.md",
+        "implementation_report": "docs/compat/06am-brimhaven-source-dim.md",
+        "scope": "Exact source pair only; not a revision or name-wide suitability ban."
+      }
     },
     {
       "display_name": "BrimhavenAgility",
@@ -75754,13 +75790,25 @@
       "observable_proof_requirement": "after Start, script-caused Agility progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PARTIAL",
-      "status_detail": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: scenario failed: step 12 (watch the first Tag prompt for the next pillar): chat(contains \"tag the next\") not seen within 150 ticks. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
+      "status": "DIM_FOREIGN_DEFECT",
+      "status_detail": "Audited frozen card/helper pair retries a known broken Brimhaven plank instead of an alternate route. Source-specific loader dim under operator policy; original failures retained and no LIVE PASS claimed. A changed card or helper requires fresh assessment.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-brimhaven-agility-8e7d965b-cd49e147.json",
-        "docs/compat/evidence/catalog-harness/agility-cd49e147.json"
-      ]
+        "docs/compat/evidence/catalog-harness/agility-cd49e147.json",
+        "docs/compat/06ah-trained-brimhaven-route-audit.md",
+        "docs/compat/06am-brimhaven-source-dim.md",
+        "docs/compat/evidence/brimhaven-source-dim/hash-gate-results.json"
+      ],
+      "foreign_defect_disposition": {
+        "card_sha256": "771daff07bd4b3d6f2826ab1300d4fd66bcbae0f9d7a76e4a2ad07a4d050e859",
+        "helper_path": "src/bot/scripts/BrimhavenAgility/BrimhavenAgilityLogic.ts",
+        "helper_sha256": "fedf5f8e05fd43642efb0370352e71e5feebf258a784bc503a2e145c33b46d4d",
+        "reason": "dim: known script defect: retries a broken Brimhaven plank instead of an alternate route",
+        "audit": "docs/compat/06ah-trained-brimhaven-route-audit.md",
+        "implementation_report": "docs/compat/06am-brimhaven-source-dim.md",
+        "scope": "Exact source pair only; not a revision or name-wide suitability ban."
+      }
     },
     {
       "display_name": "MuleCrafter",
@@ -80998,5 +81046,35 @@
       "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
       "fixture_id": "local-289"
     }
-  ]
+  ],
+  "current_loader_dispositions": {
+    "original_fixed_inventory_preserved": true,
+    "fixed_enabled_card_count": 45,
+    "fixed_requirement_row_count": 180,
+    "source_specific_foreign_defect_rows": 4,
+    "catalogs": [
+      {
+        "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+        "counts": {
+          "enabled": 44,
+          "dim": 10,
+          "import_blocked": 2,
+          "registry_omitted": 3,
+          "reserved_native": 1
+        },
+        "receipt": "docs/compat/evidence/brimhaven-source-dim/100adccc.json"
+      },
+      {
+        "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+        "counts": {
+          "enabled": 44,
+          "dim": 10,
+          "import_blocked": 2,
+          "registry_omitted": 3,
+          "reserved_native": 1
+        },
+        "receipt": "docs/compat/evidence/brimhaven-source-dim/8e7d965b.json"
+      }
+    ]
+  }
 }

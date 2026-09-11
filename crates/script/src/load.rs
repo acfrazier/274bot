@@ -348,6 +348,8 @@ impl JsLibrary {
             let unloadable = catalog_unloadable(
                 &card.name,
                 ScriptSource::Catalog,
+                &sha256,
+                &path,
                 first_unloadable_for_card(&origin, &path),
             );
             self.cards
@@ -402,8 +404,13 @@ impl JsLibrary {
                 },
             )
             .map_err(|e| format!("{name}: {e}"))?;
-        let unloadable =
-            catalog_unloadable(name, source, first_unloadable_for_card(&origin, &path));
+        let unloadable = catalog_unloadable(
+            name,
+            source,
+            &cached.sha256,
+            &path,
+            first_unloadable_for_card(&origin, &path),
+        );
         let card = &mut self.cards[idx];
         card.path = path;
         card.shape = shape;
@@ -865,12 +872,37 @@ pub fn is_catalog_dim(name: &str) -> bool {
     CATALOG_DIM.contains(&name)
 }
 
-fn catalog_unloadable(name: &str, source: ScriptSource, scanned: Option<String>) -> Option<String> {
-    if source == ScriptSource::Catalog && is_catalog_dim(name) {
-        Some(format!("dim: {name}"))
-    } else {
-        scanned
+fn catalog_unloadable(
+    name: &str,
+    source: ScriptSource,
+    origin_sha: &str,
+    path: &Path,
+    scanned: Option<String>,
+) -> Option<String> {
+    if source == ScriptSource::Catalog {
+        if is_catalog_dim(name) {
+            return Some(format!("dim: {name}"));
+        }
+        if let Some(reason) = catalog_defect_reason(name, origin_sha, path) {
+            return Some(reason.into());
+        }
     }
+    scanned
+}
+
+/// A diagnosed foreign-script defect applies only to the exact audited pair.
+/// A changed card or helper is a different version, not a global name ban.
+fn catalog_defect_reason(name: &str, origin_sha: &str, path: &Path) -> Option<&'static str> {
+    if name != "BrimhavenAgility"
+        || origin_sha != "771daff07bd4b3d6f2826ab1300d4fd66bcbae0f9d7a76e4a2ad07a4d050e859"
+    {
+        return None;
+    }
+    let helper = path.parent()?.join("BrimhavenAgilityLogic.ts");
+    let bytes = std::fs::read(helper).ok()?;
+    (JsCache::origin_sha(&bytes)
+        == "fedf5f8e05fd43642efb0370352e71e5feebf258a784bc503a2e145c33b46d4d")
+        .then_some("dim: known script defect: retries a broken Brimhaven plank instead of an alternate route")
 }
 
 /// A picker selection: a compiled id or a loaded JS card by `(source, name)`.

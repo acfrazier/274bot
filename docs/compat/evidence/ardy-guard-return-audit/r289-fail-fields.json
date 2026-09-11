@@ -1,0 +1,40 @@
+{
+  "scenario": "\"ardy_cakes\"",
+  "outcome": "\"FAIL\"",
+  "predicate": "\"arrived_near(2655",
+  "ticks": "251",
+  "elapsed_ms": "75557",
+  "message": "Some(\"step 13 (watch arrival at the Ardougne bank after the stall fill): arrived_near(2655",
+  "tile": "Some([2668",
+  "scene": "2",
+  "inv_raw": "InvRow { id: 1901, name: Some(\"Chocolate slice\"), count: 1 }, InvRow { id: 1891, name: Some(\"Cake\"), count: 1 }, InvRow { id: 1901, name: Some(\"Chocolate slice\"), count: 1 }",
+  "inv_rows": [
+    [
+      "1901",
+      "Chocolate slice",
+      "1"
+    ],
+    [
+      "1891",
+      "Cake",
+      "1"
+    ],
+    [
+      "1901",
+      "Chocolate slice",
+      "1"
+    ]
+  ],
+  "stat": " runenergy: 89 ",
+  "chat": [
+    "You steal a chocolate slice.",
+    "It heals some health.",
+    "You eat the bread.",
+    "You steal a chocolate slice.",
+    "You steal a cake.",
+    "You steal some bread.",
+    "Inventory wiped.",
+    "set tutorial: to 1000",
+    "Welcome to RuneScape."
+  ]
+}

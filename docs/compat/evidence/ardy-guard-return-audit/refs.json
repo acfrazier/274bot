@@ -1,0 +1,48 @@
+{
+  "task": "t_ad570a8a",
+  "brief": "docs/compat/briefs/142-ardy-guard-return-audit.md",
+  "report": "docs/compat/06al-ardy-guard-return-audit.md",
+  "kind": "bounded-read-only-audit",
+  "branch": "codex/rs2b0t-multirevision",
+  "campaign_head_at_writeup": "6dd6f9102b1111fdcadf551ccfd3a24658d81661",
+  "live_host": "9429357d1124a9a3451c33e2fae1725fd5296be0",
+  "client_gitlink": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "catalog_boundary_binary_sha256": "51c4e645ba7d7f0c1b0ab1df35e624358d2a794a18748f2b16d77f9448a624d6",
+  "frozen_catalogs": {
+    "old": ".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775",
+    "newer": ".superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a"
+  },
+  "catalog": {
+    "old": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "newer": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "named_scripts_byte_identical": true,
+    "native942_live": "old-catalog-only"
+  },
+  "engines": {
+    "274_receipt": "4c95f87efe00b068cadbd229d94736626907bd1a",
+    "274_engine_dir": "/Users/acfrazier/experiments/Server/engine",
+    "274_content": "000c19997e07206131bcb3c884265840efce416d",
+    "289": "cc359656b4acd216ca452495874b6beba9a0ac75",
+    "289_engine_dir": "/Users/acfrazier/experiments/lostcity-289/engine",
+    "289_content": "92649430fcbc83538d8c4367ecb96cee1a67a944"
+  },
+  "pins": {
+    "loc_id": 2561,
+    "name": "Baker's stall",
+    "op": "Steal from",
+    "stall": [2667, 3310, 0],
+    "stand": [2668, 3312, 0],
+    "stand_alt": [2669, 3310, 0],
+    "flee": [2655, 3298, 0],
+    "bank": [2655, 3286, 0]
+  },
+  "do_not_touch": [
+    "crates/scenario/src/lib.rs",
+    "crates/host-play/tests/catalog_boundary_live.rs",
+    "frozen catalogs",
+    "STATE/matrix/ledger",
+    "task 139 ballast",
+    "foreign CakeStall 90s loop clone",
+    "dim implementation"
+  ]
+}
