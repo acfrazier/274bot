@@ -146,6 +146,7 @@ const RUNE_AXE_ID: i32 = 1359;
 const GNOME_BALLAST_KNIVES: i32 = 26;
 const STEEL_PICKAXE_ID: i32 = 1269;
 const NOTED_COAL_ID: i32 = 454;
+const COAL_BALLAST_KNIVES: i32 = 26;
 const GNOME_WEST_MAGICS: (i32, i32, i32) = (2372, 3425, 0);
 const GNOME_BANK_STAND: (i32, i32, i32) = (2445, 3425, 1);
 const GNOME_BANK_STAIR_SOUTH: (i32, i32, i32) = (2444, 3416, 0);
@@ -209,6 +210,7 @@ const COMBAT_ATTACK_LEVEL: i32 = 40;
 const RUNE_SCIMITAR_ID: i32 = 1333;
 const DRAGONFIRE_SHIELD_ID: i32 = 1540;
 const NOTED_DRAGONFIRE_SHIELD_ID: i32 = 1541;
+const BRASS_KEY_ID: i32 = 983;
 const DRAGON_BONES_ID: i32 = 536;
 const NOTED_DRAGON_BONES_ID: i32 = 537;
 const GREEN_DRAGONHIDE_ID: i32 = 1753;
@@ -1201,7 +1203,9 @@ fn gnome_fletch_baseline_ready(baseline: &Observation, fletching: i32, max: Opti
 fn coal_trucks_baseline_ready(baseline: &Observation) -> bool {
     near(baseline.tile, COAL_MINE, 8)
         && baseline.level("mining") >= 30
-        && held_id(baseline, STEEL_PICKAXE_ID) >= 1
+        && baseline.item_id(STEEL_PICKAXE_ID) == 1
+        && baseline.item_id(KNIFE_ID) == COAL_BALLAST_KNIVES
+        && baseline.item_ids.values().copied().sum::<i32>() == 27
         && baseline.item_id(COAL_ID) == 0
         && baseline.item_id(NOTED_COAL_ID) == 0
         && baseline.bank_item_id(COAL_ID) == 0
@@ -1798,7 +1802,7 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
             "west magics, Woodcutting 75, Fletching 85, one Rune axe 1359, exactly 26 Knives 946, and no seeded 1513/70"
         }
         CoreCase::CoalTrucks => {
-            "coal mine (2582,3481,0), native combat level >=55, Mining 30, steel pickaxe 1269, and empty pack of 453"
+            "coal mine (2582,3481,0), native combat level >=55, Mining 30, steel pickaxe 1269, exactly 26 nonproduct Knives 946 (one free slot), and zero 453/454"
         }
         CoreCase::CookBot => {
             "Catherby bank (2809,3441,0), Cooking 80, empty pack of 331/329"
@@ -2984,6 +2988,7 @@ enum CombatLoot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CombatExtra {
     None,
+    DungeonKey,
     RockActivation,
     WornShield,
     DungeonAmulet,
@@ -3020,7 +3025,7 @@ fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             food_count: HILL_GIANT_FOOD,
             weapon_id: ADAMANT_SCIMITAR_ID,
             loot: CombatLoot::BigBonesOrLimpwurt,
-            extra: CombatExtra::None,
+            extra: CombatExtra::DungeonKey,
         }),
         CoreCase::AutoFighter => Some(CombatSpec {
             target: "Guard",
@@ -3133,8 +3138,9 @@ fn combat_baseline_ready(baseline: &Observation, spec: CombatSpec) -> bool {
     };
     let extra_ok = match spec.extra {
         CombatExtra::None | CombatExtra::RockActivation => true,
+        CombatExtra::DungeonKey => baseline.item_id(BRASS_KEY_ID) == 1,
         CombatExtra::WornShield => {
-            held_id(baseline, DRAGONFIRE_SHIELD_ID) >= 1
+            baseline.equipment_id(DRAGONFIRE_SHIELD_ID) == 1
                 && baseline.tile.is_some_and(|tile| tile.1 >= WILDERNESS_MIN_Z)
         }
         CombatExtra::DungeonAmulet => {
@@ -3181,11 +3187,13 @@ struct CombatFact {
 }
 
 /// Sustained selected-target combat: two engagements, a verified defeat
-/// that is not mere despawn, selected-style XP, and exact loot where required.
+/// that is not mere despawn, fresh selected work after that defeat,
+/// selected-style XP, and exact loot where required.
 #[derive(Debug, Clone, Default, Serialize)]
 struct CombatCoreCycle {
     engagements: u32,
     defeats: u32,
+    further_work: bool,
     style_xp: bool,
     looted: bool,
     noted: bool,
@@ -3197,6 +3205,7 @@ struct CombatCoreCycle {
     dormant_tiles: BTreeMap<usize, (i32, i32, i32)>,
     last: BTreeMap<usize, CombatNpcLast>,
     currently_engaged: BTreeSet<usize>,
+    previous_ground: BTreeMap<(i32, i32, i32, i32), i32>,
     facts: Vec<CombatFact>,
 }
 
@@ -3242,18 +3251,23 @@ impl CombatCoreCycle {
             }
             seen.insert(npc.index);
             let prev = self.last.get(&npc.index).cloned();
-            let combat = npc.in_combat
-                || npc.targeting_local
+            let selected_combat = npc.targeting_local
                 || (now.local_target_npc == Some(npc.index) && now.local_in_combat);
-            let health_drop = prev
-                .as_ref()
-                .is_some_and(|prev| prev.health > npc.health && npc.health >= 0 && prev.engaged);
+            let health_drop = prev.as_ref().is_some_and(|prev| {
+                prev.health > 0 && prev.health > npc.health && npc.health >= 0 && prev.engaged
+            });
             let new_spawn = prev
                 .as_ref()
-                .is_some_and(|prev| prev.defeated && npc.health > 0);
-            if (combat || health_drop)
-                && (!self.currently_engaged.contains(&npc.index) || new_spawn)
-            {
+                .is_some_and(|prev| prev.defeated && npc.total_health > 0 && npc.health > 0);
+            if new_spawn {
+                self.currently_engaged.remove(&npc.index);
+            }
+            let was_engaged = self.currently_engaged.contains(&npc.index);
+            let actual_work = selected_combat || health_drop;
+            if self.defeats > 0 && was_engaged && actual_work {
+                self.further_work = true;
+            }
+            if actual_work && !was_engaged {
                 self.engagements += 1;
                 self.currently_engaged.insert(npc.index);
                 if self.facts.len() < 16 {
@@ -3268,9 +3282,17 @@ impl CombatCoreCycle {
                     });
                 }
             }
-            if npc.health == 0 && self.currently_engaged.contains(&npc.index) {
+            if npc.total_health > 0
+                && npc.health == 0
+                && prev
+                    .as_ref()
+                    .is_some_and(|prev| prev.engaged && prev.health > 0)
+                && self.currently_engaged.contains(&npc.index)
+            {
                 self.record_defeat(npc.index, name, npc.health, npc.animation, None, true);
             }
+            let defeated =
+                self.last.get(&npc.index).is_some_and(|last| last.defeated) && !new_spawn;
             self.last.insert(
                 npc.index,
                 CombatNpcLast {
@@ -3279,11 +3301,9 @@ impl CombatCoreCycle {
                     animation: npc.animation,
                     tile: npc.tile,
                     engaged: self.currently_engaged.contains(&npc.index),
-                    defeated: self.last.get(&npc.index).is_some_and(|prev| prev.defeated)
-                        || npc.health == 0,
+                    defeated,
                 },
             );
-            let _ = prev;
         }
         let missing: Vec<(usize, CombatNpcLast)> = self
             .last
@@ -3293,9 +3313,20 @@ impl CombatCoreCycle {
             .collect();
         for (index, prev) in missing {
             let loot_id = now.ground_loot.iter().find_map(|item| {
-                (item.tile == prev.tile && combat_loot_id(item.id, spec.loot)).then_some(item.id)
+                let key = (item.id, item.tile.0, item.tile.1, item.tile.2);
+                let baseline_count = baseline
+                    .ground_loot
+                    .iter()
+                    .filter(|old| old.id == item.id && old.tile == item.tile)
+                    .map(|old| old.count)
+                    .sum::<i32>();
+                let previous_count = self.previous_ground.get(&key).copied().unwrap_or(0);
+                (item.tile == prev.tile
+                    && combat_loot_id(item.id, spec.loot)
+                    && item.count > baseline_count.max(previous_count))
+                .then_some(item.id)
             });
-            if self.looted || loot_id.is_some() {
+            if loot_id.is_some() {
                 self.record_defeat(
                     index,
                     &prev.name,
@@ -3304,9 +3335,12 @@ impl CombatCoreCycle {
                     loot_id,
                     false,
                 );
-            } else {
-                self.currently_engaged.remove(&index);
             }
+        }
+        self.previous_ground.clear();
+        for item in &now.ground_loot {
+            let key = (item.id, item.tile.0, item.tile.1, item.tile.2);
+            *self.previous_ground.entry(key).or_insert(0) += item.count;
         }
     }
 
@@ -3343,13 +3377,14 @@ impl CombatCoreCycle {
 
     fn qualified(&self, spec: CombatSpec) -> bool {
         let extra_ok = match spec.extra {
-            CombatExtra::None | CombatExtra::DungeonAmulet => true,
+            CombatExtra::None | CombatExtra::DungeonKey | CombatExtra::DungeonAmulet => true,
             CombatExtra::RockActivation => self.activated,
             CombatExtra::WornShield => self.shield_worn,
             CombatExtra::StolenFood => self.stolen_food,
         };
         self.engagements >= 2
             && self.defeats >= 1
+            && self.further_work
             && self.style_xp
             && (spec.loot == CombatLoot::None || self.looted)
             && !self.noted
@@ -4143,12 +4178,15 @@ struct CoalTrucksCycle {
     further: bool,
     noted: bool,
     banked: bool,
+    fixture_changed: bool,
 }
 
 impl CoalTrucksCycle {
     fn observe(&mut self, baseline: &Observation, now: &Observation) {
         self.noted |= now.item_id(NOTED_COAL_ID) > 0 || now.bank_item_id(NOTED_COAL_ID) > 0;
         self.banked |= now.bank_item_id(COAL_ID) > baseline.bank_item_id(COAL_ID);
+        self.fixture_changed |=
+            now.item_id(STEEL_PICKAXE_ID) != 1 || now.item_id(KNIFE_ID) != COAL_BALLAST_KNIVES;
         if self.mined.is_none()
             && now.item_id(COAL_ID) >= 1
             && baseline.item_id(COAL_ID) == 0
@@ -4175,7 +4213,12 @@ impl CoalTrucksCycle {
     }
 
     fn qualified(&self) -> bool {
-        self.further && self.mined.is_some() && self.trucked.is_some() && !self.noted
+        self.further
+            && self.mined.is_some()
+            && self.trucked.is_some()
+            && !self.noted
+            && !self.banked
+            && !self.fixture_changed
     }
 }
 
@@ -6296,7 +6339,11 @@ mod tests {
 
     #[test]
     fn coal_trucks_requires_the_documented_native_combat_level() {
-        let mut baseline = observation_ids(&[(STEEL_PICKAXE_ID, 1)], &[], 0);
+        let mut baseline = observation_ids(
+            &[(STEEL_PICKAXE_ID, 1), (KNIFE_ID, COAL_BALLAST_KNIVES)],
+            &[],
+            0,
+        );
         baseline.tile = Some(COAL_MINE);
         baseline.levels.insert("mining".into(), 30);
         baseline.combat_level = 54;
@@ -8886,7 +8933,7 @@ mod tests {
         let levels = [("mining", 30)];
         let mut baseline = resource_obs(
             COAL_MINE,
-            &[(STEEL_PICKAXE_ID, 1)],
+            &[(STEEL_PICKAXE_ID, 1), (KNIFE_ID, 26)],
             &[],
             &[],
             &[("mining", 0)],
@@ -8897,7 +8944,7 @@ mod tests {
 
         let mined = resource_obs(
             COAL_MINE,
-            &[(STEEL_PICKAXE_ID, 1), (COAL_ID, 27)],
+            &[(STEEL_PICKAXE_ID, 1), (KNIFE_ID, 26), (COAL_ID, 1)],
             &[],
             &[],
             &[("mining", 1350)],
@@ -8905,7 +8952,7 @@ mod tests {
         );
         let trucked = resource_obs(
             COAL_MINE_TRUCK_STAND,
-            &[(STEEL_PICKAXE_ID, 1)],
+            &[(STEEL_PICKAXE_ID, 1), (KNIFE_ID, 26)],
             &[],
             &[],
             &[("mining", 1350)],
@@ -8913,7 +8960,7 @@ mod tests {
         );
         let further = resource_obs(
             COAL_MINE,
-            &[(STEEL_PICKAXE_ID, 1), (COAL_ID, 1)],
+            &[(STEEL_PICKAXE_ID, 1), (KNIFE_ID, 26), (COAL_ID, 1)],
             &[],
             &[],
             &[("mining", 1400)],
@@ -8986,9 +9033,27 @@ mod tests {
         .qualify()
         .is_err());
 
+        let mut lost_ballast = mined.clone();
+        lost_ballast
+            .item_ids
+            .insert(KNIFE_ID, COAL_BALLAST_KNIVES - 1);
+        assert!(witness(
+            CoreCase::CoalTrucks,
+            &baseline,
+            [&lost_ballast, &trucked, &further]
+        )
+        .qualify()
+        .is_err());
+
         let mut seeded = baseline.clone();
         seeded.item_ids.insert(COAL_ID, 1);
         assert!(validate_case_baseline(CoreCase::CoalTrucks, &seeded).is_err());
+        let mut missing_ballast = baseline.clone();
+        missing_ballast.item_ids.insert(KNIFE_ID, 25);
+        assert!(validate_case_baseline(CoreCase::CoalTrucks, &missing_ballast).is_err());
+        let mut excess_ballast = baseline.clone();
+        excess_ballast.item_ids.insert(KNIFE_ID, 27);
+        assert!(validate_case_baseline(CoreCase::CoalTrucks, &excess_ballast).is_err());
         let low = resource_obs(
             COAL_MINE,
             &[(STEEL_PICKAXE_ID, 1)],
@@ -10102,6 +10167,255 @@ mod tests {
         observation
     }
 
+    fn auto_fighter_spec() -> CombatSpec {
+        combat_spec(CoreCase::AutoFighter).expect("auto fighter combat spec")
+    }
+
+    #[test]
+    fn combat_observer_does_not_turn_unknown_zero_health_into_a_sticky_death() {
+        let baseline = combat_obs(
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[("strength", 80)],
+            &[("attack", 40), ("strength", 40), ("hitpoints", 40)],
+            &[],
+            false,
+            None,
+        );
+        let mut unknown = combat_npc(5, "Guard", 0, false, ARDY_THIEVER_STAND);
+        unknown.total_health = 0;
+        let unknown = combat_obs(
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[("strength", 80)],
+            &[("attack", 40), ("strength", 40), ("hitpoints", 40)],
+            &[unknown],
+            false,
+            None,
+        );
+        let selected = combat_obs(
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[("strength", 84)],
+            &[("attack", 40), ("strength", 40), ("hitpoints", 40)],
+            &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
+            true,
+            Some(5),
+        );
+
+        let mut cycle = CombatCoreCycle::default();
+        cycle.observe(auto_fighter_spec(), &baseline, &unknown);
+        cycle.observe(auto_fighter_spec(), &baseline, &selected);
+        cycle.observe(auto_fighter_spec(), &baseline, &selected);
+
+        assert_eq!(cycle.engagements, 1);
+        assert_eq!(cycle.defeats, 0);
+        assert!(!cycle.last.get(&5).expect("tracked guard").defeated);
+    }
+
+    #[test]
+    fn combat_observer_does_not_count_disappearance_reappearance_as_a_new_life() {
+        let levels = [("attack", 40), ("strength", 40), ("hitpoints", 40)];
+        let baseline = combat_obs(
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[("strength", 80)],
+            &levels,
+            &[],
+            false,
+            None,
+        );
+        let selected = combat_obs(
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[("strength", 84)],
+            &levels,
+            &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
+            true,
+            Some(5),
+        );
+        let missing = combat_obs(
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[("strength", 84)],
+            &levels,
+            &[],
+            false,
+            None,
+        );
+
+        let mut cycle = CombatCoreCycle::default();
+        for observation in [&selected, &missing, &selected] {
+            cycle.observe(auto_fighter_spec(), &baseline, observation);
+        }
+
+        assert_eq!(cycle.engagements, 1);
+        assert_eq!(cycle.defeats, 0);
+    }
+
+    #[test]
+    fn combat_observer_rejects_other_actors_combat_and_stale_global_loot() {
+        let levels = [("attack", 40), ("strength", 40), ("hitpoints", 40)];
+        let baseline = combat_obs(
+            MOSS_GIANT_SAFESPOT,
+            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[("strength", 100)],
+            &levels,
+            &[],
+            false,
+            None,
+        );
+        let mut other_actor_npc = combat_npc(4, "Moss giant", 50, true, MOSS_GIANT_SAFESPOT);
+        other_actor_npc.targeting_local = false;
+        let other_actor = combat_obs(
+            MOSS_GIANT_SAFESPOT,
+            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[("strength", 100)],
+            &levels,
+            &[other_actor_npc],
+            false,
+            None,
+        );
+        let selected = combat_obs(
+            MOSS_GIANT_SAFESPOT,
+            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[("strength", 104)],
+            &levels,
+            &[combat_npc(4, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)],
+            true,
+            Some(4),
+        );
+        let stale_loot = combat_obs(
+            MOSS_GIANT_SAFESPOT,
+            &[(LOBSTER_ID, MOSS_GIANT_FOOD), (BIG_BONES_ID, 1)],
+            &[("strength", 104)],
+            &levels,
+            &[],
+            false,
+            None,
+        );
+        let spec = combat_spec(CoreCase::MossGiant).expect("moss giant combat spec");
+
+        let mut cycle = CombatCoreCycle::default();
+        cycle.observe(spec, &baseline, &other_actor);
+        assert_eq!(cycle.engagements, 0);
+        cycle.observe(spec, &baseline, &selected);
+        cycle.observe(spec, &baseline, &stale_loot);
+        assert_eq!(cycle.defeats, 0);
+    }
+
+    #[test]
+    fn combat_observer_requires_a_fresh_matching_drop_for_disappearance() {
+        let levels = [("attack", 40), ("strength", 40), ("hitpoints", 40)];
+        let baseline = combat_obs(
+            MOSS_GIANT_SAFESPOT,
+            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[("strength", 100)],
+            &levels,
+            &[],
+            false,
+            None,
+        );
+        let selected = combat_obs(
+            MOSS_GIANT_SAFESPOT,
+            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[("strength", 104)],
+            &levels,
+            &[combat_npc(4, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)],
+            true,
+            Some(4),
+        );
+        let drop = BoundedGround {
+            id: BIG_BONES_ID,
+            count: 1,
+            tile: MOSS_GIANT_SAFESPOT,
+            distance: 1,
+        };
+        let mut stale_drop = selected.clone();
+        stale_drop.ground_loot = vec![drop.clone()];
+        let mut missing = selected.clone();
+        missing.npc_facts.clear();
+        missing.local_in_combat = false;
+        missing.local_target_npc = None;
+        missing.ground_loot = vec![drop];
+        let spec = combat_spec(CoreCase::MossGiant).expect("moss giant combat spec");
+
+        let mut cycle = CombatCoreCycle::default();
+        for observation in [&selected, &stale_drop, &missing] {
+            cycle.observe(spec, &baseline, observation);
+        }
+
+        assert_eq!(cycle.defeats, 0);
+
+        let mut fresh_cycle = CombatCoreCycle::default();
+        fresh_cycle.observe(spec, &baseline, &selected);
+        fresh_cycle.observe(spec, &baseline, &missing);
+        assert_eq!(fresh_cycle.defeats, 1);
+    }
+
+    #[test]
+    fn combat_observer_clears_death_on_respawn_and_needs_a_later_work_frame() {
+        let levels = [("attack", 40), ("strength", 40), ("hitpoints", 40)];
+        let baseline = combat_obs(
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[("strength", 80)],
+            &levels,
+            &[],
+            false,
+            None,
+        );
+        let first = combat_obs(
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[("strength", 84)],
+            &levels,
+            &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
+            true,
+            Some(5),
+        );
+        let death = combat_obs(
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[("strength", 88)],
+            &levels,
+            &[combat_npc(5, "Guard", 0, false, ARDY_THIEVER_STAND)],
+            false,
+            None,
+        );
+        let respawn = combat_obs(
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[("strength", 88)],
+            &levels,
+            &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
+            true,
+            Some(5),
+        );
+        let spec = auto_fighter_spec();
+
+        assert!(
+            witness(CoreCase::AutoFighter, &baseline, [&first, &death, &respawn])
+                .qualify()
+                .is_err()
+        );
+        assert!(witness(
+            CoreCase::AutoFighter,
+            &baseline,
+            [&first, &death, &respawn, &respawn]
+        )
+        .qualify()
+        .is_ok());
+
+        let mut cycle = CombatCoreCycle::default();
+        for observation in [&first, &death, &respawn, &respawn] {
+            cycle.observe(spec, &baseline, observation);
+        }
+        assert_eq!(cycle.engagements, 2);
+        assert_eq!(cycle.defeats, 1);
+        assert!(!cycle.last.get(&5).expect("respawned guard").defeated);
+    }
+
     #[test]
     fn combat_cores_require_two_engagements_verified_defeat_style_xp_and_exact_loot() {
         let levels = [
@@ -10210,7 +10524,7 @@ mod tests {
 
         let hill_base = combat_obs(
             HILL_GIANT_PIT,
-            &[(TROUT_ID, HILL_GIANT_FOOD)],
+            &[(TROUT_ID, HILL_GIANT_FOOD), (BRASS_KEY_ID, 1)],
             &[("strength", 100)],
             &levels,
             &[],
@@ -10218,6 +10532,9 @@ mod tests {
             None,
         );
         validate_case_baseline(CoreCase::HillGiant, &hill_base).unwrap();
+        let mut hill_without_key = hill_base.clone();
+        hill_without_key.item_ids.remove(&BRASS_KEY_ID);
+        assert!(validate_case_baseline(CoreCase::HillGiant, &hill_without_key).is_err());
         let hill_first = combat_obs(
             HILL_GIANT_PIT,
             &[(TROUT_ID, HILL_GIANT_FOOD)],
@@ -10239,11 +10556,13 @@ mod tests {
             true,
             Some(3),
         );
-        assert!(
-            witness(CoreCase::HillGiant, &hill_base, [&hill_first, &hill_second])
-                .qualify()
-                .is_ok()
-        );
+        assert!(witness(
+            CoreCase::HillGiant,
+            &hill_base,
+            [&hill_first, &hill_second, &hill_second]
+        )
+        .qualify()
+        .is_ok());
         let alias = combat_obs(
             HILL_GIANT_PIT,
             &[(TROUT_ID, HILL_GIANT_FOOD), (BIG_BONES_ID, 1)],
@@ -10294,7 +10613,7 @@ mod tests {
         assert!(witness(
             CoreCase::ChaosDruid,
             &chaos_base,
-            [&chaos_first, &chaos_second]
+            [&chaos_first, &chaos_second, &chaos_second]
         )
         .qualify()
         .is_ok());
@@ -10342,7 +10661,7 @@ mod tests {
         assert!(witness(
             CoreCase::AutoFighter,
             &auto_base,
-            [&auto_first, &auto_second]
+            [&auto_first, &auto_second, &auto_second]
         )
         .qualify()
         .is_ok());
@@ -10390,7 +10709,7 @@ mod tests {
         assert!(witness(
             CoreCase::RockCrab,
             &rock_base,
-            [&rocks, &woke, &rock_second]
+            [&rocks, &woke, &rock_second, &rock_second]
         )
         .qualify()
         .is_ok());
@@ -10428,7 +10747,7 @@ mod tests {
         );
         dragon_base.equipment_ids.clear();
         dragon_base.equipment_ids.insert(RUNE_SCIMITAR_ID, 1);
-        validate_case_baseline(CoreCase::GreenDragon, &dragon_base).unwrap();
+        assert!(validate_case_baseline(CoreCase::GreenDragon, &dragon_base).is_err());
         let mut worn_start = dragon_base.clone();
         worn_start.item_ids.remove(&DRAGONFIRE_SHIELD_ID);
         worn_start.equipment_ids.insert(DRAGONFIRE_SHIELD_ID, 1);
@@ -10469,8 +10788,8 @@ mod tests {
         };
         assert!(witness(
             CoreCase::GreenDragon,
-            &dragon_base,
-            [&dragon_first, &dragon_second]
+            &worn_start,
+            [&dragon_first, &dragon_second, &dragon_second]
         )
         .qualify()
         .is_ok());
@@ -10479,8 +10798,8 @@ mod tests {
         hide_ok.item_ids.insert(GREEN_DRAGONHIDE_ID, 1);
         assert!(witness(
             CoreCase::GreenDragon,
-            &dragon_base,
-            [&dragon_first, &hide_ok]
+            &worn_start,
+            [&dragon_first, &hide_ok, &hide_ok]
         )
         .qualify()
         .is_ok());
@@ -10574,11 +10893,13 @@ mod tests {
             true,
             Some(11),
         );
-        assert!(
-            witness(CoreCase::FireGiant, &fire_base, [&fire_first, &fire_second])
-                .qualify()
-                .is_ok()
-        );
+        assert!(witness(
+            CoreCase::FireGiant,
+            &fire_base,
+            [&fire_first, &fire_second, &fire_second]
+        )
+        .qualify()
+        .is_ok());
         let fire_alias = combat_obs(
             FIRE_GIANT_ROOM,
             &[
@@ -10659,7 +10980,7 @@ mod tests {
         assert!(witness(
             CoreCase::ArdyFighter,
             &ardy_base,
-            [&stolen, &ardy_first, &ardy_second]
+            [&stolen, &ardy_first, &ardy_second, &ardy_second]
         )
         .qualify()
         .is_ok());
