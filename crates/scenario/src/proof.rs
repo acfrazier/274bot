@@ -17,10 +17,18 @@ pub enum Proof {
     /// obj named `name` — the consume-side arm (a BoneBurier run has
     /// buried the difference from the seeded count).
     ItemAtMost { name: &'static str, count: i32 },
+    /// Inventory contains at least `count` of exact object `id`.
+    ItemId { id: i32, count: i32 },
+    /// Inventory contains at most `count` of exact object `id`.
+    ItemIdAtMost { id: i32, count: i32 },
     /// A fresh, open bank contains at least `count` of the named item.
     BankItem { name: &'static str, count: i32 },
     /// A fresh, open bank contains at most `count` of the named item.
     BankItemAtMost { name: &'static str, count: i32 },
+    /// A fresh, open bank contains at least `count` of exact object `id`.
+    BankItemId { id: i32, count: i32 },
+    /// A fresh, open bank contains at most `count` of exact object `id`.
+    BankItemIdAtMost { id: i32, count: i32 },
     /// The bank modal is closed after a preceding observed bank step.
     BankClosed,
     /// `arrived(x, z, level)`: standing on the tile (or adjacent to it
@@ -84,8 +92,14 @@ impl Proof {
         match self {
             Proof::Item { name, count } => format!("has_item({name})>={count}"),
             Proof::ItemAtMost { name, count } => format!("has_item({name})<={count}"),
+            Proof::ItemId { id, count } => format!("has_item_id({id})>={count}"),
+            Proof::ItemIdAtMost { id, count } => format!("has_item_id({id})<={count}"),
             Proof::BankItem { name, count } => format!("fresh_bank_item({name})>={count}"),
             Proof::BankItemAtMost { name, count } => format!("fresh_bank_item({name})<={count}"),
+            Proof::BankItemId { id, count } => format!("fresh_bank_item_id({id})>={count}"),
+            Proof::BankItemIdAtMost { id, count } => {
+                format!("fresh_bank_item_id({id})<={count}")
+            }
             Proof::BankClosed => "bank_closed".to_string(),
             Proof::Arrived { x, z, level } => format!("arrived({x},{z},{level})"),
             Proof::ArrivedNear {
@@ -156,6 +170,8 @@ impl Proof {
                     .sum();
                 got <= *count
             }
+            Proof::ItemId { id, count } => inv_id_count(snap, *id) >= *count,
+            Proof::ItemIdAtMost { id, count } => inv_id_count(snap, *id) <= *count,
             Proof::BankItem { name, count } | Proof::BankItemAtMost { name, count } => {
                 if !snap.ingame()
                     || snap.scene_state() != 2
@@ -174,6 +190,22 @@ impl Proof {
                     .map(|row| row.count)
                     .sum();
                 if matches!(self, Proof::BankItem { .. }) {
+                    got >= *count
+                } else {
+                    got <= *count
+                }
+            }
+            Proof::BankItemId { id, count } | Proof::BankItemIdAtMost { id, count } => {
+                if !fresh_bank(snap) {
+                    return false;
+                }
+                let got: i32 = snap
+                    .bank()
+                    .iter()
+                    .filter(|row| row.def.id == *id)
+                    .map(|row| row.count)
+                    .sum();
+                if matches!(self, Proof::BankItemId { .. }) {
                     got >= *count
                 } else {
                     got <= *count
@@ -280,6 +312,18 @@ impl Proof {
             }),
         }
     }
+}
+
+fn inv_id_count(snap: &GameSnapshot, id: i32) -> i32 {
+    snap.inv()
+        .iter()
+        .filter(|(item_id, _)| *item_id == id)
+        .map(|(_, count)| *count)
+        .sum()
+}
+
+fn fresh_bank(snap: &GameSnapshot) -> bool {
+    snap.ingame() && snap.scene_state() == 2 && snap.bank_component_id() >= 0 && snap.bank_loaded()
 }
 
 /// XP for skill `id` from the snapshot stat table (`None` when absent).
@@ -460,6 +504,46 @@ mod tests {
             }
             .check(&s, Some(&names)),
             "must not use by_name's first id (1) when the stack is 995"
+        );
+    }
+
+    #[test]
+    fn item_id_predicates_distinguish_same_name_items() {
+        let mut c = seeded();
+        if let Some(id) = c.iface_id(|f| f.r#type == ComponentType::TYPE_INV) {
+            let inv = c.iface_mut(id).unwrap();
+            // Stored ids are obj id + 1. Willow shortbow ids 60 (u) and
+            // 849 (strung) deliberately share a display name.
+            inv.link_obj_type = Some(vec![61, 61, 850]);
+            inv.link_obj_number = Some(vec![1, 1, 1]);
+        }
+        let s = snap(&mut c);
+
+        assert!(Proof::ItemId { id: 60, count: 2 }.check(&s, None));
+        assert!(!Proof::ItemId { id: 849, count: 2 }.check(&s, None));
+        assert!(Proof::ItemIdAtMost { id: 849, count: 1 }.check(&s, None));
+        assert_eq!(
+            Proof::ItemId { id: 60, count: 2 }.name(),
+            "has_item_id(60)>=2"
+        );
+        assert_eq!(
+            Proof::ItemIdAtMost { id: 849, count: 1 }.name(),
+            "has_item_id(849)<=1"
+        );
+    }
+
+    #[test]
+    fn bank_item_id_predicates_fail_closed_without_a_fresh_open_bank() {
+        let s = snap(&mut seeded());
+        assert!(!Proof::BankItemId { id: 60, count: 0 }.check(&s, None));
+        assert!(!Proof::BankItemIdAtMost { id: 849, count: 0 }.check(&s, None));
+        assert_eq!(
+            Proof::BankItemId { id: 60, count: 2 }.name(),
+            "fresh_bank_item_id(60)>=2"
+        );
+        assert_eq!(
+            Proof::BankItemIdAtMost { id: 849, count: 0 }.name(),
+            "fresh_bank_item_id(849)<=0"
         );
     }
 
