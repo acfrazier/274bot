@@ -1,0 +1,16 @@
+     Running tests/death_recovery.rs (.superpowers/review-exports/death-recovery-root-8fd0f138-target/debug/deps/death_recovery-a184727c97a9b23c)
+
+running 7 tests
+test new_death_waits_then_walks_and_recovers_once_from_actual_position ... ok
+test needs_is_explicit_unsupported ... ok
+test pause_hold_and_session_reset_drop_stale_walk ... ok
+test guardian_hold_does_not_walk ... ok
+test idle_without_death_sends_nothing ... ok
+test wildy_walk_back_is_invoked_instead_of_default_walk ... ok
+test seeded_duplicate_and_old_chat_do_not_retrigger ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+export: .superpowers/review-exports/death-recovery-root-8fd0f138
+host: 8fd0f13870dbe7d207c1604726937ca36963d5aa
+client: 56d80272bcbda3eb1e22db096c1c5e21d3497de4

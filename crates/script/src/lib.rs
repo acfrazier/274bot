@@ -58,6 +58,8 @@ pub use load::{transpile_ts, LoadIsolate};
 #[cfg(feature = "load")]
 mod bank_withdraw;
 #[cfg(feature = "load")]
+mod death_recovery;
+#[cfg(feature = "load")]
 mod periodic_bank;
 
 #[cfg(feature = "memory-profile")]

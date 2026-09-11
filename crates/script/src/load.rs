@@ -1589,6 +1589,13 @@ mod isolate {
             })
             .map_err(|e| format!("register periodic bank: {e}"))?;
         runtime
+            .register_function("__rs2b0t_death_recovery", |args: &[serde_json::Value]| {
+                Ok(crate::death_recovery::dispatch(
+                    args.first().unwrap_or(&serde_json::Value::Null),
+                ))
+            })
+            .map_err(|e| format!("register death recovery: {e}"))?;
+        runtime
             .register_function(
                 "__rs2b0t_selected_loadout",
                 |args: &[serde_json::Value]| {
@@ -2896,6 +2903,7 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                             if snap.has_hold() {
                                 host_hold = snap.hold();
                                 crate::periodic_bank::on_hold(host_hold);
+                                crate::death_recovery::on_hold(host_hold);
                             }
                             if let Err(e) = materialize_snapshot(&mut runtime, &snap, host_hold) {
                                 let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
@@ -3146,15 +3154,18 @@ globalThis.__rs2b0t_tick_async = async (n) => {
                 }
                 IsolateCmd::ResetSession => {
                     crate::periodic_bank::on_reset();
+                    crate::death_recovery::on_reset();
                     let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
                 }
                 IsolateCmd::Pause => {
                     paused = true;
                     crate::periodic_bank::on_pause();
+                    crate::death_recovery::on_pause();
                 }
                 IsolateCmd::Resume => {
                     paused = false;
                     crate::periodic_bank::on_resume();
+                    crate::death_recovery::on_resume();
                 }
                 IsolateCmd::Probe(expr, reply) => {
                     let value: Result<serde_json::Value, String> =
