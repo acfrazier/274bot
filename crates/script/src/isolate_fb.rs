@@ -27,6 +27,8 @@ use flatbuffers::{
 const MAX_INTERACT_REQS: usize = 256;
 /// Max paint lines per frame (isolate→host).
 const MAX_PAINT_LINES: usize = 512;
+/// Max advertised paint buttons per frame (isolate→host).
+const MAX_PAINT_BUTTONS: usize = 32;
 
 fn isolate_verify_opts() -> VerifierOptions {
     VerifierOptions {
@@ -247,10 +249,15 @@ const VT_IN_TARGET_ITEM_SLOT: VOffsetT = 38;
 // InteractBatch: { reqs: [Interact] }
 const VT_REQS: VOffsetT = 4;
 
-// Paint: { title: string, accent: string, lines: [string] }
+// PaintButton: { id: string, label: string }
+const VT_PAINT_BTN_ID: VOffsetT = 4;
+const VT_PAINT_BTN_LABEL: VOffsetT = 6;
+
+// Paint: { title: string, accent: string, lines: [string], buttons: [PaintButton] }
 const VT_PAINT_TITLE: VOffsetT = 4;
 const VT_PAINT_ACCENT: VOffsetT = 6;
 const VT_PAINT_LINES: VOffsetT = 8;
+const VT_PAINT_BUTTONS: VOffsetT = 10;
 
 /// A game tile `{x, z, level}`.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3548,11 +3555,33 @@ fn encode_interact_batch_into(b: &mut FlatBufferBuilder<'_>, reqs: &[crate::shim
     b.finish(root, None);
 }
 
+fn paint_button_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    btn: &crate::shim::ScriptPaintButton,
+) -> WIPOffset<PaintButtonReader<'b>> {
+    let id_off = b.create_string(&btn.id);
+    let label_off = b.create_string(&btn.label);
+    let tab = b.start_table();
+    b.push_slot_always(VT_PAINT_BTN_ID, id_off);
+    b.push_slot_always(VT_PAINT_BTN_LABEL, label_off);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
 fn encode_paint_into(b: &mut FlatBufferBuilder<'_>, paint: &crate::shim::ScriptPaint) {
     let title_off = paint.title.as_deref().map(|s| b.create_string(s));
     let accent_off = paint.accent.as_deref().map(|s| b.create_string(s));
     let line_offs: Vec<_> = paint.lines.iter().map(|s| b.create_string(s)).collect();
     let lines_off = b.create_vector(&line_offs);
+    let btn_offs: Vec<_> = paint
+        .buttons
+        .iter()
+        .map(|btn| paint_button_off(b, btn))
+        .collect();
+    let buttons_off = if btn_offs.is_empty() {
+        None
+    } else {
+        Some(b.create_vector(&btn_offs))
+    };
     let tab = b.start_table();
     if let Some(off) = title_off {
         b.push_slot_always(VT_PAINT_TITLE, off);
@@ -3561,6 +3590,9 @@ fn encode_paint_into(b: &mut FlatBufferBuilder<'_>, paint: &crate::shim::ScriptP
         b.push_slot_always(VT_PAINT_ACCENT, off);
     }
     b.push_slot_always(VT_PAINT_LINES, lines_off);
+    if let Some(off) = buttons_off {
+        b.push_slot_always(VT_PAINT_BUTTONS, off);
+    }
     let root = b.end_table(tab);
     b.finish(root, None);
 }
@@ -3589,8 +3621,50 @@ impl Verifiable for PaintReader<'_> {
                 VT_PAINT_LINES,
                 false,
             )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<PaintButtonReader>>>>(
+                "buttons",
+                VT_PAINT_BUTTONS,
+                false,
+            )?
             .finish();
         Ok(())
+    }
+}
+
+/// One advertised `{id,label}` paint control as decoded.
+struct PaintButtonReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> Follow<'a> for PaintButtonReader<'a> {
+    type Inner = PaintButtonReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl Verifiable for PaintButtonReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<ForwardsUOffset<&str>>("id", VT_PAINT_BTN_ID, false)?
+            .visit_field::<ForwardsUOffset<&str>>("label", VT_PAINT_BTN_LABEL, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+impl PaintButtonReader<'_> {
+    fn id(&self) -> &str {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_PAINT_BTN_ID, None) }.unwrap_or("")
+    }
+    fn label(&self) -> &str {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<&str>>(VT_PAINT_BTN_LABEL, None)
+        }
+        .unwrap_or("")
     }
 }
 
@@ -3618,6 +3692,17 @@ impl PaintReader<'_> {
         };
         Ok(lines)
     }
+    fn buttons(&self) -> Result<Vec<crate::shim::ScriptPaintButton>, String> {
+        let rows =
+            rows_capped::<PaintButtonReader>(&self.tab, VT_PAINT_BUTTONS, MAX_PAINT_BUTTONS)?;
+        Ok(rows
+            .into_iter()
+            .map(|row| crate::shim::ScriptPaintButton {
+                id: row.id().to_string(),
+                label: row.label().to_string(),
+            })
+            .collect())
+    }
 }
 
 /// Decode a root-`Paint` FlatBuffer into the shim's recorded frame.
@@ -3627,6 +3712,8 @@ pub fn decode_paint(buf: &[u8]) -> Result<crate::shim::ScriptPaint, String> {
         title: paint.title().map(str::to_string),
         accent: paint.accent().map(str::to_string),
         lines: paint.lines()?,
+        buttons: paint.buttons()?,
+        generation: 0,
     })
 }
 
@@ -4414,6 +4501,11 @@ pub(crate) mod tests {
             title: Some("BoneBurier".into()),
             accent: Some("#f3e6a2".into()),
             lines: vec!["Runtime: 1.2m".into(), "".into()],
+            buttons: vec![crate::shim::ScriptPaintButton {
+                id: "gobank".into(),
+                label: "Go bank".into(),
+            }],
+            generation: 0,
         };
         let pbytes = buf.encode_paint(&paint);
         let decoded = decode_paint(&pbytes).expect("paint");
@@ -4455,6 +4547,11 @@ pub(crate) mod tests {
             title: Some("t".into()),
             accent: None,
             lines: vec!["line".into()],
+            buttons: vec![crate::shim::ScriptPaintButton {
+                id: "gobank".into(),
+                label: "Go bank".into(),
+            }],
+            generation: 0,
         };
         let full = IsolateBuf::new().encode_paint(&paint);
         for cut in 1..full.len() {

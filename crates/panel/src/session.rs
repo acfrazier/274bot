@@ -3753,6 +3753,16 @@ impl Session {
         }
     }
 
+    /// One-shot script-local paint button on the focused slot.
+    pub fn script_paint_click(&mut self, id: &str, generation: u64) {
+        let Some(name) = self.focused_name() else {
+            return;
+        };
+        if let Some(play) = self.play.as_ref() {
+            play.script_paint_click(&name, id, generation);
+        }
+    }
+
     /// Overlay generation for the path overlay's rising-edge refresh.
     pub fn route_gen(&self) -> u64 {
         self.route_gen

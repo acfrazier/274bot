@@ -785,7 +785,7 @@ fn isolate_rs2b0t_api_bare_import_resolves_to_our_shim() {
 }
 
 // Task 3 — Paint.begin(title/row/gap/end) records a ScriptPaint on the
-// host handle (no canvas); the widget methods throw `not impl`.
+// host handle (no canvas); unused widget methods still throw `not impl`.
 #[test]
 fn isolate_paint_begin_records_script_paint() {
     let src = r#"

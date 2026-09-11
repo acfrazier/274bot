@@ -176,6 +176,15 @@ impl ChatData {
             show_game_chat: self.show_game_chat,
         }
     }
+
+    fn paint_buttons_active(&self) -> bool {
+        !self.is_modal_open()
+            && !self.show_game_chat
+            && self
+                .script_paint
+                .as_ref()
+                .is_some_and(|p| !p.buttons.is_empty())
+    }
 }
 
 /// Headless panel view model.
@@ -326,7 +335,8 @@ impl TuiApp {
     fn chat_on_key(&mut self, key: KeyEvent) -> Option<AppAction> {
         let mut chat = Chat::new(self.chat_data.view(), &mut self.chat, |_| {});
         match chat.on_key(key) {
-            action @ (ChatAction::Continue | ChatAction::Answer(_)) => {
+            action
+            @ (ChatAction::Continue | ChatAction::Answer(_) | ChatAction::PaintButton(_)) => {
                 Some(AppAction::Chat(action))
             }
             ChatAction::None => None,
@@ -467,6 +477,28 @@ impl TuiApp {
         }
         if self.chat_data.is_modal_open() {
             return self.chat_on_key(key).unwrap_or(AppAction::None);
+        }
+        if self.chat_data.paint_buttons_active() {
+            match key.code {
+                KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::Enter
+                | KeyCode::Char(' ')
+                | KeyCode::Char('j')
+                | KeyCode::Char('k')
+                | KeyCode::Char('1')
+                | KeyCode::Char('2')
+                | KeyCode::Char('3')
+                | KeyCode::Char('4')
+                | KeyCode::Char('5')
+                | KeyCode::Char('6')
+                | KeyCode::Char('7')
+                | KeyCode::Char('8')
+                | KeyCode::Char('9') => {
+                    return self.chat_on_key(key).unwrap_or(AppAction::None);
+                }
+                _ => {}
+            }
         }
         if let Some(here) = self.here {
             if let Some((x, z, level)) = wasd_target((here.x, here.z, here.level), key.code) {
@@ -771,9 +803,9 @@ impl TuiApp {
         if self.chat_area.contains(Position::new(col, row)) {
             let mut chat = Chat::new(self.chat_data.view(), &mut self.chat, |_| {});
             match chat.on_click(self.chat_area, col, row) {
-                action @ (ChatAction::Continue | ChatAction::Answer(_)) => {
-                    return AppAction::Chat(action)
-                }
+                action @ (ChatAction::Continue
+                | ChatAction::Answer(_)
+                | ChatAction::PaintButton(_)) => return AppAction::Chat(action),
                 ChatAction::None => {}
             }
         }
@@ -1441,6 +1473,33 @@ mod tests {
     }
 
     #[test]
+    fn paint_showing_digit_routes_to_paint_button_not_wire() {
+        let mut app = TuiApp::new("274bot headless");
+        app.chat_data.script_paint = Some(script::shim::ScriptPaint {
+            title: Some("NatureCrafter".into()),
+            accent: None,
+            lines: vec!["status".into()],
+            buttons: vec![script::shim::ScriptPaintButton {
+                id: "gobank".into(),
+                label: "Go bank".into(),
+            }],
+            generation: 0,
+        });
+        assert_eq!(
+            app.on_key(key(KeyCode::Char('1'))),
+            AppAction::Chat(super::ChatAction::PaintButton(0)),
+            "digit 1 dispatches the advertised paint button"
+        );
+        app.chat_data.has_continue = true;
+        app.chat_data.modal_texts = vec!["Wait.".into()];
+        assert_eq!(
+            app.on_key(key(KeyCode::Enter)),
+            AppAction::Chat(super::ChatAction::Continue),
+            "modal still wins over paint buttons"
+        );
+    }
+
+    #[test]
     fn settings_enter_flips_random_events_and_marks_dirty() {
         let mut app = TuiApp::new("274bot headless");
         app.settings = ProfileSettings::default();
@@ -1892,6 +1951,8 @@ mod tests {
             title: Some("BoneBurier — digging".into()),
             accent: Some("#f3e6a2".into()),
             lines: vec!["Runtime: 1.2m | Buried: 3".into(), "".into()],
+            buttons: Vec::new(),
+            generation: 0,
         });
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal.draw(|frame| app.draw(frame)).unwrap();

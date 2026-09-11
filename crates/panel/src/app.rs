@@ -1389,7 +1389,11 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         // ImGui window over the chatbox rect — never on the game texture.
         let statuses = state.session.statuses();
         if let Some(slot) = focused_slot(&state.session, &statuses) {
-            state.paint.frame(ui, slot.script_paint.as_ref(), min, size);
+            if let Some((id, generation)) =
+                state.paint.frame(ui, slot.script_paint.as_ref(), min, size)
+            {
+                state.session.script_paint_click(&id, generation);
+            }
         }
         // Capture: only map/enqueue while on and hovered;
         // capture off skips the coord math entirely (tx is

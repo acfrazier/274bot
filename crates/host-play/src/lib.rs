@@ -4320,6 +4320,33 @@ impl Play {
         self.wake(name);
     }
 
+    /// One-shot script-local paint button for `name`. No-op when there is
+    /// no slot, the slot is not Running, `id` is empty, `generation` does
+    /// not match the last forwarded frame, or that frame does not advertise
+    /// `id`. Never walks, pauses, or stops.
+    pub fn script_paint_click(&self, name: &str, id: &str, generation: u64) {
+        if id.is_empty() {
+            return;
+        }
+        let Some(slot) = script_slot(&self.scripts, name) else {
+            return;
+        };
+        let slot = slot.lock().unwrap();
+        if slot.state() != script::RunState::Running {
+            return;
+        }
+        let Some(paint) = slot.paint() else {
+            return;
+        };
+        if paint.generation != generation {
+            return;
+        }
+        if !paint.buttons.iter().any(|b| b.id == id) {
+            return;
+        }
+        slot.paint_click(id);
+    }
+
     /// `name`'s script lifecycle state; `Idle` when the slot has none.
     pub fn script_state(&self, name: &str) -> script::RunState {
         script_slot(&self.scripts, name)
@@ -6688,6 +6715,35 @@ mod tests {
     }
 
     #[test]
+    fn script_paint_click_is_noop_when_idle_paused_or_unadvertised() {
+        let mut play = run_with_io(
+            &PlayOptions {
+                host: "127.0.0.1".into(),
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _, _| {},
+        );
+        play.attach_arm("alice", SlotArm::new(7, false));
+        play.script_paint_click("alice", "gobank", 0);
+        let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
+        play.script_start_load("alice", src, script::LoadShape::NativeTick, None, vec![])
+            .unwrap();
+        play.script_paint_click("alice", "", 0);
+        play.script_paint_click("alice", "gobank", 0);
+        play.script_pause("alice");
+        play.script_paint_click("alice", "gobank", 0);
+        assert_eq!(play.script_state("alice"), script::RunState::Paused);
+        play.script_stop("alice");
+        play.script_paint_click("alice", "gobank", 0);
+        assert_eq!(play.script_state("alice"), script::RunState::Idle);
+    }
+
+    #[test]
     fn script_start_unknown_slot_errors_without_phantom_entry() {
         let play = run_with_io(
             &PlayOptions {
@@ -6731,6 +6787,7 @@ mod tests {
         play.script_pause("ghost");
         play.script_resume("ghost");
         play.script_stop("ghost");
+        play.script_paint_click("ghost", "gobank", 0);
         assert_eq!(play.script_state("ghost"), script::RunState::Idle);
         play.cheat("ghost", "tele 0,50,50,20,20");
         assert!(
@@ -11260,6 +11317,8 @@ export default class T extends LoopingBot {
             title: Some("probe".into()),
             accent: None,
             lines: vec!["same".into()],
+            buttons: Vec::new(),
+            generation: 0,
         };
         let mut status = SlotStatus {
             username: "alice".into(),
@@ -11279,6 +11338,8 @@ export default class T extends LoopingBot {
             title: Some("probe".into()),
             accent: None,
             lines: vec!["different".into()],
+            buttons: Vec::new(),
+            generation: 0,
         };
         publish_script_paint(&mut status, Some(&changed));
         assert_ne!(
@@ -11287,6 +11348,23 @@ export default class T extends LoopingBot {
             "changed lines must publish a new frame"
         );
         assert_eq!(status.script_paint.as_ref().unwrap().lines[0], "different");
+
+        let relabel = ScriptPaint {
+            title: Some("probe".into()),
+            accent: None,
+            lines: vec!["different".into()],
+            buttons: vec![script::shim::ScriptPaintButton {
+                id: "gobank".into(),
+                label: "Resume".into(),
+            }],
+            generation: 0,
+        };
+        publish_script_paint(&mut status, Some(&relabel));
+        assert_eq!(
+            status.script_paint.as_ref().unwrap().buttons[0].label,
+            "Resume",
+            "button label toggle must publish"
+        );
     }
 
     #[test]

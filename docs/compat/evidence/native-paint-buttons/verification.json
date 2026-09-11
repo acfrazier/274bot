@@ -1,0 +1,43 @@
+{
+  "task": "t_9b6fbcdf",
+  "brief": "docs/compat/briefs/113-native-paint-buttons.md",
+  "brief_sha256": "ae22df0e97d261ac4330f9aab939505e460a46f7b9b5b868f0a9f16266b9c247",
+  "source_commit": "9d6f8693137790661370dc7c403f0e27b775e509",
+  "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "export": ".superpowers/review-exports/native-paint-buttons-t_9b6fbcdf",
+  "cargo_target_dir": ".superpowers/review-exports/native-paint-buttons-t_9b6fbcdf-target",
+  "isolated_build": true,
+  "live": false,
+  "overlay_sha256": {
+    "crates/script/src/shim/paint.js": "04221359ef74c60981aafb75fea16650ed4092ad0288cd79934fedb925148e44",
+    "crates/script/src/shim/mod.rs": "bb0f2dc6a6cf68d71fcb73446ffc14c3ce2c319f4d2c04f3c22d1eb58e87a907",
+    "crates/script/schema/isolate.fbs": "0b3751facc22141b4b25b05964e083a4b5f8da9feb6dfb391673bcb7f5c6f37a",
+    "crates/script/src/isolate_fb.rs": "42a8024730194426a16176e83b1aa54271e6c7eb4b72b0af520afe20cb1a7ccb",
+    "crates/script/src/load.rs": "ea13ed34620df8eca1ded07f3767c526788a496b8383766901ee497ad519e07d",
+    "crates/script/src/slot.rs": "8b12f296df2ccd55ffce99cb122abc670bcb1994f287af161a31e6d9baec9b57",
+    "crates/script/tests/paint_buttons.rs": "cfa35293fd1dc945bc259a987e698def5ce676085e1fe08ff3a6c3102583d604",
+    "crates/script/tests/load_isolate.rs": "5a433eebeb55d0bb68e874d75091e4ff0e78a4a4d579a282b89e5bc6a660a303",
+    "crates/host-play/src/lib.rs": "e0e0e788202244fc25a3d6430221222d23f1a339e35dcc71870f0d01550402a2",
+    "crates/panel/src/paint.rs": "a20de7f5a6dc8f610fbe85e10913a70ac5f525ac014b3a8a30cb32b88b1bd1dd",
+    "crates/panel/src/session.rs": "a964098273bad59df1e188afd099e6982c8f1610dea71a7c430e023599c89ed2",
+    "crates/panel/src/app.rs": "566e6fafc4896e075af49659f9c295bd5cc951eca50ebfbc4299959c40c67c2a",
+    "crates/tui/src/chat.rs": "17ff09ede26570d4fcfe234c86edca092f67092ce50a0c01af2bba2c75c313cb",
+    "crates/tui/src/app.rs": "15ca93dff98248049224a6e4378e9496cf0c4a0e6c97bf5d7066f1c56730d0de",
+    "crates/tui/src/bin.rs": "40398973095f5aa33218a904546d9c484c423a3f06719aa148e47629609d1c85",
+    "docs/compat/04af-native-paint-buttons.md": "8eec3ddefd1635809ee573b294d0131fe93df47bd149107062787f5cbcba64b8",
+    "docs/compat/evidence/native-paint-buttons/README.md": "03cf2f318a24de259f831abb52e487c3de0e33199e0d965ba2c404b1841865c4"
+  },
+  "tests_passed": 35,
+  "tests_run": [
+    "cargo test --locked --offline -p script --test paint_buttons -- --test-threads=1",
+    "cargo test --locked --offline -p script --lib paint -- --test-threads=1",
+    "cargo test --locked --offline -p script --test load_isolate isolate_paint -- --test-threads=1",
+    "cargo test --locked --offline -p panel --lib paint::tests -- --test-threads=1",
+    "cargo test --locked --offline -p tui paint -- --test-threads=1",
+    "cargo test --locked --offline -p host-play --lib script_paint -- --test-threads=1",
+    "cargo clippy --locked --offline --no-deps -p script --lib -- -D warnings",
+    "cargo clippy --locked --offline --no-deps -p script --test paint_buttons -- -D warnings",
+    "cargo clippy --locked --offline --no-deps -p host-play --lib -- -D warnings",
+    "rustfmt --edition 2021 --check owned Rust"
+  ]
+}
