@@ -1,0 +1,25 @@
+isolated export: /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-iso
+host: 2744b8be4619d5af9bb6d91755b6bbe339f5ba45
+client: 9d090ed04957e4efc254f073cda97bc5510ca72b
+owned target (reused): /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target
+overlay: crates/scenario/src/lib.rs crates/host-play/tests/catalog_boundary_live.rs docs/compat/05t-combat-core-fixtures.md
+inputs symlink for frozen ledger identity
+
+cargo test -p scenario --lib
+  97 passed; 0 failed
+
+cargo test -p host-play --features memory-profile --test catalog_boundary_live
+  34 passed; 0 failed; 1 ignored LIVE
+  checked_in_frozen_core_sources_match_both_catalog_ledgers: passed after inputs symlink
+  combat_cores_require_two_engagements_verified_defeat_style_xp_and_exact_loot: passed
+
+cargo clippy -p scenario -- -D warnings
+  pass
+
+cargo clippy -p host-play --features memory-profile --test catalog_boundary_live -- -D warnings
+  pass
+
+rustfmt --check crates/scenario/src/lib.rs crates/host-play/tests/catalog_boundary_live.rs
+  clean
+
+no LIVE

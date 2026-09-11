@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use api::obj_names::ObjNames;
-use api::snapshot::GameSnapshot;
+use api::snapshot::{ActorKind, GameSnapshot};
 use host::Pump;
 use host_play::{ProfileOptions, ScriptStartHandle, SharedClientTemplate};
 use scenario::{RunnerStatus, ScenarioRunner};
@@ -19,7 +19,7 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const SUPPORT_MATRIX: &str = include_str!("../../../docs/compat/support-matrix.json");
-const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_thiever|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt";
+const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_thiever|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|moss_giant|hill_giant|auto_fighter";
 const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -163,6 +163,25 @@ const NOTED_RED_SPIDERS_EGGS_ID: i32 = 224;
 const NOTED_EYE_OF_NEWT_ID: i32 = 222;
 const EGG_FIELD: (i32, i32, i32) = (3120, 9952, 0);
 const BETTY_SHOP: (i32, i32, i32) = (3012, 3259, 0);
+const TROUT_ID: i32 = 333;
+const BIG_BONES_ID: i32 = 532;
+const NOTED_BIG_BONES_ID: i32 = 533;
+const LIMPWURT_ROOT_ID: i32 = 225;
+const NOTED_LIMPWURT_ROOT_ID: i32 = 226;
+const LAW_RUNE_ID: i32 = 563;
+const BONES_ID: i32 = 526;
+const NOTED_BONES_ID: i32 = 527;
+const NOTED_HERB_ID: i32 = 200;
+const LANTADYME_HERB_ID: i32 = 2485;
+const NOTED_LANTADYME_HERB_ID: i32 = 2486;
+const CHAOS_DRUID_FIELD: (i32, i32, i32) = (3110, 9936, 0);
+const MOSS_GIANT_SAFESPOT: (i32, i32, i32) = (2553, 3406, 0);
+const HILL_GIANT_PIT: (i32, i32, i32) = (3110, 9832, 0);
+const CHAOS_DRUID_FOOD: i32 = 12;
+const MOSS_GIANT_FOOD: i32 = 10;
+const HILL_GIANT_FOOD: i32 = 8;
+const AUTO_FIGHTER_FOOD: i32 = 8;
+const COMBAT_ATTACK_LEVEL: i32 = 40;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -220,6 +239,10 @@ enum CoreCase {
     FlaxAioSpin,
     HerbloreSecondaries,
     HerbloreSecondariesNewt,
+    ChaosDruid,
+    MossGiant,
+    HillGiant,
+    AutoFighter,
 }
 
 impl CoreCase {
@@ -278,6 +301,10 @@ impl CoreCase {
             "flax_aio_spin" => Ok(Self::FlaxAioSpin),
             "herblore_secondaries" => Ok(Self::HerbloreSecondaries),
             "herblore_secondaries_newt" => Ok(Self::HerbloreSecondariesNewt),
+            "chaos_druid" => Ok(Self::ChaosDruid),
+            "moss_giant" => Ok(Self::MossGiant),
+            "hill_giant" => Ok(Self::HillGiant),
+            "auto_fighter" => Ok(Self::AutoFighter),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -339,6 +366,10 @@ impl CoreCase {
             Self::FlaxAioSpin => "flax_aio_spin",
             Self::HerbloreSecondaries => "herblore_secondaries",
             Self::HerbloreSecondariesNewt => "herblore_secondaries_newt",
+            Self::ChaosDruid => "chaos_druid",
+            Self::MossGiant => "moss_giant",
+            Self::HillGiant => "hill_giant",
+            Self::AutoFighter => "auto_fighter",
         }
     }
 
@@ -379,6 +410,10 @@ impl CoreCase {
             Self::FlaxSpinner => "FlaxSpinner",
             Self::FlaxAio | Self::FlaxAioPick | Self::FlaxAioSpin => "FlaxAIO",
             Self::HerbloreSecondaries | Self::HerbloreSecondariesNewt => "HerbloreSecondaries",
+            Self::ChaosDruid => "ChaosDruidKiller",
+            Self::MossGiant => "MossGiant",
+            Self::HillGiant => "HillGiant",
+            Self::AutoFighter => "AutoFighter",
         }
     }
 }
@@ -554,6 +589,12 @@ struct Observation {
     xp: BTreeMap<String, i32>,
     chat: Vec<(i32, String)>,
     loc_facts: Vec<BoundedLoc>,
+    npc_facts: Vec<BoundedNpc>,
+    ground_loot: Vec<BoundedGround>,
+    local_in_combat: bool,
+    local_target_npc: Option<usize>,
+    local_health: i32,
+    local_animation: i32,
     equipment_ids: BTreeMap<i32, i32>,
     main_modal: i32,
     widget_ids: BTreeSet<i32>,
@@ -568,6 +609,29 @@ struct BoundedLoc {
     level: i32,
     name: Option<String>,
     open: bool,
+}
+
+/// Compact NPC identity used by combat cores. The live NPC sweep is not copied.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct BoundedNpc {
+    index: usize,
+    name: Option<String>,
+    health: i32,
+    total_health: i32,
+    animation: i32,
+    in_combat: bool,
+    targeting_local: bool,
+    tile: (i32, i32, i32),
+    distance: i32,
+}
+
+/// Compact ground loot of combat-core item ids. The live ground sweep is not copied.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct BoundedGround {
+    id: i32,
+    count: i32,
+    tile: (i32, i32, i32),
+    distance: i32,
 }
 
 impl Observation {
@@ -638,6 +702,59 @@ impl Observation {
                 *equipment_ids.entry(item.def.id).or_insert(0) += item.count;
             }
         }
+        let self_slot = snapshot.self_slot();
+        let local = snapshot.local_player();
+        let local_in_combat = local.is_some_and(|player| player.player.actor.in_combat);
+        let local_target_npc = local
+            .and_then(|player| player.player.actor.target)
+            .and_then(|target| (target.kind == ActorKind::Npc).then_some(target.index));
+        let local_health = local.map(|player| player.player.actor.health).unwrap_or(0);
+        let local_animation = local
+            .map(|player| player.player.actor.animation)
+            .unwrap_or(0);
+        let npc_facts = snapshot
+            .npcs()
+            .iter()
+            .filter(|npc| {
+                npc.distance <= 8
+                    && (npc.in_combat
+                        || combat_npc_name(npc.name.as_deref())
+                        || npc.target.is_some_and(|target| {
+                            target.kind == ActorKind::Player
+                                && self_slot >= 0
+                                && target.index == self_slot as usize
+                        })
+                        || local_target_npc == Some(npc.index))
+            })
+            .take(8)
+            .map(|npc| BoundedNpc {
+                index: npc.index,
+                name: npc.name.clone(),
+                health: npc.health,
+                total_health: npc.total_health,
+                animation: npc.animation,
+                in_combat: npc.in_combat,
+                targeting_local: npc.target.is_some_and(|target| {
+                    target.kind == ActorKind::Player
+                        && self_slot >= 0
+                        && target.index == self_slot as usize
+                }),
+                tile: (npc.tile.x, npc.tile.z, npc.tile.level),
+                distance: npc.distance,
+            })
+            .collect();
+        let ground_loot = snapshot
+            .ground_items()
+            .iter()
+            .filter(|item| item.distance <= 8 && combat_ground_id(item.def.id))
+            .take(8)
+            .map(|item| BoundedGround {
+                id: item.def.id,
+                count: item.count,
+                tile: (item.tile.x, item.tile.z, item.tile.level),
+                distance: item.distance,
+            })
+            .collect();
         Self {
             ingame: snapshot.ingame() && snapshot.attached(),
             scene_state: snapshot.scene_state(),
@@ -655,6 +772,12 @@ impl Observation {
             xp,
             chat,
             loc_facts,
+            npc_facts,
+            ground_loot,
+            local_in_combat,
+            local_target_npc,
+            local_health,
+            local_animation,
             equipment_ids,
             main_modal: snapshot.modals().main,
             widget_ids: snapshot
@@ -696,6 +819,43 @@ impl Observation {
     fn has_widget(&self, id: i32) -> bool {
         self.widget_ids.contains(&id)
     }
+}
+
+fn combat_npc_name(name: Option<&str>) -> bool {
+    matches!(
+        name.map(str::trim),
+        Some("Chaos druid" | "Moss giant" | "Giant" | "Guard")
+    )
+}
+
+fn unidentified_herb_id(id: i32) -> bool {
+    matches!(
+        id,
+        199 | 201 | 203 | 205 | 207 | 209 | 211 | 213 | 215 | 217 | 219 | LANTADYME_HERB_ID
+    )
+}
+
+fn noted_herb_id(id: i32) -> bool {
+    matches!(
+        id,
+        200 | 202 | 204 | 206 | 208 | 210 | 212 | 214 | 216 | 218 | 220 | NOTED_LANTADYME_HERB_ID
+    )
+}
+
+fn combat_ground_id(id: i32) -> bool {
+    unidentified_herb_id(id)
+        || noted_herb_id(id)
+        || matches!(
+            id,
+            NATURE_RUNE_ID
+                | LAW_RUNE_ID
+                | BIG_BONES_ID
+                | NOTED_BIG_BONES_ID
+                | LIMPWURT_ROOT_ID
+                | NOTED_LIMPWURT_ROOT_ID
+                | BONES_ID
+                | NOTED_BONES_ID
+        )
 }
 
 fn keep_bounded_loc(id: i32, name: Option<&str>) -> bool {
@@ -1247,6 +1407,12 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         CoreCase::FlaxAioSpin => flax_aio_spin_baseline_ready(baseline),
         CoreCase::HerbloreSecondaries => herblore_eggs_baseline_ready(baseline),
         CoreCase::HerbloreSecondariesNewt => herblore_newt_baseline_ready(baseline),
+        CoreCase::ChaosDruid
+        | CoreCase::MossGiant
+        | CoreCase::HillGiant
+        | CoreCase::AutoFighter => {
+            combat_spec(case).is_some_and(|spec| combat_baseline_ready(baseline, spec))
+        }
     };
     if ready {
         return Ok(());
@@ -1378,6 +1544,18 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         CoreCase::HerbloreSecondariesNewt => {
             "Betty shop (3012,3259,0) with empty pack of 221/223"
         }
+        CoreCase::ChaosDruid => {
+            "Edgeville dungeon (3110,9936,0), Attack/Strength/Hitpoints 40, lobster 12, scimitar 1331, empty herb/law/nature"
+        }
+        CoreCase::MossGiant => {
+            "Moss safespot (2553,3406,0), Attack/Strength/Hitpoints 40, lobster 10, scimitar 1331, empty big bones 532"
+        }
+        CoreCase::HillGiant => {
+            "Giant pit (3110,9832,0), Attack/Strength/Hitpoints 40, trout 8, scimitar 1331, empty 532/225"
+        }
+        CoreCase::AutoFighter => {
+            "Ardougne Guard (2661,3306,0), Attack/Strength/Hitpoints 40, trout 8, scimitar 1331, banking None"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -1421,6 +1599,7 @@ struct CoreWitness {
     flax_aio_pick_cycle: FlaxAioPickCycle,
     herblore_eggs_cycle: HerbloreEggsCycle,
     herblore_newt_cycle: HerbloreNewtCycle,
+    combat_core_cycle: CombatCoreCycle,
     ordered_first_exhausted: bool,
 }
 
@@ -2187,6 +2366,281 @@ impl HerbloreNewtCycle {
 
     fn qualified(&self) -> bool {
         self.further && self.coins_spent && !self.wrong_product && !self.noted
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CombatSpec {
+    target: &'static str,
+    stand: (i32, i32, i32),
+    radius: i32,
+    food_id: i32,
+    food_count: i32,
+    loot: CombatLoot,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CombatLoot {
+    HerbLawNature,
+    BigBones,
+    BigBonesOrLimpwurt,
+    None,
+}
+
+fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
+    match case {
+        CoreCase::ChaosDruid => Some(CombatSpec {
+            target: "Chaos druid",
+            stand: CHAOS_DRUID_FIELD,
+            radius: 14,
+            food_id: LOBSTER_ID,
+            food_count: CHAOS_DRUID_FOOD,
+            loot: CombatLoot::HerbLawNature,
+        }),
+        CoreCase::MossGiant => Some(CombatSpec {
+            target: "Moss giant",
+            stand: MOSS_GIANT_SAFESPOT,
+            radius: 10,
+            food_id: LOBSTER_ID,
+            food_count: MOSS_GIANT_FOOD,
+            loot: CombatLoot::BigBones,
+        }),
+        CoreCase::HillGiant => Some(CombatSpec {
+            target: "Giant",
+            stand: HILL_GIANT_PIT,
+            radius: 16,
+            food_id: TROUT_ID,
+            food_count: HILL_GIANT_FOOD,
+            loot: CombatLoot::BigBonesOrLimpwurt,
+        }),
+        CoreCase::AutoFighter => Some(CombatSpec {
+            target: "Guard",
+            stand: ARDY_THIEVER_STAND,
+            radius: 8,
+            food_id: TROUT_ID,
+            food_count: AUTO_FIGHTER_FOOD,
+            loot: CombatLoot::None,
+        }),
+        _ => None,
+    }
+}
+
+fn combat_noted(observation: &Observation) -> bool {
+    noted_herb_id_held(observation)
+        || observation.item_id(NOTED_BIG_BONES_ID) > 0
+        || observation.bank_item_id(NOTED_BIG_BONES_ID) > 0
+        || observation.item_id(NOTED_LIMPWURT_ROOT_ID) > 0
+        || observation.bank_item_id(NOTED_LIMPWURT_ROOT_ID) > 0
+        || observation.item_id(NOTED_BONES_ID) > 0
+        || observation.bank_item_id(NOTED_BONES_ID) > 0
+}
+
+fn noted_herb_id_held(observation: &Observation) -> bool {
+    observation
+        .item_ids
+        .keys()
+        .copied()
+        .chain(observation.bank_ids.keys().copied())
+        .any(noted_herb_id)
+}
+
+fn combat_loot_count(observation: &Observation, loot: CombatLoot) -> i32 {
+    match loot {
+        CombatLoot::HerbLawNature => {
+            observation.item_id(NATURE_RUNE_ID)
+                + observation.item_id(LAW_RUNE_ID)
+                + observation
+                    .item_ids
+                    .iter()
+                    .filter(|(id, _)| unidentified_herb_id(**id))
+                    .map(|(_, count)| *count)
+                    .sum::<i32>()
+        }
+        CombatLoot::BigBones => observation.item_id(BIG_BONES_ID),
+        CombatLoot::BigBonesOrLimpwurt => {
+            observation.item_id(BIG_BONES_ID) + observation.item_id(LIMPWURT_ROOT_ID)
+        }
+        CombatLoot::None => 0,
+    }
+}
+
+fn combat_baseline_ready(baseline: &Observation, spec: CombatSpec) -> bool {
+    near(baseline.tile, spec.stand, spec.radius)
+        && baseline.level("attack") >= COMBAT_ATTACK_LEVEL
+        && baseline.level("strength") >= COMBAT_ATTACK_LEVEL
+        && baseline.level("hitpoints") >= COMBAT_ATTACK_LEVEL
+        && baseline.item_id(spec.food_id) >= spec.food_count
+        && held_id(baseline, ADAMANT_SCIMITAR_ID) >= 1
+        && combat_loot_count(baseline, spec.loot) == 0
+        && !combat_noted(baseline)
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+struct CombatNpcLast {
+    name: String,
+    health: i32,
+    animation: i32,
+    tile: (i32, i32, i32),
+    engaged: bool,
+    defeated: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CombatFact {
+    kind: &'static str,
+    index: usize,
+    name: String,
+    health: i32,
+    animation: i32,
+    loot_id: Option<i32>,
+    zero_health: bool,
+}
+
+/// Sustained selected-target combat: two engagements, a verified defeat
+/// that is not mere despawn, selected-style XP, and exact loot where required.
+#[derive(Debug, Clone, Default, Serialize)]
+struct CombatCoreCycle {
+    engagements: u32,
+    defeats: u32,
+    style_xp: bool,
+    looted: bool,
+    noted: bool,
+    last: BTreeMap<usize, CombatNpcLast>,
+    currently_engaged: BTreeSet<usize>,
+    facts: Vec<CombatFact>,
+}
+
+impl CombatCoreCycle {
+    fn observe(&mut self, spec: CombatSpec, baseline: &Observation, now: &Observation) {
+        self.noted |= combat_noted(now);
+        self.style_xp |= now.skill_xp("strength") > baseline.skill_xp("strength");
+        self.looted |= combat_loot_count(now, spec.loot) > combat_loot_count(baseline, spec.loot);
+        let mut seen = BTreeSet::new();
+        for npc in &now.npc_facts {
+            let Some(name) = npc.name.as_deref().map(str::trim) else {
+                continue;
+            };
+            if name != spec.target {
+                continue;
+            }
+            seen.insert(npc.index);
+            let prev = self.last.get(&npc.index).cloned();
+            let combat = npc.in_combat
+                || npc.targeting_local
+                || (now.local_target_npc == Some(npc.index) && now.local_in_combat);
+            let health_drop = prev
+                .as_ref()
+                .is_some_and(|prev| prev.health > npc.health && npc.health >= 0 && prev.engaged);
+            let new_spawn = prev
+                .as_ref()
+                .is_some_and(|prev| prev.defeated && npc.health > 0);
+            if (combat || health_drop)
+                && (!self.currently_engaged.contains(&npc.index) || new_spawn)
+            {
+                self.engagements += 1;
+                self.currently_engaged.insert(npc.index);
+                if self.facts.len() < 16 {
+                    self.facts.push(CombatFact {
+                        kind: "engage",
+                        index: npc.index,
+                        name: name.to_string(),
+                        health: npc.health,
+                        animation: npc.animation,
+                        loot_id: None,
+                        zero_health: false,
+                    });
+                }
+            }
+            if npc.health == 0 && self.currently_engaged.contains(&npc.index) {
+                self.record_defeat(npc.index, name, npc.health, npc.animation, None, true);
+            }
+            self.last.insert(
+                npc.index,
+                CombatNpcLast {
+                    name: name.to_string(),
+                    health: npc.health,
+                    animation: npc.animation,
+                    tile: npc.tile,
+                    engaged: self.currently_engaged.contains(&npc.index),
+                    defeated: self.last.get(&npc.index).is_some_and(|prev| prev.defeated)
+                        || npc.health == 0,
+                },
+            );
+            let _ = prev;
+        }
+        let missing: Vec<(usize, CombatNpcLast)> = self
+            .last
+            .iter()
+            .filter(|(index, prev)| prev.engaged && !prev.defeated && !seen.contains(index))
+            .map(|(index, prev)| (*index, prev.clone()))
+            .collect();
+        for (index, prev) in missing {
+            let loot_id = now.ground_loot.iter().find_map(|item| {
+                (item.tile == prev.tile && combat_loot_id(item.id, spec.loot)).then_some(item.id)
+            });
+            if self.looted || loot_id.is_some() {
+                self.record_defeat(
+                    index,
+                    &prev.name,
+                    prev.health,
+                    prev.animation,
+                    loot_id,
+                    false,
+                );
+            } else {
+                self.currently_engaged.remove(&index);
+            }
+        }
+    }
+
+    fn record_defeat(
+        &mut self,
+        index: usize,
+        name: &str,
+        health: i32,
+        animation: i32,
+        loot_id: Option<i32>,
+        zero_health: bool,
+    ) {
+        if self.last.get(&index).is_some_and(|prev| prev.defeated) {
+            return;
+        }
+        self.defeats += 1;
+        self.currently_engaged.remove(&index);
+        if let Some(prev) = self.last.get_mut(&index) {
+            prev.defeated = true;
+            prev.engaged = false;
+        }
+        if self.facts.len() < 16 {
+            self.facts.push(CombatFact {
+                kind: "defeat",
+                index,
+                name: name.to_string(),
+                health,
+                animation,
+                loot_id,
+                zero_health,
+            });
+        }
+    }
+
+    fn qualified(&self, loot: CombatLoot) -> bool {
+        self.engagements >= 2
+            && self.defeats >= 1
+            && self.style_xp
+            && (loot == CombatLoot::None || self.looted)
+            && !self.noted
+    }
+}
+
+fn combat_loot_id(id: i32, loot: CombatLoot) -> bool {
+    match loot {
+        CombatLoot::HerbLawNature => {
+            unidentified_herb_id(id) || id == NATURE_RUNE_ID || id == LAW_RUNE_ID
+        }
+        CombatLoot::BigBones => id == BIG_BONES_ID,
+        CombatLoot::BigBonesOrLimpwurt => id == BIG_BONES_ID || id == LIMPWURT_ROOT_ID,
+        CombatLoot::None => false,
     }
 }
 
@@ -3233,6 +3687,7 @@ impl CoreWitness {
             flax_aio_pick_cycle: FlaxAioPickCycle::default(),
             herblore_eggs_cycle: HerbloreEggsCycle::default(),
             herblore_newt_cycle: HerbloreNewtCycle::default(),
+            combat_core_cycle: CombatCoreCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -3346,6 +3801,10 @@ impl CoreWitness {
         if matches!(self.case, CoreCase::HerbloreSecondariesNewt) {
             self.herblore_newt_cycle
                 .observe(&self.baseline, observation);
+        }
+        if let Some(spec) = combat_spec(self.case) {
+            self.combat_core_cycle
+                .observe(spec, &self.baseline, observation);
         }
         if matches!(self.case, CoreCase::Superheater) {
             self.superheater_cycle.observe(
@@ -3655,6 +4114,11 @@ impl CoreWitness {
             CoreCase::FlaxAioPick => self.flax_aio_pick_cycle.qualified(),
             CoreCase::HerbloreSecondaries => self.herblore_eggs_cycle.qualified(),
             CoreCase::HerbloreSecondariesNewt => self.herblore_newt_cycle.qualified(),
+            CoreCase::ChaosDruid
+            | CoreCase::MossGiant
+            | CoreCase::HillGiant
+            | CoreCase::AutoFighter => combat_spec(self.case)
+                .is_some_and(|spec| self.combat_core_cycle.qualified(spec.loot)),
         };
         if !ok {
             return Err(format!(
@@ -3697,6 +4161,7 @@ impl CoreWitness {
             "flax_aio_pick_cycle": self.flax_aio_pick_cycle,
             "herblore_eggs_cycle": self.herblore_eggs_cycle,
             "herblore_newt_cycle": self.herblore_newt_cycle,
+            "combat_core_cycle": self.combat_core_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -4275,6 +4740,12 @@ mod tests {
                 .map(|(sequence, text)| (*sequence, (*text).to_string()))
                 .collect(),
             loc_facts: Vec::new(),
+            npc_facts: Vec::new(),
+            ground_loot: Vec::new(),
+            local_in_combat: false,
+            local_target_npc: None,
+            local_health: 0,
+            local_animation: 0,
             equipment_ids: BTreeMap::new(),
             main_modal: -1,
             widget_ids: BTreeSet::new(),
@@ -4338,6 +4809,10 @@ mod tests {
                 CoreCase::FlaxPicker,
                 CoreCase::FlaxAio,
                 CoreCase::HerbloreSecondaries,
+                CoreCase::ChaosDruid,
+                CoreCase::MossGiant,
+                CoreCase::HillGiant,
+                CoreCase::AutoFighter,
             ] {
                 let row = ledger_card(&matrix, commit, 274, case).unwrap();
                 verify_source_identity(&root, &row).unwrap();
@@ -8279,6 +8754,290 @@ mod tests {
         assert!(validate_case_baseline(CoreCase::HerbloreSecondariesNewt, &seeded_newt).is_err());
     }
 
+    fn combat_npc(
+        index: usize,
+        name: &str,
+        health: i32,
+        in_combat: bool,
+        tile: (i32, i32, i32),
+    ) -> BoundedNpc {
+        BoundedNpc {
+            index,
+            name: Some(name.into()),
+            health,
+            total_health: 60,
+            animation: if in_combat { 422 } else { 0 },
+            in_combat,
+            targeting_local: in_combat,
+            tile,
+            distance: 1,
+        }
+    }
+
+    fn combat_obs(
+        tile: (i32, i32, i32),
+        item_ids: &[(i32, i32)],
+        xp: &[(&str, i32)],
+        levels: &[(&str, i32)],
+        npcs: &[BoundedNpc],
+        local_in_combat: bool,
+        local_target_npc: Option<usize>,
+    ) -> Observation {
+        let mut observation =
+            resource_obs(tile, item_ids, &[], &[(ADAMANT_SCIMITAR_ID, 1)], xp, levels);
+        observation.npc_facts = npcs.to_vec();
+        observation.local_in_combat = local_in_combat;
+        observation.local_target_npc = local_target_npc;
+        observation.local_health = 40;
+        observation
+    }
+
+    #[test]
+    fn combat_cores_require_two_engagements_verified_defeat_style_xp_and_exact_loot() {
+        let levels = [
+            ("attack", COMBAT_ATTACK_LEVEL),
+            ("strength", COMBAT_ATTACK_LEVEL),
+            ("hitpoints", COMBAT_ATTACK_LEVEL),
+        ];
+        let moss_base = combat_obs(
+            MOSS_GIANT_SAFESPOT,
+            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[("strength", 100), ("attack", 100)],
+            &levels,
+            &[],
+            false,
+            None,
+        );
+        validate_case_baseline(CoreCase::MossGiant, &moss_base).unwrap();
+
+        let first = combat_obs(
+            MOSS_GIANT_SAFESPOT,
+            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[("strength", 100), ("attack", 100)],
+            &levels,
+            &[combat_npc(4, "Moss giant", 50, true, MOSS_GIANT_SAFESPOT)],
+            true,
+            Some(4),
+        );
+        let second = combat_obs(
+            MOSS_GIANT_SAFESPOT,
+            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[("strength", 104), ("attack", 100)],
+            &levels,
+            &[
+                combat_npc(4, "Moss giant", 0, false, MOSS_GIANT_SAFESPOT),
+                combat_npc(7, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT),
+            ],
+            true,
+            Some(7),
+        );
+        let mut looted = second.clone();
+        looted.item_ids.insert(BIG_BONES_ID, 1);
+        looted.npc_facts = vec![combat_npc(7, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)];
+        assert!(
+            witness(CoreCase::MossGiant, &moss_base, [&first, &second, &looted])
+                .qualify()
+                .is_ok()
+        );
+
+        assert!(witness(CoreCase::MossGiant, &moss_base, [&moss_base])
+            .qualify()
+            .is_err());
+        assert!(witness(CoreCase::MossGiant, &moss_base, [&first])
+            .qualify()
+            .is_err());
+        let xp_only = combat_obs(
+            MOSS_GIANT_SAFESPOT,
+            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[("strength", 108), ("attack", 100)],
+            &levels,
+            &[],
+            false,
+            None,
+        );
+        assert!(witness(CoreCase::MossGiant, &moss_base, [&xp_only])
+            .qualify()
+            .is_err());
+        let attack_only = combat_obs(
+            MOSS_GIANT_SAFESPOT,
+            &[(LOBSTER_ID, MOSS_GIANT_FOOD), (BIG_BONES_ID, 1)],
+            &[("strength", 100), ("attack", 108)],
+            &levels,
+            &[
+                combat_npc(4, "Moss giant", 0, true, MOSS_GIANT_SAFESPOT),
+                combat_npc(7, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT),
+            ],
+            true,
+            Some(4),
+        );
+        assert!(
+            witness(CoreCase::MossGiant, &moss_base, [&first, &attack_only])
+                .qualify()
+                .is_err()
+        );
+        let despawn = combat_obs(
+            MOSS_GIANT_SAFESPOT,
+            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[("strength", 104), ("attack", 100)],
+            &levels,
+            &[],
+            false,
+            None,
+        );
+        assert!(witness(CoreCase::MossGiant, &moss_base, [&first, &despawn])
+            .qualify()
+            .is_err());
+        let mut noted = looted.clone();
+        noted.item_ids.insert(NOTED_BIG_BONES_ID, 1);
+        assert!(
+            witness(CoreCase::MossGiant, &moss_base, [&first, &second, &noted])
+                .qualify()
+                .is_err()
+        );
+        let mut seeded = moss_base.clone();
+        seeded.item_ids.insert(BIG_BONES_ID, 1);
+        assert!(validate_case_baseline(CoreCase::MossGiant, &seeded).is_err());
+
+        let hill_base = combat_obs(
+            HILL_GIANT_PIT,
+            &[(TROUT_ID, HILL_GIANT_FOOD)],
+            &[("strength", 100)],
+            &levels,
+            &[],
+            false,
+            None,
+        );
+        validate_case_baseline(CoreCase::HillGiant, &hill_base).unwrap();
+        let hill_first = combat_obs(
+            HILL_GIANT_PIT,
+            &[(TROUT_ID, HILL_GIANT_FOOD)],
+            &[("strength", 100)],
+            &levels,
+            &[combat_npc(2, "Giant", 35, true, HILL_GIANT_PIT)],
+            true,
+            Some(2),
+        );
+        let hill_second = combat_obs(
+            HILL_GIANT_PIT,
+            &[(TROUT_ID, HILL_GIANT_FOOD), (BIG_BONES_ID, 1)],
+            &[("strength", 110)],
+            &levels,
+            &[
+                combat_npc(2, "Giant", 0, false, HILL_GIANT_PIT),
+                combat_npc(3, "Giant", 20, true, HILL_GIANT_PIT),
+            ],
+            true,
+            Some(3),
+        );
+        assert!(
+            witness(CoreCase::HillGiant, &hill_base, [&hill_first, &hill_second])
+                .qualify()
+                .is_ok()
+        );
+        let alias = combat_obs(
+            HILL_GIANT_PIT,
+            &[(TROUT_ID, HILL_GIANT_FOOD), (BIG_BONES_ID, 1)],
+            &[("strength", 110)],
+            &levels,
+            &[
+                combat_npc(2, "Hill giant", 0, true, HILL_GIANT_PIT),
+                combat_npc(3, "Hill giant", 20, true, HILL_GIANT_PIT),
+            ],
+            true,
+            Some(2),
+        );
+        assert!(witness(CoreCase::HillGiant, &hill_base, [&alias])
+            .qualify()
+            .is_err());
+
+        let chaos_base = combat_obs(
+            CHAOS_DRUID_FIELD,
+            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
+            &[("strength", 50)],
+            &levels,
+            &[],
+            false,
+            None,
+        );
+        validate_case_baseline(CoreCase::ChaosDruid, &chaos_base).unwrap();
+        let chaos_first = combat_obs(
+            CHAOS_DRUID_FIELD,
+            &[(LOBSTER_ID, CHAOS_DRUID_FOOD)],
+            &[("strength", 50)],
+            &levels,
+            &[combat_npc(1, "Chaos druid", 20, true, CHAOS_DRUID_FIELD)],
+            true,
+            Some(1),
+        );
+        let chaos_second = combat_obs(
+            CHAOS_DRUID_FIELD,
+            &[(LOBSTER_ID, CHAOS_DRUID_FOOD), (UNIDENTIFIED_GUAM_ID, 1)],
+            &[("strength", 54)],
+            &levels,
+            &[
+                combat_npc(1, "Chaos druid", 0, false, CHAOS_DRUID_FIELD),
+                combat_npc(8, "Chaos druid", 18, true, CHAOS_DRUID_FIELD),
+            ],
+            true,
+            Some(8),
+        );
+        assert!(witness(
+            CoreCase::ChaosDruid,
+            &chaos_base,
+            [&chaos_first, &chaos_second]
+        )
+        .qualify()
+        .is_ok());
+        let mut noted_herb = chaos_second.clone();
+        noted_herb.item_ids.insert(NOTED_HERB_ID, 1);
+        assert!(witness(
+            CoreCase::ChaosDruid,
+            &chaos_base,
+            [&chaos_first, &noted_herb]
+        )
+        .qualify()
+        .is_err());
+
+        let auto_base = combat_obs(
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[("strength", 80)],
+            &levels,
+            &[],
+            false,
+            None,
+        );
+        validate_case_baseline(CoreCase::AutoFighter, &auto_base).unwrap();
+        let auto_first = combat_obs(
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[("strength", 80)],
+            &levels,
+            &[combat_npc(5, "Guard", 22, true, ARDY_THIEVER_STAND)],
+            true,
+            Some(5),
+        );
+        let auto_second = combat_obs(
+            ARDY_THIEVER_STAND,
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
+            &[("strength", 88)],
+            &levels,
+            &[
+                combat_npc(5, "Guard", 0, false, ARDY_THIEVER_STAND),
+                combat_npc(9, "Guard", 22, true, ARDY_THIEVER_STAND),
+            ],
+            true,
+            Some(9),
+        );
+        assert!(witness(
+            CoreCase::AutoFighter,
+            &auto_base,
+            [&auto_first, &auto_second]
+        )
+        .qualify()
+        .is_ok());
+    }
+
     #[test]
     fn old_catalog_explicitly_refuses_cut_string_mode() {
         let error =
@@ -8339,6 +9098,10 @@ mod tests {
             CoreCase::FlaxAioSpin,
             CoreCase::HerbloreSecondaries,
             CoreCase::HerbloreSecondariesNewt,
+            CoreCase::ChaosDruid,
+            CoreCase::MossGiant,
+            CoreCase::HillGiant,
+            CoreCase::AutoFighter,
         ] {
             validate_case_catalog(case, CATALOG_COMMIT_A).unwrap();
             validate_case_catalog(case, CATALOG_COMMIT_B).unwrap();

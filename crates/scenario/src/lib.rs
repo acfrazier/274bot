@@ -437,6 +437,10 @@ pub fn get(name: &str) -> Option<Scenario> {
         "flax_aio_spin" => Some(flax_aio_spin_scenario()),
         "herblore_secondaries" => Some(herblore_secondaries_scenario()),
         "herblore_secondaries_newt" => Some(herblore_secondaries_newt_scenario()),
+        "chaos_druid" => Some(chaos_druid_scenario()),
+        "moss_giant" => Some(moss_giant_scenario()),
+        "hill_giant" => Some(hill_giant_scenario()),
+        "auto_fighter" => Some(auto_fighter_scenario()),
         "script_trade" => Some(script_trade_scenario()),
         _ => None,
     }
@@ -509,6 +513,10 @@ pub fn names() -> Vec<&'static str> {
         "flax_aio_spin",
         "herblore_secondaries",
         "herblore_secondaries_newt",
+        "chaos_druid",
+        "moss_giant",
+        "hill_giant",
+        "auto_fighter",
         "script_trade",
     ]
 }
@@ -7076,6 +7084,121 @@ const HERBLORE_NEWT_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
     value: ScriptInjectValue::Str("Eye of newt"),
 }];
 
+const TROUT_ID: i32 = 333;
+const COMBAT_SCIMITAR_ID: i32 = 1331;
+const BIG_BONES_ID: i32 = 532;
+const NOTED_BIG_BONES_ID: i32 = 533;
+const LIMPWURT_ROOT_ID: i32 = 225;
+const NOTED_LIMPWURT_ROOT_ID: i32 = 226;
+const LAW_RUNE_ID: i32 = 563;
+const BONES_ID: i32 = 526;
+const NOTED_BONES_ID: i32 = 527;
+const NOTED_HERB_ID: i32 = 200;
+const CHAOS_DRUID_FOOD: i32 = 12;
+const MOSS_GIANT_FOOD: i32 = 10;
+const HILL_GIANT_FOOD: i32 = 8;
+const AUTO_FIGHTER_FOOD: i32 = 8;
+const COMBAT_ATTACK_LEVEL: i32 = 40;
+
+const CHAOS_DRUID_FIELD: WorldTile = WorldTile {
+    x: 3110,
+    z: 9936,
+    level: 0,
+};
+const MOSS_GIANT_SAFESPOT: WorldTile = WorldTile {
+    x: 2553,
+    z: 3406,
+    level: 0,
+};
+const HILL_GIANT_PIT: WorldTile = WorldTile {
+    x: 3110,
+    z: 9832,
+    level: 0,
+};
+
+const CHAOS_DRUID_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "location",
+        value: ScriptInjectValue::Str("Edgeville Dungeon"),
+    },
+    ScriptSettingInject {
+        id: "combatStyleIndex",
+        value: ScriptInjectValue::Str("1"),
+    },
+];
+const MOSS_GIANT_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("melee"),
+    },
+    ScriptSettingInject {
+        id: "meleeStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+];
+const HILL_GIANT_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "meleeStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+];
+const AUTO_FIGHTER_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "target",
+        value: ScriptInjectValue::Str("Guard"),
+    },
+    ScriptSettingInject {
+        id: "spot",
+        value: ScriptInjectValue::Str("Start position"),
+    },
+    ScriptSettingInject {
+        id: "banking",
+        value: ScriptInjectValue::Str("None"),
+    },
+    ScriptSettingInject {
+        id: "solveClues",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "useSpecial",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "combatStyle",
+        value: ScriptInjectValue::Str("melee"),
+    },
+    ScriptSettingInject {
+        id: "meleeStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+];
+const CHAOS_DRUID_LOOT_EMPTY: &[i32] = &[
+    UNIDENTIFIED_GUAM_ID,
+    NATURE_RUNE_ID,
+    LAW_RUNE_ID,
+    NOTED_HERB_ID,
+];
+const MOSS_GIANT_LOOT_EMPTY: &[i32] = &[BIG_BONES_ID, NOTED_BIG_BONES_ID];
+const HILL_GIANT_LOOT_EMPTY: &[i32] = &[
+    BIG_BONES_ID,
+    NOTED_BIG_BONES_ID,
+    LIMPWURT_ROOT_ID,
+    NOTED_LIMPWURT_ROOT_ID,
+];
+const AUTO_FIGHTER_LOOT_EMPTY: &[i32] = &[BONES_ID, NOTED_BONES_ID];
+
 const COOK_BOT_SALMON_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "fish",
@@ -8540,6 +8663,195 @@ fn herblore_secondaries_newt_scenario() -> Scenario {
     }
 }
 
+/// Shared melee-core seed: legal stats, food, ordinary scimitar, empty loot,
+/// then Start. Banking policy is explicit in the inject; these cells are not
+/// bank-roundtrip proof. Scenario watch is selected-style XP; catalog adds
+/// two engagements, a verified defeat, and exact loot where required.
+struct CombatCorePlan {
+    name: &'static str,
+    card: &'static str,
+    tele: WorldTile,
+    radius: i32,
+    food_alias: &'static str,
+    food_id: i32,
+    food_count: i32,
+    loot_empty: &'static [i32],
+    inject: &'static [ScriptSettingInject],
+}
+
+fn combat_core_scenario(plan: CombatCorePlan) -> Scenario {
+    let CombatCorePlan {
+        name,
+        card,
+        tele,
+        radius,
+        food_alias,
+        food_id,
+        food_count,
+        loot_empty,
+        inject,
+    } = plan;
+    let xp = Proof::StatXpGain {
+        id: STRENGTH_STAT,
+        min: 1,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "prepare melee stats, food, gear and field before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, &format!("setstat attack {COMBAT_ATTACK_LEVEL}"));
+                cheat(c, &format!("setstat strength {COMBAT_ATTACK_LEVEL}"));
+                cheat(c, &format!("setstat hitpoints {COMBAT_ATTACK_LEVEL}"));
+                cheat(c, "~clearinv");
+                cheat(c, "give adamant_scimitar 1");
+                cheat(c, &format!("give {food_alias} {food_count}"));
+                cheat(c, &tele_args(tele.level, tele.x, tele.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: tele.x,
+                z: tele.z,
+                level: tele.level,
+                radius,
+            },
+            budget_ticks: 200,
+        },
+    });
+    steps.push(bank_fletcher_watch(
+        "acknowledge prepared Attack 40",
+        Proof::Stat {
+            id: 0,
+            min: COMBAT_ATTACK_LEVEL,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge prepared Strength 40",
+        Proof::Stat {
+            id: STRENGTH_STAT,
+            min: COMBAT_ATTACK_LEVEL,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge prepared Hitpoints 40",
+        Proof::Stat {
+            id: 3,
+            min: COMBAT_ATTACK_LEVEL,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge prepared food in pack before Start",
+        Proof::ItemId {
+            id: food_id,
+            count: food_count,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge prepared Adamant scimitar 1331 before Start",
+        Proof::ItemId {
+            id: COMBAT_SCIMITAR_ID,
+            count: 1,
+        },
+    ));
+    for &id in loot_empty {
+        steps.push(bank_fletcher_watch(
+            "confirm no seeded combat loot in pack before Start",
+            Proof::ItemIdAtMost { id, count: 0 },
+        ));
+    }
+    steps.push(start_catalog_step());
+    steps.push(bank_fletcher_watch(
+        "watch Strength XP from the selected melee style after Start",
+        xp,
+    ));
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: xp,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some(card),
+            script_settings_inject: Some(inject),
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+/// ChaosDruidKiller Edgeville dungeon core. Own bank is not this cell.
+/// Style index 1 on the wielded weapon; lobster x12 so tripPrepared holds.
+fn chaos_druid_scenario() -> Scenario {
+    combat_core_scenario(CombatCorePlan {
+        name: "chaos_druid",
+        card: "ChaosDruidKiller",
+        tele: CHAOS_DRUID_FIELD,
+        radius: 14,
+        food_alias: "lobster",
+        food_id: LOBSTER_ID,
+        food_count: CHAOS_DRUID_FOOD,
+        loot_empty: CHAOS_DRUID_LOOT_EMPTY,
+        inject: CHAOS_DRUID_INJECT,
+    })
+}
+
+/// MossGiant default melee at the safespot. Big bones 532 is catalog loot.
+/// DeathRecovery stays idle. Banking is not this cell.
+fn moss_giant_scenario() -> Scenario {
+    combat_core_scenario(CombatCorePlan {
+        name: "moss_giant",
+        card: "MossGiant",
+        tele: MOSS_GIANT_SAFESPOT,
+        radius: 10,
+        food_alias: "lobster",
+        food_id: LOBSTER_ID,
+        food_count: MOSS_GIANT_FOOD,
+        loot_empty: MOSS_GIANT_LOOT_EMPTY,
+        inject: MOSS_GIANT_INJECT,
+    })
+}
+
+/// HillGiant default melee in the pit. Target display is Giant. Blank weapon.
+/// DeathRecovery walkBack stays idle. Banking is not this cell.
+fn hill_giant_scenario() -> Scenario {
+    combat_core_scenario(CombatCorePlan {
+        name: "hill_giant",
+        card: "HillGiant",
+        tele: HILL_GIANT_PIT,
+        radius: 16,
+        food_alias: "trout",
+        food_id: TROUT_ID,
+        food_count: HILL_GIANT_FOOD,
+        loot_empty: HILL_GIANT_LOOT_EMPTY,
+        inject: HILL_GIANT_INJECT,
+    })
+}
+
+/// AutoFighter Guard at Start position. banking=None, clues/special off.
+/// Gem-table loot is not required. DeathRecovery stays idle.
+fn auto_fighter_scenario() -> Scenario {
+    combat_core_scenario(CombatCorePlan {
+        name: "auto_fighter",
+        card: "AutoFighter",
+        tele: ARDOUGNE_GUARD,
+        radius: 8,
+        food_alias: "trout",
+        food_id: TROUT_ID,
+        food_count: AUTO_FIGHTER_FOOD,
+        loot_empty: AUTO_FIGHTER_LOOT_EMPTY,
+        inject: AUTO_FIGHTER_INJECT,
+    })
+}
+
 /// Lumbridge courtyard stand where the two-bot trade meets.
 const TRADE_COURTYARD: WorldTile = WorldTile {
     x: 3220,
@@ -9092,6 +9404,10 @@ mod tests {
                 "flax_aio_spin",
                 "herblore_secondaries",
                 "herblore_secondaries_newt",
+                "chaos_druid",
+                "moss_giant",
+                "hill_giant",
+                "auto_fighter",
                 "script_trade",
             ]
         );
@@ -12125,6 +12441,181 @@ mod tests {
     }
 
     #[test]
+    fn combat_core_cases_register_melee_cycles() {
+        let strength = Proof::StatXpGain {
+            id: STRENGTH_STAT,
+            min: 1,
+        };
+        let attack = Proof::Stat {
+            id: 0,
+            min: COMBAT_ATTACK_LEVEL,
+        };
+        let chaos = get("chaos_druid").expect("chaos_druid");
+        assert_eq!(chaos.settings.start_script, Some("ChaosDruidKiller"));
+        assert_eq!(chaos.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        let inject = settings_inject_map(chaos.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("location"),
+            Some(&Value::String("Edgeville Dungeon".into()))
+        );
+        assert_eq!(
+            inject.get("combatStyleIndex"),
+            Some(&Value::String("1".into()))
+        );
+        let start = chaos
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let seed = chaos.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::ArrivedNear {
+            x: 3110,
+            z: 9936,
+            level: 0,
+            radius: 14,
+        }));
+        assert!(seed.contains(&attack));
+        assert!(seed.contains(&Proof::Stat {
+            id: STRENGTH_STAT,
+            min: COMBAT_ATTACK_LEVEL,
+        }));
+        assert!(seed.contains(&Proof::ItemId {
+            id: LOBSTER_ID,
+            count: CHAOS_DRUID_FOOD,
+        }));
+        assert!(seed.contains(&Proof::ItemId {
+            id: COMBAT_SCIMITAR_ID,
+            count: 1,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: UNIDENTIFIED_GUAM_ID,
+            count: 0,
+        }));
+        assert_eq!(chaos.steps[start + 1].wait.arm, strength);
+        assert_eq!(chaos.proof, strength);
+
+        let moss = get("moss_giant").expect("moss_giant");
+        assert_eq!(moss.settings.start_script, Some("MossGiant"));
+        let inject = settings_inject_map(moss.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("combatStyle"),
+            Some(&Value::String("melee".into()))
+        );
+        assert_eq!(
+            inject.get("meleeStyle"),
+            Some(&Value::String("strength".into()))
+        );
+        assert_eq!(inject.get("buryBones"), Some(&Value::Bool(false)));
+        let start = moss
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let seed = moss.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::ArrivedNear {
+            x: 2553,
+            z: 3406,
+            level: 0,
+            radius: 10,
+        }));
+        assert!(seed.contains(&Proof::ItemId {
+            id: LOBSTER_ID,
+            count: MOSS_GIANT_FOOD,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: BIG_BONES_ID,
+            count: 0,
+        }));
+        assert_eq!(moss.proof, strength);
+
+        let hill = get("hill_giant").expect("hill_giant");
+        assert_eq!(hill.settings.start_script, Some("HillGiant"));
+        let inject = settings_inject_map(hill.settings.script_settings_inject).unwrap();
+        assert_eq!(
+            inject.get("meleeStyle"),
+            Some(&Value::String("strength".into()))
+        );
+        assert_eq!(inject.get("buryBones"), Some(&Value::Bool(false)));
+        assert!(!inject.contains_key("weapon"));
+        let start = hill
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let seed = hill.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::ArrivedNear {
+            x: 3110,
+            z: 9832,
+            level: 0,
+            radius: 16,
+        }));
+        assert!(seed.contains(&Proof::ItemId {
+            id: TROUT_ID,
+            count: HILL_GIANT_FOOD,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: BIG_BONES_ID,
+            count: 0,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: LIMPWURT_ROOT_ID,
+            count: 0,
+        }));
+        assert_eq!(hill.proof, strength);
+
+        let auto = get("auto_fighter").expect("auto_fighter");
+        assert_eq!(auto.settings.start_script, Some("AutoFighter"));
+        let inject = settings_inject_map(auto.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("target"), Some(&Value::String("Guard".into())));
+        assert_eq!(
+            inject.get("spot"),
+            Some(&Value::String("Start position".into()))
+        );
+        assert_eq!(inject.get("banking"), Some(&Value::String("None".into())));
+        assert_eq!(inject.get("solveClues"), Some(&Value::Bool(false)));
+        assert_eq!(inject.get("useSpecial"), Some(&Value::Bool(false)));
+        let start = auto
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let seed = auto.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::ArrivedNear {
+            x: 2661,
+            z: 3306,
+            level: 0,
+            radius: 8,
+        }));
+        assert!(seed.contains(&Proof::ItemId {
+            id: TROUT_ID,
+            count: AUTO_FIGHTER_FOOD,
+        }));
+        assert_eq!(auto.proof, strength);
+
+        for name in ["chaos_druid", "moss_giant", "hill_giant", "auto_fighter"] {
+            assert!(names().contains(&name));
+            let scenario = get(name).unwrap();
+            assert_eq!(scenario.settings.deadline, SCRIPT_GOLD_DEADLINE);
+            assert!(!scenario
+                .steps
+                .iter()
+                .any(|step| matches!(step.wait.arm, Proof::BankItemId { .. })));
+        }
+    }
+
+    #[test]
     fn bone_burier_requires_banking_between_burial_cycles() {
         let s = get("bone_burier").unwrap();
         assert_eq!(s.settings.start_script, Some("BoneBurier"));
@@ -12220,6 +12711,10 @@ mod tests {
             "flax_aio_spin",
             "herblore_secondaries",
             "herblore_secondaries_newt",
+            "chaos_druid",
+            "moss_giant",
+            "hill_giant",
+            "auto_fighter",
             "script_trade",
         ] {
             let s = get(name).unwrap_or_else(|| panic!("{name} registered"));
