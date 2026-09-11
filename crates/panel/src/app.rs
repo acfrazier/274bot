@@ -316,14 +316,12 @@ fn startup_progress(startup: &StartupPreparation, generation: u64) -> Option<Sta
         .filter(|job| job.generation == generation)
     {
         (ProgressPhase::FinalChecks, &job.progress)
-    } else if let Some(job) = startup
-        .prepare
-        .as_ref()
-        .filter(|job| job.generation == generation)
-    {
-        (ProgressPhase::Preparing, &job.progress)
     } else {
-        return None;
+        let job = startup
+            .prepare
+            .as_ref()
+            .filter(|job| job.generation == generation)?;
+        (ProgressPhase::Preparing, &job.progress)
     };
     let progress = latest.lock().ok()?.as_ref().copied()?;
     Some(StartupProgressView { phase, progress })
