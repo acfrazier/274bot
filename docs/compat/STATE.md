@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 16:34 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 16:33 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -60,8 +60,10 @@ Both failures panic when serializing nonempty CombatCoreCycle.previous_ground
 current children finished and all processes are reaped. Ledger419. Root owns
 serializer repaircffd62c59, preserving132 mage WIP. Both success/failure
 receipt regressions reproduced the panic before correction;11 combat tests PASS
-after correction on isolated source. Fresh exactcff binary build pending;
-original failures remain FAIL.
+after correction on isolated source. Fresh exactcff binary built with4966
+source files and binary hashes reverified;274/289 combat batches now running;
+original failures remain FAIL. Audit143 t_46d26f49 is queued with grok46
+to bound remaining distinct combat/utility option cells.
 Audit142 completed with verified Grok4.6 run1371:274 is a native guard LOS
 catch with successful flee/return movement, no proven foreign defect. Keep
 ArdyCakes enabled and retain FAIL;139 pack preparation is separate.
