@@ -5925,15 +5925,15 @@ fn rune_craft_variant(spec: RuneCraftSpec) -> Scenario {
             ruins_near,
         ),
         (
-            "watch essence become the selected rune after altar entry",
-            crafted,
-        ),
-        (
             "watch Runecraft XP from the selected craft",
             Proof::StatXpGain {
                 id: RUNECRAFT_STAT,
                 min: 1,
             },
+        ),
+        (
+            "watch essence become the selected rune after altar entry",
+            crafted,
         ),
         (
             "watch the withdrawn essence finish converting",
@@ -8724,11 +8724,11 @@ mod tests {
                     count: 1,
                 },
                 ruins,
-                crafted,
                 Proof::StatXpGain {
                     id: RUNECRAFT_STAT,
                     min: 1,
                 },
+                crafted,
                 Proof::ItemIdAtMost {
                     id: RUNE_ESSENCE_ID,
                     count: 0,
@@ -8748,6 +8748,15 @@ mod tests {
                 crafted,
             ]
         );
+        let first_xp = watch
+            .iter()
+            .position(|arm| {
+                *arm == Proof::StatXpGain {
+                    id: RUNECRAFT_STAT,
+                    min: 1,
+                }
+            })
+            .unwrap();
         let first_rune = watch.iter().position(|arm| *arm == crafted).unwrap();
         let bank_runes = watch
             .iter()
@@ -8763,6 +8772,8 @@ mod tests {
             .position(|arm| *arm == pack_empty_runes)
             .unwrap();
         let further_rune = watch.iter().rposition(|arm| *arm == crafted).unwrap();
+        assert!(watch[1] == ruins);
+        assert!(first_xp < first_rune);
         assert!(first_rune < bank_runes);
         assert!(bank_runes < pack_empty);
         assert!(pack_empty < further_rune);
@@ -8810,7 +8821,14 @@ mod tests {
             count: 1,
         };
         assert_eq!(earth_watch[1], earth_ruins);
-        assert_eq!(earth_watch[2], earth_rune);
+        assert_eq!(
+            earth_watch[2],
+            Proof::StatXpGain {
+                id: RUNECRAFT_STAT,
+                min: 1,
+            }
+        );
+        assert_eq!(earth_watch[3], earth_rune);
         assert!(earth_watch.contains(&Proof::BankItemId {
             id: EARTH_RUNE_ID,
             count: 1,
@@ -8845,7 +8863,14 @@ mod tests {
             radius: 4,
         };
         assert_eq!(mule_watch[1], mule_ruins);
-        assert_eq!(mule_watch[2], crafted);
+        assert_eq!(
+            mule_watch[2],
+            Proof::StatXpGain {
+                id: RUNECRAFT_STAT,
+                min: 1,
+            }
+        );
+        assert_eq!(mule_watch[3], crafted);
         assert_ne!(mule_watch[1], ruins);
         assert_eq!(mule.proof, crafted);
 
