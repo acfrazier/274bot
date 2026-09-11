@@ -1844,11 +1844,17 @@ fn dispatch_script_interact(
                 z,
                 level,
                 action,
+                id,
             } => {
-                let loc = snapshot
-                    .locs()
-                    .iter()
-                    .find(|l| l.tile.x == x && l.tile.z == z && l.tile.level == level);
+                // Selected `id` must match a current row at this tile.
+                // Do not fall back to another co-located loc. Absent id
+                // keeps the previous first-row coordinate match.
+                let loc = snapshot.locs().iter().find(|l| {
+                    l.tile.x == x
+                        && l.tile.z == z
+                        && l.tile.level == level
+                        && id.is_none_or(|wanted| l.id == wanted)
+                });
                 if let Some(loc) = loc {
                     wrote |= matches!(
                         ix.interact(OpTarget::Loc(loc), ActionSpec::Label(action.clone())),
@@ -8372,6 +8378,224 @@ export default class T extends LoopingBot {
                 (0, MiniMenuAction::USEHELD_ONHELD, 1777, 1, 500),
             ],
             "legacy name-only requests retain first-name behavior"
+        );
+    }
+
+    fn loc_typecode(id: i32) -> i32 {
+        0x4000_0000 + (id << 14)
+    }
+
+    fn scene_typecode(id: i32) -> i32 {
+        loc_typecode(id) + 7 + (8 << 7)
+    }
+
+    fn seed_wall_and_flax_defs(c: &mut Client) {
+        use client::config::LocType;
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        while cache.locs.len() <= 2646 {
+            cache.locs.push(LocType::default());
+        }
+        cache.locs[980] = LocType {
+            id: 980,
+            name: String::new(),
+            op: vec![],
+            width: 1,
+            length: 1,
+            ..Default::default()
+        };
+        cache.locs[2646] = LocType {
+            id: 2646,
+            name: "Flax".into(),
+            op: vec![None, Some("Pick".into())],
+            width: 1,
+            length: 1,
+            ..Default::default()
+        };
+    }
+
+    /// Wall 980 and Ground Flax 2646 share scene tile (5,6). `wall_first`
+    /// places 980 on the wall layer (native LIVE order); otherwise Flax is
+    /// the wall-layer row so it is first in the snapshot sweep.
+    fn colocated_wall_flax(wall_first: bool) -> (Client, GameSnapshot) {
+        let mut c = nav_client();
+        c.map_build_base_x = 0;
+        c.map_build_base_z = 0;
+        c.minusedlevel = 0;
+        c.local_player = Some(client::dash3d::ClientPlayer::at(4, 5));
+        seed_wall_and_flax_defs(&mut c);
+        let (wall_layer_id, ground_id) = if wall_first { (980, 2646) } else { (2646, 980) };
+        c.world.set_wall(
+            0,
+            5,
+            6,
+            0,
+            0,
+            0,
+            loc_typecode(wall_layer_id),
+            1 << 6,
+            0,
+            0,
+            0,
+            0,
+        );
+        assert!(c.world.add_scenery(
+            0,
+            5,
+            6,
+            0,
+            scene_typecode(ground_id),
+            (3 << 6) + 10,
+            1,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0
+        ));
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        (c, snap)
+    }
+
+    fn loc_req(id: Option<i32>, action: &str) -> script::shim::InteractReq {
+        script::shim::InteractReq::Loc {
+            x: 5,
+            z: 6,
+            level: 0,
+            action: action.into(),
+            id,
+        }
+    }
+
+    fn dispatch_loc(snap: &GameSnapshot, req: script::shim::InteractReq) -> GuardRec {
+        let (navs, world) = empty_nav();
+        let mut rec = GuardRec::default();
+        dispatch_script_interact(
+            &mut rec,
+            snap,
+            None,
+            Some((4, 5, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![req],
+        );
+        rec
+    }
+
+    fn flax_typecode(snap: &GameSnapshot) -> i32 {
+        snap.locs()
+            .iter()
+            .find(|loc| loc.id == 2646)
+            .expect("flax row")
+            .typecode
+    }
+
+    #[test]
+    fn dispatch_loc_preserves_selected_id_when_layers_share_a_tile() {
+        for wall_first in [true, false] {
+            let (_c, snap) = colocated_wall_flax(wall_first);
+            let ids: Vec<i32> = snap.locs().iter().map(|loc| loc.id).collect();
+            if wall_first {
+                assert_eq!(ids, vec![980, 2646], "native sweep is wall then ground");
+            } else {
+                assert_eq!(ids, vec![2646, 980], "flax on wall layer is first");
+            }
+            let rec = dispatch_loc(&snap, loc_req(Some(2646), "Pick"));
+            assert_eq!(
+                rec.menus,
+                vec![(0, MiniMenuAction::OP_LOC2, flax_typecode(&snap), 5, 6)],
+                "selected Flax 2646 must win in either row order (wall_first={wall_first})"
+            );
+        }
+    }
+
+    #[test]
+    fn dispatch_loc_refuses_stale_missing_forged_and_invalid_action() {
+        let (mut c, snap) = colocated_wall_flax(true);
+        let before = dispatch_loc(&snap, loc_req(Some(2646), "Open"));
+        assert!(before.menus.is_empty(), "invalid flax action sends nothing");
+
+        let forged = dispatch_loc(&snap, loc_req(Some(9999), "Pick"));
+        assert!(forged.menus.is_empty(), "forged id sends nothing");
+
+        let wall_pick = dispatch_loc(&snap, loc_req(Some(980), "Pick"));
+        assert!(wall_pick.menus.is_empty(), "wall 980 has no Pick");
+
+        c.world.del_loc(0, 5, 6);
+        c.bump_gens(ServerProt::LOC_DEL);
+        let mut gone = GameSnapshot::new();
+        gone.rebuild(&c);
+        assert!(
+            gone.locs().iter().all(|loc| loc.id != 2646),
+            "deleted flax must leave the snapshot"
+        );
+        let missing = dispatch_loc(&gone, loc_req(Some(2646), "Pick"));
+        assert!(
+            missing.menus.is_empty(),
+            "missing selected flax must not fall back to wall 980"
+        );
+    }
+
+    #[test]
+    fn dispatch_loc_legacy_without_id_keeps_first_row_behavior() {
+        let (_c, shared) = colocated_wall_flax(true);
+        let legacy_shared = dispatch_loc(&shared, loc_req(None, "Pick"));
+        assert!(
+            legacy_shared.menus.is_empty(),
+            "legacy first-row wall 980 still refuses Pick"
+        );
+
+        let mut c = nav_client();
+        c.map_build_base_x = 0;
+        c.map_build_base_z = 0;
+        c.minusedlevel = 0;
+        c.local_player = Some(client::dash3d::ClientPlayer::at(4, 5));
+        seed_wall_and_flax_defs(&mut c);
+        assert!(c.world.add_scenery(
+            0,
+            5,
+            6,
+            0,
+            scene_typecode(2646),
+            (3 << 6) + 10,
+            1,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0
+        ));
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        let mut only = GameSnapshot::new();
+        only.rebuild(&c);
+        assert_eq!(
+            only.locs().iter().map(|loc| loc.id).collect::<Vec<_>>(),
+            vec![2646]
+        );
+        let rec = dispatch_loc(&only, loc_req(None, "Pick"));
+        assert_eq!(
+            rec.menus,
+            vec![(0, MiniMenuAction::OP_LOC2, flax_typecode(&only), 5, 6)],
+            "legacy coordinate match still dispatches a lone flax"
+        );
+    }
+
+    #[test]
+    fn dispatch_loc_selected_id_survives_flatbuffer_round_trip() {
+        let (_c, snap) = colocated_wall_flax(true);
+        let reqs = vec![loc_req(Some(2646), "Pick")];
+        let bytes = script::isolate_fb::encode_interact_batch(&reqs);
+        let decoded = script::isolate_fb::decode_interact_batch(&bytes).expect("loc batch");
+        assert_eq!(decoded, reqs);
+        let rec = dispatch_loc(&snap, decoded.into_iter().next().unwrap());
+        assert_eq!(
+            rec.menus,
+            vec![(0, MiniMenuAction::OP_LOC2, flax_typecode(&snap), 5, 6)]
         );
     }
 

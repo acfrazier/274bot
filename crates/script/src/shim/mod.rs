@@ -752,12 +752,18 @@ pub enum InteractReq {
         index: Option<i32>,
     },
     /// Interact with a loc at `(x, z, level)` using an action label.
+    /// `id` is the selected loc type from the posted snapshot row. Host
+    /// dispatch matches that identity on the current snapshot and refuses
+    /// rather than taking another co-located row. Absent `id` keeps the
+    /// previous first-row coordinate match.
     #[serde(rename = "loc")]
     Loc {
         x: i32,
         z: i32,
         level: i32,
         action: String,
+        #[serde(default)]
+        id: Option<i32>,
     },
     /// Interact with a ground item at `(x, z, level)` using an action label.
     #[serde(rename = "obj")]

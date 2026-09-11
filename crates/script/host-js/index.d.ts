@@ -163,6 +163,8 @@ export interface Snapshot {
   withdraw_x_result: boolean;
   withdraw_load_result_seq: number;
   withdraw_load_result: boolean;
+  bank_op_result_seq: number;
+  bank_op_result: boolean;
   bank_note_on: number;
   bank_note_off: number;
   /** 2 = 3D ready. */
@@ -237,7 +239,7 @@ export type InteractReq =
   | { op: 'held'; name: string; action: string}
   | { op: 'close'}
   | { op: 'npc'; name: string; action: string; index?: number | null}
-  | { op: 'loc'; x: number; z: number; level: number; action: string}
+  | { op: 'loc'; x: number; z: number; level: number; action: string; id?: number | null}
   | { op: 'obj'; x: number; z: number; level: number; name?: string | null; action: string}
   | { op: 'player'; name: string; action: string}
   | { op: 'use-on'; name: string; kind: string; target_name?: string | null; x: number; z: number; level: number; index?: number | null; source_item_id?: number | null; source_item_slot?: number | null; target_item_id?: number | null; target_item_slot?: number | null}

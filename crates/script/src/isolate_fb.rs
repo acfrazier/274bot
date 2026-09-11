@@ -3649,6 +3649,7 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                     .action()
                     .ok_or_else(|| "loc has no action".to_string())?
                     .to_string(),
+                id: row.index(),
             }),
             "obj" => out.push(crate::shim::InteractReq::Obj {
                 x: row.x(),
@@ -3927,11 +3928,16 @@ fn interact_off<'b>(
                 b.push_slot_always(VT_IN_INDEX, *idx);
             }
         }
-        InteractReq::Loc { x, z, level, .. } => {
+        InteractReq::Loc {
+            x, z, level, id, ..
+        } => {
             b.push_slot_always(VT_IN_X, *x);
             b.push_slot_always(VT_IN_Z, *z);
             b.push_slot_always(VT_IN_LEVEL, *level);
             b.push_slot_always(VT_IN_ACTION, action_off.unwrap());
+            if let Some(id) = id {
+                b.push_slot_always(VT_IN_INDEX, *id);
+            }
         }
         InteractReq::Obj { x, z, level, .. } => {
             b.push_slot_always(VT_IN_X, *x);
