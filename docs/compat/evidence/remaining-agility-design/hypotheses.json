@@ -1,0 +1,67 @@
+{
+  "accepted": 8,
+  "rejected": [1, 2, 3, 4, 5, 6, 7],
+  "hypotheses": [
+    {
+      "id": 1,
+      "claim": "Ridge XP/message + z>3931 is enough Wildy core",
+      "status": "rejected",
+      "why": "Brief requires a whole native course circuit and further work. remaining-combat-world §14 is a dated lead."
+    },
+    {
+      "id": 2,
+      "claim": "Entrance fee or one arena XP/ticket is enough Brimhaven core",
+      "status": "rejected",
+      "why": "Need actual hop, obstacle XP, script Tag progression, then subsequent work. First Tag never grants ticket 2996."
+    },
+    {
+      "id": 3,
+      "claim": "Dim the cards; imported scripts are broken",
+      "status": "rejected",
+      "why": "Frozen constructors are the documented callers. reader.hintTile and actions.setRun are missing host members."
+    },
+    {
+      "id": 4,
+      "claim": "Implement a host arena planner / guardian / route",
+      "status": "rejected",
+      "why": "Frozen JS already owns nextHop/ARENA_EDGES. Host owes loc/npc/hint/run/bank."
+    },
+    {
+      "id": 5,
+      "claim": "Expand DeathRecovery, Shop.sell, or a boat helper so options pass",
+      "status": "rejected",
+      "why": "User permits those stubs. Core leaves them idle. No new host policy."
+    },
+    {
+      "id": 6,
+      "claim": "Seed tickets / agility / teleports after Start, or fake a fail",
+      "status": "rejected",
+      "why": "Brief forbids post-Start seeds, teleports, stat awards, tickets, or fake failures."
+    },
+    {
+      "id": 7,
+      "claim": "Widen 180s/150 tick so a lap/ticket cycle fits",
+      "status": "rejected",
+      "why": "Gold unchanged. Timeout is FAIL. Diagnostics stay distinct from acceptance."
+    },
+    {
+      "id": 8,
+      "claim": "Thin hint post + actions.setRun over existing isolate/host run; reuse Gnome ordered-witness shape",
+      "status": "accepted",
+      "why": "Client already stores HINT_ARROW; isolate already decodes set-run; host-play already calls set_run. Gnome course is the valid ordered-witness reuse."
+    }
+  ],
+  "missing_host_capabilities": [
+    "reader.hintTile from posted client hint_type/hint_tile_x/hint_tile_z",
+    "actions.setRun queues existing op set-run"
+  ],
+  "nonfatal_missing": [
+    "reader.retaliateControls — Wildy logs and continues"
+  ],
+  "deferred_stubs": [
+    "DeathRecovery walkBack death cell",
+    "Shop.sell boat-fare cell",
+    "stealRestock cake/guard cells",
+    "foreign boat helper"
+  ]
+}
