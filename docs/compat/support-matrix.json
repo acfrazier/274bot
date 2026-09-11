@@ -27378,7 +27378,7 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Latest isolated 04d7b1f4 gnome_chop FAIL: FAIL: catalog_boundary_live: scenario failed: step 13 (watch Woodcutting XP from a Magic tree after Start): stat_xp_gain(8)>=1 not seen within 150 ticks. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "status_detail": "Partial controlled resource evidence on exact2d589; full branch/platform acceptance remains open. See resource2d589_results and append-only ledger. Herblore pre-Start readiness and Gnome actual-tree start correction139 pending; Flax reachability semantics audit138 pending.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-gnome-chop-100adccc-28d97f38.json",
@@ -27388,6 +27388,29 @@
         "docs/compat/evidence/catalog-harness/live/r274-gnome-chop-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r274-gnome-chop-100adccc-04d7b1f4.log",
         "docs/compat/06x-station-platform-and-remaining.md"
+      ],
+      "resource2d589_results": [
+        {
+          "case": "gnome_chop",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-gnome-chop-100adccc-resource2d589.json",
+          "log": "docs/compat/evidence/catalog-harness/live/r274-gnome-chop-100adccc-resource2d589.log",
+          "start_baseline_present": true
+        },
+        {
+          "case": "gnome_fletch_long",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-gnome-fletch-long-100adccc-resource2d589.json",
+          "log": "docs/compat/evidence/catalog-harness/live/r274-gnome-fletch-long-100adccc-resource2d589.log",
+          "start_baseline_present": true
+        },
+        {
+          "case": "gnome_fletch_short",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-gnome-fletch-short-100adccc-resource2d589.json",
+          "log": "docs/compat/evidence/catalog-harness/live/r274-gnome-fletch-short-100adccc-resource2d589.log",
+          "start_baseline_present": true
+        }
       ]
     },
     {
@@ -27685,7 +27708,7 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Latest isolated 04d7b1f4 gnome_chop FAIL: FAIL: catalog_boundary_live: scenario failed: step 13 (watch Woodcutting XP from a Magic tree after Start): stat_xp_gain(8)>=1 not seen within 150 ticks. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "status_detail": "Partial controlled resource evidence on exact2d589; full branch/platform acceptance remains open. See resource2d589_results and append-only ledger. Herblore pre-Start readiness and Gnome actual-tree start correction139 pending; Flax reachability semantics audit138 pending.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-gnome-chop-100adccc-28d97f38.json",
@@ -27695,6 +27718,29 @@
         "docs/compat/evidence/catalog-harness/live/r289-gnome-chop-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r289-gnome-chop-100adccc-04d7b1f4.log",
         "docs/compat/06x-station-platform-and-remaining.md"
+      ],
+      "resource2d589_results": [
+        {
+          "case": "gnome_chop",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-gnome-chop-100adccc-resource2d589.json",
+          "log": "docs/compat/evidence/catalog-harness/live/r289-gnome-chop-100adccc-resource2d589.log",
+          "start_baseline_present": true
+        },
+        {
+          "case": "gnome_fletch_long",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-gnome-fletch-long-100adccc-resource2d589.json",
+          "log": "docs/compat/evidence/catalog-harness/live/r289-gnome-fletch-long-100adccc-resource2d589.log",
+          "start_baseline_present": true
+        },
+        {
+          "case": "gnome_fletch_short",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-gnome-fletch-short-100adccc-resource2d589.json",
+          "log": "docs/compat/evidence/catalog-harness/live/r289-gnome-fletch-short-100adccc-resource2d589.log",
+          "start_baseline_present": true
+        }
       ]
     },
     {
@@ -32385,12 +32431,21 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Latest isolated 04d7b1f4 herblore_secondaries FAIL: FAIL: catalog_boundary_live: scenario failed: step 4 (open and acknowledge the exact lobster food seed bank): fresh_bank_item_id(379)>=50 not seen within 150 ticks. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "status_detail": "Partial controlled resource evidence on exact2d589; full branch/platform acceptance remains open. See resource2d589_results and append-only ledger. Herblore pre-Start readiness and Gnome actual-tree start correction139 pending; Flax reachability semantics audit138 pending.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-herblore-secondaries-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r274-herblore-secondaries-100adccc-04d7b1f4.log",
         "docs/compat/06x-station-platform-and-remaining.md"
+      ],
+      "resource2d589_results": [
+        {
+          "case": "herblore_secondaries",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-herblore-secondaries-100adccc-resource2d589.json",
+          "log": "docs/compat/evidence/catalog-harness/live/r274-herblore-secondaries-100adccc-resource2d589.log",
+          "start_baseline_present": false
+        }
       ]
     },
     {
@@ -32677,12 +32732,21 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Latest isolated 04d7b1f4 herblore_secondaries FAIL: FAIL: catalog_boundary_live: scenario failed: step 4 (open and acknowledge the exact lobster food seed bank): fresh_bank_item_id(379)>=50 not seen within 150 ticks. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "status_detail": "Partial controlled resource evidence on exact2d589; full branch/platform acceptance remains open. See resource2d589_results and append-only ledger. Herblore pre-Start readiness and Gnome actual-tree start correction139 pending; Flax reachability semantics audit138 pending.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-herblore-secondaries-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r289-herblore-secondaries-100adccc-04d7b1f4.log",
         "docs/compat/06x-station-platform-and-remaining.md"
+      ],
+      "resource2d589_results": [
+        {
+          "case": "herblore_secondaries",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-herblore-secondaries-100adccc-resource2d589.json",
+          "log": "docs/compat/evidence/catalog-harness/live/r289-herblore-secondaries-100adccc-resource2d589.log",
+          "start_baseline_present": false
+        }
       ]
     },
     {
@@ -37668,12 +37732,21 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Latest isolated 04d7b1f4 flax_aio_pick FAIL: FAIL: catalog_boundary_live: scenario failed: flax_aio_pick: deadline 180s exceeded. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "status_detail": "Partial controlled resource evidence on exact2d589; full branch/platform acceptance remains open. See resource2d589_results and append-only ledger. Herblore pre-Start readiness and Gnome actual-tree start correction139 pending; Flax reachability semantics audit138 pending.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-flax-aio-pick-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r274-flax-aio-pick-100adccc-04d7b1f4.log",
         "docs/compat/06x-station-platform-and-remaining.md"
+      ],
+      "resource2d589_results": [
+        {
+          "case": "flax_aio_pick",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-flax-aio-pick-100adccc-resource2d589.json",
+          "log": "docs/compat/evidence/catalog-harness/live/r274-flax-aio-pick-100adccc-resource2d589.log",
+          "start_baseline_present": true
+        }
       ]
     },
     {
@@ -37833,12 +37906,21 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Latest isolated 04d7b1f4 flax_aio_pick FAIL: FAIL: catalog_boundary_live: scenario failed: step 8 (watch a full pack of exact flax 1779): has_item_id(1779)>=28 not seen within 150 ticks. Failed artifacts retained; diagnose host/fixture/script ownership before acceptance.",
+      "status_detail": "Partial controlled resource evidence on exact2d589; full branch/platform acceptance remains open. See resource2d589_results and append-only ledger. Herblore pre-Start readiness and Gnome actual-tree start correction139 pending; Flax reachability semantics audit138 pending.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-flax-aio-pick-100adccc-04d7b1f4.json",
         "docs/compat/evidence/catalog-harness/live/r289-flax-aio-pick-100adccc-04d7b1f4.log",
         "docs/compat/06x-station-platform-and-remaining.md"
+      ],
+      "resource2d589_results": [
+        {
+          "case": "flax_aio_pick",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-flax-aio-pick-100adccc-resource2d589.json",
+          "log": "docs/compat/evidence/catalog-harness/live/r289-flax-aio-pick-100adccc-resource2d589.log",
+          "start_baseline_present": true
+        }
       ]
     },
     {
@@ -62790,9 +62872,18 @@
       "observable_proof_requirement": "after Start, script-caused Woodcutting progress plus the card's defining inventory/world transition; exercise every declared setting branch and any bank/return path",
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
-      "status": "PENDING",
-      "status_detail": "PENDING: Rust capability mapping and script-caused functional proof are not yet qualified for this catalog/revision",
-      "fixture_id": "local-289"
+      "status": "PARTIAL",
+      "status_detail": "Partial controlled resource evidence on exact2d589; full branch/platform acceptance remains open. See resource2d589_results and append-only ledger. Herblore pre-Start readiness and Gnome actual-tree start correction139 pending; Flax reachability semantics audit138 pending.",
+      "fixture_id": "local-289",
+      "resource2d589_results": [
+        {
+          "case": "gnome_fletch_short",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-gnome-fletch-short-8e7d965b-resource2d589.json",
+          "log": "docs/compat/evidence/catalog-harness/live/r289-gnome-fletch-short-8e7d965b-resource2d589.log",
+          "start_baseline_present": true
+        }
+      ]
     },
     {
       "display_name": "CoalTrucks",

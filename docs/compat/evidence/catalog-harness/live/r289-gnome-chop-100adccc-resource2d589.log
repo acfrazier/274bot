@@ -1,0 +1,204 @@
+
+running 1 test
+{"phase":"identity","revision":289,"profile":"local-289 · 127.0.0.1:44594 · revision 289","cache_id":"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack","nav_sha256":"131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924","catalog_commit":"100adccc037d9f6898080e1cad58fcfc43364775","catalog_identity":"pre-289 frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"GnomeMagicChopper","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/GnomeMagicChopper/GnomeMagicChopper.ts","source_sha256":"3b0d034c761f9b98361561627817a6d806d359f659000cbccdf22e25772471e1","compiled_sha256":"ab343efb7a0a40f49793d87b2ab4ba07ecb563f9dd9687581414bf4620639218","siblings":[],"settings":{"fletchLogs":false}},"account":"livep6sbkv_0","engine_speed_ms":null}
+[host-play] slot livep6sbkv_0: thread up
+289bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+[host-play] slot livep6sbkv_0: handshake begin reconnect=false
+[host-play] slot livep6sbkv_0: handshake ok
+[host] slot livep6sbkv_0: d_loop_us=2874 d_raster_us=0 d_observe_us=30431 max_observe_us=2455 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot livep6sbkv_0: queued mainland tele+setvar (scene 2)
+[host-play] slot livep6sbkv_0: handshake begin reconnect=true
+[host-play] slot livep6sbkv_0: handshake ok
+[host] slot livep6sbkv_0: d_loop_us=1232 d_raster_us=0 d_observe_us=48200 max_observe_us=5727 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot livep6sbkv_0: queued mainland tele+setvar (scene 2)
+[host] slot livep6sbkv_0: d_loop_us=20875 d_raster_us=0 d_observe_us=96025 max_observe_us=6332 d_paints=0 d_skips=50 d_ticks=27 window_ms=5331
+{"phase":"baseline-after-preparation","scenario":"gnome_chop","account":"livep6sbkv_0","observation":{"ingame":true,"scene_state":2,"player":"Livep6sbkv 0","tile":[2372,3425,0],"combat_level":3,"tick":40,"items":{"Knife":26,"Rune axe":1},"item_ids":{"946":26,"1359":1},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":75},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":1210421},"varps":{"309":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[{"id":1553,"x":2380,"z":3425,"level":0,"name":"Gate","open":true}],"npc_facts":[],"ground_loot":[],"local_in_combat":false,"local_target_npc":null,"local_health":0,"local_animation":-1,"equipment_ids":{},"main_modal":-1,"widget_ids":[3213,3214]}}
+[script livep6sbkv_0] start load
+{"phase":"start","account":"livep6sbkv_0","count":1}
+[host] hitch livep6sbkv_0: observe_us=87233 paints=0 skips=112 ticks=40
+[script livep6sbkv_0] GnomeMagicChopper, magics at 2372,3425 / 2433,3410 / 2491,3413, banking logs (fletch off)
+[script livep6sbkv_0] gear: opening gnome bank for best axe / knife
+[script livep6sbkv_0] walking to bank stairs 2444,3416 (only 2444,3416 or 2445,3443)
+[script livep6sbkv_0] interact WalkNear { x: 2444, z: 3416, level: 0, radius: 1, allow_teleports: false }
+[nav-follow] here=WorldTile { x: 2372, z: 3425, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2374, z: 3425, level: 0 } aim=WorldTile { x: 2379, z: 3424, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2372, z: 3425, level: 0 })
+[nav-follow] here=WorldTile { x: 2374, z: 3425, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2376, z: 3425, level: 0 } aim=WorldTile { x: 2379, z: 3424, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2372, z: 3425, level: 0 })
+[nav-follow] here=WorldTile { x: 2376, z: 3425, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2378, z: 3424, level: 0 } aim=WorldTile { x: 2379, z: 3424, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2372, z: 3425, level: 0 })
+[nav-follow] here=WorldTile { x: 2378, z: 3424, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch livep6sbkv_0: observe_us=17141 paints=0 skips=144 ticks=45
+[host] slot livep6sbkv_0: d_loop_us=2319 d_raster_us=0 d_observe_us=176582 max_observe_us=87233 d_paints=0 d_skips=50 d_ticks=17 window_ms=3539
+[nav-walk] here=WorldTile { x: 2379, z: 3424, level: 0 } aim=WorldTile { x: 2379, z: 3424, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 2372, z: 3425, level: 0 })
+[nav-follow] here=WorldTile { x: 2379, z: 3424, level: 0 } walk=false transport=true leg=1 hops=1 outcome=None
+[host] hitch livep6sbkv_0: observe_us=18574 paints=0 skips=153 ticks=46
+[nav-transport] here=WorldTile { x: 2380, z: 3424, level: 0 } to=WorldTile { x: 2380, z: 3426, level: 0 } troll=false ticks_waited=0 loc_id=1553 open=false
+[nav-follow] here=WorldTile { x: 2380, z: 3424, level: 0 } walk=false transport=true leg=1 hops=1 outcome=None
+[nav-transport] cheap hop walk-through to WorldTile { x: 2380, z: 3426, level: 0 }
+[nav-follow] here=WorldTile { x: 2380, z: 3424, level: 0 } walk=false transport=true leg=1 hops=1 outcome=None
+[host] hitch livep6sbkv_0: observe_us=18730 paints=0 skips=170 ticks=48
+[nav-transport] here=WorldTile { x: 2380, z: 3426, level: 0 } to=WorldTile { x: 2380, z: 3426, level: 0 } troll=false ticks_waited=1 loc_id=1553 open=true
+[nav-follow] here=WorldTile { x: 2380, z: 3426, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[nav-walk] here=WorldTile { x: 2382, z: 3427, level: 0 } aim=WorldTile { x: 2395, z: 3431, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 2380, z: 3426, level: 0 })
+[nav-follow] here=WorldTile { x: 2382, z: 3427, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[nav-walk] here=WorldTile { x: 2384, z: 3427, level: 0 } aim=WorldTile { x: 2395, z: 3431, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 2380, z: 3426, level: 0 })
+[nav-follow] here=WorldTile { x: 2384, z: 3427, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[host] hitch livep6sbkv_0: observe_us=20582 paints=0 skips=196 ticks=51
+[host] slot livep6sbkv_0: d_loop_us=2684 d_raster_us=0 d_observe_us=152400 max_observe_us=20582 d_paints=0 d_skips=50 d_ticks=6 window_ms=1169
+[nav-walk] here=WorldTile { x: 2386, z: 3427, level: 0 } aim=WorldTile { x: 2395, z: 3431, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 2380, z: 3426, level: 0 })
+[nav-follow] here=WorldTile { x: 2386, z: 3427, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[host] hitch livep6sbkv_0: observe_us=16379 paints=0 skips=204 ticks=52
+[nav-walk] here=WorldTile { x: 2388, z: 3427, level: 0 } aim=WorldTile { x: 2395, z: 3431, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 2380, z: 3426, level: 0 })
+[nav-follow] here=WorldTile { x: 2388, z: 3427, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[host] hitch livep6sbkv_0: observe_us=17757 paints=0 skips=213 ticks=53
+[nav-walk] here=WorldTile { x: 2390, z: 3427, level: 0 } aim=WorldTile { x: 2395, z: 3431, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 2380, z: 3426, level: 0 })
+[nav-follow] here=WorldTile { x: 2390, z: 3427, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[host] hitch livep6sbkv_0: observe_us=18900 paints=0 skips=221 ticks=54
+[nav-walk] here=WorldTile { x: 2392, z: 3428, level: 0 } aim=WorldTile { x: 2395, z: 3431, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 2380, z: 3426, level: 0 })
+[nav-follow] here=WorldTile { x: 2392, z: 3428, level: 0 } walk=true transport=false leg=2 hops=2 outcome=None
+[host] hitch livep6sbkv_0: observe_us=21055 paints=0 skips=230 ticks=55
+[nav-walk] here=WorldTile { x: 2394, z: 3430, level: 0 } aim=WorldTile { x: 2395, z: 3431, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 2380, z: 3426, level: 0 })
+[nav-follow] here=WorldTile { x: 2394, z: 3430, level: 0 } walk=true transport=false leg=2 hops=3 outcome=None
+[host] hitch livep6sbkv_0: observe_us=16840 paints=0 skips=238 ticks=56
+[nav-walk] here=WorldTile { x: 2396, z: 3430, level: 0 } aim=WorldTile { x: 2411, z: 3435, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 2394, z: 3430, level: 0 })
+[nav-follow] here=WorldTile { x: 2396, z: 3430, level: 0 } walk=true transport=false leg=2 hops=3 outcome=None
+[host] hitch livep6sbkv_0: observe_us=17886 paints=0 skips=247 ticks=57
+[host] slot livep6sbkv_0: d_loop_us=2985 d_raster_us=0 d_observe_us=161203 max_observe_us=21055 d_paints=0 d_skips=50 d_ticks=6 window_ms=1175
+[nav-walk] here=WorldTile { x: 2398, z: 3430, level: 0 } aim=WorldTile { x: 2411, z: 3435, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 2394, z: 3430, level: 0 })
+[nav-follow] here=WorldTile { x: 2398, z: 3430, level: 0 } walk=true transport=false leg=2 hops=3 outcome=None
+[host] hitch livep6sbkv_0: observe_us=17568 paints=0 skips=255 ticks=58
+[nav-walk] here=WorldTile { x: 2400, z: 3430, level: 0 } aim=WorldTile { x: 2411, z: 3435, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 2394, z: 3430, level: 0 })
+[nav-follow] here=WorldTile { x: 2400, z: 3430, level: 0 } walk=true transport=false leg=2 hops=3 outcome=None
+[host] hitch livep6sbkv_0: observe_us=19592 paints=0 skips=264 ticks=59
+[nav-walk] here=WorldTile { x: 2402, z: 3431, level: 0 } aim=WorldTile { x: 2411, z: 3435, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 2394, z: 3430, level: 0 })
+[nav-follow] here=WorldTile { x: 2402, z: 3431, level: 0 } walk=true transport=false leg=2 hops=3 outcome=None
+[host] hitch livep6sbkv_0: observe_us=17570 paints=0 skips=273 ticks=60
+[nav-walk] here=WorldTile { x: 2404, z: 3433, level: 0 } aim=WorldTile { x: 2411, z: 3435, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 2394, z: 3430, level: 0 })
+[nav-follow] here=WorldTile { x: 2404, z: 3433, level: 0 } walk=true transport=false leg=2 hops=3 outcome=None
+[host] hitch livep6sbkv_0: observe_us=20219 paints=0 skips=281 ticks=61
+[nav-walk] here=WorldTile { x: 2406, z: 3435, level: 0 } aim=WorldTile { x: 2411, z: 3435, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 2394, z: 3430, level: 0 })
+[nav-follow] here=WorldTile { x: 2406, z: 3435, level: 0 } walk=true transport=false leg=2 hops=3 outcome=None
+[host] slot livep6sbkv_0: d_loop_us=2698 d_raster_us=0 d_observe_us=154754 max_observe_us=20219 d_paints=0 d_skips=50 d_ticks=6 window_ms=1185
+[nav-walk] here=WorldTile { x: 2410, z: 3436, level: 0 } aim=WorldTile { x: 2411, z: 3435, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 2394, z: 3430, level: 0 })
+[nav-follow] here=WorldTile { x: 2410, z: 3436, level: 0 } walk=true transport=false leg=2 hops=4 outcome=None
+[host] hitch livep6sbkv_0: observe_us=16433 paints=0 skips=309 ticks=64
+[nav-walk] here=WorldTile { x: 2412, z: 3434, level: 0 } aim=WorldTile { x: 2427, z: 3428, level: 0 } radius=2 ticks_waited=0 sent_tile=Some(WorldTile { x: 2410, z: 3436, level: 0 })
+[nav-follow] here=WorldTile { x: 2412, z: 3434, level: 0 } walk=true transport=false leg=2 hops=4 outcome=None
+[host] hitch livep6sbkv_0: observe_us=16205 paints=0 skips=315 ticks=65
+[nav-walk] here=WorldTile { x: 2414, z: 3432, level: 0 } aim=WorldTile { x: 2427, z: 3428, level: 0 } radius=2 ticks_waited=1 sent_tile=Some(WorldTile { x: 2410, z: 3436, level: 0 })
+[nav-follow] here=WorldTile { x: 2414, z: 3432, level: 0 } walk=true transport=false leg=2 hops=4 outcome=None
+[host] hitch livep6sbkv_0: observe_us=17009 paints=0 skips=324 ticks=66
+[nav-walk] here=WorldTile { x: 2416, z: 3431, level: 0 } aim=WorldTile { x: 2427, z: 3428, level: 0 } radius=2 ticks_waited=2 sent_tile=Some(WorldTile { x: 2410, z: 3436, level: 0 })
+[nav-follow] here=WorldTile { x: 2416, z: 3431, level: 0 } walk=true transport=false leg=2 hops=4 outcome=None
+[host] hitch livep6sbkv_0: observe_us=18386 paints=0 skips=333 ticks=67
+[nav-walk] here=WorldTile { x: 2418, z: 3431, level: 0 } aim=WorldTile { x: 2427, z: 3428, level: 0 } radius=2 ticks_waited=3 sent_tile=Some(WorldTile { x: 2410, z: 3436, level: 0 })
+[nav-follow] here=WorldTile { x: 2418, z: 3431, level: 0 } walk=true transport=false leg=2 hops=4 outcome=None
+[host] hitch livep6sbkv_0: observe_us=16301 paints=0 skips=341 ticks=68
+[host] slot livep6sbkv_0: d_loop_us=15372 d_raster_us=0 d_observe_us=158947 max_observe_us=18386 d_paints=0 d_skips=50 d_ticks=6 window_ms=1144
+[nav-walk] here=WorldTile { x: 2420, z: 3431, level: 0 } aim=WorldTile { x: 2427, z: 3428, level: 0 } radius=2 ticks_waited=4 sent_tile=Some(WorldTile { x: 2410, z: 3436, level: 0 })
+[nav-follow] here=WorldTile { x: 2420, z: 3431, level: 0 } walk=true transport=false leg=2 hops=4 outcome=None
+[host] hitch livep6sbkv_0: observe_us=19247 paints=0 skips=350 ticks=69
+[nav-walk] here=WorldTile { x: 2422, z: 3429, level: 0 } aim=WorldTile { x: 2427, z: 3428, level: 0 } radius=2 ticks_waited=5 sent_tile=Some(WorldTile { x: 2410, z: 3436, level: 0 })
+[nav-follow] here=WorldTile { x: 2422, z: 3429, level: 0 } walk=true transport=false leg=2 hops=4 outcome=None
+[host] hitch livep6sbkv_0: observe_us=19340 paints=0 skips=359 ticks=70
+[nav-walk] here=WorldTile { x: 2424, z: 3428, level: 0 } aim=WorldTile { x: 2427, z: 3428, level: 0 } radius=2 ticks_waited=6 sent_tile=Some(WorldTile { x: 2410, z: 3436, level: 0 })
+[nav-follow] here=WorldTile { x: 2424, z: 3428, level: 0 } walk=true transport=false leg=2 hops=4 outcome=None
+[host] hitch livep6sbkv_0: observe_us=19837 paints=0 skips=367 ticks=71
+[nav-walk] here=WorldTile { x: 2426, z: 3428, level: 0 } aim=WorldTile { x: 2427, z: 3428, level: 0 } radius=2 ticks_waited=7 sent_tile=Some(WorldTile { x: 2410, z: 3436, level: 0 })
+[nav-follow] here=WorldTile { x: 2426, z: 3428, level: 0 } walk=true transport=false leg=2 hops=5 outcome=None
+[host] hitch livep6sbkv_0: observe_us=19374 paints=0 skips=376 ticks=72
+[nav-walk] here=WorldTile { x: 2428, z: 3427, level: 0 } aim=WorldTile { x: 2443, z: 3415, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2426, z: 3428, level: 0 })
+[nav-follow] here=WorldTile { x: 2428, z: 3427, level: 0 } walk=true transport=false leg=2 hops=5 outcome=None
+[host] hitch livep6sbkv_0: observe_us=20055 paints=0 skips=384 ticks=73
+[nav-walk] here=WorldTile { x: 2430, z: 3425, level: 0 } aim=WorldTile { x: 2443, z: 3415, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2426, z: 3428, level: 0 })
+[nav-follow] here=WorldTile { x: 2430, z: 3425, level: 0 } walk=true transport=false leg=2 hops=5 outcome=None
+[host] slot livep6sbkv_0: d_loop_us=2184 d_raster_us=0 d_observe_us=159292 max_observe_us=20055 d_paints=0 d_skips=50 d_ticks=5 window_ms=1165
+[nav-walk] here=WorldTile { x: 2432, z: 3424, level: 0 } aim=WorldTile { x: 2443, z: 3415, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2426, z: 3428, level: 0 })
+[nav-follow] here=WorldTile { x: 2432, z: 3424, level: 0 } walk=true transport=false leg=2 hops=5 outcome=None
+[nav-walk] here=WorldTile { x: 2434, z: 3423, level: 0 } aim=WorldTile { x: 2443, z: 3415, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 2426, z: 3428, level: 0 })
+[nav-follow] here=WorldTile { x: 2434, z: 3423, level: 0 } walk=true transport=false leg=2 hops=5 outcome=None
+[nav-walk] here=WorldTile { x: 2436, z: 3422, level: 0 } aim=WorldTile { x: 2443, z: 3415, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 2426, z: 3428, level: 0 })
+[nav-follow] here=WorldTile { x: 2436, z: 3422, level: 0 } walk=true transport=false leg=2 hops=5 outcome=None
+[nav-walk] here=WorldTile { x: 2438, z: 3421, level: 0 } aim=WorldTile { x: 2443, z: 3415, level: 0 } radius=0 ticks_waited=5 sent_tile=Some(WorldTile { x: 2426, z: 3428, level: 0 })
+[nav-follow] here=WorldTile { x: 2438, z: 3421, level: 0 } walk=true transport=false leg=2 hops=5 outcome=None
+[nav-walk] here=WorldTile { x: 2440, z: 3419, level: 0 } aim=WorldTile { x: 2443, z: 3415, level: 0 } radius=0 ticks_waited=6 sent_tile=Some(WorldTile { x: 2426, z: 3428, level: 0 })
+[nav-follow] here=WorldTile { x: 2440, z: 3419, level: 0 } walk=true transport=false leg=2 hops=5 outcome=None
+[nav-walk] here=WorldTile { x: 2441, z: 3417, level: 0 } aim=WorldTile { x: 2443, z: 3415, level: 0 } radius=0 ticks_waited=7 sent_tile=Some(WorldTile { x: 2426, z: 3428, level: 0 })
+[nav-follow] here=WorldTile { x: 2441, z: 3417, level: 0 } walk=true transport=false leg=2 hops=5 outcome=None
+[host] slot livep6sbkv_0: d_loop_us=1284 d_raster_us=0 d_observe_us=107095 max_observe_us=15911 d_paints=0 d_skips=50 d_ticks=6 window_ms=1167
+[nav-walk] here=WorldTile { x: 2443, z: 3415, level: 0 } aim=WorldTile { x: 2443, z: 3415, level: 0 } radius=0 ticks_waited=8 sent_tile=Some(WorldTile { x: 2426, z: 3428, level: 0 })
+[nav-follow] here=WorldTile { x: 2443, z: 3415, level: 0 } walk=false transport=false leg=3 hops=5 outcome=Some(Arrived { at: WorldTile { x: 2443, z: 3415, level: 0 } })
+[script livep6sbkv_0] Climb-up Staircase @ 2444,3414 (bank stairs only)
+[script livep6sbkv_0] interact Loc { x: 2444, z: 3414, level: 0, action: "Climb-up", id: Some(1742) }
+[script livep6sbkv_0] upstairs, walking to central booths 2445,3425
+[script livep6sbkv_0] walking to central bank booths 2445,3425,1
+[script livep6sbkv_0] interact WalkNear { x: 2445, z: 3425, level: 1, radius: 2, allow_teleports: false }
+[nav-follow] here=WorldTile { x: 2445, z: 3416, level: 1 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2445, z: 3418, level: 1 } aim=WorldTile { x: 2445, z: 3423, level: 1 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2445, z: 3416, level: 1 })
+[nav-follow] here=WorldTile { x: 2445, z: 3418, level: 1 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2445, z: 3420, level: 1 } aim=WorldTile { x: 2445, z: 3423, level: 1 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2445, z: 3416, level: 1 })
+[nav-follow] here=WorldTile { x: 2445, z: 3420, level: 1 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] slot livep6sbkv_0: d_loop_us=4420 d_raster_us=0 d_observe_us=88836 max_observe_us=12778 d_paints=0 d_skips=50 d_ticks=6 window_ms=1199
+[nav-walk] here=WorldTile { x: 2445, z: 3422, level: 1 } aim=WorldTile { x: 2445, z: 3423, level: 1 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2445, z: 3416, level: 1 })
+[nav-follow] here=WorldTile { x: 2445, z: 3422, level: 1 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2445, z: 3423, level: 1 } aim=WorldTile { x: 2445, z: 3423, level: 1 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 2445, z: 3416, level: 1 })
+[nav-follow] here=WorldTile { x: 2445, z: 3423, level: 1 } walk=false transport=false leg=1 hops=1 outcome=Some(Arrived { at: WorldTile { x: 2445, z: 3423, level: 1 } })
+[script livep6sbkv_0] Use-quickly Bank booth @ 2444,3424,1
+[script livep6sbkv_0] interact Loc { x: 2444, z: 3424, level: 1, action: "Use-quickly", id: Some(2213) }
+[host] slot livep6sbkv_0: d_loop_us=1856 d_raster_us=0 d_observe_us=108421 max_observe_us=14026 d_paints=0 d_skips=50 d_ticks=6 window_ms=1190
+[script livep6sbkv_0] gear: depositing all except Knife
+[script livep6sbkv_0] gear: withdrawing Rune axe
+[script livep6sbkv_0] interact Close
+[shim-close] sent
+[host] slot livep6sbkv_0: d_loop_us=2162 d_raster_us=0 d_observe_us=107412 max_observe_us=15888 d_paints=0 d_skips=50 d_ticks=6 window_ms=1168
+[script livep6sbkv_0] gear: keeping Rune axe in pack (Attack too low to wield)
+[script livep6sbkv_0] gear: ready, Rune axe
+[script livep6sbkv_0] walking to bank stairs 2444,3416 (only 2444,3416 or 2445,3443)
+[script livep6sbkv_0] interact WalkNear { x: 2444, z: 3416, level: 1, radius: 1, allow_teleports: false }
+[nav-follow] here=WorldTile { x: 2445, z: 3424, level: 1 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2445, z: 3422, level: 1 } aim=WorldTile { x: 2445, z: 3417, level: 1 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2445, z: 3424, level: 1 })
+[nav-follow] here=WorldTile { x: 2445, z: 3422, level: 1 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2445, z: 3420, level: 1 } aim=WorldTile { x: 2445, z: 3417, level: 1 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2445, z: 3424, level: 1 })
+[nav-follow] here=WorldTile { x: 2445, z: 3420, level: 1 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2445, z: 3418, level: 1 } aim=WorldTile { x: 2445, z: 3417, level: 1 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2445, z: 3424, level: 1 })
+[nav-follow] here=WorldTile { x: 2445, z: 3418, level: 1 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2445, z: 3417, level: 1 } aim=WorldTile { x: 2445, z: 3417, level: 1 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 2445, z: 3424, level: 1 })
+[nav-follow] here=WorldTile { x: 2445, z: 3417, level: 1 } walk=false transport=false leg=1 hops=1 outcome=Some(Arrived { at: WorldTile { x: 2445, z: 3417, level: 1 } })
+[script livep6sbkv_0] climbing down allowed bank staircase
+[script livep6sbkv_0] Climb-down Staircase @ 2445,3415 (bank stairs only)
+[script livep6sbkv_0] interact Loc { x: 2445, z: 3415, level: 1, action: "Climb-down", id: Some(1744) }
+[host] slot livep6sbkv_0: d_loop_us=1701 d_raster_us=0 d_observe_us=97788 max_observe_us=12888 d_paints=0 d_skips=50 d_ticks=6 window_ms=1167
+[script livep6sbkv_0] back on the ground, heading to magics
+[script livep6sbkv_0] running to Magic tree @ 2432,3410
+[script livep6sbkv_0] interact WalkNear { x: 2432, z: 3410, level: 0, radius: 2, allow_teleports: false }
+[nav-follow] here=WorldTile { x: 2446, z: 3415, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2446, z: 3413, level: 0 } aim=WorldTile { x: 2434, z: 3408, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2446, z: 3415, level: 0 })
+[nav-follow] here=WorldTile { x: 2446, z: 3413, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] slot livep6sbkv_0: d_loop_us=7428 d_raster_us=0 d_observe_us=118129 max_observe_us=15686 d_paints=0 d_skips=50 d_ticks=6 window_ms=1183
+[nav-walk] here=WorldTile { x: 2444, z: 3413, level: 0 } aim=WorldTile { x: 2434, z: 3408, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2446, z: 3415, level: 0 })
+[nav-follow] here=WorldTile { x: 2444, z: 3413, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch livep6sbkv_0: observe_us=16940 paints=0 skips=706 ticks=111
+[nav-walk] here=WorldTile { x: 2442, z: 3413, level: 0 } aim=WorldTile { x: 2434, z: 3408, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2446, z: 3415, level: 0 })
+[nav-follow] here=WorldTile { x: 2442, z: 3413, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch livep6sbkv_0: observe_us=19050 paints=0 skips=715 ticks=112
+[nav-walk] here=WorldTile { x: 2440, z: 3411, level: 0 } aim=WorldTile { x: 2434, z: 3408, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 2446, z: 3415, level: 0 })
+[nav-follow] here=WorldTile { x: 2440, z: 3411, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2438, z: 3411, level: 0 } aim=WorldTile { x: 2434, z: 3408, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 2446, z: 3415, level: 0 })
+[nav-follow] here=WorldTile { x: 2438, z: 3411, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch livep6sbkv_0: observe_us=19738 paints=0 skips=732 ticks=114
+[nav-walk] here=WorldTile { x: 2436, z: 3410, level: 0 } aim=WorldTile { x: 2434, z: 3408, level: 0 } radius=0 ticks_waited=5 sent_tile=Some(WorldTile { x: 2446, z: 3415, level: 0 })
+[nav-follow] here=WorldTile { x: 2436, z: 3410, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch livep6sbkv_0: observe_us=17648 paints=0 skips=741 ticks=115
+[nav-walk] here=WorldTile { x: 2434, z: 3408, level: 0 } aim=WorldTile { x: 2434, z: 3408, level: 0 } radius=0 ticks_waited=6 sent_tile=Some(WorldTile { x: 2446, z: 3415, level: 0 })
+[nav-follow] here=WorldTile { x: 2434, z: 3408, level: 0 } walk=false transport=false leg=1 hops=1 outcome=Some(Arrived { at: WorldTile { x: 2434, z: 3408, level: 0 } })
+[host] slot livep6sbkv_0: d_loop_us=1972 d_raster_us=0 d_observe_us=150397 max_observe_us=19738 d_paints=0 d_skips=50 d_ticks=6 window_ms=1188
+[host] slot livep6sbkv_0: d_loop_us=1850 d_raster_us=0 d_observe_us=119100 max_observe_us=14421 d_paints=0 d_skips=50 d_ticks=6 window_ms=1185
+[script livep6sbkv_0] chopping Magic tree @ 2432,3410
+[script livep6sbkv_0] interact Loc { x: 2432, z: 3410, level: 0, action: "Chop down", id: Some(1306) }
+[host] slot livep6sbkv_0: d_loop_us=1766 d_raster_us=0 d_observe_us=89316 max_observe_us=13811 d_paints=0 d_skips=50 d_ticks=6 window_ms=1171
+[host] slot livep6sbkv_0: d_loop_us=1289 d_raster_us=0 d_observe_us=98572 max_observe_us=11018 d_paints=0 d_skips=50 d_ticks=5 window_ms=1176
+[host] slot livep6sbkv_0: d_loop_us=1727 d_raster_us=0 d_observe_us=101617 max_observe_us=10785 d_paints=0 d_skips=50 d_ticks=6 window_ms=1172
+[host] slot livep6sbkv_0: d_loop_us=1379 d_raster_us=0 d_observe_us=102149 max_observe_us=12721 d_paints=0 d_skips=50 d_ticks=6 window_ms=1169
+[host] slot livep6sbkv_0: d_loop_us=1360 d_raster_us=0 d_observe_us=83421 max_observe_us=8781 d_paints=0 d_skips=50 d_ticks=6 window_ms=1193
+[host] slot livep6sbkv_0: d_loop_us=2059 d_raster_us=0 d_observe_us=129465 max_observe_us=13121 d_paints=0 d_skips=50 d_ticks=6 window_ms=1183
+FAIL: catalog_boundary_live: scenario failed: step 16 (watch Woodcutting XP from a Magic tree after Start): stat_xp_gain(8)>=1 not seen within 150 ticks; evidence=Some(Evidence { scenario: "gnome_chop", outcome: "FAIL", predicate: "stat_xp_gain(8)>=1", ticks: 172, elapsed_ms: 39288, message: Some("step 16 (watch Woodcutting XP from a Magic tree after Start): stat_xp_gain(8)>=1 not seen within 150 ticks"), tile: Some([2433, 3409, 0]), inv: [InvRow { id: 1359, name: Some("Rune axe"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }, InvRow { id: 946, name: Some("Knife"), count: 1 }], stat: Some(StatRow { runenergy: 66 }), chat: [ChatRow { text: "You swing your axe at the tree.", username: None }, ChatRow { text: "Inventory wiped.", username: None }, ChatRow { text: "set tutorial: to 1000", username: None }, ChatRow { text: "Welcome to RuneScape.", username: None }], scene: 2 }); core={"error":"gnome_chop core post-Start delta incomplete","witness":{"case":"gnome_chop","baseline":{"ingame":true,"scene_state":2,"player":"Livep6sbkv 0","tile":[2372,3425,0],"combat_level":3,"tick":40,"items":{"Knife":26,"Rune axe":1},"item_ids":{"946":26,"1359":1},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":75},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":1210421},"varps":{"309":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[{"id":1553,"x":2380,"z":3425,"level":0,"name":"Gate","open":true}],"npc_facts":[],"ground_loot":[],"local_in_combat":false,"local_target_npc":null,"local_health":0,"local_animation":-1,"equipment_ids":{},"main_modal":-1,"widget_ids":[3213,3214]},"latest":{"ingame":true,"scene_state":2,"player":"Livep6sbkv 0","tile":[2433,3409,0],"combat_level":3,"tick":158,"items":{"Knife":26,"Rune axe":1},"item_ids":{"946":26,"1359":1},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":2,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":75},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":1210421},"varps":{"309":0},"chat":[[8,"You swing your axe at the tree."],[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[],"npc_facts":[],"ground_loot":[],"local_in_combat":false,"local_target_npc":null,"local_health":0,"local_animation":867,"equipment_ids":{},"main_modal":-1,"widget_ids":[3213,3214]},"max_items":{"Knife":26,"Rune axe":1},"max_xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":1210421},"saw_bury_chat":false,"post_start_observations":987,"bone_bank_cycle":{"first_batch_buried":false,"opened":null,"withdrawn":null,"buried_after_withdrawal":false},"bank_fletcher_cycle":{"first_pack_created":false,"deposited":null,"withdrawn":null,"crafted_after_withdrawal":false},"bank_fletcher_option_cycle":{"first":null,"deposited":null,"restocked":null,"further":false},"bank_fletcher_string_cycle":{"initial_pairs_strung":false,"deposited":null,"withdrawn":null,"strung_after_withdrawal":false},"bank_fletcher_cut_string_cycle":{"cut_pair_created":false,"deposited":null,"withdrawn":null,"string_pair_created":false},"alcher_defaults_cycle":{"withdrawn":null,"consumed":false},"alcher_generated_custom_cycle":{"withdrawn":null,"consumed":false},"dart_fletcher_cycle":{"first":null,"further":false,"wrong_tier":false},"herb_cleaner_cycle":{"first_pack":false,"deposited":null,"withdrawn":null,"cleaned_after_withdrawal":false,"filter_violated":false},"gem_cutter_cycle":{"first_pack":false,"deposited":null,"withdrawn":null,"cut_after_withdrawal":false,"filter_violated":false},"door_opener_cycle":{"selected":null,"opened":false},"gnome_course_cycle":{"log":null,"ground_return":null,"pipe":null,"second_lap":false},"wildy_agility_cycle":{"ridge":null,"pipe":null,"rope":null,"stone":null,"log":null,"rocks":null,"further_pipe":false},"brimhaven_agility_cycle":{"paid":false,"entered":null,"moved":null,"first_tag":false,"ticket":null,"subsequent_work":false},"flax_picker_cycle":{"first_pack":false,"deposited":null,"returned":false,"further":false},"superheater_cycle":{"first_bars":false,"deposited":null,"withdrawn":null,"produced_after_withdrawal":false,"wrong_product":false,"wrong_staff":false},"chicken_killer_bank_cycle":{"combat_loot":false,"deposited":null,"returned":false,"further":false},"vial_filler_cycle":{"filled":null,"deposited":null,"withdrawn":null,"returned":false,"further":false},"potion_maker_cycle":{"unfinished":null,"finished":null,"deposited":null,"withdrawn":null,"further":false,"wrong_product":false,"filter_violated":false},"tanner_bot_cycle":{"widget":null,"tanned":null,"deposited":null,"withdrawn":null,"returned":false,"further":false,"wrong_product":false,"shop":false},"rune_crafter_cycle":{"withdrawn":null,"entered":null,"crafted":null,"exited":null,"deposited":null,"restocked":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"ardy_cakes_cycle":{"stolen":null,"deposited":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"ardy_thiever_cycle":{"pickpocketed":null,"deposited":null,"returned":false,"further":false},"gnome_chop_cycle":{"chopped":null,"deposited":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"gnome_fletch_cycle":{"chopped":null,"fletched":null,"deposited":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"coal_trucks_cycle":{"mined":null,"trucked":null,"further":false,"noted":false,"banked":false},"station_production_cycle":{"withdrawn":null,"produced":null,"deposited":null,"restocked":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"flax_aio_cycle":{"picked":null,"produced":null,"deposited":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"flax_aio_pick_cycle":{"first_pack":false,"deposited":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"herblore_eggs_cycle":{"taken":false,"deposited":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"herblore_newt_cycle":{"bought":false,"deposited":null,"returned":false,"further":false,"coins_spent":false,"coins_peak":0,"wrong_product":false,"noted":false},"combat_core_cycle":{"engagements":0,"defeats":0,"style_xp":false,"looted":false,"noted":false,"activated":false,"shield_worn":false,"stolen_food":false,"wrong_item":false,"dormant_indexes":[],"dormant_tiles":{},"last":{},"currently_engaged":[],"facts":[]},"ordered_first_exhausted":false}}; diagnostic={"observation":{"ingame":true,"scene_state":2,"player":"Livep6sbkv 0","tile":[2433,3409,0],"combat_level":3,"tick":158,"items":{"Knife":26,"Rune axe":1},"item_ids":{"946":26,"1359":1},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":2,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":10,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":1,"woodcutting":75},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":1154,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":0,"woodcutting":1210421},"varps":{"309":0},"chat":[[8,"You swing your axe at the tree."],[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[],"npc_facts":[],"ground_loot":[],"local_in_combat":false,"local_target_npc":null,"local_health":0,"local_animation":867,"equipment_ids":{},"main_modal":-1,"widget_ids":[3213,3214]},"flax_aio_pick":null}
