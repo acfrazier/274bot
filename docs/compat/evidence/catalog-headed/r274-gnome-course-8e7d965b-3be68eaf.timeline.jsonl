@@ -1,0 +1,225 @@
+{"elapsed_seconds": 4.655494, "line": "[host-play] slot live2ws5dn_0: thread up"}
+{"elapsed_seconds": 4.694284, "line": "274bot: loaded snapshot (4556 models, 336 anim records)"}
+{"elapsed_seconds": 4.823639, "line": "[panel] scenario capture armed: Some(\"gnome_course\")"}
+{"elapsed_seconds": 4.823695, "line": "[panel] live2ws5dn_0: live2ws5dn_0: slot up"}
+{"elapsed_seconds": 4.911934, "line": "[host-play] slot live2ws5dn_0: handshake begin reconnect=false"}
+{"elapsed_seconds": 5.03911, "line": "[host-play] slot live2ws5dn_0: handshake ok"}
+{"elapsed_seconds": 5.111029, "line": "[host] hitch live2ws5dn_0: frame_us=71282 paints=1 skips=0 ticks=0"}
+{"elapsed_seconds": 5.118731, "line": "[panel] live2ws5dn_0: live2ws5dn_0: scene 1"}
+{"elapsed_seconds": 5.789257, "line": "[host] hitch live2ws5dn_0: frame_us=69155 paints=25 skips=0 ticks=1"}
+{"elapsed_seconds": 5.791832, "line": "[panel] live2ws5dn_0: live2ws5dn_0: mainland hop queued"}
+{"elapsed_seconds": 5.797777, "line": "[panel] live2ws5dn_0: live2ws5dn_0: ingame"}
+{"elapsed_seconds": 5.797875, "line": "[panel] live2ws5dn_0: live2ws5dn_0: scene 2"}
+{"elapsed_seconds": 5.797895, "line": "live script_gnome_course: running step 1/10"}
+{"elapsed_seconds": 6.302053, "line": "[panel] live2ws5dn_0: live2ws5dn_0: scene 1"}
+{"elapsed_seconds": 6.407677, "line": "[host] slot live2ws5dn_0: d_loop_us=21960 d_raster_us=296655 d_observe_us=64431 max_observe_us=3837 d_paints=50 d_skips=0 d_ticks=3 window_ms=0"}
+{"elapsed_seconds": 6.408811, "line": "[panel] live2ws5dn_0: live2ws5dn_0: ingame"}
+{"elapsed_seconds": 6.408848, "line": "[panel] live2ws5dn_0: live2ws5dn_0: scene 2"}
+{"elapsed_seconds": 7.697506, "line": "[host] slot live2ws5dn_0: d_loop_us=1329 d_raster_us=182591 d_observe_us=55490 max_observe_us=3486 d_paints=50 d_skips=0 d_ticks=2 window_ms=1289"}
+{"elapsed_seconds": 8.418863, "line": "live script_gnome_course: running step 2/10"}
+{"elapsed_seconds": 8.677376, "line": "[host-play] slot live2ws5dn_0: handshake begin reconnect=true"}
+{"elapsed_seconds": 8.692592, "line": "[panel] live2ws5dn_0: live2ws5dn_0: scene 0"}
+{"elapsed_seconds": 9.236927, "line": "[host-play] slot live2ws5dn_0: handshake ok"}
+{"elapsed_seconds": 9.281719, "line": "[panel] live2ws5dn_0: live2ws5dn_0: scene 1"}
+{"elapsed_seconds": 10.25095, "line": "[panel] live2ws5dn_0: live2ws5dn_0: ingame"}
+{"elapsed_seconds": 10.251022, "line": "[panel] live2ws5dn_0: live2ws5dn_0: scene 2"}
+{"elapsed_seconds": 10.538118, "line": "[host] slot live2ws5dn_0: d_loop_us=15167 d_raster_us=181021 d_observe_us=78499 max_observe_us=5203 d_paints=50 d_skips=0 d_ticks=1 window_ms=0"}
+{"elapsed_seconds": 11.808902, "line": "[host] slot live2ws5dn_0: d_loop_us=1296 d_raster_us=170744 d_observe_us=40344 max_observe_us=4051 d_paints=50 d_skips=0 d_ticks=4 window_ms=1270"}
+{"elapsed_seconds": 12.265071, "line": "live script_gnome_course: running step 3/10"}
+{"elapsed_seconds": 12.890052, "line": "[panel] live2ws5dn_0: live2ws5dn_0: scene 1"}
+{"elapsed_seconds": 13.015054, "line": "[panel] live2ws5dn_0: live2ws5dn_0: ingame"}
+{"elapsed_seconds": 13.015144, "line": "[panel] live2ws5dn_0: live2ws5dn_0: scene 2"}
+{"elapsed_seconds": 13.07646, "line": "[host] slot live2ws5dn_0: d_loop_us=12189 d_raster_us=174753 d_observe_us=66758 max_observe_us=8072 d_paints=50 d_skips=0 d_ticks=2 window_ms=1267"}
+{"elapsed_seconds": 14.357982, "line": "[host] slot live2ws5dn_0: d_loop_us=1177 d_raster_us=165873 d_observe_us=50272 max_observe_us=4829 d_paints=50 d_skips=0 d_ticks=2 window_ms=1281"}
+{"elapsed_seconds": 15.035322, "line": "live script_gnome_course: running step 4/10"}
+{"elapsed_seconds": 15.049008, "line": "[script live2ws5dn_0] start load"}
+{"elapsed_seconds": 15.131209, "line": "live script_gnome_course: running step 5/10"}
+{"elapsed_seconds": 15.131284, "line": "[host] hitch live2ws5dn_0: observe_us=83090 paints=226 skips=0 ticks=10"}
+{"elapsed_seconds": 15.697771, "line": "[host] slot live2ws5dn_0: d_loop_us=1170 d_raster_us=155766 d_observe_us=135214 max_observe_us=83090 d_paints=50 d_skips=0 d_ticks=2 window_ms=1339"}
+{"elapsed_seconds": 15.901862, "line": "[script live2ws5dn_0] running agility course: [log balance -> obstacle net -> tree branch -> balancing rope -> tree branch -> obstacle net -> obstacle pipe] within 20 tiles"}
+{"elapsed_seconds": 15.901976, "line": "[script live2ws5dn_0] interact Loc { x: 2474, z: 3435, level: 0, action: \"Walk-across\" }"}
+{"elapsed_seconds": 15.910495, "line": "[panel] live2ws5dn_0: script: running agility course: [log balance -> obstacle net -> tree branch -> balancing rope -> tree branch -> obstacle net -> obstacle pipe] within 20 tiles"}
+{"elapsed_seconds": 16.985527, "line": "[host] slot live2ws5dn_0: d_loop_us=1194 d_raster_us=159082 d_observe_us=65146 max_observe_us=14673 d_paints=50 d_skips=0 d_ticks=2 window_ms=1287"}
+{"elapsed_seconds": 18.258181, "line": "[host] slot live2ws5dn_0: d_loop_us=1094 d_raster_us=146583 d_observe_us=59391 max_observe_us=13232 d_paints=50 d_skips=0 d_ticks=3 window_ms=1272"}
+{"elapsed_seconds": 19.532456, "line": "[host] slot live2ws5dn_0: d_loop_us=1187 d_raster_us=155743 d_observe_us=78050 max_observe_us=15166 d_paints=50 d_skips=0 d_ticks=2 window_ms=1274"}
+{"elapsed_seconds": 20.700595, "line": "live script_gnome_course: running step 6/10"}
+{"elapsed_seconds": 20.718827, "line": "live script_gnome_course: running step 7/10"}
+{"elapsed_seconds": 20.798148, "line": "[host] slot live2ws5dn_0: d_loop_us=1046 d_raster_us=151393 d_observe_us=65625 max_observe_us=15870 d_paints=50 d_skips=0 d_ticks=2 window_ms=1265"}
+{"elapsed_seconds": 22.057953, "line": "[host] slot live2ws5dn_0: d_loop_us=1191 d_raster_us=160229 d_observe_us=60194 max_observe_us=10497 d_paints=50 d_skips=0 d_ticks=2 window_ms=1259"}
+{"elapsed_seconds": 23.10195, "line": "[script live2ws5dn_0] interact Loc { x: 2471, z: 3425, level: 0, action: \"Climb-over\" }"}
+{"elapsed_seconds": 23.36894, "line": "[host] slot live2ws5dn_0: d_loop_us=1099 d_raster_us=174122 d_observe_us=62047 max_observe_us=10965 d_paints=50 d_skips=0 d_ticks=2 window_ms=1310"}
+{"elapsed_seconds": 24.616895, "line": "[host] slot live2ws5dn_0: d_loop_us=1109 d_raster_us=166685 d_observe_us=63442 max_observe_us=10393 d_paints=50 d_skips=0 d_ticks=2 window_ms=1247"}
+{"elapsed_seconds": 25.896794, "line": "[host] slot live2ws5dn_0: d_loop_us=1098 d_raster_us=186452 d_observe_us=59307 max_observe_us=10180 d_paints=50 d_skips=0 d_ticks=2 window_ms=1279"}
+{"elapsed_seconds": 27.198316, "line": "[host] slot live2ws5dn_0: d_loop_us=4767 d_raster_us=131959 d_observe_us=62284 max_observe_us=10734 d_paints=50 d_skips=0 d_ticks=2 window_ms=1301"}
+{"elapsed_seconds": 27.896763, "line": "[script live2ws5dn_0] interact Loc { x: 2473, z: 3422, level: 1, action: \"Climb\" }"}
+{"elapsed_seconds": 28.493856, "line": "[host] slot live2ws5dn_0: d_loop_us=953 d_raster_us=128251 d_observe_us=55455 max_observe_us=12543 d_paints=50 d_skips=0 d_ticks=3 window_ms=1295"}
+{"elapsed_seconds": 29.775118, "line": "[host] slot live2ws5dn_0: d_loop_us=924 d_raster_us=145272 d_observe_us=45168 max_observe_us=7392 d_paints=50 d_skips=0 d_ticks=2 window_ms=1281"}
+{"elapsed_seconds": 31.081621, "line": "[host] slot live2ws5dn_0: d_loop_us=3982 d_raster_us=133168 d_observe_us=54240 max_observe_us=8244 d_paints=50 d_skips=0 d_ticks=2 window_ms=1306"}
+{"elapsed_seconds": 32.097239, "line": "[script live2ws5dn_0] interact Loc { x: 2478, z: 3420, level: 2, action: \"Walk-on\" }"}
+{"elapsed_seconds": 32.362948, "line": "[host] slot live2ws5dn_0: d_loop_us=867 d_raster_us=111540 d_observe_us=37645 max_observe_us=7351 d_paints=50 d_skips=0 d_ticks=2 window_ms=1281"}
+{"elapsed_seconds": 33.679545, "line": "[host] slot live2ws5dn_0: d_loop_us=792 d_raster_us=97246 d_observe_us=31091 max_observe_us=4833 d_paints=50 d_skips=0 d_ticks=2 window_ms=1316"}
+{"elapsed_seconds": 34.995774, "line": "[host] slot live2ws5dn_0: d_loop_us=873 d_raster_us=136815 d_observe_us=41753 max_observe_us=8287 d_paints=50 d_skips=0 d_ticks=2 window_ms=1316"}
+{"elapsed_seconds": 36.290308, "line": "[host] slot live2ws5dn_0: d_loop_us=870 d_raster_us=158897 d_observe_us=51077 max_observe_us=8030 d_paints=50 d_skips=0 d_ticks=3 window_ms=1294"}
+{"elapsed_seconds": 37.563897, "line": "[host] slot live2ws5dn_0: d_loop_us=888 d_raster_us=149297 d_observe_us=44824 max_observe_us=8961 d_paints=50 d_skips=0 d_ticks=2 window_ms=1273"}
+{"elapsed_seconds": 38.868304, "line": "[host] slot live2ws5dn_0: d_loop_us=840 d_raster_us=133193 d_observe_us=42824 max_observe_us=6539 d_paints=50 d_skips=0 d_ticks=2 window_ms=1304"}
+{"elapsed_seconds": 40.166065, "line": "[host] slot live2ws5dn_0: d_loop_us=841 d_raster_us=132566 d_observe_us=45895 max_observe_us=8497 d_paints=50 d_skips=0 d_ticks=2 window_ms=1297"}
+{"elapsed_seconds": 40.495737, "line": "[script live2ws5dn_0] interact Loc { x: 2486, z: 3419, level: 2, action: \"Climb-down\" }"}
+{"elapsed_seconds": 41.457457, "line": "[host] slot live2ws5dn_0: d_loop_us=880 d_raster_us=135691 d_observe_us=43395 max_observe_us=6799 d_paints=50 d_skips=0 d_ticks=2 window_ms=1291"}
+{"elapsed_seconds": 42.760657, "line": "[host] slot live2ws5dn_0: d_loop_us=870 d_raster_us=126746 d_observe_us=43181 max_observe_us=7420 d_paints=50 d_skips=0 d_ticks=2 window_ms=1303"}
+{"elapsed_seconds": 42.889788, "line": "live script_gnome_course: running step 8/10"}
+{"elapsed_seconds": 44.024871, "line": "[host] slot live2ws5dn_0: d_loop_us=7583 d_raster_us=157087 d_observe_us=83129 max_observe_us=14835 d_paints=50 d_skips=0 d_ticks=2 window_ms=1264"}
+{"elapsed_seconds": 44.69926, "line": "[script live2ws5dn_0] interact Loc { x: 2483, z: 3426, level: 0, action: \"Climb-over\" }"}
+{"elapsed_seconds": 45.302678, "line": "[host] slot live2ws5dn_0: d_loop_us=1024 d_raster_us=157355 d_observe_us=71405 max_observe_us=10518 d_paints=50 d_skips=0 d_ticks=3 window_ms=1277"}
+{"elapsed_seconds": 45.89765, "line": "[host] hitch live2ws5dn_0: observe_us=16827 paints=1422 skips=0 ticks=62"}
+{"elapsed_seconds": 46.501307, "line": "live script_gnome_course: running step 9/10"}
+{"elapsed_seconds": 46.572732, "line": "[host] slot live2ws5dn_0: d_loop_us=1127 d_raster_us=157092 d_observe_us=68319 max_observe_us=16827 d_paints=50 d_skips=0 d_ticks=2 window_ms=1270"}
+{"elapsed_seconds": 47.844716, "line": "[host] slot live2ws5dn_0: d_loop_us=1201 d_raster_us=191251 d_observe_us=62713 max_observe_us=10835 d_paints=50 d_skips=0 d_ticks=2 window_ms=1271"}
+{"elapsed_seconds": 49.118722, "line": "[host] slot live2ws5dn_0: d_loop_us=1220 d_raster_us=168440 d_observe_us=61294 max_observe_us=10124 d_paints=50 d_skips=0 d_ticks=2 window_ms=1273"}
+{"elapsed_seconds": 50.110874, "line": "[script live2ws5dn_0] interact Loc { x: 2484, z: 3431, level: 0, action: \"Squeeze-through\" }"}
+{"elapsed_seconds": 50.38336, "line": "[host] slot live2ws5dn_0: d_loop_us=1163 d_raster_us=158765 d_observe_us=61331 max_observe_us=9915 d_paints=50 d_skips=0 d_ticks=2 window_ms=1264"}
+{"elapsed_seconds": 51.649574, "line": "[host] slot live2ws5dn_0: d_loop_us=1077 d_raster_us=156330 d_observe_us=61109 max_observe_us=10163 d_paints=50 d_skips=0 d_ticks=2 window_ms=1266"}
+{"elapsed_seconds": 52.941901, "line": "[host] slot live2ws5dn_0: d_loop_us=1070 d_raster_us=150184 d_observe_us=67817 max_observe_us=14111 d_paints=50 d_skips=0 d_ticks=2 window_ms=1292"}
+{"elapsed_seconds": 54.207928, "line": "[host] slot live2ws5dn_0: d_loop_us=1050 d_raster_us=157987 d_observe_us=58170 max_observe_us=8072 d_paints=50 d_skips=0 d_ticks=2 window_ms=1266"}
+{"elapsed_seconds": 55.491241, "line": "[host] slot live2ws5dn_0: d_loop_us=1036 d_raster_us=150167 d_observe_us=58454 max_observe_us=7180 d_paints=50 d_skips=0 d_ticks=3 window_ms=1283"}
+{"elapsed_seconds": 56.782409, "line": "[host] slot live2ws5dn_0: d_loop_us=990 d_raster_us=155367 d_observe_us=56036 max_observe_us=7467 d_paints=50 d_skips=0 d_ticks=2 window_ms=1291"}
+{"elapsed_seconds": 57.287301, "line": "[host] hitch live2ws5dn_0: observe_us=17955 paints=1868 skips=0 ticks=81"}
+{"elapsed_seconds": 58.071455, "line": "[host] slot live2ws5dn_0: d_loop_us=1096 d_raster_us=153842 d_observe_us=70927 max_observe_us=17955 d_paints=50 d_skips=0 d_ticks=2 window_ms=1289"}
+{"elapsed_seconds": 59.349502, "line": "[host] slot live2ws5dn_0: d_loop_us=1096 d_raster_us=159314 d_observe_us=63214 max_observe_us=10684 d_paints=50 d_skips=0 d_ticks=2 window_ms=1278"}
+{"elapsed_seconds": 60.629296, "line": "[host] slot live2ws5dn_0: d_loop_us=1122 d_raster_us=193345 d_observe_us=66742 max_observe_us=13286 d_paints=50 d_skips=0 d_ticks=2 window_ms=1279"}
+{"elapsed_seconds": 60.913657, "line": "[script live2ws5dn_0] lap 1 complete"}
+{"elapsed_seconds": 60.923339, "line": "[panel] live2ws5dn_0: script: lap 1 complete"}
+{"elapsed_seconds": 61.495895, "line": "[script live2ws5dn_0] interact ContinueDialog"}
+{"elapsed_seconds": 61.909759, "line": "[host] slot live2ws5dn_0: d_loop_us=974 d_raster_us=199369 d_observe_us=59535 max_observe_us=9708 d_paints=50 d_skips=0 d_ticks=2 window_ms=1280"}
+{"elapsed_seconds": 62.713351, "line": "[script live2ws5dn_0] interact Loc { x: 2474, z: 3435, level: 0, action: \"Walk-across\" }"}
+{"elapsed_seconds": 63.221875, "line": "[host] slot live2ws5dn_0: d_loop_us=937 d_raster_us=161541 d_observe_us=63441 max_observe_us=12196 d_paints=50 d_skips=0 d_ticks=2 window_ms=1312"}
+{"elapsed_seconds": 64.49654, "line": "[host] hitch live2ws5dn_0: observe_us=17304 paints=2149 skips=0 ticks=93"}
+{"elapsed_seconds": 64.500256, "line": "[host] slot live2ws5dn_0: d_loop_us=1146 d_raster_us=156092 d_observe_us=79936 max_observe_us=17304 d_paints=50 d_skips=0 d_ticks=3 window_ms=1278"}
+{"elapsed_seconds": 65.742419, "line": "[host] slot live2ws5dn_0: d_loop_us=1124 d_raster_us=151388 d_observe_us=64192 max_observe_us=10668 d_paints=50 d_skips=0 d_ticks=2 window_ms=1242"}
+{"elapsed_seconds": 67.000305, "line": "[host] slot live2ws5dn_0: d_loop_us=1162 d_raster_us=153730 d_observe_us=68881 max_observe_us=15779 d_paints=50 d_skips=0 d_ticks=2 window_ms=1257"}
+{"elapsed_seconds": 68.304022, "line": "[host] slot live2ws5dn_0: d_loop_us=1171 d_raster_us=157394 d_observe_us=59807 max_observe_us=12710 d_paints=50 d_skips=0 d_ticks=2 window_ms=1303"}
+{"elapsed_seconds": 69.548115, "line": "[host] slot live2ws5dn_0: d_loop_us=1211 d_raster_us=157463 d_observe_us=67651 max_observe_us=14024 d_paints=50 d_skips=0 d_ticks=2 window_ms=1244"}
+{"elapsed_seconds": 70.824782, "line": "[host] slot live2ws5dn_0: d_loop_us=1207 d_raster_us=153276 d_observe_us=70388 max_observe_us=15455 d_paints=50 d_skips=0 d_ticks=2 window_ms=1276"}
+{"elapsed_seconds": 71.118787, "line": "live script_gnome_course: running step 10/10"}
+{"elapsed_seconds": 71.121214, "line": "[panel] scenario capture requested: gnome_course"}
+{"elapsed_seconds": 71.174818, "line": "[host] hitch live2ws5dn_0: observe_us=54704 paints=2411 skips=0 ticks=104"}
+{"elapsed_seconds": 71.177038, "line": "[panel] capture readback requested: 1"}
+{"elapsed_seconds": 72.037354, "line": "[panel] shot gnome_course -> /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/catalog-headed/r274-gnome-course-8e7d965b-3be68eaf/shots/2026-09-11T05-14-17_15699/2026-09-11T05-15-24_gnome_course.png"}
+{"elapsed_seconds": 72.037533, "line": "PASS: live script_gnome_course {\"scenario\":\"gnome_course\",\"outcome\":\"PASS\",\"predicate\":\"stat_xp_gain(16)>=94\",\"ticks\":148,\"elapsed_ms\":66524,\"tile\":[2474,3429,0],\"stat\":{\"runenergy\":94},\"chat\":[{\"text\":\"...You make it safely to the other side.\"},{\"text\":\"You walk carefully across the slippery log...\"},{\"text\":\"Congratulations, you just advanced an agility level.\"},{\"text\":\"You climb the netting...\"},{\"text\":\"You land on the ground.\"},{\"text\":\"You climb down the tree...\"},{\"text\":\"You carefully cross the tightrope.\"},{\"text\":\"...To the platform above.\"},{\"text\":\"You climb the tree..\"},{\"text\":\"You climb the netting...\"},{\"text\":\"...You make it safely to the other side.\"},{\"text\":\"You walk carefully across the slippery log...\"},{\"text\":\"Welcome to RuneScape.\"}],\"scene\":2}"}
+{"elapsed_seconds": 72.14353, "line": "[host] slot live2ws5dn_0: d_loop_us=1187 d_raster_us=136763 d_observe_us=108828 max_observe_us=54704 d_paints=50 d_skips=0 d_ticks=2 window_ms=1318"}
+{"elapsed_seconds": 73.408228, "line": "[host] slot live2ws5dn_0: d_loop_us=1224 d_raster_us=165200 d_observe_us=54888 max_observe_us=9802 d_paints=50 d_skips=0 d_ticks=2 window_ms=1264"}
+{"elapsed_seconds": 73.502505, "line": "[script live2ws5dn_0] interact Loc { x: 2471, z: 3425, level: 0, action: \"Climb-over\" }"}
+{"elapsed_seconds": 74.67369, "line": "[host] slot live2ws5dn_0: d_loop_us=1210 d_raster_us=168134 d_observe_us=58423 max_observe_us=9869 d_paints=50 d_skips=0 d_ticks=3 window_ms=1265"}
+{"elapsed_seconds": 75.951689, "line": "[host] slot live2ws5dn_0: d_loop_us=1189 d_raster_us=164936 d_observe_us=63609 max_observe_us=10907 d_paints=50 d_skips=0 d_ticks=2 window_ms=1277"}
+{"elapsed_seconds": 77.239823, "line": "[host] slot live2ws5dn_0: d_loop_us=4606 d_raster_us=126096 d_observe_us=52576 max_observe_us=8904 d_paints=50 d_skips=0 d_ticks=2 window_ms=1288"}
+{"elapsed_seconds": 78.309484, "line": "[script live2ws5dn_0] interact Loc { x: 2473, z: 3422, level: 1, action: \"Climb\" }"}
+{"elapsed_seconds": 78.540574, "line": "[host] slot live2ws5dn_0: d_loop_us=924 d_raster_us=115339 d_observe_us=38714 max_observe_us=7636 d_paints=50 d_skips=0 d_ticks=2 window_ms=1300"}
+{"elapsed_seconds": 79.819004, "line": "[host] slot live2ws5dn_0: d_loop_us=1067 d_raster_us=139043 d_observe_us=48382 max_observe_us=12750 d_paints=50 d_skips=0 d_ticks=2 window_ms=1278"}
+{"elapsed_seconds": 81.097848, "line": "[host] slot live2ws5dn_0: d_loop_us=3769 d_raster_us=143006 d_observe_us=47299 max_observe_us=8049 d_paints=50 d_skips=0 d_ticks=2 window_ms=1278"}
+{"elapsed_seconds": 82.3568, "line": "[host] slot live2ws5dn_0: d_loop_us=893 d_raster_us=133848 d_observe_us=42057 max_observe_us=7412 d_paints=50 d_skips=0 d_ticks=2 window_ms=1258"}
+{"elapsed_seconds": 82.515143, "line": "[script live2ws5dn_0] interact Loc { x: 2478, z: 3420, level: 2, action: \"Walk-on\" }"}
+{"elapsed_seconds": 83.651224, "line": "[host] slot live2ws5dn_0: d_loop_us=810 d_raster_us=118860 d_observe_us=33662 max_observe_us=5928 d_paints=50 d_skips=0 d_ticks=3 window_ms=1294"}
+{"elapsed_seconds": 85.006287, "line": "[host] slot live2ws5dn_0: d_loop_us=779 d_raster_us=112595 d_observe_us=36437 max_observe_us=7603 d_paints=50 d_skips=0 d_ticks=2 window_ms=1355"}
+{"elapsed_seconds": 86.2813, "line": "[host] slot live2ws5dn_0: d_loop_us=788 d_raster_us=100803 d_observe_us=29911 max_observe_us=5960 d_paints=50 d_skips=0 d_ticks=2 window_ms=1275"}
+{"elapsed_seconds": 87.609414, "line": "[host] slot live2ws5dn_0: d_loop_us=780 d_raster_us=108199 d_observe_us=34575 max_observe_us=9710 d_paints=50 d_skips=0 d_ticks=2 window_ms=1328"}
+{"elapsed_seconds": 88.917754, "line": "[host] slot live2ws5dn_0: d_loop_us=895 d_raster_us=104981 d_observe_us=39883 max_observe_us=6396 d_paints=50 d_skips=0 d_ticks=2 window_ms=1308"}
+{"elapsed_seconds": 90.230544, "line": "[host] slot live2ws5dn_0: d_loop_us=734 d_raster_us=99993 d_observe_us=30980 max_observe_us=7637 d_paints=50 d_skips=0 d_ticks=2 window_ms=1312"}
+{"elapsed_seconds": 90.899201, "line": "[script live2ws5dn_0] interact Loc { x: 2486, z: 3419, level: 2, action: \"Climb-down\" }"}
+{"elapsed_seconds": 91.498573, "line": "[host] slot live2ws5dn_0: d_loop_us=1065 d_raster_us=133317 d_observe_us=46077 max_observe_us=6846 d_paints=50 d_skips=0 d_ticks=3 window_ms=1268"}
+{"elapsed_seconds": 92.784817, "line": "[host] slot live2ws5dn_0: d_loop_us=800 d_raster_us=132797 d_observe_us=38430 max_observe_us=6584 d_paints=50 d_skips=0 d_ticks=2 window_ms=1286"}
+{"elapsed_seconds": 94.068371, "line": "[host] slot live2ws5dn_0: d_loop_us=8089 d_raster_us=155682 d_observe_us=68339 max_observe_us=14366 d_paints=50 d_skips=0 d_ticks=2 window_ms=1283"}
+{"elapsed_seconds": 95.104422, "line": "[script live2ws5dn_0] interact Loc { x: 2483, z: 3426, level: 0, action: \"Climb-over\" }"}
+{"elapsed_seconds": 95.358369, "line": "[host] slot live2ws5dn_0: d_loop_us=1109 d_raster_us=161902 d_observe_us=60849 max_observe_us=11889 d_paints=50 d_skips=0 d_ticks=2 window_ms=1289"}
+{"elapsed_seconds": 96.616175, "line": "[host] slot live2ws5dn_0: d_loop_us=1048 d_raster_us=139643 d_observe_us=55436 max_observe_us=15839 d_paints=50 d_skips=0 d_ticks=2 window_ms=1257"}
+{"elapsed_seconds": 97.899607, "line": "[host] slot live2ws5dn_0: d_loop_us=1102 d_raster_us=162246 d_observe_us=52123 max_observe_us=10179 d_paints=50 d_skips=0 d_ticks=2 window_ms=1283"}
+{"elapsed_seconds": 99.173206, "line": "[host] slot live2ws5dn_0: d_loop_us=1097 d_raster_us=199475 d_observe_us=56291 max_observe_us=9264 d_paints=50 d_skips=0 d_ticks=2 window_ms=1273"}
+{"elapsed_seconds": 100.426521, "line": "[host] slot live2ws5dn_0: d_loop_us=1123 d_raster_us=175395 d_observe_us=56760 max_observe_us=9910 d_paints=50 d_skips=0 d_ticks=2 window_ms=1253"}
+{"elapsed_seconds": 100.4941, "line": "[script live2ws5dn_0] interact Loc { x: 2484, z: 3431, level: 0, action: \"Squeeze-through\" }"}
+{"elapsed_seconds": 101.698504, "line": "[host] slot live2ws5dn_0: d_loop_us=1076 d_raster_us=163683 d_observe_us=65292 max_observe_us=10499 d_paints=50 d_skips=0 d_ticks=3 window_ms=1271"}
+{"elapsed_seconds": 102.990149, "line": "[host] slot live2ws5dn_0: d_loop_us=1085 d_raster_us=139335 d_observe_us=54913 max_observe_us=10995 d_paints=50 d_skips=0 d_ticks=2 window_ms=1291"}
+{"elapsed_seconds": 104.289013, "line": "[host] slot live2ws5dn_0: d_loop_us=1098 d_raster_us=151161 d_observe_us=51227 max_observe_us=7380 d_paints=50 d_skips=0 d_ticks=2 window_ms=1298"}
+{"elapsed_seconds": 105.601927, "line": "[host] slot live2ws5dn_0: d_loop_us=1156 d_raster_us=157888 d_observe_us=51910 max_observe_us=6913 d_paints=50 d_skips=0 d_ticks=2 window_ms=1312"}
+{"elapsed_seconds": 106.874361, "line": "[host] slot live2ws5dn_0: d_loop_us=1061 d_raster_us=157417 d_observe_us=49616 max_observe_us=7068 d_paints=50 d_skips=0 d_ticks=2 window_ms=1272"}
+{"elapsed_seconds": 108.160153, "line": "[host] slot live2ws5dn_0: d_loop_us=1077 d_raster_us=141168 d_observe_us=55303 max_observe_us=12746 d_paints=50 d_skips=0 d_ticks=2 window_ms=1285"}
+{"elapsed_seconds": 109.467124, "line": "[host] slot live2ws5dn_0: d_loop_us=1151 d_raster_us=164323 d_observe_us=57395 max_observe_us=11304 d_paints=50 d_skips=0 d_ticks=3 window_ms=1306"}
+{"elapsed_seconds": 110.693048, "line": "[script live2ws5dn_0] lap 2 complete"}
+{"elapsed_seconds": 110.702056, "line": "[panel] live2ws5dn_0: script: lap 2 complete"}
+{"elapsed_seconds": 110.741181, "line": "[host] slot live2ws5dn_0: d_loop_us=1227 d_raster_us=172929 d_observe_us=73044 max_observe_us=11844 d_paints=50 d_skips=0 d_ticks=2 window_ms=1274"}
+{"elapsed_seconds": 111.30261, "line": "[script live2ws5dn_0] interact Loc { x: 2474, z: 3435, level: 0, action: \"Walk-across\" }"}
+{"elapsed_seconds": 112.024527, "line": "[host] slot live2ws5dn_0: d_loop_us=1139 d_raster_us=165732 d_observe_us=58537 max_observe_us=11444 d_paints=50 d_skips=0 d_ticks=2 window_ms=1283"}
+{"elapsed_seconds": 113.081382, "line": "[host] hitch live2ws5dn_0: observe_us=16627 paints=4039 skips=0 ticks=174"}
+{"elapsed_seconds": 113.316202, "line": "[host] slot live2ws5dn_0: d_loop_us=1442 d_raster_us=172045 d_observe_us=65090 max_observe_us=16627 d_paints=50 d_skips=0 d_ticks=2 window_ms=1291"}
+{"elapsed_seconds": 114.605055, "line": "[host] slot live2ws5dn_0: d_loop_us=1350 d_raster_us=179919 d_observe_us=58189 max_observe_us=11169 d_paints=50 d_skips=0 d_ticks=2 window_ms=1288"}
+{"elapsed_seconds": 115.489314, "line": "[host] hitch live2ws5dn_0: observe_us=16558 paints=4133 skips=0 ticks=178"}
+{"elapsed_seconds": 115.882682, "line": "[host] slot live2ws5dn_0: d_loop_us=1260 d_raster_us=167871 d_observe_us=62339 max_observe_us=16558 d_paints=50 d_skips=0 d_ticks=2 window_ms=1277"}
+{"elapsed_seconds": 117.160503, "line": "[host] slot live2ws5dn_0: d_loop_us=1231 d_raster_us=167478 d_observe_us=59794 max_observe_us=13459 d_paints=50 d_skips=0 d_ticks=2 window_ms=1277"}
+{"elapsed_seconds": 118.4383, "line": "[host] slot live2ws5dn_0: d_loop_us=1207 d_raster_us=155961 d_observe_us=57364 max_observe_us=14726 d_paints=50 d_skips=0 d_ticks=2 window_ms=1277"}
+{"elapsed_seconds": 119.721842, "line": "[host] slot live2ws5dn_0: d_loop_us=1326 d_raster_us=163411 d_observe_us=77520 max_observe_us=15509 d_paints=50 d_skips=0 d_ticks=3 window_ms=1283"}
+{"elapsed_seconds": 120.911106, "line": "[script live2ws5dn_0] interact ContinueDialog"}
+{"elapsed_seconds": 120.992071, "line": "[host] slot live2ws5dn_0: d_loop_us=1221 d_raster_us=217338 d_observe_us=58618 max_observe_us=11042 d_paints=50 d_skips=0 d_ticks=2 window_ms=1270"}
+{"elapsed_seconds": 122.105788, "line": "[script live2ws5dn_0] interact Loc { x: 2471, z: 3425, level: 0, action: \"Climb-over\" }"}
+{"elapsed_seconds": 122.257436, "line": "[host] slot live2ws5dn_0: d_loop_us=1264 d_raster_us=195959 d_observe_us=58853 max_observe_us=12155 d_paints=50 d_skips=0 d_ticks=2 window_ms=1265"}
+{"elapsed_seconds": 123.543137, "line": "[host] slot live2ws5dn_0: d_loop_us=1371 d_raster_us=184828 d_observe_us=61074 max_observe_us=11270 d_paints=50 d_skips=0 d_ticks=2 window_ms=1285"}
+{"elapsed_seconds": 124.810544, "line": "[host] slot live2ws5dn_0: d_loop_us=1280 d_raster_us=204442 d_observe_us=58440 max_observe_us=11028 d_paints=50 d_skips=0 d_ticks=2 window_ms=1267"}
+{"elapsed_seconds": 126.117974, "line": "[host] slot live2ws5dn_0: d_loop_us=5112 d_raster_us=153753 d_observe_us=59624 max_observe_us=10047 d_paints=50 d_skips=0 d_ticks=2 window_ms=1307"}
+{"elapsed_seconds": 126.902005, "line": "[script live2ws5dn_0] interact Loc { x: 2473, z: 3422, level: 1, action: \"Climb\" }"}
+{"elapsed_seconds": 127.415985, "line": "[host] slot live2ws5dn_0: d_loop_us=1052 d_raster_us=141279 d_observe_us=47411 max_observe_us=9166 d_paints=50 d_skips=0 d_ticks=2 window_ms=1297"}
+{"elapsed_seconds": 128.710117, "line": "[host] slot live2ws5dn_0: d_loop_us=1323 d_raster_us=151245 d_observe_us=56735 max_observe_us=12909 d_paints=50 d_skips=0 d_ticks=3 window_ms=1294"}
+{"elapsed_seconds": 129.992267, "line": "[host] slot live2ws5dn_0: d_loop_us=5432 d_raster_us=152834 d_observe_us=52809 max_observe_us=9278 d_paints=50 d_skips=0 d_ticks=2 window_ms=1282"}
+{"elapsed_seconds": 131.103888, "line": "[script live2ws5dn_0] interact Loc { x: 2478, z: 3420, level: 2, action: \"Walk-on\" }"}
+{"elapsed_seconds": 131.298896, "line": "[host] slot live2ws5dn_0: d_loop_us=1068 d_raster_us=150394 d_observe_us=47247 max_observe_us=8010 d_paints=50 d_skips=0 d_ticks=2 window_ms=1306"}
+{"elapsed_seconds": 132.598944, "line": "[host] slot live2ws5dn_0: d_loop_us=997 d_raster_us=145312 d_observe_us=44468 max_observe_us=7933 d_paints=50 d_skips=0 d_ticks=2 window_ms=1300"}
+{"elapsed_seconds": 133.872726, "line": "[host] slot live2ws5dn_0: d_loop_us=1044 d_raster_us=150326 d_observe_us=45832 max_observe_us=9320 d_paints=50 d_skips=0 d_ticks=2 window_ms=1273"}
+{"elapsed_seconds": 135.176944, "line": "[host] slot live2ws5dn_0: d_loop_us=982 d_raster_us=151184 d_observe_us=47248 max_observe_us=9536 d_paints=50 d_skips=0 d_ticks=2 window_ms=1304"}
+{"elapsed_seconds": 136.482128, "line": "[host] slot live2ws5dn_0: d_loop_us=921 d_raster_us=150014 d_observe_us=47941 max_observe_us=8094 d_paints=50 d_skips=0 d_ticks=3 window_ms=1305"}
+{"elapsed_seconds": 137.781771, "line": "[host] slot live2ws5dn_0: d_loop_us=991 d_raster_us=133036 d_observe_us=40923 max_observe_us=7461 d_paints=50 d_skips=0 d_ticks=2 window_ms=1299"}
+{"elapsed_seconds": 139.054057, "line": "[host] slot live2ws5dn_0: d_loop_us=1001 d_raster_us=136759 d_observe_us=43656 max_observe_us=8236 d_paints=50 d_skips=0 d_ticks=2 window_ms=1272"}
+{"elapsed_seconds": 139.493721, "line": "[script live2ws5dn_0] interact Loc { x: 2486, z: 3419, level: 2, action: \"Climb-down\" }"}
+{"elapsed_seconds": 140.373982, "line": "[host] slot live2ws5dn_0: d_loop_us=986 d_raster_us=141471 d_observe_us=40088 max_observe_us=7682 d_paints=50 d_skips=0 d_ticks=2 window_ms=1319"}
+{"elapsed_seconds": 141.672726, "line": "[host] slot live2ws5dn_0: d_loop_us=995 d_raster_us=142003 d_observe_us=44475 max_observe_us=7894 d_paints=50 d_skips=0 d_ticks=2 window_ms=1298"}
+{"elapsed_seconds": 141.899922, "line": "[host] hitch live2ws5dn_0: observe_us=16482 paints=5157 skips=0 ticks=222"}
+{"elapsed_seconds": 142.960926, "line": "[host] slot live2ws5dn_0: d_loop_us=5376 d_raster_us=158933 d_observe_us=78319 max_observe_us=16482 d_paints=50 d_skips=0 d_ticks=2 window_ms=1288"}
+{"elapsed_seconds": 143.692623, "line": "[script live2ws5dn_0] interact Loc { x: 2483, z: 3426, level: 0, action: \"Climb-over\" }"}
+{"elapsed_seconds": 144.232787, "line": "[host] slot live2ws5dn_0: d_loop_us=1062 d_raster_us=168795 d_observe_us=60210 max_observe_us=11557 d_paints=50 d_skips=0 d_ticks=2 window_ms=1271"}
+{"elapsed_seconds": 145.516204, "line": "[host] slot live2ws5dn_0: d_loop_us=1129 d_raster_us=147506 d_observe_us=67825 max_observe_us=11754 d_paints=50 d_skips=0 d_ticks=3 window_ms=1283"}
+{"elapsed_seconds": 146.786227, "line": "[host] slot live2ws5dn_0: d_loop_us=1149 d_raster_us=170520 d_observe_us=59055 max_observe_us=11249 d_paints=50 d_skips=0 d_ticks=2 window_ms=1270"}
+{"elapsed_seconds": 148.083164, "line": "[host] slot live2ws5dn_0: d_loop_us=1095 d_raster_us=160398 d_observe_us=54017 max_observe_us=11152 d_paints=50 d_skips=0 d_ticks=2 window_ms=1296"}
+{"elapsed_seconds": 149.107443, "line": "[script live2ws5dn_0] interact Loc { x: 2484, z: 3431, level: 0, action: \"Squeeze-through\" }"}
+{"elapsed_seconds": 149.356908, "line": "[host] slot live2ws5dn_0: d_loop_us=1182 d_raster_us=164292 d_observe_us=54237 max_observe_us=10882 d_paints=50 d_skips=0 d_ticks=2 window_ms=1273"}
+{"elapsed_seconds": 150.65777, "line": "[host] slot live2ws5dn_0: d_loop_us=1214 d_raster_us=157407 d_observe_us=55479 max_observe_us=11702 d_paints=50 d_skips=0 d_ticks=2 window_ms=1300"}
+{"elapsed_seconds": 151.940434, "line": "[host] slot live2ws5dn_0: d_loop_us=1195 d_raster_us=169173 d_observe_us=66072 max_observe_us=15203 d_paints=50 d_skips=0 d_ticks=2 window_ms=1282"}
+{"elapsed_seconds": 153.221334, "line": "[host] slot live2ws5dn_0: d_loop_us=1156 d_raster_us=171538 d_observe_us=53846 max_observe_us=9108 d_paints=50 d_skips=0 d_ticks=2 window_ms=1280"}
+{"elapsed_seconds": 154.539026, "line": "[host] slot live2ws5dn_0: d_loop_us=1160 d_raster_us=170767 d_observe_us=59401 max_observe_us=8352 d_paints=50 d_skips=0 d_ticks=3 window_ms=1317"}
+{"elapsed_seconds": 155.818249, "line": "[host] slot live2ws5dn_0: d_loop_us=1140 d_raster_us=161604 d_observe_us=55062 max_observe_us=8001 d_paints=50 d_skips=0 d_ticks=2 window_ms=1279"}
+{"elapsed_seconds": 156.297082, "line": "[host] hitch live2ws5dn_0: observe_us=18235 paints=5717 skips=0 ticks=246"}
+{"elapsed_seconds": 157.132976, "line": "[host] slot live2ws5dn_0: d_loop_us=1158 d_raster_us=159188 d_observe_us=66581 max_observe_us=18235 d_paints=50 d_skips=0 d_ticks=2 window_ms=1314"}
+{"elapsed_seconds": 158.431453, "line": "[host] slot live2ws5dn_0: d_loop_us=1142 d_raster_us=161325 d_observe_us=59721 max_observe_us=11198 d_paints=50 d_skips=0 d_ticks=2 window_ms=1298"}
+{"elapsed_seconds": 159.312736, "line": "[script live2ws5dn_0] lap 3 complete"}
+{"elapsed_seconds": 159.314813, "line": "[panel] live2ws5dn_0: script: lap 3 complete"}
+{"elapsed_seconds": 159.707852, "line": "[host] slot live2ws5dn_0: d_loop_us=1113 d_raster_us=154799 d_observe_us=58141 max_observe_us=11149 d_paints=50 d_skips=0 d_ticks=2 window_ms=1276"}
+{"elapsed_seconds": 159.901605, "line": "[script live2ws5dn_0] interact Loc { x: 2474, z: 3435, level: 0, action: \"Walk-across\" }"}
+{"elapsed_seconds": 160.975083, "line": "[host] slot live2ws5dn_0: d_loop_us=1225 d_raster_us=163353 d_observe_us=60752 max_observe_us=11454 d_paints=50 d_skips=0 d_ticks=2 window_ms=1267"}
+{"elapsed_seconds": 161.692446, "line": "[host] hitch live2ws5dn_0: observe_us=17607 paints=5926 skips=0 ticks=255"}
+{"elapsed_seconds": 162.258434, "line": "[host] slot live2ws5dn_0: d_loop_us=1249 d_raster_us=159103 d_observe_us=67736 max_observe_us=17607 d_paints=50 d_skips=0 d_ticks=3 window_ms=1283"}
+{"elapsed_seconds": 163.513304, "line": "[host] slot live2ws5dn_0: d_loop_us=1167 d_raster_us=166721 d_observe_us=73454 max_observe_us=11660 d_paints=50 d_skips=0 d_ticks=2 window_ms=1254"}
+{"elapsed_seconds": 164.097844, "line": "[host] hitch live2ws5dn_0: observe_us=16155 paints=6021 skips=0 ticks=259"}
+{"elapsed_seconds": 164.817374, "line": "[host] slot live2ws5dn_0: d_loop_us=1063 d_raster_us=144238 d_observe_us=58476 max_observe_us=16155 d_paints=50 d_skips=0 d_ticks=2 window_ms=1304"}
+{"elapsed_seconds": 166.085372, "line": "[host] slot live2ws5dn_0: d_loop_us=1236 d_raster_us=163844 d_observe_us=54125 max_observe_us=8124 d_paints=50 d_skips=0 d_ticks=2 window_ms=1267"}
+{"elapsed_seconds": 167.364345, "line": "[host] slot live2ws5dn_0: d_loop_us=1279 d_raster_us=158673 d_observe_us=62798 max_observe_us=14671 d_paints=50 d_skips=0 d_ticks=2 window_ms=1278"}
+{"elapsed_seconds": 167.686898, "line": "[host] hitch live2ws5dn_0: observe_us=16857 paints=6161 skips=0 ticks=265"}
+{"elapsed_seconds": 168.628896, "line": "[host] slot live2ws5dn_0: d_loop_us=1322 d_raster_us=167023 d_observe_us=63952 max_observe_us=16857 d_paints=50 d_skips=0 d_ticks=2 window_ms=1264"}
+{"elapsed_seconds": 169.924081, "line": "[host] slot live2ws5dn_0: d_loop_us=1198 d_raster_us=148996 d_observe_us=53841 max_observe_us=11879 d_paints=50 d_skips=0 d_ticks=2 window_ms=1295"}
+{"elapsed_seconds": 170.715522, "line": "[script live2ws5dn_0] interact Loc { x: 2471, z: 3425, level: 0, action: \"Climb-over\" }"}
+{"elapsed_seconds": 171.224466, "line": "[host] slot live2ws5dn_0: d_loop_us=1288 d_raster_us=153600 d_observe_us=50713 max_observe_us=10621 d_paints=50 d_skips=0 d_ticks=2 window_ms=1300"}
+{"elapsed_seconds": 172.497657, "line": "[host] slot live2ws5dn_0: d_loop_us=1216 d_raster_us=188761 d_observe_us=70785 max_observe_us=12133 d_paints=50 d_skips=0 d_ticks=3 window_ms=1273"}
+{"elapsed_seconds": 173.74905, "line": "[host] slot live2ws5dn_0: d_loop_us=5770 d_raster_us=208490 d_observe_us=59317 max_observe_us=10331 d_paints=50 d_skips=0 d_ticks=2 window_ms=1251"}
+{"elapsed_seconds": 175.03247, "line": "[host] slot live2ws5dn_0: d_loop_us=1198 d_raster_us=140790 d_observe_us=54454 max_observe_us=9182 d_paints=50 d_skips=0 d_ticks=2 window_ms=1283"}
+{"elapsed_seconds": 175.492789, "line": "[script live2ws5dn_0] interact Loc { x: 2473, z: 3422, level: 1, action: \"Climb\" }"}
+{"elapsed_seconds": 176.323039, "line": "[host] slot live2ws5dn_0: d_loop_us=1053 d_raster_us=126574 d_observe_us=50118 max_observe_us=15531 d_paints=50 d_skips=0 d_ticks=2 window_ms=1290"}
+{"elapsed_seconds": 177.599275, "line": "[host] slot live2ws5dn_0: d_loop_us=1064 d_raster_us=164710 d_observe_us=39263 max_observe_us=8076 d_paints=50 d_skips=0 d_ticks=2 window_ms=1276"}
+{"elapsed_seconds": 178.892741, "line": "[host] slot live2ws5dn_0: d_loop_us=4835 d_raster_us=171078 d_observe_us=52288 max_observe_us=8058 d_paints=50 d_skips=0 d_ticks=2 window_ms=1293"}
+{"elapsed_seconds": 179.703917, "line": "[script live2ws5dn_0] interact ContinueDialog"}
+{"elapsed_seconds": 180.193418, "line": "[host] slot live2ws5dn_0: d_loop_us=918 d_raster_us=190479 d_observe_us=38135 max_observe_us=7044 d_paints=50 d_skips=0 d_ticks=2 window_ms=1300"}
+{"elapsed_seconds": 180.895345, "line": "[script live2ws5dn_0] interact Loc { x: 2478, z: 3420, level: 2, action: \"Walk-on\" }"}
+{"elapsed_seconds": 181.490722, "line": "[host] slot live2ws5dn_0: d_loop_us=962 d_raster_us=122562 d_observe_us=44420 max_observe_us=7895 d_paints=50 d_skips=0 d_ticks=3 window_ms=1297"}
+{"elapsed_seconds": 182.78363, "line": "[host] slot live2ws5dn_0: d_loop_us=947 d_raster_us=125775 d_observe_us=38268 max_observe_us=8137 d_paints=50 d_skips=0 d_ticks=2 window_ms=1292"}
+{"elapsed_seconds": 184.041973, "line": "[host] slot live2ws5dn_0: d_loop_us=1059 d_raster_us=130726 d_observe_us=43340 max_observe_us=9645 d_paints=50 d_skips=0 d_ticks=2 window_ms=1258"}

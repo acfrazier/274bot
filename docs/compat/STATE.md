@@ -1,11 +1,47 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 05:02 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 05:22 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
 Read `docs/execution.md` for dispatch/review rules. Reports below preserve dated
 results and failed cells; this state identifies current work.
+
+## Current follow-ups (05:22 UTC)
+
+- Isolated 3be68eaf adds six verified passes: corrected Fire battlestaff on
+  both revisions, and all four default Gnome cells with actual second-log
+  XP94/destination. All four radius8 Gnome cells fail after first-lap resync
+  to the exit pipe; host distance freshness is under audit before attributing
+  the foreign script. The ledger retains 179 total historical/current rows.
+- Flax: old-catalog289 reaches reader.toLocal and fails; adapter source
+  d28be9df is committed and awaiting same-card review. Old-catalog274 collects
+  seven flax then times out. Native static scenery removal/addition and scalar
+  distance freshness are assigned to t_192feefa (brief70); no JS policy change.
+- Chicken Loot-count bank trips complete on both revisions, but fresh Feather314
+  misses the unchanged180s deadline with novice melee stats. Root fixture
+  8fd0f138 prepares/acknowledges Attack30/Strength30 and keeps all work witnesses.
+  Exact source2411 files is frozen/building; LIVE waits for composed Vial
+  source55f12daa and adapterd28be9df review gates. No same failed-source rerun.
+- N2 source587a69fd passes both LIVE processes in47.618/49.804s. Root audit
+  rejects full Stop qualification: B is compared with pre-resume pause_end.
+  Corrective t_03bc820a anchors actual Stop and retains full raw witnesses.
+  Existing review1230 and both raw PASS receipts remain; no lifecycle claim.
+- Native3be274 Gnome independently reaches XP94 at2474,3429 with a read
+  internal capture. Native289 Fire battlestaff also completes a full bank cycle.
+  Windows native6c and Concord TUI6c both complete actual289 Alcher work;
+  platform-isolated/ui-qualification-6c7075ce.json records raw checks and limits.
+  Windows has two startup500ms probe misses in the first4s, then both HWNDs
+  respond through59.78s. Actual GPU backend was not logged; no blanket GPU,
+  responsiveness, frontend-controls or performance claim. Owned Windows
+  scheduled task was removed only after Ready/result0 and identity checks.
+- DeathRecovery run1228 ended on xAI HTTP500 Auth context expired/TTFB retries,
+  before commit/handoff. Source and diagnostic checks remain. Recovery run1233
+  uses a fresh actualGrok4.6 session and must freeze immutable source/new target
+  before same-card review. No credentials/authentication changes. Grok Usage
+  last refreshed at05:10 remains68%used, reset07:40 local; service banner reports
+  issues. Vial/Potion source55f12daa is in actualGrok4.5 review1234; Tanner and
+  solo Runecrafter/Mule stay behind their dependency/file-ownership gates.
 
 ## Imported-script ownership (operator clarification, 01:41 UTC)
 

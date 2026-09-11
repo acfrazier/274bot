@@ -1,0 +1,115 @@
+{
+    "Name":  "274bot-Catalog-289-6c7075ce-Native-20260911",
+    "State":  "Ready",
+    "Principal":  "BotTest",
+    "Actions":  [
+                    {
+                        "CimClass":  {
+                                         "CimSuperClassName":  "MSFT_TaskAction",
+                                         "CimSuperClass":  {
+                                                               "CimSuperClassName":  null,
+                                                               "CimSuperClass":  null,
+                                                               "CimClassProperties":  [
+                                                                                          "Id"
+                                                                                      ],
+                                                               "CimClassQualifiers":  [
+
+                                                                                      ],
+                                                               "CimClassMethods":  [
+
+                                                                                   ],
+                                                               "CimSystemProperties":  {
+                                                                                           "Namespace":  "ROOT/Microsoft/Windows/TaskScheduler",
+                                                                                           "ServerName":  "DESKTOP-SL99R6C",
+                                                                                           "ClassName":  "MSFT_TaskAction",
+                                                                                           "Path":  null
+                                                                                       }
+                                                           },
+                                         "CimClassProperties":  [
+                                                                    {
+                                                                        "Name":  "Id",
+                                                                        "Value":  null,
+                                                                        "CimType":  14,
+                                                                        "Flags":  "Property, NullValue",
+                                                                        "Qualifiers":  "",
+                                                                        "ReferenceClassName":  null
+                                                                    },
+                                                                    {
+                                                                        "Name":  "Arguments",
+                                                                        "Value":  null,
+                                                                        "CimType":  14,
+                                                                        "Flags":  "Property, NullValue",
+                                                                        "Qualifiers":  "",
+                                                                        "ReferenceClassName":  null
+                                                                    },
+                                                                    {
+                                                                        "Name":  "Execute",
+                                                                        "Value":  null,
+                                                                        "CimType":  14,
+                                                                        "Flags":  "Property, NullValue",
+                                                                        "Qualifiers":  "",
+                                                                        "ReferenceClassName":  null
+                                                                    },
+                                                                    {
+                                                                        "Name":  "WorkingDirectory",
+                                                                        "Value":  null,
+                                                                        "CimType":  14,
+                                                                        "Flags":  "Property, NullValue",
+                                                                        "Qualifiers":  "",
+                                                                        "ReferenceClassName":  null
+                                                                    }
+                                                                ],
+                                         "CimClassQualifiers":  [
+
+                                                                ],
+                                         "CimClassMethods":  [
+
+                                                             ],
+                                         "CimSystemProperties":  {
+                                                                     "Namespace":  "Root/Microsoft/Windows/TaskScheduler",
+                                                                     "ServerName":  "DESKTOP-SL99R6C",
+                                                                     "ClassName":  "MSFT_TaskExecAction",
+                                                                     "Path":  null
+                                                                 }
+                                     },
+                        "CimInstanceProperties":  [
+                                                      {
+                                                          "Name":  "Id",
+                                                          "Value":  null,
+                                                          "CimType":  14,
+                                                          "Flags":  "Property, NotModified, NullValue",
+                                                          "IsValueModified":  false
+                                                      },
+                                                      {
+                                                          "Name":  "Arguments",
+                                                          "Value":  "\"C:\\ProgramData\\274bot-Test\\multirevision-20260910-native-6c7075ce\\windows-native-watch-6c7075ce.py\"",
+                                                          "CimType":  14,
+                                                          "Flags":  "Property, NotModified",
+                                                          "IsValueModified":  false
+                                                      },
+                                                      {
+                                                          "Name":  "Execute",
+                                                          "Value":  "C:\\Program Files\\Python314\\python.exe",
+                                                          "CimType":  14,
+                                                          "Flags":  "Property, NotModified",
+                                                          "IsValueModified":  false
+                                                      },
+                                                      {
+                                                          "Name":  "WorkingDirectory",
+                                                          "Value":  null,
+                                                          "CimType":  14,
+                                                          "Flags":  "Property, NotModified, NullValue",
+                                                          "IsValueModified":  false
+                                                      }
+                                                  ],
+                        "CimSystemProperties":  {
+                                                    "Namespace":  "Root/Microsoft/Windows/TaskScheduler",
+                                                    "ServerName":  "DESKTOP-SL99R6C",
+                                                    "ClassName":  "MSFT_TaskExecAction",
+                                                    "Path":  null
+                                                }
+                    }
+                ],
+    "LastTaskResult":  0,
+    "LastRunTime":  "09/11/2026 00:52:27"
+}
