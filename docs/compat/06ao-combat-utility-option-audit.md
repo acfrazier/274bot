@@ -1,48 +1,55 @@
-# Remaining combat and utility behavior branches
+# Remaining combat and utility behavior branches (145 correction)
 
 Reviewer: Hermes profile `grok46`, model `grok-4.6`, provider `xai-oauth`.
-Date: 2026-09-11 16:42 UTC. Kind: bounded read-only campaign audit of brief
-143. Own only this report and `docs/compat/evidence/combat-utility-option-audit/`.
-No code, build, LIVE, STATE, support-matrix, ledger, or new cards. Root owns
-acceptance.
+Date: 2026-09-11 16:55 UTC. Kind: bounded read-only corrective audit of brief
+145 after audit143/t_46d26f49. Own only this report and
+`docs/compat/evidence/combat-utility-option-audit/`. No code, build, LIVE,
+STATE, support-matrix, ledger, or new cards. Root owns acceptance.
 
-Read once: `AGENTS.md`, `docs/execution.md`, brief 143. Branch checked first:
-`codex/rs2b0t-multirevision` (not `main`). Frozen cards+siblings are the two
-catalog inputs. Isolated PASS is taken from named harvest summaries/core-results,
-not lexicographic last `host_commit` and not giant logs. Concurrent working-tree
-edits are not a tested binary. Fresh `cffd62c59` combat is not a complete batch;
-only the named Chaos diagnostics file is cited for those two cells.
+Read once: `AGENTS.md`, `docs/execution.md`, briefs 143 and 145. Branch checked
+first: `codex/rs2b0t-multirevision` (not `main`). Same fifteen-card scope as
+143. Root is independently running/fixing existing cores; this audit does not
+duplicate Mage132, fixture139 (GreenDragon wear / RockCrab dormant), or
+native144 (FireGiant npcBox).
 
-## Verdict
+## Prior audit 143 (dated, not the remaining set)
 
-**Replace “remaining supported settings” / stale BLOCKED-missing-bank/recovery
-text on these fifteen cards with five named extra scenarios (twenty
-catalog×revision cells), plus the already-named cores that still lack accepted
-isolated PASS.** Do not mark final PASS. Do not dim. Do not invent spell/ammo
-lists, melee XP fields, Time/Either bank triggers, or per-card mage cells.
+Written 2026-09-11 16:42 UTC on campaign HEAD `7706f053`. Committed
+`c9331e833`. Machine copy:
+`evidence/combat-utility-option-audit/remaining-cells-143.json`.
 
-New still-needed scenarios:
+143 named five extra scenarios (20 cells): `thiever_bank`,
+`chaos_druid_tower`, `chaos_druid_yanille`, `ardy_cakes_fight`,
+`ardy_thiever_fight`. It labeled AutoFighter `banking=Auto`, RockCrab
+ammo/bank, GreenDragon special/potions, FireGiant approach/barrel/bank and
+ArdyFighter Loot-count as later because those cores were still unqualified.
+Tower/Yanille witnesses said honest loot if any. Thiever Auto was called
+unwitnessed.
 
-1. `thiever_bank` — `banking=Auto` food restock.
-2. `chaos_druid_tower` — `location=Chaos Druid Tower` (Thieving 46).
-3. `chaos_druid_yanille` — `location=Yanille Dungeon` (Agility 40, warrior).
-4. `ardy_cakes_fight` — `guardResponse=Fight`.
-5. `ardy_thiever_fight` — `guardResponse=Fight`.
+Root did not accept that as the complete remaining set. Unqualified core is a
+dependency, not a scope exclusion. This file keeps 143 as the prior result and
+corrects those three gaps.
 
-Already-named cores still unqualified: `chaos_druid` (Edgeville), `moss_giant`,
-`hill_giant`, `auto_fighter`, `rock_crab`, `green_dragon`, `fire_giant`,
-`ardy_fighter`, `ardy_cakes` Flee. Leave cff refresh to root. Mage132 owns
-`auto_fighter_mage`. Clue stubs stay stubs. Brimhaven is already dimmed.
+## Corrected verdict
+
+**Eighteen named extra scenarios (seventy-two catalog×revision cells), gated
+after the already-named cores, plus those cores that still lack accepted
+isolated PASS.** Drop `thiever_bank` as four extra cells: the Auto food
+restock path is already witnessed on the exact frozen Thiever script by fleet
+N1/N32. Restore actual selected loot on Tower/Yanille. Do not mark final PASS.
+Do not dim. Do not invent spell/ammo lists, melee XP fields, Time/Either bank
+triggers, or per-card mage cells.
 
 ## Inspected refs
 
 | Role | Exact commit / object |
 |---|---|
-| Campaign HEAD at write-up | `7706f053b2a71069e4487cd990784b7258e97552` |
+| Campaign HEAD at write-up | `324d7b5946534db28305942d9bfba75fdd2e5dc8` |
 | Client gitlink | `aef3952d1cd7bb3b93d39c497f0f476b68021c59` |
 | Branch | `codex/rs2b0t-multirevision` |
+| Brief 145 SHA-256 | `c97590b29bb3864b4a7fd0717a5f26465d7aa6530ca709db7e6c9f5e97a2243a` |
 | Brief 143 SHA-256 | `8e9da0c2512f7312e23582adc54bdd3280cd7de36047eb3ad1ed3875ccf58ff4` |
-| Kanban card | `t_46d26f49` |
+| Kanban card | `t_a7f32d56` (parent `t_46d26f49` / `c9331e833`) |
 | Old catalog | `100adccc037d9f6898080e1cad58fcfc43364775` |
 | Newer catalog | `8e7d965be2071d6ec65c3265e12af797082d720a` |
 | Isolated chicken/thiever core | `f6b9ec4b2e7afe22f4a5bb58a837f3b9a992cb5f` |
@@ -50,160 +57,146 @@ Already-named cores still unqualified: `chaos_druid` (Edgeville), `moss_giant`,
 | Isolated door/gate | `6401d3a4a0fd` |
 | Isolated Ardy thieve bank cycles | `91289e9bac158721849209a301dcae5c26988eb9` |
 | Isolated Wildy 8c | `8c56eb85a846` |
+| Fleet Thiever Auto | host `6d750e65` / client `56d8027` / catalog `8e7d965` / script `5cff25a75db3166a3bf3ab6ca1a8ba37ed77e0e9d48292178f79767316b66ad9` |
 | Named cff Chaos diagnostics | `cffd62c598ceab2ea80b9bcc29e0eaf58f4dd885` / `evidence/combat-ground-serialization/fresh-chaos-diagnostics.json` |
 
-Card/sibling SHA-256 values: `evidence/combat-utility-option-audit/source-hashes.json`.
-`cmp` is 0 on both catalogs for every listed sibling.
+Card/sibling SHA-256 values remain
+`evidence/combat-utility-option-audit/source-hashes.json`. `cmp` is 0 on both
+catalogs for every listed sibling. Concurrent working-tree edits are not a
+tested binary.
 
-Registered names vs source path: Thiever → `ThievingBot.ts`; GnomeCourse →
-`AgilityBot.ts`. No other identity mismatch on the fifteen cards.
+## Corrections
 
-## Method
+### 1. Later bank/escape/range is still required
 
-Meaningful remaining work is default vs bank/return/restock, combat
-mode/autocast/ranged, death-recovery policy, or a different location/guard
-task. Not a Cartesian product of scalars, spell names, ammo, or melee XP
-fields. One default does not qualify every string name. The same generated
-action on another content row is data substitution. Unknown content/API is
-not substitution. Matrix `BLOCKED: missing periodic bank/death recovery` is
-stale: native PeriodicBank, DeathRecovery and Autocast.arm already exist.
-Do not weaken predicates/clocks or dim FAILs. Do not prescribe post-Start
-fixture cheats or forced combat/loot RNG.
+Native PeriodicBank / Special / Autocast existence, and Chicken Loot-count
+PASS, do not qualify another card's source option. Each distinct branch is
+either witnessed, mapped to an owned cell, or named and gated after its core.
 
-## Per card
+| 143 label | Source | Corrected disposition |
+|---|---|---|
+| AutoFighter banking Auto | custom Bank, not PeriodicBank; core injects None | `auto_fighter_bank` gated after `auto_fighter` |
+| RockCrab bank | PeriodicBank Loot-count at Seers + food return | `rock_crab_bank` gated after `rock_crab` |
+| RockCrab ammo | `AmmoLogic.sweepPlan` + projectile equip | `rock_crab_range` gated after `rock_crab` |
+| GreenDragon special | `Special.ready`/`arm`; core injects false | `green_dragon_special` gated after `green_dragon` |
+| GreenDragon potions | `boostPotions` mid-fight sip; not Eat | `green_dragon_potions` gated after `green_dragon` |
+| GreenDragon escape/bank | Flee-to-bank / pack restock Edgeville | `green_dragon_bank` gated after `green_dragon` |
+| GreenDragon Teleport | distinct `escape` setting | `green_dragon_tele` gated after core **and** brief 37 `Game.teleport` |
+| FireGiant approach | `EnterDungeon` raft/rope/ledge; core starts in-room | `fire_giant_approach` gated after `fire_giant` |
+| FireGiant barrel/bank | Barrel wash-up + Ardougne West restock | `fire_giant_bank` gated after `fire_giant` |
+| ArdyFighter Loot-count | PeriodicBank after stolen loot; core Off | `ardy_fighter_bank` gated after `ardy_fighter` |
+| Chaos/Moss/Hill bank | script-owned trip end, not PeriodicBank | `chaos_druid_bank` / `moss_giant_bank` / `hill_giant_bank` gated after cores |
+| All range = substitution | Chicken/AutoFighter ammo withdraw+equip; RockCrab sweep | `auto_fighter_range` family cell; `rock_crab_range` separate |
 
-### ChickenKiller — none remaining
+Chicken Time/Either still only flips `shouldBankNow` on the already-witnessed
+PeriodicBank trip. Melee XP fields stay the same `setCombatStyle` dispatch.
+Per-card mage stays Mage132 (`auto_fighter_mage`). AutoFighter `useSpecial`
+maps to `green_dragon_special`. FireGiant spell teles map to
+`green_dragon_tele`; Barrel does not.
 
-Covered on isolated `f6` all four: default melee, `bankStrategy=Off`,
-`buryBones=true` (Strength 12, Prayer 4, Hitpoints 3). Covered on isolated
-`b1` all four: `bankStrategy=Loot count`, `lootMatch=feather`, deposit,
-closed return, further feathers. `Time`/`Either` only change
-`shouldBankNow` in `bankRules.ts`; the bank trip is the same PeriodicBank
-run. Mage is ArmAutocast, owned by Mage132, not a second Chicken cell.
-Range/ammo names are CombatStyleLogic substitution. DeathRecovery idle is
-not a missing capability.
+### 2. Thiever Auto is not globally unwitnessed
 
-### Thiever — one remaining (`thiever_bank`)
+Exact identity vs frozen Thiever:
 
-Covered: default Man / Pickpocket / `banking=None`, isolated `f6` all four
-(Thieving 46). Other `PICKPOCKET_TARGET_NAMES` are the same Pickpocket op
-on another NPC. `suicide` is the out-of-food continue path, not a bank
-mode. Auto banking withdraws food and returns; unwitnessed.
+- Registered display_name `Thiever` → `ThievingBot.ts` hash `5cff25a75db3…`
+  on **both** catalogs (source-hashes `equal: true`).
+- Fleet controller is **not** catalog-harness isolated `thiever`. It is the
+  TUI memory IsolatedEnv overlay plus `crates/host-play/src/memory.rs`
+  `start_script` when `BOT_MEMORY_SUSTAIN=1`, which posts `banking=Auto`,
+  loadout `Memory food` / Lobster, `foodWithdraw=22`, `bankAtFood=3`.
+- Isolated `thiever` still injects `target=Guard`, `banking=None` at Ardougne
+  (not catalog default Man). Guard vs Man is Pickpocket substitution.
+- Evidence: `docs/compat/evidence/fleet-prerequisite/README.md`,
+  `n1-results-6d750e65.json` PASS both revisions (274 observation gain 2,902
+  XP, 289 2,574), N32 274 and 289 qualification.json PASS all 32 actors with
+  real food depletion, loaded bank, replenish to 22, return, further XP.
+- Host `6d750e65`, catalog `8e7d965` only. Old-catalog siblings are
+  byte-identical; that is not a second Auto mode.
 
-### ChaosDruidKiller — two extra locations; Edgeville core still open
+This **qualifies the script Auto bank path**. It does **not** automatically
+create four extra `thiever_bank` catalog-harness cells. Final integrated N32
+refresh remains a campaign-wide gate.
 
-`DRUID_SPOTS` has three keys. Default Edgeville Dungeon `(3110,9936,0)` is
-the existing `chaos_druid` cell. Isolated 04d7/214/b18 FAILs retained.
-Named cff diagnostics (not batch acceptance): both older-catalog cells
-timed out `looted=false`, no serializer panic, zero Ground calls; 274 has
-6 script Attack calls, 289 has none and stays on native retaliation/eating
-with Strength XP. Orch source note, not verified in this checkout:
-`Player.isInWilderness` treats underground `z>=9920` as wilderness, hunt
-`nottoostrong` applies only outside wilderness, and frozen `Loot.validate`
-requires `!Game.inCombat`. That can starve loot under continuous combat.
-It is not a conclusive script defect. Do not move the fixture, alter aggro,
-or force loot RNG.
+### 3. Tower/Yanille loot stays the real transition
 
-Tower and Yanille are distinct remaining locations (see named set).
-`combatStyleIndex` 0–3 is the same `setCombatMode` dispatch.
+`Loot.validate` requires `!Game.inCombat()` and a wanted drop. Matcher is
+exact `herb` / `law rune` / `nature rune` (unidentified Herb 199-family, Law
+563, Nature 561). The agreed combat core already requires that pickup after
+Start. 143's "honest loot if any" is withdrawn. Timeout without the pickup is
+FAIL. Do not force loot RNG, dim, or change predicates/clocks. Same rule on
+the existing Edgeville `chaos_druid` core.
 
-### MossGiant — existing core only
+## Per card (corrected)
 
-Default melee/strength, bury off, DeathRecovery idle. b18 and 214 274-old
-PASS are diagnostic, not card acceptance. Newer-catalog / 289 lack accepted
-isolated PASS. Mage is Autocast (Mage132). Range/ammo substitution. Banking
-is not the core cell.
+ChickenKiller — none extra of its own. f6 melee + b1 Loot-count stand.
+Range/ammo maps to `auto_fighter_range`. Mage → Mage132.
 
-### HillGiant — existing core only
+Thiever — none extra isolated cells. f6 Guard/`banking=None`. Auto → fleet
+N1/N32 on the same script. Suicide is the out-of-food continue path.
 
-Melee only. Target display Giant. 04d7/214 FAIL retained. In-progress cff
-rows are not a complete batch. `shouldBank` is trip-end logic, not an
-Off/Auto setting. `walkBack` DeathRecovery exists natively.
+ChaosDruidKiller — Edgeville core still open (loot required). Extra:
+`chaos_druid_bank`, `chaos_druid_tower`, `chaos_druid_yanille`.
 
-### AutoFighter — existing melee core; mage is Mage132
+MossGiant / HillGiant — existing cores only, plus gated script-owned bank
+cells. Mage/range map as above. Bury is ancillary.
 
-Covered fixture injects `banking=None`, special/clues off, melee/strength
-Guard. 04d7/214 FAIL retained. Catalog default `banking=Auto` is a later
-restock mode, not a current extra cell on an unqualified core.
-`auto_fighter_mage` landed as a fixture on this HEAD; this audit does not
-duplicate it or claim LIVE. Range is the same CombatStyleLogic family.
-`solveClues` is a stub.
+AutoFighter — existing melee core; mage is Mage132. Extra: `auto_fighter_bank`,
+`auto_fighter_range`. Special maps to `green_dragon_special`. Clues stub.
 
-### RockCrab — existing core only
+RockCrab — existing melee core; fixture139 owns dormant stand. Extra:
+`rock_crab_bank`, `rock_crab_range`. Mage → Mage132.
 
-Default melee plus native Rocks → Rock Crab activation. 214 FAIL retained.
-PeriodicBank native exists; core injects bank off. Ammo sweep is later,
-after melee. Mage is Autocast.
+GreenDragon — existing melee core; fixture139 owns wear. Extra: bank, special,
+potions, tele. No range (shield slot). Clues stub.
 
-### GreenDragon — existing core only
+FireGiant — existing in-room melee core; native144 owns npcBox. Extra:
+approach, barrel+bank. Spell teles map to `green_dragon_tele`.
 
-Default melee, shield 1540, bones 536 / hide 1753. 214 FAIL retained.
-`escape` Teleport to Varrock awaits existing teleport work. `useSpecial` /
-`usePotions` are later. Mage is Autocast. Clues stub.
+ArdyFighter — existing melee core. Extra: `ardy_fighter_bank`. Time/Either
+same PeriodicBank trip. Clues stub.
 
-### FireGiant — existing core only
+ArdyCakes — Flee core still open (pack-full bank is that loop). Fight extra.
 
-Default melee already in the east room, Waterfall Quest, Glarial 295, rope
-954, `escapeTele=Barrel (free)`. 214 FAIL retained. Camelot/Ardougne/
-Falador/Varrock are the same teleport family. Approach/barrel/bank stay
-unqualified on the core.
+ArdyThiever — knight Flee bank covered (`912` all four). Guard Flee 289 PASS /
+274 FAIL retained. Fight extra. Paladin/Hero substitution.
 
-### ArdyFighter — existing core only
-
-Default Guard/strength, post-Start stall steal, then combat. 214 FAIL
-retained. `bankStrategy` Off vs Loot-count is later. Clues stub.
-
-### ArdyCakes — Flee core still open; Fight extra
-
-Default Flee stall+bank cycle: all isolated FAIL retained. audit142: native
-guard LOS catch, keep enabled. `guardResponse=Fight` constructs `FightBack`
-instead of `Flee` — named extra below. Clues stub.
-
-### ArdyThiever — knight Flee covered; Guard 274 FAIL retained; Fight extra
-
-Isolated `912`: knight Flee bank cycle PASS all four. Guard Flee PASS on
-289 both catalogs; 274 both FAIL retained. Paladin/Hero are Pickpocket
-substitution. Fight is the other guard task.
-
-### GnomeCourse — none remaining
-
-Default radius-20 complete lap + next log, isolated `3be`/`b1` all four.
-`gnome_course_radius` (`searchRadius=8`) is the 05k imported AgilityBot
-resync defect. Do not dim the default card. Obstacle CSV is the course
-list, not a second mode.
-
-### WildyAgility — none remaining as options
-
-Isolated `8c`: 274 both catalogs and 289 newer PASS (full obstacles +
-further pipe). 289 old FAIL after rope fall at HP10 retained. 15e/cd49
-FAIL retained. Food names are eat-item substitution. `acquireFoodAtStart`
-and timeout ticks are scalars. DeathRecovery walkBack is native.
-
-### DoorOpener — none remaining
-
-Isolated `6401` door and gate, all eight cells: selected closed loc
-replaced by its open loc after Start. Stand/leash scalars are not modes.
+GnomeCourse / WildyAgility / DoorOpener — none remaining as options (same as
+143: complete-lap, course except retained 289-old FAIL, door+gate).
 
 ## Minimal named extra set
 
 | Scenario | Inject | Witness | Cells |
 |---|---|---|---|
-| `thiever_bank` | `banking=Auto`, Man, Pickpocket | Food withdraw, closed bank, return, further pickpocket XP | 4 |
-| `chaos_druid_tower` | `location=Chaos Druid Tower` | Attack Chaos druid at tower field; Thieving 46; honest loot if any | 4 |
-| `chaos_druid_yanille` | `location=Yanille Dungeon` | Attack Chaos druid warrior; Agility 40; honest loot if any | 4 |
-| `ardy_cakes_fight` | `guardResponse=Fight` | Stall steal then FightBack kill, not Flee kite | 4 |
-| `ardy_thiever_fight` | `guardResponse=Fight` | Guard pickpocket then FightBack, then bank/return | 4 |
+| `auto_fighter_bank` | `banking=Auto` | Nearest-bank deposit, return, further XP | 4 |
+| `auto_fighter_range` | `combatStyle=range` | Ranged XP + ammo consume/quiver | 4 |
+| `rock_crab_bank` | `Loot count` | Seers booth, restock, return, further XP | 4 |
+| `rock_crab_range` | `combatStyle=range` | Rocks→Crab, Ranged XP, sweep/consume | 4 |
+| `green_dragon_bank` | `escape=Flee to bank` | Edgeville booth, return z>=3520, loot 536/1753 | 4 |
+| `green_dragon_special` | `useSpecial=true` | Spec energy spend during a kill | 4 |
+| `green_dragon_potions` | `usePotions=true` | Mid-fight sip + boost | 4 |
+| `green_dragon_tele` | `escape=Teleport to Varrock` | Spellbook land + Magic XP (gated on brief 37) | 4 |
+| `fire_giant_approach` | start at raft | Post-Start z>=9000 then Strength XP | 4 |
+| `fire_giant_bank` | `escapeTele=Barrel (free)` | Barrel, Ardougne West, re-enter, further XP | 4 |
+| `ardy_fighter_bank` | `Loot count` | Stall steal, booth, return, further XP | 4 |
+| `chaos_druid_bank` | Edgeville | Booth, trapdoor return, further kill+loot | 4 |
+| `chaos_druid_tower` | `location=Chaos Druid Tower` | Attack + Herb/Law/Nature pickup | 4 |
+| `chaos_druid_yanille` | `location=Yanille Dungeon` | Warrior Attack + Herb/Law/Nature pickup | 4 |
+| `moss_giant_bank` | melee | Ardougne North restock/return | 4 |
+| `hill_giant_bank` | strength | Varrock West restock/return | 4 |
+| `ardy_cakes_fight` | `guardResponse=Fight` | Stall steal then FightBack, not Flee | 4 |
+| `ardy_thiever_fight` | `guardResponse=Fight` | FightBack then bank/return | 4 |
 
-Twenty extra cells. Existing cores above stay on `scenario::get` / `names()`.
+Seventy-two extra cells. Existing cores stay on `scenario::get` / `names()`.
 Do not change frozen catalog source. Do not force loot/combat RNG.
 
 ## What this is not
 
 - Not final card PASS and not a dim.
-- Not a demand to click native/TUI controls on every remaining tier.
-- Not a new Autocast task (Mage132) and not a new teleport task.
-- Not a death-recovery capability gap.
+- Not four extra `thiever_bank` catalog-harness cells.
+- Not a new Autocast, Special ABI, npcBox, or wear/dormant-stand task.
+- Not induced-death LIVE and not a death-recovery capability gap.
 - Not cff batch acceptance; not an Edgeville wilderness fixture move.
-- Not integrated-source N32 refresh.
+- Not integrated-source N32 refresh (campaign-wide).
+- Not Cartesian ammo names, melee XP fields, Time/Either, or per-card mage.
 
-Machine copies: `evidence/combat-utility-option-audit/{refs,source-hashes,frozen-settings,isolated-pass,remaining-cells}.json`.
+Machine copies: `evidence/combat-utility-option-audit/{refs,source-hashes,frozen-settings,isolated-pass,remaining-cells,remaining-cells-143}.json`.

@@ -17,9 +17,9 @@
       "constructs": ["DeathRecovery", "PeriodicBank", "ArmAutocast"]
     },
     "Thiever": {
-      "target": {"default": "Man", "options": ["Man", "Woman", "Farmer", "Warrior woman", "Al-Kharid warrior", "Rogue", "Guard", "Knight of Ardougne", "Watchman", "Paladin", "Hero"]},
+      "target": {"default": "Man", "options": ["Man", "Woman", "Farmer", "Warrior woman", "Al-Kharid warrior", "Rogue", "Guard", "Knight of Ardougne", "Watchman", "Paladin", "Hero"], "isolated_inject": "Guard; Man vs Guard is Pickpocket substitution"},
       "action": {"default": "Pickpocket", "type": "free-text"},
-      "banking": {"default": "None", "options": ["None", "Auto"], "help": "Auto = bank non-food, withdraw food, return"},
+      "banking": {"default": "None", "options": ["None", "Auto"], "help": "Auto = bank non-food, withdraw food, return", "isolated_inject": "None", "fleet_override": "Auto on exact ThievingBot via memory.rs BOT_MEMORY_SUSTAIN"},
       "suicide": {"default": false, "help": "keep pickpocketing when out of food"}
     },
     "ChaosDruidKiller": {

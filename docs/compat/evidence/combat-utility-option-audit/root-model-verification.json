@@ -1,22 +1,21 @@
 {
-  "task_id": "t_46d26f49",
-  "run_id": 1376,
-  "session_id": "20260911_123359_502d4e",
-  "model": "grok-4.6",
+  "task_id": "t_a7f32d56",
+  "parent_task": "t_46d26f49",
+  "session_note": "Corrective audit145. Model grok-4.6 / xai-oauth via profile grok46.",
   "actual_model_verified": true,
-  "usage": [
-    {
-      "session_id": "20260911_123359_502d4e",
-      "model": "grok-4.6",
-      "billing_provider": "xai-oauth",
-      "api_call_count": 33
-    },
-    {
-      "session_id": "20260911_123359_502d4e",
-      "model": "grok-4.6",
-      "billing_provider": "xai-oauth",
-      "api_call_count": 1
-    }
-  ],
-  "root_acceptance": "Provisional leads only; complete branch set rejected for unaccounted later bank/escape branches. Corrective audit145 queued."
+  "prior_audit143": {
+    "commit": "c9331e833bad40c4c7e94872efaf3a88e1e41af3",
+    "cell_count": 20,
+    "root_acceptance": "Provisional leads only; complete branch set rejected for unaccounted later bank/escape branches."
+  },
+  "correction": {
+    "still_needed_named_scenarios": 18,
+    "cell_count": 72,
+    "thiever_auto": "fleet N1/N32 on exact ThievingBot; not four extra cells",
+    "loot": "Tower/Yanille keep Herb/Law/Nature pickup",
+    "no_acceptance": true,
+    "no_live": true,
+    "no_code": true
+  },
+  "root_acceptance": "Root owns acceptance. No final PASS."
 }

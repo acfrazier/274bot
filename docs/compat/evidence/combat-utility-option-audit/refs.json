@@ -1,14 +1,24 @@
 {
-  "kind": "read-only remaining-option inventory",
-  "brief": "143-combat-utility-option-audit.md",
-  "brief_sha256": "8e9da0c2512f7312e23582adc54bdd3280cd7de36047eb3ad1ed3875ccf58ff4",
-  "kanban_task": "t_46d26f49",
+  "kind": "read-only remaining-option inventory (145 correction)",
+  "brief": "145-combat-option-audit-correction.md",
+  "brief_sha256": "c97590b29bb3864b4a7fd0717a5f26465d7aa6530ca709db7e6c9f5e97a2243a",
+  "prior_brief": "143-combat-utility-option-audit.md",
+  "prior_brief_sha256": "8e9da0c2512f7312e23582adc54bdd3280cd7de36047eb3ad1ed3875ccf58ff4",
+  "prior_commit": "c9331e833bad40c4c7e94872efaf3a88e1e41af3",
+  "kanban_task": "t_a7f32d56",
+  "parent_task": "t_46d26f49",
   "branch": "codex/rs2b0t-multirevision",
-  "campaign_head_at_writeup": "7706f053b2a71069e4487cd990784b7258e97552",
+  "campaign_head_at_writeup": "324d7b5946534db28305942d9bfba75fdd2e5dc8",
   "client_gitlink": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
-  "written_utc": "2026-09-11 16:42 UTC",
+  "written_utc": "2026-09-11 16:55 UTC",
   "old_catalog": "100adccc037d9f6898080e1cad58fcfc43364775",
   "newer_catalog": "8e7d965be2071d6ec65c3265e12af797082d720a",
-  "evidence_cutoff": "Named finalized catalog-harness core-results plus named receipts listed in isolated-pass.json. Fresh cff batch is not a complete acceptance set; cite only docs/compat/evidence/combat-ground-serialization/fresh-chaos-diagnostics.json for those two ChaosDruid cells.",
-  "note": "Campaign HEAD is the working tree at write-up, not a tested isolated binary. Isolated PASS hosts below are the named harvests. Matrix/source/LIVE were not edited. Mage132 fixture auto_fighter_mage exists on this HEAD; this audit does not duplicate it or claim LIVE."
+  "fleet_thiever": {
+    "host_commit": "6d750e65a227aa8a39f2bb6fdc1e5ceb5a452338",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "script_sha256": "5cff25a75db3166a3bf3ab6ca1a8ba37ed77e0e9d48292178f79767316b66ad9"
+  },
+  "evidence_cutoff": "Named finalized catalog-harness core-results plus named receipts listed in isolated-pass.json, plus fleet-prerequisite N1/N32 on 6d750e65. Fresh cff batch is not a complete acceptance set; cite only docs/compat/evidence/combat-ground-serialization/fresh-chaos-diagnostics.json for those two ChaosDruid cells.",
+  "note": "Campaign HEAD is the working tree at write-up, not a tested isolated binary. Isolated PASS hosts below are the named harvests. Matrix/source/LIVE were not edited. Mage132 fixture auto_fighter_mage exists; fixture139 and native144 are owned elsewhere and were not duplicated."
 }
