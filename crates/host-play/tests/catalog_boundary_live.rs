@@ -64,6 +64,8 @@ const GNOME_START: (i32, i32, i32) = (2474, 3436, 0);
 const GNOME_AFTER_LOG: (i32, i32, i32) = (2474, 3429, 0);
 const GNOME_GROUND_RETURN: (i32, i32, i32) = (2487, 3420, 0);
 const GNOME_PIPE: (i32, i32, i32) = (2484, 3431, 0);
+// Selected 274/289 content: 86.5 XP per full lap, then 7.5 for the next log.
+const GNOME_SECOND_LOG_XP: i32 = 94;
 const FLAX_FIELD: (i32, i32, i32) = (2741, 3444, 0);
 const FALADOR_CHICKENS: (i32, i32, i32) = (3029, 3294, 0);
 
@@ -1280,7 +1282,9 @@ impl GnomeCourseCycle {
             }
         }
         if let Some(pipe) = &self.pipe {
-            self.second_lap |= xp > pipe.skill_xp("agility") && near(now.tile, GNOME_START, 8);
+            self.second_lap |= xp > pipe.skill_xp("agility")
+                && xp - baseline.skill_xp("agility") >= GNOME_SECOND_LOG_XP
+                && near(now.tile, GNOME_AFTER_LOG, 3);
         }
     }
 
@@ -3448,10 +3452,12 @@ mod tests {
             let baseline = gnome_obs(GNOME_START, 0);
             validate_case_baseline(case, &baseline).unwrap();
 
-            let log = gnome_obs(GNOME_AFTER_LOG, 75);
-            let ground = gnome_obs(GNOME_GROUND_RETURN, 200);
-            let pipe = gnome_obs(GNOME_PIPE, 400);
-            let second = gnome_obs(GNOME_START, 475);
+            let log = gnome_obs(GNOME_AFTER_LOG, 7);
+            let ground = gnome_obs(GNOME_GROUND_RETURN, 27);
+            let pipe = gnome_obs(GNOME_PIPE, 32);
+            let first_lap_return = gnome_obs((2482, 3437, 0), 86);
+            let queued_next_log = gnome_obs(GNOME_AFTER_LOG, 86);
+            let second = gnome_obs(GNOME_AFTER_LOG, 94);
             assert!(witness(case, &baseline, [&log, &ground, &pipe, &second])
                 .qualify()
                 .is_ok());
@@ -3461,6 +3467,11 @@ mod tests {
             assert!(witness(case, &baseline, [&log, &ground, &pipe])
                 .qualify()
                 .is_err());
+            for incomplete in [&first_lap_return, &queued_next_log] {
+                assert!(witness(case, &baseline, [&log, &ground, &pipe, incomplete])
+                    .qualify()
+                    .is_err());
+            }
         }
     }
 

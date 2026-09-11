@@ -1,0 +1,74 @@
+{
+  "observed_at": "2026-09-11T04:44:10.863527+00:00",
+  "cause": "GnomeCourseCycle captured pre-pipe XP32; full first-lap XP86 with return within radius8 satisfied second_lap. Scenario further_xp min1 reused the initial skill baseline.",
+  "correction": "Require at least 94 XP above Start baseline and observed second log destination, preserving native deadlines and foreign behavior.",
+  "selected_content_xp_tenths": {
+    "obstacles": [
+      75,
+      75,
+      50,
+      75,
+      50,
+      75,
+      75
+    ],
+    "lap_bonus": 390,
+    "lap_total": 865,
+    "next_log": 75,
+    "second_log_total": 940
+  },
+  "content_sha256": {
+    "/Users/acfrazier/experiments/Server/content/scripts/skill_agility/scripts/gnome_course.rs2": "4737dbed1c42aa8aeb7d019ed72cb40870981613ef03367541e2ee245a9be187",
+    "/Users/acfrazier/experiments/lostcity-289/content/scripts/skill_agility/scripts/gnome_course.rs2": "ad27350bc8c502af58dd35be1a5066ace5abd66082d1a2feea3594af04ad214c"
+  },
+  "historical_records": [
+    {
+      "log": "docs/compat/evidence/catalog-harness/live/r274-gnome-course-100adccc-50f2be8a.log",
+      "log_sha256": "5568b0bc17ac9a5e1481651c4fca02fae885410af5caefcb212655db1f3b6809",
+      "actual_first_lap_xp": 86,
+      "latest_tile": [
+        2482,
+        3437,
+        0
+      ],
+      "prior_second_lap_flag": true,
+      "qualification": "First lap and queued next-log walk observed; actual next-log outcome not established"
+    },
+    {
+      "log": "docs/compat/evidence/catalog-harness/live/r274-gnome-course-8e7d965b-50f2be8a.log",
+      "log_sha256": "3db37394944e2bff8778387d7a0dc6b48c15c910d9e82f3818dabaf157b0d6aa",
+      "actual_first_lap_xp": 86,
+      "latest_tile": [
+        2482,
+        3437,
+        0
+      ],
+      "prior_second_lap_flag": true,
+      "qualification": "First lap and queued next-log walk observed; actual next-log outcome not established"
+    },
+    {
+      "log": "docs/compat/evidence/catalog-harness/live/r289-gnome-course-100adccc-50f2be8a.log",
+      "log_sha256": "d6ad9fb75bf3b1c1cb343ed1469d0b7043d5f577b81286403977937edf217a42",
+      "actual_first_lap_xp": 86,
+      "latest_tile": [
+        2482,
+        3437,
+        0
+      ],
+      "prior_second_lap_flag": true,
+      "qualification": "First lap and queued next-log walk observed; actual next-log outcome not established"
+    },
+    {
+      "log": "docs/compat/evidence/catalog-harness/live/r289-gnome-course-8e7d965b-50f2be8a.log",
+      "log_sha256": "ec7743ddc757e4779e5c7f3815ef6e73ff9dc08efaa1559874a1e69e6ded50f8",
+      "actual_first_lap_xp": 86,
+      "latest_tile": [
+        2482,
+        3437,
+        0
+      ],
+      "prior_second_lap_flag": true,
+      "qualification": "First lap and queued next-log walk observed; actual next-log outcome not established"
+    }
+  ]
+}

@@ -103,7 +103,10 @@ not a product behavior change.
 - Location/world fixtures 58ec089e passed same-card Grok 4.5 review 1195 with
   independent empty-target checks. Root froze and built 50f2be8a (same
   fixtures plus the layout correction). All four default GnomeCourse cells
-  pass ordered log/ground-return/pipe and next-lap XP. DoorOpener fails on
+  show ordered log/ground-return/pipe and one complete lap; root found
+  their second-lap flag could pass at 86 XP before the next log completed.
+  A bounded fixture correction now requires 94 XP and the next-log dest;
+  stronger LIVE requalification remains pending. DoorOpener fails on
   settings.tile losing Tile methods; radius-8 old-catalog Gnome on both
   revisions fails on missing Reachability.walkable. These are our mappings
   to repair. Stored Gnome milestones are on the ground; native tile publication already

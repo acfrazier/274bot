@@ -4070,9 +4070,9 @@ fn gnome_course_radius_scenario() -> Scenario {
     gnome_course_variant("gnome_course_radius", Some(GNOME_COURSE_RADIUS_INJECT))
 }
 
-/// Complete natural gnome lap from selected server dests, then further
-/// progress back at the log. Snapshot tile.level is always 0; ground return
-/// is the packed climb-down coord.
+/// Complete a natural gnome lap, then cross the log again. Selected 274/289
+/// content grants 86.5 XP per lap plus 7.5 for the next log. Stored milestones
+/// are on the ground; snapshot levels follow the actual client plane.
 fn gnome_course_variant(
     name: &'static str,
     inject: Option<&'static [ScriptSettingInject]>,
@@ -4083,7 +4083,7 @@ fn gnome_course_variant(
     };
     let further_xp = Proof::StatXpGain {
         id: AGILITY_STAT,
-        min: 1,
+        min: 94,
     };
     let start = GNOME_START;
     let mut steps = script_live_seed_steps();
@@ -4140,12 +4140,12 @@ fn gnome_course_variant(
             further_xp,
         ),
         (
-            "watch return toward the log for second-lap progress",
+            "watch the log dest after second-lap progress",
             Proof::ArrivedNear {
-                x: start.x,
-                z: start.z,
-                level: start.level,
-                radius: 8,
+                x: GNOME_AFTER_LOG.x,
+                z: GNOME_AFTER_LOG.z,
+                level: GNOME_AFTER_LOG.level,
+                radius: 3,
             },
         ),
     ] {
@@ -6133,12 +6133,13 @@ mod tests {
             level: 0,
             radius: 6,
         }));
-        assert!(gnome_watch.contains(&Proof::ArrivedNear {
-            x: 2474,
-            z: 3436,
-            level: 0,
-            radius: 8,
-        }));
+        assert_eq!(
+            gnome.proof,
+            Proof::StatXpGain {
+                id: AGILITY_STAT,
+                min: 94
+            }
+        );
 
         let radius = get("gnome_course_radius").expect("gnome_course_radius");
         let inject = settings_inject_map(radius.settings.script_settings_inject).unwrap();
