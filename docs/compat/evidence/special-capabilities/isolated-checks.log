@@ -1,0 +1,18 @@
+isolated_build=true
+empty_target=true
+export=.superpowers/review-exports/special-controls-t_68de6f48
+target=.superpowers/review-exports/special-controls-t_68de6f48-target
+host=2e6f02e728ff915a74ed339a5ebf3bd57fd5d6ee
+client=9d090ed04957e4efc254f073cda97bc5510ca72b
+files=3913
+commit=c5749bbe29eaa0ff313f25169e3d101865e217a9
+
+api --test game_data: 4 passed
+script --lib special: 2 passed
+script --test special: 9 passed
+clippy api lib / script lib / script test special / host-play lib: pass
+rustfmt owned Rust: pass
+npx tsx tools/game-data/generate.test.ts: pass (worktree)
+two generations byte-identical; verify.ts pass (worktree)
+gold_stubs 12 passed 1 ignored; load_isolate isolate_special_energy 2 passed (worktree diagnostic target)
+not LIVE

@@ -1,0 +1,48 @@
+{
+  "task": "t_68de6f48",
+  "brief": "docs/compat/briefs/36-special-controls.md",
+  "brief_sha256": "d8fcc16c8bc13b07d06f754507a7aea83b70a244533543267c0961091751799a",
+  "commit": "c5749bbe29eaa0ff313f25169e3d101865e217a9",
+  "source_commit": "2e6f02e728ff915a74ed339a5ebf3bd57fd5d6ee",
+  "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "export": ".superpowers/review-exports/special-controls-t_68de6f48",
+  "files": 3913,
+  "cargo_target_dir": ".superpowers/review-exports/special-controls-t_68de6f48-target",
+  "isolated_build": true,
+  "live": false,
+  "json_sha256": {
+    "274": "6ca4c04acd7f12f635b99c044009d24d0af09d1d23afb709e8f0e6ca5a634232",
+    "289": "f7c78bf2ac32b29c618cc5690c555495abd29f101d1e1eba7e382dc4b8f0422b"
+  },
+  "overlay_sha256": {
+    "tools/game-data/generate.ts": "e50ad42b99103a347686d4ba094903a0077ba116df741a6b0575badd280e5ade",
+    "tools/game-data/generate.test.ts": "71535be0169cf00ba1dd1e6d71212af85be0ad9be735b4e1ce665435dc64b003",
+    "tools/game-data/verify.ts": "037daee679538cbfeee2331e67bd5ebd5ca34319f33d275a15e65679de605530",
+    "crates/api/data/game-data/274.json": "6ca4c04acd7f12f635b99c044009d24d0af09d1d23afb709e8f0e6ca5a634232",
+    "crates/api/data/game-data/289.json": "f7c78bf2ac32b29c618cc5690c555495abd29f101d1e1eba7e382dc4b8f0422b",
+    "crates/api/data/game-data/manifest.json": "7cd17d87d91e8511bf727f70547506e57ea14b9bc1b421b002343a4b17538ce3",
+    "crates/api/src/game_data.rs": "763976cfe2432d8c42073d4aecc6ac544bac56a48ff80cd3870d3bf45fd4980b",
+    "crates/api/tests/game_data.rs": "8374f4e824efec3944acbe3736ef2dd7d6a9d774ca56c374dd8c055844be8ff2",
+    "crates/script/src/special.rs": "cecd2e7d13f3eec43804675490977057acaf3a6a11ba3eea8aec01214280c804",
+    "crates/script/src/lib.rs": "5da5605dd03f37ad300eeaf91c9047259704d607bf682d2de3ab0c575f620850",
+    "crates/script/src/load.rs": "55060d8f944f7b7824bfa3486338abd85e4e363ac6f27e11790cd6bbecd98295",
+    "crates/script/src/shim/special.js": "c98c38ee257d5cf03d91e5568b1275e46f5c771a8a325e037ed56d8aa06f866f",
+    "crates/script/src/shim/mod.rs": "7b78764a188bf552311b5e53b83a2b5be38bfada6e1719c25b6853fda8d6a573",
+    "crates/script/tests/special.rs": "ecf59a62a54b772bbd991bbc13ab3f0514b8444a209a0caa938fda07eb0cae05",
+    "crates/host-play/src/lib.rs": "62d9b24df645da5b12401308f734eff5cbc7ad69d554667431990c40ea51056e",
+    "docs/compat/04-capabilities-special.md": "e1a07f1b8ce29f5cc4ac91b66367caf5f6ad76d334d961528a04d3a3ff7d5313",
+    "docs/compat/evidence/special-capabilities/README.md": "817761497504ff61349613a7689c5dd1dcf9abb932edcb995ef5a96c3795795f",
+    "docs/compat/evidence/generated-game-data/verification.json": "2db0a5c95c1a425b172bdcbf9e50ce6a380a0ac438a8aafe4e156adef61bdb80"
+  },
+  "tests_passed": 15,
+  "tests_run": [
+    "cargo test --locked --offline -p api --test game_data -- --test-threads=1",
+    "cargo test --locked --offline -p script --lib special -- --test-threads=1",
+    "cargo test --locked --offline -p script --test special -- --test-threads=1",
+    "cargo clippy --locked --offline --no-deps -p api --lib -- -D warnings",
+    "cargo clippy --locked --offline --no-deps -p script --lib -- -D warnings",
+    "cargo clippy --locked --offline --no-deps -p script --test special -- -D warnings",
+    "cargo clippy --locked --offline --no-deps -p host-play --lib -- -D warnings",
+    "rustfmt --edition 2021 --check owned Rust"
+  ]
+}
