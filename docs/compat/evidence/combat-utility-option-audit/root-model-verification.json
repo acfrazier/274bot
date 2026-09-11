@@ -1,0 +1,22 @@
+{
+  "task_id": "t_46d26f49",
+  "run_id": 1376,
+  "session_id": "20260911_123359_502d4e",
+  "model": "grok-4.6",
+  "actual_model_verified": true,
+  "usage": [
+    {
+      "session_id": "20260911_123359_502d4e",
+      "model": "grok-4.6",
+      "billing_provider": "xai-oauth",
+      "api_call_count": 33
+    },
+    {
+      "session_id": "20260911_123359_502d4e",
+      "model": "grok-4.6",
+      "billing_provider": "xai-oauth",
+      "api_call_count": 1
+    }
+  ],
+  "root_acceptance": "Provisional leads only; complete branch set rejected for unaccounted later bank/escape branches. Corrective audit145 queued."
+}
