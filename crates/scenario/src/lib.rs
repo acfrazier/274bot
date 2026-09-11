@@ -407,6 +407,9 @@ pub fn get(name: &str) -> Option<Scenario> {
         "gnome_course" => Some(gnome_course_scenario()),
         "gnome_course_radius" => Some(gnome_course_radius_scenario()),
         "flax_picker" => Some(flax_picker_scenario()),
+        "superheater" => Some(superheater_scenario()),
+        "superheater_steel" => Some(superheater_steel_scenario()),
+        "superheater_fire_battlestaff" => Some(superheater_fire_battlestaff_scenario()),
         "script_trade" => Some(script_trade_scenario()),
         _ => None,
     }
@@ -449,6 +452,9 @@ pub fn names() -> Vec<&'static str> {
         "gnome_course",
         "gnome_course_radius",
         "flax_picker",
+        "superheater",
+        "superheater_steel",
+        "superheater_fire_battlestaff",
         "script_trade",
     ]
 }
@@ -4111,6 +4117,411 @@ fn flax_picker_scenario() -> Scenario {
     }
 }
 
+const MAGIC_STAT: i32 = 6;
+const SMITHING_STAT: i32 = 13;
+const COPPER_ORE_ID: i32 = 436;
+const TIN_ORE_ID: i32 = 438;
+const IRON_ORE_ID: i32 = 440;
+const COAL_ID: i32 = 453;
+const FIRE_BATTLESTAFF_ID: i32 = 1393;
+const BRONZE_BAR_ID: i32 = 2349;
+const IRON_BAR_ID: i32 = 2351;
+const STEEL_BAR_ID: i32 = 2353;
+const SUPERHEAT_MAGIC: i32 = 43;
+const BRONZE_SMITHING: i32 = 1;
+const STEEL_SMITHING: i32 = 30;
+const SUPERHEATER_NATURES_SEED: i32 = 200;
+const SUPERHEATER_ORE_SEED: i32 = 100;
+const SUPERHEATER_COAL_SEED: i32 = 200;
+
+const SUPERHEATER_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "bar",
+    value: ScriptInjectValue::Str("Bronze"),
+}];
+
+const SUPERHEATER_STEEL_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "bar",
+    value: ScriptInjectValue::Str("Steel"),
+}];
+
+const SUPERHEATER_FIRE_BATTLESTAFF_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "bar",
+    value: ScriptInjectValue::Str("Bronze"),
+}];
+
+#[derive(Clone, Copy)]
+enum SuperheaterStaff {
+    Fire,
+    FireBattlestaff,
+}
+
+#[derive(Clone, Copy)]
+enum SuperheaterRecipe {
+    Bronze,
+    Steel,
+}
+
+fn superheater_scenario() -> Scenario {
+    superheater_variant(
+        "superheater",
+        SUPERHEATER_INJECT,
+        SuperheaterRecipe::Bronze,
+        SuperheaterStaff::Fire,
+    )
+}
+
+fn superheater_steel_scenario() -> Scenario {
+    superheater_variant(
+        "superheater_steel",
+        SUPERHEATER_STEEL_INJECT,
+        SuperheaterRecipe::Steel,
+        SuperheaterStaff::Fire,
+    )
+}
+
+fn superheater_fire_battlestaff_scenario() -> Scenario {
+    superheater_variant(
+        "superheater_fire_battlestaff",
+        SUPERHEATER_FIRE_BATTLESTAFF_INJECT,
+        SuperheaterRecipe::Bronze,
+        SuperheaterStaff::FireBattlestaff,
+    )
+}
+
+/// Empty pack at Varrock West. Banked staff, natures and recipe ores.
+/// Script withdraws/equips the staff, casts Superheat Item on the primary
+/// ore, deposits bars except natures, restocks and smelts again.
+fn superheater_variant(
+    name: &'static str,
+    inject: &'static [ScriptSettingInject],
+    recipe: SuperheaterRecipe,
+    staff: SuperheaterStaff,
+) -> Scenario {
+    let first_magic = Proof::StatXpGain {
+        id: MAGIC_STAT,
+        min: 1,
+    };
+    let first_smithing = Proof::StatXpGain {
+        id: SMITHING_STAT,
+        min: 1,
+    };
+    let further_magic = Proof::StatXpGain {
+        id: MAGIC_STAT,
+        min: 2,
+    };
+    let further_smithing = Proof::StatXpGain {
+        id: SMITHING_STAT,
+        min: 2,
+    };
+    let (bar_id, primary_id, secondary_id, smithing, staff_id, staff_alias) = match (recipe, staff)
+    {
+        (SuperheaterRecipe::Bronze, SuperheaterStaff::Fire) => (
+            BRONZE_BAR_ID,
+            COPPER_ORE_ID,
+            TIN_ORE_ID,
+            BRONZE_SMITHING,
+            STAFF_OF_FIRE_ID,
+            "staff_of_fire",
+        ),
+        (SuperheaterRecipe::Steel, SuperheaterStaff::Fire) => (
+            STEEL_BAR_ID,
+            IRON_ORE_ID,
+            COAL_ID,
+            STEEL_SMITHING,
+            STAFF_OF_FIRE_ID,
+            "staff_of_fire",
+        ),
+        (SuperheaterRecipe::Bronze, SuperheaterStaff::FireBattlestaff) => (
+            BRONZE_BAR_ID,
+            COPPER_ORE_ID,
+            TIN_ORE_ID,
+            BRONZE_SMITHING,
+            FIRE_BATTLESTAFF_ID,
+            "fire_battlestaff",
+        ),
+        (SuperheaterRecipe::Steel, SuperheaterStaff::FireBattlestaff) => {
+            unreachable!("steel is a recipe split, not a staff split")
+        }
+    };
+    let bank = VARROCK_WEST_BANK;
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed Magic, Smithing, bank stock and tele to Varrock West before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, &format!("setstat magic {SUPERHEAT_MAGIC}"));
+                cheat(c, &format!("setstat smithing {smithing}"));
+                cheat(c, &format!("givebank {staff_alias} 1"));
+                cheat(
+                    c,
+                    &format!("givebank naturerune {SUPERHEATER_NATURES_SEED}"),
+                );
+                match recipe {
+                    SuperheaterRecipe::Bronze => {
+                        cheat(c, &format!("givebank copper_ore {SUPERHEATER_ORE_SEED}"));
+                        cheat(c, &format!("givebank tin_ore {SUPERHEATER_ORE_SEED}"));
+                    }
+                    SuperheaterRecipe::Steel => {
+                        cheat(c, &format!("givebank iron_ore {SUPERHEATER_ORE_SEED}"));
+                        cheat(c, &format!("givebank coal {SUPERHEATER_COAL_SEED}"));
+                    }
+                }
+                cheat(c, &tele_args(bank.level, bank.x, bank.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: bank.x,
+                z: bank.z,
+                level: bank.level,
+                radius: 6,
+            },
+            budget_ticks: 200,
+        },
+    });
+    let mut before_start = vec![
+        (
+            "confirm Magic 43 before Start",
+            Proof::Stat {
+                id: MAGIC_STAT,
+                min: SUPERHEAT_MAGIC,
+            },
+        ),
+        (
+            "confirm Smithing before Start",
+            Proof::Stat {
+                id: SMITHING_STAT,
+                min: smithing,
+            },
+        ),
+        (
+            "confirm no seeded staff in pack before Start",
+            Proof::ItemIdAtMost {
+                id: staff_id,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded natures in pack before Start",
+            Proof::ItemIdAtMost {
+                id: NATURE_RUNE_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded primary ore in pack before Start",
+            Proof::ItemIdAtMost {
+                id: primary_id,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded secondary ore in pack before Start",
+            Proof::ItemIdAtMost {
+                id: secondary_id,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded bars in pack before Start",
+            Proof::ItemIdAtMost {
+                id: bar_id,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded iron bars in pack before Start",
+            Proof::ItemIdAtMost {
+                id: IRON_BAR_ID,
+                count: 0,
+            },
+        ),
+    ];
+    if matches!(staff, SuperheaterStaff::FireBattlestaff) {
+        before_start.push((
+            "confirm default Staff of fire is absent from pack",
+            Proof::ItemIdAtMost {
+                id: STAFF_OF_FIRE_ID,
+                count: 0,
+            },
+        ));
+    }
+    if matches!(recipe, SuperheaterRecipe::Bronze) {
+        before_start.push((
+            "confirm no seeded steel bars in pack before Start",
+            Proof::ItemIdAtMost {
+                id: STEEL_BAR_ID,
+                count: 0,
+            },
+        ));
+    } else {
+        before_start.push((
+            "confirm no seeded bronze bars in pack before Start",
+            Proof::ItemIdAtMost {
+                id: BRONZE_BAR_ID,
+                count: 0,
+            },
+        ));
+    }
+    for (step_name, arm) in before_start {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(bank_fletcher_open_seed_bank(
+        "open and acknowledge the exact fire staff seed bank",
+        Proof::BankItemId {
+            id: staff_id,
+            count: 1,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge the exact nature-rune seed bank",
+        Proof::BankItemId {
+            id: NATURE_RUNE_ID,
+            count: SUPERHEATER_NATURES_SEED,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge the exact primary ore seed bank",
+        Proof::BankItemId {
+            id: primary_id,
+            count: SUPERHEATER_ORE_SEED,
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge the exact secondary ore seed bank",
+        Proof::BankItemId {
+            id: secondary_id,
+            count: match recipe {
+                SuperheaterRecipe::Bronze => SUPERHEATER_ORE_SEED,
+                SuperheaterRecipe::Steel => SUPERHEATER_COAL_SEED,
+            },
+        },
+    ));
+    steps.push(bank_fletcher_watch(
+        "acknowledge no seeded bars in bank",
+        Proof::BankItemIdAtMost {
+            id: bar_id,
+            count: 0,
+        },
+    ));
+    if matches!(staff, SuperheaterStaff::FireBattlestaff) {
+        steps.push(bank_fletcher_watch(
+            "acknowledge Staff of fire is absent from the alternative-staff bank",
+            Proof::BankItemIdAtMost {
+                id: STAFF_OF_FIRE_ID,
+                count: 0,
+            },
+        ));
+    }
+    steps.push(bank_fletcher_close_seed_bank());
+    steps.push(start_catalog_step());
+    let mut watch = vec![
+        ("watch Magic XP from Superheat Item", first_magic),
+        ("watch Smithing XP from the produced bar", first_smithing),
+        (
+            "watch the exact bar id after Start",
+            Proof::ItemId {
+                id: bar_id,
+                count: 1,
+            },
+        ),
+        (
+            "watch at least one nature rune consumed",
+            Proof::ItemIdAtMost {
+                id: NATURE_RUNE_ID,
+                count: 49,
+            },
+        ),
+        (
+            "watch script-created bars enter a fresh bank",
+            Proof::BankItemId {
+                id: bar_id,
+                count: 1,
+            },
+        ),
+        (
+            "watch natures kept in pack across deposit",
+            Proof::ItemId {
+                id: NATURE_RUNE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch a restock of the exact primary ore",
+            Proof::ItemId {
+                id: primary_id,
+                count: 1,
+            },
+        ),
+        (
+            "watch a restock of the exact secondary ore",
+            Proof::ItemId {
+                id: secondary_id,
+                count: match recipe {
+                    SuperheaterRecipe::Bronze => 1,
+                    SuperheaterRecipe::Steel => 2,
+                },
+            },
+        ),
+    ];
+    if matches!(staff, SuperheaterStaff::FireBattlestaff) {
+        watch.push((
+            "watch Staff of fire never enter the pack",
+            Proof::ItemIdAtMost {
+                id: STAFF_OF_FIRE_ID,
+                count: 0,
+            },
+        ));
+    }
+    watch.extend([
+        (
+            "watch no iron bar from a partial recipe",
+            Proof::ItemIdAtMost {
+                id: IRON_BAR_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch the script close its superheat bank",
+            Proof::BankClosed,
+        ),
+        (
+            "watch another exact bar after restock",
+            Proof::ItemId {
+                id: bar_id,
+                count: 1,
+            },
+        ),
+        ("watch Magic XP beyond the first trip", further_magic),
+        ("watch Smithing XP beyond the first trip", further_smithing),
+    ]);
+    for (step_name, arm) in watch {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: further_smithing,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("Superheater"),
+            script_settings_inject: Some(inject),
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
 /// Lumbridge courtyard stand where the two-bot trade meets.
 const TRADE_COURTYARD: WorldTile = WorldTile {
     x: 3220,
@@ -4633,6 +5044,9 @@ mod tests {
                 "gnome_course",
                 "gnome_course_radius",
                 "flax_picker",
+                "superheater",
+                "superheater_steel",
+                "superheater_fire_battlestaff",
                 "script_trade",
             ]
         );
@@ -5607,6 +6021,179 @@ mod tests {
     }
 
     #[test]
+    fn superheater_cases_register_exact_ids_and_bank_cycles() {
+        let bronze = get("superheater").expect("superheater");
+        assert_eq!(bronze.settings.start_script, Some("Superheater"));
+        assert_eq!(bronze.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        let inject = settings_inject_map(bronze.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("bar"), Some(&Value::String("Bronze".into())));
+        let bronze_start = bronze
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        assert_eq!(bronze.steps[bronze_start - 1].wait.arm, Proof::BankClosed);
+        let bronze_seed = bronze.steps[..bronze_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(bronze_seed.contains(&Proof::Stat {
+            id: MAGIC_STAT,
+            min: SUPERHEAT_MAGIC,
+        }));
+        assert!(bronze_seed.contains(&Proof::Stat {
+            id: SMITHING_STAT,
+            min: BRONZE_SMITHING,
+        }));
+        assert!(bronze_seed.contains(&Proof::BankItemId {
+            id: STAFF_OF_FIRE_ID,
+            count: 1,
+        }));
+        assert!(bronze_seed.contains(&Proof::BankItemId {
+            id: NATURE_RUNE_ID,
+            count: SUPERHEATER_NATURES_SEED,
+        }));
+        assert!(bronze_seed.contains(&Proof::BankItemId {
+            id: COPPER_ORE_ID,
+            count: SUPERHEATER_ORE_SEED,
+        }));
+        assert!(bronze_seed.contains(&Proof::BankItemId {
+            id: TIN_ORE_ID,
+            count: SUPERHEATER_ORE_SEED,
+        }));
+        assert!(bronze_seed.contains(&Proof::ItemIdAtMost {
+            id: BRONZE_BAR_ID,
+            count: 0,
+        }));
+        let bronze_watch = bronze.steps[bronze_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            bronze_watch[0],
+            Proof::StatXpGain {
+                id: MAGIC_STAT,
+                min: 1
+            }
+        );
+        assert!(bronze_watch.contains(&Proof::StatXpGain {
+            id: SMITHING_STAT,
+            min: 1
+        }));
+        assert!(bronze_watch.contains(&Proof::ItemId {
+            id: BRONZE_BAR_ID,
+            count: 1,
+        }));
+        assert!(bronze_watch.contains(&Proof::BankItemId {
+            id: BRONZE_BAR_ID,
+            count: 1,
+        }));
+        assert!(bronze_watch.contains(&Proof::ItemId {
+            id: COPPER_ORE_ID,
+            count: 1,
+        }));
+        assert!(bronze_watch.contains(&Proof::ItemId {
+            id: TIN_ORE_ID,
+            count: 1,
+        }));
+        assert!(bronze_watch.contains(&Proof::ItemIdAtMost {
+            id: NATURE_RUNE_ID,
+            count: 49,
+        }));
+        assert!(bronze_watch.contains(&Proof::BankClosed));
+        assert_eq!(
+            bronze.proof,
+            Proof::StatXpGain {
+                id: SMITHING_STAT,
+                min: 2
+            }
+        );
+
+        let steel = get("superheater_steel").expect("superheater_steel");
+        let inject = settings_inject_map(steel.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("bar"), Some(&Value::String("Steel".into())));
+        let steel_start = steel
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let steel_seed = steel.steps[..steel_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(steel_seed.contains(&Proof::Stat {
+            id: SMITHING_STAT,
+            min: STEEL_SMITHING,
+        }));
+        assert!(steel_seed.contains(&Proof::BankItemId {
+            id: IRON_ORE_ID,
+            count: SUPERHEATER_ORE_SEED,
+        }));
+        assert!(steel_seed.contains(&Proof::BankItemId {
+            id: COAL_ID,
+            count: SUPERHEATER_COAL_SEED,
+        }));
+        let steel_watch = steel.steps[steel_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(steel_watch.contains(&Proof::ItemId {
+            id: STEEL_BAR_ID,
+            count: 1,
+        }));
+        assert!(steel_watch.contains(&Proof::ItemId {
+            id: COAL_ID,
+            count: 2,
+        }));
+        assert!(steel_watch.contains(&Proof::ItemIdAtMost {
+            id: IRON_BAR_ID,
+            count: 0,
+        }));
+
+        let alt = get("superheater_fire_battlestaff").expect("superheater_fire_battlestaff");
+        let inject = settings_inject_map(alt.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("bar"), Some(&Value::String("Bronze".into())));
+        let alt_start = alt
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        assert_eq!(alt.steps[alt_start - 1].wait.arm, Proof::BankClosed);
+        let alt_seed = alt.steps[..alt_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(alt_seed.contains(&Proof::BankItemId {
+            id: FIRE_BATTLESTAFF_ID,
+            count: 1,
+        }));
+        assert!(alt_seed.contains(&Proof::BankItemIdAtMost {
+            id: STAFF_OF_FIRE_ID,
+            count: 0,
+        }));
+        let alt_watch = alt.steps[alt_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(alt_watch.contains(&Proof::ItemId {
+            id: BRONZE_BAR_ID,
+            count: 1,
+        }));
+        assert!(alt_watch.contains(&Proof::ItemIdAtMost {
+            id: STAFF_OF_FIRE_ID,
+            count: 0,
+        }));
+
+        for name in [
+            "superheater",
+            "superheater_steel",
+            "superheater_fire_battlestaff",
+        ] {
+            assert!(names().contains(&name));
+        }
+    }
+
+    #[test]
     fn bone_burier_requires_banking_between_burial_cycles() {
         let s = get("bone_burier").unwrap();
         assert_eq!(s.settings.start_script, Some("BoneBurier"));
@@ -5672,6 +6259,9 @@ mod tests {
             "gnome_course",
             "gnome_course_radius",
             "flax_picker",
+            "superheater",
+            "superheater_steel",
+            "superheater_fire_battlestaff",
             "script_trade",
         ] {
             let s = get(name).unwrap_or_else(|| panic!("{name} registered"));
