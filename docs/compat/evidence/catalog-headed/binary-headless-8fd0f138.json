@@ -1,0 +1,29 @@
+{
+  "mode": "headless",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "host-play",
+    "--test",
+    "catalog_boundary_live",
+    "--features",
+    "memory-profile",
+    "--no-run",
+    "--message-format=json"
+  ],
+  "started_at": "2026-09-11T05:21:13.147191+00:00",
+  "elapsed_seconds": 27.24,
+  "exit_code": 0,
+  "isolated_build": true,
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/target-isolated-8fd0f138",
+  "target_started_empty": true,
+  "host_commit": "8fd0f13870dbe7d207c1604726937ca36963d5aa",
+  "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "source_root": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-8fd0f138-56d8027",
+  "binary": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-8fd0f138",
+  "binary_sha256": "1129e5f42b1a86730436e201e1f71b9e9d30025fb63382b2dfec210ca0e94d0b",
+  "binary_bytes": 178110968,
+  "source_files_verified": 2411,
+  "elapsed_is_not_performance_measurement": true
+}

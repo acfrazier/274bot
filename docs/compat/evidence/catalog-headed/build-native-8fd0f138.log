@@ -1,0 +1,95 @@
+   Compiling tracing-core v0.1.36
+   Compiling log v0.4.34
+   Compiling dispatch2 v0.3.1
+   Compiling regex-automata v0.4.18
+   Compiling objc2-core-audio-types v0.3.2
+   Compiling cpal v0.18.2
+   Compiling mach2 v0.6.0
+   Compiling dasp_sample v0.11.0
+   Compiling objc-sys v0.3.5
+   Compiling rustysynth v1.3.6
+   Compiling dear-imgui-build-support v0.15.1
+   Compiling sharded-slab v0.1.7
+   Compiling core-foundation v0.9.4
+   Compiling foreign-types-macros v0.2.4
+   Compiling thread_local v1.1.10
+   Compiling wgpu-types v29.0.4
+   Compiling naga v29.0.4
+   Compiling objc2-core-foundation v0.3.2
+   Compiling tungstenite v0.24.0
+   Compiling dear-imgui-sys v0.15.1
+   Compiling tracing v0.1.44
+   Compiling deno_permissions v0.72.0
+   Compiling objc2 v0.5.2
+   Compiling swc_common v9.2.0
+   Compiling tracing-log v0.2.0
+   Compiling dispatch v0.2.0
+   Compiling nu-ansi-term v0.50.3
+   Compiling bitflags v1.3.2
+   Compiling mint v0.5.9
+   Compiling foreign-types-shared v0.3.1
+   Compiling core-graphics-types v0.1.3
+   Compiling winit v0.30.13
+   Compiling foreign-types v0.5.0
+   Compiling dpi v0.1.2
+   Compiling core-graphics v0.23.2
+   Compiling smol_str v0.2.2
+   Compiling cursor-icon v1.2.0
+   Compiling panel v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-8fd0f138-56d8027/crates/panel)
+   Compiling block2 v0.5.1
+   Compiling objc2-foundation v0.2.2
+   Compiling swc_ecma_ast v9.0.0
+   Compiling swc_ecma_loader v9.0.0
+   Compiling regex v1.13.1
+   Compiling objc2-foundation v0.3.2
+   Compiling bindgen v0.71.1
+   Compiling Inflector v0.11.4
+   Compiling matchers v0.2.0
+   Compiling tracing-subscriber v0.3.23
+   Compiling urlpattern v0.3.0
+   Compiling swc_visit_macros v0.5.13
+   Compiling dear-imgui-rs v0.15.1
+   Compiling objc2-metal v0.3.2
+   Compiling objc2-core-audio v0.3.2
+   Compiling objc2-app-kit v0.2.2
+   Compiling objc2-audio-toolbox v0.3.2
+   Compiling coreaudio-rs v0.14.2
+   Compiling v8 v137.2.1
+   Compiling wgpu-naga-bridge v29.0.4
+   Compiling objc2-quartz-core v0.3.2
+   Compiling raw-window-metal v1.1.0
+   Compiling wgpu-hal v29.0.4
+   Compiling serde_v8 v0.264.0
+   Compiling dear-imgui-winit v0.15.1
+   Compiling deno_core v0.355.0
+   Compiling swc_ecma_lexer v12.0.0
+   Compiling swc_ecma_visit v9.0.0
+   Compiling swc_ecma_codegen v11.0.0
+   Compiling wgpu-core-deps-apple v29.0.4
+   Compiling wgpu-core v29.0.4
+   Compiling swc_ecma_parser v12.0.0
+   Compiling swc_ecma_utils v13.1.0
+   Compiling deno_web v0.244.0
+   Compiling deno_url v0.213.0
+   Compiling deno_console v0.213.0
+   Compiling deno_features v0.10.0
+   Compiling deno_webidl v0.213.0
+   Compiling swc_ecma_transforms_base v13.0.0
+   Compiling dprint-swc-ext v0.24.0
+   Compiling wgpu v29.0.4
+   Compiling swc_ecma_transforms_react v15.0.0
+   Compiling swc_ecma_transforms_classes v13.0.0
+   Compiling swc_ecma_transforms_proposal v13.0.0
+   Compiling swc_ecma_transforms_typescript v15.0.0
+   Compiling deno_ast v0.49.0
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-8fd0f138-56d8027/vendor/fr-client-rust/crates/client)
+   Compiling dear-imgui-wgpu v0.15.1
+   Compiling deno_crypto v0.227.0
+   Compiling rustyscript v0.12.3
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-8fd0f138-56d8027/crates/api)
+   Compiling nav v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-8fd0f138-56d8027/crates/nav)
+   Compiling host v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-8fd0f138-56d8027/crates/host)
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-8fd0f138-56d8027/crates/script)
+   Compiling scenario v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-8fd0f138-56d8027/crates/scenario)
+   Compiling host-play v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-8fd0f138-56d8027/crates/host-play)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 19.36s
