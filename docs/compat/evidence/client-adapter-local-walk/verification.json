@@ -1,0 +1,50 @@
+{
+  "task": "t_15c05b42",
+  "isolated_build": true,
+  "host_export_commit": "d903cc882da7784ec2434817cc0d269d724a9aa3",
+  "host_archive_sha256": "ee7771a0db90fec225d6cee30dd6287bf130bff626dcdf961650390ec89c1a13",
+  "client_gitlink": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "client_archive_sha256": "ffe863519e87cc44e56823bab93ab275f42408a9f0ccbf8fcbc070cf7c881a0f",
+  "client_pin_method": "git archive of 56d80272 tarball hash; not git rev-parse inside gitless export",
+  "export": ".superpowers/task-exports/t_15c05b42-d903cc88",
+  "export_gitless": true,
+  "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/t_15c05b42-d903cc88",
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_15c05b42",
+  "overlay": [
+    "crates/script/src/shim/client_adapter.js",
+    "crates/script/tests/client_adapter_local_walk.rs"
+  ],
+  "overlay_sha256": {
+    "crates/script/src/shim/client_adapter.js": "3b09c619377684ce97b80a3e9058f3e9ca47f1c2a8afdf43c31e787e5172d471",
+    "crates/script/tests/client_adapter_local_walk.rs": "7f2365f409a42b6eb01fa0789560c554df9b4c418402fdb2f39e956fda32e200"
+  },
+  "live": false,
+  "commands": [
+    {
+      "name": "script-client-adapter-local-walk",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/t_15c05b42-d903cc88",
+      "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_15c05b42",
+      "cmd": "cargo test --locked --offline -p script --test client_adapter_local_walk -- --test-threads=1",
+      "exit": 0,
+      "result": "8 passed (to_local_maps_nonzero_base_and_104_edges, to_local_rejects_wrong_inputs_and_unavailable_old_data, walk_to_queues_world_coords_on_current_plane_without_waiting, walk_to_queues_nothing_outside_scene_or_on_bad_input, flax_pair_to_local_then_walk_to_queues_exact_world, current_base_and_plane_change_affects_the_next_call, two_slots_do_not_exchange_scene_bases, omitted_delta_keeps_last_scene_unavailable_clears)"
+    },
+    {
+      "name": "script-clippy-affected",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/task-exports/t_15c05b42-d903cc88",
+      "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-t_15c05b42",
+      "cmd": "cargo clippy --locked --offline --no-deps -p script --test client_adapter_local_walk -- -D warnings",
+      "exit": 0
+    },
+    {
+      "name": "fmt-check",
+      "cwd": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision",
+      "cmd": "rustfmt --edition 2021 --check crates/script/tests/client_adapter_local_walk.rs",
+      "exit": 0
+    }
+  ],
+  "notes": [
+    "toLocal/walkTo are thin posted-scene mappings. Queue admission is not arrival.",
+    "Unavailable/old reach must not convert through a zero base.",
+    "Not LIVE. 274 full-pack timeout and picking/fixture behavior remain out of scope."
+  ]
+}

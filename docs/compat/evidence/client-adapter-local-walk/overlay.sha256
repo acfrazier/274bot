@@ -1,0 +1,2 @@
+3b09c619377684ce97b80a3e9058f3e9ca47f1c2a8afdf43c31e787e5172d471  crates/script/src/shim/client_adapter.js
+7f2365f409a42b6eb01fa0789560c554df9b4c418402fdb2f39e956fda32e200  crates/script/tests/client_adapter_local_walk.rs
