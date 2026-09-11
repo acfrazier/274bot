@@ -8,9 +8,9 @@ Source provenance:
 - brief SHA-256: `47cc91859323a800924cddf473592e51aa0874246dc0a05b65873333cf6c296e`
 - root implementation base: `2c4fd6040f9cd0c9ab9b90143fd91576eaebf362`
 - root implementation commit: `a1434ae2015a0af0b24bf4819ec8a919e5de28dc`
-- root projection-gate correction: `e05ecafb806b5a0af0b24bf4819ec8a919e5de28dc`
+- root projection-gate correction: `e05ecafb806b5af7f1d729b6f9c23c780956c118`
 - checked root archive: `.superpowers/review-exports/native-npc-paint-box-t_c48f1d6a-e05ecafb8-r1`
-- checked root commit: `e05ecafb806b5a0af0b24bf4819ec8a919e5de28dc`
+- checked root commit: `e05ecafb806b5af7f1d729b6f9c23c780956c118`
 - client base: `aef3952d1cd7bb3b93d39c497f0f476b68021c59`
 - client implementation/checked commit: `52c37f9ce50d1f184656d5b4469c007ec8a5791a`
 - exact-check targets: `target-review-t_c48f1d6a-r2` and `vendor/fr-client-rust/target-review-t_c48f1d6a-r2`
@@ -28,7 +28,7 @@ Exact-export verification:
 - Root and client `cargo fmt --all -- --check`: passed.
 - Scoped root and client `git diff --check`: passed.
 
-The exact root archive was materialized at `e05ecafb806b5a0af0b24bf4819ec8a919e5de28dc`; its nested client source was replaced with the exact `52c37f9ce50d1f184656d5b4469c007ec8a5791a` archive before checks. Later root commits `bbe1742cd8c31e33edb4b95d6dd3babf9610d705`, `3bf3644ad5ed06ef7cbf52c87307e07885265526`, and `29bed3b73055e376b7f27f2aa87ec6d7e781b4d7` are unrelated fixture, TaskBot-validation, and qualification documentation work. The task-owned paths had no delta from the checked root at the recorded post-check HEAD.
+The exact root archive was materialized at `e05ecafb806b5af7f1d729b6f9c23c780956c118`; its nested client source was replaced with the exact `52c37f9ce50d1f184656d5b4469c007ec8a5791a` archive before checks. Later root commits `bbe1742cd8c31e33edb4b95d6dd3babf9610d705`, `3bf3644ad5ed06ef7cbf52c87307e07885265526`, and `29bed3b73055e376b7f27f2aa87ec6d7e781b4d7` are unrelated fixture, TaskBot-validation, and qualification documentation work. The task-owned paths had no delta from the checked root at the recorded post-check HEAD.
 
 Frozen-source SHA-256:
 
