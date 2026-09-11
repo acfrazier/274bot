@@ -1,0 +1,21 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.18s
+     Running tests/catalog_boundary_live.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target/debug/deps/catalog_boundary_live-cf42836446c7a751)
+
+running 14 tests
+test catalog_boundary_live ... ignored, requires LIVE=1, CATALOG_REVISION/ROOT/COMMIT/SCENARIO/NAV_PACK, and local engine
+test tests::old_catalog_explicitly_refuses_cut_string_mode ... ok
+test tests::start_baseline_rejects_a_seeded_outcome_without_case_preparation ... ok
+test tests::thiever_requires_post_start_xp_and_coin_progress ... ok
+test tests::chicken_killer_requires_combat_xp_and_a_post_start_loot_bury_cycle ... ok
+test tests::bank_fletcher_requires_a_fresh_bank_cycle_and_further_crafting ... ok
+test tests::bank_fletcher_string_requires_exact_ids_and_a_same_generation_bank_cycle ... ok
+test tests::alcher_requires_acquired_fuel_then_consumption_xp_and_coins ... ok
+test tests::alcher_option_witnesses_reject_seeded_only_and_require_order_and_large_stack ... ok
+test tests::bank_fletcher_cut_string_requires_cut_then_bank_then_string_by_id ... ok
+test tests::bone_burier_rejects_first_burial_and_requires_observed_bank_cycle ... ok
+test tests::alcher_generated_custom_requires_noted_id_then_exact_consumption ... ok
+test tests::source_identity_rejects_bytes_that_do_not_match_the_frozen_ledger ... ok
+test tests::checked_in_frozen_core_sources_match_both_catalog_ledgers ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.03s
+

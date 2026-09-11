@@ -3365,5 +3365,2753 @@
     },
     "post_start_observations": 866,
     "ordered_first_exhausted": true
+  },
+  {
+    "host_commit": "30193c3b5a3ec237e6f95523a74a152cbd823b08",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "bank_fletcher_string",
+    "exit_code": 1,
+    "elapsed_seconds": 150.889,
+    "revision": 274,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-string-100adccc-30193c3b.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-string-100adccc-30193c3b.log",
+    "outcome": "FAIL",
+    "failure": "Before Start, step 9 opened OP_LOC1 Use/banker dialogue; fresh_bank_item_id(60)>=28 was not observed within 150 ticks.",
+    "scope": "Fixture failed before Start. No stringing or bank-cycle acceptance. Corrected helper d4f1809e uses the existing snapshot-bound Use-quickly action."
+  },
+  {
+    "host_commit": "d4f1809e670136cb074eac41a1a76c18d44bd6f8",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "alcher_custom_alias",
+    "exit_code": 0,
+    "elapsed_seconds": 73.976,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-alias-100adccc-d4f1809e.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-alias-100adccc-d4f1809e.log",
+    "revision": 274,
+    "scope": "Generated Adamant scimitar custom alias/display-name option proof only; remaining options and frontend qualification remain separate.",
+    "outcome": "PASS",
+    "xp_delta": {
+      "magic": 65
+    },
+    "latest_items": {
+      "Coins": 1536
+    },
+    "max_items": {
+      "Adamant scimitar": 1,
+      "Coins": 1536,
+      "Nature rune": 1,
+      "Staff of fire": 1
+    },
+    "post_start_observations": 405,
+    "core_witness": {
+      "case": "alcher_custom_alias",
+      "baseline": {
+        "ingame": true,
+        "scene_state": 2,
+        "player": "Livetyhvlb 0",
+        "tile": [
+          3185,
+          3440,
+          0
+        ],
+        "tick": 29,
+        "items": {},
+        "item_ids": {},
+        "bank": {},
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 2,
+        "levels": {
+          "-unused-": 0,
+          "agility": 1,
+          "attack": 1,
+          "cooking": 1,
+          "crafting": 1,
+          "defence": 1,
+          "firemaking": 1,
+          "fishing": 1,
+          "fletching": 1,
+          "herblore": 1,
+          "hitpoints": 10,
+          "magic": 55,
+          "mining": 1,
+          "prayer": 1,
+          "ranged": 1,
+          "runecraft": 1,
+          "slayer": 1,
+          "smithing": 1,
+          "strength": 1,
+          "thieving": 1,
+          "woodcutting": 1
+        },
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 166636,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        },
+        "chat": [
+          [
+            7,
+            "Inventory wiped."
+          ],
+          [
+            6,
+            "set tutorial: to 1000"
+          ],
+          [
+            5,
+            "Welcome to RuneScape."
+          ]
+        ]
+      },
+      "latest": {
+        "ingame": true,
+        "scene_state": 2,
+        "player": "Livetyhvlb 0",
+        "tile": [
+          3185,
+          3440,
+          0
+        ],
+        "tick": 46,
+        "items": {
+          "Coins": 1536
+        },
+        "item_ids": {
+          "995": 1536
+        },
+        "bank": {},
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 6,
+        "levels": {
+          "-unused-": 0,
+          "agility": 1,
+          "attack": 1,
+          "cooking": 1,
+          "crafting": 1,
+          "defence": 1,
+          "firemaking": 1,
+          "fishing": 1,
+          "fletching": 1,
+          "herblore": 1,
+          "hitpoints": 10,
+          "magic": 55,
+          "mining": 1,
+          "prayer": 1,
+          "ranged": 1,
+          "runecraft": 1,
+          "slayer": 1,
+          "smithing": 1,
+          "strength": 1,
+          "thieving": 1,
+          "woodcutting": 1
+        },
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 166701,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        },
+        "chat": [
+          [
+            8,
+            "This item can not be withdrawn as a note."
+          ],
+          [
+            7,
+            "Inventory wiped."
+          ],
+          [
+            6,
+            "set tutorial: to 1000"
+          ],
+          [
+            5,
+            "Welcome to RuneScape."
+          ]
+        ]
+      },
+      "max_items": {
+        "Adamant scimitar": 1,
+        "Coins": 1536,
+        "Nature rune": 1,
+        "Staff of fire": 1
+      },
+      "max_xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 166701,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 0
+      },
+      "saw_bury_chat": false,
+      "post_start_observations": 405,
+      "bone_bank_cycle": {
+        "first_batch_buried": false,
+        "opened": null,
+        "withdrawn": null,
+        "buried_after_withdrawal": false
+      },
+      "bank_fletcher_cycle": {
+        "first_pack_created": false,
+        "deposited": null,
+        "withdrawn": null,
+        "crafted_after_withdrawal": false
+      },
+      "bank_fletcher_string_cycle": {
+        "initial_pairs_strung": false,
+        "deposited": null,
+        "withdrawn": null,
+        "strung_after_withdrawal": false
+      },
+      "bank_fletcher_cut_string_cycle": {
+        "cut_pair_created": false,
+        "deposited": null,
+        "withdrawn": null,
+        "string_pair_created": false
+      },
+      "alcher_generated_custom_cycle": {
+        "withdrawn": {
+          "ingame": true,
+          "scene_state": 2,
+          "player": "Livetyhvlb 0",
+          "tile": [
+            3185,
+            3440,
+            0
+          ],
+          "tick": 42,
+          "items": {
+            "Adamant scimitar": 1,
+            "Nature rune": 1
+          },
+          "item_ids": {
+            "561": 1,
+            "1332": 1
+          },
+          "bank": {},
+          "bank_ids": {},
+          "bank_open": true,
+          "bank_loaded": true,
+          "bank_generation": 5,
+          "levels": {
+            "-unused-": 0,
+            "agility": 1,
+            "attack": 1,
+            "cooking": 1,
+            "crafting": 1,
+            "defence": 1,
+            "firemaking": 1,
+            "fishing": 1,
+            "fletching": 1,
+            "herblore": 1,
+            "hitpoints": 10,
+            "magic": 55,
+            "mining": 1,
+            "prayer": 1,
+            "ranged": 1,
+            "runecraft": 1,
+            "slayer": 1,
+            "smithing": 1,
+            "strength": 1,
+            "thieving": 1,
+            "woodcutting": 1
+          },
+          "xp": {
+            "-unused-": 0,
+            "agility": 0,
+            "attack": 0,
+            "cooking": 0,
+            "crafting": 0,
+            "defence": 0,
+            "firemaking": 0,
+            "fishing": 0,
+            "fletching": 0,
+            "herblore": 0,
+            "hitpoints": 1154,
+            "magic": 166636,
+            "mining": 0,
+            "prayer": 0,
+            "ranged": 0,
+            "runecraft": 0,
+            "slayer": 0,
+            "smithing": 0,
+            "strength": 0,
+            "thieving": 0,
+            "woodcutting": 0
+          },
+          "chat": [
+            [
+              8,
+              "This item can not be withdrawn as a note."
+            ],
+            [
+              7,
+              "Inventory wiped."
+            ],
+            [
+              6,
+              "set tutorial: to 1000"
+            ],
+            [
+              5,
+              "Welcome to RuneScape."
+            ]
+          ]
+        },
+        "consumed": true
+      },
+      "ordered_first_exhausted": false
+    }
+  },
+  {
+    "host_commit": "d4f1809e670136cb074eac41a1a76c18d44bd6f8",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "case": "alcher_custom_alias",
+    "exit_code": 0,
+    "elapsed_seconds": 76.419,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-alias-8e7d965b-d4f1809e.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-alias-8e7d965b-d4f1809e.log",
+    "revision": 274,
+    "scope": "Generated Adamant scimitar custom alias/display-name option proof only; remaining options and frontend qualification remain separate.",
+    "outcome": "PASS",
+    "xp_delta": {
+      "magic": 65
+    },
+    "latest_items": {
+      "Coins": 1536
+    },
+    "max_items": {
+      "Adamant scimitar": 1,
+      "Coins": 1536,
+      "Nature rune": 1,
+      "Staff of fire": 1
+    },
+    "post_start_observations": 431,
+    "core_witness": {
+      "case": "alcher_custom_alias",
+      "baseline": {
+        "ingame": true,
+        "scene_state": 2,
+        "player": "Live57uw6r 0",
+        "tile": [
+          3185,
+          3440,
+          0
+        ],
+        "tick": 29,
+        "items": {},
+        "item_ids": {},
+        "bank": {},
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 2,
+        "levels": {
+          "-unused-": 0,
+          "agility": 1,
+          "attack": 1,
+          "cooking": 1,
+          "crafting": 1,
+          "defence": 1,
+          "firemaking": 1,
+          "fishing": 1,
+          "fletching": 1,
+          "herblore": 1,
+          "hitpoints": 10,
+          "magic": 55,
+          "mining": 1,
+          "prayer": 1,
+          "ranged": 1,
+          "runecraft": 1,
+          "slayer": 1,
+          "smithing": 1,
+          "strength": 1,
+          "thieving": 1,
+          "woodcutting": 1
+        },
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 166636,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        },
+        "chat": [
+          [
+            7,
+            "Inventory wiped."
+          ],
+          [
+            6,
+            "set tutorial: to 1000"
+          ],
+          [
+            5,
+            "Welcome to RuneScape."
+          ]
+        ]
+      },
+      "latest": {
+        "ingame": true,
+        "scene_state": 2,
+        "player": "Live57uw6r 0",
+        "tile": [
+          3185,
+          3440,
+          0
+        ],
+        "tick": 47,
+        "items": {
+          "Coins": 1536
+        },
+        "item_ids": {
+          "995": 1536
+        },
+        "bank": {},
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 6,
+        "levels": {
+          "-unused-": 0,
+          "agility": 1,
+          "attack": 1,
+          "cooking": 1,
+          "crafting": 1,
+          "defence": 1,
+          "firemaking": 1,
+          "fishing": 1,
+          "fletching": 1,
+          "herblore": 1,
+          "hitpoints": 10,
+          "magic": 55,
+          "mining": 1,
+          "prayer": 1,
+          "ranged": 1,
+          "runecraft": 1,
+          "slayer": 1,
+          "smithing": 1,
+          "strength": 1,
+          "thieving": 1,
+          "woodcutting": 1
+        },
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 166701,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        },
+        "chat": [
+          [
+            8,
+            "This item can not be withdrawn as a note."
+          ],
+          [
+            7,
+            "Inventory wiped."
+          ],
+          [
+            6,
+            "set tutorial: to 1000"
+          ],
+          [
+            5,
+            "Welcome to RuneScape."
+          ]
+        ]
+      },
+      "max_items": {
+        "Adamant scimitar": 1,
+        "Coins": 1536,
+        "Nature rune": 1,
+        "Staff of fire": 1
+      },
+      "max_xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 166701,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 0
+      },
+      "saw_bury_chat": false,
+      "post_start_observations": 431,
+      "bone_bank_cycle": {
+        "first_batch_buried": false,
+        "opened": null,
+        "withdrawn": null,
+        "buried_after_withdrawal": false
+      },
+      "bank_fletcher_cycle": {
+        "first_pack_created": false,
+        "deposited": null,
+        "withdrawn": null,
+        "crafted_after_withdrawal": false
+      },
+      "bank_fletcher_string_cycle": {
+        "initial_pairs_strung": false,
+        "deposited": null,
+        "withdrawn": null,
+        "strung_after_withdrawal": false
+      },
+      "bank_fletcher_cut_string_cycle": {
+        "cut_pair_created": false,
+        "deposited": null,
+        "withdrawn": null,
+        "string_pair_created": false
+      },
+      "alcher_generated_custom_cycle": {
+        "withdrawn": {
+          "ingame": true,
+          "scene_state": 2,
+          "player": "Live57uw6r 0",
+          "tile": [
+            3185,
+            3440,
+            0
+          ],
+          "tick": 43,
+          "items": {
+            "Adamant scimitar": 1,
+            "Nature rune": 1
+          },
+          "item_ids": {
+            "561": 1,
+            "1332": 1
+          },
+          "bank": {},
+          "bank_ids": {},
+          "bank_open": true,
+          "bank_loaded": true,
+          "bank_generation": 5,
+          "levels": {
+            "-unused-": 0,
+            "agility": 1,
+            "attack": 1,
+            "cooking": 1,
+            "crafting": 1,
+            "defence": 1,
+            "firemaking": 1,
+            "fishing": 1,
+            "fletching": 1,
+            "herblore": 1,
+            "hitpoints": 10,
+            "magic": 55,
+            "mining": 1,
+            "prayer": 1,
+            "ranged": 1,
+            "runecraft": 1,
+            "slayer": 1,
+            "smithing": 1,
+            "strength": 1,
+            "thieving": 1,
+            "woodcutting": 1
+          },
+          "xp": {
+            "-unused-": 0,
+            "agility": 0,
+            "attack": 0,
+            "cooking": 0,
+            "crafting": 0,
+            "defence": 0,
+            "firemaking": 0,
+            "fishing": 0,
+            "fletching": 0,
+            "herblore": 0,
+            "hitpoints": 1154,
+            "magic": 166636,
+            "mining": 0,
+            "prayer": 0,
+            "ranged": 0,
+            "runecraft": 0,
+            "slayer": 0,
+            "smithing": 0,
+            "strength": 0,
+            "thieving": 0,
+            "woodcutting": 0
+          },
+          "chat": [
+            [
+              8,
+              "This item can not be withdrawn as a note."
+            ],
+            [
+              7,
+              "Inventory wiped."
+            ],
+            [
+              6,
+              "set tutorial: to 1000"
+            ],
+            [
+              5,
+              "Welcome to RuneScape."
+            ]
+          ]
+        },
+        "consumed": true
+      },
+      "ordered_first_exhausted": false
+    }
+  },
+  {
+    "host_commit": "d4f1809e670136cb074eac41a1a76c18d44bd6f8",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "alcher_custom_name",
+    "exit_code": 0,
+    "elapsed_seconds": 74.125,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-name-100adccc-d4f1809e.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-name-100adccc-d4f1809e.log",
+    "revision": 274,
+    "scope": "Generated Adamant scimitar custom alias/display-name option proof only; remaining options and frontend qualification remain separate.",
+    "outcome": "PASS",
+    "xp_delta": {
+      "magic": 65
+    },
+    "latest_items": {
+      "Coins": 1536
+    },
+    "max_items": {
+      "Adamant scimitar": 1,
+      "Coins": 1536,
+      "Nature rune": 1,
+      "Staff of fire": 1
+    },
+    "post_start_observations": 401,
+    "core_witness": {
+      "case": "alcher_custom_name",
+      "baseline": {
+        "ingame": true,
+        "scene_state": 2,
+        "player": "Live4aws2o 0",
+        "tile": [
+          3185,
+          3440,
+          0
+        ],
+        "tick": 26,
+        "items": {},
+        "item_ids": {},
+        "bank": {},
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 2,
+        "levels": {
+          "-unused-": 0,
+          "agility": 1,
+          "attack": 1,
+          "cooking": 1,
+          "crafting": 1,
+          "defence": 1,
+          "firemaking": 1,
+          "fishing": 1,
+          "fletching": 1,
+          "herblore": 1,
+          "hitpoints": 10,
+          "magic": 55,
+          "mining": 1,
+          "prayer": 1,
+          "ranged": 1,
+          "runecraft": 1,
+          "slayer": 1,
+          "smithing": 1,
+          "strength": 1,
+          "thieving": 1,
+          "woodcutting": 1
+        },
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 166636,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        },
+        "chat": [
+          [
+            7,
+            "Inventory wiped."
+          ],
+          [
+            6,
+            "set tutorial: to 1000"
+          ],
+          [
+            5,
+            "Welcome to RuneScape."
+          ]
+        ]
+      },
+      "latest": {
+        "ingame": true,
+        "scene_state": 2,
+        "player": "Live4aws2o 0",
+        "tile": [
+          3185,
+          3440,
+          0
+        ],
+        "tick": 43,
+        "items": {
+          "Coins": 1536
+        },
+        "item_ids": {
+          "995": 1536
+        },
+        "bank": {},
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 6,
+        "levels": {
+          "-unused-": 0,
+          "agility": 1,
+          "attack": 1,
+          "cooking": 1,
+          "crafting": 1,
+          "defence": 1,
+          "firemaking": 1,
+          "fishing": 1,
+          "fletching": 1,
+          "herblore": 1,
+          "hitpoints": 10,
+          "magic": 55,
+          "mining": 1,
+          "prayer": 1,
+          "ranged": 1,
+          "runecraft": 1,
+          "slayer": 1,
+          "smithing": 1,
+          "strength": 1,
+          "thieving": 1,
+          "woodcutting": 1
+        },
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 166701,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        },
+        "chat": [
+          [
+            8,
+            "This item can not be withdrawn as a note."
+          ],
+          [
+            7,
+            "Inventory wiped."
+          ],
+          [
+            6,
+            "set tutorial: to 1000"
+          ],
+          [
+            5,
+            "Welcome to RuneScape."
+          ]
+        ]
+      },
+      "max_items": {
+        "Adamant scimitar": 1,
+        "Coins": 1536,
+        "Nature rune": 1,
+        "Staff of fire": 1
+      },
+      "max_xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 166701,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 0
+      },
+      "saw_bury_chat": false,
+      "post_start_observations": 401,
+      "bone_bank_cycle": {
+        "first_batch_buried": false,
+        "opened": null,
+        "withdrawn": null,
+        "buried_after_withdrawal": false
+      },
+      "bank_fletcher_cycle": {
+        "first_pack_created": false,
+        "deposited": null,
+        "withdrawn": null,
+        "crafted_after_withdrawal": false
+      },
+      "bank_fletcher_string_cycle": {
+        "initial_pairs_strung": false,
+        "deposited": null,
+        "withdrawn": null,
+        "strung_after_withdrawal": false
+      },
+      "bank_fletcher_cut_string_cycle": {
+        "cut_pair_created": false,
+        "deposited": null,
+        "withdrawn": null,
+        "string_pair_created": false
+      },
+      "alcher_generated_custom_cycle": {
+        "withdrawn": {
+          "ingame": true,
+          "scene_state": 2,
+          "player": "Live4aws2o 0",
+          "tile": [
+            3185,
+            3440,
+            0
+          ],
+          "tick": 39,
+          "items": {
+            "Adamant scimitar": 1,
+            "Nature rune": 1
+          },
+          "item_ids": {
+            "561": 1,
+            "1332": 1
+          },
+          "bank": {},
+          "bank_ids": {},
+          "bank_open": true,
+          "bank_loaded": true,
+          "bank_generation": 5,
+          "levels": {
+            "-unused-": 0,
+            "agility": 1,
+            "attack": 1,
+            "cooking": 1,
+            "crafting": 1,
+            "defence": 1,
+            "firemaking": 1,
+            "fishing": 1,
+            "fletching": 1,
+            "herblore": 1,
+            "hitpoints": 10,
+            "magic": 55,
+            "mining": 1,
+            "prayer": 1,
+            "ranged": 1,
+            "runecraft": 1,
+            "slayer": 1,
+            "smithing": 1,
+            "strength": 1,
+            "thieving": 1,
+            "woodcutting": 1
+          },
+          "xp": {
+            "-unused-": 0,
+            "agility": 0,
+            "attack": 0,
+            "cooking": 0,
+            "crafting": 0,
+            "defence": 0,
+            "firemaking": 0,
+            "fishing": 0,
+            "fletching": 0,
+            "herblore": 0,
+            "hitpoints": 1154,
+            "magic": 166636,
+            "mining": 0,
+            "prayer": 0,
+            "ranged": 0,
+            "runecraft": 0,
+            "slayer": 0,
+            "smithing": 0,
+            "strength": 0,
+            "thieving": 0,
+            "woodcutting": 0
+          },
+          "chat": [
+            [
+              8,
+              "This item can not be withdrawn as a note."
+            ],
+            [
+              7,
+              "Inventory wiped."
+            ],
+            [
+              6,
+              "set tutorial: to 1000"
+            ],
+            [
+              5,
+              "Welcome to RuneScape."
+            ]
+          ]
+        },
+        "consumed": true
+      },
+      "ordered_first_exhausted": false
+    }
+  },
+  {
+    "host_commit": "d4f1809e670136cb074eac41a1a76c18d44bd6f8",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "case": "alcher_custom_name",
+    "exit_code": 0,
+    "elapsed_seconds": 75.972,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-name-8e7d965b-d4f1809e.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-alcher-custom-name-8e7d965b-d4f1809e.log",
+    "revision": 274,
+    "scope": "Generated Adamant scimitar custom alias/display-name option proof only; remaining options and frontend qualification remain separate.",
+    "outcome": "PASS",
+    "xp_delta": {
+      "magic": 65
+    },
+    "latest_items": {
+      "Coins": 1536
+    },
+    "max_items": {
+      "Adamant scimitar": 1,
+      "Coins": 1536,
+      "Nature rune": 1,
+      "Staff of fire": 1
+    },
+    "post_start_observations": 403,
+    "core_witness": {
+      "case": "alcher_custom_name",
+      "baseline": {
+        "ingame": true,
+        "scene_state": 2,
+        "player": "Liveghgfuq 0",
+        "tile": [
+          3185,
+          3440,
+          0
+        ],
+        "tick": 30,
+        "items": {},
+        "item_ids": {},
+        "bank": {},
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 2,
+        "levels": {
+          "-unused-": 0,
+          "agility": 1,
+          "attack": 1,
+          "cooking": 1,
+          "crafting": 1,
+          "defence": 1,
+          "firemaking": 1,
+          "fishing": 1,
+          "fletching": 1,
+          "herblore": 1,
+          "hitpoints": 10,
+          "magic": 55,
+          "mining": 1,
+          "prayer": 1,
+          "ranged": 1,
+          "runecraft": 1,
+          "slayer": 1,
+          "smithing": 1,
+          "strength": 1,
+          "thieving": 1,
+          "woodcutting": 1
+        },
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 166636,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        },
+        "chat": [
+          [
+            7,
+            "Inventory wiped."
+          ],
+          [
+            6,
+            "set tutorial: to 1000"
+          ],
+          [
+            5,
+            "Welcome to RuneScape."
+          ]
+        ]
+      },
+      "latest": {
+        "ingame": true,
+        "scene_state": 2,
+        "player": "Liveghgfuq 0",
+        "tile": [
+          3185,
+          3440,
+          0
+        ],
+        "tick": 47,
+        "items": {
+          "Coins": 1536
+        },
+        "item_ids": {
+          "995": 1536
+        },
+        "bank": {},
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 6,
+        "levels": {
+          "-unused-": 0,
+          "agility": 1,
+          "attack": 1,
+          "cooking": 1,
+          "crafting": 1,
+          "defence": 1,
+          "firemaking": 1,
+          "fishing": 1,
+          "fletching": 1,
+          "herblore": 1,
+          "hitpoints": 10,
+          "magic": 55,
+          "mining": 1,
+          "prayer": 1,
+          "ranged": 1,
+          "runecraft": 1,
+          "slayer": 1,
+          "smithing": 1,
+          "strength": 1,
+          "thieving": 1,
+          "woodcutting": 1
+        },
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 166701,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        },
+        "chat": [
+          [
+            8,
+            "This item can not be withdrawn as a note."
+          ],
+          [
+            7,
+            "Inventory wiped."
+          ],
+          [
+            6,
+            "set tutorial: to 1000"
+          ],
+          [
+            5,
+            "Welcome to RuneScape."
+          ]
+        ]
+      },
+      "max_items": {
+        "Adamant scimitar": 1,
+        "Coins": 1536,
+        "Nature rune": 1,
+        "Staff of fire": 1
+      },
+      "max_xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 166701,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 0
+      },
+      "saw_bury_chat": false,
+      "post_start_observations": 403,
+      "bone_bank_cycle": {
+        "first_batch_buried": false,
+        "opened": null,
+        "withdrawn": null,
+        "buried_after_withdrawal": false
+      },
+      "bank_fletcher_cycle": {
+        "first_pack_created": false,
+        "deposited": null,
+        "withdrawn": null,
+        "crafted_after_withdrawal": false
+      },
+      "bank_fletcher_string_cycle": {
+        "initial_pairs_strung": false,
+        "deposited": null,
+        "withdrawn": null,
+        "strung_after_withdrawal": false
+      },
+      "bank_fletcher_cut_string_cycle": {
+        "cut_pair_created": false,
+        "deposited": null,
+        "withdrawn": null,
+        "string_pair_created": false
+      },
+      "alcher_generated_custom_cycle": {
+        "withdrawn": {
+          "ingame": true,
+          "scene_state": 2,
+          "player": "Liveghgfuq 0",
+          "tile": [
+            3185,
+            3440,
+            0
+          ],
+          "tick": 43,
+          "items": {
+            "Adamant scimitar": 1,
+            "Nature rune": 1
+          },
+          "item_ids": {
+            "561": 1,
+            "1332": 1
+          },
+          "bank": {},
+          "bank_ids": {},
+          "bank_open": true,
+          "bank_loaded": true,
+          "bank_generation": 5,
+          "levels": {
+            "-unused-": 0,
+            "agility": 1,
+            "attack": 1,
+            "cooking": 1,
+            "crafting": 1,
+            "defence": 1,
+            "firemaking": 1,
+            "fishing": 1,
+            "fletching": 1,
+            "herblore": 1,
+            "hitpoints": 10,
+            "magic": 55,
+            "mining": 1,
+            "prayer": 1,
+            "ranged": 1,
+            "runecraft": 1,
+            "slayer": 1,
+            "smithing": 1,
+            "strength": 1,
+            "thieving": 1,
+            "woodcutting": 1
+          },
+          "xp": {
+            "-unused-": 0,
+            "agility": 0,
+            "attack": 0,
+            "cooking": 0,
+            "crafting": 0,
+            "defence": 0,
+            "firemaking": 0,
+            "fishing": 0,
+            "fletching": 0,
+            "herblore": 0,
+            "hitpoints": 1154,
+            "magic": 166636,
+            "mining": 0,
+            "prayer": 0,
+            "ranged": 0,
+            "runecraft": 0,
+            "slayer": 0,
+            "smithing": 0,
+            "strength": 0,
+            "thieving": 0,
+            "woodcutting": 0
+          },
+          "chat": [
+            [
+              8,
+              "This item can not be withdrawn as a note."
+            ],
+            [
+              7,
+              "Inventory wiped."
+            ],
+            [
+              6,
+              "set tutorial: to 1000"
+            ],
+            [
+              5,
+              "Welcome to RuneScape."
+            ]
+          ]
+        },
+        "consumed": true
+      },
+      "ordered_first_exhausted": false
+    }
+  },
+  {
+    "host_commit": "d4f1809e670136cb074eac41a1a76c18d44bd6f8",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "alcher_custom_alias",
+    "exit_code": 0,
+    "elapsed_seconds": 76.0,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-alias-100adccc-d4f1809e.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-alias-100adccc-d4f1809e.log",
+    "revision": 289,
+    "scope": "Generated Adamant scimitar custom alias/display-name option proof only; remaining options and frontend qualification remain separate.",
+    "outcome": "PASS",
+    "xp_delta": {
+      "magic": 65
+    },
+    "latest_items": {
+      "Coins": 1536
+    },
+    "max_items": {
+      "Adamant scimitar": 1,
+      "Coins": 1536,
+      "Nature rune": 1,
+      "Staff of fire": 1
+    },
+    "post_start_observations": 402,
+    "core_witness": {
+      "case": "alcher_custom_alias",
+      "baseline": {
+        "ingame": true,
+        "scene_state": 2,
+        "player": "Livetj8u02 0",
+        "tile": [
+          3185,
+          3440,
+          0
+        ],
+        "tick": 30,
+        "items": {},
+        "item_ids": {},
+        "bank": {},
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 2,
+        "levels": {
+          "-unused-": 0,
+          "agility": 1,
+          "attack": 1,
+          "cooking": 1,
+          "crafting": 1,
+          "defence": 1,
+          "firemaking": 1,
+          "fishing": 1,
+          "fletching": 1,
+          "herblore": 1,
+          "hitpoints": 10,
+          "magic": 55,
+          "mining": 1,
+          "prayer": 1,
+          "ranged": 1,
+          "runecraft": 1,
+          "slayer": 1,
+          "smithing": 1,
+          "strength": 1,
+          "thieving": 1,
+          "woodcutting": 1
+        },
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 166636,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        },
+        "chat": [
+          [
+            7,
+            "Inventory wiped."
+          ],
+          [
+            6,
+            "set tutorial: to 1000"
+          ],
+          [
+            5,
+            "Welcome to RuneScape."
+          ]
+        ]
+      },
+      "latest": {
+        "ingame": true,
+        "scene_state": 2,
+        "player": "Livetj8u02 0",
+        "tile": [
+          3185,
+          3440,
+          0
+        ],
+        "tick": 47,
+        "items": {
+          "Coins": 1536
+        },
+        "item_ids": {
+          "995": 1536
+        },
+        "bank": {},
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 6,
+        "levels": {
+          "-unused-": 0,
+          "agility": 1,
+          "attack": 1,
+          "cooking": 1,
+          "crafting": 1,
+          "defence": 1,
+          "firemaking": 1,
+          "fishing": 1,
+          "fletching": 1,
+          "herblore": 1,
+          "hitpoints": 10,
+          "magic": 55,
+          "mining": 1,
+          "prayer": 1,
+          "ranged": 1,
+          "runecraft": 1,
+          "slayer": 1,
+          "smithing": 1,
+          "strength": 1,
+          "thieving": 1,
+          "woodcutting": 1
+        },
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 166701,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        },
+        "chat": [
+          [
+            8,
+            "This item can not be withdrawn as a note."
+          ],
+          [
+            7,
+            "Inventory wiped."
+          ],
+          [
+            6,
+            "set tutorial: to 1000"
+          ],
+          [
+            5,
+            "Welcome to RuneScape."
+          ]
+        ]
+      },
+      "max_items": {
+        "Adamant scimitar": 1,
+        "Coins": 1536,
+        "Nature rune": 1,
+        "Staff of fire": 1
+      },
+      "max_xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 166701,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 0
+      },
+      "saw_bury_chat": false,
+      "post_start_observations": 402,
+      "bone_bank_cycle": {
+        "first_batch_buried": false,
+        "opened": null,
+        "withdrawn": null,
+        "buried_after_withdrawal": false
+      },
+      "bank_fletcher_cycle": {
+        "first_pack_created": false,
+        "deposited": null,
+        "withdrawn": null,
+        "crafted_after_withdrawal": false
+      },
+      "bank_fletcher_string_cycle": {
+        "initial_pairs_strung": false,
+        "deposited": null,
+        "withdrawn": null,
+        "strung_after_withdrawal": false
+      },
+      "bank_fletcher_cut_string_cycle": {
+        "cut_pair_created": false,
+        "deposited": null,
+        "withdrawn": null,
+        "string_pair_created": false
+      },
+      "alcher_generated_custom_cycle": {
+        "withdrawn": {
+          "ingame": true,
+          "scene_state": 2,
+          "player": "Livetj8u02 0",
+          "tile": [
+            3185,
+            3440,
+            0
+          ],
+          "tick": 43,
+          "items": {
+            "Adamant scimitar": 1,
+            "Nature rune": 1
+          },
+          "item_ids": {
+            "561": 1,
+            "1332": 1
+          },
+          "bank": {},
+          "bank_ids": {},
+          "bank_open": true,
+          "bank_loaded": true,
+          "bank_generation": 5,
+          "levels": {
+            "-unused-": 0,
+            "agility": 1,
+            "attack": 1,
+            "cooking": 1,
+            "crafting": 1,
+            "defence": 1,
+            "firemaking": 1,
+            "fishing": 1,
+            "fletching": 1,
+            "herblore": 1,
+            "hitpoints": 10,
+            "magic": 55,
+            "mining": 1,
+            "prayer": 1,
+            "ranged": 1,
+            "runecraft": 1,
+            "slayer": 1,
+            "smithing": 1,
+            "strength": 1,
+            "thieving": 1,
+            "woodcutting": 1
+          },
+          "xp": {
+            "-unused-": 0,
+            "agility": 0,
+            "attack": 0,
+            "cooking": 0,
+            "crafting": 0,
+            "defence": 0,
+            "firemaking": 0,
+            "fishing": 0,
+            "fletching": 0,
+            "herblore": 0,
+            "hitpoints": 1154,
+            "magic": 166636,
+            "mining": 0,
+            "prayer": 0,
+            "ranged": 0,
+            "runecraft": 0,
+            "slayer": 0,
+            "smithing": 0,
+            "strength": 0,
+            "thieving": 0,
+            "woodcutting": 0
+          },
+          "chat": [
+            [
+              8,
+              "This item can not be withdrawn as a note."
+            ],
+            [
+              7,
+              "Inventory wiped."
+            ],
+            [
+              6,
+              "set tutorial: to 1000"
+            ],
+            [
+              5,
+              "Welcome to RuneScape."
+            ]
+          ]
+        },
+        "consumed": true
+      },
+      "ordered_first_exhausted": false
+    }
+  },
+  {
+    "host_commit": "d4f1809e670136cb074eac41a1a76c18d44bd6f8",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "case": "alcher_custom_alias",
+    "exit_code": 0,
+    "elapsed_seconds": 78.143,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-alias-8e7d965b-d4f1809e.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-alias-8e7d965b-d4f1809e.log",
+    "revision": 289,
+    "scope": "Generated Adamant scimitar custom alias/display-name option proof only; remaining options and frontend qualification remain separate.",
+    "outcome": "PASS",
+    "xp_delta": {
+      "magic": 65
+    },
+    "latest_items": {
+      "Coins": 1536
+    },
+    "max_items": {
+      "Adamant scimitar": 1,
+      "Coins": 1536,
+      "Nature rune": 1,
+      "Staff of fire": 1
+    },
+    "post_start_observations": 405,
+    "core_witness": {
+      "case": "alcher_custom_alias",
+      "baseline": {
+        "ingame": true,
+        "scene_state": 2,
+        "player": "Live4betxj 0",
+        "tile": [
+          3185,
+          3440,
+          0
+        ],
+        "tick": 31,
+        "items": {},
+        "item_ids": {},
+        "bank": {},
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 2,
+        "levels": {
+          "-unused-": 0,
+          "agility": 1,
+          "attack": 1,
+          "cooking": 1,
+          "crafting": 1,
+          "defence": 1,
+          "firemaking": 1,
+          "fishing": 1,
+          "fletching": 1,
+          "herblore": 1,
+          "hitpoints": 10,
+          "magic": 55,
+          "mining": 1,
+          "prayer": 1,
+          "ranged": 1,
+          "runecraft": 1,
+          "slayer": 1,
+          "smithing": 1,
+          "strength": 1,
+          "thieving": 1,
+          "woodcutting": 1
+        },
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 166636,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        },
+        "chat": [
+          [
+            7,
+            "Inventory wiped."
+          ],
+          [
+            6,
+            "set tutorial: to 1000"
+          ],
+          [
+            5,
+            "Welcome to RuneScape."
+          ]
+        ]
+      },
+      "latest": {
+        "ingame": true,
+        "scene_state": 2,
+        "player": "Live4betxj 0",
+        "tile": [
+          3185,
+          3440,
+          0
+        ],
+        "tick": 48,
+        "items": {
+          "Coins": 1536
+        },
+        "item_ids": {
+          "995": 1536
+        },
+        "bank": {},
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 6,
+        "levels": {
+          "-unused-": 0,
+          "agility": 1,
+          "attack": 1,
+          "cooking": 1,
+          "crafting": 1,
+          "defence": 1,
+          "firemaking": 1,
+          "fishing": 1,
+          "fletching": 1,
+          "herblore": 1,
+          "hitpoints": 10,
+          "magic": 55,
+          "mining": 1,
+          "prayer": 1,
+          "ranged": 1,
+          "runecraft": 1,
+          "slayer": 1,
+          "smithing": 1,
+          "strength": 1,
+          "thieving": 1,
+          "woodcutting": 1
+        },
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 166701,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        },
+        "chat": [
+          [
+            8,
+            "This item can not be withdrawn as a note."
+          ],
+          [
+            7,
+            "Inventory wiped."
+          ],
+          [
+            6,
+            "set tutorial: to 1000"
+          ],
+          [
+            5,
+            "Welcome to RuneScape."
+          ]
+        ]
+      },
+      "max_items": {
+        "Adamant scimitar": 1,
+        "Coins": 1536,
+        "Nature rune": 1,
+        "Staff of fire": 1
+      },
+      "max_xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 166701,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 0
+      },
+      "saw_bury_chat": false,
+      "post_start_observations": 405,
+      "bone_bank_cycle": {
+        "first_batch_buried": false,
+        "opened": null,
+        "withdrawn": null,
+        "buried_after_withdrawal": false
+      },
+      "bank_fletcher_cycle": {
+        "first_pack_created": false,
+        "deposited": null,
+        "withdrawn": null,
+        "crafted_after_withdrawal": false
+      },
+      "bank_fletcher_string_cycle": {
+        "initial_pairs_strung": false,
+        "deposited": null,
+        "withdrawn": null,
+        "strung_after_withdrawal": false
+      },
+      "bank_fletcher_cut_string_cycle": {
+        "cut_pair_created": false,
+        "deposited": null,
+        "withdrawn": null,
+        "string_pair_created": false
+      },
+      "alcher_generated_custom_cycle": {
+        "withdrawn": {
+          "ingame": true,
+          "scene_state": 2,
+          "player": "Live4betxj 0",
+          "tile": [
+            3185,
+            3440,
+            0
+          ],
+          "tick": 44,
+          "items": {
+            "Adamant scimitar": 1,
+            "Nature rune": 1
+          },
+          "item_ids": {
+            "561": 1,
+            "1332": 1
+          },
+          "bank": {},
+          "bank_ids": {},
+          "bank_open": true,
+          "bank_loaded": true,
+          "bank_generation": 5,
+          "levels": {
+            "-unused-": 0,
+            "agility": 1,
+            "attack": 1,
+            "cooking": 1,
+            "crafting": 1,
+            "defence": 1,
+            "firemaking": 1,
+            "fishing": 1,
+            "fletching": 1,
+            "herblore": 1,
+            "hitpoints": 10,
+            "magic": 55,
+            "mining": 1,
+            "prayer": 1,
+            "ranged": 1,
+            "runecraft": 1,
+            "slayer": 1,
+            "smithing": 1,
+            "strength": 1,
+            "thieving": 1,
+            "woodcutting": 1
+          },
+          "xp": {
+            "-unused-": 0,
+            "agility": 0,
+            "attack": 0,
+            "cooking": 0,
+            "crafting": 0,
+            "defence": 0,
+            "firemaking": 0,
+            "fishing": 0,
+            "fletching": 0,
+            "herblore": 0,
+            "hitpoints": 1154,
+            "magic": 166636,
+            "mining": 0,
+            "prayer": 0,
+            "ranged": 0,
+            "runecraft": 0,
+            "slayer": 0,
+            "smithing": 0,
+            "strength": 0,
+            "thieving": 0,
+            "woodcutting": 0
+          },
+          "chat": [
+            [
+              8,
+              "This item can not be withdrawn as a note."
+            ],
+            [
+              7,
+              "Inventory wiped."
+            ],
+            [
+              6,
+              "set tutorial: to 1000"
+            ],
+            [
+              5,
+              "Welcome to RuneScape."
+            ]
+          ]
+        },
+        "consumed": true
+      },
+      "ordered_first_exhausted": false
+    }
+  },
+  {
+    "host_commit": "d4f1809e670136cb074eac41a1a76c18d44bd6f8",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "alcher_custom_name",
+    "exit_code": 0,
+    "elapsed_seconds": 76.837,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-name-100adccc-d4f1809e.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-name-100adccc-d4f1809e.log",
+    "revision": 289,
+    "scope": "Generated Adamant scimitar custom alias/display-name option proof only; remaining options and frontend qualification remain separate.",
+    "outcome": "PASS",
+    "xp_delta": {
+      "magic": 65
+    },
+    "latest_items": {
+      "Coins": 1536
+    },
+    "max_items": {
+      "Adamant scimitar": 1,
+      "Coins": 1536,
+      "Nature rune": 1,
+      "Staff of fire": 1
+    },
+    "post_start_observations": 402,
+    "core_witness": {
+      "case": "alcher_custom_name",
+      "baseline": {
+        "ingame": true,
+        "scene_state": 2,
+        "player": "Livejyhhd1 0",
+        "tile": [
+          3185,
+          3440,
+          0
+        ],
+        "tick": 28,
+        "items": {},
+        "item_ids": {},
+        "bank": {},
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 2,
+        "levels": {
+          "-unused-": 0,
+          "agility": 1,
+          "attack": 1,
+          "cooking": 1,
+          "crafting": 1,
+          "defence": 1,
+          "firemaking": 1,
+          "fishing": 1,
+          "fletching": 1,
+          "herblore": 1,
+          "hitpoints": 10,
+          "magic": 55,
+          "mining": 1,
+          "prayer": 1,
+          "ranged": 1,
+          "runecraft": 1,
+          "slayer": 1,
+          "smithing": 1,
+          "strength": 1,
+          "thieving": 1,
+          "woodcutting": 1
+        },
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 166636,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        },
+        "chat": [
+          [
+            7,
+            "Inventory wiped."
+          ],
+          [
+            6,
+            "set tutorial: to 1000"
+          ],
+          [
+            5,
+            "Welcome to RuneScape."
+          ]
+        ]
+      },
+      "latest": {
+        "ingame": true,
+        "scene_state": 2,
+        "player": "Livejyhhd1 0",
+        "tile": [
+          3185,
+          3440,
+          0
+        ],
+        "tick": 45,
+        "items": {
+          "Coins": 1536
+        },
+        "item_ids": {
+          "995": 1536
+        },
+        "bank": {},
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 6,
+        "levels": {
+          "-unused-": 0,
+          "agility": 1,
+          "attack": 1,
+          "cooking": 1,
+          "crafting": 1,
+          "defence": 1,
+          "firemaking": 1,
+          "fishing": 1,
+          "fletching": 1,
+          "herblore": 1,
+          "hitpoints": 10,
+          "magic": 55,
+          "mining": 1,
+          "prayer": 1,
+          "ranged": 1,
+          "runecraft": 1,
+          "slayer": 1,
+          "smithing": 1,
+          "strength": 1,
+          "thieving": 1,
+          "woodcutting": 1
+        },
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 166701,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        },
+        "chat": [
+          [
+            8,
+            "This item can not be withdrawn as a note."
+          ],
+          [
+            7,
+            "Inventory wiped."
+          ],
+          [
+            6,
+            "set tutorial: to 1000"
+          ],
+          [
+            5,
+            "Welcome to RuneScape."
+          ]
+        ]
+      },
+      "max_items": {
+        "Adamant scimitar": 1,
+        "Coins": 1536,
+        "Nature rune": 1,
+        "Staff of fire": 1
+      },
+      "max_xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 166701,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 0
+      },
+      "saw_bury_chat": false,
+      "post_start_observations": 402,
+      "bone_bank_cycle": {
+        "first_batch_buried": false,
+        "opened": null,
+        "withdrawn": null,
+        "buried_after_withdrawal": false
+      },
+      "bank_fletcher_cycle": {
+        "first_pack_created": false,
+        "deposited": null,
+        "withdrawn": null,
+        "crafted_after_withdrawal": false
+      },
+      "bank_fletcher_string_cycle": {
+        "initial_pairs_strung": false,
+        "deposited": null,
+        "withdrawn": null,
+        "strung_after_withdrawal": false
+      },
+      "bank_fletcher_cut_string_cycle": {
+        "cut_pair_created": false,
+        "deposited": null,
+        "withdrawn": null,
+        "string_pair_created": false
+      },
+      "alcher_generated_custom_cycle": {
+        "withdrawn": {
+          "ingame": true,
+          "scene_state": 2,
+          "player": "Livejyhhd1 0",
+          "tile": [
+            3185,
+            3440,
+            0
+          ],
+          "tick": 41,
+          "items": {
+            "Adamant scimitar": 1,
+            "Nature rune": 1
+          },
+          "item_ids": {
+            "561": 1,
+            "1332": 1
+          },
+          "bank": {},
+          "bank_ids": {},
+          "bank_open": true,
+          "bank_loaded": true,
+          "bank_generation": 5,
+          "levels": {
+            "-unused-": 0,
+            "agility": 1,
+            "attack": 1,
+            "cooking": 1,
+            "crafting": 1,
+            "defence": 1,
+            "firemaking": 1,
+            "fishing": 1,
+            "fletching": 1,
+            "herblore": 1,
+            "hitpoints": 10,
+            "magic": 55,
+            "mining": 1,
+            "prayer": 1,
+            "ranged": 1,
+            "runecraft": 1,
+            "slayer": 1,
+            "smithing": 1,
+            "strength": 1,
+            "thieving": 1,
+            "woodcutting": 1
+          },
+          "xp": {
+            "-unused-": 0,
+            "agility": 0,
+            "attack": 0,
+            "cooking": 0,
+            "crafting": 0,
+            "defence": 0,
+            "firemaking": 0,
+            "fishing": 0,
+            "fletching": 0,
+            "herblore": 0,
+            "hitpoints": 1154,
+            "magic": 166636,
+            "mining": 0,
+            "prayer": 0,
+            "ranged": 0,
+            "runecraft": 0,
+            "slayer": 0,
+            "smithing": 0,
+            "strength": 0,
+            "thieving": 0,
+            "woodcutting": 0
+          },
+          "chat": [
+            [
+              8,
+              "This item can not be withdrawn as a note."
+            ],
+            [
+              7,
+              "Inventory wiped."
+            ],
+            [
+              6,
+              "set tutorial: to 1000"
+            ],
+            [
+              5,
+              "Welcome to RuneScape."
+            ]
+          ]
+        },
+        "consumed": true
+      },
+      "ordered_first_exhausted": false
+    }
+  },
+  {
+    "host_commit": "d4f1809e670136cb074eac41a1a76c18d44bd6f8",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+    "case": "alcher_custom_name",
+    "exit_code": 0,
+    "elapsed_seconds": 75.57,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-name-8e7d965b-d4f1809e.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r289-alcher-custom-name-8e7d965b-d4f1809e.log",
+    "revision": 289,
+    "scope": "Generated Adamant scimitar custom alias/display-name option proof only; remaining options and frontend qualification remain separate.",
+    "outcome": "PASS",
+    "xp_delta": {
+      "magic": 65
+    },
+    "latest_items": {
+      "Coins": 1536
+    },
+    "max_items": {
+      "Adamant scimitar": 1,
+      "Coins": 1536,
+      "Nature rune": 1,
+      "Staff of fire": 1
+    },
+    "post_start_observations": 407,
+    "core_witness": {
+      "case": "alcher_custom_name",
+      "baseline": {
+        "ingame": true,
+        "scene_state": 2,
+        "player": "Liveetr3ya 0",
+        "tile": [
+          3185,
+          3440,
+          0
+        ],
+        "tick": 28,
+        "items": {},
+        "item_ids": {},
+        "bank": {},
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 2,
+        "levels": {
+          "-unused-": 0,
+          "agility": 1,
+          "attack": 1,
+          "cooking": 1,
+          "crafting": 1,
+          "defence": 1,
+          "firemaking": 1,
+          "fishing": 1,
+          "fletching": 1,
+          "herblore": 1,
+          "hitpoints": 10,
+          "magic": 55,
+          "mining": 1,
+          "prayer": 1,
+          "ranged": 1,
+          "runecraft": 1,
+          "slayer": 1,
+          "smithing": 1,
+          "strength": 1,
+          "thieving": 1,
+          "woodcutting": 1
+        },
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 166636,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        },
+        "chat": [
+          [
+            7,
+            "Inventory wiped."
+          ],
+          [
+            6,
+            "set tutorial: to 1000"
+          ],
+          [
+            5,
+            "Welcome to RuneScape."
+          ]
+        ]
+      },
+      "latest": {
+        "ingame": true,
+        "scene_state": 2,
+        "player": "Liveetr3ya 0",
+        "tile": [
+          3185,
+          3440,
+          0
+        ],
+        "tick": 45,
+        "items": {
+          "Coins": 1536
+        },
+        "item_ids": {
+          "995": 1536
+        },
+        "bank": {},
+        "bank_ids": {},
+        "bank_open": false,
+        "bank_loaded": false,
+        "bank_generation": 6,
+        "levels": {
+          "-unused-": 0,
+          "agility": 1,
+          "attack": 1,
+          "cooking": 1,
+          "crafting": 1,
+          "defence": 1,
+          "firemaking": 1,
+          "fishing": 1,
+          "fletching": 1,
+          "herblore": 1,
+          "hitpoints": 10,
+          "magic": 55,
+          "mining": 1,
+          "prayer": 1,
+          "ranged": 1,
+          "runecraft": 1,
+          "slayer": 1,
+          "smithing": 1,
+          "strength": 1,
+          "thieving": 1,
+          "woodcutting": 1
+        },
+        "xp": {
+          "-unused-": 0,
+          "agility": 0,
+          "attack": 0,
+          "cooking": 0,
+          "crafting": 0,
+          "defence": 0,
+          "firemaking": 0,
+          "fishing": 0,
+          "fletching": 0,
+          "herblore": 0,
+          "hitpoints": 1154,
+          "magic": 166701,
+          "mining": 0,
+          "prayer": 0,
+          "ranged": 0,
+          "runecraft": 0,
+          "slayer": 0,
+          "smithing": 0,
+          "strength": 0,
+          "thieving": 0,
+          "woodcutting": 0
+        },
+        "chat": [
+          [
+            8,
+            "This item can not be withdrawn as a note."
+          ],
+          [
+            7,
+            "Inventory wiped."
+          ],
+          [
+            6,
+            "set tutorial: to 1000"
+          ],
+          [
+            5,
+            "Welcome to RuneScape."
+          ]
+        ]
+      },
+      "max_items": {
+        "Adamant scimitar": 1,
+        "Coins": 1536,
+        "Nature rune": 1,
+        "Staff of fire": 1
+      },
+      "max_xp": {
+        "-unused-": 0,
+        "agility": 0,
+        "attack": 0,
+        "cooking": 0,
+        "crafting": 0,
+        "defence": 0,
+        "firemaking": 0,
+        "fishing": 0,
+        "fletching": 0,
+        "herblore": 0,
+        "hitpoints": 1154,
+        "magic": 166701,
+        "mining": 0,
+        "prayer": 0,
+        "ranged": 0,
+        "runecraft": 0,
+        "slayer": 0,
+        "smithing": 0,
+        "strength": 0,
+        "thieving": 0,
+        "woodcutting": 0
+      },
+      "saw_bury_chat": false,
+      "post_start_observations": 407,
+      "bone_bank_cycle": {
+        "first_batch_buried": false,
+        "opened": null,
+        "withdrawn": null,
+        "buried_after_withdrawal": false
+      },
+      "bank_fletcher_cycle": {
+        "first_pack_created": false,
+        "deposited": null,
+        "withdrawn": null,
+        "crafted_after_withdrawal": false
+      },
+      "bank_fletcher_string_cycle": {
+        "initial_pairs_strung": false,
+        "deposited": null,
+        "withdrawn": null,
+        "strung_after_withdrawal": false
+      },
+      "bank_fletcher_cut_string_cycle": {
+        "cut_pair_created": false,
+        "deposited": null,
+        "withdrawn": null,
+        "string_pair_created": false
+      },
+      "alcher_generated_custom_cycle": {
+        "withdrawn": {
+          "ingame": true,
+          "scene_state": 2,
+          "player": "Liveetr3ya 0",
+          "tile": [
+            3185,
+            3440,
+            0
+          ],
+          "tick": 41,
+          "items": {
+            "Adamant scimitar": 1,
+            "Nature rune": 1
+          },
+          "item_ids": {
+            "561": 1,
+            "1332": 1
+          },
+          "bank": {},
+          "bank_ids": {},
+          "bank_open": true,
+          "bank_loaded": true,
+          "bank_generation": 5,
+          "levels": {
+            "-unused-": 0,
+            "agility": 1,
+            "attack": 1,
+            "cooking": 1,
+            "crafting": 1,
+            "defence": 1,
+            "firemaking": 1,
+            "fishing": 1,
+            "fletching": 1,
+            "herblore": 1,
+            "hitpoints": 10,
+            "magic": 55,
+            "mining": 1,
+            "prayer": 1,
+            "ranged": 1,
+            "runecraft": 1,
+            "slayer": 1,
+            "smithing": 1,
+            "strength": 1,
+            "thieving": 1,
+            "woodcutting": 1
+          },
+          "xp": {
+            "-unused-": 0,
+            "agility": 0,
+            "attack": 0,
+            "cooking": 0,
+            "crafting": 0,
+            "defence": 0,
+            "firemaking": 0,
+            "fishing": 0,
+            "fletching": 0,
+            "herblore": 0,
+            "hitpoints": 1154,
+            "magic": 166636,
+            "mining": 0,
+            "prayer": 0,
+            "ranged": 0,
+            "runecraft": 0,
+            "slayer": 0,
+            "smithing": 0,
+            "strength": 0,
+            "thieving": 0,
+            "woodcutting": 0
+          },
+          "chat": [
+            [
+              8,
+              "This item can not be withdrawn as a note."
+            ],
+            [
+              7,
+              "Inventory wiped."
+            ],
+            [
+              6,
+              "set tutorial: to 1000"
+            ],
+            [
+              5,
+              "Welcome to RuneScape."
+            ]
+          ]
+        },
+        "consumed": true
+      },
+      "ordered_first_exhausted": false
+    }
+  },
+  {
+    "host_commit": "d4f1809e670136cb074eac41a1a76c18d44bd6f8",
+    "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "catalog_commit": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "case": "bank_fletcher_string",
+    "exit_code": 1,
+    "elapsed_seconds": 120.61,
+    "receipt": "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-string-100adccc-d4f1809e.json",
+    "log": "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-string-100adccc-d4f1809e.log",
+    "revision": 274,
+    "scope": "Stringing option attempt failed after the first product; the complete bank-cycle witness did not pass.",
+    "outcome": "FAIL",
+    "failure": "FAIL: catalog_boundary_live: scenario failed: step 14 (watch XP from both seeded stringing pairs): stat_xp_gain(9)>=66 not seen within 150 ticks"
   }
 ]

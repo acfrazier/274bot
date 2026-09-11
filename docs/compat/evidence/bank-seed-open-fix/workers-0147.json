@@ -1,0 +1,125 @@
+{
+  "observed_at": "2026-09-11T01:47:12.124289+00:00",
+  "workers": [
+    {
+      "profile": "grok46",
+      "task": "t_dde220ef",
+      "actual_sessions": [
+        {
+          "id": "20260910_211806_39ef8c",
+          "model": "grok-4.6",
+          "billing_provider": "xai-oauth",
+          "started_at": 1789089487.561381,
+          "ended_at": 1789090408.493203,
+          "title": "Work kanban task t_dde220ef"
+        }
+      ]
+    },
+    {
+      "profile": "grok46",
+      "task": "t_3737503d",
+      "actual_sessions": [
+        {
+          "id": "20260910_213411_28720e",
+          "model": "grok-4.6",
+          "billing_provider": "xai-oauth",
+          "started_at": 1789090452.241164,
+          "ended_at": null,
+          "title": "Work kanban task t_3737503d"
+        }
+      ]
+    },
+    {
+      "profile": "grok46",
+      "task": "t_66955ad4",
+      "actual_sessions": [
+        {
+          "id": "20260910_212911_04efe4",
+          "model": "grok-4.6",
+          "billing_provider": "xai-oauth",
+          "started_at": 1789090155.251433,
+          "ended_at": 1789090412.564939,
+          "title": "Work kanban task t_66955ad4 #2"
+        },
+        {
+          "id": "20260910_212810_6acfbb",
+          "model": "grok-4.6",
+          "billing_provider": "xai-oauth",
+          "started_at": 1789090094.392092,
+          "ended_at": 1789090139.0902221,
+          "title": "Work kanban task t_66955ad4"
+        }
+      ]
+    },
+    {
+      "profile": "grok46",
+      "task": "t_6533221b",
+      "actual_sessions": [
+        {
+          "id": "20260910_213711_3ceb77",
+          "model": "grok-4.6",
+          "billing_provider": "xai-oauth",
+          "started_at": 1789090632.588127,
+          "ended_at": null,
+          "title": "Work kanban task t_6533221b"
+        }
+      ]
+    },
+    {
+      "profile": "grok46",
+      "task": "t_3317197c",
+      "actual_sessions": [
+        {
+          "id": "20260910_212709_01dc8f",
+          "model": "grok-4.6",
+          "billing_provider": "xai-oauth",
+          "started_at": 1789090030.19063,
+          "ended_at": 1789091205.897417,
+          "title": "Work kanban task t_3317197c"
+        }
+      ]
+    },
+    {
+      "profile": "sol",
+      "task": "t_90e850ab",
+      "actual_sessions": [
+        {
+          "id": "20260910_213411_aad79e",
+          "model": "gpt-5.6-sol",
+          "billing_provider": "openai-codex",
+          "started_at": 1789090452.81658,
+          "ended_at": null,
+          "title": "Work kanban task t_90e850ab"
+        }
+      ]
+    },
+    {
+      "profile": "reviewer",
+      "task": "t_1a24382e",
+      "actual_sessions": [
+        {
+          "id": "20260910_212509_07d113",
+          "model": "grok-4.5",
+          "billing_provider": "xai-oauth",
+          "started_at": 1789089910.00351,
+          "ended_at": 1789090001.983486,
+          "title": "Work kanban task t_1a24382e"
+        }
+      ]
+    },
+    {
+      "profile": "reviewer",
+      "task": "t_42263bfd",
+      "actual_sessions": [
+        {
+          "id": "20260910_211405_8e47f2",
+          "model": "grok-4.5",
+          "billing_provider": "xai-oauth",
+          "started_at": 1789089246.8473039,
+          "ended_at": 1789089477.5133739,
+          "title": "Work kanban task t_42263bfd"
+        }
+      ]
+    }
+  ]
+}

@@ -164,3 +164,28 @@ Rune chainbody; brief 51 scopes a separate selected-data custom-item witness
 for Adamant scimitar by alias and display name. No arbitrary custom-item LIVE
 acceptance is claimed yet. All Alcher matrix rows remain PARTIAL pending the
 remaining option and integrated/frontend gates.
+
+### 2026-09-11 01:46 UTC generated custom-item qualification
+
+All eight custom alias/display-name Alcher cells pass at frozen d4f1809e/client
+56d8027: Adamant scimitar on both revisions and both immutable catalogs. Root
+verified receipt/log hashes, empty Start inventory, fresh loaded bank generation
+with exact noted item 1332 and rune 561, then both consumed, 1536 coins and
++65 Magic XP. Each retained 401-431 post-Start observations and a full core
+witness. Same-card Grok 4.5 review 1182 approved the source and seed helper.
+These qualify these two selected-data options, not every arbitrary item.
+
+BankFletcher stringing at 30193c3b failed before Start because the seed helper
+opened banker dialogue. Corrected d4f1809e opened the seed bank, then failed
+after the first bow: the shim discarded valid IDs/slots and reselected a
+same-name finished bow. Both 274 headless and 289 native failures are retained;
+t_90e850ab repairs that bridge identity loss before fresh LIVE retries.
+The ledger now contains 40 PASS, five FAIL and one PARTIAL historical headless
+cells. Native receipts remain separate; no stringing success is claimed.
+
+The operator clarified catalog ownership: a demonstrated foreign-script bug
+gets a dimmed card and a concrete reason, preserving its original inventory
+row and evidence. Host behavior is not changed to accommodate it. Ancillary
+features such as clue solving remain stubs for separate future native host
+projects; that existing deferred dependency is not a foreign-script defect.
+Current BankFletcher evidence identifies our bridge bug, so it remains enabled.

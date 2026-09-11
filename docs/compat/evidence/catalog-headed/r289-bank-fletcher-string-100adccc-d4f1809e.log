@@ -1,0 +1,194 @@
+[host-play] slot livermcoz7_0: thread up
+274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+[panel] scenario capture armed: Some("bank_fletcher_string terminal")
+[panel] livermcoz7_0: livermcoz7_0: slot up
+[host-play] slot livermcoz7_0: handshake begin reconnect=false
+[host-play] slot livermcoz7_0: handshake ok
+[host] hitch livermcoz7_0: frame_us=71467 paints=1 skips=0 ticks=0
+[panel] livermcoz7_0: livermcoz7_0: scene 1
+[host] hitch livermcoz7_0: frame_us=63584 paints=43 skips=0 ticks=1
+[panel] livermcoz7_0: livermcoz7_0: mainland hop queued
+[panel] livermcoz7_0: livermcoz7_0: ingame
+[panel] livermcoz7_0: livermcoz7_0: scene 2
+live script_bank_fletcher_string: running step 1/25
+[host] slot livermcoz7_0: d_loop_us=10196 d_raster_us=229466 d_observe_us=57570 max_observe_us=3412 d_paints=50 d_skips=0 d_ticks=1 window_ms=0
+[panel] livermcoz7_0: livermcoz7_0: scene 1
+[panel] livermcoz7_0: livermcoz7_0: ingame
+[panel] livermcoz7_0: livermcoz7_0: scene 2
+[host] slot livermcoz7_0: d_loop_us=11865 d_raster_us=230087 d_observe_us=71528 max_observe_us=5059 d_paints=50 d_skips=0 d_ticks=3 window_ms=1157
+[host] slot livermcoz7_0: d_loop_us=1071 d_raster_us=211437 d_observe_us=26135 max_observe_us=860 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155
+live script_bank_fletcher_string: running step 2/25
+[host-play] slot livermcoz7_0: handshake begin reconnect=true
+[panel] livermcoz7_0: livermcoz7_0: scene 0
+[host-play] slot livermcoz7_0: handshake ok
+[panel] livermcoz7_0: livermcoz7_0: scene 1
+[host] hitch livermcoz7_0: frame_us=50769 paints=39 skips=0 ticks=1
+[panel] livermcoz7_0: livermcoz7_0: ingame
+[panel] livermcoz7_0: livermcoz7_0: scene 2
+[host] slot livermcoz7_0: d_loop_us=15313 d_raster_us=176246 d_observe_us=75729 max_observe_us=4376 d_paints=50 d_skips=0 d_ticks=1 window_ms=0
+[host] slot livermcoz7_0: d_loop_us=1321 d_raster_us=159763 d_observe_us=44170 max_observe_us=5535 d_paints=50 d_skips=0 d_ticks=3 window_ms=1162
+live script_bank_fletcher_string: running step 3/25
+[host] slot livermcoz7_0: d_loop_us=1242 d_raster_us=154258 d_observe_us=29233 max_observe_us=2004 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170
+[panel] livermcoz7_0: livermcoz7_0: scene 1
+[panel] livermcoz7_0: livermcoz7_0: ingame
+[panel] livermcoz7_0: livermcoz7_0: scene 2
+[host] slot livermcoz7_0: d_loop_us=10548 d_raster_us=215595 d_observe_us=71111 max_observe_us=6371 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161
+[host] slot livermcoz7_0: d_loop_us=1059 d_raster_us=188292 d_observe_us=34826 max_observe_us=4120 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163
+live script_bank_fletcher_string: running step 4/25
+live script_bank_fletcher_string: running step 5/25
+live script_bank_fletcher_string: running step 6/25
+live script_bank_fletcher_string: running step 7/25
+live script_bank_fletcher_string: running step 8/25
+live script_bank_fletcher_string: running step 9/25
+live script_bank_fletcher_string: running step 10/25
+live script_bank_fletcher_string: running step 11/25
+live script_bank_fletcher_string: running step 12/25
+[host] slot livermcoz7_0: d_loop_us=1039 d_raster_us=199157 d_observe_us=38236 max_observe_us=4210 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173
+live script_bank_fletcher_string: running step 13/25
+[script livermcoz7_0] start load
+live script_bank_fletcher_string: running step 14/25
+[host] hitch livermcoz7_0: observe_us=77959 paints=309 skips=0 ticks=13
+[host] hitch livermcoz7_0: observe_us=20643 paints=331 skips=0 ticks=14
+[host] slot livermcoz7_0: d_loop_us=991 d_raster_us=183034 d_observe_us=136326 max_observe_us=77959 d_paints=50 d_skips=0 d_ticks=2 window_ms=1231
+[script livermcoz7_0] BankFletcher stringing 'Willow shortbow' (u id 60) at (3185, 3440, 0) (booth 'Bank booth', r6)
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[panel] livermcoz7_0: script: BankFletcher stringing 'Willow shortbow' (u id 60) at (3185, 3440, 0) (booth 'Bank booth', r6)
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1037 d_raster_us=202027 d_observe_us=49670 max_observe_us=8743 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1094 d_raster_us=204337 d_observe_us=44585 max_observe_us=5479 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=982 d_raster_us=187623 d_observe_us=44565 max_observe_us=5692 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=891 d_raster_us=188529 d_observe_us=40964 max_observe_us=5612 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=939 d_raster_us=166238 d_observe_us=40644 max_observe_us=4642 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=920 d_raster_us=191908 d_observe_us=45939 max_observe_us=6460 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=970 d_raster_us=190987 d_observe_us=49214 max_observe_us=6200 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=959 d_raster_us=202318 d_observe_us=48140 max_observe_us=6153 d_paints=50 d_skips=0 d_ticks=2 window_ms=1145
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=927 d_raster_us=189812 d_observe_us=49706 max_observe_us=6017 d_paints=50 d_skips=0 d_ticks=2 window_ms=1147
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=990 d_raster_us=199158 d_observe_us=48400 max_observe_us=6264 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1004 d_raster_us=176230 d_observe_us=39103 max_observe_us=4306 d_paints=50 d_skips=0 d_ticks=1 window_ms=1150
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=968 d_raster_us=193123 d_observe_us=46643 max_observe_us=6478 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=980 d_raster_us=187932 d_observe_us=48587 max_observe_us=6357 d_paints=50 d_skips=0 d_ticks=2 window_ms=1141
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=954 d_raster_us=201430 d_observe_us=48591 max_observe_us=6266 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=964 d_raster_us=182682 d_observe_us=47680 max_observe_us=6026 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=928 d_raster_us=190288 d_observe_us=45762 max_observe_us=5787 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1012 d_raster_us=190499 d_observe_us=47944 max_observe_us=5847 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1052 d_raster_us=204912 d_observe_us=49877 max_observe_us=6345 d_paints=50 d_skips=0 d_ticks=2 window_ms=1146
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=928 d_raster_us=194266 d_observe_us=48058 max_observe_us=6361 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=917 d_raster_us=183578 d_observe_us=47297 max_observe_us=6045 d_paints=50 d_skips=0 d_ticks=2 window_ms=1145
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1101 d_raster_us=200200 d_observe_us=48927 max_observe_us=6297 d_paints=50 d_skips=0 d_ticks=2 window_ms=1147
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1008 d_raster_us=190326 d_observe_us=49116 max_observe_us=6342 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=921 d_raster_us=200696 d_observe_us=42906 max_observe_us=6295 d_paints=50 d_skips=0 d_ticks=1 window_ms=1153
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=926 d_raster_us=188951 d_observe_us=48791 max_observe_us=6291 d_paints=50 d_skips=0 d_ticks=2 window_ms=1136
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=935 d_raster_us=191101 d_observe_us=44414 max_observe_us=5615 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=966 d_raster_us=194099 d_observe_us=49896 max_observe_us=6217 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1015 d_raster_us=195161 d_observe_us=46156 max_observe_us=5745 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=974 d_raster_us=188553 d_observe_us=48681 max_observe_us=6509 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1018 d_raster_us=197883 d_observe_us=48072 max_observe_us=6260 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=970 d_raster_us=179981 d_observe_us=47936 max_observe_us=5995 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=940 d_raster_us=197639 d_observe_us=48157 max_observe_us=5908 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1045 d_raster_us=185692 d_observe_us=48790 max_observe_us=6428 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=948 d_raster_us=199238 d_observe_us=48093 max_observe_us=6020 d_paints=50 d_skips=0 d_ticks=2 window_ms=1147
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=969 d_raster_us=185223 d_observe_us=46578 max_observe_us=6608 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=953 d_raster_us=197331 d_observe_us=48296 max_observe_us=6155 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=936 d_raster_us=193295 d_observe_us=42851 max_observe_us=5938 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1007 d_raster_us=203310 d_observe_us=49032 max_observe_us=6638 d_paints=50 d_skips=0 d_ticks=1 window_ms=1136
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1035 d_raster_us=193786 d_observe_us=50134 max_observe_us=6216 d_paints=50 d_skips=0 d_ticks=2 window_ms=1137
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=988 d_raster_us=201340 d_observe_us=49805 max_observe_us=6370 d_paints=50 d_skips=0 d_ticks=2 window_ms=1134
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1008 d_raster_us=193454 d_observe_us=48226 max_observe_us=5825 d_paints=50 d_skips=0 d_ticks=2 window_ms=1140
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=973 d_raster_us=186618 d_observe_us=46010 max_observe_us=5849 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=956 d_raster_us=184570 d_observe_us=45295 max_observe_us=5962 d_paints=50 d_skips=0 d_ticks=2 window_ms=1145
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1039 d_raster_us=205339 d_observe_us=49794 max_observe_us=6453 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1089 d_raster_us=198998 d_observe_us=48547 max_observe_us=6076 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1279 d_raster_us=209762 d_observe_us=53146 max_observe_us=6763 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1397 d_raster_us=225869 d_observe_us=53759 max_observe_us=6739 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158
+[panel] scenario capture requested: bank_fletcher_string terminal
+[host] hitch livermcoz7_0: observe_us=83931 paints=2673 skips=0 ticks=104
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1093 d_raster_us=181068 d_observe_us=122051 max_observe_us=83931 d_paints=50 d_skips=0 d_ticks=2 window_ms=1227
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1117 d_raster_us=199835 d_observe_us=45007 max_observe_us=6266 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1331 d_raster_us=208159 d_observe_us=42613 max_observe_us=4044 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1377 d_raster_us=231042 d_observe_us=51838 max_observe_us=6287 d_paints=50 d_skips=0 d_ticks=1 window_ms=1163
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1244 d_raster_us=194881 d_observe_us=49319 max_observe_us=6161 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1279 d_raster_us=215590 d_observe_us=46898 max_observe_us=6238 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1366 d_raster_us=211341 d_observe_us=51324 max_observe_us=6287 d_paints=50 d_skips=0 d_ticks=2 window_ms=1128
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1345 d_raster_us=227860 d_observe_us=49425 max_observe_us=6125 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154
+[script livermcoz7_0] interact UseOn { name: "Bow string", kind: "inv", target_name: Some("Willow shortbow"), x: 0, z: 0, level: 0, index: None }
+[host] slot livermcoz7_0: d_loop_us=1336 d_raster_us=211657 d_observe_us=51256 max_observe_us=6631 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150
+FAIL: live script_bank_fletcher_string {"scenario":"bank_fletcher_string","outcome":"FAIL","predicate":"stat_xp_gain(9)>=66","ticks":159,"elapsed_ms":68679,"message":"step 14 (watch XP from both seeded stringing pairs): stat_xp_gain(9)>=66 not seen within 150 ticks","tile":[3185,3440,0],"inv":[{"id":849,"name":"Willow shortbow","count":1},{"id":60,"name":"Willow shortbow","count":1},{"id":1777,"name":"Bow string","count":1}],"stat":{"runenergy":100},"chat":[{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"Nothing interesting happens."},{"text":"You add a string to the bow."},{"text":"Congratulations, you just advanced a fletching level."},{"text":"Inventory wiped."},{"text":"Welcome to RuneScape."}],"scene":2}
+FAIL: step 14 (watch XP from both seeded stringing pairs): stat_xp_gain(9)>=66 not seen within 150 ticks
