@@ -61,6 +61,24 @@ struct PendingCatalogStart {
     siblings: Vec<(String, String)>,
 }
 
+/// Freeze the already-published prepared observation immediately before the
+/// actual isolate Start call. A successful Start cannot overtake its baseline.
+fn start_catalog_with_core<F>(
+    watch: &host_play::catalog_core::CoreWatch,
+    slot: &str,
+    start: F,
+) -> Result<(), String>
+where
+    F: FnOnce() -> Result<(), String>,
+{
+    watch.begin_start(slot)?;
+    let result = start();
+    if let Err(error) = &result {
+        watch.fail_start(slot, error.clone());
+    }
+    result
+}
+
 /// Owned inputs captured on the UI thread and consumed by the sequential
 /// profile/template preparation worker.
 pub(crate) struct ProfilePreparation {
@@ -109,6 +127,7 @@ pub(crate) enum ProfilePreparationCompletion {
 fn fire_pending_catalog_start(
     pending: &Mutex<Vec<PendingCatalogStart>>,
     handle: &Mutex<Option<host_play::ScriptStartHandle>>,
+    core_watch: &Mutex<Option<host_play::catalog_core::CoreWatch>>,
     runner: &scenario::ScenarioRunner,
 ) -> bool {
     if !runner.on_start_script() {
@@ -122,14 +141,17 @@ fn fire_pending_catalog_start(
     let Some(h) = handle.as_ref() else {
         return false;
     };
+    let watch = core_watch.lock().unwrap().clone().unwrap_or_default();
     for card in pending.iter() {
-        if h.start_load(
-            &card.slot,
-            card.js.clone(),
-            card.shape,
-            card.bag.clone(),
-            card.siblings.clone(),
-        )
+        if start_catalog_with_core(&watch, &card.slot, || {
+            h.start_load(
+                &card.slot,
+                card.js.clone(),
+                card.shape,
+                card.bag.clone(),
+                card.siblings.clone(),
+            )
+        })
         .is_err()
         {
             return false;
@@ -923,6 +945,10 @@ pub struct Session {
     pending_script: Arc<Mutex<Vec<PendingCatalogStart>>>,
     /// Isolate-start handle the per-frame hook uses (filled after Play).
     script_start_handle: Arc<Mutex<Option<host_play::ScriptStartHandle>>>,
+    /// Shared full-core observer handle, filled from Play and configured only
+    /// by the catalog_watch executable.
+    catalog_core_watch: Arc<Mutex<Option<host_play::catalog_core::CoreWatch>>>,
+    catalog_core_enabled: bool,
     /// Focused-slot speaker gate: at most one cpal speaker, owned by the
     /// focused slot while its Music/SFX toggle is on. `lowmem` (toggle
     /// off) never opens cpal; slot threads reconcile on their frame loop.
@@ -1121,6 +1147,8 @@ impl Session {
             scenario: Arc::new(Mutex::new(None)),
             pending_script: Arc::new(Mutex::new(Vec::new())),
             script_start_handle: Arc::new(Mutex::new(None)),
+            catalog_core_watch: Arc::new(Mutex::new(None)),
+            catalog_core_enabled: false,
             audio: Arc::new(AudioGate::new()),
             persist_ui: true,
             options: {
@@ -1144,6 +1172,23 @@ impl Session {
             requested_unlock: None,
             validated_template: None,
         }
+    }
+
+    /// Enable full-core proof only for the dedicated catalog_watch entry.
+    pub fn set_catalog_core_enabled(&mut self, enabled: bool) {
+        self.catalog_core_enabled = enabled;
+    }
+
+    /// Clone the Play-owned proof handle without exposing slot snapshots.
+    pub fn catalog_core_watch(&self) -> Option<host_play::catalog_core::CoreWatch> {
+        self.catalog_core_watch.lock().unwrap().clone()
+    }
+
+    pub(crate) fn install_catalog_core_watch(
+        &self,
+        watch: Option<host_play::catalog_core::CoreWatch>,
+    ) {
+        *self.catalog_core_watch.lock().unwrap() = watch;
     }
 
     /// Install production launch inputs while the locked panel still exposes
@@ -1854,6 +1899,14 @@ impl Session {
         // Mint one name per seed slot (fleet included): both slots get a
         // fresh account for this invocation.
         let names = host_play::mint_live_names(scenario.seed.profiles.len());
+        let core_case = if self.catalog_core_enabled {
+            if names.len() != 1 {
+                return Err("catalog core watch supports exactly one driven slot".into());
+            }
+            Some(host_play::catalog_core::CoreCase::parse(scenario.name)?)
+        } else {
+            None
+        };
         let mut inject = scenario::settings_inject_map(view.script_settings_inject);
         if let Some(key) = view.inject_companion_as {
             if names.len() > 1 {
@@ -1871,6 +1924,12 @@ impl Session {
                 .error
                 .clone()
                 .unwrap_or_else(|| "unlock_at failed".into()));
+        }
+        if let Some(case) = core_case {
+            let watch = self
+                .catalog_core_watch()
+                .ok_or_else(|| "catalog core watch handle unavailable".to_string())?;
+            watch.configure(case, names[0].clone());
         }
         self.mainland
             .store(scenario.seed.mainland, Ordering::Relaxed);
@@ -2000,6 +2059,7 @@ impl Session {
         let scenario = Arc::clone(&self.scenario);
         let pending_script = Arc::clone(&self.pending_script);
         let script_start_handle = Arc::clone(&self.script_start_handle);
+        let catalog_core_watch = Arc::clone(&self.catalog_core_watch);
         let audio = Arc::clone(&self.audio);
         let nav_publish = Arc::clone(&self.nav_publish);
         // Last failed device-open `(slot, when)`; a machine without an
@@ -2170,7 +2230,12 @@ impl Session {
             // same way `step_nav_bot` freezes (route stays latched).
             if let Some(runner) = scenario.lock().unwrap().as_mut() {
                 if runner.drives(name) {
-                    if fire_pending_catalog_start(&pending_script, &script_start_handle, runner) {
+                    if fire_pending_catalog_start(
+                        &pending_script,
+                        &script_start_handle,
+                        &catalog_core_watch,
+                        runner,
+                    ) {
                         runner.tick_with_hold(c, hold);
                     }
                 } else if let Some(index) = runner.companion_for(name) {
@@ -2293,6 +2358,7 @@ impl Session {
             },
         };
         *self.script_start_handle.lock().unwrap() = Some(play.script_start_handle());
+        self.install_catalog_core_watch(Some(play.catalog_core_watch()));
         *self.script_nav_paint.lock().unwrap() = Some(play.script_nav_paint());
         self.play = Some(play);
         crate::picker::set_pack(self.play.as_ref().and_then(|p| p.world()));
@@ -3911,8 +3977,8 @@ mod tests {
         is_local_engine, live_or_walk_paint, maybe_send_click, nav_snapshot_for_follow,
         null_raster_live_entries_for_target, parse_getvar_line, publish_frontend_slot,
         publish_nav_debug, reset_frontend_slot_lifetime, script_active, script_pause_enabled,
-        script_status_text, script_stop_enabled, seed_on_first_world, stream_capture,
-        stress_live_entries_for_target, temp_live_vault_from, walkto_tele_cmd,
+        script_status_text, script_stop_enabled, seed_on_first_world, start_catalog_with_core,
+        stream_capture, stress_live_entries_for_target, temp_live_vault_from, walkto_tele_cmd,
         ProfilePreparationCompletion, Session, SlotIo, WalkArm,
     };
     use crate::focus::draw_for_slot;
@@ -3941,6 +4007,74 @@ mod tests {
 
     use crate::nav_settings::{effective, NavSettings};
     use script::IsolatedEnv;
+
+    #[test]
+    fn catalog_core_start_marker_precedes_actual_isolate_start() {
+        let watch = host_play::catalog_core::CoreWatch::default();
+        let mut baseline = host_play::catalog_core::Observation {
+            ingame: true,
+            scene_state: 2,
+            player: Some("catalogtest".into()),
+            tile: Some((2661, 3306, 0)),
+            ..host_play::catalog_core::Observation::default()
+        };
+        baseline.levels.insert("thieving".into(), 50);
+        baseline.levels.insert("hitpoints".into(), 50);
+        baseline.effective_levels.insert("thieving".into(), 50);
+        baseline.effective_levels.insert("hitpoints".into(), 50);
+        baseline.items.insert("Lobster".into(), 10);
+        watch.configure(host_play::catalog_core::CoreCase::Thiever, "catalogtest");
+        watch.observe("catalogtest", baseline, false);
+
+        start_catalog_with_core(&watch, "catalogtest", || {
+            assert!(
+                watch
+                    .qualify()
+                    .unwrap_err()
+                    .contains("no post-Start observations"),
+                "the core baseline must be frozen before isolate Start"
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn catalog_core_initial_login_then_preparation_then_start_uses_current_session() {
+        let watch = host_play::catalog_core::CoreWatch::default();
+        watch.configure(host_play::catalog_core::CoreCase::Thiever, "catalogtest");
+        watch.observe(
+            "catalogtest",
+            host_play::catalog_core::Observation::default(),
+            true,
+        );
+
+        let mut prepared = host_play::catalog_core::Observation {
+            ingame: true,
+            scene_state: 2,
+            player: Some("catalogtest".into()),
+            tile: Some((2661, 3306, 0)),
+            ..host_play::catalog_core::Observation::default()
+        };
+        prepared.levels.insert("thieving".into(), 50);
+        prepared.levels.insert("hitpoints".into(), 50);
+        prepared.effective_levels.insert("thieving".into(), 50);
+        prepared.effective_levels.insert("hitpoints".into(), 50);
+        prepared.items.insert("Lobster".into(), 10);
+        watch.observe("catalogtest", prepared, false);
+
+        let mut started = false;
+        start_catalog_with_core(&watch, "catalogtest", || {
+            started = true;
+            Ok(())
+        })
+        .unwrap();
+        assert!(started);
+        assert!(watch
+            .qualify()
+            .unwrap_err()
+            .contains("no post-Start observations"));
+    }
 
     fn checked_profile_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf) {
         let fixture =

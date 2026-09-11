@@ -2,7 +2,7 @@
 //! All gameplay, rendering and scenario handling use the production panel.
 
 fn main() {
-    let args = match panel::parse_args(std::env::args().skip(1), None) {
+    let mut args = match panel::parse_args(std::env::args().skip(1), None) {
         Ok(args) => args,
         Err((code, message)) => {
             eprintln!("{message}");
@@ -13,6 +13,7 @@ fn main() {
         eprintln!("FAIL: catalog_watch requires --live script_<name>");
         std::process::exit(1);
     }
+    args.catalog_core = true;
     // The panel's main-thread stores use this existing scoped seam. It does
     // not alter HOME or the operator's catalog/settings/loadout files.
     let _stores = script::IsolatedEnv::enter(&format!("catalog-watch-{}", std::process::id()));

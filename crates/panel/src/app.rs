@@ -210,6 +210,48 @@ struct LiveScript {
     soak: bool,
     soak_until: Option<Instant>,
     announced_pass: bool,
+    /// Separate wall-clock ceiling when scenario PASS arrives before the
+    /// full shared core qualifies. `None` for every ordinary panel run.
+    core_deadline: Option<Instant>,
+}
+
+#[derive(Debug, PartialEq)]
+enum CoreGate {
+    Disabled,
+    Pending,
+    Qualified(Option<Arc<serde_json::Value>>),
+    Failed(String),
+}
+
+fn catalog_core_gate(
+    watch: Option<&host_play::catalog_core::CoreWatch>,
+    deadline: Option<Instant>,
+    now: Instant,
+) -> CoreGate {
+    let Some(watch) = watch else {
+        return CoreGate::Disabled;
+    };
+    use host_play::catalog_core::CoreWatchStatus;
+    match watch.status() {
+        CoreWatchStatus::Disabled => CoreGate::Disabled,
+        CoreWatchStatus::Qualified => CoreGate::Qualified(None),
+        CoreWatchStatus::Failed => CoreGate::Failed(
+            watch
+                .failure()
+                .unwrap_or_else(|| "catalog core failed".into()),
+        ),
+        CoreWatchStatus::Ready | CoreWatchStatus::Running
+            if deadline.is_some_and(|deadline| now >= deadline) =>
+        {
+            match watch.qualify() {
+                Ok(evidence) => CoreGate::Qualified(Some(evidence)),
+                Err(error) => CoreGate::Failed(format!(
+                    "catalog core did not qualify before the headed deadline: {error}"
+                )),
+            }
+        }
+        CoreWatchStatus::Ready | CoreWatchStatus::Running => CoreGate::Pending,
+    }
 }
 
 /// Headed `--smoke` watch. The `render_smoke` scenario's shot sink fires
@@ -383,9 +425,15 @@ impl LiveBoot {
                 let scenario_name = name.strip_prefix("script_").unwrap_or(&name);
                 let scenario = scenario::get(scenario_name)
                     .ok_or_else(|| format!("unknown scenario {scenario_name}"))?;
+                let scenario_deadline = scenario.settings.deadline;
                 state.session.live_prepare_script(scenario)?;
                 arm_scenario_shots(state);
                 let budget = scenario::budget_s_from_env();
+                let core_deadline = state
+                    .session
+                    .catalog_core_watch()
+                    .filter(|watch| watch.configured())
+                    .map(|_| Instant::now() + budget.unwrap_or(scenario_deadline));
                 state.live = Some(LiveHarness::Script(LiveScript {
                     name,
                     passed: false,
@@ -395,6 +443,7 @@ impl LiveBoot {
                     soak: budget.is_some(),
                     soak_until: budget.map(|d| Instant::now() + d),
                     announced_pass: false,
+                    core_deadline,
                 }));
             }
             LiveBoot::Smoke => {
@@ -779,6 +828,8 @@ pub enum RunMode {
 pub struct PanelArgs {
     pub mode: RunMode,
     pub profile: host_play::ProfileOptions,
+    /// Dedicated catalog_watch proof bridge; ordinary panel-play stays false.
+    pub catalog_core: bool,
 }
 
 pub fn parse_args(
@@ -788,7 +839,11 @@ pub fn parse_args(
     let (profile, rest) =
         host_play::parse_profile_args(args).map_err(|msg| (2, format!("panel-play: {msg}")))?;
     let mode = parse_live_args(rest, env_live)?;
-    Ok(PanelArgs { mode, profile })
+    Ok(PanelArgs {
+        mode,
+        profile,
+        catalog_core: false,
+    })
 }
 
 impl RunMode {
@@ -1037,15 +1092,49 @@ fn live_script_tick(
             guard.as_ref().is_some_and(|r| r.terminal_shot().is_some()),
         )
     };
+    let core_watch = session.catalog_core_watch();
+    let core_gate = catalog_core_gate(core_watch.as_ref(), live.core_deadline, Instant::now());
     let record = |evidence: &Option<scenario::Evidence>| {
         evidence.as_ref().map(|ev| ev.to_json()).unwrap_or_default()
     };
+    // Compact core evidence is additive: preserve the existing scenario JSON
+    // receipt byte-for-byte and emit the shared witness only at a terminal
+    // decision, off the gameplay observation thread.
+    let record_core = || {
+        core_watch
+            .as_ref()
+            .filter(|watch| watch.configured())
+            .map(|watch| match &core_gate {
+                CoreGate::Qualified(Some(evidence)) => evidence.to_string(),
+                _ => watch
+                    .qualify()
+                    .map(|evidence| evidence.to_string())
+                    .unwrap_or_else(|_| watch.evidence().to_string()),
+            })
+    };
+    if let CoreGate::Failed(message) = &core_gate {
+        if hold_terminal_shot(live, wants_terminal_shot, wrote_shots) {
+            return None;
+        }
+        if let Some(core) = record_core() {
+            eprintln!("CATALOG_CORE: {} {core}", live.name);
+        }
+        eprintln!("FAIL: live {} {}", live.name, record(&evidence));
+        live.failed = Some(message.clone());
+        return Some(message.clone());
+    }
     match status {
         Some(scenario::RunnerStatus::Passed) => {
+            if matches!(core_gate, CoreGate::Pending) {
+                return None;
+            }
             if hold_terminal_shot(live, wants_terminal_shot, wrote_shots) {
                 return None;
             }
             if !live.announced_pass {
+                if let Some(core) = record_core() {
+                    println!("CATALOG_CORE: {} {core}", live.name);
+                }
                 println!("PASS: live {} {}", live.name, record(&evidence));
                 live.announced_pass = true;
             }
@@ -1061,6 +1150,9 @@ fn live_script_tick(
         Some(scenario::RunnerStatus::Failed(msg)) => {
             if hold_terminal_shot(live, wants_terminal_shot, wrote_shots) {
                 return None;
+            }
+            if let Some(core) = record_core() {
+                eprintln!("CATALOG_CORE: {} {core}", live.name);
             }
             eprintln!("FAIL: live {} {}", live.name, record(&evidence));
             live.failed = Some(msg.clone());
@@ -4298,6 +4390,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     let scale = Arc::new(AtomicU32::new(1.0f32.to_bits()));
     let frame_scale = Arc::clone(&scale);
     let mut state = PanelState::default();
+    state.session.set_catalog_core_enabled(args.catalog_core);
     state
         .session
         .configure_profile(args.profile)
@@ -4530,19 +4623,39 @@ mod tests {
 
     use super::{
         apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal, boot_for,
-        capture_key_ch, chooser_should_open_popup, clamp_hop_label_px, debug_caption,
-        drive_startup, edit_parameters_enabled, game_window_flags, live_null_tick,
+        capture_key_ch, catalog_core_gate, chooser_should_open_popup, clamp_hop_label_px,
+        debug_caption, drive_startup, edit_parameters_enabled, game_window_flags, live_null_tick,
         live_script_tick, live_smoke_tick, live_stress_tick, loading_text, log_follow_bottom,
         manual_shot_label, parse_args, parse_live_args, progress_channel, random_status_text,
-        runner_config, smoke_settled, smoke_should_fire, startup_progress, Boot, LiveBoot,
-        LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState, ProfilePrepareJob, ProgressPhase,
-        RunMode, StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, SMOKE_DEADLINE,
-        SMOKE_SETTLE,
+        runner_config, smoke_settled, smoke_should_fire, startup_progress, Boot, CoreGate,
+        LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState, ProfilePrepareJob,
+        ProgressPhase, RunMode, StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE,
+        SMOKE_DEADLINE, SMOKE_SETTLE,
     };
     use crate::theme::{
         applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
     };
     use crate::window::RedrawMode;
+
+    #[test]
+    fn headed_core_gate_rejects_scenario_only_pass_and_times_out() {
+        let watch = host_play::catalog_core::CoreWatch::default();
+        watch.configure(host_play::catalog_core::CoreCase::Thiever, "catalogtest");
+        let deadline = Instant::now() + Duration::from_secs(30);
+
+        assert!(matches!(
+            catalog_core_gate(Some(&watch), Some(deadline), Instant::now()),
+            CoreGate::Pending
+        ));
+        assert!(matches!(
+            catalog_core_gate(
+                Some(&watch),
+                Some(deadline),
+                deadline + Duration::from_secs(1)
+            ),
+            CoreGate::Failed(_)
+        ));
+    }
 
     fn checked_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf) {
         let fixture =
@@ -5550,6 +5663,7 @@ mod tests {
             soak: false,
             soak_until: None,
             announced_pass: false,
+            core_deadline: None,
         };
         assert_eq!(
             live_script_tick(&mut live, &mut s, 0),
@@ -5557,6 +5671,45 @@ mod tests {
             "PASS latches; the caller exits 0"
         );
         assert!(live.passed);
+
+        // Dedicated catalog_watch: scenario PASS alone waits for the shared
+        // core, and an unqualified core becomes FAIL at its own deadline.
+        let watch = host_play::catalog_core::CoreWatch::default();
+        watch.configure(host_play::catalog_core::CoreCase::Thiever, "catalogtest");
+        s.install_catalog_core_watch(Some(watch.clone()));
+        live.passed = false;
+        live.announced_pass = false;
+        live.core_deadline = Some(Instant::now() + Duration::from_secs(60));
+        assert_eq!(live_script_tick(&mut live, &mut s, 0), None);
+        assert!(!live.passed, "scenario-only PASS is not catalog core PASS");
+        live.core_deadline = Some(Instant::now() - Duration::from_secs(1));
+        let error =
+            live_script_tick(&mut live, &mut s, 0).expect("unqualified core times out as FAIL");
+        assert!(error.contains("catalog core did not qualify"), "{error}");
+
+        live.failed = None;
+        live.core_deadline = Some(Instant::now() + Duration::from_secs(60));
+        let mut baseline = host_play::catalog_core::Observation {
+            ingame: true,
+            scene_state: 2,
+            player: Some("catalogtest".into()),
+            tile: Some((2661, 3306, 0)),
+            ..host_play::catalog_core::Observation::default()
+        };
+        baseline.levels.insert("thieving".into(), 50);
+        baseline.levels.insert("hitpoints".into(), 50);
+        baseline.effective_levels.insert("thieving".into(), 50);
+        baseline.effective_levels.insert("hitpoints".into(), 50);
+        baseline.items.insert("Lobster".into(), 10);
+        watch.configure(host_play::catalog_core::CoreCase::Thiever, "catalogtest");
+        watch.observe("catalogtest", baseline.clone(), false);
+        watch.begin_start("catalogtest").unwrap();
+        baseline.xp.insert("thieving".into(), 1);
+        baseline.items.insert("Coins".into(), 1);
+        watch.observe("catalogtest", baseline, false);
+        assert_eq!(live_script_tick(&mut live, &mut s, 0), None);
+        assert!(live.passed, "full shared core permits headed PASS");
+        watch.clear();
 
         live.passed = false;
         live.announced_pass = false;
@@ -5611,6 +5764,7 @@ mod tests {
             soak: false,
             soak_until: None,
             announced_pass: false,
+            core_deadline: None,
         };
         // No terminal shot armed: the FAIL returns immediately.
         let msg = live_script_tick(&mut live, &mut s, 0).expect("FAIL returns the message");
@@ -5666,6 +5820,7 @@ mod tests {
             soak: false,
             soak_until: None,
             announced_pass: false,
+            core_deadline: None,
         };
         assert_eq!(
             live_script_tick(&mut live, &mut s, 0),
@@ -5731,6 +5886,7 @@ mod tests {
             soak: false,
             soak_until: None,
             announced_pass: false,
+            core_deadline: None,
         };
         assert_eq!(
             live_script_tick(&mut live, &mut s, 0),
