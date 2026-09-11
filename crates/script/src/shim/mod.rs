@@ -727,6 +727,10 @@ pub enum InteractReq {
         z: i32,
         level: i32,
         index: Option<i32>,
+        source_item_id: Option<i32>,
+        source_item_slot: Option<i32>,
+        target_item_id: Option<i32>,
+        target_item_slot: Option<i32>,
     },
     /// Use a widget (spell / interface button) on a scene target.
     #[serde(rename = "use-widget-on")]

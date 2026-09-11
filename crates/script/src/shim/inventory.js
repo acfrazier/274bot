@@ -2,6 +2,8 @@
 // ops on `__rs2b0t_host.interact`. Missing members throw `not impl`.
 import { snap, notImpl, queue, proxy } from '../../shim/_kernel.js';
 
+const inventoryIdentity = Symbol('inventoryIdentity');
+
 function rows() {
     return snap().inv || [];
 }
@@ -22,6 +24,12 @@ function useOnKind(target) {
 }
 
 function held(row) {
+    const hasIdentity =
+        Number.isInteger(row.id) && Number.isInteger(row.slot) && row.slot >= 0;
+    const sourceIdentity = {
+        source_item_id: hasIdentity ? row.id : null,
+        source_item_slot: hasIdentity ? row.slot : null,
+    };
     return {
         name: row.name,
         count: row.count,
@@ -29,6 +37,7 @@ function held(row) {
         slot: row.slot ?? 0,
         noted: row.noted === true,
         cert: row.cert ?? -1,
+        [inventoryIdentity]: hasIdentity ? { id: row.id, slot: row.slot } : null,
         interact(action) {
             queue({ op: 'held', name: row.name, action: String(action) });
             return true;
@@ -39,11 +48,15 @@ function held(row) {
         useOn(target) {
             if (!target) return false;
             if (target.name && !target.snap) {
+                const targetIdentity = target[inventoryIdentity];
                 queue({
                     op: 'use-on',
                     name: row.name,
                     kind: 'inv',
                     target_name: target.name,
+                    ...sourceIdentity,
+                    target_item_id: targetIdentity?.id ?? null,
+                    target_item_slot: targetIdentity?.slot ?? null,
                     x: 0,
                     z: 0,
                     level: 0,
@@ -58,6 +71,7 @@ function held(row) {
                     name: row.name,
                     kind,
                     target_name: target.name ?? target.snap.name ?? null,
+                    ...sourceIdentity,
                     x: target.snap?.x ?? 0,
                     z: target.snap?.z ?? 0,
                     level: target.snap?.level ?? 0,

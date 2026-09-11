@@ -314,6 +314,12 @@ const SUPPORTING_INTERFACES: &[TsInterface] = &[
                 optional: false,
                 doc: None,
             },
+            TsField {
+                name: "slot",
+                ty: "number",
+                optional: true,
+                doc: Some("Container slot when the host has exact item identity."),
+            },
         ],
     },
     TsInterface {
@@ -1449,6 +1455,30 @@ const INTERACT_VARIANTS: &[InteractVariant] = &[
             },
             TsField {
                 name: "index",
+                ty: "number | null",
+                optional: true,
+                doc: None,
+            },
+            TsField {
+                name: "source_item_id",
+                ty: "number | null",
+                optional: true,
+                doc: None,
+            },
+            TsField {
+                name: "source_item_slot",
+                ty: "number | null",
+                optional: true,
+                doc: None,
+            },
+            TsField {
+                name: "target_item_id",
+                ty: "number | null",
+                optional: true,
+                doc: None,
+            },
+            TsField {
+                name: "target_item_slot",
                 ty: "number | null",
                 optional: true,
                 doc: None,

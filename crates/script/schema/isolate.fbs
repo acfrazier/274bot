@@ -26,6 +26,7 @@ table Row {
   noted: bool;
   cert: int;
   component_id: int;
+  slot: int = -1;
 }
 
 // One skill row: index, name, xp, unboosted base, and current effective.
@@ -229,6 +230,10 @@ table Interact {
   bank_generation: ulong;
   bank_item_id: int;
   lands_as_id: int;
+  source_item_id: int;
+  source_item_slot: int;
+  target_item_id: int;
+  target_item_slot: int;
 }
 
 // The tick's shim interact queue, forwarded to the host.
