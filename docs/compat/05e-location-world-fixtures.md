@@ -22,11 +22,14 @@ become the open id through a same-session loc change. Script counters, a queued
 Open, or an unrelated loc elsewhere fail.
 
 GnomeCourse must show the log dest, the selected ground return, the pipe, then
-further Agility XP back at the start tile. Snapshot `tile.level` is always 0 and
-the loc sweep is `minusedlevel` only, so plane is not a native player fact;
-ground return is the packed climb-down coord. `searchRadius=8` cannot see the
+further Agility XP back at the start tile. Root correction: `GameSnapshot::tile` publishes `client.minusedlevel`; it is
+not hardcoded to level 0. These selected stored milestones happen on the
+ground and therefore do not independently capture each upper-floor transition.
+Ground return is the packed climb-down coord. `searchRadius=8` cannot see the
 log from the pipe exit (chebyshev 13 on selected maps). That is a foreign
-option/re-sync finding; the host and script are not rewritten. If a live cell
+search/re-sync observation. Missing native walkability/coordinate reach and
+DirectNavigator.walkTo must be connected before assigning the final runtime
+failure to the imported script; host policy and script source stay unchanged. If a live cell
 cannot finish a lap inside `SCRIPT_GOLD_DEADLINE`, report the measured reason
 rather than stretching the watch.
 

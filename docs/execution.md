@@ -67,6 +67,16 @@ concurrent working files to make a build pass; their owners may be editing them.
 Use `fail-closed-dispatch` for foreign-API compatibility work; it is not a
 mandatory dependency of a memory measurement or documentation task.
 
+Shared-file commits need an explicit owner. `git commit --only PATH` commits
+all current working-tree changes in PATH; selective staging does not restrict
+that command to one task's hunks. Do not use it on a file containing another
+active owner's changes, and never remove those changes to make the commit
+look scoped. Serialize such runtime tasks with dependency gates, or have the
+orchestrator compose a scoped commit using an isolated Git index while leaving
+the working file and ordinary index untouched. Verify the actual committed
+diff before requesting review. Entire-file `--only` remains appropriate when
+the named task owns every change in that file.
+
 ## One task, implementation then review
 
 The configured flow has `kanban.review_dispatch=true`. The implementer commits

@@ -1,0 +1,55 @@
+{
+  "checked_at": "2026-09-11T03:05:14.177618+00:00",
+  "reason": "Completed root qualification targets only; raw evidence, source exports and copied binaries retained. No active file references in lsof scan. Active workers use other private targets.",
+  "targets": {
+    ".superpowers/catalog-headed/target-isolated-a4157243": 10523000832,
+    ".superpowers/catalog-headed/target-isolated-50f2be8a": 6027280384,
+    ".superpowers/navigation-proof/target-isolated-external": 5736849408,
+    ".superpowers/navigation-proof/target-isolated-bundled": 5729898496,
+    ".superpowers/loadout-ui/target-isolated-50f2be8a": 4139237376
+  },
+  "bytes_before": 32156266496,
+  "preserved_catalog_binaries": [
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-watch-a4157243",
+      "sha256": "01041560a57713fd314f77166c134d81556416012b73c26b3d437ead14325146"
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-a4157243",
+      "sha256": "bded173a1f1f77d7d78041441cc3d01844dd0a6c78661b69a959c0c312f3f4ea"
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-watch-50f2be8a",
+      "sha256": "d94858a6c273890bab3a19ab0135a4a43ab014a38bf7763d2085a5800eadd9d2"
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-50f2be8a",
+      "sha256": "65dae89560ddd97f92a6fc06937c5a7f443533a1c0e4c7a557e89b8dd0a05232"
+    }
+  ],
+  "scope": "Compiler intermediates only; no source/measurement/runtime pack removal.",
+  "completed_at": "2026-09-11T03:05:18.661484+00:00",
+  "all_targets_removed": true,
+  "preserved_other_proof_binaries": [
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/nav_origin_probe-external-d2372fe0",
+      "sha256": "9474fddc3858ad3d9e80f7ecb2b95d396daa2d53b99c68ffd90a57008fecc50c"
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/startup_watch-external-d2372fe0",
+      "sha256": "57638f5df89be7e551e23e631524e7c5a53d0e6446502164b483bf8629a14151"
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/nav_origin_probe-bundled-d2372fe0",
+      "sha256": "058b2465422fe76fd6d490baae4d3b69645ac7198e301597a23e8129668c574a"
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/navigation-proof/startup_watch-bundled-d2372fe0",
+      "sha256": "ddc558373298ad9ded1b7ded08c1e314bc85c08277a0d9616ab3a63d4e798a56"
+    },
+    {
+      "path": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/loadout-ui/Loadout UI Proof.app/Contents/MacOS/startup_watch",
+      "sha256": "59788d0c44c0d9b398cd67e183a2780efa272eaaaa74699882c5a1bd9900154e"
+    }
+  ]
+}

@@ -19,7 +19,9 @@ must explicitly clear any retained view; omitted delta means unchanged only.
 Keep old buffers without the new optional table readable and fail closed.
 Validate finite integer coordinates and bounds before indexing. Missing level
 keeps existing default. Use the same scene/flood for row and coordinate facts.
-Do not treat player-body plane 0 as a newly verified plane observation.
+Root verified immutable 50f2be8a: GameSnapshot::tile and player_here_tile use
+client.minusedlevel, not constant zero. Use actual posted level. Ground-only
+stored Gnome milestones do not imply a missing native plane fact.
 
 Allowed scope: minimal api query-view packing/accessors and focused tests;
 host-play with_script_snapshot_input publication; script SnapshotInput,
