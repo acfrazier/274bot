@@ -1,0 +1,788 @@
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-stage2-324/vendor/fr-client-rust/crates/client)
+   Compiling vault v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-stage2-324/crates/vault)
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-stage2-324/crates/api)
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-stage2-324/crates/script)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 22.03s
+     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/script-d001a53c8b402800)
+
+running 86 tests
+test autocast::tests::both_selected_caches_post_the_audited_staff_spell_controls ... ok
+test autocast::tests::missing_arm_observation_fails_closed ... ok
+test autocast::tests::native_arm_next_owns_choose_spell_toggle_order ... ok
+test autocast::tests::observe_tracks_staff_panel_and_armed_without_faking_missing_controls ... ok
+test bank_open::tests::out_of_range_stand_fails_closed ... ok
+test bank_open::tests::timeout_and_reset_fail_closed_without_another_command ... ok
+test bank_open::tests::walk_and_ready_bounds_are_native ... ok
+test bank_withdraw::tests::no_progress_and_full_inventory_stop ... ok
+test bank_withdraw::tests::x_then_fallback_then_exact_remainder ... ok
+test cake_stall::tests::api_predicates_own_count_and_restock ... ok
+test cake_stall::tests::native_bounds_timeout_and_reset_are_fail_closed ... ok
+test ctx::tests::bank_loaded_uses_packet_freshness_and_allows_empty_full ... ok
+test ctx::tests::chat_open_and_options_read_the_chat_modal ... ok
+test ctx::tests::find_options_default_bank_fetch_off ... ok
+test ctx::tests::has_item_resolves_inventory_by_name ... ok
+test ctx::tests::quest_status_reads_the_journal_colour ... ok
+test ctx::tests::stat_level_16_is_run_energy_other_ids_read_effective ... ok
+test ctx::tests::varp_reads_transmitted_values_and_fails_closed ... ok
+test death_recovery::tests::bounds_match_frozen_contract ... ok
+test death_recovery::tests::pause_freezes_sends_and_reset_drops_stale_token ... ok
+test death_recovery::tests::respawn_timeout_still_advances_to_ticks ... ok
+test death_recovery::tests::seeded_duplicate_and_old_chat_do_not_latch ... ok
+test death_recovery::tests::validate_false_until_new_death_and_recovers_once_at_anchor ... ok
+test death_recovery::tests::walk_back_is_invoked_instead_of_default_walk ... ok
+test host_js::tests::render_excludes_game_teleport ... ok
+test host_js::tests::render_includes_find_options_wilderness_jsdoc ... ok
+test isolate_fb::tests::encode_decode_interact_npc_pick_round_trips ... ok
+test isolate_fb::tests::encode_decode_npc_view_round_trips ... ok
+test isolate_fb::tests::encode_decode_reach_view_round_trips ... ok
+test isolate_fb::tests::encode_decode_stat_base_and_effective ... ok
+test isolate_fb::tests::omitted_npc_table_is_absent_not_empty ... ok
+test isolate_fb::tests::omitted_reach_is_absent_when_unchanged ... ok
+test isolate_fb::tests::one_isolate_buf_encodes_snapshot_then_paint_then_interact ... ok
+test isolate_fb::tests::optional_string_delta_clears_chat_text ... ok
+test isolate_fb::tests::optional_string_delta_clears_my_name ... ok
+test isolate_fb::tests::reused_isolate_buf_second_snapshot_does_not_keep_first_tick ... ok
+test isolate_fb::tests::truncated_paint_and_interact_buffers_return_err ... ok
+test isolate_fb::tests::unavailable_reach_is_posted_when_cleared ... ok
+test isolated_env::tests::ensure_thread_does_not_use_operator_home ... ok
+test isolated_env::tests::ensure_thread_survives_isolated_env_drop ... ok
+test isolated_env::tests::enter_then_ensure_thread_drop_keeps_the_thread_pin ... ok
+test isolated_env::tests::isolated_env_does_not_mutate_process_home ... ok
+test isolated_env::tests::isolated_env_is_thread_local ... ok
+test isolated_env::tests::isolated_env_restores_bot_home_and_deletes_scratch ... ok
+test isolated_env::tests::operator_home_never_queries_profile_for_explicit_home ... ok
+test isolated_env::tests::operator_home_selector_matches_client_rules ... ok
+test load::isolate::tests::reset_rejects_a_tick_queued_with_the_previous_session_generation ... ok
+test load::isolate::tests::shim_prelude_defines_globals_for_compat_fixture ... ok
+test loadouts_store::compatibility_tests::accessors_read_righthand_qty_and_unassigned_gear ... ok
+test loadouts_store::compatibility_tests::selected_loadout_matches_case_and_falls_back_to_first ... ok
+test loadouts_store::tests::copy_equipment_keeps_supplies_and_unknown_gear ... ok
+test loadouts_store::tests::explicit_slots_and_quantities_survive_file_round_trip ... ok
+test loadouts_store::tests::failed_save_can_restore_the_previous_file_image ... ok
+test loadouts_store::tests::legacy_array_worn_and_carry_are_preserved_without_guessing_slots ... ok
+test loadouts_store::tests::replace_at_renames_without_duplicating ... ok
+test loadouts_store::tests::resolve_item_options_drops_missing_alias_and_keeps_sort ... ok
+test loadouts_store::tests::resolve_item_options_leaves_literals_and_loadouts ... ok
+test loadouts_store::tests::resolve_item_options_matches_both_pinned_revisions ... ok
+test loadouts_store::tests::resolve_item_options_none_facts_prefix_only ... ok
+test loadouts_store::tests::resolve_item_options_rebounds_without_mutating_schema ... ok
+test loadouts_store::tests::resolve_item_options_tie_order_and_identity_labels ... ok
+test loadouts_store::tests::resolve_setting_options_lists_loadout_names ... ok
+test loadouts_store::tests::store_round_trips_at_private_mode ... ok
+test loadouts_store::tests::unique_loadout_name_avoids_collisions ... ok
+test memory_profile::tests::runtime_teardown_clears_heap_gauges ... ok
+test memory_profile::tests::snapshot_lifetime_counts_capacity_and_releases_on_channel_drop ... ok
+test memory_profile::tests::thread_ownership_survives_handle_release_without_registry_retention ... ok
+test params::tests::every_compiled_id_defaults_to_no_rows_yet ... ok
+test periodic_bank::tests::combat_and_off_never_due ... ok
+test periodic_bank::tests::failure_backoff_blocks_retry_and_pause_freezes_elapsed ... ok
+test periodic_bank::tests::frozen_should_bank_now_contract ... ok
+test periodic_bank::tests::labels_and_tokens_map_to_items_without_equating_loot_and_items_strings ... ok
+test periodic_bank::tests::npc_access_is_explicit_missing_access ... ok
+test periodic_bank::tests::supplied_destination_does_not_fall_back_and_reset_drops_callback_phase ... ok
+test registry::tests::factory_counter_is_some_and_ticks ... ok
+test settings_store::tests::merge_bag_applies_defaults_then_overrides_then_inject ... ok
+test settings_store::tests::show_if_any_of_hides_when_value_mismatch ... ok
+test settings_store::tests::show_if_array_membership_is_case_sensitive_scalar ... ok
+test slot::tests::on_random_defaults_to_host_and_override_claims_handle ... ok
+test slot::tests::pending_bank_op_pause_freezes_while_stop_and_reconnect_abort ... ok
+test slot::tests::pending_withdraw_x_pause_freezes_while_stop_and_reconnect_abort ... ok
+test slot::tests::script_requested_stop_cleans_slot_work_and_allows_fresh_restart ... ok
+test slot::tests::stop_releases_snapshot_storage_and_restart_emits_keyframe ... ok
+test slot::tests::ticks_counts_dispatched_ticks_since_start ... ok
+test special::tests::both_selected_caches_post_the_audited_special_controls ... ok
+test special::tests::missing_controls_do_not_invent_costs_or_bars ... ok
+
+test result: ok. 86 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.69s
+
+     Running tests/autocast.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/autocast-8514ec6b78407f2f)
+
+running 9 tests
+test arm_three_presses_across_delta_omissions_then_posted_armed_state ... ok
+test initially_armed_reads_posted_varp_on_both_selected_caches ... ok
+test melee_resolution_shape_is_unchanged ... ok
+test missing_controls_throw_and_do_not_send ... ok
+test native_autocast_does_not_roundtrip_js_snapshot_observations ... ok
+test pause_and_hold_freeze_mid_arm_without_late_press ... ok
+test staff_not_attached_refuses_without_send ... ok
+test stale_chooser_times_out_after_choose ... ok
+test unknown_spell_refuses_without_send ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.71s
+
+     Running tests/cake_stall_native_mapping.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/cake_stall_native_mapping-090e6d23678b3a51)
+
+running 8 tests
+test closer_door_still_selects_qualifying_stall_id ... ok
+test food_delta_calls_onsteal_once_and_partial_is_not_stocked ... ok
+test gates_skip_dispatch_and_walk_revalidates ... ok
+test native_cake_owner_selects_with_api_predicate_and_posts_food_gain ... ok
+test native_cake_stall_does_not_roundtrip_js_snapshot_collections ... ok
+test other_stall_depleted_wrong_op_and_missing_facts_queue_nothing ... ok
+test posted_pins_match_selected_274_289_stall_and_live_stand ... ok
+test result_is_never_boolean_and_classify_is_not_on_the_path ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.76s
+
+     Running tests/catalog_run.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/catalog_run-23cdaf086e953848)
+
+running 1 test
+test catalog_cards_except_dim_set_remap ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+     Running tests/catalog_start.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/catalog_start-9a0816d31faa4324)
+
+running 1 test
+test bright_catalog_cards_start_without_not_impl ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.96s
+
+     Running tests/client_adapter_count_dialog.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/client_adapter_count_dialog-36a4555d430ad8a3)
+
+running 8 tests
+test answer_count_does_not_queue_when_dialog_is_closed ... ok
+test answer_count_invalid_values_do_not_dispatch ... ok
+test answer_count_queues_valid_integer_on_open_dialog ... ok
+test answer_count_round_trips_through_flatbuffer ... ok
+test answer_count_zero_is_a_supported_integer ... ok
+test count_dialog_open_follows_closed_open_closed_posts ... ok
+test count_dialog_open_rejects_missing_and_malformed_as_closed ... ok
+test tanner_inv_button_then_posted_dialog_then_count_answer ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+     Running tests/client_adapter_inventory.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/client_adapter_inventory-71811d4bd7d3af48)
+
+running 6 tests
+test caller_mutation_does_not_corrupt_posted_snapshot ... ok
+test counts_ops_and_component_identity_are_posted_not_invented ... ok
+test empty_inventory_does_not_read_bank_or_equipment ... ok
+test omitted_delta_keeps_last_inventory_replacement_and_clear_update ... ok
+test sparse_slots_keep_duplicate_names_and_distinct_ids ... ok
+test two_isolates_do_not_exchange_inventory_rows ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running tests/client_adapter_local_walk.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/client_adapter_local_walk-c9875629e15200d4)
+
+running 8 tests
+test current_base_and_plane_change_affects_the_next_call ... ok
+test flax_pair_to_local_then_walk_to_queues_exact_world ... ok
+test omitted_delta_keeps_last_scene_unavailable_clears ... ok
+test to_local_maps_nonzero_base_and_104_edges ... ok
+test to_local_rejects_wrong_inputs_and_unavailable_old_data ... ok
+test two_slots_do_not_exchange_scene_bases ... ok
+test walk_to_queues_nothing_outside_scene_or_on_bad_input ... ok
+test walk_to_queues_world_coords_on_current_plane_without_waiting ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s
+
+     Running tests/combat_start_helpers.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/combat_start_helpers-5d1d3168a3ee497a)
+
+running 3 tests
+test food_forms_are_generated_aliases_and_count_slots ... ok
+test ranged_loadout_is_truthful_and_uses_dart_shape_only ... ok
+test settings_display_and_saved_preserve_posted_values ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests/combat_style_contract.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/combat_style_contract-71c94c89049a2f5f)
+
+running 1 test
+test matched_combat_style_result_can_be_described_by_the_catalog_helper ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/cook_location_shape.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/cook_location_shape-9f59f6a3ca654769)
+
+running 3 tests
+test catherby_consumer_reads_bank_tile_and_host_stand ... ok
+test custom_keeps_settings_fallback_and_options_stay_catherby ... ok
+test unknown_and_auto_do_not_invent_a_location ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests/death_recovery.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/death_recovery-cd16a3818b4134a5)
+
+running 7 tests
+test guardian_hold_does_not_walk ... ok
+test idle_without_death_sends_nothing ... ok
+test needs_is_explicit_unsupported ... ok
+test new_death_waits_then_walks_and_recovers_once_from_actual_position ... ok
+test pause_hold_and_session_reset_drop_stale_walk ... ok
+test seeded_duplicate_and_old_chat_do_not_retrigger ... ok
+test wildy_walk_back_is_invoked_instead_of_default_walk ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+     Running tests/declared_abi.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/declared_abi-d4d2426aaeb589d1)
+
+running 4 tests
+test declared_abi_fixture_matches_local_dts ... ok
+test declared_abi_members_are_loadable ... ok
+test parse_index_dts_names_only_skips_types_and_internal ... ok
+test regen_js_declared_abi ... ignored
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/direct_walkto.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/direct_walkto-f86b3ded692c4768)
+
+running 7 tests
+test walk_to_does_not_succeed_on_a_different_plane ... ok
+test walk_to_expired_unreachable_returns_false ... ok
+test walk_to_invalid_dest_is_false_without_queue ... ok
+test walk_to_preserves_explicit_radius_zero_versus_default_two ... ok
+test walk_to_queues_scene_walk_and_stays_pending_until_posted_arrival ... ok
+test walk_to_session_reset_drops_unforwarded_sends_but_parked_wait_survives ... ok
+test walk_to_stop_does_not_count_queued_send_as_arrival ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
+
+     Running tests/gold_stubs.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/gold_stubs-1b31e5e07831e24b)
+
+running 12 tests
+test alcher_logic_sibling_is_sha_cached_at_start ... ok
+test death_recovery_import_does_not_404 ... ok
+test file_load_parses_export_settings_without_a_throwaway_runtime ... ok
+test gold_catalog_import_paths_resolve_for_live_scripts ... ok
+test item_db_reads_host_content_alcher_gold_row ... ok
+test quest_engine_throws_not_impl_on_use ... ok
+test selected_game_data_composes_with_frozen_alcher_logic ... ignored, requires RS2B0T to name a frozen catalog root
+test selected_game_data_is_published_before_modules_and_offline_stays_empty ... ok
+test solve_clue_construct_is_idle_not_impl ... ok
+test thiever_resolves_food_from_host_loadout_and_queues_eat ... ok
+test thiever_start_helpers_read_posted_bag_without_not_impl ... ok
+test withdraw_x_waits_for_inventory_publication ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.76s
+
+     Running tests/host_js.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/host_js-33c6c4138d8c7eb4)
+
+running 3 tests
+test host_js_dts_includes_required_interfaces ... ok
+test host_js_dts_is_fresh ... ok
+test regen_host_js ... ignored
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/hostile_duel.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/hostile_duel-9e86f7c2f9992958)
+
+running 6 tests
+test attacked_by_player_follows_posted_local_face_and_does_not_latch ... ok
+test duel_controls_match_both_selected_caches ... ok
+test hold_freezes_loop_but_keeps_posted_hostile_and_widget_facts ... ok
+test if_text_reads_selected_posted_widgets_not_stale_labels ... ok
+test is_hostile_attacker_uses_posted_npc_facts_not_name_table ... ok
+test missing_distance_or_max_refuses_hostile_true ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.55s
+
+     Running tests/input_inv_button.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/input_inv_button-3f289348ce3e253f)
+
+running 5 tests
+test inv_button_does_not_queue_count_answer ... ok
+test inv_button_invalid_op_closed_missing_and_forged_send_nothing ... ok
+test inv_button_queues_selected_id_with_first_row_other_name_twin ... ok
+test inv_button_queues_selected_id_with_selected_row_first ... ok
+test inv_button_round_trips_through_flatbuffer ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running tests/js_cache.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/js_cache-b1c19e03ab4502c8)
+
+running 11 tests
+test cache_dirs_are_private_on_unix ... ok
+test catalog_and_file_bone_burier_are_two_cards ... ok
+test catalog_register_does_not_transpile_until_ensure_js ... ok
+test first_import_writes_cache_object ... ok
+test js_origin_is_hashed_not_transpiled ... ok
+test load_populates_kind_source_and_sha_on_card ... ok
+test manifest_records_script_kind_source_and_media ... ok
+test mutated_origin_produces_new_object_and_refresh_keeps_one_card ... ok
+test persist_and_restore_keeps_catalog_vs_file_provenance ... ok
+test rs2b0t_shaped_tree_gets_no_js_beside_ts ... ok
+test second_same_bytes_hits_cache_without_rewriting_object ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+     Running tests/load_isolate.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/load_isolate-349b41c802330947)
+
+running 164 tests
+test bank_count_by_id_sums_posted_ids ... ok
+test bank_wait_ready_resolves_when_posted_open_and_loaded ... ok
+test default_js_store_is_dot_274bot_json ... ok
+test direct_navigator_walk_queues_scene_walk_to ... ok
+test eat_predicates ... ok
+test event_signal_ignored_randoms_reads_a_definebot_instance ... ok
+test event_signal_ignored_randoms_reads_the_bot_instance ... ok
+test game_cast_on_loc_queues_use_widget_on ... ok
+test game_scene_state_ready_and_energy_read_posted_fields ... ok
+test game_weight_and_camera_read_posted_fields ... ok
+test has_combat_style_strength_requires_current_mode_not_just_a_posted_row ... ok
+test ignored_randoms_cache_fills_without_probe ... ok
+test inventory_use_on_preserves_selected_source_and_target_identity ... ok
+test isolate_bank_close_waits_until_posted_shut ... ok
+test isolate_bank_items_do_not_invent_ops_and_withdraw_x_throws ... ok
+test isolate_bank_open_nearest_and_open_booth_queue_open_booth ... ok
+test isolate_bank_set_note_mode_queues_op_when_bank_open_with_note_button ... ok
+test isolate_bank_set_note_mode_throws_when_bank_closed_or_no_note_button ... ok
+test isolate_bank_snapshot_generation_waits_for_a_new_ready_session ... ok
+test isolate_bank_withdraw_load_handles_stale_and_full_snapshots_without_requests ... ok
+test isolate_bank_withdraw_load_queues_one_host_owned_request ... ok
+test isolate_bank_withdraw_x_by_id_carries_noted_destination_and_fixed_op ... ok
+test isolate_bank_withdraw_x_never_answers_after_bank_session_changes ... ok
+test isolate_bank_withdraw_x_queues_one_host_owned_continuation ... ok
+test isolate_bank_withdraw_x_zero_is_success_without_a_request ... ok
+test isolate_banking_bank_nearest_fails_closed_without_a_packed_booth ... ok
+test isolate_banking_bank_nearest_routes_to_an_off_scene_packed_booth ... ok
+test isolate_banking_deposit_all_matching_bounds_duplicate_rows_to_one_request ... ok
+test isolate_banking_deposit_skips_unknown_names_and_missing_members_throw ... ok
+test isolate_banking_deposit_waits_for_observed_host_result ... ok
+test isolate_banking_open_forwards_stand_and_exact_named_access ... ok
+test isolate_banking_open_queues_open_booth_without_walk ... ok
+test isolate_banking_open_rejects_each_unsupported_option_by_name ... ok
+test isolate_bot_host_tick_count_reads_posted_tick ... ok
+test isolate_bury_one_in_fight_queues_held_bury_when_idle ... ok
+test isolate_chat_dialog_make_x_clicks_posted_button_not_adjacent ... ok
+test isolate_chat_dialog_make_x_queues_answer_count_after_button ... ok
+test isolate_common_bank_loot_uses_rust_predicate_and_preserves_short_circuit ... ok
+test isolate_equipment_equip_queues_wear_when_inv_ops_empty ... ok
+test isolate_event_signal_pending_ignores_js_writable_host_hold ... ok
+test isolate_event_signal_pending_ignores_js_writable_snapshot_hold ... ok
+test isolate_event_signal_pending_tracks_hold_or_ours ... ok
+test isolate_execution_delay_parks_on_wall_clock ... ok
+test isolate_execution_delay_ticks_parks_n_ticks ... ok
+test isolate_execution_delay_until_parks_loop_until_cond ... ok
+test isolate_execution_delay_until_ticks_resolves_on_cond_or_budget ... ok
+test isolate_execution_delay_until_times_out_false ... ok
+test isolate_fire_spots_bank_tiles_match_host_content ... ok
+test isolate_firemaking_spots_and_log_keys_and_find_burn_lane_not_impl ... ok
+test isolate_forwards_this_log ... ok
+test isolate_game_messages_ingest_posted_chat ... ok
+test isolate_hash_bot_shop_import_resolves_at_start ... ok
+test isolate_hold_freezes_loop_and_parked_conds ... ok
+test isolate_hold_from_blob_freezes_loop_but_still_paints ... ok
+test isolate_host_content_posts_rust_coordinate_tables ... ok
+test isolate_input_held_op_matches_posted_id_not_array_index ... ok
+test isolate_input_held_op_throws_without_posted_ids ... ok
+test isolate_input_interact_npc_queues_posted_op ... ok
+test isolate_inventory_count_by_id_empty_inv_is_zero ... ok
+test isolate_inventory_count_by_id_sums_posted_ids ... ok
+test isolate_inventory_first_queues_a_held_interact ... ok
+test isolate_inventory_is_full_uses_posted_inv_size_not_twenty_eight ... ok
+test isolate_join_returns_and_isolates_are_reusable ... ok
+test isolate_js_cannot_clear_host_hold ... ok
+test isolate_light_fire_queues_tinderbox_use_on_logs ... ok
+test isolate_live_catalog_noted_inv_row_maps_unnoted_to_note ... ok
+test isolate_live_catalog_noted_of_from_posted_cert ... ok
+test isolate_logs_tick_errors ... ok
+test isolate_looping_bot_on_does_not_throw_and_taskbot_still_adds ... ok
+test isolate_looping_bot_on_fires_chat_message_when_chat_text_changes ... ok
+test isolate_model_npc_is_the_existing_class ... ok
+test isolate_native_tick_api_is_throw_on_missing_proxy ... ok
+test isolate_nearest_bank_is_posted_booth_not_player_tile ... ok
+test isolate_nearest_bank_null_when_no_booth ... ok
+test isolate_nearest_bank_picks_rust_nearest_of_two_booths ... ok
+test isolate_onpaint_throw_paints_the_not_impl ... ok
+test isolate_onpaint_without_end_still_forwards_a_frame ... ok
+test isolate_onstart_park_still_paints ... ok
+test isolate_pack_rules_matches_any_and_count_matching ... ok
+test isolate_paint_accessor_returns_the_recorded_frame ... ok
+test isolate_paint_begin_records_script_paint ... ok
+test isolate_parked_wait_still_paints_each_tick ... ok
+test isolate_pause_ignores_ticks_and_resume_continues ... ok
+test isolate_quests_all_throws_without_posted_journal ... ok
+test isolate_reachability_can_reach_is_not_chebyshev ... ok
+test isolate_reachability_can_step_reads_posted_masks ... ok
+test isolate_reachability_can_step_unavailable_omitted_and_old_buffer ... ok
+test isolate_reachability_entity_tiles_use_the_same_coordinate_budget ... ok
+test isolate_reachability_unavailable_and_omitted_delta ... ok
+test isolate_reachability_walkable_and_coordinate_can_reach ... ok
+test isolate_reachability_without_coordinate_ranks_fails_closed ... ok
+test isolate_reader_and_actions_expose_thin_stubs_and_throw_on_missing ... ok
+test isolate_reader_does_not_invent_chat_or_bank_component_ids ... ok
+test isolate_reader_inventory_size_mirrors_the_posted_tab_slot_count ... ok
+test isolate_reads_posted_fb_snapshot_blob ... ok
+test isolate_recovery_hints_take_anchor_is_empty_so_here_wins ... ok
+test isolate_remaps_api_imports_to_our_game_and_teleport_throws ... ok
+test isolate_return_to_anchor_uses_walk_resilient_arity ... ok
+test isolate_rs2b0t_api_bare_import_resolves_to_our_shim ... ok
+test isolate_script_runner_stop_stops_the_isolate ... ok
+test isolate_settings_store_does_not_return_schema_defaults ... ok
+test isolate_shop_buy_by_id_throws_not_impl ... ok
+test isolate_shop_buy_non_fixed_qty_queues_if_button_and_answer_count ... ok
+test isolate_shop_buy_queues_if_button_on_matching_stock_row ... ok
+test isolate_shop_closed_is_not_open_with_empty_stock ... ok
+test isolate_shop_open_reads_posted_stock_row ... ok
+test isolate_side_tab_interface_posts_id ... ok
+test isolate_silent_fakes_throw_and_rust_policy_tables_are_published ... ok
+test isolate_skills_reads_base_effective_and_hp_fraction ... ok
+test isolate_snapshot_delta_merges_onto_last_js_snapshot ... ok
+test isolate_snapshot_reads_fail_closed_without_a_post ... ok
+test isolate_spawn_compat_class_ticks_and_joins ... ok
+test isolate_spawn_compat_fixture_ticks_and_joins ... ok
+test isolate_spawn_returns_immediately_with_handle ... ok
+test isolate_spawn_ticks_probe_and_joins ... ok
+test isolate_special_energy_reads_posted_varp ... ok
+test isolate_special_energy_throws_without_posted_varp ... ok
+test isolate_swing_started_this_tick_is_a_rising_edge ... ok
+test isolate_task_bot_loop_awaits_execute ... ok
+test isolate_task_bot_loop_runs_first_passing_validate ... ok
+test isolate_trade_accept_queues_posted_if_button ... ok
+test isolate_trade_decline_queues_posted_if_button ... ok
+test isolate_trade_empty_is_inactive_with_no_partner ... ok
+test isolate_trade_my_offer_and_their_offer_read_name_and_count ... ok
+test isolate_trade_offer_all_queues_if_button_on_every_side_row ... ok
+test isolate_trade_offer_queues_if_button_on_first_side_row ... ok
+test isolate_trade_posted_offer_reads_partner_and_screen ... ok
+test isolate_trade_remove_all_queues_if_button_on_every_mine_row ... ok
+test isolate_trade_request_queues_player_trade ... ok
+test isolate_walk_opening_queues_walk_resilient_not_walk_to ... ok
+test isolate_walk_resilient_forwards_teleport_opt_in ... ok
+test isolate_walk_to_queues_packet_not_traveller ... ok
+test join_bounds_a_runaway_tick ... ok
+test js_library_load_bone_burier_named_file_is_ok ... ok
+test js_library_load_native_tick_file_adds_card ... ok
+test js_library_loads_compat_class_ts ... ok
+test js_library_rejects_non_bot_shape_and_missing_file ... ok
+test js_library_reserved_walk_to_errors ... ok
+test js_library_restore_reads_persisted_paths ... ok
+test js_library_same_name_replaces_path_and_source ... ok
+test kernel_facade_chat_dialog_continue_queues_continue_op ... ok
+test kernel_facade_game_auto_retaliate_is_exported ... ok
+test kernel_facade_game_cast_on_item_queues_use_widget_on ... ok
+test kernel_facade_gold_import_paths_resolve ... ok
+test kernel_facade_inventory_count_by_id_throws_not_impl ... ok
+test kernel_facade_inventory_use_on_loc_queues_loc_kind ... ok
+test kernel_facade_npcs_nearest_reads_posted_snapshot ... ok
+test npc_snap_total_health_aliases_max_health ... ok
+test npc_targets_another_player_when_face_entity_not_self ... ok
+test npc_targets_me_follows_posted_face_entity ... ok
+test pack_rules_predicates ... ok
+test real_bone_burier_queues_bury_when_seeded ... ok
+test real_bone_burier_without_bones_queues_host_bank_route ... ok
+test session_reset_discards_unread_old_interactions_and_preserves_the_isolate ... ok
+test set_camera_yaw_queues_host_write ... ok
+test set_combat_style_empty_rows_throws_not_impl ... ok
+test set_combat_style_strength_queues_posted_aggressive_if_button ... ok
+test slot_load_and_compiled_are_xor ... ok
+test slot_start_load_refuses_while_active ... ok
+test slot_start_load_reserved_name_via_compiled_ids_is_checked_at_load ... ok
+test slot_start_load_ticks_and_stop_joins ... ok
+test slow_tick_is_interrupted_and_isolate_survives ... ok
+test transpile_ts_strips_types_and_v8_can_parse_it ... ok
+test traversal_pure_walk_and_with_teles_are_nav_flag_objects ... ok
+
+test result: ok. 164 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.04s
+
+     Running tests/load_picker.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/load_picker-d10995d65e59a401)
+
+running 1 test
+test script_file_path_still_rejects_escape_for_catalog ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/load_shape.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/load_shape-78a851a7244ebd87)
+
+running 11 tests
+test class_fixture_is_compat_class ... ok
+test compat_class_marker_variants ... ok
+test compat_class_wins_over_native_tick ... ok
+test compat_define_bot_still_wins_over_class ... ok
+test compat_fixture_is_compat_define_bot ... ok
+test compat_marker_variants ... ok
+test compat_wins_over_native_when_both_present ... ok
+test empty_and_whitespace_reject ... ok
+test native_fixture_is_native_tick ... ok
+test native_marker_variants ... ok
+test reject_fixture_is_reject ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/load_siblings.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/load_siblings-2e31c0829fcfc6da)
+
+running 7 tests
+test flaxaio_catalog_siblings_include_walking ... ok
+test load_under_fake_rs2b0t_root_is_file_not_catalog ... ok
+test resolve_sibling_modules_follows_same_folder_imports_of_siblings ... ok
+test resolve_sibling_modules_skips_the_card_origin ... ok
+test scan_same_folder_js_imports_finds_quoted_relative_js ... ok
+test sibling_logic_ts_is_cached_and_registered_without_v8 ... ok
+test sibling_module_url_maps_to_bot_module_dir ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+     Running tests/loadouts_bag.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/loadouts_bag-f358ff3b5f75d7ca)
+
+running 4 tests
+test isolate_accessors_read_slots_quantities_and_food ... ok
+test isolate_provision_composes_fresh_bank_withdraw_and_wear ... ok
+test loadout_combo_resolves_from_store_names_in_script_crate ... ok
+test settings_str_returns_selected_loadout_name ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running tests/loc_selected_identity.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/loc_selected_identity-e6401ca5b1ce5ae4)
+
+running 5 tests
+test loc_interact_legacy_without_id_round_trips ... ok
+test loc_interact_missing_action_does_not_queue ... ok
+test loc_interact_queues_selected_id_with_flax_first ... ok
+test loc_interact_queues_selected_id_with_wall_first ... ok
+test loc_interact_round_trips_selected_id_through_flatbuffer ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+     Running tests/named_bank_approach.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/named_bank_approach-19a7cfa3c5db8e83)
+
+running 13 tests
+test bank_access_already_adjacent_does_not_rearm_navigation ... ok
+test named_open_nearest_completes_on_fresh_generation_not_queued_click ... ok
+test named_open_nearest_from_chebyshev_1_queues_named_open_booth_only ... ok
+test named_open_nearest_from_chebyshev_2_queues_walk_near_then_same_named_open_booth ... ok
+test named_open_nearest_missing_loc_after_approach_sends_no_click ... ok
+test named_open_nearest_replaced_loc_after_approach_sends_no_click ... ok
+test native_bank_open_does_not_roundtrip_js_snapshot_collections ... ok
+test native_bank_owner_preserves_selected_identity_across_omitted_locs_delta ... ok
+test open_nearest_access_non_default_still_throws_unsupported ... ok
+test session_reset_clears_native_bank_observation ... ok
+test supplied_stand_walks_then_delivers_fresh_bank_result ... ok
+test unnamed_banking_open_from_distance_queues_open_booth_without_walk ... ok
+test world_open_walks_with_native_verb_then_opens_observed_booth ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.53s
+
+     Running tests/named_bank_locations.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/named_bank_locations-6b9ee1764ab93442)
+
+running 4 tests
+test absent_world_facts_leave_bank_locations_empty ... ok
+test import_time_find_sees_falador_without_a_snapshot ... ok
+test independent_isolates_do_not_share_named_bank_facts ... ok
+test nearest_bank_follows_posted_booth_not_the_alias_list ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+     Running tests/native_hint_overhead.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/native_hint_overhead-029ccdb6993dce70)
+
+running 4 tests
+test absent_old_buffer_defaults_new_reader_facts_to_null ... ok
+test reader_returns_posted_local_overhead_and_coordinate_hint_unchanged ... ok
+test set_run_queues_existing_command_in_call_order ... ok
+test successive_snapshot_clears_overhead_and_hint_without_stale_retention ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+     Running tests/native_quest_status.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/native_quest_status-d3ac7b81ec0843bc)
+
+running 5 tests
+test buffer_without_quest_rows_keeps_the_query_explicitly_unavailable ... ok
+test changed_snapshot_clears_a_missing_quest_tab_to_unavailable ... ok
+test loaded_empty_quest_tab_remains_available ... ok
+test quests_preserve_rows_and_frozen_status_strings_with_first_duplicate_winning ... ok
+test separate_isolates_do_not_share_quest_rows ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+     Running tests/native_retaliate_controls.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/native_retaliate_controls-52a26d09b1ab32b5)
+
+running 4 tests
+test buffer_without_retaliate_fields_defaults_reader_to_null ... ok
+test changed_snapshot_clears_unavailable_retaliate_pair ... ok
+test reader_returns_posted_retaliate_pair_without_guessing_from_enabled_state ... ok
+test separate_isolates_do_not_share_retaliate_control_identity ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running tests/paint_buttons.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/paint_buttons-3f9e704af73b79be)
+
+running 11 tests
+test buttons_does_not_throw_and_headless_returns_null ... ok
+test click_on_one_isolate_never_returns_from_another ... ok
+test empty_old_paint_still_decodes_and_label_toggle_is_a_change ... ok
+test generation_skip_drops_pending_click ... ok
+test hold_still_consumes_and_keeps_loop_frozen ... ok
+test paint_click_is_consumed_once ... ok
+test pause_drops_click_and_resume_does_not_replay ... ok
+test stale_frame_generation_rejects_same_id_on_later_script ... ok
+test stepper_still_throws_not_impl ... ok
+test two_buttons_calls_append_and_consume_this_call_only ... ok
+test unadvertised_id_returns_null_and_clears_pending ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+
+     Running tests/periodic_bank.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/periodic_bank-8dc41249302b98e3)
+
+running 8 tests
+test combat_suppresses_loot_count_trigger ... ok
+test common_junk_true_deposits_gem_false_skips_it ... ok
+test either_label_and_shim_loot_token_both_trigger ... ok
+test loot_count_chicken_shape_observes_deposit_afterdeposit_close_and_return ... ok
+test missing_access_backs_off_without_retry_spam ... ok
+test off_periodic_bank_validates_false_and_sends_nothing ... ok
+test pause_and_session_reset_drop_late_callback_and_sends ... ok
+test supplied_destination_is_exact_and_does_not_open_a_different_loc ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+
+     Running tests/registry.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/registry-7dd1921a26de48bc)
+
+running 4 tests
+test compiled_ids_is_empty_no_abandoned_smokes ... ok
+test factory_none_for_leftover_ids_until_wired ... ok
+test is_reserved_is_walk_to_only ... ok
+test is_whale_accepts_all_whales_rejects_unknown ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/resource_tool_facts.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/resource_tool_facts-8a51c3c7746312ec)
+
+running 4 tests
+test best_tool_callback_is_exclusive_and_ordered ... ok
+test can_wield_is_attack_not_held_and_unknown_is_false ... ok
+test posted_axes_are_best_first_with_real_ids_including_black ... ok
+test preload_is_void_noop_and_absent_facts_fail_closed ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+     Running tests/rs2b0t_registry.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/rs2b0t_registry-7b25921cec6b305c)
+
+running 24 tests
+test js_library_registers_rs2b0t_cards_without_isolates ... ok
+test parse_registry_errors_on_non_registry_index ... ok
+test parse_registry_extracts_high_alchemy_item_option_spec ... ok
+test parse_registry_identifier_options_does_not_execute_ts ... ok
+test parse_registry_identifier_valued_setting_inlines_export_const ... ok
+test parse_registry_inlines_alcher_literal_defaults_and_anyof_const ... ok
+test parse_registry_inlines_same_dir_logic_option_arrays ... ok
+test parse_registry_is_relative_path_to_catalog_dir ... ok
+test parse_registry_refuses_unsupported_item_option_expressions ... ok
+test parse_registry_rejects_wrong_names_cycles_mixed_and_comments ... ok
+test parse_registry_resolves_quoted_string_const_default ... ok
+test parse_registry_resolves_settings_schema_via_import_alias ... ok
+test parse_registry_skips_parent_dir_imports ... ok
+test parse_registry_unescapes_apostrophe_in_description ... ok
+test parse_registry_yields_register_name_and_import_path ... ok
+test parse_settings_inlines_same_file_and_shim_spreads ... ok
+test parse_settings_inlines_shim_food_banking_and_spell_keys ... ok
+test parse_settings_skips_typescript_type_annotation ... ok
+test register_rs2b0t_skips_cards_whose_path_escapes_catalog ... ok
+test rs2b0t_fill_uses_register_name_and_skips_reserved_walk_to ... ok
+test rs2b0t_import_deferred_roundtrip ... ok
+test rs2b0t_root_prefers_env_then_persisted_file ... ok
+test script_file_path_rejects_escape_and_absolute ... ok
+test script_file_path_resolves_js_import_to_ts_twin ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/settings_bag.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/settings_bag-d42607b66357084d)
+
+running 5 tests
+test merge_bag_coerces_string_array_default_to_json_array ... ok
+test merged_bag_from_spread_schema_posts_inject_over_defaults ... ok
+test prelude_reads_posted_settings_bag_not_only_fallback ... ok
+test settings_store_round_trips_overrides_at_private_mode ... ok
+test tile_and_list_schema_defaults_round_trip_through_prelude ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running tests/slot.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/slot-47cbd158d9959bbe)
+
+running 8 tests
+test game_tick_dispatches_only_while_running ... ok
+test idle_has_no_script_and_tick_is_noop ... ok
+test not_is_up_skips_tick_keeps_instance_auto_resumes ... ok
+test operator_pause_survives_login ... ok
+test panicking_tick_sets_error_and_drops_instance ... ok
+test start_pause_resume_stop ... ok
+test start_while_active_refuses ... ok
+test stop_runs_on_stop_hook ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/special.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/special-ebb6c38ec639e01f)
+
+running 9 tests
+test already_armed_is_idempotent ... ok
+test arm_clicks_bar_then_posted_armed_state ... ok
+test costs_ready_and_wielded_on_both_selected_caches ... ok
+test energy_without_posted_varp_still_throws ... ok
+test missing_controls_throw_and_do_not_send ... ok
+test no_bar_refuses_without_send ... ok
+test pause_and_hold_freeze_mid_arm_without_late_click ... ok
+test timeout_without_armed_returns_false ... ok
+test weapon_change_selects_the_posted_combat_bar ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.72s
+
+     Running tests/spell_facts.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/spell_facts-f77a044e7c258656)
+
+running 6 tests
+test cast_on_item_missing_spell_control_throws ... ok
+test cast_on_item_queues_then_observes_magic_xp_and_item_change ... ok
+test cast_on_item_rejects_stale_inventory_without_queue ... ok
+test casts_available_and_withdraw_list_use_rust_staff_substitution ... ok
+test posted_spell_db_and_staff_runes_construct_later_superheater_fire_staves ... ok
+test spell_helpers_are_unknown_without_selected_game_data ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+
+     Running tests/tick_subscriber.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/tick_subscriber-b60689633c1a2c44)
+
+running 10 tests
+test add_tick_listener_on_start_does_not_fail ... ok
+test hold_freezes_listeners_and_still_paints ... ok
+test isolates_do_not_share_tick_listeners ... ok
+test parked_delay_until_still_fires_listeners ... ok
+test pause_freezes_listeners_and_resume_continues ... ok
+test reset_session_work_skips_until_next_snapshot_tick ... ok
+test same_callback_added_twice_fires_once ... ok
+test start_tick_does_not_fire_later_ticks_see_posted_snapshot ... ok
+test throwing_listener_is_isolated_from_others_and_last_error ... [rs2b0t] listener error Error: listener boom
+    at file:///rs2b0t/bot/scripts/bot/bot.js:6:47
+    at globalThis.__rs2b0t_fire_tick_listeners (file:///rs2b0t/bot/runtime/BotHost.js:14:13)
+    at globalThis.__rs2b0t_tick_async (file:///rs2b0t/bot/scripts/bot/main.js:15:37)
+    at globalThis.__rs_tick (file:///rs2b0t/bot/scripts/bot/main.js:8:16)
+ok
+test unsubscribe_stops_fires ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s
+
+     Running tests/unloadable.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/unloadable-f95f94556cfe5622)
+
+running 14 tests
+test autofighter_shaped_combat_imports_remap ... ok
+test boneburier_shaped_imports_are_loadable ... ok
+test catalog_dim_names_are_locked ... ok
+test catalog_dim_register_stamps_unloadable_even_when_imports_remap ... ok
+test chicken_killer_import_lines_are_loadable ... ok
+test event_webwalk_direct_navigator_remaps ... ok
+test firemaking_and_light_fire_import_lines_remap ... ok
+test hash_bot_shop_remaps ... ok
+test herb_cleaner_parent_sibling_remaps ... ok
+test input_bothost_and_model_paths_remap ... ok
+test log_from_who_is_not_an_import_specifier ... ok
+test walk_executor_stays_unloadable ... ok
+test webwalk_navigator_stays_unloadable ... ok
+test webwalk_something_is_unloadable ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/walk_to.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target/debug/deps/walk_to-fb470f9ddd36732a)
+
+running 6 tests
+test factory_walk_to_is_not_a_compiled_card_ui_walk_to_is_host_nav ... ok
+test walk_rejected_retries_the_request_next_tick ... ok
+test walk_to_noops_inside_radius ... ok
+test walk_to_requests_target_until_inside_radius ... ok
+test walk_to_waits_until_here_is_observed ... ok
+test walk_to_without_walk_errors_instead_of_faking_arrival ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests script
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
