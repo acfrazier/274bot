@@ -28,3 +28,24 @@ The previous failures and the one core PASS remain in
 `evidence/catalog-harness/qualification-combatb18.json`; they do not qualify
 all supported options or the full combat batch. No gameplay workaround or
 performance claim follows from this evidence repair.
+
+## Fresh corrected-source diagnostic boundary (16:51 UTC)
+
+Exact `cffd62c598ceab2ea80b9bcc29e0eaf58f4dd885` / unchanged client was
+built from4966 verified files, with no overlays; binary/source receipts are
+in catalog-headed. Both fresh Chaos cells returned bounded-timeout FAIL with
+complete JSON diagnostics, no serializer panic. Combat facts and XP progressed,
+but selected herb/law/nature loot was never acquired. Compact diagnostics are
+in combat-ground-serialization/fresh-chaos-diagnostics.json. The source hunt
+policy permits aggression at the wilderness fixture and the script only loots
+outside combat; that is a possible explanation, not a proven script defect.
+No unchanged Chaos rerun is planned.
+
+At this boundary289 has finished,274 continues, and the batch has14PASS/9FAIL.
+Moss/Hill/Auto core pass all four cells;289Coal both pass. RockCrab's required
+post-Start wake is absent from an already-awake baseline; GreenDragon Repeat
+wear rejects before Start; FireGiant encounters missing reader.npcBox during
+paint. Fixture139 and native144 own those corrections. ArdyFighter289 makes
+Attack/Thieving progress but never reaches selected Strength style;139 tests
+its supported one-food target while preserving real theft and combat witnesses.
+All failures remain, and incomplete batches/options are not final acceptance.

@@ -19,3 +19,53 @@ Completed274 native942 ArdyCakes differs: zeroXP/zerofood, immediate guard catch
 ## Root addendum15:28: Wildy survival preparation after actual pit death
 
 Same fixture lane may also acknowledge HP40 for Wildy, without changing Agility52, combat equipment, fiveLobster inventory, hostility or clocks. Exact reviewed8c56eb85a plane-fix LIVE:274bothcatalogs and289newer PASS all5obstacles+nextpipe;289old fails after real pipe then ropeswing fall into wolf pit, escape WalkTo3005,10363 followed by death andLumbridge3222,3220. BaselineHP10/Attack1/Defence1 is not a representative survivor for an Agility52 course fall; previous15e274newer also died afterridgefall. Prepare base/effectiveHP40 and acknowledge beforeStart, retain actual damage/eating/escape behavior and zeroAgilityXPbaseline changes beyond existing52seed. No Defence/Attack boost, no gear, no removalwolves, no forced RNG, no post-Start cheat. Core baseline records/requiresHP40 so goodpasscannotcome fromunacknowledged setup. Keep all originalFAILs; this does not promote the289old cell. Root reruns changedfixture once acrossfourcells, never until-lucky. Do not weakenfull orderedridge/pipe/rope/stone/log/rocks/nextpipe and incrementalXPwitness; baseline-only/helper tests proportional.
+
+## Root addendum16:47: GreenDragon shield readiness and RockCrab activation
+
+Two exactcff289 combat failures identify further preparation issues in the same
+fixture lane. Include these bounded fixes with the above preparation work:
+
+- GreenDragon fails before Start at step10, `wear and acknowledge Dragonfire
+  shield before hostile-field teleport`: driver rejected the send, even though
+  raw failure inventory already lacks1540. Current StepKind::Repeat resends wear;
+  inspect the runner/SendResult and correct to a single native wear followed by
+  the existing acknowledgment (as appropriate), requiring real equipment1540
+  before hostile teleport/baseline. No swallowed genuine refusal or fake equip,
+  no generic runner lifecycle changes. Keep200tick budget. Use focused regression
+  with delayed native acknowledgment to catch redundant send/refusal.
+- RockCrab289 reaches core baseline with already awake Rock Crab attacking the
+  actor, then gains1888strengthXP but observer `activated=false`: it never saw
+  post-Start dormant Rocks -> active Rock Crab. Preserve that meaningful oracle.
+  Prepare at an actually safe stand in the supported same field where dormant
+  Rocks are observed before Start and let the script's supported approach wake
+  them afterward. Confirm loaded target identity and stand for274/289; do not
+  wake/kill/respawn NPCs via cheats or claim a pre-Start activation. Preserve
+  existing combat stats, food and total clock. A baseline refusing an already
+  awake-only seed is appropriate; do not soften full core qualification.
+
+Raw exact failures:
+`docs/compat/evidence/catalog-harness/live/r289-green-dragon-100adccc-combatcff.log`
+and `r289-rock-crab-100adccc-combatcff.log`. Root still runs the274 counterpart;
+use its finalized receipt if present. These are fixture corrections, not a
+foreign-script dim or changes to gameplay/host operation semantics. Missing
+FireGiant reader.npcBox is separately owned by native144, do not implement it.
+
+## Root addendum16:50: bound ArdyFighter food target before style/combat
+
+Exactcff289 ArdyFighter FAIL after150tick Strength watch: gained88Attack,
+29Hitpoints and48Thieving XP, stole/ate food but never called SetCombatStyle
+or Attack; observer stolen_food=true, style_xp=false. Source task order is
+RestockCakes -> SetStyle -> Fight. Default foodTarget8 keeps refilling while
+native guard retaliation/eating consumes the small stock; SetStyle additionally
+requires !Game.inCombat. This is not a missing combat-style capability and no
+script defect is claimed. Include a bounded legitimate fixture setting
+`foodTarget=1` (declared supported min1/max27) so the core asks for one real
+post-Start stolen food before style/selected combat. Keep baseline zero food,
+Thieving5/HP40/combat stats, ordinary guards/RNG, bankingOff, all150tick/overall
+clocks and the full Strength/selected defeat/further-work witness. Do not seed
+food, set style for the script, suppress guards or accept Attack instead of
+Strength. The change qualifies the explicitly recorded one-food setting, not
+8-food stock throughput. If it still fails, retain failure rather than retry.
+Root will run corrected fixture once after review. Add proportional settings/
+baseline regression within this existing coherent fixture card, no runtime
+changes. Inspect the finalized274 counterpart before finishing if available.

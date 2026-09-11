@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 16:33 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 16:51 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -36,10 +36,10 @@ four cells with real work. ArdyCakes214 fails after isolate termination.
 
 Fixture lane: resource125 reviewed (Grok4.5 run1361); root resource batch on exact2d589c7ba completed1 PASS/10 FAIL; nine
 newer-catalog cells remain held after old-catalog failure. Trained Brimhaven131 reviewed (verified Grok4.5 run1364) -> reviewed Wildy plane135 (verified Grok4.5 run1369)
--> combat observer/Coal136 reviewed1372 -> active mage132 -> resource
+-> combat observer/Coal136 reviewed1372 -> mage132 review1378 -> resource
 start preparation139 -> Mule bootstrap127.
 Native lane: observation projection134 reviewed (verified Grok4.5 run1365) after audit133/retaliate128 ->
-quest status transport137 reviewed1373 -> active bounded reachability140 -> teleport -> shop -> Make-X -> fire -> trade126.
+quest status transport137 reviewed1373 -> active bounded reachability140 -> native NPC paint box144 -> teleport -> shop -> Make-X -> fire -> trade126.
 Existing parent gates remain. Independent bounded reachability audit138 completed (verified Grok4.6
 run1363): Flax requests maxSteps400 but shim uses unrestricted flood bits.
 Rust flood-metadata mapping140 will honor budgets without JS BFS, preserve
@@ -62,8 +62,17 @@ serializer repaircffd62c59, preserving132 mage WIP. Both success/failure
 receipt regressions reproduced the panic before correction;11 combat tests PASS
 after correction on isolated source. Fresh exactcff binary built with4966
 source files and binary hashes reverified;274/289 combat batches now running;
-original failures remain FAIL. Audit143 t_46d26f49 is queued with grok46
-to bound remaining distinct combat/utility option cells.
+original failures remain FAIL. Exactcff ongoing batch now14 PASS/9 FAIL,
+ledger442;289 finished/reaped,274 still running. Moss/Hill/Auto core pass
+all four cells;289Coal both pass. Chaos no selected loot, Rock already awake
+at baseline, Green repeat-wear refusal, Fire missing reader.npcBox, Ardy289
+food stocking before style are retained failures. Fixture139 includes Rock/Green
+and supported ArdyFighter foodTarget1 correction; native144 t_c48f1d6a owns
+NPC projection and gates teleport. No changed clocks/predicates/RNG.
+Audit143 completed actualG4.6 run1376,34 API calls; its five extra cells are
+provisional leads, not accepted full remaining scope. Corrective145 t_a7f32d56
+requires accounting for later bank/escape branches and verifying existing
+Thiever fleet evidence. No final support acceptance.
 Audit142 completed with verified Grok4.6 run1371:274 is a native guard LOS
 catch with successful flee/return movement, no proven foreign defect. Keep
 ArdyCakes enabled and retain FAIL;139 pack preparation is separate.
