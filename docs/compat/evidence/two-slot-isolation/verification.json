@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-09-11T04:24:05Z",
+  "verification_base": {
+    "git_head": "08235c6460241787e31cbf9eb09f97442bc9f5b0",
+    "host_export_base": "637ee0e3c275a03ee86e78d6c4253b6bfc31c7e0",
+    "client": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+    "mode": "git checkout-index of committed host plus owned overlay and frozen client checkout-index; shared-worktree sibling edits were excluded",
+    "export": "/Users/acfrazier/experiments/274bot/.worktrees/t_4eb51061-src-20260911041819",
+    "target": "/Users/acfrazier/experiments/274bot/.worktrees/t_4eb51061-target-20260911041819",
+    "isolated_build": true
+  },
+  "brief": {
+    "path": "docs/compat/briefs/65-two-slot-isolation-proof.md",
+    "sha256": "5e2ce9581af48d6bd616836183aae54d7d83618869dc7ff51626ada571196b63"
+  },
+  "harness": {
+    "path": "crates/host-play/tests/two_slot_isolation_live.rs",
+    "sha256": "ca560f3566d1e5e35d4e4851d2d90b3e9dd9ef3f41dd5662bdfcc159321b5593"
+  },
+  "support": {
+    "path": "crates/host-play/tests/support/two_slot_isolation.rs",
+    "sha256": "891b6844194d841f84e2adf25f7254db5d367b5a6e55c0de383e8b2bb6e577e8"
+  },
+  "report": {
+    "path": "docs/compat/06a-two-slot-isolation-proof.md",
+    "sha256": "657399ab9e6117e1b72d3bff5ae58faa227cfdbb3e1226b8152173b8ca94e032"
+  },
+  "live_launch_performed": false,
+  "checks": [
+    {
+      "command": "rustfmt --check -- crates/host-play/tests/two_slot_isolation_live.rs crates/host-play/tests/support/two_slot_isolation.rs",
+      "exit_code": 0,
+      "result": "pass"
+    },
+    {
+      "command": "cargo test -p host-play --test two_slot_isolation_live -- --skip two_slot_isolation_live",
+      "exit_code": 0,
+      "result": "6 passed; 0 failed; 1 filtered out"
+    },
+    {
+      "command": "cargo clippy -p host-play --test two_slot_isolation_live --no-deps -- -D warnings",
+      "exit_code": 0,
+      "result": "pass"
+    },
+    {
+      "command": "cargo test -p host-play --test two_slot_isolation_live two_slot_isolation_live",
+      "exit_code": 0,
+      "result": "0 passed; 0 failed; 1 ignored; 6 filtered out"
+    }
+  ],
+  "notes": [
+    "Offline checks are implementation verification, not live two-slot isolation evidence.",
+    "Witness tests reject mixed identities, queued-only Start, no-progress while paused, paused-slot continued progress, and cross-slot fodder contamination.",
+    "No live client was launched by this task.",
+    "Component proof is separate from catalog, native UI, N32 and frontend acceptance.",
+    "Preparation processes off-world relog observations under production hold and does not send gameplay under hold."
+  ]
+}
