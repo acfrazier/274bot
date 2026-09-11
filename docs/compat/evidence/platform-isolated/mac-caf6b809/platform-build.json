@@ -1,0 +1,35 @@
+{
+  "overlays": {
+    "source/crates/tui/examples/platform_proof.rs": "fn main() -> std::process::ExitCode {\n    let _stores = script::IsolatedEnv::enter(&format!(\"platform-proof-{}\", std::process::id()));\n    tui::bin::main()\n}\n"
+  },
+  "host_commit": "caf6b809f42294edf80b745208c206fdcccbaa0c",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "platform": "darwin",
+  "source_files_verified": 6292,
+  "target_dir": ".superpowers/platform-preparation/target-tui-caf6b809",
+  "isolated_build": true,
+  "target_started_empty": true,
+  "jobs": [
+    {
+      "name": "platform_proof",
+      "command": [
+        "/Users/acfrazier/.cargo/bin/cargo",
+        "build",
+        "-p",
+        "tui",
+        "--example",
+        "platform_proof",
+        "--features",
+        "memory-profile",
+        "--message-format=json"
+      ],
+      "started_at": "2026-09-11T07:17:41.844271+00:00",
+      "elapsed_seconds": 127.318,
+      "exit_code": 0,
+      "binary": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/platform-preparation/platform-isolated-caf6b809/bin/platform_proof-caf6b809",
+      "binary_sha256": "074ce1e897bd73bc75617da67f239b6f0c0943266697a3e66ccb29c2425ede3c",
+      "binary_bytes": 179356112
+    }
+  ],
+  "elapsed_is_not_performance_measurement": true
+}

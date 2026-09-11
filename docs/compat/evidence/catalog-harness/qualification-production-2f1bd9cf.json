@@ -1,0 +1,28 @@
+{
+  "host_commit": "2f1bd9cf75bfcff0900eb9e029deb98433f5a6d3",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "source_files_verified": 2551,
+  "core_passed": 4,
+  "core_failed": 4,
+  "native": {
+    "receipt": "docs/compat/evidence/catalog-headed/r289-vial-filler-8e7d965b-2f1bd9cf-gpu.json",
+    "outcome": "PASS",
+    "inventory": {
+      "227": 1,
+      "229": 27
+    },
+    "final_counters": [
+      0,
+      7507,
+      7505,
+      2
+    ],
+    "adapter": "[panel] adapter name=Apple M4 Max backend=Metal device_type=IntegratedGpu vendor=0x0 device=0x0",
+    "snapshot": "docs/compat/evidence/catalog-headed/r289-vial-filler-8e7d965b-2f1bd9cf-gpu/shots/2026-09-11T07-03-24_89306/2026-09-11T07-04-48_vial_filler.json",
+    "snapshot_sha256": "2edb29b0f7dc80668507428785073c5a4e532497bac156393290c962d9b9b1dd",
+    "png": "docs/compat/evidence/catalog-headed/r289-vial-filler-8e7d965b-2f1bd9cf-gpu/shots/2026-09-11T07-03-24_89306/2026-09-11T07-04-48_vial_filler.png",
+    "png_sha256": "f0130ec4ad14efedbdea04fe7e543d0d35f51c4eda0bc4b02453d48d745df8ae",
+    "visual_read": true,
+    "scope": "Root read the internal PNG: scene2, Trips1, Filled28, first new water vial after bank return. GPU texture presentation; no complete rendering-equivalence or performance claim."
+  }
+}

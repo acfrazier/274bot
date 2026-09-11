@@ -1,0 +1,13 @@
+{
+  "captured_at": "2026-09-11T07:37:29.390264+00:00",
+  "source": "/home/acfrazier/274bot-campaign/multirevision-20260910/platform-isolated-caf6b809/live/r274-alcher-controls/terminal.log",
+  "terminal_size": [
+    140,
+    40
+  ],
+  "decoder": "pyte0.8.2",
+  "raw_sha256": "cc919cafb8e6ff20cc2ed8ba8c8bd3cd8acd1f14e7e89de5e07fd0ff973a20e5",
+  "screen_sha256": "900d49b66da6cff378925a283aa00b5167ba2ff9dc4b4fa48efd2b25232f0131",
+  "screen_file": "docs/compat/evidence/platform-isolated/concord-tui-caf6b809/r274-controls/controls/pre-pause.txt",
+  "active_pass_text_present": false
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "reconstruct last active terminal frame before restore",
+  "terminal_prefix_bytes": 105107,
+  "raw_sha256": "98e4bbafe5d3cabc2ad069db3db0a348414c29384151f6dd42ef52145b91aad3",
+  "screen_sha256": "4e0cdd9a3101aedf92b06059a177c9d2672b2c75ae2ab2f706beb5e13f949d04",
+  "decoder": "pyte0.8.2"
+}

@@ -1,0 +1,53 @@
+{
+  "command": [
+    "/home/acfrazier/274bot-campaign/multirevision-20260910/platform-isolated-caf6b809/bin/platform_proof-caf6b809",
+    "--live",
+    "script_alcher",
+    "--profile",
+    "local-274",
+    "--revision",
+    "274",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "43594",
+    "--asset-host",
+    "127.0.0.1",
+    "--http-port",
+    "8080",
+    "--engine",
+    "/home/acfrazier/274bot-campaign/server-4c95f87",
+    "--nav-pack",
+    "/home/acfrazier/274bot-campaign/multirevision-20260910/platform-isolated-caf6b809/nav/274/274bot.navpack",
+    "--nav-flags",
+    "/home/acfrazier/274bot-campaign/multirevision-20260910/platform-isolated-caf6b809/nav/274/274bot.navflags",
+    "--catalog",
+    "/home/acfrazier/274bot-campaign/multirevision-20260910/platform-isolated-caf6b809/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a",
+    "--vault",
+    "/home/acfrazier/274bot-campaign/multirevision-20260910/platform-isolated-caf6b809/live/r274-alcher-controls/private-vault",
+    "--unpack",
+    "/home/acfrazier/274bot-campaign/multirevision-20260910/platform-isolated-caf6b809/live/r274-alcher-controls/unpack"
+  ],
+  "pid": 139373,
+  "started_at": "2026-09-11T07:36:53.813750+00:00",
+  "environment": {
+    "LIVE": "1",
+    "BOT_CPU": "1",
+    "BOT_DEBUG": "1",
+    "BUDGET_S": "180",
+    "RUST_BACKTRACE": "1",
+    "TERM": "xterm-256color"
+  },
+  "host_commit": "caf6b809f42294edf80b745208c206fdcccbaa0c",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "binary_sha256": "b15745c0695a4292eac261d3f47127b30bc29917203165c459fc8b1755762925",
+  "overlay": {
+    "source/crates/tui/examples/platform_proof.rs": "fn main() -> std::process::ExitCode {\n    let _stores = script::IsolatedEnv::enter(&format!(\"platform-proof-{}\", std::process::id()));\n    tui::bin::main()\n}\n"
+  },
+  "catalog_commit": "8e7d965be2071d6ec65c3265e12af797082d720a",
+  "revision": "274",
+  "case": "alcher",
+  "platform": "linux",
+  "package_files_verified": 6292,
+  "elapsed_is_not_performance_measurement": true
+}

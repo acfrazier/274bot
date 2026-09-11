@@ -1,0 +1,12 @@
+{
+  "time_utc": "2026-09-11T07:17:41.196410+00:00",
+  "root": ".superpowers/platform-preparation/platform-isolated-caf6b809",
+  "host_commit": "caf6b809f42294edf80b745208c206fdcccbaa0c",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "archive_sha256": "03f46144508451e7942981cab6a43e9536cae0cc74ac488fe8587f808aeb6852",
+  "verified_files": 6292,
+  "overlays": {
+    "source/crates/tui/examples/platform_proof.rs": "fn main() -> std::process::ExitCode {\n    let _stores = script::IsolatedEnv::enter(&format!(\"platform-proof-{}\", std::process::id()));\n    tui::bin::main()\n}\n"
+  },
+  "method": "Hash-verified unique regular members; exclusive new files; no archive extraction or overwrite"
+}

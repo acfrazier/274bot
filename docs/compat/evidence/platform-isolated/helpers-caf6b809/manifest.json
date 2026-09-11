@@ -1,0 +1,8 @@
+{
+  "build-platform-caf6b809.py": "c4c13982ef9a20e9f85a492aae2c7625467be628aecaf52dce19719f63ee25c9",
+  "capture-caf-terminal.py": "b94dde1de962a143aefbde76ba6478b3ad14dab4dd8ccd488d77d1c2c8fce545",
+  "pack-platform-caf6b809.py": "9990164284910ca0eabeeb2ee1235f9d18deadfb2e346398a279b2c8f6496c0a",
+  "prepare-concord-caf.py": "a2a6dba51552b208424cd8d6ae8c8113b8f9c4103ff42eb431a0e68abab8c985",
+  "run-tui-caf-controls.py": "3a5fa20fa37c51d38e5969ee3cd8050d946738cdc400d50055753d079bded81c",
+  "send-caf-input.py": "2ea16a4fcd058907c01de8e7dd9a65fc27289d0402bbef77b155bfd644049993"
+}

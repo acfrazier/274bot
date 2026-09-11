@@ -1,0 +1,8 @@
+{
+  "requested_target": ".superpowers/platform-preparation/target-tui-caf6b809",
+  "cargo_working_directory": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/platform-preparation/platform-isolated-caf6b809/source",
+  "actual_target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/platform-preparation/platform-isolated-caf6b809/source/.superpowers/platform-preparation/target-tui-caf6b809",
+  "compiler_artifact": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/platform-preparation/platform-isolated-caf6b809/source/.superpowers/platform-preparation/target-tui-caf6b809/debug/examples/platform_proof",
+  "qualification": "Builder was given a relative CARGO_TARGET_DIR. Cargo resolves it under its source cwd. This target is inside the exclusively-created, hash-verified new package source tree, whose archive contains no target members. It is isolated from every other source/build; original raw receipt is preserved.",
+  "source_files_verified": 6292
+}

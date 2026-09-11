@@ -1,0 +1,10 @@
+{"elapsed_seconds": 54.092, "request": {"action": "click", "x": 22, "y": 39, "requested_at": "2026-09-11T07:31:25.076257+00:00"}, "terminal_bytes_hex": "1b5b3c303b32323b33394d1b5b3c303b32323b33396d"}
+{"elapsed_seconds": 99.703, "request": {"action": "click", "x": 22, "y": 39, "requested_at": "2026-09-11T07:32:10.672477+00:00"}, "terminal_bytes_hex": "1b5b3c303b32323b33394d1b5b3c303b32323b33396d"}
+{"elapsed_seconds": 111.031, "request": {"action": "click", "x": 29, "y": 39, "requested_at": "2026-09-11T07:32:22.099266+00:00"}, "terminal_bytes_hex": "1b5b3c303b32393b33394d1b5b3c303b32393b33396d"}
+{"elapsed_seconds": 117.952, "request": {"action": "click", "x": 5, "y": 39, "requested_at": "2026-09-11T07:32:28.941150+00:00"}, "terminal_bytes_hex": "1b5b3c303b353b33394d1b5b3c303b353b33396d"}
+{"elapsed_seconds": 124.316, "request": {"action": "click", "x": 7, "y": 31, "requested_at": "2026-09-11T07:32:35.382463+00:00"}, "terminal_bytes_hex": "1b5b3c303b373b33314d1b5b3c303b373b33316d"}
+{"elapsed_seconds": 130.773, "request": {"action": "click", "x": 5, "y": 25, "requested_at": "2026-09-11T07:32:41.805672+00:00"}, "terminal_bytes_hex": "1b5b3c303b353b32354d1b5b3c303b353b32356d"}
+{"elapsed_seconds": 144.141, "request": {"action": "click", "x": 5, "y": 39, "requested_at": "2026-09-11T07:32:55.189366+00:00"}, "terminal_bytes_hex": "1b5b3c303b353b33394d1b5b3c303b353b33396d"}
+{"elapsed_seconds": 152.051, "request": {"action": "key", "key": "escape", "requested_at": "2026-09-11T07:33:03.029292+00:00"}, "terminal_bytes_hex": "1b"}
+{"elapsed_seconds": 152.502, "request": {"action": "click", "x": 13, "y": 38, "requested_at": "2026-09-11T07:33:03.570987+00:00"}, "terminal_bytes_hex": "1b5b3c303b31333b33384d1b5b3c303b31333b33386d"}
+{"elapsed_seconds": 182.313, "request": {"action": "click", "x": 29, "y": 38, "requested_at": "2026-09-11T07:33:33.337340+00:00"}, "terminal_bytes_hex": "1b5b3c303b32393b33384d1b5b3c303b32393b33386d"}

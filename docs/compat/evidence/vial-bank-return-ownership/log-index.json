@@ -1,0 +1,90 @@
+[
+  {
+    "file": "r274-vial-filler-east-100adccc-b1cff8a7.log",
+    "bytes": 60231,
+    "sha256": "48daff95b339b852a71cfacf8d3608f233ce76e8d2b1db6da6175c430810b3f8",
+    "line_count": 420,
+    "hit_count": 185,
+    "tiles": [
+      {
+        "tile": [
+          3013,
+          3355,
+          0
+        ],
+        "n": 1
+      },
+      {
+        "tile": [
+          3010,
+          3352,
+          0
+        ],
+        "n": 1
+      }
+    ],
+    "mined": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/vial-bank-return-ownership/r274-vial-filler-east-100adccc-b1cff8a7-mined.json"
+  },
+  {
+    "file": "r289-vial-filler-east-100adccc-b1cff8a7.log",
+    "bytes": 61430,
+    "sha256": "7ae913de1ceeee711f332a571cc7e0b7ffdbf1ae7c47794fd0f6388719b9ade4",
+    "line_count": 435,
+    "hit_count": 185,
+    "tiles": [
+      {
+        "tile": [
+          3013,
+          3355,
+          0
+        ],
+        "n": 1
+      },
+      {
+        "tile": [
+          3010,
+          3352,
+          0
+        ],
+        "n": 1
+      }
+    ],
+    "mined": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/vial-bank-return-ownership/r289-vial-filler-east-100adccc-b1cff8a7-mined.json"
+  },
+  {
+    "file": "r274-vial-filler-100adccc-b1cff8a7.log",
+    "bytes": 3781,
+    "sha256": "f05ec81977da0ddb5643a3ab985a4434b0076f1c4f7a8c58bd348ab2e8c9b9e1",
+    "line_count": 19,
+    "hit_count": 2,
+    "tiles": [
+      {
+        "tile": [
+          2946,
+          3368,
+          0
+        ],
+        "n": 1
+      }
+    ],
+    "mined": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/vial-bank-return-ownership/r274-vial-filler-100adccc-b1cff8a7-mined.json"
+  },
+  {
+    "file": "r289-vial-filler-100adccc-b1cff8a7.log",
+    "bytes": 3865,
+    "sha256": "98499dc55da76c33f4285683b3220fe93ca2fd6f94589a30ebf1ad68b6deb3d6",
+    "line_count": 19,
+    "hit_count": 2,
+    "tiles": [
+      {
+        "tile": [
+          2946,
+          3368,
+          0
+        ],
+        "n": 1
+      }
+    ],
+    "mined": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/vial-bank-return-ownership/r289-vial-filler-100adccc-b1cff8a7-mined.json"
+  }
+]

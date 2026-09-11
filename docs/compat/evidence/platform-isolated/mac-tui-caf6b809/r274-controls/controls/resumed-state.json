@@ -1,0 +1,13 @@
+{
+  "captured_at": "2026-09-11T07:29:35.121042+00:00",
+  "source": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/platform-preparation/platform-isolated-caf6b809/live/r274-alcher-controls/terminal.log",
+  "terminal_size": [
+    140,
+    40
+  ],
+  "decoder": "pyte0.8.2",
+  "raw_sha256": "902cf57c1453641e7cde34b999ed01095aaa76ed4617e170e220af5525f12a3a",
+  "screen_sha256": "0d2b2421f661a108e0c0d8b3b39794191ea2eb79ecfb0bc9a1588619676bf636",
+  "screen_file": "docs/compat/evidence/platform-isolated/mac-tui-caf6b809/r274-controls/controls/resumed-state.txt",
+  "active_pass_text_present": true
+}

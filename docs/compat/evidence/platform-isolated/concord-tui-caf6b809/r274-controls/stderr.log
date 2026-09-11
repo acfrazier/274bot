@@ -1,0 +1,250 @@
+[host-play] slot livefgh49u_0: thread up
+274bot: snapshot load skipped: read /home/acfrazier/274bot-campaign/multirevision-20260910/platform-isolated-caf6b809/live/r274-alcher-controls/unpack/2faf336eeb0462ed/models.bin: No such file or directory (os error 2)
+[host-play] slot livefgh49u_0: handshake begin reconnect=false
+[host-play] slot livefgh49u_0: handshake ok
+[host-play] slot livefgh49u_0: queued mainland tele+setvar (scene 2)
+[host] slot livefgh49u_0: d_loop_us=36482 d_raster_us=0 d_observe_us=120367 max_observe_us=10975 d_paints=0 d_skips=50 d_ticks=2 window_ms=0
+[host-play] slot livefgh49u_0: handshake begin reconnect=true
+[host-play] slot livefgh49u_0: login code 5: Try again in 60 secs...
+[host-play] slot livefgh49u_0: handshake begin reconnect=true
+[host-play] slot livefgh49u_0: handshake ok
+[host-play] slot livefgh49u_0: queued mainland tele+setvar (scene 2)
+[host] slot livefgh49u_0: d_loop_us=27014 d_raster_us=0 d_observe_us=140796 max_observe_us=14524 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host] hitch livefgh49u_0: observe_us=16550 paints=0 skips=66 ticks=9
+[script livefgh49u_0] start load
+[host] hitch livefgh49u_0: observe_us=347206 paints=0 skips=81 ticks=14
+[host] hitch livefgh49u_0: observe_us=20881 paints=0 skips=82 ticks=15
+[script livefgh49u_0] Alcher — High Level Alchemy on 1 item(s), richest first: Rune chainbody
+[script livefgh49u_0] banking at Bank booth (Bank booth / Use-quickly)
+[script livefgh49u_0] interact OpenBooth { x: 3186, z: 3440, level: 0, id: 2213, name: Some("Bank booth"), action: Some("Use-quickly") }
+[host] hitch livefgh49u_0: observe_us=28236 paints=0 skips=96 ticks=16
+[host] slot livefgh49u_0: d_loop_us=29459 d_raster_us=0 d_observe_us=582329 max_observe_us=347206 d_paints=0 d_skips=50 d_ticks=15 window_ms=8883
+[host] hitch livefgh49u_0: observe_us=20763 paints=0 skips=125 ticks=17
+[host] slot livefgh49u_0: d_loop_us=1319 d_raster_us=0 d_observe_us=96727 max_observe_us=20763 d_paints=0 d_skips=50 d_ticks=1 window_ms=1010
+[host] hitch livefgh49u_0: observe_us=28474 paints=0 skips=155 ticks=18
+[script livefgh49u_0] interact Close
+[shim-close] sent
+[host] hitch livefgh49u_0: observe_us=29203 paints=0 skips=184 ticks=19
+[script livefgh49u_0] interact Held { name: "Staff of fire", action: "Wield" }
+[shim-held] Staff of fire Wield slot=0 -> sent
+[host] slot livefgh49u_0: d_loop_us=1391 d_raster_us=0 d_observe_us=128124 max_observe_us=29203 d_paints=0 d_skips=50 d_ticks=2 window_ms=1029
+[host] hitch livefgh49u_0: observe_us=27249 paints=0 skips=215 ticks=20
+[host] hitch livefgh49u_0: observe_us=20732 paints=0 skips=242 ticks=21
+[script livefgh49u_0] wore Staff of fire — casts need only Nature runes now
+[script livefgh49u_0] interact OpenBooth { x: 3186, z: 3440, level: 0, id: 2213, name: Some("Bank booth"), action: Some("Use-quickly") }
+[host] slot livefgh49u_0: d_loop_us=1648 d_raster_us=0 d_observe_us=143517 max_observe_us=27249 d_paints=0 d_skips=50 d_ticks=2 window_ms=1019
+[host] hitch livefgh49u_0: observe_us=29046 paints=0 skips=272 ticks=22
+[host] slot livefgh49u_0: d_loop_us=1450 d_raster_us=0 d_observe_us=109619 max_observe_us=29046 d_paints=0 d_skips=50 d_ticks=1 window_ms=1020
+[host] hitch livefgh49u_0: observe_us=21191 paints=0 skips=301 ticks=23
+[host] hitch livefgh49u_0: observe_us=20478 paints=0 skips=331 ticks=24
+[script livefgh49u_0] interact SetNoteMode { on: true }
+[shim-note] on=true sent
+[host] slot livefgh49u_0: d_loop_us=1414 d_raster_us=0 d_observe_us=111137 max_observe_us=21191 d_paints=0 d_skips=50 d_ticks=2 window_ms=1009
+[host] hitch livefgh49u_0: observe_us=21090 paints=0 skips=361 ticks=25
+[host] hitch livefgh49u_0: observe_us=19320 paints=0 skips=389 ticks=25
+[host] hitch livefgh49u_0: observe_us=27564 paints=0 skips=390 ticks=26
+[host] slot livefgh49u_0: d_loop_us=1864 d_raster_us=0 d_observe_us=152302 max_observe_us=27564 d_paints=0 d_skips=50 d_ticks=2 window_ms=1019
+[host] hitch livefgh49u_0: observe_us=29152 paints=0 skips=420 ticks=27
+[script livefgh49u_0] withdrew 27 Rune chainbody (noted, 30000gp each)
+[host] hitch livefgh49u_0: observe_us=20316 paints=0 skips=449 ticks=28
+[host] slot livefgh49u_0: d_loop_us=1925 d_raster_us=0 d_observe_us=144068 max_observe_us=29152 d_paints=0 d_skips=50 d_ticks=2 window_ms=1035
+[host] hitch livefgh49u_0: observe_us=32263 paints=0 skips=479 ticks=29
+[script livefgh49u_0] withdrew 27 Nature runes
+[script livefgh49u_0] interact Close
+[shim-close] sent
+[host] slot livefgh49u_0: d_loop_us=1644 d_raster_us=0 d_observe_us=110597 max_observe_us=32263 d_paints=0 d_skips=50 d_ticks=1 window_ms=1001
+[host] hitch livefgh49u_0: observe_us=27810 paints=0 skips=508 ticks=30
+[script livefgh49u_0] restocked: 27 Rune chainbody notes + 27 Nature runes
+[host] hitch livefgh49u_0: observe_us=19565 paints=0 skips=537 ticks=31
+[script livefgh49u_0] interact SideTab { tab: 6 }
+[host] slot livefgh49u_0: d_loop_us=1401 d_raster_us=0 d_observe_us=125483 max_observe_us=27810 d_paints=0 d_skips=50 d_ticks=2 window_ms=1017
+[host] hitch livefgh49u_0: observe_us=19897 paints=0 skips=567 ticks=32
+[script livefgh49u_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] hitch livefgh49u_0: observe_us=32337 paints=0 skips=597 ticks=33
+[host] slot livefgh49u_0: d_loop_us=1569 d_raster_us=0 d_observe_us=130448 max_observe_us=32337 d_paints=0 d_skips=50 d_ticks=2 window_ms=1021
+[host] hitch livefgh49u_0: observe_us=20229 paints=0 skips=626 ticks=34
+[host] slot livefgh49u_0: d_loop_us=1528 d_raster_us=0 d_observe_us=77362 max_observe_us=20229 d_paints=0 d_skips=50 d_ticks=1 window_ms=1007
+[host] hitch livefgh49u_0: observe_us=20023 paints=0 skips=655 ticks=35
+[host] hitch livefgh49u_0: observe_us=19934 paints=0 skips=685 ticks=36
+[host] slot livefgh49u_0: d_loop_us=1494 d_raster_us=0 d_observe_us=94340 max_observe_us=20023 d_paints=0 d_skips=50 d_ticks=2 window_ms=1008
+[host] hitch livefgh49u_0: observe_us=19977 paints=0 skips=715 ticks=37
+[script livefgh49u_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] hitch livefgh49u_0: observe_us=26026 paints=0 skips=745 ticks=38
+[host] slot livefgh49u_0: d_loop_us=1492 d_raster_us=0 d_observe_us=108225 max_observe_us=26026 d_paints=0 d_skips=50 d_ticks=2 window_ms=1014
+[host] hitch livefgh49u_0: observe_us=19994 paints=0 skips=774 ticks=39
+[host] slot livefgh49u_0: d_loop_us=1486 d_raster_us=0 d_observe_us=76844 max_observe_us=19994 d_paints=0 d_skips=50 d_ticks=1 window_ms=1008
+[host] hitch livefgh49u_0: observe_us=19688 paints=0 skips=804 ticks=40
+[host] hitch livefgh49u_0: observe_us=20755 paints=0 skips=834 ticks=41
+[host] slot livefgh49u_0: d_loop_us=1503 d_raster_us=0 d_observe_us=95650 max_observe_us=20755 d_paints=0 d_skips=50 d_ticks=2 window_ms=1008
+[host] hitch livefgh49u_0: observe_us=19791 paints=0 skips=863 ticks=42
+[script livefgh49u_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] hitch livefgh49u_0: observe_us=26417 paints=0 skips=893 ticks=43
+[host] slot livefgh49u_0: d_loop_us=1421 d_raster_us=0 d_observe_us=110745 max_observe_us=26417 d_paints=0 d_skips=50 d_ticks=2 window_ms=1014
+[host] hitch livefgh49u_0: observe_us=19859 paints=0 skips=923 ticks=44
+[host] slot livefgh49u_0: d_loop_us=1537 d_raster_us=0 d_observe_us=75240 max_observe_us=19859 d_paints=0 d_skips=50 d_ticks=1 window_ms=1007
+[host] hitch livefgh49u_0: observe_us=21501 paints=0 skips=952 ticks=45
+[host] hitch livefgh49u_0: observe_us=20395 paints=0 skips=982 ticks=46
+[host] slot livefgh49u_0: d_loop_us=1374 d_raster_us=0 d_observe_us=94351 max_observe_us=21501 d_paints=0 d_skips=50 d_ticks=2 window_ms=1009
+[host] hitch livefgh49u_0: observe_us=19882 paints=0 skips=1012 ticks=47
+[script livefgh49u_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] hitch livefgh49u_0: observe_us=26644 paints=0 skips=1042 ticks=48
+[host] slot livefgh49u_0: d_loop_us=1496 d_raster_us=0 d_observe_us=110088 max_observe_us=26644 d_paints=0 d_skips=50 d_ticks=2 window_ms=1015
+[host] hitch livefgh49u_0: observe_us=19593 paints=0 skips=1071 ticks=49
+[host] slot livefgh49u_0: d_loop_us=1739 d_raster_us=0 d_observe_us=83395 max_observe_us=19593 d_paints=0 d_skips=50 d_ticks=1 window_ms=1006
+[host] hitch livefgh49u_0: observe_us=19616 paints=0 skips=1101 ticks=50
+[host] hitch livefgh49u_0: observe_us=20029 paints=0 skips=1130 ticks=51
+[host] slot livefgh49u_0: d_loop_us=1373 d_raster_us=0 d_observe_us=96880 max_observe_us=20029 d_paints=0 d_skips=50 d_ticks=2 window_ms=1006
+[host] hitch livefgh49u_0: observe_us=19470 paints=0 skips=1160 ticks=52
+[script livefgh49u_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] hitch livefgh49u_0: observe_us=27193 paints=0 skips=1190 ticks=53
+[host] slot livefgh49u_0: d_loop_us=1766 d_raster_us=0 d_observe_us=116653 max_observe_us=27193 d_paints=0 d_skips=50 d_ticks=2 window_ms=1015
+[host] hitch livefgh49u_0: observe_us=19848 paints=0 skips=1219 ticks=54
+[host] hitch livefgh49u_0: observe_us=19479 paints=0 skips=1249 ticks=55
+[host] slot livefgh49u_0: d_loop_us=1377 d_raster_us=0 d_observe_us=93193 max_observe_us=19848 d_paints=0 d_skips=50 d_ticks=2 window_ms=1025
+[host] hitch livefgh49u_0: observe_us=25313 paints=0 skips=1279 ticks=56
+[host] slot livefgh49u_0: d_loop_us=1379 d_raster_us=0 d_observe_us=82873 max_observe_us=25313 d_paints=0 d_skips=50 d_ticks=1 window_ms=993
+[host] hitch livefgh49u_0: observe_us=24376 paints=0 skips=1309 ticks=57
+[script livefgh49u_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] hitch livefgh49u_0: observe_us=25797 paints=0 skips=1338 ticks=57
+[host] hitch livefgh49u_0: observe_us=76543 paints=0 skips=1339 ticks=58
+[host] slot livefgh49u_0: d_loop_us=1606 d_raster_us=0 d_observe_us=183037 max_observe_us=76543 d_paints=0 d_skips=50 d_ticks=2 window_ms=1110
+[host] hitch livefgh49u_0: observe_us=19053 paints=0 skips=1364 ticks=59
+[host] hitch livefgh49u_0: observe_us=19712 paints=0 skips=1393 ticks=60
+[host] slot livefgh49u_0: d_loop_us=2048 d_raster_us=0 d_observe_us=95930 max_observe_us=19712 d_paints=0 d_skips=50 d_ticks=2 window_ms=1003
+[host] hitch livefgh49u_0: observe_us=20631 paints=0 skips=1423 ticks=61
+[host] slot livefgh49u_0: d_loop_us=1477 d_raster_us=0 d_observe_us=76906 max_observe_us=20631 d_paints=0 d_skips=50 d_ticks=1 window_ms=1007
+[host] hitch livefgh49u_0: observe_us=19953 paints=0 skips=1453 ticks=62
+[script livefgh49u_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] hitch livefgh49u_0: observe_us=26519 paints=0 skips=1482 ticks=63
+[host] slot livefgh49u_0: d_loop_us=1544 d_raster_us=0 d_observe_us=110935 max_observe_us=26519 d_paints=0 d_skips=50 d_ticks=2 window_ms=1015
+[host] hitch livefgh49u_0: observe_us=21470 paints=0 skips=1512 ticks=64
+[host] hitch livefgh49u_0: observe_us=26094 paints=0 skips=1542 ticks=65
+[host] slot livefgh49u_0: d_loop_us=1533 d_raster_us=0 d_observe_us=105384 max_observe_us=26094 d_paints=0 d_skips=50 d_ticks=2 window_ms=1015
+[host] hitch livefgh49u_0: observe_us=20390 paints=0 skips=1571 ticks=66
+[host] slot livefgh49u_0: d_loop_us=1443 d_raster_us=0 d_observe_us=80548 max_observe_us=20390 d_paints=0 d_skips=50 d_ticks=1 window_ms=1010
+[host] hitch livefgh49u_0: observe_us=19815 paints=0 skips=1601 ticks=67
+[script livefgh49u_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] hitch livefgh49u_0: observe_us=18183 paints=0 skips=1629 ticks=67
+[host] hitch livefgh49u_0: observe_us=30258 paints=0 skips=1630 ticks=68
+[host] slot livefgh49u_0: d_loop_us=1626 d_raster_us=0 d_observe_us=125817 max_observe_us=30258 d_paints=0 d_skips=50 d_ticks=2 window_ms=1021
+[host] hitch livefgh49u_0: observe_us=19255 paints=0 skips=1659 ticks=69
+[host] hitch livefgh49u_0: observe_us=19698 paints=0 skips=1689 ticks=70
+[host] slot livefgh49u_0: d_loop_us=1495 d_raster_us=0 d_observe_us=94712 max_observe_us=19698 d_paints=0 d_skips=50 d_ticks=2 window_ms=1005
+[host] hitch livefgh49u_0: observe_us=19534 paints=0 skips=1719 ticks=71
+[host] hitch livefgh49u_0: observe_us=20422 paints=0 skips=1749 ticks=72
+[host] slot livefgh49u_0: d_loop_us=1476 d_raster_us=0 d_observe_us=96778 max_observe_us=20422 d_paints=0 d_skips=50 d_ticks=2 window_ms=1026
+[script livefgh49u_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] hitch livefgh49u_0: observe_us=27050 paints=0 skips=1779 ticks=73
+[host] slot livefgh49u_0: d_loop_us=1599 d_raster_us=0 d_observe_us=96158 max_observe_us=27050 d_paints=0 d_skips=50 d_ticks=1 window_ms=995
+[host] hitch livefgh49u_0: observe_us=19842 paints=0 skips=1808 ticks=74
+[host] hitch livefgh49u_0: observe_us=20412 paints=0 skips=1838 ticks=75
+[host] slot livefgh49u_0: d_loop_us=1321 d_raster_us=0 d_observe_us=97822 max_observe_us=20412 d_paints=0 d_skips=50 d_ticks=2 window_ms=1009
+[host] hitch livefgh49u_0: observe_us=19461 paints=0 skips=1867 ticks=76
+[host] hitch livefgh49u_0: observe_us=19618 paints=0 skips=1897 ticks=77
+[script livefgh49u_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] slot livefgh49u_0: d_loop_us=1448 d_raster_us=0 d_observe_us=94989 max_observe_us=19618 d_paints=0 d_skips=50 d_ticks=2 window_ms=1008
+[host] hitch livefgh49u_0: observe_us=26672 paints=0 skips=1927 ticks=78
+[host] slot livefgh49u_0: d_loop_us=1527 d_raster_us=0 d_observe_us=95785 max_observe_us=26672 d_paints=0 d_skips=50 d_ticks=1 window_ms=1016
+[host] hitch livefgh49u_0: observe_us=19943 paints=0 skips=1956 ticks=79
+[host] hitch livefgh49u_0: observe_us=19514 paints=0 skips=1986 ticks=80
+[host] slot livefgh49u_0: d_loop_us=1351 d_raster_us=0 d_observe_us=94581 max_observe_us=19943 d_paints=0 d_skips=50 d_ticks=2 window_ms=1007
+[host] hitch livefgh49u_0: observe_us=19276 paints=0 skips=2016 ticks=81
+[host] hitch livefgh49u_0: observe_us=20185 paints=0 skips=2045 ticks=82
+[script livefgh49u_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] slot livefgh49u_0: d_loop_us=1529 d_raster_us=0 d_observe_us=103385 max_observe_us=20185 d_paints=0 d_skips=50 d_ticks=2 window_ms=1007
+[host] hitch livefgh49u_0: observe_us=25769 paints=0 skips=2075 ticks=83
+[host] slot livefgh49u_0: d_loop_us=1394 d_raster_us=0 d_observe_us=88600 max_observe_us=25769 d_paints=0 d_skips=50 d_ticks=1 window_ms=1012
+[host] hitch livefgh49u_0: observe_us=19048 paints=0 skips=2105 ticks=84
+[host] hitch livefgh49u_0: observe_us=19483 paints=0 skips=2134 ticks=85
+[host] slot livefgh49u_0: d_loop_us=1382 d_raster_us=0 d_observe_us=93242 max_observe_us=19483 d_paints=0 d_skips=50 d_ticks=2 window_ms=1007
+[host] hitch livefgh49u_0: observe_us=19503 paints=0 skips=2164 ticks=86
+[host] hitch livefgh49u_0: observe_us=19196 paints=0 skips=2194 ticks=87
+[script livefgh49u_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] slot livefgh49u_0: d_loop_us=1329 d_raster_us=0 d_observe_us=92544 max_observe_us=19503 d_paints=0 d_skips=50 d_ticks=2 window_ms=1006
+[host] hitch livefgh49u_0: observe_us=26149 paints=0 skips=2224 ticks=88
+[host] slot livefgh49u_0: d_loop_us=1487 d_raster_us=0 d_observe_us=90387 max_observe_us=26149 d_paints=0 d_skips=50 d_ticks=1 window_ms=1013
+[host] hitch livefgh49u_0: observe_us=20006 paints=0 skips=2253 ticks=89
+[host] hitch livefgh49u_0: observe_us=19364 paints=0 skips=2283 ticks=90
+[host] slot livefgh49u_0: d_loop_us=1329 d_raster_us=0 d_observe_us=95438 max_observe_us=20006 d_paints=0 d_skips=50 d_ticks=2 window_ms=1007
+[host] hitch livefgh49u_0: observe_us=25334 paints=0 skips=2313 ticks=91
+[host] hitch livefgh49u_0: observe_us=24070 paints=0 skips=2342 ticks=92
+[script livefgh49u_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] slot livefgh49u_0: d_loop_us=1407 d_raster_us=0 d_observe_us=105047 max_observe_us=25334 d_paints=0 d_skips=50 d_ticks=2 window_ms=1018
+[host] hitch livefgh49u_0: observe_us=27301 paints=0 skips=2372 ticks=93
+[host] slot livefgh49u_0: d_loop_us=1394 d_raster_us=0 d_observe_us=90884 max_observe_us=27301 d_paints=0 d_skips=50 d_ticks=1 window_ms=1013
+[host] hitch livefgh49u_0: observe_us=20561 paints=0 skips=2401 ticks=94
+[host] hitch livefgh49u_0: observe_us=19379 paints=0 skips=2431 ticks=95
+[host] slot livefgh49u_0: d_loop_us=1425 d_raster_us=0 d_observe_us=94567 max_observe_us=20561 d_paints=0 d_skips=50 d_ticks=2 window_ms=1007
+[host] hitch livefgh49u_0: observe_us=20043 paints=0 skips=2461 ticks=96
+[host] hitch livefgh49u_0: observe_us=19594 paints=0 skips=2491 ticks=97
+[script livefgh49u_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] slot livefgh49u_0: d_loop_us=1427 d_raster_us=0 d_observe_us=95103 max_observe_us=20043 d_paints=0 d_skips=50 d_ticks=2 window_ms=1008
+[host] hitch livefgh49u_0: observe_us=26685 paints=0 skips=2520 ticks=98
+[host] slot livefgh49u_0: d_loop_us=1424 d_raster_us=0 d_observe_us=92377 max_observe_us=26685 d_paints=0 d_skips=50 d_ticks=2 window_ms=1014
+[host] hitch livefgh49u_0: observe_us=19657 paints=0 skips=2550 ticks=99
+[host] hitch livefgh49u_0: observe_us=19752 paints=0 skips=2580 ticks=100
+[host] slot livefgh49u_0: d_loop_us=1424 d_raster_us=0 d_observe_us=92541 max_observe_us=19752 d_paints=0 d_skips=50 d_ticks=1 window_ms=1007
+[host] hitch livefgh49u_0: observe_us=20306 paints=0 skips=2609 ticks=101
+[host] hitch livefgh49u_0: observe_us=19420 paints=0 skips=2639 ticks=102
+[script livefgh49u_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] slot livefgh49u_0: d_loop_us=1555 d_raster_us=0 d_observe_us=97770 max_observe_us=20306 d_paints=0 d_skips=50 d_ticks=2 window_ms=1007
+[host] hitch livefgh49u_0: observe_us=34648 paints=0 skips=2669 ticks=103
+[host] hitch livefgh49u_0: observe_us=19942 paints=0 skips=2698 ticks=104
+[host] slot livefgh49u_0: d_loop_us=1626 d_raster_us=0 d_observe_us=123165 max_observe_us=34648 d_paints=0 d_skips=50 d_ticks=2 window_ms=1023
+[host] hitch livefgh49u_0: observe_us=20313 paints=0 skips=2727 ticks=105
+[host] slot livefgh49u_0: d_loop_us=1500 d_raster_us=0 d_observe_us=77016 max_observe_us=20313 d_paints=0 d_skips=50 d_ticks=1 window_ms=1007
+[host] hitch livefgh49u_0: observe_us=19263 paints=0 skips=2757 ticks=106
+[host] hitch livefgh49u_0: observe_us=19684 paints=0 skips=2787 ticks=107
+[script livefgh49u_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] slot livefgh49u_0: d_loop_us=1527 d_raster_us=0 d_observe_us=94987 max_observe_us=19684 d_paints=0 d_skips=50 d_ticks=2 window_ms=1007
+[host] hitch livefgh49u_0: observe_us=27184 paints=0 skips=2817 ticks=108
+[host] hitch livefgh49u_0: observe_us=21285 paints=0 skips=2846 ticks=109
+[host] slot livefgh49u_0: d_loop_us=1474 d_raster_us=0 d_observe_us=109863 max_observe_us=27184 d_paints=0 d_skips=50 d_ticks=2 window_ms=1018
+[host] hitch livefgh49u_0: observe_us=19529 paints=0 skips=2876 ticks=110
+[host] slot livefgh49u_0: d_loop_us=1465 d_raster_us=0 d_observe_us=76059 max_observe_us=19529 d_paints=0 d_skips=50 d_ticks=1 window_ms=1006
+[host] hitch livefgh49u_0: observe_us=19818 paints=0 skips=2906 ticks=111
+[host] hitch livefgh49u_0: observe_us=19958 paints=0 skips=2935 ticks=112
+[script livefgh49u_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] slot livefgh49u_0: d_loop_us=1509 d_raster_us=0 d_observe_us=95256 max_observe_us=19958 d_paints=0 d_skips=50 d_ticks=2 window_ms=1008
+[host] hitch livefgh49u_0: observe_us=27563 paints=0 skips=2965 ticks=113
+[host] hitch livefgh49u_0: observe_us=20696 paints=0 skips=2995 ticks=114
+[host] slot livefgh49u_0: d_loop_us=1494 d_raster_us=0 d_observe_us=111902 max_observe_us=27563 d_paints=0 d_skips=50 d_ticks=2 window_ms=1017
+[host] hitch livefgh49u_0: observe_us=19789 paints=0 skips=3024 ticks=115
+[host] slot livefgh49u_0: d_loop_us=1524 d_raster_us=0 d_observe_us=74329 max_observe_us=19789 d_paints=0 d_skips=50 d_ticks=1 window_ms=1007
+[host] hitch livefgh49u_0: observe_us=19400 paints=0 skips=3054 ticks=116
+[host] hitch livefgh49u_0: observe_us=19262 paints=0 skips=3084 ticks=117
+[script livefgh49u_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] slot livefgh49u_0: d_loop_us=1474 d_raster_us=0 d_observe_us=93232 max_observe_us=19400 d_paints=0 d_skips=50 d_ticks=2 window_ms=1006
+[host] hitch livefgh49u_0: observe_us=27953 paints=0 skips=3114 ticks=118
+[host] slot livefgh49u_0: d_loop_us=2008 d_raster_us=0 d_observe_us=95896 max_observe_us=27953 d_paints=0 d_skips=50 d_ticks=12 window_ms=6865
+[host] hitch livefgh49u_0: observe_us=26552 paints=0 skips=3175 ticks=153
+[script livefgh49u_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] slot livefgh49u_0: d_loop_us=2439 d_raster_us=0 d_observe_us=90973 max_observe_us=26552 d_paints=0 d_skips=50 d_ticks=24 window_ms=14950
+[host] hitch livefgh49u_0: observe_us=35371 paints=0 skips=3203 ticks=154
+[host] hitch livefgh49u_0: observe_us=19988 paints=0 skips=3232 ticks=155
+[host] slot livefgh49u_0: d_loop_us=1617 d_raster_us=0 d_observe_us=125950 max_observe_us=35371 d_paints=0 d_skips=50 d_ticks=2 window_ms=1026
+[host] hitch livefgh49u_0: observe_us=22045 paints=0 skips=3262 ticks=156
+[host] hitch livefgh49u_0: observe_us=20490 paints=0 skips=3291 ticks=157
+[host] slot livefgh49u_0: d_loop_us=1666 d_raster_us=0 d_observe_us=103821 max_observe_us=22045 d_paints=0 d_skips=50 d_ticks=2 window_ms=1010
+[host] hitch livefgh49u_0: observe_us=20358 paints=0 skips=3321 ticks=158
+[script livefgh49u_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] slot livefgh49u_0: d_loop_us=1333 d_raster_us=0 d_observe_us=74141 max_observe_us=20358 d_paints=0 d_skips=50 d_ticks=1 window_ms=1013
+[host] hitch livefgh49u_0: observe_us=27175 paints=0 skips=3351 ticks=159
+[host] hitch livefgh49u_0: observe_us=19366 paints=0 skips=3380 ticks=160
+[host] slot livefgh49u_0: d_loop_us=1445 d_raster_us=0 d_observe_us=109750 max_observe_us=27175 d_paints=0 d_skips=50 d_ticks=2 window_ms=1010
+[host] hitch livefgh49u_0: observe_us=19541 paints=0 skips=3410 ticks=161
+[host] hitch livefgh49u_0: observe_us=19989 paints=0 skips=3440 ticks=162
+[host] slot livefgh49u_0: d_loop_us=1450 d_raster_us=0 d_observe_us=93867 max_observe_us=19989 d_paints=0 d_skips=50 d_ticks=2 window_ms=1006
+[host] hitch livefgh49u_0: observe_us=19463 paints=0 skips=3470 ticks=163
+[script livefgh49u_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] hitch livefgh49u_0: observe_us=26941 paints=0 skips=3499 ticks=164
+[host] slot livefgh49u_0: d_loop_us=1379 d_raster_us=0 d_observe_us=101616 max_observe_us=26941 d_paints=0 d_skips=50 d_ticks=2 window_ms=1033
+[host] hitch livefgh49u_0: observe_us=19403 paints=0 skips=3529 ticks=165
+[host] slot livefgh49u_0: d_loop_us=1406 d_raster_us=0 d_observe_us=77535 max_observe_us=19403 d_paints=0 d_skips=50 d_ticks=1 window_ms=988
+[host] hitch livefgh49u_0: observe_us=20027 paints=0 skips=3559 ticks=166
+[host] hitch livefgh49u_0: observe_us=20556 paints=0 skips=3588 ticks=167
+[host] slot livefgh49u_0: d_loop_us=1422 d_raster_us=0 d_observe_us=95744 max_observe_us=20556 d_paints=0 d_skips=50 d_ticks=2 window_ms=1008
+[host] hitch livefgh49u_0: observe_us=19811 paints=0 skips=3618 ticks=168
+[script livefgh49u_0] interact UseWidgetOn { component_id: 1178, kind: "held", target_name: Some("Rune chainbody"), x: 0, z: 0, level: 0, index: None }
+[host] hitch livefgh49u_0: observe_us=29469 paints=0 skips=3648 ticks=169
+[host] slot livefgh49u_0: d_loop_us=1424 d_raster_us=0 d_observe_us=114599 max_observe_us=29469 d_paints=0 d_skips=50 d_ticks=2 window_ms=1019
