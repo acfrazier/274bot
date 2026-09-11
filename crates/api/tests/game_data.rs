@@ -72,3 +72,38 @@ fn generated_items_food_and_pickpocket_facts_preserve_selected_content() {
         assert_eq!(data.required_thieving("Unknown target"), None);
     }
 }
+
+#[test]
+fn generated_wearpos_maps_to_loadout_slots_without_guessing_names() {
+    use api::game_data::{loadout_slot_for_wearpos, WEARPOS_QUIVER, WEARPOS_RIGHTHAND};
+
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected data");
+        let scim = data.item_by_alias("rune_scimitar").expect("rune scimitar");
+        let helm = data
+            .item_by_alias("rune_full_helm")
+            .expect("rune full helm");
+        let twoh = data.item_by_alias("iron_2h_sword").expect("iron 2h");
+        let arrow = data.item_by_alias("bronze_arrow").expect("bronze arrow");
+        let cert = data
+            .item_by_alias("cert_rune_scimitar")
+            .expect("noted scimitar");
+        assert_eq!(scim.wear_position, WEARPOS_RIGHTHAND);
+        assert_eq!(scim.loadout_slot(), Some("righthand"));
+        assert_eq!(helm.loadout_slot(), Some("hat"));
+        assert_eq!(helm.wear_position_2, 8);
+        assert_eq!(helm.wear_position_3, 11);
+        assert_eq!(loadout_slot_for_wearpos(8), None, "head is appearance-only");
+        assert_eq!(loadout_slot_for_wearpos(11), None, "jaw is appearance-only");
+        assert!(twoh.is_two_handed());
+        assert_eq!(arrow.wear_position, WEARPOS_QUIVER);
+        assert_eq!(arrow.loadout_slot(), Some("quiver"));
+        assert!(cert.is_certificate());
+        assert_eq!(cert.loadout_slot(), None);
+        let hits = data.search_slot_items("righthand", "rune scimitar", 8);
+        assert!(hits
+            .iter()
+            .any(|hit| hit.id == 1333 && hit.alias == "rune_scimitar"));
+        assert!(hits.iter().all(|hit| hit.id != cert.id));
+    }
+}

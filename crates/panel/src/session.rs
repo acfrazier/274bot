@@ -892,10 +892,16 @@ pub struct Session {
     pub loadouts_open: bool,
     /// Selected row in the loadouts list.
     pub loadouts_sel: usize,
-    /// Scratch buffers for the selected loadout editor.
-    pub loadouts_name_scratch: String,
-    pub loadouts_worn_scratch: String,
-    pub loadouts_carry_scratch: String,
+    /// Working copy of the selected preset. Store/file change only on save.
+    pub loadouts_draft: Option<script::Loadout>,
+    /// Visible save/error feedback for the editor.
+    pub loadouts_status: String,
+    /// Item search box for the active slot or supply row.
+    pub loadouts_search: String,
+    /// Equipment slot currently picking an item.
+    pub loadouts_search_slot: Option<String>,
+    /// Supply row currently picking an item.
+    pub loadouts_search_supply: Option<usize>,
     /// Process-wide equipment/inventory presets.
     pub loadouts: script::LoadoutsStore,
     /// Scenario/live inject merged last on Start (Task 12 fills this).
@@ -1097,9 +1103,11 @@ impl Session {
             script_prefs_open: false,
             loadouts_open: false,
             loadouts_sel: 0,
-            loadouts_name_scratch: String::new(),
-            loadouts_worn_scratch: String::new(),
-            loadouts_carry_scratch: String::new(),
+            loadouts_draft: None,
+            loadouts_status: String::new(),
+            loadouts_search: String::new(),
+            loadouts_search_slot: None,
+            loadouts_search_supply: None,
             loadouts: script::LoadoutsStore::with_default_path(),
             script_settings_inject: None,
             js: {
@@ -3523,6 +3531,34 @@ impl Session {
         self.statuses()
             .iter()
             .any(|s| s.username == name && s.ingame)
+    }
+
+    /// Generated facts for the bound profile, when the cache identity matches.
+    pub fn selected_game_data(&self) -> Option<std::sync::Arc<api::game_data::SelectedGameData>> {
+        let profile = self.server_profile.as_ref()?;
+        api::game_data::for_optional_profile(profile.revision(), profile.cache_id())
+            .ok()
+            .flatten()
+    }
+
+    /// Observed equipment names/ids for the focused ingame character.
+    /// `None` when no usable character is available.
+    pub fn focused_equipment_items(&self) -> Option<Vec<(String, i32)>> {
+        if !self.focused_ingame() {
+            return None;
+        }
+        let name = self.focused_name()?;
+        let states = self.nav_states.lock().ok()?;
+        let (snap, _) = states.get(&name)?;
+        Some(
+            snap.equipment()
+                .iter()
+                .filter_map(|item| {
+                    let name = item.def.name.as_deref()?.trim();
+                    (!name.is_empty()).then(|| (name.to_string(), item.def.id))
+                })
+                .collect(),
+        )
     }
 
     /// The focused slot's script lifecycle state; `Idle` when nothing is

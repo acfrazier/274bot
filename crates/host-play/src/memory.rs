@@ -604,11 +604,7 @@ impl Run {
                 card.js.clone(),
                 card.shape,
                 siblings.clone(),
-                &[script::Loadout {
-                    name: "Memory food".into(),
-                    worn: vec![],
-                    carry: vec!["Lobster".into()],
-                }],
+                &[script::Loadout::new("Memory food").with_carry("Lobster", 1)],
                 play.game_data(),
             )?;
             slot.post_settings_bag(&bag);

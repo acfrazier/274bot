@@ -1,0 +1,44 @@
+   Compiling panel v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/panel)
+   Compiling scenario v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/crates/scenario)
+error[E0425]: cannot find function `door_opener_scenario` in this scope
+   --> crates/scenario/src/lib.rs:405:31
+    |
+405 |         "door_opener" => Some(door_opener_scenario()),
+    |                               ^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `door_opener_gate_scenario` in this scope
+   --> crates/scenario/src/lib.rs:406:36
+    |
+406 |         "door_opener_gate" => Some(door_opener_gate_scenario()),
+    |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `gnome_course_scenario` in this scope
+    --> crates/scenario/src/lib.rs:407:32
+     |
+ 407 |         "gnome_course" => Some(gnome_course_scenario()),
+     |                                ^^^^^^^^^^^^^^^^^^^^^
+...
+1632 | fn bone_burier_scenario() -> Scenario {
+     | ------------------------------------- similarly named function `bone_burier_scenario` defined here
+     |
+help: a function with a similar name exists
+     |
+ 407 -         "gnome_course" => Some(gnome_course_scenario()),
+ 407 +         "gnome_course" => Some(bone_burier_scenario()),
+     |
+
+error[E0425]: cannot find function `gnome_course_radius_scenario` in this scope
+   --> crates/scenario/src/lib.rs:408:39
+    |
+408 |         "gnome_course_radius" => Some(gnome_course_radius_scenario()),
+    |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `flax_picker_scenario` in this scope
+   --> crates/scenario/src/lib.rs:409:31
+    |
+409 |         "flax_picker" => Some(flax_picker_scenario()),
+    |                               ^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+For more information about this error, try `rustc --explain E0425`.
+error: could not compile `scenario` (lib) due to 5 previous errors
+PANEL_EXIT:101

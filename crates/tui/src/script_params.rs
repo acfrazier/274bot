@@ -207,16 +207,8 @@ mod tests {
         let settings_path = dir.join("script-settings.json");
         let loadouts_path = dir.join("loadouts.json");
         let mut loadouts = LoadoutsStore::at(loadouts_path);
-        loadouts.upsert(script::Loadout {
-            name: "fish".into(),
-            worn: vec![],
-            carry: vec![],
-        });
-        loadouts.upsert(script::Loadout {
-            name: "mine".into(),
-            worn: vec![],
-            carry: vec![],
-        });
+        loadouts.upsert(script::Loadout::new("fish"));
+        loadouts.upsert(script::Loadout::new("mine"));
         loadouts.save().unwrap();
         let schema = vec![SettingDef {
             id: "loadout".into(),

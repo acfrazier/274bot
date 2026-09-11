@@ -8,16 +8,19 @@ export function foodOf(loadout, fallback) {
     return globalThis.rustyscript.functions.__rs2b0t_food_of(loadout, fallback == null ? '' : String(fallback));
 }
 
-export function gearOf(_loadout) {
-    throw notImpl('gearOf');
+export function gearOf(loadout) {
+    return globalThis.rustyscript.functions.__rs2b0t_gear_of(loadout == null ? null : loadout);
 }
 
-export function suppliesOf(_loadout) {
-    throw notImpl('suppliesOf');
+export function suppliesOf(loadout) {
+    return globalThis.rustyscript.functions.__rs2b0t_supplies_of(loadout == null ? null : loadout);
 }
 
-export function weaponOf(_loadout, _fallback) {
-    throw notImpl('weaponOf');
+export function weaponOf(loadout, fallback = null) {
+    return globalThis.rustyscript.functions.__rs2b0t_weapon_of(
+        loadout == null ? null : loadout,
+        fallback == null ? null : String(fallback),
+    );
 }
 
 export function scriptFood(bag, fallback) {

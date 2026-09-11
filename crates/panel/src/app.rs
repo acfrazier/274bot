@@ -3159,7 +3159,7 @@ fn slot_config_row(ui: &Ui, session: &mut Session) {
                     if ui.button_with_size("Loadouts", [w, 0.0]) {
                         session.loadouts_open = true;
                         session.loadouts_sel = 0;
-                        sync_loadouts_scratch(session);
+                        crate::loadouts::sync_draft(session);
                     }
                     ui.set_item_tooltip("equipment and inventory presets");
                 }
@@ -3177,123 +3177,6 @@ fn slot_config_row(ui: &Ui, session: &mut Session) {
             }
         }
     }
-}
-
-/// Copy the selected loadout into the session scratch buffers.
-fn sync_loadouts_scratch(session: &mut Session) {
-    if let Some(loadout) = session.loadouts.loadouts().get(session.loadouts_sel) {
-        session.loadouts_name_scratch = loadout.name.clone();
-        session.loadouts_worn_scratch = loadout.worn.join(", ");
-        session.loadouts_carry_scratch = loadout.carry.join(", ");
-    } else {
-        session.loadouts_name_scratch.clear();
-        session.loadouts_worn_scratch.clear();
-        session.loadouts_carry_scratch.clear();
-    }
-}
-
-fn split_loadout_csv(raw: &str) -> Vec<String> {
-    raw.split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .collect()
-}
-
-fn apply_loadouts_scratch(session: &mut Session) {
-    let name = session.loadouts_name_scratch.trim();
-    if name.is_empty() {
-        return;
-    }
-    let loadout = script::Loadout {
-        name: name.to_string(),
-        worn: split_loadout_csv(&session.loadouts_worn_scratch),
-        carry: split_loadout_csv(&session.loadouts_carry_scratch),
-    };
-    if session.loadouts_sel < session.loadouts.loadouts().len() {
-        session.loadouts.replace_at(session.loadouts_sel, loadout);
-    } else {
-        session.loadouts.upsert(loadout);
-    }
-    let _ = session.loadouts.save();
-}
-
-/// Loadouts window: list presets and edit worn/carry item names.
-fn loadouts_window(ui: &Ui, session: &mut Session) {
-    if !session.loadouts_open {
-        return;
-    }
-    let mut open = true;
-    ui.window("Loadouts")
-        .opened(&mut open)
-        .flags(WindowFlags::NO_COLLAPSE)
-        .size([400.0, 360.0], Condition::FirstUseEver)
-        .build(|| {
-            let count = session.loadouts.loadouts().len();
-            if count == 0 {
-                ui.text_wrapped("No loadouts yet — add one below.");
-            } else {
-                ui.text("Presets");
-                let names: Vec<String> = session.loadouts.names();
-                for (i, name) in names.iter().enumerate() {
-                    let selected = i == session.loadouts_sel;
-                    if ui.selectable_config(name).selected(selected).build() {
-                        session.loadouts_sel = i;
-                        sync_loadouts_scratch(session);
-                    }
-                }
-            }
-            ui.spacing();
-            ui.text("Edit");
-            if ui
-                .input_text("name", &mut session.loadouts_name_scratch)
-                .build()
-            {
-                apply_loadouts_scratch(session);
-            }
-            if ui
-                .input_text("worn (comma-separated)", &mut session.loadouts_worn_scratch)
-                .build()
-            {
-                apply_loadouts_scratch(session);
-            }
-            if ui
-                .input_text(
-                    "carry (comma-separated)",
-                    &mut session.loadouts_carry_scratch,
-                )
-                .build()
-            {
-                apply_loadouts_scratch(session);
-            }
-            if ui.button("Add loadout") {
-                let next = format!("loadout-{}", session.loadouts.loadouts().len() + 1);
-                session.loadouts.upsert(script::Loadout {
-                    name: next.clone(),
-                    worn: vec![],
-                    carry: vec![],
-                });
-                let _ = session.loadouts.save();
-                session.loadouts_sel = session.loadouts.loadouts().len().saturating_sub(1);
-                sync_loadouts_scratch(session);
-            }
-            if count > 0 && ui.button("Delete selected") {
-                if let Some(name) = session
-                    .loadouts
-                    .loadouts()
-                    .get(session.loadouts_sel)
-                    .map(|l| l.name.clone())
-                {
-                    session.loadouts.remove(&name);
-                    let _ = session.loadouts.save();
-                    if session.loadouts_sel >= session.loadouts.loadouts().len() {
-                        session.loadouts_sel = session.loadouts.loadouts().len().saturating_sub(1);
-                    }
-                    sync_loadouts_scratch(session);
-                }
-            }
-        });
-    session.loadouts_open = open;
 }
 
 /// Parameter editing is enabled for compat cards with a settings schema.
@@ -4608,7 +4491,7 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
     load_window(ui, &mut state.session);
     nav_settings_window(ui, &mut state.session, state.panel_dock_node);
     script_prefs_window(ui, &mut state.session, state.panel_dock_node);
-    loadouts_window(ui, &mut state.session);
+    crate::loadouts::window(ui, &mut state.session);
     render_all_warn_window(ui, &mut state.session);
 }
 
@@ -4622,15 +4505,15 @@ mod tests {
     use host_play::SharedClientTemplate;
 
     use super::{
-        apply_loadouts_scratch, apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal,
-        boot_for, capture_key_ch, chooser_should_open_popup, clamp_hop_label_px, debug_caption,
+        apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal, boot_for,
+        capture_key_ch, chooser_should_open_popup, clamp_hop_label_px, debug_caption,
         drive_startup, edit_parameters_enabled, game_window_flags, live_null_tick,
         live_script_tick, live_smoke_tick, live_stress_tick, loading_text, log_follow_bottom,
         manual_shot_label, parse_args, parse_live_args, progress_channel, random_status_text,
-        runner_config, smoke_settled, smoke_should_fire, startup_progress, sync_loadouts_scratch,
-        Boot, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState, ProfilePrepareJob,
-        ProgressPhase, RunMode, StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE,
-        SMOKE_DEADLINE, SMOKE_SETTLE,
+        runner_config, smoke_settled, smoke_should_fire, startup_progress, Boot, LiveBoot,
+        LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState, ProfilePrepareJob, ProgressPhase,
+        RunMode, StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, SMOKE_DEADLINE,
+        SMOKE_SETTLE,
     };
     use crate::theme::{
         applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
@@ -5012,16 +4895,8 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let mut store = LoadoutsStore::at(dir.join("loadouts.json"));
-        store.upsert(Loadout {
-            name: "guard".into(),
-            worn: vec![],
-            carry: vec![],
-        });
-        store.upsert(Loadout {
-            name: "stall".into(),
-            worn: vec![],
-            carry: vec![],
-        });
+        store.upsert(Loadout::new("guard"));
+        store.upsert(Loadout::new("stall"));
         let def = SettingDef {
             id: "loadout".into(),
             ty: "string".into(),
@@ -5042,42 +4917,6 @@ mod tests {
             resolve_setting_options(&def, &store),
             vec!["guard".to_string(), "stall".to_string()]
         );
-    }
-
-    #[test]
-    fn apply_loadouts_scratch_renames_in_place() {
-        use script::{Loadout, LoadoutsStore};
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        use crate::session::Session;
-
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "274bot-panel-loadout-rename-{n}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let mut store = LoadoutsStore::at(dir.join("loadouts.json"));
-        store.upsert(Loadout {
-            name: "melee".into(),
-            worn: vec![],
-            carry: vec![],
-        });
-
-        let mut session = Session::new();
-        session.loadouts = store;
-        session.loadouts_sel = 0;
-        sync_loadouts_scratch(&mut session);
-        session.loadouts_name_scratch = "melee2".into();
-        apply_loadouts_scratch(&mut session);
-
-        assert_eq!(session.loadouts.loadouts().len(), 1);
-        assert_eq!(session.loadouts.loadouts()[0].name, "melee2");
-        assert_eq!(session.loadouts_sel, 0);
     }
 
     #[test]

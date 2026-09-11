@@ -32,7 +32,11 @@ pub use load::{
     scan_import_specifiers, scan_same_folder_js_imports, sibling_module_url, JsCard, JsLibrary,
     LoadShape, ScriptSel,
 };
-pub use loadouts_store::{default_loadouts_path, resolve_setting_options, Loadout, LoadoutsStore};
+pub use loadouts_store::{
+    copy_equipment_preserving_supplies, default_loadouts_path, resolve_setting_options,
+    unique_loadout_name, worn_slot_label, CarryEntry, Loadout, LoadoutsStore, WORN_SLOTS,
+    WORN_SLOT_LAYOUT,
+};
 pub use params::defaults;
 pub use registry::{compiled_ids, factory, is_whale, CompiledId};
 pub use rs2b0t_registry::{
