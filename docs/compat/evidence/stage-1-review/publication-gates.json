@@ -1,0 +1,12 @@
+{
+  "review_task": "t_fd3a8b47",
+  "review_run": 1346,
+  "actual_model": "grok-4.6",
+  "source_approved": true,
+  "client": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+  "code_candidate": "940531c3f7a4fe392f8ee5688702fe1f617d28b0",
+  "review_report_commit": "02ee3e51eb45ef11ddb2743e0f28b22400653dcf",
+  "remote_publication_done": false,
+  "fresh_recursive_clone_checked": false,
+  "main_merged": false
+}

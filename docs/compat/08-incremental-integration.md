@@ -12,50 +12,51 @@ The batch includes the reconciled 274/289 client, immutable process-wide server
 and resource profile, panel/TUI profile selection, revision-aware host writes,
 session reset and selected-world navigation foundation. The client also contains
 later reviewed inventory/scenery publication fixes and a mechanical revision-based
-diagnostic label change. Historical scoped reports are01-session-profile.md,
+diagnostic label change. Historical scoped reports are 01-session-profile.md,
 02-host-boundary.md,02a-host-outbound.md,02b-host-snapshot-reset.md and
 03-world-capabilities.md; their old next-actions are evidence snapshots.
 
 Later catalog shim capabilities are outside this batch, including the new cake
 helper and bank opening/autocast sequencing being corrected to native ownership.
 Existing incomplete catalog behavior is not described as complete. This is not
-Alpha2/0.1.7 release acceptance, platform qualification or a performance result.
+Alpha 2/0.1.7 release acceptance, platform qualification or a performance result.
 
 ## Fresh verification
 
 Formatting and strict Clippy passed. Workspace checks with memory-profile passed
 2603 tests after explicitly excluding two unchanged external-catalog failures.
-The separate client integration invocation passed1007 tests (two ignored).
-Both failing external-catalog tests were reproduced on exact mainb2bd5023 and
-client9b41e6e0 against the same operator catalog42011fb1:
+The separate client integration invocation passed 1007 tests (two ignored).
+Both failing external-catalog tests were reproduced on exact main b2bd5023 and
+client 9b41e6e0 against the same operator catalog 42011fb1:
 
 - catalog_start: missing STAFF_RUNES in Alcher, ClimbingBoots and Superheater.
 - declared_abi: the committed ABI fixture differs from that newer local catalog.
 
 All original failures, baseline assertion comparisons, commands and logs remain
 in evidence/stage-1. No test was changed or silently disabled. The passing
-workspace/client checks used source65938065/clientaef3952d. The only subsequent
+workspace/client checks used source 65938065/client aef3952d. The only subsequent
 code changes are the three fixture corrections in world_boundary_live.rs;
 focused formatting and strict Clippy passed again.
 
 Eight controlled live cells passed: session boundary, cross-square navigation,
-door traversal and Guardian lamp on each of274/289. They show real walking,
+door traversal and Guardian lamp on each of 274/289. They show real walking,
 NPC dialogue, world change, logout clearing; door opening and inside arrival;
-and lamp consumption/XP followed by resumed walking. The first274 door run
+and lamp consumption/XP followed by resumed walking. The first 274 door run
 failed because the early batch omitted the later Catherby preparation fix.
 That failed run is retained. Corrected door/lamp cells passed on both revisions;
-289 boundary/navigation also ran after the correction. Unaffected274 boundary
-and navigation results are retained from65938065. The exact source/proof mapping
+289 boundary/navigation also ran after the correction. Unaffected 274 boundary
+and navigation results are retained from 65938065. The exact source/proof mapping
 and verified log hashes are in evidence/stage-1/validation-ready.json.
 
 ## Integration gate
 
-Whole-branch review is running as t_fd3a8b47, profile branchreviewer/Grok4.6,
-against exact code940531c3f and clientaef3952d. Approval is pending; creation or
-an assignee label is not a verdict. Root must verify the actual model and final
-findings before publication. No merge or push yet.
+Whole-branch review approved this exact code/client batch in t_fd3a8b47,
+actual Grok 4.6 / xai-oauth run 1346 (30 verified API calls). Report:
+08a-stage1-whole-branch-review.md. No material findings. Root is proceeding
+with client/staging-branch publication and fresh recursive clone verification
+before merging main. The final full-campaign review remains separate.
 
-After approval, publish the client to acfrazier/FR-client-bothost r274-bh-modular
+Publish the client to acfrazier/FR-client-bothost r274-bh-modular
 before publishing the host gitlink. Verify a fresh recursive checkout, merge
 ordinary history into host main and push acfrazier/274bot. Preserve unrelated
 primary checkout files and active campaign work. No tag/package/announcement.
