@@ -1,0 +1,50 @@
+{
+  "host_commit": "3be68eafffd586d790e72e8095ddcab457795672",
+  "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "source_root": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/source-3be68eaf-56d8027",
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/target-isolated-3be68eaf",
+  "checks": [
+    {
+      "command": [
+        "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/catalog-headed/catalog-boundary-3be68eaf",
+        "tests::gnome_course_requires_complete_lap_and_second_lap_progress",
+        "--exact",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "log": "docs/compat/evidence/location-world/second-log-catalog-3be68eaf.log",
+      "log_sha256": "f63723ec8ceb590aa83f2e6f1289fcc874f50111e8101be7f346aeaf98bc2cb3"
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "scenario",
+        "location_world_cases_register_exact_settings_and_witnesses",
+        "--",
+        "--exact"
+      ],
+      "exit_code": 0,
+      "log": "docs/compat/evidence/location-world/second-log-scenario-3be68eaf.log",
+      "log_sha256": "7d9353c2facce09ff620d05813db0882d2592f6d1d718ef88fb063a5dad1097c",
+      "accepted": false,
+      "reason": "Bare filter with --exact selected zero tests; retained diagnostic only"
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "scenario",
+        "tests::location_world_cases_register_exact_settings_and_witnesses",
+        "--",
+        "--exact"
+      ],
+      "exit_code": 0,
+      "accepted": true,
+      "log": "docs/compat/evidence/location-world/second-log-scenario-qualified-3be68eaf.log",
+      "log_sha256": "c206b609989a4988a86449561cb60eaebae3bbb78f8fa2c68242b0ac30a59fd4"
+    }
+  ]
+}

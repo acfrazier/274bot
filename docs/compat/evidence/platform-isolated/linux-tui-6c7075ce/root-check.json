@@ -1,0 +1,18 @@
+{
+  "host_commit": "6c7075ce2ae98fac1f2641026445b9b87a566076",
+  "client_commit": "56d80272bcbda3eb1e22db096c1c5e21d3497de4",
+  "verified_original_source_files": 2240,
+  "overlay": {
+    "crates/tui/examples/platform_proof.rs": "fn main() -> std::process::ExitCode {\n    let _stores = script::IsolatedEnv::enter(&format!(\"platform-proof-{}\", std::process::id()));\n    tui::bin::main()\n}\n"
+  },
+  "binary_sha256": "78149b98fe0d380d3a43098c1db10b86b3caad7b3ef8a141517b231ad252d946",
+  "downloaded_files": {
+    "source-manifest.json": "efe2a54fdf5e145ac93526fab8b5923823c678aef19c49b9f8208cca640199d8",
+    "package-manifest.json": "33ac9a9f019114d02937caddc612c4e844e57601a175d0276767d67ae085b4ad",
+    "package.json": "57b6b39847765679fdb66a5bc4246aab6848360fd303a2eb5be10e902d95618a",
+    "build.jsonl": "f17d613dff8402b72f31a88cfa4e0d0970a4153c737439a0bfd42a3105fcf347",
+    "concord-verified.json": "58c129174ca8e4ad93f0372d649bf8941e86eb1f1a8ebb0d31e3d41e165a5d0b",
+    "binary.json": "ab95f8759cebef90a4efae7aba2c93d6e5f9a4e9818be255d08e0c118dbf4067",
+    "build.log": "d7418895282b3d328decb9a7e6de2f947ca4bbb1baf1f911ded2ad607e8115a1"
+  }
+}

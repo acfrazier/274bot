@@ -4,9 +4,9 @@ Use profile grok46 defaults on codex/rs2b0t-multirevision. Read applicable
 instructions, docs/execution.md, fail-closed-dispatch, current STATE.md and
 reviewed coordinate/canStep reports. Do not spawn agents. Root owns LIVE.
 
-Exact 3be68eaf FlaxPicker LIVE now picks actual flax on both revisions, then
-fails at tick 88/near the full pack on `not impl: reader.toLocal`. Both failures
-are retained in evidence/catalog-harness/live/*flax-picker*3be68eaf*.log.
+Exact 3be68eaf FlaxPicker LIVE picks actual flax on both revisions. The 289
+run then fails at tick 88 on `not impl: reader.toLocal`; 274 separately times
+out with seven flax before full-pack readiness. Both failures are retained in evidence/catalog-harness/live/*flax-picker*3be68eaf*.log.
 Frozen FlaxPicker.travelTo/walkLocal calls reader.toLocal(world x,z), then
 synchronous actions.walkTo(local lx,lz) and awaits observed position itself.
 Both adapter members are missing in crates/script/src/shim/client_adapter.js.
