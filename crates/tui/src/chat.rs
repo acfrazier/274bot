@@ -81,6 +81,89 @@ impl<'a> ChatView<'a> {
             .map(|p| p.buttons.as_slice())
             .unwrap_or(&[])
     }
+
+    /// Preferred outer height for the ordinary app layout. Paint buttons
+    /// get their advertised rows instead of competing with the historic
+    /// six-row chat allocation; the cap keeps the rest of the TUI useful.
+    pub(crate) fn preferred_height(&self) -> u16 {
+        const DEFAULT_HEIGHT: u16 = 6;
+        const MAX_PAINT_HEIGHT: u16 = 14;
+
+        if chat_modal_open(self) || !self.paint_showing() || self.paint_buttons().is_empty() {
+            return DEFAULT_HEIGHT;
+        }
+        let paint = self.script_paint.expect("paint_showing requires paint");
+        let content_rows = usize::from(paint.title.is_some()) + paint.lines.len();
+        let rows = 2usize
+            .saturating_add(content_rows)
+            .saturating_add(1)
+            .saturating_add(paint.buttons.len());
+        u16::try_from(rows)
+            .unwrap_or(u16::MAX)
+            .clamp(DEFAULT_HEIGHT, MAX_PAINT_HEIGHT)
+    }
+}
+
+#[derive(Debug)]
+struct PaintButtonLayout {
+    index: usize,
+    row: Rect,
+    hit: Rect,
+    text: String,
+}
+
+#[derive(Debug)]
+struct PaintLayout {
+    content: Rect,
+    buttons: Vec<PaintButtonLayout>,
+}
+
+/// Compute the paint rows once for both rendering and pointer dispatch.
+/// Buttons are pinned to the bottom of the inner pane; if they cannot all
+/// fit, the visible window always contains the focused button.
+fn paint_layout(view: &ChatView<'_>, state: &ChatState, area: Rect) -> PaintLayout {
+    let inner = Block::default().borders(Borders::ALL).inner(area);
+    let buttons = view.paint_buttons();
+    let visible_count = buttons.len().min(usize::from(inner.height));
+    if visible_count == 0 || inner.width == 0 {
+        return PaintLayout {
+            content: inner,
+            buttons: Vec::new(),
+        };
+    }
+
+    let focus = state.paint_choice.min(buttons.len() - 1);
+    let first = focus
+        .saturating_add(1)
+        .saturating_sub(visible_count)
+        .min(buttons.len() - visible_count);
+    let buttons_y = inner.y + inner.height - visible_count as u16;
+    let content = Rect::new(
+        inner.x,
+        inner.y,
+        inner.width,
+        buttons_y.saturating_sub(inner.y).saturating_sub(1),
+    );
+    let buttons = buttons[first..first + visible_count]
+        .iter()
+        .enumerate()
+        .map(|(visible_index, button)| {
+            let index = first + visible_index;
+            let marker = if index == focus { "> " } else { "  " };
+            let text = format!("{marker}[{}] {}", index + 1, button.label);
+            let row = Rect::new(inner.x, buttons_y + visible_index as u16, inner.width, 1);
+            let hit_width = Line::from(text.as_str())
+                .width()
+                .min(usize::from(inner.width)) as u16;
+            PaintButtonLayout {
+                index,
+                row,
+                hit: Rect::new(row.x, row.y, hit_width, 1),
+                text,
+            }
+        })
+        .collect();
+    PaintLayout { content, buttons }
 }
 
 /// The chat pane widget. Cheap to rebuild each frame (borrows only); the
@@ -202,22 +285,15 @@ impl<'a, F: FnMut(ChatAction)> Chat<'a, F> {
                 }
             }
         } else if self.view.paint_showing() {
-            let buttons = self.view.paint_buttons();
-            if buttons.is_empty() {
-                ChatAction::None
-            } else {
-                let title_lines =
-                    usize::from(self.view.script_paint.is_some_and(|p| p.title.is_some()));
-                let body_lines = self.view.script_paint.map(|p| p.lines.len()).unwrap_or(0);
-                let buttons_start = area.y + 1 + title_lines as u16 + body_lines as u16 + 1;
-                let offset = row.saturating_sub(buttons_start) as usize;
-                if offset < buttons.len() {
-                    self.state.paint_choice = offset;
-                    ChatAction::PaintButton(offset)
-                } else {
-                    ChatAction::None
-                }
-            }
+            let layout = paint_layout(&self.view, self.state, area);
+            layout
+                .buttons
+                .iter()
+                .find(|button| button.hit.contains(Position::new(col, row)))
+                .map_or(ChatAction::None, |button| {
+                    self.state.paint_choice = button.index;
+                    ChatAction::PaintButton(button.index)
+                })
         } else if self.view.options.is_empty() {
             ChatAction::Continue
         } else {
@@ -281,7 +357,10 @@ impl<'a, F: FnMut(ChatAction)> Widget for Chat<'a, F> {
                 .render(inner, buf);
         } else if let Some(paint) = self.view.script_paint.filter(|_| self.view.paint_showing()) {
             // Paint-as-chat: the script's frame replaces the game ring
-            // (title + rows, rs2b0t paint shape). `p` toggles back.
+            // (title + rows, rs2b0t paint shape). `p` toggles back. Controls
+            // are laid out separately so wrapped body text cannot clip or
+            // shift their hit targets.
+            let layout = paint_layout(&self.view, self.state, area);
             let mut lines: Vec<Line> = Vec::new();
             if let Some(t) = &paint.title {
                 lines.push(Line::from(t.clone()));
@@ -289,17 +368,12 @@ impl<'a, F: FnMut(ChatAction)> Widget for Chat<'a, F> {
             for row in &paint.lines {
                 lines.push(Line::from(row.clone()));
             }
-            if !paint.buttons.is_empty() {
-                lines.push(Line::from(""));
-                let focus = self.state.paint_choice.min(paint.buttons.len() - 1);
-                for (i, btn) in paint.buttons.iter().enumerate() {
-                    let marker = if i == focus { "> " } else { "  " };
-                    lines.push(Line::from(format!("{marker}[{}] {}", i + 1, btn.label)));
-                }
-            }
             Paragraph::new(lines)
                 .wrap(Wrap { trim: false })
-                .render(inner, buf);
+                .render(layout.content, buf);
+            for button in layout.buttons {
+                Paragraph::new(button.text).render(button.row, buf);
+            }
         } else {
             let mut lines: Vec<Line> = Vec::new();
             for line in self
@@ -622,7 +696,10 @@ mod tests {
 
     #[test]
     fn paint_modal_still_wins_over_paint_buttons() {
-        let paint = paint_with_button();
+        let mut paint = paint_with_button();
+        paint
+            .lines
+            .extend(["second row".into(), "third row".into()]);
         let texts = vec!["The stranger waits.".into()];
         let view = ChatView {
             lines: &[],
@@ -632,6 +709,11 @@ mod tests {
             script_paint: Some(&paint),
             show_game_chat: false,
         };
+        assert_eq!(
+            view.preferred_height(),
+            6,
+            "the dialogue layout, not hidden paint, controls modal height"
+        );
         let mut state = ChatState::default();
         let mut sent: Vec<ChatAction> = Vec::new();
         let action = {
@@ -647,5 +729,75 @@ mod tests {
         };
         assert_eq!(action, ChatAction::None);
         assert!(sent.is_empty());
+    }
+
+    #[test]
+    fn paint_click_rejects_rows_above_wrapped_button_and_hits_rendered_row() {
+        let paint = script::shim::ScriptPaint {
+            title: Some("NatureCrafter".into()),
+            accent: None,
+            lines: vec!["a status row long enough to wrap in this compact pane".into()],
+            buttons: vec![script::shim::ScriptPaintButton {
+                id: "gobank".into(),
+                label: "Go bank".into(),
+            }],
+            generation: 0,
+        };
+        let view = ChatView {
+            lines: &[],
+            modal_texts: &[],
+            options: &[],
+            has_continue: false,
+            script_paint: Some(&paint),
+            show_game_chat: false,
+        };
+        let area = ratatui::layout::Rect::new(0, 0, 24, 7);
+        let mut state = ChatState::default();
+        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+        terminal
+            .draw(|frame| frame.render_widget(Chat::new(view, &mut state, |_| {}), area))
+            .unwrap();
+        let button_row = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(usize::from(area.width))
+            .enumerate()
+            .find_map(|(row, cells)| {
+                let text: String = cells.iter().map(|cell| cell.symbol()).collect();
+                text.contains("[1] Go bank").then_some(row as u16)
+            })
+            .expect("the focused button must remain visible in the compact pane");
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(
+            !rendered.contains("compact pane"),
+            "the overflowing tail of the wrapped body is clipped: {rendered:?}"
+        );
+
+        let mut sent = Vec::new();
+        let (title, body, spacer, border, trailing, button) = {
+            let mut chat = Chat::new(view, &mut state, |a| sent.push(a));
+            (
+                chat.on_click(area, 2, 1),
+                chat.on_click(area, 2, 2),
+                chat.on_click(area, 2, button_row - 1),
+                chat.on_click(area, 0, button_row),
+                chat.on_click(area, area.width - 2, button_row),
+                chat.on_click(area, 3, button_row),
+            )
+        };
+        assert_eq!(title, ChatAction::None);
+        assert_eq!(body, ChatAction::None);
+        assert_eq!(spacer, ChatAction::None);
+        assert_eq!(border, ChatAction::None);
+        assert_eq!(trailing, ChatAction::None);
+        assert_eq!(button, ChatAction::PaintButton(0));
+        assert_eq!(sent, vec![ChatAction::PaintButton(0)]);
     }
 }
