@@ -71,3 +71,48 @@ implementation task, using profile `grok46` defaults (grok-4.6 / xai-oauth, high
 reasoning). This supersedes the original card body mentioning Sol. Keep the
 same branch, scope, dependencies, required checks and same-card `reviewer`
 handoff. Do not self-complete implementation or bypass the review gate.
+
+## Accepted first-pass loadout UX (2026-09-11 01:06 UTC)
+
+The operator agreed to an initial native editor improvement, followed by later
+expansion once this groundwork works. Implement it in this task alongside the
+already required slot/quantity model. Root compared the current three text
+fields with the frozen `panel/LoadoutPanel.ts` and `loadoutPanelLogic.ts`.
+Recreate the useful workflow with native Rust widgets and host facts; do not
+copy the foreign panel, runtime, policies or data computations.
+
+- Present labeled equipment slots in a compact familiar equipment layout.
+  Reuse existing item-icon rendering/cache if straightforward; readable labels
+  and item names must always work without icons. Do not create another sprite
+  cache, eager asset download, or a rendering refactor.
+- Click a slot to search the selected revision's items. Filter by verified
+  equipment facts, and distinguish equal display names with useful identity
+  detail. Existing generated rows already include wear_position, wear_position_2
+  and wear_position_3; audit their mapping rather than guessing from names.
+  Keep a visible place for unassigned legacy gear so old entries cannot vanish.
+- Show supplies as editable item/positive-quantity rows, with arbitrary extra
+  supplies beyond common food and potion choices. A quantity must survive
+  selection, rename, duplicate, editing, saving, reopening and script posting.
+- Add Copy current equipment from the focused character's observed equipment.
+  Preserve supplies. Explain/disable the action when no usable character is
+  available; do not simulate equipment or silently capture stale state.
+- Provide clear New, Duplicate, Rename and Delete preset controls, a visible
+  selected preset, and actual save/error feedback. Preserve existing stored
+  values on invalid input or failed save. Do not report Saved from an in-memory
+  mutation when the file write failed. Keep selection distinct from provisioning.
+
+The first pass covers editing and the already scoped provisioning behavior.
+Bank-availability previews, acquisition automation, preset marketplaces,
+import/export systems and further visual redesign are deferred. The TUI needs
+usable slot/quantity editing with the same data preservation; it need not copy
+a graphical equipment layout.
+
+Minimal editor state changes in panel/session.rs are now explicitly allowed:
+the previous frontend task is complete, and this card starts after the current
+loading/UI integration review. Preserve those accepted preparation/lifecycle
+fields and semantics. API selected-game-data accessors and minimal generator
+work are allowed only when necessary for verified slot facts; reuse the checked-
+in facts already available. No per-frame full-table serialization or per-bot
+world copy. Native UI proof is root-owned after source review; supply focused
+behavior tests for preservation, invalid edits, copying equipment without
+clobbering supplies and failed saves, rather than tests that mirror labels.

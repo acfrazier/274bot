@@ -254,3 +254,8 @@ Operator quota direction at 01:00 UTC moves the next four implementation cards
 t_0c5ce97f death recovery) to profile grok46, configured grok-4.6 / xai-oauth
 with high reasoning. Existing workers and dependency/reviewer gates remain.
 Actual implementation model verification follows when each queued run starts.
+
+The operator accepted the first-pass loadout UX at 01:06 UTC: equipment slots,
+quantity rows, selected-data search, Copy current equipment, preset controls
+and actual save feedback. Brief 26 includes this in the queued Grok loadout
+implementation. Bank previews and further automation stay deferred.
