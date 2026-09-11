@@ -30,11 +30,11 @@ ChickenKiller (`parseBankStrategy` + `depositAllExcept` keep list + `afterDeposi
 
 ## Hotspot
 
-`crates/script/src/load.rs` is a shared isolate register/lifecycle file. This card owns only `__rs2b0t_periodic_bank` registration and Pause/Resume/ResetSession/hold clock hooks in that file. Commit `41cf8eac` also landed `__rs2b0t_tile_distance` helpers/registration from concurrent brief 57 / `t_701d17f4` work; PeriodicBank does not call that path. Per orch (2026-09-10), those Tile helpers stay in the working tree for the Tile card and must not be stripped by this task. Root follow-up `922dac2481dfa42619c3edf74f36e06d93e908a4` separates those 68 lines from the committed PeriodicBank composition with a private index, preserving the working tree and ordinary index. Complete Tile work is separately committed at `6401d3a4`; it must not be removed from later working source. Review PeriodicBank at exact `922dac24`.
+`crates/script/src/load.rs` is a shared isolate register/lifecycle file. This card owns only `__rs2b0t_periodic_bank` registration and Pause/Resume/ResetSession/hold clock hooks in that file. Commit `41cf8eac` also landed `__rs2b0t_tile_distance` helpers/registration from concurrent brief 57 / `t_701d17f4` work; PeriodicBank does not call that path. Per orch (2026-09-10), those Tile helpers stay in the working tree for the Tile card and must not be stripped by this task. History still attributes them under `41cf8eac`; root/Tile card own separating or claiming that hunk.
 
 ## Verification
 
-First-round service checks used `target-t_51452e47`; the first Grok 4.5 review confirmed the results below but requested source-ownership correction. The interrupted `target-t_51452e47-corrective` attempt did not complete qualification. A new empty-target review of exact `922dac24` is required. Raw logs and the interrupted verification record remain in `docs/compat/evidence/periodic-bank-capabilities/`; original committed logs remain at `41cf8eac`.
+Isolated corrective target: `target-t_51452e47-corrective`. Prior round used `target-t_51452e47`. Raw logs: `docs/compat/evidence/periodic-bank-capabilities/`.
 
 - `cargo test -p script --lib periodic_bank`: 6 passed (label/token mapping, shouldBankNow, combat/Off, backoff + Pause freeze, dest no-fallback, npcAccess).
 - `cargo test -p script --test periodic_bank`: 8 passed (Off zero sends, combat suppress, ChickenKiller loot-count deposit/afterDeposit/close/return, Either+shim `loot` token, exact destination, commonJunk true/false, missing-access backoff, Pause/session abort).
