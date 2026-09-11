@@ -1,0 +1,5 @@
+# Wildy8c player-plane live requalification
+
+2026-09-11. Exact host8c56eb85a846162cf2e13e8ce00c49ca372071b1/clientaef3952d1cd7bb3b93d39c497f0f476b68021c59, verified Grok4.5 review1369. Root rehashed4815 exportedsource files and isolated headless binaryc31d255dccad07908310292447ff2a769022dcc25acf6a667cd0343ce1f3e568.
+
+Four completed cells:3 PASS/1 FAIL. Both274 catalogs and289newer complete ridge, pipe, rope, stone, observed plane0 log destination, rocks/lapXP and furtherpipe. Full witnesses in evidence/catalog-harness/qualification-wildy8c.json. The289old cell completed pipe then fell at ropeswing, queued escape WalkTo3005,10363, died and respawnedLumbridge3222,3220; baselineHP10, Agility52, fiveLobsters. Failure retained. No until-lucky rerun. Preparation139 now scopes acknowledged base/effectiveHP40, unchangedAgility52, fiveLobsters, hostility and allclocks/orderedwitnesses. No armour/Defence/Attack boost, forcedfall or seededpostStartXP. This change is not yet implemented or qualified. Fullcard/platform/otherbranch acceptance remains open. Times are notperformance claims; ledger416 rows.

@@ -1,0 +1,65 @@
+{
+  "agility": 52,
+  "pathingEdges": {
+    "keeps_24_plank": true,
+    "drops_non24_plank_at_20": true,
+    "drops_blade": true,
+    "drops_darts": true,
+    "keeps_saws": true
+  },
+  "avoid_rule": "substitute only when neighbor remaining hop-count equals need; else return original first; CrossObstacle clears avoidHop when hop==avoid",
+  "cases": [
+    {
+      "from": 24,
+      "goal": 17,
+      "avoid": 23,
+      "rem": {"24": 3, "23": 2, "19": 4},
+      "first": 23,
+      "nextHop": 23,
+      "live": "r289 hops 1-2"
+    },
+    {
+      "from": 24,
+      "goal": 20,
+      "avoid": 23,
+      "rem": {"24": 4, "23": 3, "19": 5},
+      "first": 23,
+      "nextHop": 23,
+      "live": "r289 hop 3"
+    },
+    {
+      "from": 24,
+      "goal": 22,
+      "avoid": 23,
+      "rem": {"24": 2, "23": 1, "19": 3},
+      "first": 23,
+      "nextHop": 23,
+      "live": "r274 hops 1-2"
+    },
+    {
+      "from": 24,
+      "goal": 1,
+      "avoid": 23,
+      "rem": {"24": 7, "23": 6, "19": 6},
+      "geo_to_goal": {"19": 66, "23": 66},
+      "hopKindCost": {"swing": 3, "plank": 5},
+      "first": 19,
+      "nextHop": 19,
+      "live": "r274 hop 3; avoid unused because first!==23"
+    }
+  ],
+  "loc_3572": {
+    "tile": [2802, 9590, 3],
+    "pack_id": "agilityarena_plank3",
+    "has_walk_on": true,
+    "broke1_id": 3576,
+    "broke1_has_op": false,
+    "native_dump": "after 2-tile forcemove loc_find(coord, agilityarena_plank_broke1) no agility roll"
+  },
+  "saws_7_to_6": {
+    "walkTrapStand": {"x": 2778, "z": 9557},
+    "live_WalkTo": {"x": 2778, "z": 9557, "level": 3},
+    "native_fail_chat": "You were hit by the spinning blades!",
+    "stat_random_at_52": {"low": 30, "high": 210, "threshold": 124, "success_over_256": 124}
+  }
+}

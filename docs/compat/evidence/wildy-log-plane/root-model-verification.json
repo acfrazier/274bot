@@ -1,0 +1,67 @@
+{
+  "task": "t_44a27b3c",
+  "run": 1369,
+  "session": "20260911_111534_e30a37",
+  "model": "grok-4.5",
+  "provider": "xai-oauth",
+  "api_calls": 13,
+  "actual_model_verified": true,
+  "verdict": "Reviewed and approved 8c56eb85a for brief 135 Wildy log player-plane witness (R1 artifact cold read + independent exclusive-target re-run). Raw loc 2297 stays plane 1 over LinkBelow on both m46_61 maps; scenario and catalog oracles now require observed player dest (2994,3945,0). Full ordered lap/next-pipe witnesses, 150/180 bounds, and all four original wildy15e failures retained; no LIVE.",
+  "review_metadata": {
+    "review_outcome": "approved",
+    "review_round": 1,
+    "lens": "artifact",
+    "blocking_defects": [],
+    "branch": "codex/rs2b0t-multirevision",
+    "brief": "docs/compat/briefs/135-wildy-log-observation-plane.md",
+    "implementation_commit": "8c56eb85a846162cf2e13e8ce00c49ca372071b1",
+    "client": "aef3952d1cd7bb3b93d39c497f0f476b68021c59",
+    "live": false,
+    "export": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_44a27b3c-r1",
+    "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/target-review-t_44a27b3c-r1",
+    "overlay_sha256": {
+      "crates/scenario/src/lib.rs": "2969b1c406b0fe198006c306f824b74f6e6a098435d66c8a84dc2b2b63b50c5e",
+      "crates/host-play/tests/catalog_boundary_live.rs": "5541ca107eb10b1d1b5d7fc77217c6a6e2b4a70d31ea8d883126c05d37af0aef"
+    },
+    "documentation_sha256": {
+      "docs/compat/05zb-wildy-log-plane.md": "ef12107f545bac7793bc5401339cac82c407ca47cfce2b43ed54ef0e59ff5bba",
+      "docs/compat/evidence/wildy-log-plane/isolated-checks.log": "d551e39f7b663fcbef0221fab459159df9db7f6f22cf1cfa8a1c5ebe30bcee01",
+      "docs/compat/evidence/wildy-log-plane/verification.json": "b308a651e446f91f6106a4beaeda880686ce60f8eb0139975d34a8adcadb06bf"
+    },
+    "source_sha256": {
+      "m46_61_jm2_both": "09c30dc7d888dfaa918634d3c656e52742ce8f573a0bbfacbe236651ee3bcf21",
+      "wilderness_course_rs2_274": "fddf3605c923f61585edf45c2edc0377b13be9e668ce745d648c59a008062572",
+      "wilderness_course_rs2_289": "db69683bd6b23f73241a4274334e40b3e9ebae954e853869c45b0d6cab5c3fe9"
+    },
+    "retained_live_log_sha256": {
+      "r274-100adccc": "4b57b94176ff22eebc5cbcfd3e6e53dff50416b60120d2ea66cf919c0d7e3648",
+      "r289-100adccc": "0f246ff5cc06ee0047543bd6429403b7441d7be2d8a905ef724e119cfdc5ed51",
+      "r289-8e7d965b": "50bcf975aa0be789a7e92d872fdd463b11ba26f83c5eb9c447eee23491b8a603",
+      "r274-8e7d965b": "dbe26b18e9b4740f16a6839c9eb4003b36cf022f30a097aa5be29566b0fb282d"
+    },
+    "reviewer_checks": [
+      "r1 artifact cold read of brief 135 vs commit 8c56eb85a",
+      "exclusive export t_44a27b3c-r1 byte-equal to workspace/commit overlay for scenario+catalog",
+      "client gitlink aef3952d unchanged; commit scoped to authorized scenario+catalog+docs only",
+      "both m46_61.jm2 sha256 09c30dc7... place loc 2297 as 1 57 41 (=3001,3945) with tile flag f3/LinkBelow",
+      "274/289 wilderness_course.rs2 log path tele x+1 then force-move -4/-3/-1 (net -7), no plane change; hashes match handoff",
+      "client MapFlag::LINK_BELOW=0x2; build routes LinkBelow collision/push_down; player tile snapshot uses minusedlevel from PLAYER_INFO/289 plane",
+      "scenario WILDY_LOG_DEST level 0; full ordered ridge/pipe/rope/stone/log/rocks/next-pipe + lap 586 and terminal further 598 retained; Agility52+5 lobsters; bank_fletcher_watch 150 ticks; deadline 180s",
+      "catalog WILDY_LOG_DEST (2994,3945,0); ordered witness qualifies; raw scenery plane-1 log witness fails closed",
+      "retained wildy15e logs: three fail step16 arrived_near(...,1,3) with player tiles plane 0; r274/8e7d965b fails step7 ridge XP after wolf-pit death \u2014 artifacts unchanged",
+      "cargo test -p scenario (exclusive target-review-t_44a27b3c-r1): 104 passed",
+      "cargo test -p host-play --features memory-profile --test catalog_boundary_live: 41 passed / 1 ignored LIVE",
+      "rustfmt --check + git diff --check on implementation files passed",
+      "no LIVE launched"
+    ],
+    "limits": [
+      "no LIVE client run",
+      "fixture/oracle/evidence only",
+      "root owns fresh four-cell qualification after this correction"
+    ],
+    "non_blocking_notes": [
+      "scenario focused test asserts observed plane 0 in the ordered chain; catalog alone carries the explicit raw-plane-1 negative qualify path"
+    ],
+    "worker_session_id": "20260911_111534_e30a37"
+  }
+}
