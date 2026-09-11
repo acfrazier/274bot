@@ -26686,20 +26686,28 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
+      "status_detail": "Current native942 attempt failed; original artifacts retained. Brimhaven route audit141 identifies a frozen-script defect; source-specific dim decision pending implementation. ArdyCakes production preparation139 pending; guard-response failure remains separate.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-ardy-cakes-100adccc-4cc6cc27.json",
         "docs/compat/evidence/catalog-harness/runes-ardy-4cc6cc27.json",
         "docs/compat/evidence/catalog-harness/live/r274-ardy-cakes-100adccc-91289e9b.json",
         "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json",
-        "docs/compat/evidence/catalog-harness/live/r274-ardy-cakes-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r274-ardy-cakes-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r274-ardy-cakes-100adccc-native942.json"
       ],
       "current_requalification_21446414": [
         {
           "case": "ardy_cakes",
           "outcome": "FAIL",
           "receipt": "docs/compat/evidence/catalog-harness/live/r274-ardy-cakes-100adccc-21446414.json"
+        }
+      ],
+      "current_requalification_native942": [
+        {
+          "case": "ardy_cakes",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-ardy-cakes-100adccc-native942.json"
         }
       ]
     },
@@ -27066,20 +27074,28 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Current214 core attempt failed; original evidence retained and native134/137 or fixture136 follow-up required. No current acceptance.",
+      "status_detail": "Current native942 attempt failed; original artifacts retained. Brimhaven route audit141 identifies a frozen-script defect; source-specific dim decision pending implementation. ArdyCakes production preparation139 pending; guard-response failure remains separate.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-ardy-cakes-100adccc-4cc6cc27.json",
         "docs/compat/evidence/catalog-harness/runes-ardy-4cc6cc27.json",
         "docs/compat/evidence/catalog-harness/live/r289-ardy-cakes-100adccc-91289e9b.json",
         "docs/compat/evidence/catalog-harness/station-ardy-91289e9b.json",
-        "docs/compat/evidence/catalog-harness/live/r289-ardy-cakes-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r289-ardy-cakes-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r289-ardy-cakes-100adccc-native942.json"
       ],
       "current_requalification_21446414": [
         {
           "case": "ardy_cakes",
           "outcome": "FAIL",
           "receipt": "docs/compat/evidence/catalog-harness/live/r289-ardy-cakes-100adccc-21446414.json"
+        }
+      ],
+      "current_requalification_native942": [
+        {
+          "case": "ardy_cakes",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-ardy-cakes-100adccc-native942.json"
         }
       ]
     },
@@ -31019,7 +31035,7 @@
       "source_version_difference": "baseline modes are selected by product; direct Bank.openBooth/openNearest; leashRadius setting present",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
+      "status_detail": "Exact native942 core/options rerun passed after reviewed native observation projection134. Earlier option evidence is retained; full supported branches and final integrated frontend/platform acceptance remain separate.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-100adccc-6c6bb2d5.json",
@@ -31032,7 +31048,9 @@
         "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-100adccc-f6b9ec4b.log",
         "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-headless-100adccc-21446414.json",
-        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-shafts-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-shafts-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-headless-100adccc-native942.json",
+        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-shafts-100adccc-native942.json"
       ],
       "current_requalification_21446414": [
         {
@@ -31044,6 +31062,18 @@
           "case": "bank_fletcher_shafts",
           "outcome": "PASS",
           "receipt": "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-shafts-100adccc-21446414.json"
+        }
+      ],
+      "current_requalification_native942": [
+        {
+          "case": "bank_fletcher_headless",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-headless-100adccc-native942.json"
+        },
+        {
+          "case": "bank_fletcher_shafts",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-shafts-100adccc-native942.json"
         }
       ]
     },
@@ -31381,7 +31411,7 @@
       "source_version_difference": "baseline modes are selected by product; direct Bank.openBooth/openNearest; leashRadius setting present",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
+      "status_detail": "Exact native942 core/options rerun passed after reviewed native observation projection134. Earlier option evidence is retained; full supported branches and final integrated frontend/platform acceptance remain separate.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-100adccc-6c6bb2d5.json",
@@ -31394,7 +31424,9 @@
         "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-100adccc-f6b9ec4b.log",
         "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-headless-100adccc-21446414.json",
-        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-shafts-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-shafts-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-headless-100adccc-native942.json",
+        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-shafts-100adccc-native942.json"
       ],
       "current_requalification_21446414": [
         {
@@ -31406,6 +31438,18 @@
           "case": "bank_fletcher_shafts",
           "outcome": "PASS",
           "receipt": "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-shafts-100adccc-21446414.json"
+        }
+      ],
+      "current_requalification_native942": [
+        {
+          "case": "bank_fletcher_headless",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-headless-100adccc-native942.json"
+        },
+        {
+          "case": "bank_fletcher_shafts",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-shafts-100adccc-native942.json"
         }
       ]
     },
@@ -33759,7 +33803,7 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
+      "status_detail": "Exact native942 core/options rerun passed after reviewed native observation projection134. Earlier option evidence is retained; full supported branches and final integrated frontend/platform acceptance remain separate.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-bone-burier-100adccc-bc499cbc.json",
@@ -33768,13 +33812,21 @@
         "docs/compat/evidence/catalog-harness/live/r274-bone-burier-100adccc-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r274-bone-burier-100adccc-f6b9ec4b.log",
         "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
-        "docs/compat/evidence/catalog-harness/live/r274-bone-burier-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r274-bone-burier-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r274-bone-burier-100adccc-native942.json"
       ],
       "current_requalification_21446414": [
         {
           "case": "bone_burier",
           "outcome": "PASS",
           "receipt": "docs/compat/evidence/catalog-harness/live/r274-bone-burier-100adccc-21446414.json"
+        }
+      ],
+      "current_requalification_native942": [
+        {
+          "case": "bone_burier",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-bone-burier-100adccc-native942.json"
         }
       ]
     },
@@ -33932,7 +33984,7 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
+      "status_detail": "Exact native942 core/options rerun passed after reviewed native observation projection134. Earlier option evidence is retained; full supported branches and final integrated frontend/platform acceptance remain separate.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-bone-burier-100adccc-bc499cbc.json",
@@ -33941,13 +33993,21 @@
         "docs/compat/evidence/catalog-harness/live/r289-bone-burier-100adccc-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r289-bone-burier-100adccc-f6b9ec4b.log",
         "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
-        "docs/compat/evidence/catalog-harness/live/r289-bone-burier-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r289-bone-burier-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r289-bone-burier-100adccc-native942.json"
       ],
       "current_requalification_21446414": [
         {
           "case": "bone_burier",
           "outcome": "PASS",
           "receipt": "docs/compat/evidence/catalog-harness/live/r289-bone-burier-100adccc-21446414.json"
+        }
+      ],
+      "current_requalification_native942": [
+        {
+          "case": "bone_burier",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-bone-burier-100adccc-native942.json"
         }
       ]
     },
@@ -35246,7 +35306,7 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
+      "status_detail": "Exact native942 core/options rerun passed after reviewed native observation projection134. Earlier option evidence is retained; full supported branches and final integrated frontend/platform acceptance remain separate.",
       "fixture_id": "local-274",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r274-alcher-100adccc-c933f37c.json",
@@ -35270,13 +35330,21 @@
         "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-100adccc-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-100adccc-f6b9ec4b.log",
         "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
-        "docs/compat/evidence/catalog-harness/live/r274-alcher-defaults-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-defaults-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-defaults-100adccc-native942.json"
       ],
       "current_requalification_21446414": [
         {
           "case": "alcher_defaults",
           "outcome": "PASS",
           "receipt": "docs/compat/evidence/catalog-harness/live/r274-alcher-defaults-100adccc-21446414.json"
+        }
+      ],
+      "current_requalification_native942": [
+        {
+          "case": "alcher_defaults",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-alcher-defaults-100adccc-native942.json"
         }
       ]
     },
@@ -35533,7 +35601,7 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
+      "status_detail": "Exact native942 core/options rerun passed after reviewed native observation projection134. Earlier option evidence is retained; full supported branches and final integrated frontend/platform acceptance remain separate.",
       "fixture_id": "local-289",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r289-alcher-100adccc-c933f37c.json",
@@ -35557,13 +35625,21 @@
         "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-100adccc-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-100adccc-f6b9ec4b.log",
         "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
-        "docs/compat/evidence/catalog-harness/live/r289-alcher-defaults-100adccc-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-defaults-100adccc-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-defaults-100adccc-native942.json"
       ],
       "current_requalification_21446414": [
         {
           "case": "alcher_defaults",
           "outcome": "PASS",
           "receipt": "docs/compat/evidence/catalog-harness/live/r289-alcher-defaults-100adccc-21446414.json"
+        }
+      ],
+      "current_requalification_native942": [
+        {
+          "case": "alcher_defaults",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-alcher-defaults-100adccc-native942.json"
         }
       ]
     },
@@ -39209,14 +39285,19 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Exact15e779cad Wildy FAIL: FAIL: catalog_boundary_live: scenario failed: step 16 (watch the selected log destination): arrived_near(2994,3945,1,3) not seen within 150 ticks. Original failure retained; log-plane fixture correction135 pending; no full acceptance.",
+      "status_detail": "Exact8c Wildy core PASS. Three cells complete all obstacles and further pipe;289 old died after rope fall with HP10. Reviewed player-plane fix is correct; acknowledged HP40 preparation139 and final integrated/platform/other options remain pending. Original failure retained.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-wildy-agility-100adccc-cd49e147.json",
         "docs/compat/evidence/catalog-harness/agility-cd49e147.json",
         "docs/compat/evidence/catalog-harness/live/r274-wildy-agility-100adccc-wildy15e.json",
-        "docs/compat/evidence/catalog-harness/agility-wildy15e.json"
-      ]
+        "docs/compat/evidence/catalog-harness/agility-wildy15e.json",
+        "docs/compat/evidence/catalog-harness/live/r274-wildy-agility-100adccc-wildy8c.json"
+      ],
+      "current_requalification_wildy8c": {
+        "outcome": "PASS",
+        "receipt": "docs/compat/evidence/catalog-harness/live/r274-wildy-agility-100adccc-wildy8c.json"
+      }
     },
     {
       "display_name": "WildyAgility",
@@ -39652,14 +39733,19 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Exact15e779cad Wildy FAIL: FAIL: catalog_boundary_live: scenario failed: step 16 (watch the selected log destination): arrived_near(2994,3945,1,3) not seen within 150 ticks. Original failure retained; log-plane fixture correction135 pending; no full acceptance.",
+      "status_detail": "Exact8c Wildy core FAIL. Three cells complete all obstacles and further pipe;289 old died after rope fall with HP10. Reviewed player-plane fix is correct; acknowledged HP40 preparation139 and final integrated/platform/other options remain pending. Original failure retained.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-wildy-agility-100adccc-cd49e147.json",
         "docs/compat/evidence/catalog-harness/agility-cd49e147.json",
         "docs/compat/evidence/catalog-harness/live/r289-wildy-agility-100adccc-wildy15e.json",
-        "docs/compat/evidence/catalog-harness/agility-wildy15e.json"
-      ]
+        "docs/compat/evidence/catalog-harness/agility-wildy15e.json",
+        "docs/compat/evidence/catalog-harness/live/r289-wildy-agility-100adccc-wildy8c.json"
+      ],
+      "current_requalification_wildy8c": {
+        "outcome": "FAIL",
+        "receipt": "docs/compat/evidence/catalog-harness/live/r289-wildy-agility-100adccc-wildy8c.json"
+      }
     },
     {
       "display_name": "BrimhavenAgility",
@@ -40090,11 +40176,19 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: scenario failed: step 11 (watch obstacle XP from a real hop before the first Tag): stat_xp_gain(16)>=1 not seen within 150 ticks. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
+      "status_detail": "Current native942 attempt failed; original artifacts retained. Brimhaven route audit141 identifies a frozen-script defect; source-specific dim decision pending implementation. ArdyCakes production preparation139 pending; guard-response failure remains separate.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-brimhaven-agility-100adccc-cd49e147.json",
-        "docs/compat/evidence/catalog-harness/agility-cd49e147.json"
+        "docs/compat/evidence/catalog-harness/agility-cd49e147.json",
+        "docs/compat/evidence/catalog-harness/live/r274-brimhaven-agility-100adccc-native942.json"
+      ],
+      "current_requalification_native942": [
+        {
+          "case": "brimhaven_agility",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-brimhaven-agility-100adccc-native942.json"
+        }
       ]
     },
     {
@@ -40526,11 +40620,19 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Exact cd49 full-core FAIL: FAIL: catalog_boundary_live: scenario failed: step 11 (watch obstacle XP from a real hop before the first Tag): stat_xp_gain(16)>=1 not seen within 150 ticks. Original failure retained; native binding128 / Brimhaven actor audit129 pending.",
+      "status_detail": "Current native942 attempt failed; original artifacts retained. Brimhaven route audit141 identifies a frozen-script defect; source-specific dim decision pending implementation. ArdyCakes production preparation139 pending; guard-response failure remains separate.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-brimhaven-agility-100adccc-cd49e147.json",
-        "docs/compat/evidence/catalog-harness/agility-cd49e147.json"
+        "docs/compat/evidence/catalog-harness/agility-cd49e147.json",
+        "docs/compat/evidence/catalog-harness/live/r289-brimhaven-agility-100adccc-native942.json"
+      ],
+      "current_requalification_native942": [
+        {
+          "case": "brimhaven_agility",
+          "outcome": "FAIL",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-brimhaven-agility-100adccc-native942.json"
+        }
       ]
     },
     {
@@ -66123,7 +66225,7 @@
       "source_version_difference": "adds mode=auto|cut|string|cut+string, uses Banking.open({stand,boothName,boothOp}), removes leashRadius, and adds combined cut-then-string behavior",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
+      "status_detail": "Exact native942 core/options rerun passed after reviewed native observation projection134. Earlier option evidence is retained; full supported branches and final integrated frontend/platform acceptance remain separate.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-8e7d965b-6c6bb2d5.json",
@@ -66138,7 +66240,9 @@
         "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-8e7d965b-f6b9ec4b.log",
         "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-headless-8e7d965b-21446414.json",
-        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-shafts-8e7d965b-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-shafts-8e7d965b-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-headless-8e7d965b-native942.json",
+        "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-shafts-8e7d965b-native942.json"
       ],
       "current_requalification_21446414": [
         {
@@ -66150,6 +66254,18 @@
           "case": "bank_fletcher_shafts",
           "outcome": "PASS",
           "receipt": "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-shafts-8e7d965b-21446414.json"
+        }
+      ],
+      "current_requalification_native942": [
+        {
+          "case": "bank_fletcher_headless",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-headless-8e7d965b-native942.json"
+        },
+        {
+          "case": "bank_fletcher_shafts",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-bank-fletcher-shafts-8e7d965b-native942.json"
         }
       ]
     },
@@ -66501,7 +66617,7 @@
       "source_version_difference": "adds mode=auto|cut|string|cut+string, uses Banking.open({stand,boothName,boothOp}), removes leashRadius, and adds combined cut-then-string behavior",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
+      "status_detail": "Exact native942 core/options rerun passed after reviewed native observation projection134. Earlier option evidence is retained; full supported branches and final integrated frontend/platform acceptance remain separate.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-8e7d965b-6c6bb2d5.json",
@@ -66516,7 +66632,9 @@
         "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-8e7d965b-f6b9ec4b.log",
         "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-headless-8e7d965b-21446414.json",
-        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-shafts-8e7d965b-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-shafts-8e7d965b-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-headless-8e7d965b-native942.json",
+        "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-shafts-8e7d965b-native942.json"
       ],
       "current_requalification_21446414": [
         {
@@ -66528,6 +66646,18 @@
           "case": "bank_fletcher_shafts",
           "outcome": "PASS",
           "receipt": "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-shafts-8e7d965b-21446414.json"
+        }
+      ],
+      "current_requalification_native942": [
+        {
+          "case": "bank_fletcher_headless",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-headless-8e7d965b-native942.json"
+        },
+        {
+          "case": "bank_fletcher_shafts",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-bank-fletcher-shafts-8e7d965b-native942.json"
         }
       ]
     },
@@ -68853,7 +68983,7 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
+      "status_detail": "Exact native942 core/options rerun passed after reviewed native observation projection134. Earlier option evidence is retained; full supported branches and final integrated frontend/platform acceptance remain separate.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-bone-burier-8e7d965b-bc499cbc.json",
@@ -68862,13 +68992,21 @@
         "docs/compat/evidence/catalog-harness/live/r274-bone-burier-8e7d965b-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r274-bone-burier-8e7d965b-f6b9ec4b.log",
         "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
-        "docs/compat/evidence/catalog-harness/live/r274-bone-burier-8e7d965b-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r274-bone-burier-8e7d965b-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r274-bone-burier-8e7d965b-native942.json"
       ],
       "current_requalification_21446414": [
         {
           "case": "bone_burier",
           "outcome": "PASS",
           "receipt": "docs/compat/evidence/catalog-harness/live/r274-bone-burier-8e7d965b-21446414.json"
+        }
+      ],
+      "current_requalification_native942": [
+        {
+          "case": "bone_burier",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-bone-burier-8e7d965b-native942.json"
         }
       ]
     },
@@ -69026,7 +69164,7 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
+      "status_detail": "Exact native942 core/options rerun passed after reviewed native observation projection134. Earlier option evidence is retained; full supported branches and final integrated frontend/platform acceptance remain separate.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-bone-burier-8e7d965b-bc499cbc.json",
@@ -69035,13 +69173,21 @@
         "docs/compat/evidence/catalog-harness/live/r289-bone-burier-8e7d965b-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r289-bone-burier-8e7d965b-f6b9ec4b.log",
         "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
-        "docs/compat/evidence/catalog-harness/live/r289-bone-burier-8e7d965b-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r289-bone-burier-8e7d965b-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r289-bone-burier-8e7d965b-native942.json"
       ],
       "current_requalification_21446414": [
         {
           "case": "bone_burier",
           "outcome": "PASS",
           "receipt": "docs/compat/evidence/catalog-harness/live/r289-bone-burier-8e7d965b-21446414.json"
+        }
+      ],
+      "current_requalification_native942": [
+        {
+          "case": "bone_burier",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-bone-burier-8e7d965b-native942.json"
         }
       ]
     },
@@ -70352,7 +70498,7 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
+      "status_detail": "Exact native942 core/options rerun passed after reviewed native observation projection134. Earlier option evidence is retained; full supported branches and final integrated frontend/platform acceptance remain separate.",
       "fixture_id": "local-274",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r274-alcher-8e7d965b-c933f37c.json",
@@ -70376,13 +70522,21 @@
         "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-8e7d965b-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r274-alcher-ordered-8e7d965b-f6b9ec4b.log",
         "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
-        "docs/compat/evidence/catalog-harness/live/r274-alcher-defaults-8e7d965b-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-defaults-8e7d965b-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r274-alcher-defaults-8e7d965b-native942.json"
       ],
       "current_requalification_21446414": [
         {
           "case": "alcher_defaults",
           "outcome": "PASS",
           "receipt": "docs/compat/evidence/catalog-harness/live/r274-alcher-defaults-8e7d965b-21446414.json"
+        }
+      ],
+      "current_requalification_native942": [
+        {
+          "case": "alcher_defaults",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r274-alcher-defaults-8e7d965b-native942.json"
         }
       ]
     },
@@ -70639,7 +70793,7 @@
       "source_version_difference": "identical card source in both frozen catalogs",
       "known_gaps": [],
       "status": "PARTIAL",
-      "status_detail": "Isolated f6b9ec4b requalification passes this catalog/revision core and linked named options. Earlier shared-target observations remain historical diagnostics. Full supported branches, integrated source and frontend acceptance remain separate; existing option evidence is retained.",
+      "status_detail": "Exact native942 core/options rerun passed after reviewed native observation projection134. Earlier option evidence is retained; full supported branches and final integrated frontend/platform acceptance remain separate.",
       "fixture_id": "local-289",
       "proof_references": [
         "docs/compat/evidence/catalog-harness/live/r289-alcher-8e7d965b-c933f37c.json",
@@ -70663,13 +70817,21 @@
         "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-8e7d965b-f6b9ec4b.json",
         "docs/compat/evidence/catalog-harness/live/r289-alcher-ordered-8e7d965b-f6b9ec4b.log",
         "docs/compat/evidence/build-isolation/core-results-f6b9ec4b.json",
-        "docs/compat/evidence/catalog-harness/live/r289-alcher-defaults-8e7d965b-21446414.json"
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-defaults-8e7d965b-21446414.json",
+        "docs/compat/evidence/catalog-harness/live/r289-alcher-defaults-8e7d965b-native942.json"
       ],
       "current_requalification_21446414": [
         {
           "case": "alcher_defaults",
           "outcome": "PASS",
           "receipt": "docs/compat/evidence/catalog-harness/live/r289-alcher-defaults-8e7d965b-21446414.json"
+        }
+      ],
+      "current_requalification_native942": [
+        {
+          "case": "alcher_defaults",
+          "outcome": "PASS",
+          "receipt": "docs/compat/evidence/catalog-harness/live/r289-alcher-defaults-8e7d965b-native942.json"
         }
       ]
     },
@@ -74266,14 +74428,19 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Exact15e779cad Wildy FAIL: FAIL: catalog_boundary_live: scenario failed: step 7 (watch ridge Agility XP): stat_xp_gain(16)>=15 not seen within 150 ticks. Original failure retained; log-plane fixture correction135 pending; no full acceptance.",
+      "status_detail": "Exact8c Wildy core PASS. Three cells complete all obstacles and further pipe;289 old died after rope fall with HP10. Reviewed player-plane fix is correct; acknowledged HP40 preparation139 and final integrated/platform/other options remain pending. Original failure retained.",
       "fixture_id": "local-274",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r274-wildy-agility-8e7d965b-cd49e147.json",
         "docs/compat/evidence/catalog-harness/agility-cd49e147.json",
         "docs/compat/evidence/catalog-harness/live/r274-wildy-agility-8e7d965b-wildy15e.json",
-        "docs/compat/evidence/catalog-harness/agility-wildy15e.json"
-      ]
+        "docs/compat/evidence/catalog-harness/agility-wildy15e.json",
+        "docs/compat/evidence/catalog-harness/live/r274-wildy-agility-8e7d965b-wildy8c.json"
+      ],
+      "current_requalification_wildy8c": {
+        "outcome": "PASS",
+        "receipt": "docs/compat/evidence/catalog-harness/live/r274-wildy-agility-8e7d965b-wildy8c.json"
+      }
     },
     {
       "display_name": "WildyAgility",
@@ -74709,14 +74876,19 @@
         }
       ],
       "status": "PARTIAL",
-      "status_detail": "Exact15e779cad Wildy FAIL: FAIL: catalog_boundary_live: scenario failed: step 16 (watch the selected log destination): arrived_near(2994,3945,1,3) not seen within 150 ticks. Original failure retained; log-plane fixture correction135 pending; no full acceptance.",
+      "status_detail": "Exact8c Wildy core PASS. Three cells complete all obstacles and further pipe;289 old died after rope fall with HP10. Reviewed player-plane fix is correct; acknowledged HP40 preparation139 and final integrated/platform/other options remain pending. Original failure retained.",
       "fixture_id": "local-289",
       "proof_refs": [
         "docs/compat/evidence/catalog-harness/live/r289-wildy-agility-8e7d965b-cd49e147.json",
         "docs/compat/evidence/catalog-harness/agility-cd49e147.json",
         "docs/compat/evidence/catalog-harness/live/r289-wildy-agility-8e7d965b-wildy15e.json",
-        "docs/compat/evidence/catalog-harness/agility-wildy15e.json"
-      ]
+        "docs/compat/evidence/catalog-harness/agility-wildy15e.json",
+        "docs/compat/evidence/catalog-harness/live/r289-wildy-agility-8e7d965b-wildy8c.json"
+      ],
+      "current_requalification_wildy8c": {
+        "outcome": "PASS",
+        "receipt": "docs/compat/evidence/catalog-harness/live/r289-wildy-agility-8e7d965b-wildy8c.json"
+      }
     },
     {
       "display_name": "BrimhavenAgility",

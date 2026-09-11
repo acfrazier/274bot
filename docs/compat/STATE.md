@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 15:08 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 15:27 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -28,15 +28,15 @@ primary and active campaign worktrees remain. See10-worktree-cleanup.md.
 Native hint117, Agility118 R2, preparation120, native sequencing123,
 retaliate128 and TUI130 have completed verified reviews. Exact21446414 batch
 is complete:19 raw PASS and19 FAIL, with18 newer-catalog cells held after
-older-catalog failure. Four additional15e Wildy FAILs remain retained. The392-row
+older-catalog failure. Four additional15e Wildy FAILs remain retained. The416-row
 ledger is append-only. Current combat PASSs
 are diagnostic pending corrected observer136; do not promote them as final
 acceptance. Bone/default Alcher/shaft/headless fletching cycles passed across
 four cells with real work. ArdyCakes214 fails after isolate termination.
 
 Fixture lane: resource125 reviewed (Grok4.5 run1361); root resource batch on exact2d589c7ba completed1 PASS/10 FAIL; nine
-newer-catalog cells remain held after old-catalog failure. Trained Brimhaven131 reviewed (verified Grok4.5 run1364) -> active Wildy plane135
--> combat observer/Coal bounded preparation136 -> mage132 -> resource
+newer-catalog cells remain held after old-catalog failure. Trained Brimhaven131 reviewed (verified Grok4.5 run1364) -> reviewed Wildy plane135 (verified Grok4.5 run1369)
+-> active combat observer/Coal bounded preparation136 -> mage132 -> resource
 start preparation139 -> Mule bootstrap127.
 Native lane: observation projection134 reviewed (verified Grok4.5 run1365) after audit133/retaliate128 ->
 quest status transport137 -> bounded reachability140 -> teleport -> shop -> Make-X -> fire -> trade126.
@@ -44,8 +44,15 @@ Existing parent gates remain. Independent bounded reachability audit138 complete
 run1363): Flax requests maxSteps400 but shim uses unrestricted flood bits.
 Rust flood-metadata mapping140 will honor budgets without JS BFS, preserve
 valid adjacency, and prevent entity-row budget bypass. No live fix claimed.
-Exact942 root LIVE began15:07 after both verified reviews, rechecking
-Brimhaven, ArdyCakes and four bank-dependent cases on both revisions/catalogs.
+Exact942 LIVE completed16 bank-dependent PASSs and4 Brimhaven/Ardy FAILs.
+Audit141 verified Grok4.6 identifies a frozen Brimhaven route defect; root
+will dim only the audited card/helper hashes after137 releases load metadata.
+Original45-card/180-row inventory remains. Ardy139 includes bounded6-slot
+production preparation; the274 caught/flee failure is not fixed by ballast.
+Wildy8c LIVE completed3 PASS/1 FAIL after verified review1369. Both274
+catalogs and289newer finish core;289old died after ropefall atHP10.
+Preparation139 additionally acknowledgesHP40, preservingAgility52/food/
+hostility/clocks. No until-lucky rerun. Root has no LIVE processes left.
 No new main publication beyond76b2016b7 yet; stage2 needs native correction
 and reviewed/live-qualified scope.
 
