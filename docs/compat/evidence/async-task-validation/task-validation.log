@@ -1,0 +1,14 @@
+   Compiling vault v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.check-t_620a63ab-final-e05-aef/crates/vault)
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.check-t_620a63ab-final-e05-aef/crates/api)
+   Compiling script v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.check-t_620a63ab-final-e05-aef/crates/script)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 44.70s
+     Running tests/task_validation.rs (target-t_620a63ab/debug/deps/task_validation-ec15b0a0f8629a9c)
+
+running 5 tests
+test task_selection_waits_for_pending_validation ... ok
+test async_false_validation_does_not_execute_or_starve_later_task ... ok
+test pause_freezes_pending_validation_until_resume ... ok
+test validation_rejection_is_surfaced_without_execution ... ok
+test stop_discards_pending_validation_without_gameplay_dispatch ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
