@@ -1,0 +1,11 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.18s
+     Running tests/resource_tool_facts.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/resource-native-tool-facts-t_afe0a5a1-target/debug/deps/resource_tool_facts-c7b1112defdcfb46)
+
+running 4 tests
+test best_tool_callback_is_exclusive_and_ordered ... ok
+test can_wield_is_attack_not_held_and_unknown_is_false ... ok
+test posted_axes_are_best_first_with_real_ids_including_black ... ok
+test preload_is_void_noop_and_absent_facts_fail_closed ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+

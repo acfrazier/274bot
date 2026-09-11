@@ -47,7 +47,7 @@ export const Traversal = proxy('Traversal', {
         }, opts.timeoutMs ?? 60_000);
     },
     preload() {
-        throw notImpl('Traversal.preload');
+        // NavWorld already binds at template/Play construction.
     },
     remaining() {
         throw notImpl('Traversal.remaining');

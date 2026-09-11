@@ -644,6 +644,7 @@ pub(crate) fn content_json(
             "flee": {"x": BAKER_STALL.flee.x, "z": BAKER_STALL.flee.z, "level": BAKER_STALL.flee.level},
             "cake_items": CAKE_ITEM_NAMES,
         },
+        "gather_tools": api::gather_tools::content_json_value(),
         "spell_db": spell_db,
         "staff_runes": staff_runes,
         "autocast": game_data.and_then(|data| {

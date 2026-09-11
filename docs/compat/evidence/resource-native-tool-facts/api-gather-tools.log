@@ -1,0 +1,172 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling libc v0.2.189
+   Compiling cfg-if v1.0.4
+   Compiling bitflags v2.13.1
+   Compiling autocfg v1.5.1
+   Compiling cfg_aliases v0.2.2
+   Compiling libm v0.2.16
+   Compiling zerocopy v0.8.56
+   Compiling objc2 v0.6.4
+   Compiling objc2-encode v4.1.0
+   Compiling version_check v0.9.5
+   Compiling once_cell v1.21.4
+   Compiling log v0.4.34
+   Compiling thiserror v2.0.20
+   Compiling hashbrown v0.17.1
+   Compiling naga v29.0.4
+   Compiling parking_lot_core v0.9.12
+   Compiling foldhash v0.2.0
+   Compiling equivalent v1.0.2
+   Compiling unicode-width v0.2.2
+   Compiling bit-vec v0.9.1
+   Compiling generic-array v0.14.7
+   Compiling typenum v1.20.1
+   Compiling num-traits v0.2.19
+   Compiling hashbrown v0.16.1
+   Compiling bit-set v0.9.1
+   Compiling codespan-reporting v0.13.1
+   Compiling indexmap v2.14.0
+   Compiling raw-window-handle v0.6.2
+   Compiling scopeguard v1.2.0
+   Compiling arrayvec v0.7.8
+   Compiling smallvec v1.15.2
+   Compiling rustc-hash v1.1.0
+   Compiling hexf-parse v0.2.1
+   Compiling lock_api v0.4.14
+   Compiling wgpu-hal v29.0.4
+   Compiling rustix v1.1.4
+   Compiling find-msvc-tools v0.1.11
+   Compiling core-foundation-sys v0.8.7
+   Compiling getrandom v0.4.3
+   Compiling shlex v2.0.1
+   Compiling cc v1.4.4
+   Compiling pkg-config v0.3.34
+   Compiling profiling v1.0.18
+   Compiling wgpu-core v29.0.4
+   Compiling litrs v1.0.0
+   Compiling objc2-core-foundation v0.3.2
+   Compiling block2 v0.6.2
+   Compiling syn v2.0.119
+   Compiling syn v3.0.3
+   Compiling native-tls v0.2.18
+   Compiling itoa v1.0.18
+   Compiling thiserror v1.0.69
+   Compiling fastrand v2.5.0
+   Compiling httparse v1.10.1
+   Compiling crc32fast v1.5.0
+   Compiling document-features v0.2.12
+   Compiling wgpu v29.0.4
+   Compiling adler2 v2.0.1
+   Compiling pxfm v0.1.30
+   Compiling getrandom v0.2.17
+   Compiling errno v0.3.14
+   Compiling security-framework-sys v2.17.0
+   Compiling bzip2-sys v0.1.13+1.0.8
+   Compiling cpufeatures v0.2.17
+   Compiling core-foundation v0.10.1
+   Compiling simd-adler32 v0.3.10
+   Compiling rand_core v0.6.4
+   Compiling objc2-foundation v0.3.2
+   Compiling zune-core v0.5.3
+   Compiling parking_lot v0.12.5
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling serde v1.0.219
+   Compiling bytes v1.12.1
+   Compiling miniz_oxide v0.8.9
+   Compiling digest v0.10.7
+   Compiling zune-jpeg v0.5.15
+   Compiling security-framework v3.7.0
+   Compiling sha1 v0.10.7
+   Compiling utf-8 v0.7.6
+   Compiling num-integer v0.1.47
+   Compiling serde_json v1.0.140
+   Compiling data-encoding v2.11.1
+   Compiling byteorder v1.5.0
+   Compiling byteorder-lite v0.1.0
+   Compiling static_assertions v1.1.0
+   Compiling flate2 v1.1.9
+   Compiling http v1.5.0
+   Compiling num-bigint v0.4.8
+   Compiling sha2 v0.10.9
+   Compiling ryu v1.0.23
+   Compiling memchr v2.8.3
+   Compiling pollster v0.4.0
+   Compiling tempfile v3.27.0
+   Compiling bzip2 v0.4.4
+   Compiling bytemuck_derive v1.12.0
+   Compiling thiserror-impl v2.0.20
+   Compiling zerocopy-derive v0.8.56
+   Compiling thiserror-impl v1.0.69
+   Compiling serde_derive v1.0.219
+   Compiling bytemuck v1.25.2
+   Compiling moxcms v0.8.1
+   Compiling objc2-metal v0.3.2
+   Compiling wgpu-types v29.0.4
+   Compiling objc2-quartz-core v0.3.2
+   Compiling image v0.25.10
+   Compiling raw-window-metal v1.1.0
+   Compiling half v2.7.1
+   Compiling ppv-lite86 v0.2.21
+   Compiling rand_chacha v0.3.1
+   Compiling rand v0.8.5
+   Compiling tungstenite v0.24.0
+   Compiling wgpu-naga-bridge v29.0.4
+   Compiling wgpu-core-deps-apple v29.0.4
+   Compiling client v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/resource-native-tool-facts-t_afe0a5a1/vendor/fr-client-rust/crates/client)
+   Compiling api v0.1.0 (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/resource-native-tool-facts-t_afe0a5a1/crates/api)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 49.24s
+     Running unittests src/lib.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/resource-native-tool-facts-t_afe0a5a1-target/debug/deps/api-386f1453e56ad78b)
+
+running 4 tests
+test gather_tools::tests::best_axe_has_no_woodcutting_gate_and_keeps_black ... ok
+test gather_tools::tests::best_pickaxe_uses_mining_level_and_available_only ... ok
+test gather_tools::tests::can_wield_is_attack_gate_and_unknown_is_unavailable ... ok
+test gather_tools::tests::selected_274_289_ids_names_and_wearpos_agree ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.08s
+
+     Running tests/game_data.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/resource-native-tool-facts-t_afe0a5a1-target/debug/deps/game_data-60dd37ca505f0b88)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+     Running tests/interact.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/resource-native-tool-facts-t_afe0a5a1-target/debug/deps/interact-cb4c4e0d875ba624)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 65 filtered out; finished in 0.00s
+
+     Running tests/obj_names.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/resource-native-tool-facts-t_afe0a5a1-target/debug/deps/obj_names-3b26201c30ab2848)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+     Running tests/query.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/resource-native-tool-facts-t_afe0a5a1-target/debug/deps/query-405b71c57002440c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 25 filtered out; finished in 0.00s
+
+     Running tests/settle.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/resource-native-tool-facts-t_afe0a5a1-target/debug/deps/settle-04bc7ce73cb7140f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+     Running tests/snapshot.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/resource-native-tool-facts-t_afe0a5a1-target/debug/deps/snapshot-1efd032a72efef7c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 62 filtered out; finished in 0.00s
+
+     Running tests/static_loc_observation.rs (/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/resource-native-tool-facts-t_afe0a5a1-target/debug/deps/static_loc_observation-e40ebf7e217a0315)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
