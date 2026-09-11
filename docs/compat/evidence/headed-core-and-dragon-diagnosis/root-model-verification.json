@@ -1,0 +1,24 @@
+{
+  "task_id": "t_9f72114a",
+  "run_id": 1383,
+  "session_id": "20260911_132516_a8cd3b",
+  "commit": "ead4d5f5d57f4018b8857880c3daf8c2ddd1990b",
+  "actual_model_verified": true,
+  "model": "grok-4.6",
+  "usage": [
+    {
+      "session_id": "20260911_132516_a8cd3b",
+      "model": "grok-4.6",
+      "billing_provider": "xai-oauth",
+      "api_call_count": 34
+    },
+    {
+      "session_id": "20260911_132516_a8cd3b",
+      "model": "grok-4.6",
+      "billing_provider": "xai-oauth",
+      "api_call_count": 1
+    }
+  ],
+  "outcome": "audit-complete",
+  "not_live_or_implementation": true
+}

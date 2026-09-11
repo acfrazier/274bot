@@ -1,6 +1,6 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 17:00 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 17:28 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
@@ -37,13 +37,14 @@ four cells with real work. ArdyCakes214 fails after isolate termination.
 Fixture lane: resource125 reviewed (Grok4.5 run1361); root resource batch on exact2d589c7ba completed1 PASS/10 FAIL; nine
 newer-catalog cells remain held after old-catalog failure. Trained Brimhaven131 reviewed (verified Grok4.5 run1364) -> reviewed Wildy plane135 (verified Grok4.5 run1369)
 -> combat observer/Coal136 reviewed1372 -> mage132 reviewed1378 -> resource
-start preparation139 -> Mule bootstrap127.
+start preparation139 (active) -> Mule bootstrap127 -> option fixtures147-150.
 Native lane: observation projection134 reviewed (verified Grok4.5 run1365) after audit133/retaliate128 ->
-quest status transport137 reviewed1373 -> bounded reachability140 review1379 -> native NPC paint box144 -> teleport -> shop -> Make-X -> fire -> trade126.
+quest status transport137 reviewed1373 -> bounded reachability140 reviewed1379 -> active native NPC paint box144 -> teleport -> shop -> Make-X -> fire -> trade126.
 Existing parent gates remain. Independent bounded reachability audit138 completed (verified Grok4.6
 run1363): Flax requests maxSteps400 but shim uses unrestricted flood bits.
-Rust flood-metadata mapping140 will honor budgets without JS BFS, preserve
-valid adjacency, and prevent entity-row budget bypass. No live fix claimed.
+Rust flood-metadata mapping140 honors budgets without JS BFS, preserves
+valid adjacency, and prevents entity-row budget bypass. Exact324 FlaxAIO pick
+now passes all four revision/catalog cells after verified140 review.
 Exact942 LIVE completed16 bank-dependent PASSs and4 Brimhaven/Ardy FAILs.
 Audit141 verified Grok4.6 identifies a frozen Brimhaven route defect; root
 has applied the verified source-specific loader dim after137 handed off:
@@ -70,15 +71,24 @@ Fire missing reader.npcBox;Ardy both never reach selected Strength style.
 Fixture139 now active with Gnome/Herblore/ArdyCakes/Wildy plus Rock/Green/
 ArdyFighter foodTarget1 and trained Coal Mining60/Rune preparation. Original
 failures/clocks/predicates retained, no RNG forcing. Native144 t_c48f1d6a owns
-NPC projection and gates teleport. No LIVE currently.
+NPC projection and gates teleport. Exact324 batch completed4 Flax PASS/2
+mage pre-Start FAIL; two newer mage cells held. Ledger451. Rootdf2 fixes only
+two gear steps Repeat -> Perform, with105 scenario tests PASS. Exactdf2
+5111-file build completed four mage PASS and two Green FAIL after Start; ledger457. Both wrappers reaped. Green shield worn but rune scimitar remained held, no Strength gain; diagnosis151 pending.
+Original failures remain. Root owns those two send-kind lines,139 preserves them.
 Root frozen stage2 candidate324d7b594/clientaef passed workspace fmt, strict
 all-target Clippy, full script suite and49 catalog tests;5030 source files
-reverified.132 actualG4.5 run1378 approved;140review1379 pending. Fresh
-324 binaries build for gated mage/core qualification; not yet published.
+reverified.132 actualG4.5 run1378 approved (18 calls);140 actualG4.5 run1379
+approved (16 calls). Stage2 candidate ref codex/rs2b0t-stage2-candidate points
+todf2; base main76b2016b7. Whole-branch review146 t_482a30d9/run1382 has
+source review complete, approval withheld pending validation-ready.json and
+finished df2 cells. Main not yet advanced. No new worktree was made.
 Audit143 completed actualG4.6 run1376,34 API calls; its five extra cells are
-provisional leads, not accepted full remaining scope. Corrective145 t_a7f32d56
-requires accounting for later bank/escape branches and verifying existing
-Thiever fleet evidence. No final support acceptance.
+provisional leads, not accepted full remaining scope. Corrective145 t_a7f32d56 completed actualG4.6 run1377 (37 calls):18 extra
+scenarios in four serial fixture cards147-150 after Mule127. Their proposed
+seeds/settings must be checked during implementation. Existing exact-script
+Thiever N1/N32 proves Auto bank; no four redundant Thiever cells. Final
+integrated fleet/platform refresh and full campaign acceptance remain open.
 Audit142 completed with verified Grok4.6 run1371:274 is a native guard LOS
 catch with successful flee/return movement, no proven foreign defect. Keep
 ArdyCakes enabled and retain FAIL;139 pack preparation is separate.
@@ -938,3 +948,19 @@ performance claim is inferred from a raw process exit. Resource125 live starts
 retesting its already known missing capability. Source2d589 build4687 hashes
 verified; runtime source remains prior to134, so future seam requalification
 must follow its review. Main remains76b2016b7; no stage2 merge/push yet.
+
+## Headed qualification requirement (17:28 UTC)
+
+Operator requires all remaining live qualification to be visible headed so they can watch preparation and gameplay. No more headless cells are launched. Root ran exactdf2 native274 mage: scenario PASS and clean process; screenshot read shows Staff of fire, Fire Strike selection and active script. This is a headed scenario result, not an additional full CoreWitness pass. Native289 mage also completed scenario PASS and clean process; both screenshots read. The full CoreWitness is currently in host-play integration test; panel scenario does not enforce all of it. Audit151 t_9f72114a grok46/run1383 traces minimal sound observer reuse and the GreenDragon stall. Green repeat cells remain held. Stage2 validation-ready remains absent pending diagnosis.
+
+Root identified GreenDragon async Traced.validate vs synchronous TaskBot predicate check: Promise(false) selects ContinueDialog and starves later tasks. Bounded correction152 t_620a63ab queued with real isolate regression and same-card review. Audit151 independently checks. No dim; stage2 review stays pending. User first-cast hitch correlates with72-75ms terminal screenshot serialization in host observe; animation-loading causation remains unproven. See06aq.
+
+## BankSorter operator decision (17:49 UTC)
+
+Operator answered the sorting-policy question: keep BankSorter explicitly unavailable. Missing native bank sorting is an accepted scope boundary for this campaign; do not implement value/ID sorting or import the foreign category planner. Preserve original45-card inventory and honest sortBank refusal; no sorting LIVE claim or foreign-defect classification. Four catalog/revision rows now UNAVAILABLE_BY_OPERATOR_DECISION. This resolves the unanswered question in historical snapshots.
+
+## Stage2 final review (17:53 UTC)
+
+Required branchreview146 approved fixeddf2/aef incremental integration in29bed3b73. Actual Grok4.6 run1386/session20260911_134626_7ecd42 verified21 API calls. Four full mage and four Flax cores plus two supplemental headed watches are recorded; Green failures remain unqualified and TaskBot block is byte-identical to main76. Root composes docs onto the frozen stage2 candidate; later139/144/152/153 code stays excluded. Merge/push and fresh recursive GitHub build are next.
+
+New code lane:139 bbe1742cd in same-card review1387;144 a1434ae20 plus root-requested projection gate e05ecafb8 completing checks;152 await-validation3bf3644ad in same-card review queue. Shared headed witness153 t_8ae5a895 follows139/144+audit151, gates native37 and option147. Mule127 paired files may proceed after139. Audit154 t_8f13bdf1 covers remaining five noncombat core cards against37-40. Audit151 completed verifiedG4.6 run1383 (35 calls). Root reclaimed37.77GiB from four DONE/unopened Cargo caches only.
