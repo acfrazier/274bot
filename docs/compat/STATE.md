@@ -1,11 +1,34 @@
 # Compatibility campaign state
 
-Updated 2026-09-11 11:05 UTC. The full implementation plan remains authorized:
+Updated 2026-09-11 11:39 UTC. The full implementation plan remains authorized:
 `docs/superpowers/plans/2026-09-10-rs2b0t-multirevision-finish.md`.
 Campaign checkout: `/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision`.
 Host branch: `codex/rs2b0t-multirevision`; client: `codex/bothost-274-289`.
 Read `docs/execution.md` for dispatch/review rules. Reports below preserve dated
 results and failed cells; this state identifies current work.
+
+## Current follow-ups (11:39 UTC)
+
+- Report06x records station912 14PASS/9FAIL, native Mac/Windows steel,
+  Windows04d three builds/six check groups, and20 further failed cells.
+  Core ledger319 preserves all previous outcomes; matrix remains PARTIAL.
+- Root04d local loops completed. Both Air912 failed Paint.buttons; both
+  Duel04d failed reader.selfChat and no combat. Remaining resource/combat
+  failures are separated by exact phase in report06x and summary JSON.
+- Windows native04d verified screenshot and process PASS; two early probe
+  timeouts retained. Owned one-shot task removed. Windows headless Mule289
+  newer PASS independently verified: ordered full solo cycle,270RCXP.
+- Special36 c5749bbe2 approved actualGrok4.5 run1323. Paint113 then teleport,
+  shop, Make-X and fire remain serialized. Fighter109 owns scenario/catalog
+  fixtures. Mulepair114 t_aba60704 owns only paired fixtures. Agility110 and
+  paired111 designs finished actualGrok4.6. Combat helper112 still active.
+- Grok reset verified0%used at11:40, next resetSeptember18 07:40Eastern.
+  Special overnight heartbeat PAUSED through app tool; healthy workers
+  preserved. Ordinary campaign continuation helper115 t_031bbe1d follows
+  Paint113, then teleport to serialize load_isolate.rs.
+- Additional completed /tmp compiler caches22.53GiB removed11:10 with
+  DONE/lsof checks; receipt retained. Continue checking free disk/reusing
+  only exclusively owned completed caches. Root combat99 cache now root-owned.
 
 ## Disk capacity follow-up (2026-09-11 10:56 UTC)
 

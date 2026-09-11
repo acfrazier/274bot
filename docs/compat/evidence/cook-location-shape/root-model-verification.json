@@ -1,0 +1,66 @@
+{
+  "verified_at": "2026-09-11T11:29:13.635308+00:00",
+  "task": "t_16aac9ce",
+  "run": {
+    "id": 1319,
+    "profile": "reviewer",
+    "status": "done",
+    "outcome": "completed",
+    "started_at": 1789125620,
+    "ended_at": 1789125729,
+    "summary": "Reviewed and approved 81606759c for brief 107. Round-1 artifact cold read plus independent re-run on hash-matched export cook-location-shape-t_16aac9ce (host 04d7b1f48 + overlay, client 9d090ed): cook_location_shape 3/3, named_bank_locations 4/4, clippy -D warnings lib+test, rustfmt. Catherby maps to bank.tile/surface.stand from COOK_STANDS; Auto/unknown stay null; approach/loc/locName null; no LIVE.",
+    "error": null,
+    "metadata": {
+      "review_outcome": "approved",
+      "review_round": 1,
+      "lens": "artifact_cold_read_plus_independent_rerun",
+      "commit": "81606759cf9bda4e40529324abb66ddb5f7daa6f",
+      "source_commit": "04d7b1f48180ab9b93bbd6fec45a655df4385233",
+      "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+      "brief": "docs/compat/briefs/107-cook-location-shape.md",
+      "brief_sha256": "16f03763772edef7b25e45841c29e71d4e1c3042c79c1a462c317d5cc7020143",
+      "export": ".superpowers/review-exports/cook-location-shape-t_16aac9ce",
+      "cargo_target_dir": ".superpowers/review-exports/cook-location-shape-t_16aac9ce-target",
+      "overlay_sha256_matched": true,
+      "export_base_blobs_matched_source": true,
+      "reviewer_checks": [
+        "brief 107 AC mapped to bank.tile + surface.stand shape from COOK_STANDS Catherby (2809,3441,0)/(2817,3443,0)",
+        "approach/loc/locName/arriveRadius left null; verified false; stand not reused as loc",
+        "resolveCookLocation Auto/Custom/unknown null; no nearest invent",
+        "bank shape {name,tile} parity with BANK_LOCATIONS; no BANK_LOCATIONS/Catherby alias bleed",
+        "commit scoped to owned paths only; no mod.rs/API/nav/fixture/LIVE",
+        "exclusive export overlay hashes match workspace+handoff; content.rs/mod.rs/Cargo.lock/bank_locations match 04d7b1f48",
+        "independent cargo test cook_location_shape 3/3 on exclusive target",
+        "independent cargo test named_bank_locations 4/4",
+        "independent clippy -D warnings script --lib and --test cook_location_shape",
+        "rustfmt --check cook_location_shape.rs"
+      ],
+      "tests_passed": 7,
+      "live": false,
+      "limits_acknowledged": [
+        "not LIVE",
+        "Auto has no nearest-bank pairing",
+        "approach/loc/locName stay null",
+        "root owns cook_bot LIVE and 3.6G cache cleanup"
+      ],
+      "worker_session_id": "20260911_072021_7d8848"
+    },
+    "worker_pid": null,
+    "step_key": null
+  },
+  "actual_model": "grok-4.5",
+  "actual_api_calls": 10,
+  "api_lines": [
+    "2026-09-11 07:20:25,006 INFO [20260911_072021_7d8848] agent.conversation_loop: API call #1: model=grok-4.5 provider=xai-oauth in=23280 out=52 total=23332 latency=3.1s id=b77057a2-08c6-9587-81ed-086e1db1a160",
+    "2026-09-11 07:20:31,621 INFO [20260911_072021_7d8848] agent.conversation_loop: API call #2: model=grok-4.5 provider=xai-oauth in=27152 out=481 total=27633 latency=6.4s cache=23168/27152 (85%) id=b7c3a4e1-f2a3-98df-b71e-044964c04cfd",
+    "2026-09-11 07:20:38,972 INFO [20260911_072021_7d8848] agent.conversation_loop: API call #3: model=grok-4.5 provider=xai-oauth in=29710 out=487 total=30197 latency=6.9s cache=27136/29710 (91%) id=aceabd4d-6cbf-9840-b30f-01048395f36b",
+    "2026-09-11 07:20:52,210 INFO [20260911_072021_7d8848] agent.conversation_loop: API call #4: model=grok-4.5 provider=xai-oauth in=38184 out=912 total=39096 latency=13.0s cache=29696/38184 (78%) id=21a796a0-1ef4-9e52-98e0-c877e665610b",
+    "2026-09-11 07:21:03,078 INFO [20260911_072021_7d8848] agent.conversation_loop: API call #5: model=grok-4.5 provider=xai-oauth in=41588 out=643 total=42231 latency=10.6s cache=38144/41588 (92%) id=b38d309c-d044-9b0a-b7d3-e678db9e0dce",
+    "2026-09-11 07:21:09,836 INFO [20260911_072021_7d8848] agent.conversation_loop: API call #6: model=grok-4.5 provider=xai-oauth in=43923 out=417 total=44340 latency=6.3s cache=41472/43923 (94%) id=5cda5e8a-344d-9d0b-9f04-0b2933a37948",
+    "2026-09-11 07:21:27,729 INFO [20260911_072021_7d8848] agent.conversation_loop: API call #7: model=grok-4.5 provider=xai-oauth in=46183 out=822 total=47005 latency=17.6s cache=43904/46183 (95%) id=d78a56f9-dca6-9222-a0c3-e013595fd58d",
+    "2026-09-11 07:21:37,376 INFO [20260911_072021_7d8848] agent.conversation_loop: API call #8: model=grok-4.5 provider=xai-oauth in=47915 out=579 total=48494 latency=8.1s cache=46080/47915 (96%) id=6aff9ace-5f8d-9729-85da-5647dd74f6b7",
+    "2026-09-11 07:21:57,728 INFO [20260911_072021_7d8848] agent.conversation_loop: API call #9: model=grok-4.5 provider=xai-oauth in=50250 out=1020 total=51270 latency=16.8s cache=47872/50250 (95%) id=5ab020db-182a-97e1-8465-2998eb6cb732",
+    "2026-09-11 07:22:09,659 INFO [20260911_072021_7d8848] agent.conversation_loop: API call #10: model=grok-4.5 provider=xai-oauth in=53006 out=872 total=53878 latency=11.2s cache=50176/53006 (95%) id=a4b58f9a-a0c0-9eb7-86e5-095ac956424d"
+  ],
+  "scope": "Design/review only, no LIVE acceptance"
+}

@@ -1,0 +1,56 @@
+
+running 1 test
+{"phase":"identity","case":"air","revision":289,"profile":"local-289 · 127.0.0.1:44594 · revision 289","cache_id":"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack","nav_sha256":"131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924","catalog_commit":"100adccc037d9f6898080e1cad58fcfc43364775","catalog_identity":"pre-289 frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"NatureCrafter","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-100adccc037d9f6898080e1cad58fcfc43364775/src/bot/scripts/NatureCrafter/NatureCrafter.ts","source_sha256":"025ac395b25d64ef818cc0321478f0a2c84a051b79f99decbbfec5a9a2f0812a","compiled_sha256":"0b3e4f6062041de83568da1b970960ca7b9023bb7ae33d1974054d2951a4b2ff","siblings":[{"module":"/rs2b0t/bot/scripts/bot/NatureRunnerLogic.js","compiled_sha256":"be4333d9c5b6aa95fb21de8ca896bfa5c2701060d96ce6f256d5ecb41bf6ba9c"}]},"accounts":["live7i68fk_0","live7i68fk_1"],"gold_deadline_secs":180,"gold_watch_ticks":150}
+[host-play] slot live7i68fk_0: thread up
+[host-play] slot live7i68fk_1: thread up
+274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+[host-play] slot live7i68fk_1: handshake begin reconnect=false
+[host-play] slot live7i68fk_0: handshake begin reconnect=false
+[host-play] slot live7i68fk_1: handshake ok
+[host-play] slot live7i68fk_0: handshake ok
+[host] slot live7i68fk_0: d_loop_us=3492 d_raster_us=0 d_observe_us=19720 max_observe_us=1638 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host] slot live7i68fk_1: d_loop_us=4139 d_raster_us=0 d_observe_us=21491 max_observe_us=1426 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot live7i68fk_0: queued mainland tele+setvar (scene 2)
+[host-play] slot live7i68fk_1: queued mainland tele+setvar (scene 2)
+{"phase":"before-relog","account":"live7i68fk_0"}
+{"phase":"before-relog","account":"live7i68fk_1"}
+[host-play] slot live7i68fk_0: handshake begin reconnect=true
+[host-play] slot live7i68fk_1: handshake begin reconnect=true
+[host-play] slot live7i68fk_1: handshake ok
+{"phase":"relog-observed-logout","account":"live7i68fk_1"}
+[host-play] slot live7i68fk_0: handshake ok
+{"phase":"relog-observed-logout","account":"live7i68fk_0"}
+[host] slot live7i68fk_1: d_loop_us=998 d_raster_us=0 d_observe_us=21398 max_observe_us=1330 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host] slot live7i68fk_0: d_loop_us=1027 d_raster_us=0 d_observe_us=24527 max_observe_us=1600 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+{"phase":"after-relog","account":"live7i68fk_1"}
+[host-play] slot live7i68fk_1: queued mainland tele+setvar (scene 2)
+{"phase":"after-relog","account":"live7i68fk_0"}
+[host-play] slot live7i68fk_0: queued mainland tele+setvar (scene 2)
+{"phase":"seed-queued","account":"live7i68fk_1","kind":"air_runner_bank200_at_falador_east","note":"queued seed is not bank acknowledgement or script restock"}
+{"phase":"seed-queued","account":"live7i68fk_0","kind":"air_master_talisman_noessence_at_ruins","note":"queued seed is not bank acknowledgement or script restock"}
+{"phase":"seed-observed","account":"live7i68fk_1","bank_ack_done":false}
+{"phase":"seed-observed","account":"live7i68fk_0","bank_ack_done":false}
+{"phase":"baseline-after-preparation","account":"live7i68fk_0","role":"master","seeded_first_supplies":false,"observation":{"ingame":true,"scene_state":2,"inventory_tab_available":true,"player":"Live7i68fk 0","tile":[2983,3288,0],"tick":8,"runecraft":1,"runecraft_xp":0,"essence_unnoted":0,"essence_noted":0,"air_runes":0,"air_talisman":1,"bank_open":false,"bank_loaded":false,"bank_session_generation":0,"bank_essence_unnoted":0,"trade_offer_open":false,"trade_confirm_open":false,"trade_partner":null,"trade_accept_id":-1,"trade_mine_essence":0,"trade_theirs_essence":0,"in_temple":false}}
+{"phase":"prepared","account":"live7i68fk_0","role":"master","note":"waiting for shared start barrier; not Start"}
+{"phase":"acknowledged-bank","account":"live7i68fk_1","bank_essence_unnoted":200,"bank_session_generation":1,"stand":[3013,3355,0],"tile":[3012,3355,0],"note":"givebank blankrune 200 observed open+loaded at Falador East; not the script restock"}
+{"phase":"closed-bank","account":"live7i68fk_1","bank_session_generation":4,"ack_generation":1,"generation_moved":true,"stand":[3013,3355,0]}
+{"phase":"seed-queued","account":"live7i68fk_1","kind":"air_runner_firstload25_at_ruins","note":"queued seed is not bank acknowledgement or script restock"}
+[host] slot live7i68fk_1: d_loop_us=38272 d_raster_us=0 d_observe_us=97749 max_observe_us=5712 d_paints=0 d_skips=50 d_ticks=14 window_ms=8369
+{"phase":"seed-observed","account":"live7i68fk_1","bank_ack_done":true}
+{"phase":"baseline-after-preparation","account":"live7i68fk_1","role":"runner","seeded_first_supplies":true,"observation":{"ingame":true,"scene_state":2,"inventory_tab_available":true,"player":"Live7i68fk 1","tile":[2983,3288,0],"tick":19,"runecraft":1,"runecraft_xp":0,"essence_unnoted":25,"essence_noted":0,"air_runes":0,"air_talisman":0,"bank_open":false,"bank_loaded":false,"bank_session_generation":4,"bank_essence_unnoted":0,"trade_offer_open":false,"trade_confirm_open":false,"trade_partner":null,"trade_accept_id":-1,"trade_mine_essence":0,"trade_theirs_essence":0,"in_temple":false}}
+{"phase":"prepared","account":"live7i68fk_1","role":"runner","note":"waiting for shared start barrier; not Start"}
+[script live7i68fk_0] start load
+{"phase":"start","account":"live7i68fk_0","kind":"air_master","settings":{"rune":"Air runes","mode":"Master","partner":"Live7i68fk 1","bankEvery":60.0,"withdrawEss":0.0,"withdrawCoins":10000.0,"stayInAltar":false}}
+[script live7i68fk_1] start load
+{"phase":"start","account":"live7i68fk_1","kind":"air_runner","settings":{"rune":"Air runes","mode":"Runner","partner":"Live7i68fk 0","bankEvery":60.0,"withdrawEss":0.0,"withdrawCoins":10000.0,"stayInAltar":false}}
+{"phase":"both-started","gold_clock":"begin","note":"gold clock starts only after both Start; preparation is not counted"}
+[host] hitch live7i68fk_1: observe_us=27767 paints=0 skips=112 ticks=20
+[host] hitch live7i68fk_0: observe_us=27698 paints=0 skips=92 ticks=20
+[script live7i68fk_0] NatureCrafter master starting — Air runes at (2983, 3288, 0), accepting essence from [Live7i68fk 1], banking everything every 60min
+[script live7i68fk_1] tick 27: not impl: Paint.buttons
+[script live7i68fk_1] NatureCrafter runner starting — ferrying essence for Air runes to [Live7i68fk 0] straight from the bank (unnoted)
+[script live7i68fk_1] runner: Trade-with 'Live7i68fk 0' d=0 closed with=- mine=0 theirs=0 unnoted=25
+[script live7i68fk_1] interact Player { name: "Live7i68fk 0", action: "Trade" }
+{"phase":"witness","air_a":{"role":"master","account":"live7i68fk_0","expected_player":"Live7i68fk 0","partner":"Live7i68fk 1","settings":{"rune":"Air runes","mode":"Master","partner":"Live7i68fk 1","bankEvery":60.0,"withdrawEss":0.0,"withdrawCoins":10000.0,"stayInAltar":false},"baseline":{"ingame":true,"scene_state":2,"inventory_tab_available":true,"player":"Live7i68fk 0","tile":[2983,3288,0],"tick":8,"runecraft":1,"runecraft_xp":0,"essence_unnoted":0,"essence_noted":0,"air_runes":0,"air_talisman":1,"bank_open":false,"bank_loaded":false,"bank_session_generation":0,"bank_essence_unnoted":0,"trade_offer_open":false,"trade_confirm_open":false,"trade_partner":null,"trade_accept_id":-1,"trade_mine_essence":0,"trade_theirs_essence":0,"in_temple":false},"latest":{"ingame":true,"scene_state":2,"inventory_tab_available":true,"player":"Live7i68fk 0","tile":[2983,3288,0],"tick":21,"runecraft":1,"runecraft_xp":0,"essence_unnoted":0,"essence_noted":0,"air_runes":0,"air_talisman":1,"bank_open":false,"bank_loaded":false,"bank_session_generation":0,"bank_essence_unnoted":0,"trade_offer_open":false,"trade_confirm_open":false,"trade_partner":null,"trade_accept_id":-1,"trade_mine_essence":0,"trade_theirs_essence":0,"in_temple":false},"post_start":5,"mixed_identity":false,"saw_offer_with_partner":false,"saw_confirm_with_partner":false,"saw_wrong_partner":false,"peak_essence":0,"min_essence_after_start":0,"transferred_out":0,"transferred_in":0,"saw_bank_open_loaded":false,"saw_bank_at_falador":false,"restock_withdraw":false,"returned_to_ruins":false,"air_from_script":0,"xp_from_script":0},"air_b":{"role":"runner","account":"live7i68fk_1","expected_player":"Live7i68fk 1","partner":"Live7i68fk 0","settings":{"rune":"Air runes","mode":"Runner","partner":"Live7i68fk 0","bankEvery":60.0,"withdrawEss":0.0,"withdrawCoins":10000.0,"stayInAltar":false},"baseline":{"ingame":true,"scene_state":2,"inventory_tab_available":true,"player":"Live7i68fk 1","tile":[2983,3288,0],"tick":19,"runecraft":1,"runecraft_xp":0,"essence_unnoted":25,"essence_noted":0,"air_runes":0,"air_talisman":0,"bank_open":false,"bank_loaded":false,"bank_session_generation":4,"bank_essence_unnoted":0,"trade_offer_open":false,"trade_confirm_open":false,"trade_partner":null,"trade_accept_id":-1,"trade_mine_essence":0,"trade_theirs_essence":0,"in_temple":false},"latest":{"ingame":true,"scene_state":2,"inventory_tab_available":true,"player":"Live7i68fk 1","tile":[2983,3288,0],"tick":21,"runecraft":1,"runecraft_xp":0,"essence_unnoted":25,"essence_noted":0,"air_runes":0,"air_talisman":0,"bank_open":false,"bank_loaded":false,"bank_session_generation":4,"bank_essence_unnoted":0,"trade_offer_open":false,"trade_confirm_open":false,"trade_partner":null,"trade_accept_id":-1,"trade_mine_essence":0,"trade_theirs_essence":0,"in_temple":false},"post_start":4,"mixed_identity":false,"saw_offer_with_partner":false,"saw_confirm_with_partner":false,"saw_wrong_partner":false,"peak_essence":25,"min_essence_after_start":25,"transferred_out":0,"transferred_in":0,"saw_bank_open_loaded":false,"saw_bank_at_falador":false,"restock_withdraw":false,"returned_to_ruins":false,"air_from_script":0,"xp_from_script":0},"duel_a":null,"duel_b":null}
+FAIL: paired_catalog_air_live: script error on live7i68fk_1: tick 27: not impl: Paint.buttons

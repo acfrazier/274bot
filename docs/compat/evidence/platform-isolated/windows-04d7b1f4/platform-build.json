@@ -1,0 +1,74 @@
+{
+  "overlays": {
+    "source/crates/tui/examples/platform_proof.rs": "fn main() -> std::process::ExitCode {\n    let _stores = script::IsolatedEnv::enter(&format!(\"platform-proof-{}\", std::process::id()));\n    tui::bin::main()\n}\n"
+  },
+  "host_commit": "04d7b1f48180ab9b93bbd6fec45a655df4385233",
+  "client_commit": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "platform": "win32",
+  "source_files_verified": 7597,
+  "target_dir": "C:\\Users\\Austen\\274bot-campaign\\multirevision-20260910\\target-isolated-b1cff8a7",
+  "isolated_build": true,
+  "target_started_empty": false,
+  "jobs": [
+    {
+      "name": "catalog_boundary_live",
+      "command": [
+        "C:\\Users\\Austen\\.cargo\\bin\\cargo.exe",
+        "test",
+        "-p",
+        "host-play",
+        "--test",
+        "catalog_boundary_live",
+        "--features",
+        "memory-profile",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "started_at": "2026-09-11T11:24:19.609475+00:00",
+      "elapsed_seconds": 43.072,
+      "exit_code": 0,
+      "binary": "C:\\Users\\Austen\\274bot-campaign\\multirevision-20260910\\platform-isolated-04d7b1f4\\bin\\catalog_boundary_live-04d7b1f4.exe",
+      "binary_sha256": "9eb9cafc3df6491c3bfcb2f6d2631b267d0106a2d498d7ad0c3a4287da2b9eb6",
+      "binary_bytes": 107151872
+    },
+    {
+      "name": "catalog_watch",
+      "command": [
+        "C:\\Users\\Austen\\.cargo\\bin\\cargo.exe",
+        "build",
+        "-p",
+        "panel",
+        "--example",
+        "catalog_watch",
+        "--message-format=json"
+      ],
+      "started_at": "2026-09-11T11:25:04.368020+00:00",
+      "elapsed_seconds": 33.249,
+      "exit_code": 0,
+      "binary": "C:\\Users\\Austen\\274bot-campaign\\multirevision-20260910\\platform-isolated-04d7b1f4\\bin\\catalog_watch-04d7b1f4.exe",
+      "binary_sha256": "39fc2bafc7e14b8360aedc088eb7d0ad043cb64d883755cf3db61f1c12a28480",
+      "binary_bytes": 111593472
+    },
+    {
+      "name": "platform_proof",
+      "command": [
+        "C:\\Users\\Austen\\.cargo\\bin\\cargo.exe",
+        "build",
+        "-p",
+        "tui",
+        "--example",
+        "platform_proof",
+        "--features",
+        "memory-profile",
+        "--message-format=json"
+      ],
+      "started_at": "2026-09-11T11:25:38.969860+00:00",
+      "elapsed_seconds": 65.636,
+      "exit_code": 0,
+      "binary": "C:\\Users\\Austen\\274bot-campaign\\multirevision-20260910\\platform-isolated-04d7b1f4\\bin\\platform_proof-04d7b1f4.exe",
+      "binary_sha256": "5ee79264562f59adafa60f1b9929f67ae77450663fd2f2c8527d1694704f285f",
+      "binary_bytes": 104866816
+    }
+  ],
+  "elapsed_is_not_performance_measurement": true
+}

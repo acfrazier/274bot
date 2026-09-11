@@ -1,0 +1,198 @@
+
+running 1 test
+{"phase":"identity","revision":289,"profile":"local-289 · 127.0.0.1:44594 · revision 289","cache_id":"c4d8ab36bcfd2a7907535b4f619e28623b0a22e98d496fd2a9620d544c5b5b09","nav_pack":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/world-capabilities/289/274bot.navpack","nav_sha256":"131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924","catalog_commit":"8e7d965be2071d6ec65c3265e12af797082d720a","catalog_identity":"289-updated frozen catalog","catalog_read_only_path":".superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a","catalog_root":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a","registry_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a/src/bot/scripts/index.ts","registry_sha256":"b614aedb3d5adfdfbac3760f082273f3cf5c33fffe4ced0f2b01490ae02d1bc2","card":{"card":"ArdyThiever","source_path":"/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/inputs/rs2b0t-8e7d965be2071d6ec65c3265e12af797082d720a/src/bot/scripts/ArdyThiever/ArdyThiever.ts","source_sha256":"3cee6ff99d8f24532a5564fc7215faba19ca78f0156386913497bf266fca8aa5","compiled_sha256":"e1d3c6ea363fc6c8a6ae3a3f87b8d3ce6d3a9c21a8d801b04e2f666bcd7e6556","siblings":[],"settings":{"thieveTarget":"Knight of Ardougne","guardResponse":"Flee","panicHp":25.0,"restUntilHp":60.0,"foodTarget":1.0,"restockAtFood":0.0,"bankAtLootSlots":1.0,"solveClues":false,"bankStrategy":"Off","bankEveryItems":15.0,"bankEveryMinutes":10.0,"bankCommonJunk":true}},"account":"liveezcv5s_0","engine_speed_ms":null}
+[host-play] slot liveezcv5s_0: thread up
+274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)
+[host-play] slot liveezcv5s_0: handshake begin reconnect=false
+[host-play] slot liveezcv5s_0: handshake ok
+[host] slot liveezcv5s_0: d_loop_us=2637 d_raster_us=0 d_observe_us=28323 max_observe_us=2152 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot liveezcv5s_0: queued mainland tele+setvar (scene 2)
+[host-play] slot liveezcv5s_0: handshake begin reconnect=true
+[host-play] slot liveezcv5s_0: handshake ok
+[host] slot liveezcv5s_0: d_loop_us=811 d_raster_us=0 d_observe_us=34865 max_observe_us=2307 d_paints=0 d_skips=50 d_ticks=1 window_ms=0
+[host-play] slot liveezcv5s_0: queued mainland tele+setvar (scene 2)
+{"phase":"baseline-after-preparation","scenario":"ardy_thiever_knight","account":"liveezcv5s_0","observation":{"ingame":true,"scene_state":2,"player":"Liveezcv5s 0","tile":[2661,3306,0],"tick":18,"items":{},"item_ids":{},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":40,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":55,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":37224,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":166636,"woodcutting":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[],"equipment_ids":{},"main_modal":-1,"widget_ids":[3213,3214]}}
+[script liveezcv5s_0] start load
+{"phase":"start","account":"liveezcv5s_0","count":1}
+[host] hitch liveezcv5s_0: observe_us=96302 paints=0 skips=93 ticks=18
+[script liveezcv5s_0] ArdyThiever starting — target 'Knight of Ardougne' at (2661, 3306, 0) r29 (Thieving 55+), flee mode, stall via shared driver, bank (2655, 3286, 0)
+[script liveezcv5s_0] restocking cake (have 0)
+[script liveezcv5s_0] interact WalkTo { x: 2668, z: 3312, level: 0 }
+[host] slot liveezcv5s_0: d_loop_us=21509 d_raster_us=0 d_observe_us=170079 max_observe_us=96302 d_paints=0 d_skips=50 d_ticks=18 window_ms=10955
+[host] hitch liveezcv5s_0: observe_us=17758 paints=0 skips=117 ticks=20
+[host] hitch liveezcv5s_0: observe_us=20681 paints=0 skips=143 ticks=21
+[host] slot liveezcv5s_0: d_loop_us=1072 d_raster_us=0 d_observe_us=71462 max_observe_us=20681 d_paints=0 d_skips=50 d_ticks=2 window_ms=1159
+[host] hitch liveezcv5s_0: observe_us=21397 paints=0 skips=168 ticks=22
+[host] hitch liveezcv5s_0: observe_us=18794 paints=0 skips=194 ticks=23
+[script liveezcv5s_0] interact Loc { x: 2667, z: 3310, level: 0, action: "Steal from", id: Some(2561) }
+[host] slot liveezcv5s_0: d_loop_us=1101 d_raster_us=0 d_observe_us=73334 max_observe_us=21397 d_paints=0 d_skips=50 d_ticks=2 window_ms=1181
+[host] slot liveezcv5s_0: d_loop_us=1239 d_raster_us=0 d_observe_us=49522 max_observe_us=8700 d_paints=0 d_skips=50 d_ticks=2 window_ms=1161
+[host] hitch liveezcv5s_0: observe_us=21034 paints=0 skips=271 ticks=26
+[host] slot liveezcv5s_0: d_loop_us=1003 d_raster_us=0 d_observe_us=64934 max_observe_us=21034 d_paints=0 d_skips=50 d_ticks=2 window_ms=1162
+[script liveezcv5s_0] interact Npc { name: "Knight of Ardougne", action: "Pickpocket", index: Some(3574) }
+[host] hitch liveezcv5s_0: observe_us=18083 paints=0 skips=347 ticks=29
+[host] slot liveezcv5s_0: d_loop_us=1008 d_raster_us=0 d_observe_us=58076 max_observe_us=18083 d_paints=0 d_skips=50 d_ticks=2 window_ms=1197
+[host] hitch liveezcv5s_0: observe_us=19887 paints=0 skips=373 ticks=30
+[host] hitch liveezcv5s_0: observe_us=18538 paints=0 skips=398 ticks=31
+[host] slot liveezcv5s_0: d_loop_us=1092 d_raster_us=0 d_observe_us=72774 max_observe_us=19887 d_paints=0 d_skips=50 d_ticks=2 window_ms=1188
+[host] hitch liveezcv5s_0: observe_us=23553 paints=0 skips=424 ticks=32
+[host] slot liveezcv5s_0: d_loop_us=1116 d_raster_us=0 d_observe_us=65462 max_observe_us=23553 d_paints=0 d_skips=50 d_ticks=2 window_ms=1175
+[script liveezcv5s_0] interact WalkTo { x: 2655, z: 3286, level: 0 }
+[host] hitch liveezcv5s_0: observe_us=19720 paints=0 skips=475 ticks=34
+[host] slot liveezcv5s_0: d_loop_us=1028 d_raster_us=0 d_observe_us=59748 max_observe_us=19720 d_paints=0 d_skips=50 d_ticks=1 window_ms=1147
+[host] hitch liveezcv5s_0: observe_us=18899 paints=0 skips=501 ticks=35
+[host] hitch liveezcv5s_0: observe_us=19327 paints=0 skips=526 ticks=36
+[host] slot liveezcv5s_0: d_loop_us=1037 d_raster_us=0 d_observe_us=68619 max_observe_us=19327 d_paints=0 d_skips=50 d_ticks=2 window_ms=1167
+[host] hitch liveezcv5s_0: observe_us=18743 paints=0 skips=552 ticks=37
+[host] hitch liveezcv5s_0: observe_us=21027 paints=0 skips=578 ticks=38
+[host] slot liveezcv5s_0: d_loop_us=1107 d_raster_us=0 d_observe_us=75872 max_observe_us=21027 d_paints=0 d_skips=50 d_ticks=2 window_ms=1152
+[host] hitch liveezcv5s_0: observe_us=18349 paints=0 skips=604 ticks=39
+[host] hitch liveezcv5s_0: observe_us=16920 paints=0 skips=630 ticks=40
+[host] slot liveezcv5s_0: d_loop_us=1183 d_raster_us=0 d_observe_us=67767 max_observe_us=18349 d_paints=0 d_skips=50 d_ticks=2 window_ms=1175
+[host] hitch liveezcv5s_0: observe_us=17778 paints=0 skips=655 ticks=41
+[host] hitch liveezcv5s_0: observe_us=17641 paints=0 skips=681 ticks=42
+[host] slot liveezcv5s_0: d_loop_us=1049 d_raster_us=0 d_observe_us=68213 max_observe_us=17778 d_paints=0 d_skips=50 d_ticks=2 window_ms=1171
+[host] hitch liveezcv5s_0: observe_us=21140 paints=0 skips=707 ticks=43
+[host] hitch liveezcv5s_0: observe_us=20569 paints=0 skips=732 ticks=44
+[host] slot liveezcv5s_0: d_loop_us=1171 d_raster_us=0 d_observe_us=83250 max_observe_us=21140 d_paints=0 d_skips=50 d_ticks=2 window_ms=1175
+[host] hitch liveezcv5s_0: observe_us=17888 paints=0 skips=758 ticks=45
+[host] hitch liveezcv5s_0: observe_us=18052 paints=0 skips=783 ticks=46
+[host] slot liveezcv5s_0: d_loop_us=1075 d_raster_us=0 d_observe_us=68309 max_observe_us=18052 d_paints=0 d_skips=50 d_ticks=2 window_ms=1158
+[host] hitch liveezcv5s_0: observe_us=18327 paints=0 skips=809 ticks=47
+[host] hitch liveezcv5s_0: observe_us=20574 paints=0 skips=835 ticks=48
+[host] slot liveezcv5s_0: d_loop_us=1058 d_raster_us=0 d_observe_us=73622 max_observe_us=20574 d_paints=0 d_skips=50 d_ticks=2 window_ms=1167
+[host] hitch liveezcv5s_0: observe_us=18078 paints=0 skips=861 ticks=49
+[host] hitch liveezcv5s_0: observe_us=17522 paints=0 skips=887 ticks=50
+[host] slot liveezcv5s_0: d_loop_us=1068 d_raster_us=0 d_observe_us=66920 max_observe_us=18078 d_paints=0 d_skips=50 d_ticks=2 window_ms=1166
+[host] hitch liveezcv5s_0: observe_us=17208 paints=0 skips=912 ticks=51
+[host] hitch liveezcv5s_0: observe_us=20861 paints=0 skips=937 ticks=52
+[host] slot liveezcv5s_0: d_loop_us=1059 d_raster_us=0 d_observe_us=71916 max_observe_us=20861 d_paints=0 d_skips=50 d_ticks=2 window_ms=1199
+[host] hitch liveezcv5s_0: observe_us=17816 paints=0 skips=962 ticks=53
+[host] hitch liveezcv5s_0: observe_us=18205 paints=0 skips=988 ticks=54
+[host] slot liveezcv5s_0: d_loop_us=1139 d_raster_us=0 d_observe_us=68520 max_observe_us=18205 d_paints=0 d_skips=50 d_ticks=2 window_ms=1166
+[host] hitch liveezcv5s_0: observe_us=17847 paints=0 skips=1014 ticks=55
+[host] hitch liveezcv5s_0: observe_us=19566 paints=0 skips=1039 ticks=56
+[host] slot liveezcv5s_0: d_loop_us=968 d_raster_us=0 d_observe_us=72608 max_observe_us=19566 d_paints=0 d_skips=50 d_ticks=2 window_ms=1198
+[host] hitch liveezcv5s_0: observe_us=17921 paints=0 skips=1064 ticks=57
+[host] hitch liveezcv5s_0: observe_us=17863 paints=0 skips=1089 ticks=58
+[script liveezcv5s_0] interact WalkNear { x: 2655, z: 3286, level: 0, radius: 1, allow_teleports: false }
+[host] slot liveezcv5s_0: d_loop_us=885 d_raster_us=0 d_observe_us=69743 max_observe_us=17921 d_paints=0 d_skips=50 d_ticks=2 window_ms=1175
+[nav-follow] here=WorldTile { x: 2655, z: 3286, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=18261 paints=0 skips=1115 ticks=59
+[script liveezcv5s_0] interact OpenBooth { x: 2656, z: 3286, level: 0, id: 2213, name: Some("Bank booth"), action: Some("Use-quickly") }
+[nav-walk] here=WorldTile { x: 2655, z: 3286, level: 0 } aim=WorldTile { x: 2654, z: 3285, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2655, z: 3286, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] slot liveezcv5s_0: d_loop_us=1115 d_raster_us=0 d_observe_us=66319 max_observe_us=18261 d_paints=0 d_skips=50 d_ticks=2 window_ms=1169
+[nav-walk] here=WorldTile { x: 2655, z: 3286, level: 0 } aim=WorldTile { x: 2654, z: 3285, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2655, z: 3286, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[nav-walk] here=WorldTile { x: 2655, z: 3286, level: 0 } aim=WorldTile { x: 2654, z: 3285, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2655, z: 3286, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] slot liveezcv5s_0: d_loop_us=996 d_raster_us=0 d_observe_us=53235 max_observe_us=10190 d_paints=0 d_skips=50 d_ticks=2 window_ms=1156
+[nav-walk] here=WorldTile { x: 2655, z: 3286, level: 0 } aim=WorldTile { x: 2654, z: 3285, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2655, z: 3286, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[script liveezcv5s_0] banked: loot slots 1->0
+[script liveezcv5s_0] interact WalkNear { x: 2661, z: 3306, level: 0, radius: 3, allow_teleports: false }
+[nav-follow] here=WorldTile { x: 2655, z: 3286, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] slot liveezcv5s_0: d_loop_us=999 d_raster_us=0 d_observe_us=52618 max_observe_us=9005 d_paints=0 d_skips=50 d_ticks=2 window_ms=1159
+[nav-walk] here=WorldTile { x: 2653, z: 3285, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2653, z: 3285, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=19388 paints=0 skips=1270 ticks=65
+[nav-walk] here=WorldTile { x: 2651, z: 3284, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2651, z: 3284, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=17973 paints=0 skips=1296 ticks=66
+[host] slot liveezcv5s_0: d_loop_us=941 d_raster_us=0 d_observe_us=71662 max_observe_us=19388 d_paints=0 d_skips=50 d_ticks=2 window_ms=1163
+[nav-walk] here=WorldTile { x: 2649, z: 3284, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2649, z: 3284, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=17674 paints=0 skips=1321 ticks=67
+[nav-walk] here=WorldTile { x: 2647, z: 3284, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2647, z: 3284, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=20796 paints=0 skips=1347 ticks=68
+[host] slot liveezcv5s_0: d_loop_us=1068 d_raster_us=0 d_observe_us=74954 max_observe_us=20796 d_paints=0 d_skips=50 d_ticks=2 window_ms=1172
+[nav-walk] here=WorldTile { x: 2645, z: 3284, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2645, z: 3284, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=18522 paints=0 skips=1372 ticks=69
+[nav-walk] here=WorldTile { x: 2644, z: 3285, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=5 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2644, z: 3285, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=17701 paints=0 skips=1398 ticks=70
+[host] slot liveezcv5s_0: d_loop_us=1064 d_raster_us=0 d_observe_us=70828 max_observe_us=18522 d_paints=0 d_skips=50 d_ticks=2 window_ms=1173
+[nav-walk] here=WorldTile { x: 2644, z: 3287, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=6 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2644, z: 3287, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=18311 paints=0 skips=1424 ticks=71
+[nav-walk] here=WorldTile { x: 2644, z: 3289, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=7 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2644, z: 3289, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=21748 paints=0 skips=1449 ticks=72
+[host] slot liveezcv5s_0: d_loop_us=1124 d_raster_us=0 d_observe_us=72287 max_observe_us=21748 d_paints=0 d_skips=50 d_ticks=2 window_ms=1191
+[nav-walk] here=WorldTile { x: 2646, z: 3289, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=8 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2646, z: 3289, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=17684 paints=0 skips=1474 ticks=73
+test catalog_boundary_live has been running for over 60 seconds
+[host] slot liveezcv5s_0: d_loop_us=1123 d_raster_us=0 d_observe_us=54017 max_observe_us=17684 d_paints=0 d_skips=50 d_ticks=2 window_ms=1165
+[nav-walk] here=WorldTile { x: 2648, z: 3289, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=9 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2648, z: 3289, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=21666 paints=0 skips=1500 ticks=74
+[nav-walk] here=WorldTile { x: 2650, z: 3289, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=10 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2650, z: 3289, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=18147 paints=0 skips=1526 ticks=75
+[host] slot liveezcv5s_0: d_loop_us=1053 d_raster_us=0 d_observe_us=78712 max_observe_us=21666 d_paints=0 d_skips=50 d_ticks=1 window_ms=1159
+[nav-walk] here=WorldTile { x: 2652, z: 3289, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=11 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2652, z: 3289, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=18206 paints=0 skips=1552 ticks=76
+[nav-walk] here=WorldTile { x: 2654, z: 3289, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=12 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2654, z: 3289, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=17162 paints=0 skips=1578 ticks=77
+[host] slot liveezcv5s_0: d_loop_us=988 d_raster_us=0 d_observe_us=70169 max_observe_us=18206 d_paints=0 d_skips=50 d_ticks=2 window_ms=1149
+[nav-walk] here=WorldTile { x: 2656, z: 3289, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=13 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2656, z: 3289, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=21978 paints=0 skips=1604 ticks=78
+[nav-walk] here=WorldTile { x: 2658, z: 3289, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=14 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2658, z: 3289, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=18464 paints=0 skips=1629 ticks=79
+[host] slot liveezcv5s_0: d_loop_us=1020 d_raster_us=0 d_observe_us=76886 max_observe_us=21978 d_paints=0 d_skips=50 d_ticks=2 window_ms=1166
+[nav-walk] here=WorldTile { x: 2660, z: 3289, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=15 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2660, z: 3289, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=17376 paints=0 skips=1655 ticks=80
+[nav-walk] here=WorldTile { x: 2662, z: 3290, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=16 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2662, z: 3290, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=17969 paints=0 skips=1681 ticks=81
+[host] slot liveezcv5s_0: d_loop_us=1007 d_raster_us=0 d_observe_us=68821 max_observe_us=17969 d_paints=0 d_skips=50 d_ticks=2 window_ms=1169
+[nav-walk] here=WorldTile { x: 2663, z: 3292, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=17 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2663, z: 3292, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=17968 paints=0 skips=1706 ticks=82
+[nav-walk] here=WorldTile { x: 2663, z: 3294, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=18 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2663, z: 3294, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=17648 paints=0 skips=1732 ticks=83
+[host] slot liveezcv5s_0: d_loop_us=1018 d_raster_us=0 d_observe_us=67885 max_observe_us=17968 d_paints=0 d_skips=50 d_ticks=2 window_ms=1177
+[nav-walk] here=WorldTile { x: 2662, z: 3296, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=19 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2662, z: 3296, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=20243 paints=0 skips=1757 ticks=84
+[nav-walk] here=WorldTile { x: 2662, z: 3298, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=20 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2662, z: 3298, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=18891 paints=0 skips=1783 ticks=85
+[host] slot liveezcv5s_0: d_loop_us=1042 d_raster_us=0 d_observe_us=72896 max_observe_us=20243 d_paints=0 d_skips=50 d_ticks=2 window_ms=1172
+[nav-walk] here=WorldTile { x: 2661, z: 3300, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=21 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2661, z: 3300, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=17894 paints=0 skips=1808 ticks=86
+[nav-walk] here=WorldTile { x: 2659, z: 3302, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=22 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2659, z: 3302, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None
+[host] hitch liveezcv5s_0: observe_us=19018 paints=0 skips=1834 ticks=87
+[host] slot liveezcv5s_0: d_loop_us=1149 d_raster_us=0 d_observe_us=68757 max_observe_us=19018 d_paints=0 d_skips=50 d_ticks=2 window_ms=1167
+[nav-walk] here=WorldTile { x: 2658, z: 3303, level: 0 } aim=WorldTile { x: 2658, z: 3303, level: 0 } radius=0 ticks_waited=23 sent_tile=Some(WorldTile { x: 2655, z: 3286, level: 0 })
+[nav-follow] here=WorldTile { x: 2658, z: 3303, level: 0 } walk=false transport=false leg=1 hops=1 outcome=Some(Arrived { at: WorldTile { x: 2658, z: 3303, level: 0 } })
+[host] hitch liveezcv5s_0: observe_us=17850 paints=0 skips=1860 ticks=88
+[script liveezcv5s_0] interact Npc { name: "Knight of Ardougne", action: "Pickpocket", index: Some(3571) }
+[host] slot liveezcv5s_0: d_loop_us=1138 d_raster_us=0 d_observe_us=60122 max_observe_us=17850 d_paints=0 d_skips=50 d_ticks=2 window_ms=1169
+[host] hitch liveezcv5s_0: observe_us=18043 paints=0 skips=1911 ticks=90
+[host] hitch liveezcv5s_0: observe_us=18114 paints=0 skips=1937 ticks=91
+[host] slot liveezcv5s_0: d_loop_us=1196 d_raster_us=0 d_observe_us=70300 max_observe_us=18114 d_paints=0 d_skips=50 d_ticks=2 window_ms=1170
+[host] hitch liveezcv5s_0: observe_us=21715 paints=0 skips=1962 ticks=92
+[host] hitch liveezcv5s_0: observe_us=17770 paints=0 skips=1988 ticks=93
+[host] slot liveezcv5s_0: d_loop_us=1155 d_raster_us=0 d_observe_us=75582 max_observe_us=21715 d_paints=0 d_skips=50 d_ticks=2 window_ms=1179
+[host] hitch liveezcv5s_0: observe_us=49318 paints=0 skips=2012 ticks=94
+[host] hitch liveezcv5s_0: observe_us=19320 paints=0 skips=2035 ticks=95
+[script liveezcv5s_0] interact Npc { name: "Knight of Ardougne", action: "Pickpocket", index: Some(3571) }
+[host] slot liveezcv5s_0: d_loop_us=1135 d_raster_us=0 d_observe_us=107751 max_observe_us=49318 d_paints=0 d_skips=50 d_ticks=2 window_ms=1260
+PASS: catalog_boundary_live: {"scenario":"ardy_thiever_knight","runner":"Some(Evidence { scenario: \"ardy_thiever_knight\", outcome: \"PASS\", predicate: \"has_item_id(995)>=1\", ticks: 124, elapsed_ms: 70509, message: None, tile: Some([2667, 3298, 0]), inv: [InvRow { id: 1891, name: Some(\"Cake\"), count: 1 }, InvRow { id: 995, name: Some(\"Coins\"), count: 50 }], stat: Some(StatRow { runenergy: 60 }), chat: [ChatRow { text: \"You pick the knight's pocket.\", username: None }, ChatRow { text: \"You attempt to pick the knight's pocket.\", username: None }, ChatRow { text: \"You pick the knight's pocket.\", username: None }, ChatRow { text: \"You attempt to pick the knight's pocket.\", username: None }, ChatRow { text: \"You steal a cake.\", username: None }, ChatRow { text: \"Inventory wiped.\", username: None }, ChatRow { text: \"set tutorial: to 1000\", username: None }, ChatRow { text: \"Welcome to RuneScape.\", username: None }], scene: 2 })","core":{"case":"ardy_thiever_knight","baseline":{"ingame":true,"scene_state":2,"player":"Liveezcv5s 0","tile":[2661,3306,0],"tick":18,"items":{},"item_ids":{},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":40,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":55,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":37224,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":166636,"woodcutting":0},"chat":[[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[],"equipment_ids":{},"main_modal":-1,"widget_ids":[3213,3214]},"latest":{"ingame":true,"scene_state":2,"player":"Liveezcv5s 0","tile":[2667,3298,0],"tick":96,"items":{"Cake":1,"Coins":50},"item_ids":{"995":50,"1891":1},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":2,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":40,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":55,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":37224,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":166820,"woodcutting":0},"chat":[[12,"You pick the knight's pocket."],[11,"You attempt to pick the knight's pocket."],[10,"You pick the knight's pocket."],[9,"You attempt to pick the knight's pocket."],[8,"You steal a cake."],[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[{"id":1530,"x":2666,"z":3294,"level":0,"name":"Door","open":true},{"id":2551,"x":2674,"z":3304,"level":0,"name":"Door","open":true},{"id":2550,"x":2674,"z":3305,"level":0,"name":"Door","open":true}],"equipment_ids":{},"main_modal":-1,"widget_ids":[3213,3214]},"max_items":{"Cake":1,"Coins":50},"max_xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":37224,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":166820,"woodcutting":0},"saw_bury_chat":false,"post_start_observations":1968,"bone_bank_cycle":{"first_batch_buried":false,"opened":null,"withdrawn":null,"buried_after_withdrawal":false},"bank_fletcher_cycle":{"first_pack_created":false,"deposited":null,"withdrawn":null,"crafted_after_withdrawal":false},"bank_fletcher_string_cycle":{"initial_pairs_strung":false,"deposited":null,"withdrawn":null,"strung_after_withdrawal":false},"bank_fletcher_cut_string_cycle":{"cut_pair_created":false,"deposited":null,"withdrawn":null,"string_pair_created":false},"alcher_generated_custom_cycle":{"withdrawn":null,"consumed":false},"dart_fletcher_cycle":{"first":null,"further":false,"wrong_tier":false},"herb_cleaner_cycle":{"first_pack":false,"deposited":null,"withdrawn":null,"cleaned_after_withdrawal":false,"filter_violated":false},"gem_cutter_cycle":{"first_pack":false,"deposited":null,"withdrawn":null,"cut_after_withdrawal":false,"filter_violated":false},"door_opener_cycle":{"selected":null,"opened":false},"gnome_course_cycle":{"log":null,"ground_return":null,"pipe":null,"second_lap":false},"flax_picker_cycle":{"first_pack":false,"deposited":null,"returned":false,"further":false},"superheater_cycle":{"first_bars":false,"deposited":null,"withdrawn":null,"produced_after_withdrawal":false,"wrong_product":false,"wrong_staff":false},"chicken_killer_bank_cycle":{"combat_loot":false,"deposited":null,"returned":false,"further":false},"vial_filler_cycle":{"filled":null,"deposited":null,"withdrawn":null,"returned":false,"further":false},"potion_maker_cycle":{"unfinished":null,"finished":null,"deposited":null,"withdrawn":null,"further":false,"wrong_product":false,"filter_violated":false},"tanner_bot_cycle":{"widget":null,"tanned":null,"deposited":null,"withdrawn":null,"returned":false,"further":false,"wrong_product":false,"shop":false},"rune_crafter_cycle":{"withdrawn":null,"entered":null,"crafted":null,"exited":null,"deposited":null,"restocked":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"ardy_cakes_cycle":{"stolen":null,"deposited":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"ardy_thiever_cycle":{"pickpocketed":{"ingame":true,"scene_state":2,"player":"Liveezcv5s 0","tile":[2665,3310,0],"tick":32,"items":{"Cake":1,"Coins":50},"item_ids":{"995":50,"1891":1},"bank":{},"bank_ids":{},"bank_open":false,"bank_loaded":false,"bank_generation":0,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":40,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":55,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":37224,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":166652,"woodcutting":0},"chat":[[10,"You pick the knight's pocket."],[9,"You attempt to pick the knight's pocket."],[8,"You steal a cake."],[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[{"id":1530,"x":2669,"z":3316,"level":0,"name":"Door","open":true}],"equipment_ids":{},"main_modal":-1,"widget_ids":[3213,3214]},"deposited":{"ingame":true,"scene_state":2,"player":"Liveezcv5s 0","tile":[2655,3286,0],"tick":62,"items":{"Cake":1},"item_ids":{"1891":1},"bank":{"Coins":50},"bank_ids":{"995":50},"bank_open":true,"bank_loaded":true,"bank_generation":1,"levels":{"-unused-":0,"agility":1,"attack":1,"cooking":1,"crafting":1,"defence":1,"firemaking":1,"fishing":1,"fletching":1,"herblore":1,"hitpoints":40,"magic":1,"mining":1,"prayer":1,"ranged":1,"runecraft":1,"slayer":1,"smithing":1,"strength":1,"thieving":55,"woodcutting":1},"xp":{"-unused-":0,"agility":0,"attack":0,"cooking":0,"crafting":0,"defence":0,"firemaking":0,"fishing":0,"fletching":0,"herblore":0,"hitpoints":37224,"magic":0,"mining":0,"prayer":0,"ranged":0,"runecraft":0,"slayer":0,"smithing":0,"strength":0,"thieving":166736,"woodcutting":0},"chat":[[10,"You pick the knight's pocket."],[9,"You attempt to pick the knight's pocket."],[8,"You steal a cake."],[7,"Inventory wiped."],[6,"set tutorial: to 1000"],[5,"Welcome to RuneScape."]],"loc_facts":[{"id":1530,"x":2656,"z":3292,"level":0,"name":"Door","open":true},{"id":1530,"x":2663,"z":3279,"level":0,"name":"Door","open":true}],"equipment_ids":{},"main_modal":5292,"widget_ids":[2005,2006,5292,5293,5294,5295,5296,5297,5298,5299,5300,5301,5302,5303,5304,5305,5306,5307,5308,5309,5310,5311,5312,5313,5314,5315,5316,5317,5318,5319,5320,5321,5322,5323,5324,5325,5326,5327,5328,5329,5330,5331,5332,5333,5334,5335,5336,5337,5338,5339,5340,5341,5342,5343,5344,5345,5346,5347,5348,5349,5350,5351,5352,5353,5354,5355,5356,5357,5358,5359,5360,5361,5362,5363,5364,5365,5366,5367,5368,5369,5370,5371,5372,5373,5374,5375,5376,5377,5378,5379,5380,5381,5382,5383,5384,5385,5386,5387,5388,5389,5390,5391,8130,8131,8132,8133]},"returned":true,"further":true},"gnome_chop_cycle":{"chopped":null,"deposited":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"gnome_fletch_cycle":{"chopped":null,"fletched":null,"deposited":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"coal_trucks_cycle":{"mined":null,"trucked":null,"further":false,"noted":false,"banked":false},"station_production_cycle":{"withdrawn":null,"produced":null,"deposited":null,"restocked":null,"returned":false,"further":false,"wrong_product":false,"noted":false},"ordered_first_exhausted":false}}
+test catalog_boundary_live ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 73.68s
+

@@ -1,0 +1,156 @@
+{
+  "verified_at": "2026-09-11T11:12:42.782006+00:00",
+  "task": "t_a74e9684",
+  "review_run": {
+    "id": 1316,
+    "profile": "reviewer",
+    "status": "done",
+    "outcome": "completed",
+    "started_at": 1789124896,
+    "ended_at": 1789125125,
+    "summary": "Reviewed and approved 04d7b1f48 (R1 artifact cold read + independent re-run on hash-matched owned export/target t_a74e9684-iso + t_a74e9684-combat-target). Four melee cores chaos_druid/moss_giant/hill_giant/auto_fighter: frozen scripts hash-match both catalogs, HillGiant target Giant, AutoFighter banking=None/clues/special off, Strength style XP, two engagements + verified defeat + exact loot witnesses; banking policy not bank proof. Isolated scenario 97, catalog 34/1 ignored LIVE, clippy/fmt clean. No LIVE.",
+    "error": null,
+    "metadata": {
+      "review_outcome": "approved",
+      "review_round": 1,
+      "lens": "artifact",
+      "blocking_defects": [],
+      "branch": "codex/rs2b0t-multirevision",
+      "brief": "docs/compat/briefs/99-combat-core-fixtures.md",
+      "brief_sha256": "351e8c146c6d28a70ca3b8cf8735a079ca3b80eda127704b9b0d02645ed4c50e",
+      "commit": "04d7b1f48180ab9b93bbd6fec45a655df4385233",
+      "git_parent": "7cbba60a2c176d74fbaee32dd558d50bacac0ff6",
+      "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+      "export": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-iso",
+      "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target",
+      "isolated_build": true,
+      "live": false,
+      "review_empty_started": false,
+      "review_empty_start_skip_reason": "orch disk recovery; reused exclusively owned target t_a74e9684-combat-target after overlay sha256 matched workspace+export",
+      "overlay_sha256": {
+        "crates/scenario/src/lib.rs": "e4c5ceca7ce42b0af1aabf69731069558409e399bd75b701dcd4d28b2b5f6dc5",
+        "crates/host-play/tests/catalog_boundary_live.rs": "cad21d5bff1f7bf73683fb70345eb686c398d2c733cb52f4858173d5ab228e01",
+        "docs/compat/05t-combat-core-fixtures.md": "1b67a66ba1a34219051a89f94ec32ab03754bfc065f25a99607af022952eb380"
+      },
+      "changed_files": [
+        "crates/scenario/src/lib.rs",
+        "crates/host-play/tests/catalog_boundary_live.rs",
+        "docs/compat/05t-combat-core-fixtures.md",
+        "docs/compat/evidence/combat-core-fixtures/_query_ids.py",
+        "docs/compat/evidence/combat-core-fixtures/id-dump.txt",
+        "docs/compat/evidence/combat-core-fixtures/isolated-checks.txt",
+        "docs/compat/evidence/combat-core-fixtures/verification.json"
+      ],
+      "identities": {
+        "chaos_druid": "ChaosDruidKiller Edgeville Dungeon style index 1 lobster 12",
+        "moss_giant": "MossGiant melee strength buryBones false",
+        "hill_giant": "HillGiant Giant not Hill giant blank weapon buryBones false",
+        "auto_fighter": "AutoFighter Guard Start position banking None solveClues false useSpecial false"
+      },
+      "ids": {
+        "trout": 333,
+        "lobster": 379,
+        "adamant_scimitar": 1331,
+        "big_bones": 532,
+        "limpwurt_root": 225,
+        "unidentified_guam_herb": 199,
+        "nature_rune": 561,
+        "law_rune": 563,
+        "bones": 526,
+        "strength_stat": 2
+      },
+      "stands": {
+        "chaos_druid_field": [
+          3110,
+          9936,
+          0
+        ],
+        "moss_giant_safespot": [
+          2553,
+          3406,
+          0
+        ],
+        "hill_giant_pit": [
+          3110,
+          9832,
+          0
+        ],
+        "auto_fighter_guard": [
+          2661,
+          3306,
+          0
+        ]
+      },
+      "frozen_script_hashes_match": true,
+      "gold_bounds": {
+        "SCRIPT_GOLD_DEADLINE_secs": 180,
+        "SCRIPT_GOLD_WATCH_TICKS": 150,
+        "unchanged": true
+      },
+      "tests_run": [
+        "cargo test -p scenario --lib: 97 passed",
+        "cargo test -p host-play --features memory-profile --test catalog_boundary_live: 34 passed, 1 ignored LIVE",
+        "clippy -D warnings scenario and catalog: pass",
+        "rustfmt --check: clean"
+      ],
+      "reviewer_checks": [
+        "r1 artifact cold read of 04d7b1f48 before handoff narrative",
+        "commit scoped to 7 owned paths only; parent 7cbba60a2",
+        "brief sha256 351e8c14 matches docs/compat/briefs/99-combat-core-fixtures.md",
+        "workspace+export overlay sha256 match for scenario/catalog/05t",
+        "SCRIPT_GOLD_DEADLINE 180s and SCRIPT_GOLD_WATCH_TICKS 150 unchanged vs parent 7cbba60a2",
+        "chaos_druid ChaosDruidKiller Edgeville Dungeon combatStyleIndex 1 lobster 12 empty herb/law/nature",
+        "moss_giant MossGiant melee/strength buryBones false big bones 532 loot",
+        "hill_giant HillGiant target Giant not Hill giant blank weapon buryBones false loot 532/225",
+        "auto_fighter AutoFighter Guard Start position banking None solveClues false useSpecial false melee strength no gem loot required",
+        "catalog CombatCoreCycle requires two engagements, verified defeat not mere despawn, Strength XP, exact loot; rejects attack-only XP, noted loot, seeded baseline, Hill giant alias",
+        "frozen script hashes rechecked on both catalog inputs for all seven sources",
+        "no BankItemId in combat scenario post-Start watches; banking policy explicit not bank proof",
+        "independent re-run on owned target: scenario 97, catalog 34/1 ignored, clippy/fmt clean",
+        "no LIVE; no runtime/foreign/client edits in commit"
+      ],
+      "limits": [
+        "no live client run",
+        "SCRIPT_GOLD_DEADLINE and SCRIPT_GOLD_WATCH_TICKS unchanged",
+        "two giant kills plus loot may not fit 180s",
+        "Chaos herb/law/nature may fail LIVE by chance",
+        "combat NPC type ids unresolved in generated JSON",
+        "DeathRecovery mage/range special teleports bank variants remaining fighters not this card",
+        "owned target reused after operator disk recovery; not independently empty-started",
+        "export path currently at campaign HEAD 04d7b1f; isolation is file overlay + exclusive CARGO_TARGET_DIR"
+      ],
+      "missing_op_gates": [
+        "combat_styles empty still gates style select until posted",
+        "Chaos loot chance is a fixture miss not a capability edit"
+      ],
+      "non_blocking_notes": [
+        "export_host_commit claim 2744b8be4 may predate export refresh to campaign HEAD; hashes still match",
+        "scenario uses COMBAT_SCIMITAR_ID alias of ADAMANT_SCIMITAR_ID 1331",
+        "AutoFighter catalog baseline does not require empty bones because loot is CombatLoot::None; scenario still empties bones before Start"
+      ],
+      "worker_session_id": "20260911_070817_79a3af"
+    },
+    "worker_pid": null,
+    "step_key": null
+  },
+  "actual_api_calls": 14,
+  "actual_model": "grok-4.5",
+  "provider": "xai-oauth",
+  "api_lines": [
+    "2026-09-11 07:08:21,779 INFO [20260911_070817_79a3af] agent.conversation_loop: API call #1: model=grok-4.5 provider=xai-oauth in=23285 out=89 total=23374 latency=3.8s cache=1024/23285 (4%) id=18286161-ea1b-97ff-9336-1fe113cd897c",
+    "2026-09-11 07:08:30,786 INFO [20260911_070817_79a3af] agent.conversation_loop: API call #2: model=grok-4.5 provider=xai-oauth in=30272 out=507 total=30779 latency=9.0s cache=23168/30272 (77%) id=3e04c8af-a6a1-9c38-a1a7-a469034bd45b",
+    "2026-09-11 07:08:38,082 INFO [20260911_070817_79a3af] agent.conversation_loop: API call #3: model=grok-4.5 provider=xai-oauth in=32376 out=371 total=32747 latency=6.9s cache=30208/32376 (93%) id=df93ad2f-4dd9-983a-aa64-99705771b28f",
+    "2026-09-11 07:08:47,785 INFO [20260911_070817_79a3af] agent.conversation_loop: API call #4: model=grok-4.5 provider=xai-oauth in=39684 out=420 total=40104 latency=9.4s cache=384/39684 (1%) id=5faadac1-410d-9fa1-8ce3-759787f31a5b",
+    "2026-09-11 07:08:55,337 INFO [20260911_070817_79a3af] agent.conversation_loop: API call #5: model=grok-4.5 provider=xai-oauth in=47484 out=399 total=47883 latency=7.3s cache=39680/47484 (84%) id=9183d6d1-08d5-9dec-878d-d866fb99e362",
+    "2026-09-11 07:09:03,707 INFO [20260911_070817_79a3af] agent.conversation_loop: API call #6: model=grok-4.5 provider=xai-oauth in=59264 out=429 total=59693 latency=8.1s cache=47360/59264 (80%) id=cdf186ed-8242-958c-a9cc-241de50e08d6",
+    "2026-09-11 07:09:17,971 INFO [20260911_070817_79a3af] agent.conversation_loop: API call #7: model=grok-4.5 provider=xai-oauth in=69699 out=769 total=70468 latency=14.1s cache=59264/69699 (85%) id=933a3c53-2cb7-989d-991a-47becd63c346",
+    "2026-09-11 07:09:51,896 INFO [20260911_070817_79a3af] agent.conversation_loop: API call #8: model=grok-4.5 provider=xai-oauth in=80510 out=2031 total=82541 latency=33.7s cache=69632/80510 (86%) id=f3507ea3-7144-91b8-857f-103e45e759d5",
+    "2026-09-11 07:10:07,907 INFO [20260911_070817_79a3af] agent.conversation_loop: API call #9: model=grok-4.5 provider=xai-oauth in=83095 out=558 total=83653 latency=15.2s cache=384/83095 (0%) id=f577e3e0-5057-949e-ae3b-336e7e29daa7",
+    "2026-09-11 07:10:31,775 INFO [20260911_070817_79a3af] agent.conversation_loop: API call #10: model=grok-4.5 provider=xai-oauth in=86631 out=285 total=86916 latency=23.5s id=dab99ae0-a926-9d87-a844-7aae1e4232f3",
+    "2026-09-11 07:10:47,757 INFO [20260911_070817_79a3af] agent.conversation_loop: API call #11: model=grok-4.5 provider=xai-oauth in=88955 out=1088 total=90043 latency=15.8s cache=86528/88955 (97%) id=09eba856-f265-9699-8ddd-6d15ed643d7a",
+    "2026-09-11 07:11:05,429 INFO [20260911_070817_79a3af] agent.conversation_loop: API call #12: model=grok-4.5 provider=xai-oauth in=99525 out=377 total=99902 latency=16.6s cache=384/99525 (0%) id=61a6403c-9abb-9940-8392-5c58db1173c8",
+    "2026-09-11 07:11:18,222 INFO [20260911_070817_79a3af] agent.conversation_loop: API call #13: model=grok-4.5 provider=xai-oauth in=102227 out=621 total=102848 latency=12.2s cache=99456/102227 (97%) id=3cbe788a-3845-9b51-ad9b-a8eb9af097e9",
+    "2026-09-11 07:12:03,507 INFO [20260911_070817_79a3af] agent.conversation_loop: API call #14: model=grok-4.5 provider=xai-oauth in=104400 out=2359 total=106759 latency=36.9s cache=102144/104400 (98%) id=89b99705-d037-9d56-bf67-a516ca51044e"
+  ],
+  "limits": "Review reused exclusive task compiler target. Root exact committed source export and integrated checks remain required before LIVE."
+}

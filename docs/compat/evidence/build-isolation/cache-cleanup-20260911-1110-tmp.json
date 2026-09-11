@@ -1,0 +1,43 @@
+{
+  "recorded_at": "2026-09-11T11:08:04.786072+00:00",
+  "scope": "Operator disk-lint request; source and evidence retained",
+  "targets": [
+    {
+      "task": "t_7bb8a58a",
+      "status": "done",
+      "path": "/private/tmp/t_7bb8a58a-target-20260911045854",
+      "before_kib": 3838908,
+      "open_reference_check": "lsof +D exit1; empty stdout/stderr",
+      "action": "remove completed compiler target only",
+      "removed": true
+    },
+    {
+      "task": "t_dde220ef",
+      "status": "done",
+      "path": "/private/tmp/t_dde220ef-target",
+      "before_kib": 9742652,
+      "open_reference_check": "lsof +D exit1; empty stdout/stderr",
+      "action": "remove completed compiler target only",
+      "removed": true
+    },
+    {
+      "task": "t_90e850ab",
+      "status": "done",
+      "path": "/private/tmp/t_90e850ab-red.ZWecLi/target",
+      "before_kib": 6247584,
+      "open_reference_check": "lsof +D exit1; empty stdout/stderr",
+      "action": "remove completed compiler target only",
+      "removed": true
+    },
+    {
+      "task": "t_1f03d5a7",
+      "status": "done",
+      "path": "/private/tmp/review-world-harness-t_1f03d5a7/target",
+      "before_kib": 3797208,
+      "open_reference_check": "lsof +D exit1; empty stdout/stderr",
+      "action": "remove completed compiler target only",
+      "removed": true
+    }
+  ],
+  "disk_after": "Filesystem      Size    Used   Avail Capacity iused ifree %iused  Mounted on\n/dev/disk3s1   1.8Ti   1.5Ti   332Gi    82%    6.2M  3.5G    0%   /System/Volumes/Data\n"
+}

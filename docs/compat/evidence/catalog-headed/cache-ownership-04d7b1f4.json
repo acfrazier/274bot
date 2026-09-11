@@ -1,0 +1,12 @@
+{
+  "recorded_at": "2026-09-11T11:13:30.710949+00:00",
+  "target": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_a74e9684-combat-target",
+  "previous_task": "t_a74e9684",
+  "previous_task_status": "done",
+  "previous_review": 1316,
+  "process_reference_check": "lsof -nP +D target exit1, empty output",
+  "new_owner": "root only",
+  "source": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/catalog-root-04d7b1f4",
+  "disk_free_gib_before": 332,
+  "action": "Reuse completed cache rather than create duplicate compiler outputs"
+}

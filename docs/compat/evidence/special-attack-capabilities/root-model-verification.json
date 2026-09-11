@@ -1,0 +1,97 @@
+{
+  "verified_at": "2026-09-11T11:37:19.095611+00:00",
+  "task": "t_68de6f48",
+  "run": {
+    "id": 1323,
+    "profile": "reviewer",
+    "step_key": null,
+    "status": "done",
+    "outcome": "completed",
+    "summary": "Reviewed and approved c5749bbe2 (evidence f8a3f4a5c) for brief 36 special controls. Round-1 artifact cold read plus independent re-run on hash-matched export special-controls-t_68de6f48 (host 2e6f02e72 + overlay, client 9d090ed Cargo.toml, exclusive target): api game_data 4, script lib special 2, script test special 9, clippy -D warnings api/script/host-play, rustfmt pass. Generated special bars/costs; thin Special.arm 2-tick wait; always-post varps 300/301. Not LIVE.",
+    "error": null,
+    "metadata": {
+      "review_outcome": "approved",
+      "review_round": 1,
+      "lens": "artifact",
+      "blocking_defects": [],
+      "brief": "docs/compat/briefs/36-special-controls.md",
+      "brief_sha256": "d8fcc16c8bc13b07d06f754507a7aea83b70a244533543267c0961091751799a",
+      "commit": "c5749bbe29eaa0ff313f25169e3d101865e217a9",
+      "evidence_commit": "f8a3f4a5c0d5c76f3e6968ac7bc95c0e7948b1f2",
+      "source_commit": "2e6f02e728ff915a74ed339a5ebf3bd57fd5d6ee",
+      "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+      "export": ".superpowers/review-exports/special-controls-t_68de6f48",
+      "cargo_target_dir": ".superpowers/review-exports/special-controls-t_68de6f48-target",
+      "isolated_build": true,
+      "live": false,
+      "report": "docs/compat/04-capabilities-special.md",
+      "evidence": "docs/compat/evidence/special-capabilities/",
+      "tests_passed": 15,
+      "tests_run": [
+        "cargo test --locked --offline -p api --test game_data -- --test-threads=1",
+        "cargo test --locked --offline -p script --lib special -- --test-threads=1",
+        "cargo test --locked --offline -p script --test special -- --test-threads=1",
+        "cargo clippy --locked --offline --no-deps -p api --lib -- -D warnings",
+        "cargo clippy --locked --offline --no-deps -p script --lib -- -D warnings",
+        "cargo clippy --locked --offline --no-deps -p script --test special -- -D warnings",
+        "cargo clippy --locked --offline --no-deps -p host-play --lib -- -D warnings",
+        "rustfmt --edition 2021 --check owned Rust"
+      ],
+      "json_sha256": {
+        "274": "6ca4c04acd7f12f635b99c044009d24d0af09d1d23afb709e8f0e6ca5a634232",
+        "289": "f7c78bf2ac32b29c618cc5690c555495abd29f101d1e1eba7e382dc4b8f0422b"
+      },
+      "overlay_sha256": {
+        "crates/api/src/game_data.rs": "763976cfe2432d8c42073d4aecc6ac544bac56a48ff80cd3870d3bf45fd4980b",
+        "crates/script/src/special.rs": "cecd2e7d13f3eec43804675490977057acaf3a6a11ba3eea8aec01214280c804",
+        "crates/script/src/shim/special.js": "c98c38ee257d5cf03d91e5568b1275e46f5c771a8a325e037ed56d8aa06f866f",
+        "crates/script/src/load.rs": "55060d8f944f7b7824bfa3486338abd85e4e363ac6f27e11790cd6bbecd98295",
+        "crates/host-play/src/lib.rs": "62d9b24df645da5b12401308f734eff5cbc7ad69d554667431990c40ea51056e",
+        "crates/api/data/game-data/274.json": "6ca4c04acd7f12f635b99c044009d24d0af09d1d23afb709e8f0e6ca5a634232",
+        "crates/api/data/game-data/289.json": "f7c78bf2ac32b29c618cc5690c555495abd29f101d1e1eba7e382dc4b8f0422b",
+        "crates/script/src/shim/mod.rs": "7b78764a188bf552311b5e53b83a2b5be38bfada6e1719c25b6853fda8d6a573"
+      },
+      "limits": [
+        "not LIVE acceptance",
+        "queued spec-bar click is not a spend",
+        "spell teleport remains later",
+        "root owns GreenDragon special LIVE and cache cleanup"
+      ],
+      "hotspot": "crates/host-play/src/lib.rs \u2014 always-post 300/301 beside 108. crates/script/src/load.rs \u2014 composition only: __rs2b0t_special register plus pause/hold/reset hooks. crates/script/src/shim/mod.rs \u2014 content_json special after duel. crates/api/src/game_data.rs serde append.",
+      "reviewer_checks": [
+        "cold read of c5749bbe2 vs brief 36 before handoff narrative",
+        "brief sha256 d8fcc16c8bc13b07 matches handoff and verification.json",
+        "commit parent is exact frozen source 2e6f02e72; scoped paths only api/script/host-play/game-data tools + report/evidence; no client/frontend/fixture/LIVE/isolate-schema edits",
+        "overlay hashes match workspace, export, commit blobs, and verification.json for owned core paths",
+        "export host base 2e6f02e72 + overlay; client tree Cargo.toml 3b1ed32eda matches live vendor at 9d090ed; exclusive target special-controls-t_68de6f48-target",
+        "generator extractSpecialControls from interface/varp/param packs + combat.constant; schema_version 3 serde default SpecialControls",
+        "both caches: energy_varp 300 armed_varp 301 max 1000 arm_confirm_ticks 2; 14 bars incl 425\u21927462 2276\u21927562 2423\u21927587 8460\u21928481; 12 sa_energy weapons; Dragon battleaxe/Excalibur/staff 328 omitted",
+        "JS Special thin: cost/bar/arm via __rs2b0t_special; no SPECBAR_BY_ROOT/SPEC_COST tables; energy/armed still throw when varps unposted",
+        "arm idempotent when sa_attack==1; else one ifButton on posted bar + delayUntilTicks(2); queued click not completion; token abort on session reset",
+        "host-play always posts varps 300/301 including 0 beside 108; remaining nonzero take(29)",
+        "load.rs composition only: register + pause/resume/reset/hold hooks; content_json special after duel",
+        "independent empty-target: api game_data 4/4; script --lib special 2/2; script --test special 9/9; clippy -D warnings api lib + script lib + script test special + host-play lib; rustfmt check owned Rust",
+        "workspace owned core paths zero diff vs c5749bbe2 after evidence f8a3f4a5c",
+        "not LIVE"
+      ],
+      "worker_session_id": "20260911_073325_c0550c"
+    },
+    "worker_pid": null,
+    "started_at": 1789126405,
+    "ended_at": 1789126546
+  },
+  "actual_model": "grok-4.5",
+  "actual_api_calls": 10,
+  "api_lines": [
+    "2026-09-11 07:33:29,863 INFO [20260911_073325_c0550c] agent.conversation_loop: API call #1: model=grok-4.5 provider=xai-oauth in=23263 out=79 total=23342 latency=3.3s cache=384/23263 (2%) id=39132635-b8f0-999b-bbfc-744a33d0f18e",
+    "2026-09-11 07:33:37,165 INFO [20260911_073325_c0550c] agent.conversation_loop: API call #2: model=grok-4.5 provider=xai-oauth in=40028 out=440 total=40468 latency=7.1s cache=23168/40028 (58%) id=dceda439-a3a0-98c1-9531-d924ae6fe1f5",
+    "2026-09-11 07:33:44,015 INFO [20260911_073325_c0550c] agent.conversation_loop: API call #3: model=grok-4.5 provider=xai-oauth in=43071 out=343 total=43414 latency=6.4s cache=39936/43071 (93%) id=4382c1f0-4dcd-9e69-98b3-83400a9f55a0",
+    "2026-09-11 07:34:03,835 INFO [20260911_073325_c0550c] agent.conversation_loop: API call #4: model=grok-4.5 provider=xai-oauth in=56434 out=1313 total=57747 latency=19.6s cache=43008/56434 (76%) id=97a8ddf6-8178-9977-90c1-4b3a8b432596",
+    "2026-09-11 07:34:18,012 INFO [20260911_073325_c0550c] agent.conversation_loop: API call #5: model=grok-4.5 provider=xai-oauth in=60951 out=1000 total=61951 latency=12.5s cache=56320/60951 (92%) id=2078a9a1-cc2f-9e48-9b5d-f3fad7adb6b8",
+    "2026-09-11 07:34:32,088 INFO [20260911_073325_c0550c] agent.conversation_loop: API call #6: model=grok-4.5 provider=xai-oauth in=66429 out=704 total=67133 latency=11.1s cache=60928/66429 (92%) id=56a8eb13-7f3d-9cfe-b672-a34fed1fb6eb",
+    "2026-09-11 07:34:45,053 INFO [20260911_073325_c0550c] agent.conversation_loop: API call #7: model=grok-4.5 provider=xai-oauth in=68705 out=685 total=69390 latency=12.4s cache=66304/68705 (97%) id=6d3eb2fd-13be-91b7-9875-1b83fae109ff",
+    "2026-09-11 07:34:54,071 INFO [20260911_073325_c0550c] agent.conversation_loop: API call #8: model=grok-4.5 provider=xai-oauth in=72078 out=402 total=72480 latency=6.4s cache=68608/72078 (95%) id=7be58ffe-def9-9dc1-9471-b825e6dc794a",
+    "2026-09-11 07:35:09,326 INFO [20260911_073325_c0550c] agent.conversation_loop: API call #9: model=grok-4.5 provider=xai-oauth in=74310 out=675 total=74985 latency=9.6s cache=72064/74310 (97%) id=b3e8c7ac-6c4f-9701-9448-0cc2c1e896c8",
+    "2026-09-11 07:35:46,097 INFO [20260911_073325_c0550c] agent.conversation_loop: API call #10: model=grok-4.5 provider=xai-oauth in=77793 out=2181 total=79974 latency=32.2s cache=74240/77793 (95%) id=9305fe22-70a9-972d-9adc-222d2c421aae"
+  ]
+}

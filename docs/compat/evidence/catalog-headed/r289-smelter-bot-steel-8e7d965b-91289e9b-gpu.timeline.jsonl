@@ -1,0 +1,435 @@
+{"elapsed_seconds": 0.116286, "line": "[panel] adapter name=Apple M4 Max backend=Metal device_type=IntegratedGpu vendor=0x0 device=0x0"}
+{"elapsed_seconds": 4.63975, "line": "[host-play] slot livef7tffd_0: thread up"}
+{"elapsed_seconds": 4.678754, "line": "274bot: snapshot load skipped: read /Users/acfrazier/.274bot/unpack-289/37214163f1e6ceca/models.bin: No such file or directory (os error 2)"}
+{"elapsed_seconds": 4.841833, "line": "[panel] scenario capture armed: Some(\"smelter_bot_steel\")"}
+{"elapsed_seconds": 4.841891, "line": "[panel] livef7tffd_0: livef7tffd_0: slot up"}
+{"elapsed_seconds": 6.337733, "line": "[host-play] slot livef7tffd_0: handshake begin reconnect=false"}
+{"elapsed_seconds": 6.446589, "line": "[host-play] slot livef7tffd_0: handshake ok"}
+{"elapsed_seconds": 6.515762, "line": "[host] hitch livef7tffd_0: frame_us=68017 paints=1 skips=0 ticks=0"}
+{"elapsed_seconds": 6.533765, "line": "[panel] livef7tffd_0: livef7tffd_0: scene 1"}
+{"elapsed_seconds": 7.544194, "line": "[host] hitch livef7tffd_0: frame_us=63860 paints=43 skips=0 ticks=1"}
+{"elapsed_seconds": 7.545415, "line": "[panel] livef7tffd_0: livef7tffd_0: mainland hop queued"}
+{"elapsed_seconds": 7.554587, "line": "[panel] livef7tffd_0: livef7tffd_0: ingame"}
+{"elapsed_seconds": 7.554645, "line": "[panel] livef7tffd_0: livef7tffd_0: scene 2"}
+{"elapsed_seconds": 7.554658, "line": "live script_smelter_bot_steel: running step 1/27"}
+{"elapsed_seconds": 7.686991, "line": "[host] slot livef7tffd_0: d_loop_us=10384 d_raster_us=232312 d_observe_us=57319 max_observe_us=2629 d_paints=50 d_skips=0 d_ticks=1 window_ms=0"}
+{"elapsed_seconds": 7.950317, "line": "[panel] livef7tffd_0: livef7tffd_0: scene 1"}
+{"elapsed_seconds": 8.060699, "line": "[panel] livef7tffd_0: livef7tffd_0: ingame"}
+{"elapsed_seconds": 8.060756, "line": "[panel] livef7tffd_0: livef7tffd_0: scene 2"}
+{"elapsed_seconds": 8.826518, "line": "[host] slot livef7tffd_0: d_loop_us=11732 d_raster_us=221202 d_observe_us=72213 max_observe_us=4981 d_paints=50 d_skips=0 d_ticks=3 window_ms=1139"}
+{"elapsed_seconds": 9.984299, "line": "[host] slot livef7tffd_0: d_loop_us=1095 d_raster_us=186219 d_observe_us=26955 max_observe_us=1143 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 10.075243, "line": "live script_smelter_bot_steel: running step 2/27"}
+{"elapsed_seconds": 10.692296, "line": "[host-play] slot livef7tffd_0: handshake begin reconnect=true"}
+{"elapsed_seconds": 10.700287, "line": "[panel] livef7tffd_0: livef7tffd_0: scene 0"}
+{"elapsed_seconds": 11.243417, "line": "[host-play] slot livef7tffd_0: handshake ok"}
+{"elapsed_seconds": 11.304614, "line": "[panel] livef7tffd_0: livef7tffd_0: scene 1"}
+{"elapsed_seconds": 12.221223, "line": "[panel] livef7tffd_0: livef7tffd_0: ingame"}
+{"elapsed_seconds": 12.22131, "line": "[panel] livef7tffd_0: livef7tffd_0: scene 2"}
+{"elapsed_seconds": 12.430486, "line": "[host] slot livef7tffd_0: d_loop_us=15457 d_raster_us=171802 d_observe_us=69417 max_observe_us=3497 d_paints=50 d_skips=0 d_ticks=1 window_ms=0"}
+{"elapsed_seconds": 13.593824, "line": "[host] slot livef7tffd_0: d_loop_us=1235 d_raster_us=170583 d_observe_us=41099 max_observe_us=5412 d_paints=50 d_skips=0 d_ticks=3 window_ms=1163"}
+{"elapsed_seconds": 14.221176, "line": "live script_smelter_bot_steel: running step 3/27"}
+{"elapsed_seconds": 14.743076, "line": "[host] slot livef7tffd_0: d_loop_us=1190 d_raster_us=182546 d_observe_us=33397 max_observe_us=1207 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 14.908599, "line": "[panel] livef7tffd_0: livef7tffd_0: scene 1"}
+{"elapsed_seconds": 15.03355, "line": "[panel] livef7tffd_0: livef7tffd_0: ingame"}
+{"elapsed_seconds": 15.033624, "line": "[panel] livef7tffd_0: livef7tffd_0: scene 2"}
+{"elapsed_seconds": 15.91625, "line": "[host] slot livef7tffd_0: d_loop_us=8955 d_raster_us=159750 d_observe_us=59200 max_observe_us=7964 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173"}
+{"elapsed_seconds": 17.062908, "line": "live script_smelter_bot_steel: running step 4/27"}
+{"elapsed_seconds": 17.071528, "line": "[host] slot livef7tffd_0: d_loop_us=1025 d_raster_us=188208 d_observe_us=30695 max_observe_us=1094 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 17.083714, "line": "live script_smelter_bot_steel: running step 5/27"}
+{"elapsed_seconds": 17.104406, "line": "live script_smelter_bot_steel: running step 6/27"}
+{"elapsed_seconds": 17.125377, "line": "live script_smelter_bot_steel: running step 7/27"}
+{"elapsed_seconds": 17.146183, "line": "live script_smelter_bot_steel: running step 8/27"}
+{"elapsed_seconds": 17.167048, "line": "live script_smelter_bot_steel: running step 9/27"}
+{"elapsed_seconds": 17.187816, "line": "live script_smelter_bot_steel: running step 10/27"}
+{"elapsed_seconds": 17.208696, "line": "live script_smelter_bot_steel: running step 11/27"}
+{"elapsed_seconds": 17.916916, "line": "live script_smelter_bot_steel: running step 12/27"}
+{"elapsed_seconds": 17.937743, "line": "live script_smelter_bot_steel: running step 13/27"}
+{"elapsed_seconds": 17.958582, "line": "live script_smelter_bot_steel: running step 14/27"}
+{"elapsed_seconds": 17.979406, "line": "live script_smelter_bot_steel: running step 15/27"}
+{"elapsed_seconds": 18.021149, "line": "live script_smelter_bot_steel: running step 16/27"}
+{"elapsed_seconds": 18.21088, "line": "[host] slot livef7tffd_0: d_loop_us=1097 d_raster_us=203806 d_observe_us=37223 max_observe_us=4276 d_paints=50 d_skips=0 d_ticks=2 window_ms=1139"}
+{"elapsed_seconds": 18.50038, "line": "live script_smelter_bot_steel: running step 17/27"}
+{"elapsed_seconds": 18.503773, "line": "[script livef7tffd_0] start load"}
+{"elapsed_seconds": 18.584997, "line": "live script_smelter_bot_steel: running step 18/27"}
+{"elapsed_seconds": 18.585087, "line": "[host] hitch livef7tffd_0: observe_us=81818 paints=312 skips=0 ticks=13"}
+{"elapsed_seconds": 19.093412, "line": "[host] hitch livef7tffd_0: observe_us=16417 paints=334 skips=0 ticks=14"}
+{"elapsed_seconds": 19.430017, "line": "[host] slot livef7tffd_0: d_loop_us=1009 d_raster_us=185543 d_observe_us=134671 max_observe_us=81818 d_paints=50 d_skips=0 d_ticks=2 window_ms=1219"}
+{"elapsed_seconds": 19.706896, "line": "[script livef7tffd_0] SmelterBot smelting 'Steel' (9 Iron ore + 18 Coal) \u2014 bank (3269, 3167, 0), furnace (3275, 3185, 0)"}
+{"elapsed_seconds": 19.706996, "line": "[script livef7tffd_0] interact Walk { x: 3269, z: 3167, level: 0, allow_teleports: false }"}
+{"elapsed_seconds": 19.712849, "line": "[panel] livef7tffd_0: script: SmelterBot smelting 'Steel' (9 Iron ore + 18 Coal) \u2014 bank (3269, 3167, 0), furnace (3275, 3185, 0)"}
+{"elapsed_seconds": 20.285776, "line": "[nav-follow] here=WorldTile { x: 3269, z: 3166, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 20.584139, "line": "[host] slot livef7tffd_0: d_loop_us=1045 d_raster_us=166960 d_observe_us=48339 max_observe_us=9583 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 20.897432, "line": "[nav-walk] here=WorldTile { x: 3269, z: 3167, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 20.89758, "line": "[nav-follow] here=WorldTile { x: 3269, z: 3167, level: 0 } walk=false transport=false leg=1 hops=1 outcome=Some(Arrived { at: WorldTile { x: 3269, z: 3167, level: 0 } })"}
+{"elapsed_seconds": 20.932118, "line": "[script livef7tffd_0] interact OpenBooth { x: 3268, z: 3166, level: 0, id: 2213, name: Some(\"Bank booth\"), action: Some(\"Use-quickly\") }"}
+{"elapsed_seconds": 21.750899, "line": "[host] slot livef7tffd_0: d_loop_us=960 d_raster_us=152968 d_observe_us=50773 max_observe_us=11577 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166"}
+{"elapsed_seconds": 22.893576, "line": "[host] slot livef7tffd_0: d_loop_us=965 d_raster_us=204960 d_observe_us=54128 max_observe_us=9623 d_paints=50 d_skips=0 d_ticks=2 window_ms=1142"}
+{"elapsed_seconds": 24.027317, "line": "[host] slot livef7tffd_0: d_loop_us=1015 d_raster_us=222553 d_observe_us=49689 max_observe_us=8214 d_paints=50 d_skips=0 d_ticks=2 window_ms=1133"}
+{"elapsed_seconds": 25.160928, "line": "[host] slot livef7tffd_0: d_loop_us=1054 d_raster_us=230057 d_observe_us=53651 max_observe_us=9176 d_paints=50 d_skips=0 d_ticks=2 window_ms=1133"}
+{"elapsed_seconds": 26.302642, "line": "[host] slot livef7tffd_0: d_loop_us=1132 d_raster_us=234392 d_observe_us=58290 max_observe_us=11175 d_paints=50 d_skips=0 d_ticks=2 window_ms=1141"}
+{"elapsed_seconds": 27.438409, "line": "[host] slot livef7tffd_0: d_loop_us=1081 d_raster_us=235948 d_observe_us=49704 max_observe_us=11547 d_paints=50 d_skips=0 d_ticks=1 window_ms=1135"}
+{"elapsed_seconds": 27.499597, "line": "[script livef7tffd_0] interact Walk { x: 3275, z: 3185, level: 0, allow_teleports: false }"}
+{"elapsed_seconds": 28.097451, "line": "[nav-follow] here=WorldTile { x: 3269, z: 3166, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 28.570424, "line": "[host] slot livef7tffd_0: d_loop_us=1013 d_raster_us=240844 d_observe_us=55525 max_observe_us=8880 d_paints=50 d_skips=0 d_ticks=2 window_ms=1132"}
+{"elapsed_seconds": 28.696672, "line": "[nav-walk] here=WorldTile { x: 3271, z: 3166, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 28.696788, "line": "[nav-follow] here=WorldTile { x: 3271, z: 3166, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 28.69727, "line": "[host] hitch livef7tffd_0: observe_us=16874 paints=754 skips=0 ticks=30"}
+{"elapsed_seconds": 29.295865, "line": "[nav-walk] here=WorldTile { x: 3273, z: 3167, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 29.295941, "line": "[nav-follow] here=WorldTile { x: 3273, z: 3167, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 29.295966, "line": "[host] hitch livef7tffd_0: observe_us=16654 paints=780 skips=0 ticks=31"}
+{"elapsed_seconds": 29.725037, "line": "[host] slot livef7tffd_0: d_loop_us=1097 d_raster_us=174692 d_observe_us=73301 max_observe_us=16874 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 29.896142, "line": "[nav-walk] here=WorldTile { x: 3273, z: 3169, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 29.896202, "line": "[nav-follow] here=WorldTile { x: 3273, z: 3169, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 30.494919, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3171, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 30.494991, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3171, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 30.874597, "line": "[host] slot livef7tffd_0: d_loop_us=1168 d_raster_us=191461 d_observe_us=64476 max_observe_us=15289 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 31.095153, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3173, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 31.095223, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3173, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 31.701718, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3175, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=5 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 31.701826, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3175, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 32.035053, "line": "[host] slot livef7tffd_0: d_loop_us=1248 d_raster_us=188758 d_observe_us=64026 max_observe_us=15755 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160"}
+{"elapsed_seconds": 32.300475, "line": "[nav-walk] here=WorldTile { x: 3275live script_smelter_bot_steel: running step 19/27"}
+{"elapsed_seconds": 32.300543, "line": ", z: 3177, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=6 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 32.300564, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3177, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 32.300575, "line": "[host] hitch livef7tffd_0: observe_us=16088 paints=910 skips=0 ticks=36"}
+{"elapsed_seconds": 32.894527, "line": "[nav-walk] here=WorldTile { x: 3277, z: 3179, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=7 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 32.89459, "line": "[nav-follow] here=WorldTile { x: 3277, z: 3179, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 33.179984, "line": "[host] slot livef7tffd_0: d_loop_us=1315 d_raster_us=180065 d_observe_us=69788 max_observe_us=16088 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144"}
+{"elapsed_seconds": 33.506363, "line": "[nav-walk] here=WorldTile { x: 3278, z: 3181, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=8 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 33.506428, "line": "[nav-follow] here=WorldTile { x: 3278, z: 3181, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 34.109785, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3183, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=9 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 34.109853, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3183, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 34.10987, "line": "[host] hitch livef7tffd_0: observe_us=16575 paints=989 skips=0 ticks=39"}
+{"elapsed_seconds": 34.329113, "line": "[host] slot livef7tffd_0: d_loop_us=1158 d_raster_us=159724 d_observe_us=63902 max_observe_us=16575 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 34.69305, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3185, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=10 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 34.69312, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3185, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 35.292939, "line": "[nav-walk] here=WorldTile { x: 3278, z: 3185, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=11 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 35.293001, "line": "[nav-follow] here=WorldTile { x: 3278, z: 3185, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 35.491855, "line": "[host] slot livef7tffd_0: d_loop_us=1180 d_raster_us=153914 d_observe_us=62128 max_observe_us=14150 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162"}
+{"elapsed_seconds": 35.881741, "line": "[nav-walk] here=WorldTile { x: 3276, z: 3185, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=12 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 35.881811, "line": "[nav-follow] here=WorldTile { x: 3276, z: 3185, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 36.492664, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3185, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=13 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 36.492731, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3185, level: 0 } walk=false transport=false leg=1 hops=1 outcome=Some(Arrived { at: WorldTile { x: 3275, z: 3185, level: 0 } })"}
+{"elapsed_seconds": 36.526809, "line": "[script livef7tffd_0] interact Loc { x: 3272, z: 3185, level: 0, action: \"Smelt\", id: Some(2781) }"}
+{"elapsed_seconds": 36.644448, "line": "[host] slot livef7tffd_0: d_loop_us=1104 d_raster_us=147115 d_observe_us=54071 max_observe_us=11997 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 37.700416, "line": "[script livef7tffd_0] interact IfButton { component_id: 3996 }"}
+{"elapsed_seconds": 37.800464, "line": "[host] slot livef7tffd_0: d_loop_us=971 d_raster_us=191536 d_observe_us=52325 max_observe_us=9680 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 38.2904, "line": "[script livef7tffd_0] interact AnswerCount { value: 30 }"}
+{"elapsed_seconds": 38.290468, "line": "[shim-count] 30 sent"}
+{"elapsed_seconds": 38.971547, "line": "[host] slot livef7tffd_0: d_loop_us=1012 d_raster_us=199954 d_observe_us=52781 max_observe_us=9854 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170"}
+{"elapsed_seconds": 40.141564, "line": "[host] slot livef7tffd_0: d_loop_us=1005 d_raster_us=144205 d_observe_us=42457 max_observe_us=6605 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170"}
+{"elapsed_seconds": 41.296061, "line": "live script_smelter_bot_steel: running step 20/27"}
+{"elapsed_seconds": 41.297078, "line": "[host] slot livef7tffd_0: d_loop_us=1119 d_raster_us=154533 d_observe_us=54650 max_observe_us=13049 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 41.316881, "line": "live script_smelter_bot_steel: running step 21/27"}
+{"elapsed_seconds": 42.442943, "line": "[host] slot livef7tffd_0: d_loop_us=1200 d_raster_us=174097 d_observe_us=45680 max_observe_us=8561 d_paints=50 d_skips=0 d_ticks=1 window_ms=1145"}
+{"elapsed_seconds": 43.571437, "line": "[host] slot livef7tffd_0: d_loop_us=1197 d_raster_us=168534 d_observe_us=52438 max_observe_us=8898 d_paints=50 d_skips=0 d_ticks=2 window_ms=1128"}
+{"elapsed_seconds": 44.715306, "line": "[host] slot livef7tffd_0: d_loop_us=1245 d_raster_us=166612 d_observe_us=55619 max_observe_us=11016 d_paints=50 d_skips=0 d_ticks=2 window_ms=1143"}
+{"elapsed_seconds": 45.862573, "line": "[host] slot livef7tffd_0: d_loop_us=1075 d_raster_us=166730 d_observe_us=52790 max_observe_us=8531 d_paints=50 d_skips=0 d_ticks=2 window_ms=1147"}
+{"elapsed_seconds": 47.010087, "line": "[host] slot livef7tffd_0: d_loop_us=1087 d_raster_us=154853 d_observe_us=52106 max_observe_us=8729 d_paints=50 d_skips=0 d_ticks=2 window_ms=1147"}
+{"elapsed_seconds": 48.133683, "line": "[host] slot livef7tffd_0: d_loop_us=1208 d_raster_us=161545 d_observe_us=56483 max_observe_us=11286 d_paints=50 d_skips=0 d_ticks=2 window_ms=1123"}
+{"elapsed_seconds": 49.301739, "line": "[host] slot livef7tffd_0: d_loop_us=1097 d_raster_us=158593 d_observe_us=51035 max_observe_us=9233 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168"}
+{"elapsed_seconds": 50.457664, "line": "[host] slot livef7tffd_0: d_loop_us=1102 d_raster_us=164304 d_observe_us=55974 max_observe_us=11634 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 51.607416, "line": "[host] slot livef7tffd_0: d_loop_us=1668 d_raster_us=167993 d_observe_us=55725 max_observe_us=9063 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 52.749782, "line": "[host] slot livef7tffd_0: d_loop_us=1205 d_raster_us=156655 d_observe_us=53631 max_observe_us=8918 d_paints=50 d_skips=0 d_ticks=2 window_ms=1142"}
+{"elapsed_seconds": 53.906004, "line": "[host] slot livef7tffd_0: d_loop_us=1218 d_raster_us=163523 d_observe_us=55239 max_observe_us=11249 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 55.024308, "line": "[host] slot livef7tffd_0: d_loop_us=1131 d_raster_us=164223 d_observe_us=48211 max_observe_us=7922 d_paints=50 d_skips=0 d_ticks=1 window_ms=1118"}
+{"elapsed_seconds": 56.181383, "line": "[host] slot livef7tffd_0: d_loop_us=1561 d_raster_us=166052 d_observe_us=53986 max_observe_us=9089 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 57.338623, "line": "[host] slot livef7tffd_0: d_loop_us=1144 d_raster_us=151521 d_observe_us=49184 max_observe_us=11259 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 58.495342, "line": "[host] slot livef7tffd_0: d_loop_us=1127 d_raster_us=163912 d_observe_us=51556 max_observe_us=8825 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 59.649321, "line": "[host] slot livef7tffd_0: d_loop_us=1178 d_raster_us=172863 d_observe_us=56898 max_observe_us=11942 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153"}
+{"elapsed_seconds": 60.810671, "line": "[host] slot livef7tffd_0: d_loop_us=1194 d_raster_us=162039 d_observe_us=50313 max_observe_us=9436 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161"}
+{"elapsed_seconds": 61.975351, "line": "[host] slot livef7tffd_0: d_loop_us=1077 d_raster_us=163411 d_observe_us=50819 max_observe_us=8830 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164"}
+{"elapsed_seconds": 63.117107, "line": "[host] slot livef7tffd_0: d_loop_us=1156 d_raster_us=166120 d_observe_us=57209 max_observe_us=11912 d_paints=50 d_skips=0 d_ticks=2 window_ms=1141"}
+{"elapsed_seconds": 64.283942, "line": "[host] slot livef7tffd_0: d_loop_us=1066 d_raster_us=164712 d_observe_us=53275 max_observe_us=9002 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166"}
+{"elapsed_seconds": 65.299248, "line": "live script_smelter_bot_steel: running step 22/27"}
+{"elapsed_seconds": 65.430023, "line": "[host] slot livef7tffd_0: d_loop_us=1102 d_raster_us=158349 d_observe_us=54233 max_observe_us=11407 d_paints=50 d_skips=0 d_ticks=2 window_ms=1146"}
+{"elapsed_seconds": 65.909138, "line": "[script livef7tffd_0] interact Walk { x: 3269, z: 3167, level: 0, allow_teleports: false }"}
+{"elapsed_seconds": 66.503786, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3185, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 66.5925, "line": "[host] slot livef7tffd_0: d_loop_us=1068 d_raster_us=160149 d_observe_us=52744 max_observe_us=8760 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162"}
+{"elapsed_seconds": 67.102584, "line": "[nav-walk] here=WorldTile { x: 3277, z: 3185, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 67.102663, "line": "[nav-follow] here=WorldTile { x: 3277, z: 3185, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 67.701614, "line": "[nav-walk] here=WorldTile { x: 3279, z: 3185, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 67.701695, "line": "[nav-follow] here=WorldTile { x: 3279, z: 3185, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 67.734133, "line": "[host] slot livef7tffd_0: d_loop_us=1088 d_raster_us=150679 d_observe_us=65987 max_observe_us=15423 d_paints=50 d_skips=0 d_ticks=2 window_ms=1141"}
+{"elapsed_seconds": 68.300075, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3184, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 68.300156, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3184, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 68.300196, "line": "[host] hitch livef7tffd_0: observe_us=17576 paints=2473 skips=0 ticks=96"}
+{"elapsed_seconds": 68.896743, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3182, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 68.896825, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3182, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 68.896848, "line": "[host] hitch livef7tffd_0: observe_us=17816 paints=2499 skips=0 ticks=97"}
+{"elapsed_seconds": 68.901643, "line": "[host] slot livef7tffd_0: d_loop_us=1223 d_raster_us=157840 d_observe_us=75491 max_observe_us=17816 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167"}
+{"elapsed_seconds": 69.502323, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3180, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 69.502408, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3180, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 70.022194, "line": "[host] slot livef7tffd_0: d_loop_us=1252 d_raster_us=172984 d_observe_us=52685 max_observe_us=15166 d_paints=50 d_skips=0 d_ticks=1 window_ms=1120"}
+{"elapsed_seconds": 70.100385, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3178, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=5 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 70.100452, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3178, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 70.692194, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3176, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=6 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 70.692266, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3176, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 71.159249, "line": "[host] slot livef7tffd_0: d_loop_us=1241 d_raster_us=185202 d_observe_us=65130 max_observe_us=14663 d_paints=50 d_skips=0 d_ticks=2 window_ms=1137"}
+{"elapsed_seconds": 71.310645, "line": "[nav-walk] here=WorldTile { x: 3278, z: 3174, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=7 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 71.310711, "line": "[nav-follow] here=WorldTile { x: 3278, z: 3174, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 71.310726, "line": "[host] hitch livef7tffd_0: observe_us=16775 paints=2605 skips=0 ticks=101"}
+{"elapsed_seconds": 71.909409, "line": "[nav-walk] here=WorldTile { x: 3276, z: 3172, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=8 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 71.90948, "line": "[nav-follow] here=WorldTile { x: 3276, z: 3172, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 72.313369, "line": "[host] slot livef7tffd_0: d_loop_us=1264 d_raster_us=188810 d_observe_us=70596 max_observe_us=16775 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 72.506503, "line": "[nav-walk] here=WorldTile { x: 3276, z: 3170, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=9 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 72.506575, "line": "[nav-follow] here=WorldTile { x: 3276, z: 3170, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 73.098767, "line": "[nav-walk] here=WorldTile { x: 3274, z: 3168, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=10 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 73.09884, "line": "[nav-follow] here=WorldTile { x: 3274, z: 3168, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 73.462303, "line": "[host] slot livef7tffd_0: d_loop_us=1147 d_raster_us=178382 d_observe_us=64434 max_observe_us=15088 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148"}
+{"elapsed_seconds": 73.680722, "line": "[nav-walk] here=WorldTile { x: 3272, z: 3167, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=11 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 73.680858, "line": "[nav-follow] here=WorldTile { x: 3272, z: 3167, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 74.297945, "line": "[nav-walk] here=WorldTile { x: 3270, z: 3167, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=12 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 74.298035, "line": "[nav-follow] here=WorldTile { x: 3270, z: 3167, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 74.298068, "line": "[host] hitch livef7tffd_0: observe_us=17781 paints=2735 skips=0 ticks=106"}
+{"elapsed_seconds": 74.601329, "line": "[host] slot livef7tffd_0: d_loop_us=1249 d_raster_us=172810 d_observe_us=68770 max_observe_us=17781 d_paints=50 d_skips=0 d_ticks=2 window_ms=1139"}
+{"elapsed_seconds": 74.911412, "line": "[nav-walk] here=WorldTile { x: 3269, z: 3167, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=13 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 74.911486, "line": "[nav-follow] here=WorldTile { x: 3269, z: 3167, level: 0 } walk=false transport=false leg=1 hops=1 outcome=Some(Arrived { at: WorldTile { x: 3269, z: 3167, level: 0 } })"}
+{"elapsed_seconds": 74.940111, "line": "[script livef7tffd_0] interact OpenBooth { x: 3268, z: 3166, level: 0, id: 2213, name: Some(\"Bank booth\"), action: Some(\"Use-quickly\") }"}
+{"elapsed_seconds": 75.749498, "line": "[host] slot livef7tffd_0: d_loop_us=1091 d_raster_us=169493 d_observe_us=58178 max_observe_us=15040 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148"}
+{"elapsed_seconds": 76.902534, "line": "[host] slot livef7tffd_0: d_loop_us=1036 d_raster_us=185788 d_observe_us=48436 max_observe_us=8909 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153"}
+{"elapsed_seconds": 77.277139, "line": "live script_smelter_bot_steel: running step 23/27"}
+{"elapsed_seconds": 77.295962, "line": "live script_smelter_bot_steel: running step 24/27"}
+{"elapsed_seconds": 78.066951, "line": "[host] slot livef7tffd_0: d_loop_us=988 d_raster_us=200218 d_observe_us=46096 max_observe_us=8959 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164"}
+{"elapsed_seconds": 79.210066, "line": "[host] slot livef7tffd_0: d_loop_us=1026 d_raster_us=200086 d_observe_us=42954 max_observe_us=7038 d_paints=50 d_skips=0 d_ticks=2 window_ms=1143"}
+{"elapsed_seconds": 80.295965, "line": "live script_smelter_bot_steel: running step 25/27"}
+{"elapsed_seconds": 80.360051, "line": "[host] slot livef7tffd_0: d_loop_us=1116 d_raster_us=198730 d_observe_us=48864 max_observe_us=9184 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 81.511213, "line": "[host] slot livef7tffd_0: d_loop_us=1094 d_raster_us=201795 d_observe_us=50853 max_observe_us=11087 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 82.105945, "line": "[script livef7tffd_0] interact Walk { x: 3275, z: 3185, level: 0, allow_teleports: false }"}
+{"elapsed_seconds": 82.668873, "line": "[host] slot livef7tffd_0: d_loop_us=1155 d_raster_us=226280 d_observe_us=43364 max_observe_us=7630 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 82.694276, "line": "[nav-follow] here=WorldTile { x: 3269, z: 3166, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 83.290871, "line": "[nav-walk] here=WorldTile { x: 3271, z: 3166, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 83.290938, "line": "[nav-follow] here=WorldTile { x: 3271, z: 3166, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 83.290953, "line": "[host] hitch livef7tffd_0: observe_us=16443 paints=3126 skips=0 ticks=121"}
+{"elapsed_seconds": 83.295968, "line": "live script_smelter_bot_steel: running step 26/27"}
+{"elapsed_seconds": 83.809668, "line": "[host] slot livef7tffd_0: d_loop_us=1114 d_raster_us=210935 d_observe_us=64538 max_observe_us=16443 d_paints=50 d_skips=0 d_ticks=1 window_ms=1140"}
+{"elapsed_seconds": 83.887984, "line": "[nav-walk] here=WorldTile { x: 3273, z: 3167, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 83.888059, "line": "[nav-follow] here=WorldTile { x: 3273, z: 3167, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 83.888076, "line": "[host] hitch livef7tffd_0: observe_us=17172 paints=3152 skips=0 ticks=122"}
+{"elapsed_seconds": 84.487649, "line": "[nav-walk] here=WorldTile { x: 3273, z: 3169, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 84.487718, "line": "[nav-follow] here=WorldTile { x: 3273, z: 3169, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 84.487738, "line": "[host] hitch livef7tffd_0: observe_us=17385 paints=3178 skips=0 ticks=123"}
+{"elapsed_seconds": 84.951665, "line": "[host] slot livef7tffd_0: d_loop_us=1224 d_raster_us=186974 d_observe_us=75711 max_observe_us=17385 d_paints=50 d_skips=0 d_ticks=2 window_ms=1141"}
+{"elapsed_seconds": 85.096161, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3171, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 85.096231, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3171, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 85.694353, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3173, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 85.69443, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3173, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 86.092251, "line": "[host] slot livef7tffd_0: d_loop_us=1179 d_raster_us=186577 d_observe_us=63286 max_observe_us=15488 d_paints=50 d_skips=0 d_ticks=2 window_ms=1140"}
+{"elapsed_seconds": 86.291666, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3175, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=5 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 86.291737, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3175, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 86.911529, "line": "[nav-walk] here=live script_smelter_bot_steel: running step 27/27"}
+{"elapsed_seconds": 86.911609, "line": "WorldTile { x: 3275, z: 3177, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=6 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 86.911627, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3177, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 86.911638, "line": "[host] hitch livef7tffd_0: observe_us=17557 paints=3284 skips=0 ticks=127"}
+{"elapsed_seconds": 87.250939, "line": "[host] slot livef7tffd_0: d_loop_us=1236 d_raster_us=178426 d_observe_us=70313 max_observe_us=17557 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 87.509008, "line": "[nav-walk] here=WorldTile { x: 3277, z: 3179, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=7 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 87.509083, "line": "[nav-follow] here=WorldTile { x: 3277, z: 3179, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 88.103977, "line": "[nav-walk] here=WorldTile { x: 3278, z: 3181, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=8 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 88.104048, "line": "[nav-follow] here=WorldTile { x: 3278, z: 3181, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 88.393785, "line": "[host] slot livef7tffd_0: d_loop_us=1278 d_raster_us=182751 d_observe_us=66704 max_observe_us=15610 d_paints=50 d_skips=0 d_ticks=2 window_ms=1142"}
+{"elapsed_seconds": 88.707514, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3183, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=9 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 88.707577, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3183, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 88.707606, "line": "[host] hitch livef7tffd_0: observe_us=16251 paints=3362 skips=0 ticks=130"}
+{"elapsed_seconds": 89.307923, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3185, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=10 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 89.307988, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3185, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 89.551364, "line": "[host] slot livef7tffd_0: d_loop_us=1314 d_raster_us=174575 d_observe_us=71128 max_observe_us=16251 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 89.889104, "line": "[nav-walk] here=WorldTile { x: 3278, z: 3185, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=11 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 89.889188, "line": "[nav-follow] here=WorldTile { x: 3278, z: 3185, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 89.889206, "line": "[host] hitch livef7tffd_0: observe_us=17345 paints=3413 skips=0 ticks=132"}
+{"elapsed_seconds": 90.503372, "line": "[nav-walk] here=WorldTile { x: 3276, z: 3185, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=12 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 90.503437, "line": "[nav-follow] here=WorldTile { x: 3276, z: 3185, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 90.699593, "line": "[host] slot livef7tffd_0: d_loop_us=1122 d_raster_us=178514 d_observe_us=68026 max_observe_us=17345 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148"}
+{"elapsed_seconds": 91.102806, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3185, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=13 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 91.102898, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3185, level: 0 } walk=false transport=false leg=1 hops=1 outcome=Some(Arrived { at: WorldTile { x: 3275, z: 3185, level: 0 } })"}
+{"elapsed_seconds": 91.131249, "line": "[script livef7tffd_0] interact Loc { x: 3272, z: 3185, level: 0, action: \"Smelt\", id: Some(2781) }"}
+{"elapsed_seconds": 91.859463, "line": "[host] slot livef7tffd_0: d_loop_us=1212 d_raster_us=175304 d_observe_us=70303 max_observe_us=15291 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 92.297486, "line": "[script livef7tffd_0] interact IfButton { component_id: 3996 }"}
+{"elapsed_seconds": 92.896877, "line": "[script livef7tffd_0] interact AnswerCount { value: 30 }"}
+{"elapsed_seconds": 92.897128, "line": "[shim-count] 30 sent"}
+{"elapsed_seconds": 93.012497, "line": "[host] slot livef7tffd_0: d_loop_us=1160 d_raster_us=209922 d_observe_us=56248 max_observe_us=8748 d_paints=50 d_skips=0 d_ticks=2 window_ms=1153"}
+{"elapsed_seconds": 94.157029, "line": "[host] slot livef7tffd_0: d_loop_us=1210 d_raster_us=162190 d_observe_us=46163 max_observe_us=9211 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144"}
+{"elapsed_seconds": 95.319423, "line": "[host] slot livef7tffd_0: d_loop_us=1134 d_raster_us=160043 d_observe_us=52410 max_observe_us=9867 d_paints=50 d_skips=0 d_ticks=2 window_ms=1162"}
+{"elapsed_seconds": 95.897852, "line": "[panel] scenario capture requested: smelter_bot_steel"}
+{"elapsed_seconds": 95.964212, "line": "[host] hitch livef7tffd_0: observe_us=70608 paints=3674 skips=0 ticks=142"}
+{"elapsed_seconds": 95.965027, "line": "[panel] capture readback requested: 1"}
+{"elapsed_seconds": 96.532316, "line": "[host] slot livef7tffd_0: d_loop_us=1194 d_raster_us=153881 d_observe_us=108325 max_observe_us=70608 d_paints=50 d_skips=0 d_ticks=2 window_ms=1212"}
+{"elapsed_seconds": 96.828689, "line": "[panel] shot smelter_bot_steel -> /Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/docs/compat/evidence/catalog-headed/r289-smelter-bot-steel-8e7d965b-91289e9b-gpu/shots/2026-09-11T11-11-30_2796/2026-09-11T11-13-02_smelter_bot_steel.png"}
+{"elapsed_seconds": 96.828816, "line": "PASS: live script_smelter_bot_steel {\"scenario\":\"smelter_bot_steel\",\"outcome\":\"PASS\",\"predicate\":\"has_item_id(2353)>=1\",\"ticks\":201,\"elapsed_ms\":91325,\"tile\":[3275,3185,0],\"inv\":[{\"id\":2353,\"name\":\"Steel bar\",\"count\":1},{\"id\":440,\"name\":\"Iron ore\",\"count\":1},{\"id\":440,\"name\":\"Iron ore\",\"count\":1},{\"id\":440,\"name\":\"Iron ore\",\"count\":1},{\"id\":440,\"name\":\"Iron ore\",\"count\":1},{\"id\":440,\"name\":\"Iron ore\",\"count\":1},{\"id\":440,\"name\":\"Iron ore\",\"count\":1},{\"id\":440,\"name\":\"Iron ore\",\"count\":1},{\"id\":440,\"name\":\"Iron ore\",\"count\":1},{\"id\":453,\"name\":\"Coal\",\"count\":1},{\"id\":453,\"name\":\"Coal\",\"count\":1},{\"id\":453,\"name\":\"Coal\",\"count\":1},{\"id\":453,\"name\":\"Coal\",\"count\":1},{\"id\":453,\"name\":\"Coal\",\"count\":1},{\"id\":453,\"name\":\"Coal\",\"count\":1},{\"id\":453,\"name\":\"Coal\",\"count\":1},{\"id\":453,\"name\":\"Coal\",\"count\":1},{\"id\":453,\"name\":\"Coal\",\"count\":1},{\"id\":453,\"name\":\"Coal\",\"count\":1},{\"id\":453,\"name\":\"Coal\",\"count\":1},{\"id\":453,\"name\":\"Coal\",\"count\":1},{\"id\":453,\"name\":\"Coal\",\"count\":1},{\"id\":453,\"name\":\"Coal\",\"count\":1},{\"id\":453,\"name\":\"Coal\",\"count\":1},{\"id\":453,\"name\":\"Coal\",\"count\":1}],\"stat\":{\"runenergy\":60},\"chat\":[{\"text\":\"You retrieve a bar of steel.\"},{\"text\":\"You place the iron and two heaps of coal into the furnace.\"},{\"text\":\"You have run out of iron ore with which to make steel.\"},{\"text\":\"You retrieve a bar of steel.\"},{\"text\":\"You place the iron and two heaps of coal into the furnace.\"},{\"text\":\"You retrieve a bar of steel.\"},{\"text\":\"You place the iron and two heaps of coal into the furnace.\"},{\"text\":\"You retrieve a bar of steel.\"},{\"text\":\"You place the iron and two heaps of coal into the furnace.\"},{\"text\":\"You retrieve a bar of steel.\"},{\"text\":\"You place the iron and two heaps of coal into the furnace.\"},{\"text\":\"You retrieve a bar of steel.\"},{\"text\":\"You place the iron and two heaps of coal into the furnace.\"},{\"text\":\"You retrieve a bar of steel.\"},{\"text\":\"You place the iron and two heaps of coal into the furnace.\"},{\"text\":\"You retrieve a bar of steel.\"},{\"text\":\"You place the iron and two heaps of coal into the furnace.\"},{\"text\":\"You retrieve a bar of steel.\"},{\"text\":\"You place the iron and two heaps of coal into the furnace.\"},{\"text\":\"You retrieve a bar of steel.\"},{\"text\":\"You place the iron and two heaps of coal into the furnace.\"},{\"text\":\"Inventory wiped.\"},{\"text\":\"Welcome to RuneScape.\"}],\"scene\":2}"}
+{"elapsed_seconds": 97.695788, "line": "[host] slot livef7tffd_0: d_loop_us=1016 d_raster_us=137155 d_observe_us=38941 max_observe_us=6527 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163"}
+{"elapsed_seconds": 98.865447, "line": "[host] slot livef7tffd_0: d_loop_us=1032 d_raster_us=142033 d_observe_us=32851 max_observe_us=6646 d_paints=50 d_skips=0 d_ticks=2 window_ms=1169"}
+{"elapsed_seconds": 100.041138, "line": "[host] slot livef7tffd_0: d_loop_us=1074 d_raster_us=139649 d_observe_us=40137 max_observe_us=8352 d_paints=50 d_skips=0 d_ticks=1 window_ms=1175"}
+{"elapsed_seconds": 101.208162, "line": "[host] slot livef7tffd_0: d_loop_us=1046 d_raster_us=140910 d_observe_us=40956 max_observe_us=6602 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167"}
+{"elapsed_seconds": 102.384253, "line": "[host] slot livef7tffd_0: d_loop_us=1018 d_raster_us=139759 d_observe_us=40631 max_observe_us=8439 d_paints=50 d_skips=0 d_ticks=2 window_ms=1176"}
+{"elapsed_seconds": 103.549618, "line": "[host] slot livef7tffd_0: d_loop_us=940 d_raster_us=140345 d_observe_us=38652 max_observe_us=6589 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165"}
+{"elapsed_seconds": 104.706328, "line": "[host] slot livef7tffd_0: d_loop_us=968 d_raster_us=136485 d_observe_us=38709 max_observe_us=6716 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 105.858089, "line": "[host] slot livef7tffd_0: d_loop_us=1034 d_raster_us=149552 d_observe_us=41655 max_observe_us=8808 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 107.007787, "line": "[host] slot livef7tffd_0: d_loop_us=1007 d_raster_us=135271 d_observe_us=40242 max_observe_us=6809 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 108.173019, "line": "[host] slot livef7tffd_0: d_loop_us=1071 d_raster_us=143169 d_observe_us=40644 max_observe_us=8006 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165"}
+{"elapsed_seconds": 109.315242, "line": "[host] slot livef7tffd_0: d_loop_us=1020 d_raster_us=139549 d_observe_us=39542 max_observe_us=6581 d_paints=50 d_skips=0 d_ticks=2 window_ms=1142"}
+{"elapsed_seconds": 110.472543, "line": "[host] slot livef7tffd_0: d_loop_us=1001 d_raster_us=139717 d_observe_us=41430 max_observe_us=6817 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 111.61696, "line": "[host] slot livef7tffd_0: d_loop_us=1049 d_raster_us=138693 d_observe_us=41134 max_observe_us=8363 d_paints=50 d_skips=0 d_ticks=2 window_ms=1144"}
+{"elapsed_seconds": 112.775372, "line": "[host] slot livef7tffd_0: d_loop_us=971 d_raster_us=140627 d_observe_us=39888 max_observe_us=7750 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 113.932283, "line": "[host] slot livef7tffd_0: d_loop_us=1018 d_raster_us=141841 d_observe_us=40380 max_observe_us=8199 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 115.096107, "line": "[host] slot livef7tffd_0: d_loop_us=1027 d_raster_us=145454 d_observe_us=41096 max_observe_us=6710 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163"}
+{"elapsed_seconds": 116.25033, "line": "[host] slot livef7tffd_0: d_loop_us=1004 d_raster_us=143564 d_observe_us=33133 max_observe_us=6466 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 117.400097, "line": "[host] slot livef7tffd_0: d_loop_us=1071 d_raster_us=144964 d_observe_us=42496 max_observe_us=8329 d_paints=50 d_skips=0 d_ticks=1 window_ms=1149"}
+{"elapsed_seconds": 118.557917, "line": "[host] slot livef7tffd_0: d_loop_us=1039 d_raster_us=148224 d_observe_us=39867 max_observe_us=6869 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 119.725914, "line": "[host] slot livef7tffd_0: d_loop_us=1026 d_raster_us=139453 d_observe_us=39249 max_observe_us=7094 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167"}
+{"elapsed_seconds": 120.50875, "line": "[script livef7tffd_0] interact Walk { x: 3269, z: 3167, level: 0, allow_teleports: false }"}
+{"elapsed_seconds": 120.875223, "line": "[host] slot livef7tffd_0: d_loop_us=1074 d_raster_us=147803 d_observe_us=39502 max_observe_us=7916 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 121.09203, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3185, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 121.681453, "line": "[nav-walk] here=WorldTile { x: 3277, z: 3185, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 121.681519, "line": "[nav-follow] here=WorldTile { x: 3277, z: 3185, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 122.051319, "line": "[host] slot livef7tffd_0: d_loop_us=1087 d_raster_us=141850 d_observe_us=45774 max_observe_us=11434 d_paints=50 d_skips=0 d_ticks=2 window_ms=1176"}
+{"elapsed_seconds": 122.296038, "line": "[nav-walk] here=WorldTile { x: 3279, z: 3185, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 122.296094, "line": "[nav-follow] here=WorldTile { x: 3279, z: 3185, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 122.893943, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3184, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 122.893996, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3184, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 123.207367, "line": "[host] slot livef7tffd_0: d_loop_us=1237 d_raster_us=145484 d_observe_us=55340 max_observe_us=12904 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 123.49138, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3182, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 123.491437, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3182, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 124.097125, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3180, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 124.097194, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3180, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 124.367474, "line": "[host] slot livef7tffd_0: d_loop_us=1133 d_raster_us=153803 d_observe_us=51951 max_observe_us=13375 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160"}
+{"elapsed_seconds": 124.696496, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3178, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=5 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 124.696547, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3178, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 125.291609, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3176, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=6 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 125.291666, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3176, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 125.510416, "line": "[host] slot livef7tffd_0: d_loop_us=1197 d_raster_us=173219 d_observe_us=50532 max_observe_us=12005 d_paints=50 d_skips=0 d_ticks=2 window_ms=1142"}
+{"elapsed_seconds": 125.891946, "line": "[nav-walk] here=WorldTile { x: 3278, z: 3174, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=7 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 125.892, "line": "[nav-follow] here=WorldTile { x: 3278, z: 3174, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 126.484323, "line": "[nav-walk] here=WorldTile { x: 3276, z: 3172, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=8 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 126.484382, "line": "[nav-follow] here=WorldTile { x: 3276, z: 3172, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 126.664744, "line": "[host] slot livef7tffd_0: d_loop_us=1215 d_raster_us=165119 d_observe_us=52264 max_observe_us=12852 d_paints=50 d_skips=0 d_ticks=2 window_ms=1154"}
+{"elapsed_seconds": 127.091755, "line": "[nav-walk] here=WorldTile { x: 3276, z: 3170, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=9 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 127.09182, "line": "[nav-follow] here=WorldTile { x: 3276, z: 3170, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 127.695971, "line": "[nav-walk] here=WorldTile { x: 3274, z: 3168, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=10 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 127.696063, "line": "[nav-follow] here=WorldTile { x: 3274, z: 3168, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 127.829266, "line": "[host] slot livef7tffd_0: d_loop_us=1113 d_raster_us=159729 d_observe_us=48075 max_observe_us=11629 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164"}
+{"elapsed_seconds": 128.300169, "line": "[nav-walk] here=WorldTile { x: 3272, z: 3167, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=11 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 128.300219, "line": "[nav-follow] here=WorldTile { x: 3272, z: 3167, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 128.903614, "line": "[nav-walk] here=WorldTile { x: 3270, z: 3167, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=12 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 128.903721, "line": "[nav-follow] here=WorldTile { x: 3270, z: 3167, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 128.985323, "line": "[host] slot livef7tffd_0: d_loop_us=1354 d_raster_us=197585 d_observe_us=64160 max_observe_us=14773 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 129.483471, "line": "[nav-walk] here=WorldTile { x: 3269, z: 3167, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=13 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 129.483546, "line": "[nav-follow] here=WorldTile { x: 3269, z: 3167, level: 0 } walk=false transport=false leg=1 hops=1 outcome=Some(Arrived { at: WorldTile { x: 3269, z: 3167, level: 0 } })"}
+{"elapsed_seconds": 129.511566, "line": "[script livef7tffd_0] interact OpenBooth { x: 3268, z: 3166, level: 0, id: 2213, name: Some(\"Bank booth\"), action: Some(\"Use-quickly\") }"}
+{"elapsed_seconds": 130.089417, "line": "[host] hitch livef7tffd_0: observe_us=17399 paints=5146 skips=0 ticks=199"}
+{"elapsed_seconds": 130.148774, "line": "[host] slot livef7tffd_0: d_loop_us=1417 d_raster_us=220360 d_observe_us=75384 max_observe_us=17399 d_paints=50 d_skips=0 d_ticks=2 window_ms=1163"}
+{"elapsed_seconds": 131.299458, "line": "[host] slot livef7tffd_0: d_loop_us=1458 d_raster_us=338577 d_observe_us=69480 max_observe_us=9208 d_paints=50 d_skips=0 d_ticks=2 window_ms=1148"}
+{"elapsed_seconds": 132.450425, "line": "[host] slot livef7tffd_0: d_loop_us=1269 d_raster_us=352183 d_observe_us=63238 max_observe_us=12436 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 133.607768, "line": "[host] slot livef7tffd_0: d_loop_us=1002 d_raster_us=209812 d_observe_us=39220 max_observe_us=6534 d_paints=50 d_skips=0 d_ticks=1 window_ms=1157"}
+{"elapsed_seconds": 134.777098, "line": "[host] slot livef7tffd_0: d_loop_us=967 d_raster_us=210138 d_observe_us=39976 max_observe_us=6358 d_paints=50 d_skips=0 d_ticks=2 window_ms=1169"}
+{"elapsed_seconds": 135.926277, "line": "[host] slot livef7tffd_0: d_loop_us=1012 d_raster_us=204836 d_observe_us=50276 max_observe_us=14413 d_paints=50 d_skips=0 d_ticks=2 window_ms=1149"}
+{"elapsed_seconds": 137.083249, "line": "[host] slot livef7tffd_0: d_loop_us=1285 d_raster_us=242443 d_observe_us=62430 max_observe_us=10675 d_paints=50 d_skips=0 d_ticks=2 window_ms=1156"}
+{"elapsed_seconds": 137.310994, "line": "[script livef7tffd_0] interact Walk { x: 3275, z: 3185, level: 0, allow_teleports: false }"}
+{"elapsed_seconds": 137.891798, "line": "[nav-follow] here=WorldTile { x: 3269, z: 3166, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 138.228712, "line": "[host] slot livef7tffd_0: d_loop_us=1335 d_raster_us=317031 d_observe_us=67149 max_observe_us=8138 d_paints=50 d_skips=0 d_ticks=2 window_ms=1145"}
+{"elapsed_seconds": 138.483498, "line": "[nav-walk] here=WorldTile { x: 3271, z: 3166, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 138.483941, "line": "[nav-follow] here=WorldTile { x: 3271, z: 3166, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 138.484031, "line": "[host] hitch livef7tffd_0: observe_us=16498 paints=5510 skips=0 ticks=213"}
+{"elapsed_seconds": 139.093257, "line": "[nav-walk] here=WorldTile { x: 3273, z: 3167, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 139.09338, "line": "[nav-follow] here=WorldTile { x: 3273, z: 3167, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 139.374734, "line": "[host] slot livef7tffd_0: d_loop_us=1593 d_raster_us=253191 d_observe_us=84712 max_observe_us=16498 d_paints=50 d_skips=0 d_ticks=2 window_ms=1146"}
+{"elapsed_seconds": 139.689883, "line": "[nav-walk] here=WorldTile { x: 3273, z: 3169, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 139.689982, "line": "[nav-follow] here=WorldTile { x: 3273, z: 3169, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 140.288713, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3171, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 140.288784, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3171, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 140.54294, "line": "[host] slot livef7tffd_0: d_loop_us=1288 d_raster_us=201903 d_observe_us=62932 max_observe_us=13521 d_paints=50 d_skips=0 d_ticks=2 window_ms=1168"}
+{"elapsed_seconds": 140.896319, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3173, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 140.896414, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3173, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 141.500279, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3175, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=5 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 141.500407, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3175, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 141.699993, "line": "[host] slot livef7tffd_0: d_loop_us=1358 d_raster_us=209350 d_observe_us=63942 max_observe_us=13793 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 142.083886, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3177, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=6 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 142.083962, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3177, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 142.691621, "line": "[nav-walk] here=WorldTile { x: 3277, z: 3179, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=7 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 142.691685, "line": "[nav-follow] here=WorldTile { x: 3277, z: 3179, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 142.871057, "line": "[host] slot livef7tffd_0: d_loop_us=1220 d_raster_us=159250 d_observe_us=53073 max_observe_us=13462 d_paints=50 d_skips=0 d_ticks=2 window_ms=1171"}
+{"elapsed_seconds": 143.303424, "line": "[nav-walk] here=WorldTile { x: 3278, z: 3181, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=8 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 143.303498, "line": "[nav-follow] here=WorldTile { x: 3278, z: 3181, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 143.303514, "line": "[host] hitch livef7tffd_0: observe_us=16715 paints=5717 skips=0 ticks=221"}
+{"elapsed_seconds": 143.892331, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3183, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=9 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 143.892567, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3183, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 144.041989, "line": "[host] slot livef7tffd_0: d_loop_us=1555 d_raster_us=217855 d_observe_us=72039 max_observe_us=16715 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170"}
+{"elapsed_seconds": 144.503538, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3185, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=10 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 144.503653, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3185, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 144.503678, "line": "[host] hitch livef7tffd_0: observe_us=23786 paints=5768 skips=0 ticks=223"}
+{"elapsed_seconds": 145.08669, "line": "[nav-walk] here=WorldTile { x: 3278, z: 3185, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=11 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 145.087124, "line": "[nav-follow] here=WorldTile { x: 3278, z: 3185, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 145.087199, "line": "[host] hitch livef7tffd_0: observe_us=16269 paints=5793 skips=0 ticks=224"}
+{"elapsed_seconds": 145.21289, "line": "[host] slot livef7tffd_0: d_loop_us=1635 d_raster_us=224247 d_observe_us=85381 max_observe_us=23786 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170"}
+{"elapsed_seconds": 145.689542, "line": "[nav-walk] here=WorldTile { x: 3276, z: 3185, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=12 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 145.689605, "line": "[nav-follow] here=WorldTile { x: 3276, z: 3185, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 146.298506, "line": "[nav-walk] here=WorldTile { x: 3275, z: 3185, level: 0 } aim=WorldTile { x: 3275, z: 3185, level: 0 } radius=0 ticks_waited=13 sent_tile=Some(WorldTile { x: 3269, z: 3166, level: 0 })"}
+{"elapsed_seconds": 146.298583, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3185, level: 0 } walk=false transport=false leg=1 hops=1 outcome=Some(Arrived { at: WorldTile { x: 3275, z: 3185, level: 0 } })"}
+{"elapsed_seconds": 146.332224, "line": "[script livef7tffd_0] interact Loc { x: 3272, z: 3185, level: 0, action: \"Smelt\", id: Some(2781) }"}
+{"elapsed_seconds": 146.383484, "line": "[host] slot livef7tffd_0: d_loop_us=1259 d_raster_us=180274 d_observe_us=53284 max_observe_us=12119 d_paints=50 d_skips=0 d_ticks=2 window_ms=1170"}
+{"elapsed_seconds": 147.49239, "line": "[script livef7tffd_0] interact IfButton { component_id: 3996 }"}
+{"elapsed_seconds": 147.54274, "line": "[host] slot livef7tffd_0: d_loop_us=1094 d_raster_us=165515 d_observe_us=44523 max_observe_us=8415 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 148.094211, "line": "[script livef7tffd_0] interact AnswerCount { value: 30 }"}
+{"elapsed_seconds": 148.094281, "line": "[shim-count] 30 sent"}
+{"elapsed_seconds": 148.694388, "line": "[host] slot livef7tffd_0: d_loop_us=1181 d_raster_us=199022 d_observe_us=50177 max_observe_us=11471 d_paints=50 d_skips=0 d_ticks=2 window_ms=1151"}
+{"elapsed_seconds": 149.849652, "line": "[host] slot livef7tffd_0: d_loop_us=1517 d_raster_us=204710 d_observe_us=52256 max_observe_us=8479 d_paints=50 d_skips=0 d_ticks=2 window_ms=1155"}
+{"elapsed_seconds": 151.028223, "line": "[host] slot livef7tffd_0: d_loop_us=1468 d_raster_us=305765 d_observe_us=72800 max_observe_us=10136 d_paints=50 d_skips=0 d_ticks=1 window_ms=1175"}
+{"elapsed_seconds": 152.172236, "line": "[host] slot livef7tffd_0: d_loop_us=1545 d_raster_us=283502 d_observe_us=70267 max_observe_us=10366 d_paints=50 d_skips=0 d_ticks=2 window_ms=1146"}
+{"elapsed_seconds": 153.349379, "line": "[host] slot livef7tffd_0: d_loop_us=1270 d_raster_us=168379 d_observe_us=44779 max_observe_us=8021 d_paints=50 d_skips=0 d_ticks=2 window_ms=1177"}
+{"elapsed_seconds": 154.516028, "line": "[host] slot livef7tffd_0: d_loop_us=1157 d_raster_us=140954 d_observe_us=40755 max_observe_us=8665 d_paints=50 d_skips=0 d_ticks=2 window_ms=1166"}
+{"elapsed_seconds": 155.697877, "line": "[host] slot livef7tffd_0: d_loop_us=1093 d_raster_us=139383 d_observe_us=38904 max_observe_us=6542 d_paints=50 d_skips=0 d_ticks=2 window_ms=1181"}
+{"elapsed_seconds": 156.858246, "line": "[host] slot livef7tffd_0: d_loop_us=1066 d_raster_us=143121 d_observe_us=40531 max_observe_us=6773 d_paints=50 d_skips=0 d_ticks=2 window_ms=1160"}
+{"elapsed_seconds": 158.024231, "line": "[host] slot livef7tffd_0: d_loop_us=2179 d_raster_us=187115 d_observe_us=49011 max_observe_us=9366 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165"}
+{"elapsed_seconds": 159.182075, "line": "[host] slot livef7tffd_0: d_loop_us=1174 d_raster_us=164934 d_observe_us=44514 max_observe_us=7332 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 160.357297, "line": "[host] slot livef7tffd_0: d_loop_us=1094 d_raster_us=143010 d_observe_us=40615 max_observe_us=8016 d_paints=50 d_skips=0 d_ticks=2 window_ms=1175"}
+{"elapsed_seconds": 161.539292, "line": "[host] slot livef7tffd_0: d_loop_us=1445 d_raster_us=293602 d_observe_us=70105 max_observe_us=9417 d_paints=50 d_skips=0 d_ticks=2 window_ms=1181"}
+{"elapsed_seconds": 162.694343, "line": "[host] slot livef7tffd_0: d_loop_us=1363 d_raster_us=252643 d_observe_us=62759 max_observe_us=7529 d_paints=50 d_skips=0 d_ticks=2 window_ms=1152"}
+{"elapsed_seconds": 163.849634, "line": "[host] slot livef7tffd_0: d_loop_us=1718 d_raster_us=297103 d_observe_us=79171 max_observe_us=12640 d_paints=50 d_skips=0 d_ticks=2 window_ms=1157"}
+{"elapsed_seconds": 165.024965, "line": "[host] slot livef7tffd_0: d_loop_us=1748 d_raster_us=299369 d_observe_us=83479 max_observe_us=12623 d_paints=50 d_skips=0 d_ticks=2 window_ms=1175"}
+{"elapsed_seconds": 166.19488, "line": "[host] slot livef7tffd_0: d_loop_us=1210 d_raster_us=178189 d_observe_us=45789 max_observe_us=8329 d_paints=50 d_skips=0 d_ticks=2 window_ms=1169"}
+{"elapsed_seconds": 167.362144, "line": "[host] slot livef7tffd_0: d_loop_us=1108 d_raster_us=148718 d_observe_us=41505 max_observe_us=6793 d_paints=50 d_skips=0 d_ticks=2 window_ms=1167"}
+{"elapsed_seconds": 168.533939, "line": "[host] slot livef7tffd_0: d_loop_us=1133 d_raster_us=163556 d_observe_us=43464 max_observe_us=8768 d_paints=50 d_skips=0 d_ticks=2 window_ms=1171"}
+{"elapsed_seconds": 169.695706, "line": "[host] slot livef7tffd_0: d_loop_us=1150 d_raster_us=164026 d_observe_us=46643 max_observe_us=8467 d_paints=50 d_skips=0 d_ticks=2 window_ms=1161"}
+{"elapsed_seconds": 170.871947, "line": "[host] slot livef7tffd_0: d_loop_us=1095 d_raster_us=155306 d_observe_us=37832 max_observe_us=7558 d_paints=50 d_skips=0 d_ticks=2 window_ms=1176"}
+{"elapsed_seconds": 172.024676, "line": "[host] slot livef7tffd_0: d_loop_us=1095 d_raster_us=160496 d_observe_us=48160 max_observe_us=9083 d_paints=50 d_skips=0 d_ticks=1 window_ms=1152"}
+{"elapsed_seconds": 173.197792, "line": "[host] slot livef7tffd_0: d_loop_us=1112 d_raster_us=157619 d_observe_us=47853 max_observe_us=9561 d_paints=50 d_skips=0 d_ticks=2 window_ms=1173"}
+{"elapsed_seconds": 174.372274, "line": "[host] slot livef7tffd_0: d_loop_us=1099 d_raster_us=156544 d_observe_us=43381 max_observe_us=8535 d_paints=50 d_skips=0 d_ticks=2 window_ms=1174"}
+{"elapsed_seconds": 175.547045, "line": "[host] slot livef7tffd_0: d_loop_us=1146 d_raster_us=154643 d_observe_us=49224 max_observe_us=12364 d_paints=50 d_skips=0 d_ticks=2 window_ms=1174"}
+{"elapsed_seconds": 175.70848, "line": "[script livef7tffd_0] interact Walk { x: 3269, z: 3167, level: 0, allow_teleports: false }"}
+{"elapsed_seconds": 176.283861, "line": "[nav-follow] here=WorldTile { x: 3275, z: 3185, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 176.716369, "line": "[host] slot livef7tffd_0: d_loop_us=1083 d_raster_us=148902 d_observe_us=43127 max_observe_us=7571 d_paints=50 d_skips=0 d_ticks=2 window_ms=1169"}
+{"elapsed_seconds": 176.894439, "line": "[nav-walk] here=WorldTile { x: 3277, z: 3185, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=0 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 176.894511, "line": "[nav-follow] here=WorldTile { x: 3277, z: 3185, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 177.494284, "line": "[nav-walk] here=WorldTile { x: 3279, z: 3185, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=1 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 177.494358, "line": "[nav-follow] here=WorldTile { x: 3279, z: 3185, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 177.88207, "line": "[host] slot livef7tffd_0: d_loop_us=1352 d_raster_us=152467 d_observe_us=57626 max_observe_us=15085 d_paints=50 d_skips=0 d_ticks=2 window_ms=1165"}
+{"elapsed_seconds": 178.081428, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3184, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=2 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 178.081516, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3184, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 178.683305, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3182, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=3 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 178.683372, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3182, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 178.683387, "line": "[host] hitch livef7tffd_0: observe_us=16381 paints=7233 skips=0 ticks=280"}
+{"elapsed_seconds": 179.040555, "line": "[host] slot livef7tffd_0: d_loop_us=1462 d_raster_us=159516 d_observe_us=61669 max_observe_us=16381 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 179.282547, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3180, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=4 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 179.28261, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3180, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 179.888044, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3178, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=5 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 179.888111, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3178, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 180.200239, "line": "[host] slot livef7tffd_0: d_loop_us=1280 d_raster_us=175729 d_observe_us=56530 max_observe_us=14396 d_paints=50 d_skips=0 d_ticks=2 window_ms=1159"}
+{"elapsed_seconds": 180.487858, "line": "[nav-walk] here=WorldTile { x: 3280, z: 3176, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=6 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 180.487927, "line": "[nav-follow] here=WorldTile { x: 3280, z: 3176, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 181.103697, "line": "[nav-walk] here=WorldTile { x: 3278, z: 3174, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=7 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 181.103761, "line": "[nav-follow] here=WorldTile { x: 3278, z: 3174, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 181.350428, "line": "[host] slot livef7tffd_0: d_loop_us=1278 d_raster_us=178212 d_observe_us=57323 max_observe_us=14455 d_paints=50 d_skips=0 d_ticks=2 window_ms=1150"}
+{"elapsed_seconds": 181.686538, "line": "[nav-walk] here=WorldTile { x: 3276, z: 3172, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=8 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 181.686618, "line": "[nav-follow] here=WorldTile { x: 3276, z: 3172, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 182.294645, "line": "[nav-walk] here=WorldTile { x: 3276, z: 3170, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=9 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 182.294714, "line": "[nav-follow] here=WorldTile { x: 3276, z: 3170, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 182.515384, "line": "[host] slot livef7tffd_0: d_loop_us=1133 d_raster_us=165682 d_observe_us=47582 max_observe_us=11540 d_paints=50 d_skips=0 d_ticks=2 window_ms=1164"}
+{"elapsed_seconds": 182.889002, "line": "[nav-walk] here=WorldTile { x: 3274, z: 3168, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=10 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 182.88909, "line": "[nav-follow] here=WorldTile { x: 3274, z: 3168, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 183.496213, "line": "[nav-walk] here=WorldTile { x: 3272, z: 3167, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=11 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 183.49629, "line": "[nav-follow] here=WorldTile { x: 3272, z: 3167, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 183.673682, "line": "[host] slot livef7tffd_0: d_loop_us=1122 d_raster_us=154992 d_observe_us=51508 max_observe_us=12594 d_paints=50 d_skips=0 d_ticks=2 window_ms=1158"}
+{"elapsed_seconds": 184.082339, "line": "[nav-walk] here=WorldTile { x: 3270, z: 3167, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=12 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 184.082416, "line": "[nav-follow] here=WorldTile { x: 3270, z: 3167, level: 0 } walk=true transport=false leg=0 hops=1 outcome=None"}
+{"elapsed_seconds": 184.690263, "line": "[nav-walk] here=WorldTile { x: 3269, z: 3167, level: 0 } aim=WorldTile { x: 3269, z: 3167, level: 0 } radius=0 ticks_waited=13 sent_tile=Some(WorldTile { x: 3275, z: 3185, level: 0 })"}
+{"elapsed_seconds": 184.690335, "line": "[nav-follow] here=WorldTile { x: 3269, z: 3167, level: 0 } walk=false transport=false leg=1 hops=1 outcome=Some(Arrived { at: WorldTile { x: 3269, z: 3167, level: 0 } })"}
+{"elapsed_seconds": 184.722174, "line": "[script livef7tffd_0] interact OpenBooth { x: 3268, z: 3166, level: 0, id: 2213, name: Some(\"Bank booth\"), action: Some(\"Use-quickly\") }"}
+{"elapsed_seconds": 184.843582, "line": "[host] slot livef7tffd_0: d_loop_us=1176 d_raster_us=175025 d_observe_us=52181 max_observe_us=13046 d_paints=50 d_skips=0 d_ticks=2 window_ms=1169"}
