@@ -1,0 +1,86 @@
+{
+  "campaign_head": "25d4fafc6c4c7b8e717fe08bfe57d95457856955",
+  "client_gitlink": "52c37f9ce50d1f184656d5b4469c007ec8a5791a",
+  "branch": "codex/rs2b0t-multirevision",
+  "kanban_task": "t_acea973c",
+  "catalogs": {
+    "100adccc": "100adccc037d9f6898080e1cad58fcfc43364775",
+    "8e7d965b": "8e7d965be2071d6ec65c3265e12af797082d720a"
+  },
+  "briefs": {
+    "158-paired-distinct-extras.md": "3525f7487b349d226da48f62d427b77b3b9a047584b7ee483598fc6caf63fa22",
+    "126-native-trade-completion.md": "9ce80c5e8506ddead0873017b03c878df4b288df845dd92df25278766d11ef80",
+    "127-mule-bootstrap-fixture.md": "cd5ef5666607752422ba301fbce5965cbaf5c179b483cf7bd4dc37d74c8f8036",
+    "156-native-flax-partner-exchange.md": "0d8b23afdef1bb9d8850cca4932433533bfddc84cf4f2ff79fa4fcbbf430bfe7",
+    "157-headed-paired-core.md": "86eacc13bbfad3ab3f64027d7c14c49ffdb0b8d1ce88fa191ace94fc14f8c7de",
+    "38-shop-transfers.md": "2a9376367a1e5fc171291c1aadf543b8bc2fa5a0de71920b906e6210984a8df0"
+  },
+  "design": {
+    "05w-paired-runner-design.md": "a274f61c0ec1881963890852c92d9c10886ad514b18e9f742bc164f9aa91e83d"
+  },
+  "shims": {
+    "shop.js": "0c532288168fb7ede92258d2da7f6f4ce158d5ea4bfe9eba1394a313b13ac682",
+    "trade.js": "fff835ca3b7c3316be66d3a7016c9223bf4f100cd72d8efcbe2cbbaf7b040e6c",
+    "bank.js": "0152af064fd4c99617dcecf49535edafb42f306e7e1ecbc2277198be8107cf7c",
+    "chat_dialog.js": "a572b5f8ca12ce4df9903bec1e49286c1eeec1ca74cf9c328879089cf118b6ec",
+    "drive_partner_trade.js": "7cf38227ca410a4accd0e4579e95f2490fa5f97cb5a26b7ff954fd121ac00c76"
+  },
+  "host": {
+    "crates/api/src/named_banks.rs": "e17959012fc1af3eb728e60d17f25253988865fd2503052ba5db21dfd7d7d59f",
+    "crates/nav/src/transport.rs": "45bfa7ea4a9d6cc6c43d936635b35a71b238d4eff27c68eba15adcdc3cef58d8",
+    "crates/api/data/game-data/274.json": "6ca4c04acd7f12f635b99c044009d24d0af09d1d23afb709e8f0e6ca5a634232",
+    "crates/api/data/game-data/289.json": "f7c78bf2ac32b29c618cc5690c555495abd29f101d1e1eba7e382dc4b8f0422b"
+  },
+  "selected_provenance": {
+    "274": {
+      "schema_version": 3,
+      "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
+      "content_commit": "000c19997e07206131bcb3c884265840efce416d",
+      "npc_dat_sha256": "112b08855d7b37c9faf36d6c37f354addbdbf886fe2d54a78a7ff832c8015cf9"
+    },
+    "289": {
+      "schema_version": 3,
+      "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
+      "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
+      "npc_dat_sha256": "29b8e82b63df203e50ba376a1b9c01cbf9c734eabbfcc45444d887adf664baea"
+    }
+  },
+  "siblings": {
+    "NatureCrafter": {
+      "src/bot/scripts/NatureCrafter/NatureCrafter.ts": {
+        "100adccc": "025ac395b25d64ef818cc0321478f0a2c84a051b79f99decbbfec5a9a2f0812a",
+        "8e7d965b": "025ac395b25d64ef818cc0321478f0a2c84a051b79f99decbbfec5a9a2f0812a",
+        "equal": true
+      },
+      "src/bot/scripts/NatureCrafter/NatureRunnerLogic.ts": {
+        "100adccc": "7a81b75a4cc4fde41d12565f5fe999de7931d88f2529da6d2d5e6a31f82d82f0",
+        "8e7d965b": "7a81b75a4cc4fde41d12565f5fe999de7931d88f2529da6d2d5e6a31f82d82f0",
+        "equal": true
+      }
+    },
+    "MuleCrafter": {
+      "src/bot/scripts/MuleCrafter/MuleCrafter.ts": {
+        "100adccc": "bf745db4c0a3df22406b49c8a8b716b10e0594302853d80ca6f38862d05dc1f9",
+        "8e7d965b": "bf745db4c0a3df22406b49c8a8b716b10e0594302853d80ca6f38862d05dc1f9",
+        "equal": true
+      },
+      "src/bot/scripts/MuleCrafter/MuleCrafterLogic.ts": {
+        "100adccc": "d9cc408c1857a02332e3338e1ae1e956dea51c7c191d4a66af81be6e5108251a",
+        "8e7d965b": "d9cc408c1857a02332e3338e1ae1e956dea51c7c191d4a66af81be6e5108251a",
+        "equal": true
+      },
+      "src/bot/data/runeCraftLocations.ts": {
+        "100adccc": "40db500c2c081a0978738796fcce62965bd39ac70d0995345e15443d4042f221",
+        "8e7d965b": "40db500c2c081a0978738796fcce62965bd39ac70d0995345e15443d4042f221",
+        "equal": true
+      }
+    }
+  },
+  "frozen_apis": {
+    "src/bot/api/shop/Shop.ts": {
+      "100adccc": "9770a4d96ae4e3b5bc0bb69ccfb24d8294bdd55fa573e04f4b3ad4bb2b84d5a0",
+      "8e7d965b": "9770a4d96ae4e3b5bc0bb69ccfb24d8294bdd55fa573e04f4b3ad4bb2b84d5a0",
+      "equal": true
+    }
+  }
+}
