@@ -593,6 +593,16 @@ pub struct GameSnapshot {
     /// the cheap stamp gates the 104×104×4 sweep between gen moves.
     #[serde(skip)]
     loc_model_stamp: u64,
+    /// World static-scenery mutation generation from the last loc sweep.
+    /// Ground loc add/del does not bump tile stamps, and LOC_DEL's scene
+    /// gen can be consumed before `loc_change_do_queue` applies.
+    #[serde(skip)]
+    loc_static_gen: u64,
+    /// Local-player tile the cached `LocView.distance` scalars were last
+    /// written for. Player ticks refresh those integers in place when this
+    /// origin moves, without cloning loc names or re-sweeping the world.
+    #[serde(skip)]
+    loc_distance_tile: Option<(i32, i32)>,
     #[serde(skip)]
     ground_item_gen: u64,
 
@@ -711,6 +721,8 @@ impl Default for GameSnapshot {
             map_flag: None,
             loc_gen: 0,
             loc_model_stamp: empty_loc_model_stamp(),
+            loc_static_gen: 0,
+            loc_distance_tile: None,
             ground_item_gen: 0,
             inventory: Vec::new(),
             equipment: Vec::new(),
@@ -1344,7 +1356,24 @@ impl GameSnapshot {
                 });
             }
         }
+        self.refresh_loc_distances(client);
         true
+    }
+
+    /// Rewrite cached loc Chebyshev distances when the local player tile
+    /// moves. Names, actions and the loc vec allocation stay put.
+    fn refresh_loc_distances(&mut self, client: &Client) {
+        let origin = local_world_tile(client);
+        if origin == self.loc_distance_tile {
+            return;
+        }
+        self.loc_distance_tile = origin;
+        let Some((lx, lz)) = origin else {
+            return;
+        };
+        for loc in &mut self.loc {
+            loc.distance = chebyshev(loc.tile.x, loc.tile.z, lx, lz);
+        }
     }
 
     /// Inv-family rebuild: zip the TYPE_INV iface's obj ids/counts. The
@@ -1908,20 +1937,22 @@ impl GameSnapshot {
 
     /// Loc-family rebuild: sweep the sim world's four layers at
     /// `minusedlevel` (locs sit on scene tiles, so the world tile is
-    /// `base + scene` with no pixel conversion). Gated on the scene gen
-    /// and the aggregated tile `model_stamp` dirty bit — typecodes can
-    /// change on the world after the observer already consumed that gen
-    /// (map restamp after `REBUILD_NORMAL`, a door multiloc applied in the
-    /// same drain), so a gen-only gate leaves nav reading the previous
-    /// build's door.
+    /// `base + scene` with no pixel conversion). Gated on the scene gen,
+    /// the aggregated tile `model_stamp`, and World's static-scenery
+    /// mutation generation — typecodes can change after the observer
+    /// already consumed that gen (map restamp, a door multiloc, or a
+    /// queued LOC_DEL/add applied without another packet), so a gen-only
+    /// gate leaves nav reading the previous build's door or flax.
     fn rebuild_loc(&mut self, client: &Client) -> bool {
         let moved = track(client.gens.scene, &mut self.loc_gen);
         let stamp = loc_model_stamp(client);
-        if !moved && stamp == self.loc_model_stamp {
+        let static_gen = client.world.static_loc_generation();
+        if !moved && stamp == self.loc_model_stamp && static_gen == self.loc_static_gen {
             return false;
         }
-        let dirty = moved || stamp != self.loc_model_stamp;
+        let dirty = moved || stamp != self.loc_model_stamp || static_gen != self.loc_static_gen;
         self.loc_model_stamp = stamp;
+        self.loc_static_gen = static_gen;
         let base = (client.map_build_base_x, client.map_build_base_z);
         let level = client.minusedlevel;
         let local_tile = local_world_tile(client);
@@ -1984,6 +2015,7 @@ impl GameSnapshot {
                 }
             }
         }
+        self.loc_distance_tile = local_tile;
         dirty
     }
 
