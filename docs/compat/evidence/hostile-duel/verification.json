@@ -1,0 +1,17 @@
+{
+  "task": "t_eeea20f0",
+  "brief": "docs/compat/briefs/35-hostile-duel-facts.md",
+  "brief_sha256": "0e3655f8cffee7fbaa1a6e5aede6f04ee9a7c25249803ceb82a4e51250efc54a",
+  "source_commit": "c6b52affbafe17275a5860eaef2ec632554f4ca7",
+  "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "isolated_build": true,
+  "export": ".superpowers/review-exports/hostile-duel-t_eeea20f0",
+  "cargo_target_dir": ".superpowers/review-exports/hostile-duel-t_eeea20f0-target",
+  "manifest": ".superpowers/review-exports/hostile-duel-t_eeea20f0-manifest.json",
+  "files": 3184,
+  "live": false,
+  "json": {
+    "274": "d310498c02aff231d4bd3a45095c9bb5d89007f899ada70f7b02863410b322c1",
+    "289": "9e7336807bd8756d86dc52568eb009520696b1b3ba4ac7066b9c997c6ad8f380"
+  }
+}
