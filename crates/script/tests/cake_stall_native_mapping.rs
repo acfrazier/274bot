@@ -1,13 +1,25 @@
 //! Bounded Baker stall mapping: posted pins, filtered loc id, honest results.
 
 use script::isolate_fb::{
-    ItemRowInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
+    IsolateBuf, ItemRowInput, ReachViewInput, SceneEntityInput, SnapshotFingerprint, SnapshotInput,
+    TileInput,
 };
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
 
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script::isolate_fb::encode_snapshot(input));
+}
+
+fn post_snapshot_delta(
+    iso: &LoadIsolate,
+    encoder: &mut IsolateBuf,
+    last: &mut Option<SnapshotFingerprint>,
+    input: &SnapshotInput<'_>,
+) {
+    let (bytes, next) = encoder.encode_snapshot_delta(last.as_ref(), input, false);
+    *last = Some(next);
+    iso.post_snapshot(bytes);
 }
 
 fn tile(x: i32, z: i32, level: i32) -> TileInput {
@@ -239,6 +251,31 @@ fn closer_door_still_selects_qualifying_stall_id() {
 }
 
 #[test]
+fn native_cake_stall_does_not_roundtrip_js_snapshot_collections() {
+    let iso = spawn();
+    iso.probe("globalThis.__fillTo = 28").unwrap();
+    let steal = ["Steal from".to_string()];
+    let locs = [loc_row(2561, Some("Baker's stall"), 2667, 3310, 2, &steal)];
+    let mut snap = base_snapshot(tile(2668, 3312, 0));
+    snap.locs = &locs;
+    post_snapshot_input(&iso, &snap);
+    iso.probe(
+        r#"(() => {
+            Object.defineProperties(globalThis.__rs2b0t_host.snapshot, {
+                locs: { get() { throw new Error('locs crossed JS/native seam'); } },
+                inv: { get() { throw new Error('inv crossed JS/native seam'); } },
+            });
+            return true;
+        })()"#,
+    )
+    .unwrap();
+
+    tick(&iso, 1);
+    assert_eq!(iso.drain_interacts(), vec![steal_loc()]);
+    iso.join();
+}
+
+#[test]
 fn other_stall_depleted_wrong_op_and_missing_facts_queue_nothing() {
     let steal = ["Steal from".to_string()];
     let examine = ["Examine".to_string()];
@@ -399,15 +436,17 @@ fn food_delta_calls_onsteal_once_and_partial_is_not_stocked() {
 
     let iso = spawn();
     iso.probe("globalThis.__fillTo = 28").unwrap();
+    let mut encoder = IsolateBuf::new();
+    let mut last = None;
     let mut snap = base_snapshot(tile(2668, 3312, 0));
     snap.locs = &locs;
-    post_snapshot_input(&iso, &snap);
+    post_snapshot_delta(&iso, &mut encoder, &mut last, &snap);
     tick(&iso, 1);
     assert_eq!(iso.drain_interacts(), vec![steal_loc()]);
     assert_eq!(iso.probe("__stolen").unwrap(), 0);
     snap.inv = &cake;
     snap.tick = 2;
-    post_snapshot_input(&iso, &snap);
+    post_snapshot_delta(&iso, &mut encoder, &mut last, &snap);
     tick(&iso, 2);
     assert_eq!(wait_result(&iso), "no-progress");
     assert_eq!(iso.probe("__stolen").unwrap(), 1);
@@ -471,35 +510,26 @@ fn native_cake_owner_selects_with_api_predicate_and_posts_food_gain() {
         vec![],
     )
     .unwrap();
+    let open_op = ["Open".to_string()];
+    let steal_op = ["Steal from".to_string()];
+    let locs = [
+        loc_row(1530, Some("Door"), 2668, 3312, 0, &open_op),
+        loc_row(2561, Some("Baker's stall"), 2666, 3310, i32::MAX, &steal_op),
+        loc_row(2561, Some("Baker's stall"), 2667, 3310, 2, &steal_op),
+    ];
+    let mut snap = base_snapshot(tile(2668, 3312, 0));
+    snap.locs = &locs;
+    post_snapshot_input(&iso, &snap);
+    iso.probe("true").unwrap();
+
     let begin = iso
         .probe(
             r#"rustyscript.functions.__rs2b0t_cake_stall({
                 op: 'begin',
                 fill_to: 28,
-                locked_out_until: 0,
-                observation: {
-                    ingame: true,
-                    tick: 1,
-                    here: {x:2668,z:3312,level:0},
-                    in_combat: false,
-                    abort: false,
-                    should_eat: false,
-                    inv_size: 28,
-                    inv: [],
-                    baker_stall: {
-                        loc_id: 2561,
-                        name: "Baker's stall",
-                        op: 'Steal from',
-                        stall: {x:2667,z:3310,level:0},
-                        stand: {x:2668,z:3312,level:0},
-                        stand_alt: {x:2669,z:3310,level:0},
-                    },
-                    locs: [
-                        {id:1530,name:'Door',x:2668,z:3312,level:0,distance:0,actions:['Open']},
-                        {id:2561,name:"Baker's stall",x:2666,z:3310,level:0,actions:['Steal from']},
-                        {id:2561,name:"Baker's stall",x:2667,z:3310,level:0,distance:2,actions:['Steal from']},
-                    ],
-                },
+                abort: false,
+                should_eat: false,
+                facts_valid: true,
             })"#,
         )
         .unwrap();
@@ -510,28 +540,8 @@ fn native_cake_owner_selects_with_api_predicate_and_posts_food_gain() {
     let steal = iso
         .probe(&format!(
             r#"rustyscript.functions.__rs2b0t_cake_stall({{
-                op: 'next', token: {token}, observation: {{
-                    ingame: true,
-                    tick: 1,
-                    here: {{x:2668,z:3312,level:0}},
-                    in_combat: false,
-                    abort: false,
-                    should_eat: false,
-                    locked_out_until: 0,
-                    inv_size: 28,
-                    inv: [],
-                    baker_stall: {{
-                        loc_id: 2561,
-                        name: "Baker's stall",
-                        op: 'Steal from',
-                        stall: {{x:2667,z:3310,level:0}},
-                        stand: {{x:2668,z:3312,level:0}},
-                    }},
-                    locs: [
-                        {{id:2561,name:"Baker's stall",x:2666,z:3310,level:0,actions:['Steal from']}},
-                        {{id:2561,name:"Baker's stall",x:2667,z:3310,level:0,distance:2,actions:['Steal from']}},
-                    ],
-                }},
+                op: 'next', token: {token}, abort: false, should_eat: false,
+                facts_valid: true, locked_out_until: 0,
             }})"#
         ))
         .unwrap();
@@ -542,21 +552,18 @@ fn native_cake_owner_selects_with_api_predicate_and_posts_food_gain() {
         "missing distance must not win target selection"
     );
 
+    let cake = [ItemRowInput::nc(Some("Cake"), 1)];
+    snap.tick = 2;
+    snap.inv = &cake;
+    snap.locs = &[];
+    post_snapshot_input(&iso, &snap);
+    iso.probe("true").unwrap();
+
     let result_check = iso
         .probe(&format!(
             r#"rustyscript.functions.__rs2b0t_cake_stall({{
-                op: 'next', token: {token}, observation: {{
-                    ingame: true,
-                    tick: 2,
-                    here: {{x:2668,z:3312,level:0}},
-                    in_combat: false,
-                    abort: false,
-                    should_eat: false,
-                    inv_size: 28,
-                    inv: [{{name:'Cake',count:1}}],
-                    baker_stall: null,
-                    locs: [],
-                }},
+                op: 'next', token: {token}, abort: false, should_eat: false,
+                facts_valid: true,
             }})"#
         ))
         .unwrap();
@@ -565,12 +572,8 @@ fn native_cake_owner_selects_with_api_predicate_and_posts_food_gain() {
     let on_steal = iso
         .probe(&format!(
             r#"rustyscript.functions.__rs2b0t_cake_stall({{
-                op: 'next', token: {token}, observation: {{
-                    ingame: true, tick: 2, here: {{x:2668,z:3312,level:0}},
-                    in_combat: false, abort: false, should_eat: false,
-                    inv_size: 28, inv: [{{name:'Cake',count:1}}],
-                    baker_stall: null, locs: [],
-                }},
+                op: 'next', token: {token}, abort: false, should_eat: false,
+                facts_valid: true,
             }})"#
         ))
         .unwrap();
@@ -578,12 +581,8 @@ fn native_cake_owner_selects_with_api_predicate_and_posts_food_gain() {
     let done = iso
         .probe(&format!(
             r#"rustyscript.functions.__rs2b0t_cake_stall({{
-                op: 'next', token: {token}, observation: {{
-                    ingame: true, tick: 2, here: {{x:2668,z:3312,level:0}},
-                    in_combat: false, abort: false, should_eat: false,
-                    inv_size: 28, inv: [{{name:'Cake',count:1}}],
-                    baker_stall: null, locs: [],
-                }},
+                op: 'next', token: {token}, abort: false, should_eat: false,
+                facts_valid: true,
             }})"#
         ))
         .unwrap();

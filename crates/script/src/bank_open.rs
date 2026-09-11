@@ -1,7 +1,8 @@
 //! Rust-owned one-attempt bank approach/open sequencing.
-//! JavaScript supplies snapshot-shaped observations and dispatches returned
-//! existing interaction verbs; Rust owns identity, phases and deadlines.
+//! Snapshot deltas feed a compact native projection; JavaScript supplies only
+//! options/tokens and dispatches returned verbs. Rust owns identity and clocks.
 
+use crate::isolate_fb::{SceneEntityReader, SnapshotReader};
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
@@ -12,6 +13,7 @@ const ACCESS_RADIUS: i32 = 1;
 
 thread_local! {
     static RUNTIME: RefCell<BankOpenRuntime> = const { RefCell::new(BankOpenRuntime::new()) };
+    static OBSERVATION: RefCell<Observation> = const { RefCell::new(Observation::new()) };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +59,96 @@ struct Observation {
     nearest_booth: Option<Booth>,
     locs: Vec<Booth>,
     has_booth_stands: bool,
+}
+
+impl Observation {
+    const fn new() -> Self {
+        Self {
+            ingame: false,
+            here: None,
+            bank_open: false,
+            bank_loaded: false,
+            bank_generation: 0,
+            nearest_booth: None,
+            locs: Vec::new(),
+            has_booth_stands: false,
+        }
+    }
+
+    fn update(&mut self, snap: &SnapshotReader<'_>) {
+        if snap.has_ingame() {
+            if !snap.ingame() {
+                *self = Self::new();
+                return;
+            }
+            self.ingame = true;
+        }
+        if snap.has_here() {
+            self.here = snap.here().map(|tile| Tile {
+                x: tile.x(),
+                z: tile.z(),
+                level: tile.level(),
+            });
+        }
+        if snap.has_bank_open() {
+            self.bank_open = snap.bank_open();
+        }
+        if snap.has_bank_loaded() {
+            self.bank_loaded = snap.bank_loaded();
+        }
+        if snap.has_bank_generation() {
+            self.bank_generation = snap.bank_generation();
+        }
+        if snap.has_nearest_booth() {
+            self.nearest_booth = snap.nearest_booth().map(|booth| Booth {
+                tile: Tile {
+                    x: booth.x(),
+                    z: booth.z(),
+                    level: booth.level(),
+                },
+                id: booth.id(),
+                distance: i32::MAX,
+                name: None,
+                action: None,
+                actions: Vec::new(),
+            });
+        }
+        if snap.has_banks() {
+            self.has_booth_stands = snap.banks().iter().any(|stand| stand.kind() == "booth");
+        }
+        if snap.has_locs() {
+            self.locs = snap.locs().iter().filter_map(bank_candidate).collect();
+        }
+    }
+}
+
+fn bank_candidate(row: &SceneEntityReader<'_>) -> Option<Booth> {
+    let name = row.name()?;
+    if !name
+        .as_bytes()
+        .windows(4)
+        .any(|word| word.eq_ignore_ascii_case(b"bank"))
+    {
+        return None;
+    }
+    let actions = row
+        .actions()
+        .into_iter()
+        .filter(|action| !action.is_empty() && *action != "hidden")
+        .map(str::to_string)
+        .collect();
+    Some(Booth {
+        tile: Tile {
+            x: row.x(),
+            z: row.z(),
+            level: row.level(),
+        },
+        id: row.id(),
+        distance: row.distance(),
+        name: Some(name.to_string()),
+        action: None,
+        actions,
+    })
 }
 
 struct BankOpenRuntime {
@@ -424,85 +516,6 @@ fn read_tile(value: Option<&Value>) -> Option<Tile> {
     })
 }
 
-fn read_booth(value: &Value, action_field: &str) -> Option<Booth> {
-    Some(Booth {
-        tile: read_tile(Some(value))?,
-        id: value.get("id")?.as_i64()? as i32,
-        distance: value
-            .get("distance")
-            .and_then(Value::as_i64)
-            .and_then(|distance| i32::try_from(distance).ok())
-            .unwrap_or(i32::MAX),
-        name: value
-            .get("name")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        action: value
-            .get(action_field)
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        actions: value
-            .get("actions")
-            .and_then(Value::as_array)
-            .map(|actions| {
-                actions
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .filter(|action| !action.is_empty() && *action != "hidden")
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default(),
-    })
-}
-
-fn read_observation(value: Option<&Value>) -> Observation {
-    let value = value.unwrap_or(&Value::Null);
-    let nearest_booth = value
-        .get("nearest_booth")
-        .and_then(|row| read_booth(row, "op"));
-    let locs = value
-        .get("locs")
-        .and_then(Value::as_array)
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|row| {
-                    let booth = read_booth(row, "action").or_else(|| read_booth(row, "op"))?;
-                    Some(booth)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    Observation {
-        ingame: value
-            .get("ingame")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        here: read_tile(value.get("here")),
-        bank_open: value
-            .get("bank_open")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        bank_loaded: value
-            .get("bank_loaded")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        bank_generation: value
-            .get("bank_generation")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        nearest_booth,
-        locs,
-        has_booth_stands: value
-            .get("banks")
-            .and_then(Value::as_array)
-            .is_some_and(|rows| {
-                rows.iter()
-                    .any(|row| row.get("kind").and_then(Value::as_str) == Some("booth"))
-            }),
-    }
-}
-
 pub fn on_pause() {
     RUNTIME.with(|runtime| {
         let held = runtime.borrow().held;
@@ -526,37 +539,45 @@ pub fn on_hold(held: bool) {
 
 pub fn on_reset() {
     RUNTIME.with(|runtime| runtime.borrow_mut().abort());
+    OBSERVATION.with(|observation| *observation.borrow_mut() = Observation::new());
+}
+
+pub fn on_snapshot(snap: &SnapshotReader<'_>) {
+    OBSERVATION.with(|observation| observation.borrow_mut().update(snap));
 }
 
 pub fn dispatch(input: &Value) -> Value {
-    RUNTIME.with(|runtime| {
-        let mut runtime = runtime.borrow_mut();
-        match input.get("op").and_then(Value::as_str).unwrap_or("") {
-            "begin" => {
-                let stand_value = input.get("stand");
-                let stand = read_tile(stand_value);
-                runtime.begin(
-                    parse_mode(input),
-                    stand,
-                    stand_value.is_some_and(|value| !value.is_null()) && stand.is_none(),
-                    input
-                        .get("booth_name")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                    input
-                        .get("booth_action")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                    &read_observation(input.get("observation")),
-                )
+    OBSERVATION.with(|observation| {
+        RUNTIME.with(|runtime| {
+            let observation = observation.borrow();
+            let mut runtime = runtime.borrow_mut();
+            match input.get("op").and_then(Value::as_str).unwrap_or("") {
+                "begin" => {
+                    let stand_value = input.get("stand");
+                    let stand = read_tile(stand_value);
+                    runtime.begin(
+                        parse_mode(input),
+                        stand,
+                        stand_value.is_some_and(|value| !value.is_null()) && stand.is_none(),
+                        input
+                            .get("booth_name")
+                            .and_then(Value::as_str)
+                            .map(str::to_string),
+                        input
+                            .get("booth_action")
+                            .and_then(Value::as_str)
+                            .map(str::to_string),
+                        &observation,
+                    )
+                }
+                "next" => runtime.next(
+                    input.get("token").and_then(Value::as_u64).unwrap_or(0),
+                    &observation,
+                ),
+                "current_token" => json!(runtime.token),
+                _ => json!({"kind": "done", "ok": false, "reason": "unknown-op"}),
             }
-            "next" => runtime.next(
-                input.get("token").and_then(Value::as_u64).unwrap_or(0),
-                &read_observation(input.get("observation")),
-            ),
-            "current_token" => json!(runtime.token),
-            _ => json!({"kind": "done", "ok": false, "reason": "unknown-op"}),
-        }
+        })
     })
 }
 
@@ -600,11 +621,11 @@ mod tests {
 
     #[test]
     fn out_of_range_stand_fails_closed() {
+        OBSERVATION.with(|observation| *observation.borrow_mut() = obs());
         let result = dispatch(&json!({
             "op": "begin",
             "mode": "open-booth",
             "stand": {"x": 2_147_483_648_i64, "z": 3355, "level": 0},
-            "observation": {"ingame": true, "here": {"x": 3010, "z": 3352, "level": 0}},
         }));
         assert_eq!(result["kind"], "done");
         assert_eq!(result["ok"], false);

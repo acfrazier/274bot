@@ -1,9 +1,23 @@
-use script::isolate_fb::{ReachViewInput, SideTabIfaceInput, SnapshotInput, TileInput, VarpInput};
+use script::isolate_fb::{
+    IsolateBuf, ReachViewInput, SideTabIfaceInput, SnapshotFingerprint, SnapshotInput, TileInput,
+    VarpInput,
+};
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
 
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script::isolate_fb::encode_snapshot(input));
+}
+
+fn post_snapshot_delta(
+    iso: &LoadIsolate,
+    encoder: &mut IsolateBuf,
+    last: &mut Option<SnapshotFingerprint>,
+    input: &SnapshotInput<'_>,
+) {
+    let (bytes, next) = encoder.encode_snapshot_delta(last.as_ref(), input, false);
+    *last = Some(next);
+    iso.post_snapshot(bytes);
 }
 
 fn base_snapshot<'a>() -> SnapshotInput<'a> {
@@ -210,7 +224,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn arm_three_presses_then_posted_armed_state() {
+fn native_autocast_does_not_roundtrip_js_snapshot_observations() {
     let iso = spawn(ARM);
     let staff = [SideTabIfaceInput { index: 0, id: 328 }];
     let idle = [VarpInput {
@@ -221,6 +235,38 @@ fn arm_three_presses_then_posted_armed_state() {
     snap.side_tab_ifaces = &staff;
     snap.varps = &idle;
     post_snapshot_input(&iso, &snap);
+    iso.probe(
+        r#"(() => {
+            Object.defineProperties(globalThis.__rs2b0t_host.snapshot, {
+                ingame: { get() { throw new Error('ingame crossed JS/native seam'); } },
+                side_tab: { get() { throw new Error('side_tab crossed JS/native seam'); } },
+                side_tab_ifaces: { get() { throw new Error('side_tab_ifaces crossed JS/native seam'); } },
+                varps: { get() { throw new Error('varps crossed JS/native seam'); } },
+            });
+            return true;
+        })()"#,
+    )
+    .unwrap();
+
+    tick(&iso, 1);
+    assert_eq!(iso.drain_interacts(), vec![if_button(353)]);
+    iso.join();
+}
+
+#[test]
+fn arm_three_presses_across_delta_omissions_then_posted_armed_state() {
+    let iso = spawn(ARM);
+    let mut encoder = IsolateBuf::new();
+    let mut last = None;
+    let staff = [SideTabIfaceInput { index: 0, id: 328 }];
+    let idle = [VarpInput {
+        index: 108,
+        value: 0,
+    }];
+    let mut snap = base_snapshot();
+    snap.side_tab_ifaces = &staff;
+    snap.varps = &idle;
+    post_snapshot_delta(&iso, &mut encoder, &mut last, &snap);
     tick(&iso, 1);
     assert_eq!(
         iso.drain_interacts(),
@@ -232,7 +278,7 @@ fn arm_three_presses_then_posted_armed_state() {
     let panel = [SideTabIfaceInput { index: 0, id: 1829 }];
     snap.tick = 2;
     snap.side_tab_ifaces = &panel;
-    post_snapshot_input(&iso, &snap);
+    post_snapshot_delta(&iso, &mut encoder, &mut last, &snap);
     tick(&iso, 2);
     assert_eq!(iso.drain_interacts(), vec![if_button(1830)]);
 
@@ -242,7 +288,7 @@ fn arm_three_presses_then_posted_armed_state() {
     }];
     snap.tick = 3;
     snap.varps = &selected;
-    post_snapshot_input(&iso, &snap);
+    post_snapshot_delta(&iso, &mut encoder, &mut last, &snap);
     tick(&iso, 3);
     assert_eq!(iso.drain_interacts(), vec![if_button(349)]);
 
@@ -254,7 +300,7 @@ fn arm_three_presses_then_posted_armed_state() {
     snap.tick = 4;
     snap.varps = &armed;
     snap.side_tab_ifaces = &staff_again;
-    post_snapshot_input(&iso, &snap);
+    post_snapshot_delta(&iso, &mut encoder, &mut last, &snap);
     tick(&iso, 4);
     assert_eq!(iso.probe("__ok").unwrap(), true);
     assert!(iso.drain_interacts().is_empty());

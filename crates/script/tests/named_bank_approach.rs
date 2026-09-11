@@ -2,13 +2,25 @@
 //! radius 1, then posts the same named OpenBooth identity.
 
 use script::isolate_fb::{
-    BankStandInput, NearestBoothInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
+    BankStandInput, IsolateBuf, NearestBoothInput, ReachViewInput, SceneEntityInput,
+    SnapshotFingerprint, SnapshotInput, TileInput,
 };
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
 
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script::isolate_fb::encode_snapshot(input));
+}
+
+fn post_snapshot_delta(
+    iso: &LoadIsolate,
+    encoder: &mut IsolateBuf,
+    last: &mut Option<SnapshotFingerprint>,
+    input: &SnapshotInput<'_>,
+) {
+    let (bytes, next) = encoder.encode_snapshot_delta(last.as_ref(), input, false);
+    *last = Some(next);
+    iso.post_snapshot(bytes);
 }
 
 fn base_snapshot<'a>() -> SnapshotInput<'a> {
@@ -226,6 +238,30 @@ fn named_open_nearest_from_chebyshev_2_queues_walk_near_then_same_named_open_boo
         vec![named_open_booth()],
         "click must reuse the same id/name/action/tile, not a later nearest"
     );
+    iso.join();
+}
+
+#[test]
+fn native_bank_open_does_not_roundtrip_js_snapshot_collections() {
+    let iso = LoadIsolate::spawn(OPEN_NEAREST.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let use_quickly = ["Use-quickly".to_string()];
+    let locs = [east_booth(&use_quickly)];
+    let mut snap = base_snapshot();
+    snap.locs = &locs;
+    post_snapshot_input(&iso, &snap);
+    iso.probe(
+        r#"(() => {
+            Object.defineProperties(globalThis.__rs2b0t_host.snapshot, {
+                locs: { get() { throw new Error('locs crossed JS/native seam'); } },
+                banks: { get() { throw new Error('banks crossed JS/native seam'); } },
+            });
+            return true;
+        })()"#,
+    )
+    .unwrap();
+
+    tick(&iso, 1);
+    assert_eq!(iso.drain_interacts(), vec![walk_near_selected()]);
     iso.join();
 }
 
@@ -506,13 +542,27 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn native_bank_owner_preserves_selected_identity_across_approach() {
+fn native_bank_owner_preserves_selected_identity_across_omitted_locs_delta() {
     let iso = LoadIsolate::spawn(
         "export default class T extends LoopingBot { loop() {} }".to_string(),
         LoadShape::CompatClass,
         vec![],
     )
     .unwrap();
+    let quick = ["Use-quickly".to_string()];
+    let examine_quick = ["Examine".to_string(), "Use-quickly".to_string()];
+    let initial_locs = [
+        loc_row(111, Some("Bank booth"), 3010, 3353, 9, &quick),
+        loc_row(2213, Some("Bank booth"), 3011, 3354, 2, &examine_quick),
+    ];
+    let mut snap = base_snapshot();
+    snap.bank_generation = 7;
+    snap.locs = &initial_locs;
+    let mut encoder = IsolateBuf::new();
+    let mut last = None;
+    post_snapshot_delta(&iso, &mut encoder, &mut last, &snap);
+    iso.probe("true").unwrap();
+
     let begin = iso
         .probe(
             r#"rustyscript.functions.__rs2b0t_bank_open({
@@ -520,19 +570,6 @@ fn native_bank_owner_preserves_selected_identity_across_approach() {
                 mode: 'open-nearest',
                 booth_name: 'Bank booth',
                 booth_action: 'Use-quickly',
-                observation: {
-                    ingame: true,
-                    here: {x:3010,z:3352,level:0},
-                    bank_open: false,
-                    bank_loaded: false,
-                    bank_generation: 7,
-                    locs: [
-                        {id:111,name:'Bank booth',x:3010,z:3353,level:0,distance:9,actions:['Use-quickly']},
-                        {id:2213,name:'Bank booth',x:3011,z:3354,level:0,distance:2,actions:['Examine','Use-quickly']},
-                    ],
-                    nearest_booth: null,
-                    banks: [],
-                },
             })"#,
         )
         .unwrap();
@@ -541,19 +578,15 @@ fn native_bank_owner_preserves_selected_identity_across_approach() {
     assert_eq!(begin["x"], 3011);
     assert_eq!(begin["z"], 3354);
 
+    snap.tick = 2;
+    snap.here = Some(tile(3011, 3353));
+    post_snapshot_delta(&iso, &mut encoder, &mut last, &snap);
+    iso.probe("true").unwrap();
+
     let open = iso
         .probe(&format!(
             r#"rustyscript.functions.__rs2b0t_bank_open({{
-                op: 'next', token: {token}, observation: {{
-                    ingame: true,
-                    here: {{x:3011,z:3353,level:0}},
-                    bank_open: false,
-                    bank_loaded: false,
-                    bank_generation: 7,
-                    locs: [{{id:2213,name:'Bank booth',x:3011,z:3354,level:0,distance:1,actions:['Examine','Use-quickly']}}],
-                    nearest_booth: null,
-                    banks: [],
-                }},
+                op: 'next', token: {token},
             }})"#
         ))
         .unwrap();
@@ -561,5 +594,35 @@ fn native_bank_owner_preserves_selected_identity_across_approach() {
     assert_eq!(open["id"], 2213);
     assert_eq!(open["name"], "Bank booth");
     assert_eq!(open["action"], "Use-quickly");
+    iso.join();
+}
+
+#[test]
+fn session_reset_clears_native_bank_observation() {
+    let iso = LoadIsolate::spawn(
+        "export default class T extends LoopingBot { loop() {} }".to_string(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    let quick = ["Use-quickly".to_string()];
+    let locs = [east_booth(&quick)];
+    let mut snap = base_snapshot();
+    snap.locs = &locs;
+    post_snapshot_input(&iso, &snap);
+    iso.probe("true").unwrap();
+    iso.reset_session_work();
+
+    let begin = iso
+        .probe(
+            r#"rustyscript.functions.__rs2b0t_bank_open({
+                op: 'begin', mode: 'open-nearest',
+                booth_name: 'Bank booth', booth_action: 'Use-quickly',
+            })"#,
+        )
+        .unwrap();
+    assert_eq!(begin["kind"], "done");
+    assert_eq!(begin["reason"], "missing-facts");
+    assert!(iso.drain_interacts().is_empty());
     iso.join();
 }

@@ -21,27 +21,14 @@ function lockoutTick(opts) {
     return 0;
 }
 
-function observation(opts, withCallbacks, withLockout) {
+function callbackResults(opts, withCallbacks, withLockout) {
     const h = host();
-    const s = h.snapshot || {};
     const abort = withCallbacks && called(opts?.abort);
     const shouldEat = withCallbacks && !abort ? called(opts?.shouldEat) : false;
     return {
-        ingame: s.ingame === true,
-        tick: Number(s.tick) || 0,
-        here: s.here ?? null,
-        in_combat: s.in_combat === true,
         abort,
         should_eat: shouldEat,
-        inv_size:
-            typeof h.invSize === 'number'
-                ? h.invSize
-                : typeof s.inv_size === 'number'
-                  ? s.inv_size
-                  : 0,
-        inv: Array.isArray(s.inv) ? s.inv : [],
-        baker_stall: h.content?.baker_stall ?? null,
-        locs: Array.isArray(s.locs) ? s.locs : [],
+        facts_valid: h.content?.baker_stall != null,
         ...(withLockout ? { locked_out_until: lockoutTick(opts) } : {}),
     };
 }
@@ -66,7 +53,7 @@ function dispatchStep(step) {
 }
 
 export function carriedCakes() {
-    return call({ op: 'count', observation: observation({}, false, false) });
+    return call({ op: 'count' });
 }
 
 export function needsCakeRestock(target) {
@@ -74,7 +61,6 @@ export function needsCakeRestock(target) {
     return call({
         op: 'needs_restock',
         target: normalized,
-        observation: observation({}, false, false),
     });
 }
 
@@ -84,7 +70,7 @@ export async function stealCakes(opts = {}) {
     let step = call({
         op: 'begin',
         fill_to: fillTo,
-        observation: observation(opts, true, false),
+        ...callbackResults(opts, true, false),
     });
     const token = step?.token;
     while (step && step.kind !== 'done' && step.kind !== 'aborted') {
@@ -92,11 +78,7 @@ export async function stealCakes(opts = {}) {
             step = call({
                 op: 'next',
                 token,
-                observation: observation(
-                    opts,
-                    step.callbacks === true,
-                    step.lockout === true,
-                ),
+                ...callbackResults(opts, step.callbacks === true, step.lockout === true),
             });
             continue;
         }
@@ -107,7 +89,7 @@ export async function stealCakes(opts = {}) {
             step = call({
                 op: 'next',
                 token,
-                observation: observation(opts, false, false),
+                ...callbackResults(opts, false, false),
             });
             continue;
         }
@@ -120,7 +102,7 @@ export async function stealCakes(opts = {}) {
             next = call({
                 op: 'next',
                 token,
-                observation: observation(opts, withCallbacks, false),
+                ...callbackResults(opts, withCallbacks, false),
             });
             return next?.kind !== 'wait';
         }, 0);

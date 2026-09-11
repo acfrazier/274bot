@@ -1,7 +1,8 @@
 //! Selected-world autocast control facts and Rust-owned arm sequencing.
-//! JS keeps the frozen Autocast ABI, dispatches returned buttons and logs the
-//! final reason. Rust owns the packed identities, phase order and deadlines.
+//! Snapshot deltas feed a compact native projection. JS keeps the frozen ABI,
+//! dispatches returned buttons and logs the final reason.
 
+use crate::isolate_fb::SnapshotReader;
 use api::game_data::{AutocastControls, SelectedGameData};
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -13,6 +14,7 @@ const STEP_MS: u64 = 3_000;
 
 thread_local! {
     static RUNTIME: RefCell<AutocastRuntime> = const { RefCell::new(AutocastRuntime::new()) };
+    static OBSERVATION: RefCell<NativeObservation> = const { RefCell::new(NativeObservation::new()) };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,11 +26,69 @@ enum Phase {
     WaitArmed,
 }
 
+#[derive(Clone, Copy)]
 struct ArmObservation {
     ingame: bool,
     active_side_tab: i32,
     combat_tab_root: i32,
     magic_varp_value: i32,
+}
+
+struct NativeObservation {
+    arm: ArmObservation,
+    magic_varp: i32,
+}
+
+impl NativeObservation {
+    const fn new() -> Self {
+        Self {
+            arm: ArmObservation {
+                ingame: false,
+                active_side_tab: -1,
+                combat_tab_root: -1,
+                magic_varp_value: 0,
+            },
+            magic_varp: -1,
+        }
+    }
+
+    fn clear_facts(&mut self) {
+        self.arm = Self::new().arm;
+    }
+
+    fn configure(&mut self, data: Option<&SelectedGameData>) {
+        *self = Self::new();
+        self.magic_varp = data
+            .and_then(SelectedGameData::autocast_controls)
+            .map_or(-1, |controls| controls.magic_varp);
+    }
+
+    fn update(&mut self, snap: &SnapshotReader<'_>) {
+        if snap.has_ingame() {
+            if !snap.ingame() {
+                self.clear_facts();
+                return;
+            }
+            self.arm.ingame = true;
+        }
+        if snap.has_side_tab() {
+            self.arm.active_side_tab = snap.side_tab();
+        }
+        if snap.has_side_tab_ifaces() {
+            self.arm.combat_tab_root = snap
+                .side_tab_ifaces()
+                .iter()
+                .find(|row| row.index() == COMBAT_TAB)
+                .map_or(-1, |row| row.id());
+        }
+        if snap.has_varps() {
+            self.arm.magic_varp_value = snap
+                .varps()
+                .iter()
+                .find(|row| row.index() == self.magic_varp)
+                .map_or(0, |row| row.value());
+        }
+    }
 }
 
 struct AutocastRuntime {
@@ -204,6 +264,15 @@ pub fn on_hold(held: bool) {
 
 pub fn on_reset() {
     RUNTIME.with(|runtime| runtime.borrow_mut().abort());
+    OBSERVATION.with(|observation| observation.borrow_mut().clear_facts());
+}
+
+pub fn configure(data: Option<&SelectedGameData>) {
+    OBSERVATION.with(|observation| observation.borrow_mut().configure(data));
+}
+
+pub fn on_snapshot(snap: &SnapshotReader<'_>) {
+    OBSERVATION.with(|observation| observation.borrow_mut().update(snap));
 }
 
 pub fn controls_json(data: Option<&SelectedGameData>) -> Value {
@@ -268,61 +337,32 @@ pub fn observe(data: Option<&SelectedGameData>, combat_tab_root: i32, magic_varp
 }
 
 pub fn dispatch(data: Option<&SelectedGameData>, input: &Value) -> Value {
-    match input
-        .get("op")
-        .and_then(Value::as_str)
-        .unwrap_or("controls")
-    {
-        "observe" => observe(
-            data,
-            input
-                .get("combat_tab_root")
-                .and_then(Value::as_i64)
-                .unwrap_or(-1) as i32,
-            input
-                .get("magic_varp_value")
-                .and_then(Value::as_i64)
-                .unwrap_or(0) as i32,
-        ),
-        "begin" => RUNTIME.with(|runtime| {
-            runtime.borrow_mut().begin(
-                data.and_then(SelectedGameData::autocast_controls),
-                input.get("spell_com").and_then(Value::as_i64).unwrap_or(-1) as i32,
-                &read_arm_observation(input.get("observation")),
-            )
-        }),
-        "next" => RUNTIME.with(|runtime| {
-            runtime.borrow_mut().next(
-                input.get("token").and_then(Value::as_u64).unwrap_or(0),
-                data.and_then(SelectedGameData::autocast_controls),
-                &read_arm_observation(input.get("observation")),
-            )
-        }),
-        "current_token" => RUNTIME.with(|runtime| json!(runtime.borrow().token)),
-        _ => controls_json(data),
-    }
-}
-
-fn read_arm_observation(value: Option<&Value>) -> ArmObservation {
-    let value = value.unwrap_or(&Value::Null);
-    ArmObservation {
-        ingame: value
-            .get("ingame")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        active_side_tab: value
-            .get("active_side_tab")
-            .and_then(Value::as_i64)
-            .unwrap_or(-1) as i32,
-        combat_tab_root: value
-            .get("combat_tab_root")
-            .and_then(Value::as_i64)
-            .unwrap_or(-1) as i32,
-        magic_varp_value: value
-            .get("magic_varp_value")
-            .and_then(Value::as_i64)
-            .unwrap_or(0) as i32,
-    }
+    OBSERVATION.with(|observation| {
+        let obs = observation.borrow().arm;
+        match input
+            .get("op")
+            .and_then(Value::as_str)
+            .unwrap_or("controls")
+        {
+            "observe" => observe(data, obs.combat_tab_root, obs.magic_varp_value),
+            "begin" => RUNTIME.with(|runtime| {
+                runtime.borrow_mut().begin(
+                    data.and_then(SelectedGameData::autocast_controls),
+                    input.get("spell_com").and_then(Value::as_i64).unwrap_or(-1) as i32,
+                    &obs,
+                )
+            }),
+            "next" => RUNTIME.with(|runtime| {
+                runtime.borrow_mut().next(
+                    input.get("token").and_then(Value::as_u64).unwrap_or(0),
+                    data.and_then(SelectedGameData::autocast_controls),
+                    &obs,
+                )
+            }),
+            "current_token" => RUNTIME.with(|runtime| json!(runtime.borrow().token)),
+            _ => controls_json(data),
+        }
+    })
 }
 
 #[cfg(test)]
@@ -332,6 +372,17 @@ mod tests {
 
     fn data(rev: ClientRevision) -> std::sync::Arc<SelectedGameData> {
         api::game_data::for_revision(rev).expect("selected data")
+    }
+
+    fn set_observation(active_side_tab: i32, combat_tab_root: i32, magic_varp_value: i32) {
+        OBSERVATION.with(|observation| {
+            observation.borrow_mut().arm = ArmObservation {
+                ingame: true,
+                active_side_tab,
+                combat_tab_root,
+                magic_varp_value,
+            };
+        });
     }
 
     #[test]
@@ -380,6 +431,7 @@ mod tests {
     #[test]
     fn missing_arm_observation_fails_closed() {
         let data = data(ClientRevision::R274);
+        configure(Some(data.as_ref()));
         let result = dispatch(
             Some(data.as_ref()),
             &json!({"op": "begin", "spell_com": 1830}),
@@ -391,68 +443,48 @@ mod tests {
 
     #[test]
     fn native_arm_next_owns_choose_spell_toggle_order() {
-        on_reset();
         let data = data(ClientRevision::R274);
+        configure(Some(data.as_ref()));
+        set_observation(0, 328, 0);
         let begin = dispatch(
             Some(data.as_ref()),
             &json!({
                 "op": "begin",
                 "spell_com": 1830,
-                "observation": {
-                    "ingame": true,
-                    "active_side_tab": 0,
-                    "combat_tab_root": 328,
-                    "magic_varp_value": 0,
-                },
             }),
         );
         let token = begin["token"].as_u64().expect("native arm token");
         assert_eq!(begin["kind"], "if-button");
         assert_eq!(begin["component_id"], 353);
 
+        set_observation(0, 1829, 0);
         let spell = dispatch(
             Some(data.as_ref()),
             &json!({
                 "op": "next",
                 "token": token,
-                "observation": {
-                    "ingame": true,
-                    "active_side_tab": 0,
-                    "combat_tab_root": 1829,
-                    "magic_varp_value": 0,
-                },
             }),
         );
         assert_eq!(spell["kind"], "if-button");
         assert_eq!(spell["component_id"], 1830);
 
+        set_observation(0, 1829, 2);
         let toggle = dispatch(
             Some(data.as_ref()),
             &json!({
                 "op": "next",
                 "token": token,
-                "observation": {
-                    "ingame": true,
-                    "active_side_tab": 0,
-                    "combat_tab_root": 1829,
-                    "magic_varp_value": 2,
-                },
             }),
         );
         assert_eq!(toggle["kind"], "if-button");
         assert_eq!(toggle["component_id"], 349);
 
+        set_observation(0, 328, 3);
         let done = dispatch(
             Some(data.as_ref()),
             &json!({
                 "op": "next",
                 "token": token,
-                "observation": {
-                    "ingame": true,
-                    "active_side_tab": 0,
-                    "combat_tab_root": 328,
-                    "magic_varp_value": 3,
-                },
             }),
         );
         assert_eq!(done["kind"], "done");
