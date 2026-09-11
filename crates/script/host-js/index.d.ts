@@ -89,6 +89,24 @@ export interface QuestStatusRow {
   status: 'notStarted' | 'inProgress' | 'complete' | 'unknown';
 }
 
+/** Compact native coordinate reachability with bounded dequeue metadata. */
+export interface ReachQueryView {
+  available: boolean;
+  base_x: number;
+  base_z: number;
+  level: number;
+  width: number;
+  height: number;
+  walkable: number[];
+  reachable: number[];
+  reachable_adj: number[];
+  /** Earliest exact dequeue rank; 65535 means unreachable. */
+  exact_rank: number[];
+  /** Earliest exact-or-valid-adjacent dequeue rank; 65535 means unreachable. */
+  adjacent_rank: number[];
+  step: number[];
+}
+
 export interface VarpRow {
   index: number;
   value: number;
@@ -199,6 +217,7 @@ export interface Snapshot {
   trade_decline_id: number;
   shop_open: boolean;
   shop_stock: ShopStockRow[];
+  reach: ReachQueryView;
   hold: boolean;
   ours: boolean;
   npcs: SceneEntity[];

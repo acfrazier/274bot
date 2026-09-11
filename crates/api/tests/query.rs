@@ -1053,9 +1053,14 @@ fn pack_reach_query_matches_walkable_and_flood() {
     );
     assert_eq!(view.step.len(), 10816, "one adjacent-step byte per tile");
     assert_eq!(
+        view.rank_bytes(),
+        2 * 10816 * 2,
+        "exact and adjacent u16 dequeue ranks per tile"
+    );
+    assert_eq!(
         view.view_bytes(),
-        view.bitset_bytes() + 10816,
-        "104x104 view is bitsets plus one byte per tile"
+        view.bitset_bytes() + 10816 + 2 * 10816 * 2,
+        "104x104 view is bitsets, step masks, and two rank maps"
     );
     assert_eq!(
         pack_reach_query(&scene, None),
@@ -1140,6 +1145,168 @@ fn pack_reach_query_matches_walkable_and_flood() {
             ),
             "reachable_adj {dest:?}"
         );
+    }
+}
+
+#[test]
+fn pack_reach_query_matches_bounded_can_reach() {
+    let player = WorldTile {
+        x: 3252,
+        z: 3252,
+        level: 0,
+    };
+    let budgets = [0, 1, 2, 64, 400, 20_000];
+
+    let mut open = open_scene();
+    let blocked_adjacent = WorldTile {
+        x: player.x + 1,
+        z: player.z,
+        level: 0,
+    };
+    open.collision_flags[53 * 104 + 52] = CollisionFlag::SQ_BLOCKED;
+    let two_north = WorldTile {
+        x: player.x,
+        z: player.z + 2,
+        level: 0,
+    };
+    let samples = [
+        player,
+        blocked_adjacent,
+        WorldTile {
+            x: player.x + 2,
+            z: player.z,
+            level: 0,
+        },
+        two_north,
+        WorldTile {
+            x: player.x + 12,
+            z: player.z + 12,
+            level: 0,
+        },
+    ];
+    let sq = SceneQuery::new(&open, Some(player));
+    let flood = sq.flood_reach().expect("open flood");
+    let view = pack_reach_query(&open, Some(&flood));
+    for destination in samples {
+        for max_steps in budgets {
+            for adjacent_ok in [false, true] {
+                let options = SceneReachOptions {
+                    max_steps: Some(max_steps),
+                    adjacent_ok,
+                };
+                assert_eq!(
+                    view.can_reach(destination, &options),
+                    sq.can_reach(destination, &options),
+                    "open destination={destination:?} max_steps={max_steps} adjacent_ok={adjacent_ok}"
+                );
+            }
+        }
+    }
+    let beyond_default = WorldTile {
+        x: player.x + 12,
+        z: player.z + 12,
+        level: 0,
+    };
+    let default_options = SceneReachOptions {
+        max_steps: None,
+        adjacent_ok: false,
+    };
+    assert_eq!(
+        view.can_reach(beyond_default, &default_options),
+        sq.can_reach(beyond_default, &default_options),
+        "omitted max_steps uses the native default budget"
+    );
+    assert!(
+        !view.can_reach(beyond_default, &default_options),
+        "default 400-expansion budget is not an unbounded flood"
+    );
+    assert!(!view.can_reach(
+        two_north,
+        &SceneReachOptions {
+            max_steps: Some(3),
+            adjacent_ok: false,
+        }
+    ));
+    assert!(view.can_reach(
+        two_north,
+        &SceneReachOptions {
+            max_steps: Some(3),
+            adjacent_ok: true,
+        }
+    ));
+    assert!(view.can_reach(
+        blocked_adjacent,
+        &SceneReachOptions {
+            max_steps: Some(0),
+            adjacent_ok: true,
+        }
+    ));
+
+    let mut wall = open_scene();
+    wall.collision_flags[53 * 104 + 52] = CollisionFlag::SQ_BLOCKED
+        | CollisionFlag::W_W
+        | CollisionFlag::W_E
+        | CollisionFlag::W_N
+        | CollisionFlag::W_S;
+    let sq = SceneQuery::new(&wall, Some(player));
+    let flood = sq.flood_reach().expect("wall flood");
+    let view = pack_reach_query(&wall, Some(&flood));
+    assert!(!view.can_reach(
+        blocked_adjacent,
+        &SceneReachOptions {
+            max_steps: Some(20_000),
+            adjacent_ok: true,
+        }
+    ));
+
+    let mut corridor = open_scene();
+    corridor.collision_flags.fill(CollisionFlag::SQ_BLOCKED);
+    for x in 0..104 {
+        corridor.collision_flags[x * 104 + 52] = 0;
+    }
+    let corridor_target = WorldTile {
+        x: player.x + 41,
+        z: player.z,
+        level: 0,
+    };
+    let sq = SceneQuery::new(&corridor, Some(player));
+    let flood = sq.flood_reach().expect("corridor flood");
+    let view = pack_reach_query(&corridor, Some(&flood));
+    for max_steps in [0, 64, 82, 400, 20_000] {
+        let options = SceneReachOptions {
+            max_steps: Some(max_steps),
+            adjacent_ok: false,
+        };
+        assert_eq!(
+            view.can_reach(corridor_target, &options),
+            sq.can_reach(corridor_target, &options),
+            "corridor max_steps={max_steps}"
+        );
+    }
+
+    let mut pocket = open_scene();
+    pocket.collision_flags.fill(CollisionFlag::SQ_BLOCKED);
+    pocket.collision_flags[52 * 104 + 52] = 0;
+    pocket.collision_flags[70 * 104 + 70] = 0;
+    let pocket_target = WorldTile {
+        x: 3270,
+        z: 3270,
+        level: 0,
+    };
+    let sq = SceneQuery::new(&pocket, Some(player));
+    let flood = sq.flood_reach().expect("pocket flood");
+    let view = pack_reach_query(&pocket, Some(&flood));
+    for adjacent_ok in [false, true] {
+        let options = SceneReachOptions {
+            max_steps: Some(20_000),
+            adjacent_ok,
+        };
+        assert_eq!(
+            view.can_reach(pocket_target, &options),
+            sq.can_reach(pocket_target, &options),
+            "isolated collision pocket adjacent_ok={adjacent_ok}"
+        );
+        assert!(!view.can_reach(pocket_target, &options));
     }
 }
 

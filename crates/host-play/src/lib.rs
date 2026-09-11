@@ -2398,6 +2398,8 @@ fn with_script_snapshot_input<R>(
         walkable: &reach_pack.walkable,
         reachable: &reach_pack.reachable,
         reachable_adj: &reach_pack.reachable_adj,
+        exact_rank: &reach_pack.exact_rank,
+        adjacent_rank: &reach_pack.adjacent_rank,
         step: &reach_pack.step,
     };
     let here = here.map(|(x, z, level)| TileInput { x, z, level });
@@ -10769,6 +10771,20 @@ export default class T extends LoopingBot {
         assert!(
             !npcs[0].reachable(),
             "npc behind SQ_BLOCKED tile is not reachable"
+        );
+        let reach = view.reach().expect("native reach metadata");
+        assert_eq!(reach.exact_rank().len(), 104 * 104);
+        assert_eq!(reach.adjacent_rank().len(), 104 * 104);
+        assert_eq!(reach.exact_rank()[5 * 104 + 5], 0, "origin dequeues first");
+        assert_eq!(
+            reach.exact_rank()[5 * 104 + 6],
+            u16::MAX,
+            "blocked npc tile has no exact dequeue rank"
+        );
+        assert_eq!(
+            reach.adjacent_rank()[5 * 104 + 6],
+            0,
+            "blocked npc tile is adjacent from the origin before expansion"
         );
     }
 
