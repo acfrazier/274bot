@@ -1,4 +1,4 @@
-// Isolate IPC wire format (v0.1.6): the PLAYER_INFO snapshot posted into
+// Isolate IPC wire format (v0.1.7): the PLAYER_INFO snapshot posted into
 // each JS isolate before its tick, and the shim interact batch forwarded
 // back after the tick. FlatBuffers, not JSON: a 50+ isolate wall must not
 // pay a stringify/parse per tick.
@@ -129,6 +129,21 @@ table ChatLine {
   text: string;
 }
 
+// Compact derived reach query: scene origin plus JS-safe u32 bitsets.
+// Index is lx * height + lz, matching native ReachFlood. Old buffers
+// omit this table; the isolate treats missing as unavailable.
+table Reach {
+  available: bool;
+  base_x: int;
+  base_z: int;
+  level: int;
+  width: int;
+  height: int;
+  walkable: [uint];
+  reachable: [uint];
+  reachable_adj: [uint];
+}
+
 // The PLAYER_INFO snapshot posted before each dispatched tick: exactly the
 // fields the shim Game/Inventory/Skills/Bank/Banking/EventSignal read and
 // nothing else (no World clone). `hold`/`ours` are the guardian's status
@@ -207,6 +222,7 @@ table Snapshot {
   withdraw_load_result: bool;
   bank_op_result_seq: ulong;
   bank_op_result: bool;
+  reach: Reach;
 }
 
 // One shim interact request, tagged by `op`:

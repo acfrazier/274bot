@@ -231,6 +231,7 @@ fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
+        reach: script::isolate_fb::ReachViewInput::UNAVAILABLE,
     }
 }
 
@@ -3904,6 +3905,211 @@ export default class T extends LoopingBot {
     assert_ne!(
         value, true,
         "canReach must not return true from Chebyshev ≤ 400: {value:?}"
+    );
+    iso.join();
+}
+
+fn reach_words(bits: &[usize]) -> Vec<u32> {
+    let mut words = vec![0u32; 3];
+    for &i in bits {
+        words[i / 32] |= 1u32 << (i % 32);
+    }
+    words
+}
+
+fn posted_reach<'a>(
+    walkable: &'a [u32],
+    reachable: &'a [u32],
+    reachable_adj: &'a [u32],
+) -> script::isolate_fb::ReachViewInput<'a> {
+    script::isolate_fb::ReachViewInput {
+        available: true,
+        base_x: 3200,
+        base_z: 3200,
+        level: 0,
+        width: 9,
+        height: 8,
+        walkable,
+        reachable,
+        reachable_adj,
+    }
+}
+
+// Coordinate walkable / canReach read the posted native query view.
+#[test]
+fn isolate_reachability_walkable_and_coordinate_can_reach() {
+    let src = r#"
+import { Reachability } from '../../event/webwalk/geometry/Reachability.js';
+export default class T extends LoopingBot {
+    loop() {
+        const t = (x, z, level) => ({ x, z, level });
+        globalThis.__probe = {
+            open: Reachability.walkable(t(3200, 3200, 0)),
+            blocked: Reachability.walkable(t(3203, 3207, 0)),
+            offScene: Reachability.walkable(t(3199, 3200, 0)),
+            otherPlane: Reachability.walkable(t(3200, 3200, 1)),
+            missingLevel: Reachability.walkable({ x: 3200, z: 3200 }),
+            nonInt: Reachability.walkable({ x: 3200.5, z: 3200, level: 0 }),
+            emptyFloor: Reachability.canReach(t(3204, 3200, 0), {}),
+            pocket: Reachability.canReach(t(3208, 3200, 0), {}),
+            wall: Reachability.canReach(t(3203, 3207, 0), {}),
+            adj: Reachability.canReach(t(3203, 3207, 0), { adjacentOk: true }),
+            maxStepsIgnored: Reachability.canReach(t(3204, 3200, 0), { maxSteps: 1 }),
+            far: Reachability.canReach(t(3300, 3300, 0), {}),
+            bit31: Reachability.walkable(t(3203, 3207, 0)),
+            bit32: Reachability.walkable(t(3204, 3200, 0)),
+            bit53: Reachability.walkable(t(3206, 3205, 0)),
+            bit63: Reachability.walkable(t(3207, 3207, 0)),
+            bit64: Reachability.walkable(t(3208, 3200, 0)),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let walkable = reach_words(&[0, 32, 53, 63, 64]);
+    let reachable = reach_words(&[0, 32]);
+    let adj = reach_words(&[0, 31, 32]);
+    let mut snap = base_snapshot();
+    snap.reach = posted_reach(&walkable, &reachable, &adj);
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value["open"], true);
+    assert_eq!(value["blocked"], false);
+    assert_eq!(value["offScene"], false);
+    assert_eq!(value["otherPlane"], false);
+    assert_eq!(value["missingLevel"], true, "missing level defaults to 0");
+    assert_eq!(value["nonInt"], false);
+    assert_eq!(value["emptyFloor"], true);
+    assert_eq!(
+        value["pocket"], false,
+        "walkable isolated pocket is not reachable"
+    );
+    assert_eq!(value["wall"], false);
+    assert_eq!(value["adj"], true, "adjacentOk uses adj bits only");
+    assert_eq!(
+        value["maxStepsIgnored"], true,
+        "maxSteps is not a per-call BFS"
+    );
+    assert_eq!(value["far"], false, "far empty tile is not Chebyshev-true");
+    assert_eq!(value["bit31"], false);
+    assert_eq!(value["bit32"], true);
+    assert_eq!(value["bit53"], true);
+    assert_eq!(value["bit63"], true);
+    assert_eq!(value["bit64"], true);
+    assert_eq!(
+        iso.drain_interacts(),
+        Vec::<script::shim::InteractReq>::new(),
+        "lookups are sync JS reads, no queued command"
+    );
+    iso.join();
+}
+
+#[test]
+fn isolate_reachability_unavailable_and_omitted_delta() {
+    let src = r#"
+import { Reachability } from '../../event/webwalk/geometry/Reachability.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            walkable: Reachability.walkable({ x: 3204, z: 3200, level: 0 }),
+            canReach: Reachability.canReach({ x: 3204, z: 3200, level: 0 }, {}),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let walkable = reach_words(&[0, 32]);
+    let reachable = reach_words(&[0, 32]);
+    let mut snap = base_snapshot();
+    snap.reach = posted_reach(&walkable, &reachable, &reachable);
+    let (keyframe, fp) = script::isolate_fb::encode_snapshot_delta(None, &snap, false);
+    iso.post_snapshot(keyframe);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value["walkable"], true);
+    assert_eq!(value["canReach"], true);
+
+    let (delta, fp2) = script::isolate_fb::encode_snapshot_delta(Some(&fp), &snap, false);
+    let omitted = script::isolate_fb::decode_snapshot(&delta).expect("delta");
+    assert!(!omitted.has_reach(), "unchanged reach omitted");
+    iso.post_snapshot(delta);
+    iso.on_game_tick(2);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value["walkable"], true, "omitted delta keeps last bits");
+    assert_eq!(value["canReach"], true);
+
+    snap.reach = script::isolate_fb::ReachViewInput::UNAVAILABLE;
+    let (cleared, _) = script::isolate_fb::encode_snapshot_delta(Some(&fp2), &snap, false);
+    iso.post_snapshot(cleared);
+    iso.on_game_tick(3);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(
+        value["walkable"], false,
+        "unavailable post clears last bits"
+    );
+    assert_eq!(value["canReach"], false);
+    iso.join();
+}
+
+#[test]
+fn isolate_reachability_row_path_still_wins_over_coordinate_bits() {
+    let src = r#"
+import { Reachability } from '../../event/webwalk/geometry/Reachability.js';
+export default class T extends LoopingBot {
+    loop() {
+        const withTile = {
+            tile() {
+                return { x: 3220, z: 3220, level: 0 };
+            },
+        };
+        globalThis.__probe = {
+            exact: Reachability.canReach(withTile, {}),
+            adj: Reachability.canReach(withTile, { adjacentOk: true }),
+            tile: Reachability.canReach({ x: 3220, z: 3220, level: 0 }, {}),
+            missing: Reachability.canReach({ x: 9999, z: 9999, level: 0 }, {}),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let actions = ["Steal".to_string()];
+    let npcs = [script::isolate_fb::SceneEntityInput {
+        index: 1,
+        id: 9,
+        name: Some("Guard"),
+        x: 3220,
+        z: 3220,
+        level: 0,
+        distance: 3,
+        health: 10,
+        max_health: 10,
+        in_combat: false,
+        animating: false,
+        actions: &actions,
+        reachable: false,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+    }];
+    let walkable = reach_words(&[0, 32]);
+    let reachable = reach_words(&[0, 32]);
+    let mut snap = base_snapshot();
+    snap.npcs = &npcs;
+    snap.reach = posted_reach(&walkable, &reachable, &reachable);
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(
+        value["exact"], false,
+        "entity row reachable false still wins over coordinate bits"
+    );
+    assert_eq!(value["adj"], true, "reachable_adj when adjacentOk");
+    assert_eq!(value["tile"], false, "tile lookup reads the same row");
+    assert_eq!(
+        value["missing"], false,
+        "no row and no coordinate bit is false"
     );
     iso.join();
 }

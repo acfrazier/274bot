@@ -2152,6 +2152,13 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         } else if !had {
             set(&mut scope, obj, "shop_stock", empty_rows)?;
         }
+        if snap.has_reach() {
+            let reach = reach_object(&mut scope, snap.reach())?;
+            set(&mut scope, obj, "reach", reach)?;
+        } else if !had {
+            let reach = unavailable_reach(&mut scope)?;
+            set(&mut scope, obj, "reach", reach)?;
+        }
         if snap.has_hold() {
             let hold = v8::Boolean::new(&mut scope, snap.hold());
             set(&mut scope, obj, "hold", hold.into())?;
@@ -2468,6 +2475,69 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         set(scope, o, "z", z)?;
         let level = num(scope, t.level() as f64);
         set(scope, o, "level", level)?;
+        Ok(o.into())
+    }
+
+    fn u32_array<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        words: &[u32],
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let arr = v8::Array::new(scope, words.len() as i32);
+        for (i, word) in words.iter().enumerate() {
+            let n = num(scope, f64::from(*word));
+            arr.set_index(scope, i as u32, n)
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        Ok(arr.into())
+    }
+
+    fn unavailable_reach<'s>(
+        scope: &mut v8::HandleScope<'s>,
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let o = v8::Object::new(scope);
+        let falsy: v8::Local<v8::Value> = v8::Boolean::new(scope, false).into();
+        set(scope, o, "available", falsy)?;
+        let zero = num(scope, 0.0);
+        set(scope, o, "base_x", zero)?;
+        set(scope, o, "base_z", zero)?;
+        set(scope, o, "level", zero)?;
+        set(scope, o, "width", zero)?;
+        set(scope, o, "height", zero)?;
+        let empty = v8::Array::new(scope, 0);
+        set(scope, o, "walkable", empty.into())?;
+        let empty = v8::Array::new(scope, 0);
+        set(scope, o, "reachable", empty.into())?;
+        let empty = v8::Array::new(scope, 0);
+        set(scope, o, "reachable_adj", empty.into())?;
+        Ok(o.into())
+    }
+
+    fn reach_object<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        reach: Option<crate::isolate_fb::ReachReader<'_>>,
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let Some(r) = reach else {
+            return unavailable_reach(scope);
+        };
+        let o = v8::Object::new(scope);
+        let available = v8::Boolean::new(scope, r.available());
+        set(scope, o, "available", available.into())?;
+        let base_x = num(scope, r.base_x() as f64);
+        set(scope, o, "base_x", base_x)?;
+        let base_z = num(scope, r.base_z() as f64);
+        set(scope, o, "base_z", base_z)?;
+        let level = num(scope, r.level() as f64);
+        set(scope, o, "level", level)?;
+        let width = num(scope, r.width() as f64);
+        set(scope, o, "width", width)?;
+        let height = num(scope, r.height() as f64);
+        set(scope, o, "height", height)?;
+        let walkable = u32_array(scope, &r.walkable())?;
+        set(scope, o, "walkable", walkable)?;
+        let reachable = u32_array(scope, &r.reachable())?;
+        set(scope, o, "reachable", reachable)?;
+        let reachable_adj = u32_array(scope, &r.reachable_adj())?;
+        set(scope, o, "reachable_adj", reachable_adj)?;
         Ok(o.into())
     }
 

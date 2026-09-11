@@ -96,6 +96,7 @@ fn empty_snap() -> script::isolate_fb::SnapshotInput<'static> {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
+        reach: script::isolate_fb::ReachViewInput::UNAVAILABLE,
     }
 }
 

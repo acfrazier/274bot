@@ -1034,6 +1034,186 @@ fn flood_reach_matches_one_shot_can_reach_without_step_cap() {
 }
 
 #[test]
+fn pack_reach_query_matches_walkable_and_flood() {
+    let mut scene = open_scene();
+    scene.collision_flags[5 * 104 + 6] = CollisionFlag::SQ_BLOCKED;
+    let player = WorldTile {
+        x: 3205,
+        z: 3205,
+        level: 0,
+    };
+    let sq = SceneQuery::new(&scene, Some(player));
+    let flood = sq.flood_reach().expect("player in scene floods");
+    let view = pack_reach_query(&scene, Some(&flood));
+    assert!(view.available);
+    assert_eq!(
+        view.bitset_bytes(),
+        3 * 10816usize.div_ceil(32) * 4,
+        "three JS-safe u32 bitsets for a 104x104 scene"
+    );
+    assert_eq!(
+        pack_reach_query(&scene, None),
+        ReachQueryView::unavailable()
+    );
+
+    let samples = [
+        WorldTile {
+            x: 3205,
+            z: 3205,
+            level: 0,
+        },
+        WorldTile {
+            x: 3205,
+            z: 3206,
+            level: 0,
+        },
+        WorldTile {
+            x: 3206,
+            z: 3206,
+            level: 0,
+        },
+        WorldTile {
+            x: 3200 + 5,
+            z: 3200 + 6,
+            level: 0,
+        },
+        WorldTile {
+            x: 3199,
+            z: 3205,
+            level: 0,
+        },
+        WorldTile {
+            x: 3205,
+            z: 3205,
+            level: 1,
+        },
+        WorldTile {
+            x: 3290,
+            z: 3290,
+            level: 0,
+        },
+    ];
+    for dest in samples {
+        let (r, a) = flood.at(&dest);
+        assert_eq!(
+            sq.walkable(dest),
+            ReachQueryView::bit_at(
+                &view.walkable,
+                view.width,
+                view.height,
+                view.base_x,
+                view.base_z,
+                view.level,
+                dest,
+            ),
+            "walkable {dest:?}"
+        );
+        assert_eq!(
+            r,
+            ReachQueryView::bit_at(
+                &view.reachable,
+                view.width,
+                view.height,
+                view.base_x,
+                view.base_z,
+                view.level,
+                dest,
+            ),
+            "reachable {dest:?}"
+        );
+        assert_eq!(
+            a,
+            ReachQueryView::bit_at(
+                &view.reachable_adj,
+                view.width,
+                view.height,
+                view.base_x,
+                view.base_z,
+                view.level,
+                dest,
+            ),
+            "reachable_adj {dest:?}"
+        );
+    }
+}
+
+#[test]
+fn pack_reach_query_word_boundaries_survive_u32_pack() {
+    let mut scene = SceneView {
+        available: true,
+        base_x: 0,
+        base_z: 0,
+        level: 0,
+        width: 9,
+        height: 8,
+        collision_flags: vec![0; 9 * 8],
+    };
+    // Block bit 31 (lx=3,lz=7) so walkable packing crosses the u32 word.
+    scene.collision_flags[3 * 8 + 7] = CollisionFlag::SQ_BLOCKED;
+    let player = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let flood = SceneQuery::new(&scene, Some(player))
+        .flood_reach()
+        .expect("flood");
+    let view = pack_reach_query(&scene, Some(&flood));
+    let at = |i: usize| {
+        let lx = (i / 8) as i32;
+        let lz = (i % 8) as i32;
+        WorldTile {
+            x: lx,
+            z: lz,
+            level: 0,
+        }
+    };
+    assert!(!ReachQueryView::bit_at(
+        &view.walkable,
+        9,
+        8,
+        0,
+        0,
+        0,
+        at(31),
+    ));
+    assert!(ReachQueryView::bit_at(
+        &view.walkable,
+        9,
+        8,
+        0,
+        0,
+        0,
+        at(32),
+    ));
+    let (r31, _) = flood.at(&at(31));
+    let (r32, _) = flood.at(&at(32));
+    let (r53, _) = flood.at(&at(53));
+    let (r63, _) = flood.at(&at(63));
+    let (r64, _) = flood.at(&at(64));
+    assert_eq!(
+        r31,
+        ReachQueryView::bit_at(&view.reachable, 9, 8, 0, 0, 0, at(31))
+    );
+    assert_eq!(
+        r32,
+        ReachQueryView::bit_at(&view.reachable, 9, 8, 0, 0, 0, at(32))
+    );
+    assert_eq!(
+        r53,
+        ReachQueryView::bit_at(&view.reachable, 9, 8, 0, 0, 0, at(53))
+    );
+    assert_eq!(
+        r63,
+        ReachQueryView::bit_at(&view.reachable, 9, 8, 0, 0, 0, at(63))
+    );
+    assert_eq!(
+        r64,
+        ReachQueryView::bit_at(&view.reachable, 9, 8, 0, 0, 0, at(64))
+    );
+}
+
+#[test]
 fn loc_approach_operability() {
     let scene = open_scene();
     let tree = fixture_loc(10, 0, 5, 5, 1, 1);
