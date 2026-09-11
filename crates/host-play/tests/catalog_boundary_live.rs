@@ -1386,7 +1386,8 @@ impl FlaxPickerCycle {
         if let Some(deposited) = &self.deposited {
             self.returned |= !now.bank_open
                 && !now.bank_loaded
-                && now.bank_generation == deposited.bank_generation
+                // Closing the modal advances the bank session generation.
+                && now.bank_generation > deposited.bank_generation
                 && near(now.tile, FLAX_FIELD, 12);
         }
         if self.returned {
@@ -1523,7 +1524,8 @@ impl ChickenKillerBankCycle {
         if let Some(deposited) = &self.deposited {
             self.returned |= !now.bank_open
                 && !now.bank_loaded
-                && now.bank_generation == deposited.bank_generation
+                // Closing the modal advances the bank session generation.
+                && now.bank_generation > deposited.bank_generation
                 && near(now.tile, FALADOR_CHICKENS, 6);
         }
         if self.returned {
@@ -1583,7 +1585,8 @@ impl VialFillerCycle {
             self.returned |= self.withdrawn.is_some()
                 && !now.bank_open
                 && !now.bank_loaded
-                && now.bank_generation == deposited.bank_generation
+                // Closing the modal advances the bank session generation.
+                && now.bank_generation > deposited.bank_generation
                 && near(now.tile, FALADOR_FOUNTAIN, 4);
         }
         if self.returned {
@@ -2807,9 +2810,9 @@ mod tests {
         deposited.bank_loaded = true;
         deposited.bank_generation = 1;
         let mut returned = chicken_bank_obs(FALADOR_CHICKENS, &[], &[(FEATHER_ID, 5)], 104);
-        returned.bank_generation = 1;
+        returned.bank_generation = 2;
         let mut further = chicken_bank_obs(FALADOR_CHICKENS, &[(FEATHER_ID, 3)], &[], 108);
-        further.bank_generation = 1;
+        further.bank_generation = 2;
 
         assert!(witness(
             CoreCase::ChickenKillerBank,
@@ -2828,6 +2831,19 @@ mod tests {
             CoreCase::ChickenKillerBank,
             &baseline,
             [&looted, &deposited, &returned]
+        )
+        .qualify()
+        .is_err());
+
+        // A fabricated closed snapshot without a new modal generation is stale.
+        let mut unclosed_return = returned.clone();
+        unclosed_return.bank_generation = deposited.bank_generation;
+        let mut unclosed_further = further.clone();
+        unclosed_further.bank_generation = deposited.bank_generation;
+        assert!(witness(
+            CoreCase::ChickenKillerBank,
+            &baseline,
+            [&looted, &deposited, &unclosed_return, &unclosed_further]
         )
         .qualify()
         .is_err());
@@ -2872,7 +2888,7 @@ mod tests {
         .is_err());
 
         let mut far = chicken_bank_obs((3185, 3440, 0), &[], &[(FEATHER_ID, 5)], 104);
-        far.bank_generation = 1;
+        far.bank_generation = 2;
         let mut further_far = further.clone();
         further_far.tile = Some((3185, 3440, 0));
         assert!(witness(
@@ -3756,8 +3772,9 @@ mod tests {
         deposited.bank_loaded = true;
         deposited.bank_generation = 1;
         let mut returned = flax_obs(FLAX_FIELD, &[], &[]);
-        returned.bank_generation = 1;
-        let further = flax_obs(FLAX_FIELD, &[(FLAX_ID, 1)], &[]);
+        returned.bank_generation = 2;
+        let mut further = flax_obs(FLAX_FIELD, &[(FLAX_ID, 1)], &[]);
+        further.bank_generation = 2;
         assert!(witness(
             CoreCase::FlaxPicker,
             &baseline,
@@ -3776,6 +3793,19 @@ mod tests {
                 .qualify()
                 .is_err()
         );
+
+        // A fabricated closed snapshot without a new modal generation is stale.
+        let mut unclosed_return = returned.clone();
+        unclosed_return.bank_generation = deposited.bank_generation;
+        let mut unclosed_further = further.clone();
+        unclosed_further.bank_generation = deposited.bank_generation;
+        assert!(witness(
+            CoreCase::FlaxPicker,
+            &baseline,
+            [&first, &deposited, &unclosed_return, &unclosed_further]
+        )
+        .qualify()
+        .is_err());
 
         let mut stale = deposited.clone();
         stale.bank_loaded = false;
@@ -4059,8 +4089,9 @@ mod tests {
             withdrawn.bank_loaded = true;
             withdrawn.bank_generation = 1;
             let mut returned = vial_obs(FALADOR_FOUNTAIN, &[(EMPTY_VIAL_ID, 28)], &[]);
-            returned.bank_generation = 1;
-            let further = vial_obs(FALADOR_FOUNTAIN, &[(VIAL_OF_WATER_ID, 1)], &[]);
+            returned.bank_generation = 2;
+            let mut further = vial_obs(FALADOR_FOUNTAIN, &[(VIAL_OF_WATER_ID, 1)], &[]);
+            further.bank_generation = 2;
 
             assert!(witness(
                 case,
@@ -4075,6 +4106,25 @@ mod tests {
                 case,
                 &baseline,
                 [&filled, &deposited, &withdrawn, &returned]
+            )
+            .qualify()
+            .is_err());
+
+            // A fabricated closed snapshot without a new modal generation is stale.
+            let mut unclosed_return = returned.clone();
+            unclosed_return.bank_generation = deposited.bank_generation;
+            let mut unclosed_further = further.clone();
+            unclosed_further.bank_generation = deposited.bank_generation;
+            assert!(witness(
+                case,
+                &baseline,
+                [
+                    &filled,
+                    &deposited,
+                    &withdrawn,
+                    &unclosed_return,
+                    &unclosed_further
+                ]
             )
             .qualify()
             .is_err());
