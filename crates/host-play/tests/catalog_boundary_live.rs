@@ -19,16 +19,22 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const SUPPORT_MATRIX: &str = include_str!("../../../docs/compat/support-matrix.json");
-const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_thiever|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|moss_giant|hill_giant|auto_fighter|rock_crab|green_dragon|fire_giant|ardy_fighter";
+const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_thiever|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|moss_giant|hill_giant|auto_fighter|rock_crab|green_dragon|fire_giant|ardy_fighter";
 const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 const ADAMANT_SCIMITAR_ID: i32 = 1331;
 const CERT_ADAMANT_SCIMITAR_ID: i32 = 1332;
+const YEW_LONGBOW_ID: i32 = 855;
+const CERT_YEW_LONGBOW_ID: i32 = 856;
 const NATURE_RUNE_ID: i32 = 561;
 const COINS_ID: i32 = 995;
 /// High Level Alchemy pays 60% of shop cost: floor(2560 * 0.6) = 1536.
 const ADAMANT_SCIMITAR_ALCH_COINS: i32 = 1536;
+const YEW_LONGBOW_ALCH_COINS: i32 = 768;
 const HIGH_ALCH_MAGIC_XP: i32 = 65;
+const LOGS_ID: i32 = 1511;
+const ARROW_SHAFT_ID: i32 = 52;
+const HEADLESS_ARROW_ID: i32 = 53;
 const BRONZE_DART_TIP_ID: i32 = 819;
 const BRONZE_DART_ID: i32 = 806;
 const IRON_DART_TIP_ID: i32 = 820;
@@ -222,12 +228,15 @@ enum CoreCase {
     ChickenKillerBank,
     Thiever,
     Alcher,
+    AlcherDefaults,
     AlcherCustom,
     AlcherCustomAlias,
     AlcherCustomName,
     AlcherOrdered,
     AlcherLargeBatch,
     BankFletcher,
+    BankFletcherShafts,
+    BankFletcherHeadless,
     BankFletcherString,
     BankFletcherCutString,
     DartFletcher,
@@ -290,12 +299,15 @@ impl CoreCase {
             "chicken_killer_bank" => Ok(Self::ChickenKillerBank),
             "thiever" => Ok(Self::Thiever),
             "alcher" => Ok(Self::Alcher),
+            "alcher_defaults" => Ok(Self::AlcherDefaults),
             "alcher_custom" => Ok(Self::AlcherCustom),
             "alcher_custom_alias" => Ok(Self::AlcherCustomAlias),
             "alcher_custom_name" => Ok(Self::AlcherCustomName),
             "alcher_ordered" => Ok(Self::AlcherOrdered),
             "alcher_large_batch" => Ok(Self::AlcherLargeBatch),
             "bank_fletcher" => Ok(Self::BankFletcher),
+            "bank_fletcher_shafts" => Ok(Self::BankFletcherShafts),
+            "bank_fletcher_headless" => Ok(Self::BankFletcherHeadless),
             "bank_fletcher_string" => Ok(Self::BankFletcherString),
             "bank_fletcher_cut_string" => Ok(Self::BankFletcherCutString),
             "dart_fletcher" => Ok(Self::DartFletcher),
@@ -361,12 +373,15 @@ impl CoreCase {
             Self::ChickenKillerBank => "chicken_killer_bank",
             Self::Thiever => "thiever",
             Self::Alcher => "alcher",
+            Self::AlcherDefaults => "alcher_defaults",
             Self::AlcherCustom => "alcher_custom",
             Self::AlcherCustomAlias => "alcher_custom_alias",
             Self::AlcherCustomName => "alcher_custom_name",
             Self::AlcherOrdered => "alcher_ordered",
             Self::AlcherLargeBatch => "alcher_large_batch",
             Self::BankFletcher => "bank_fletcher",
+            Self::BankFletcherShafts => "bank_fletcher_shafts",
+            Self::BankFletcherHeadless => "bank_fletcher_headless",
             Self::BankFletcherString => "bank_fletcher_string",
             Self::BankFletcherCutString => "bank_fletcher_cut_string",
             Self::DartFletcher => "dart_fletcher",
@@ -427,15 +442,17 @@ impl CoreCase {
             Self::BoneBurier => "BoneBurier",
             Self::ChickenKiller | Self::ChickenKillerBank => "ChickenKiller",
             Self::Thiever => "Thiever",
-            Self::Alcher => "Alcher",
+            Self::Alcher | Self::AlcherDefaults => "Alcher",
             Self::AlcherCustom
             | Self::AlcherCustomAlias
             | Self::AlcherCustomName
             | Self::AlcherOrdered
             | Self::AlcherLargeBatch => "Alcher",
-            Self::BankFletcher | Self::BankFletcherString | Self::BankFletcherCutString => {
-                "BankFletcher"
-            }
+            Self::BankFletcher
+            | Self::BankFletcherShafts
+            | Self::BankFletcherHeadless
+            | Self::BankFletcherString
+            | Self::BankFletcherCutString => "BankFletcher",
             Self::DartFletcher | Self::DartFletcherIron => "DartFletcher",
             Self::HerbCleaner | Self::HerbCleanerNamed => "HerbCleaner",
             Self::GemCutter | Self::GemCutterNamed => "GemCutter",
@@ -632,6 +649,7 @@ struct Observation {
     scene_state: i32,
     player: Option<String>,
     tile: Option<(i32, i32, i32)>,
+    combat_level: i32,
     tick: u32,
     items: BTreeMap<String, i32>,
     item_ids: BTreeMap<i32, i32>,
@@ -823,6 +841,10 @@ impl Observation {
             scene_state: snapshot.scene_state(),
             player,
             tile: snapshot.tile(),
+            combat_level: snapshot
+                .local_player()
+                .map(|local| local.player.combat_level)
+                .unwrap_or(0),
             tick: snapshot.tick(),
             items,
             item_ids,
@@ -1244,6 +1266,15 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         | CoreCase::AlcherLargeBatch => {
             near(baseline.tile, (3185, 3440, 0), 6) && baseline.level("magic") >= 55
         }
+        CoreCase::AlcherDefaults => {
+            near(baseline.tile, (3185, 3440, 0), 6)
+                && baseline.level("magic") >= 55
+                && baseline.item_id(YEW_LONGBOW_ID) == 0
+                && baseline.item_id(CERT_YEW_LONGBOW_ID) == 0
+                && baseline.item_id(COINS_ID) == 0
+                && baseline.item_id(NATURE_RUNE_ID) == 0
+                && baseline.item("Rune chainbody") == 0
+        }
         CoreCase::AlcherCustomAlias | CoreCase::AlcherCustomName => {
             near(baseline.tile, (3185, 3440, 0), 6)
                 && baseline.level("magic") >= 55
@@ -1259,6 +1290,20 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
                 && baseline.item("Knife") >= 1
                 && baseline.item("Willow logs") >= 27
                 && baseline.level("fletching") >= 35
+        }
+        CoreCase::BankFletcherShafts => {
+            near(baseline.tile, (3185, 3440, 0), 6)
+                && (held_id(baseline, KNIFE_ID) == 1 || baseline.item("Knife") == 1)
+                && baseline.item_id(LOGS_ID) == 27
+                && baseline.item_id(ARROW_SHAFT_ID) == 0
+                && baseline.level("fletching") >= 1
+        }
+        CoreCase::BankFletcherHeadless => {
+            near(baseline.tile, (3185, 3440, 0), 6)
+                && baseline.item_id(FEATHER_ID) == 30
+                && baseline.item_id(ARROW_SHAFT_ID) == 30
+                && baseline.item_id(HEADLESS_ARROW_ID) == 0
+                && baseline.level("fletching") >= 1
         }
         CoreCase::BankFletcherString => {
             near(baseline.tile, (3185, 3440, 0), 6)
@@ -1448,7 +1493,7 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         CoreCase::GnomeChop => gnome_chop_baseline_ready(baseline),
         CoreCase::GnomeFletchShort => gnome_fletch_baseline_ready(baseline, 80, Some(84)),
         CoreCase::GnomeFletchLong => gnome_fletch_baseline_ready(baseline, 85, None),
-        CoreCase::CoalTrucks => coal_trucks_baseline_ready(baseline),
+        CoreCase::CoalTrucks => coal_trucks_baseline_ready(baseline) && baseline.combat_level >= 55,
         CoreCase::CookBot => cook_bot_baseline_ready(
             baseline,
             RAW_SALMON_ID,
@@ -1508,15 +1553,23 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
             "Falador south chickens (3029,3294,0), Attack/Strength 30 and no Feather 314"
         }
         CoreCase::Thiever => "Ardougne guard stand, ten Lobsters, and prepared stats",
-        CoreCase::Alcher
-        | CoreCase::AlcherCustom
+        CoreCase::Alcher | CoreCase::AlcherCustom
         | CoreCase::AlcherOrdered
         | CoreCase::AlcherLargeBatch => "Varrock West bank and Magic 55",
+        CoreCase::AlcherDefaults => {
+            "Varrock West bank, Magic 55, and no seeded yew-longbow note, coins, Nature rune, or chainbody"
+        }
         CoreCase::AlcherCustomAlias | CoreCase::AlcherCustomName => {
             "Varrock West bank, Magic 55, and no seeded coins/custom-target outcome"
         }
         CoreCase::BankFletcher => {
             "Varrock West bank, Knife, twenty-seven Willow logs, and Fletching 35"
+        }
+        CoreCase::BankFletcherShafts => {
+            "Varrock West bank, Knife, exact id 1511x27, no id 52, and Fletching 1"
+        }
+        CoreCase::BankFletcherHeadless => {
+            "Varrock West bank, exact ids 314x30 and 52x30, no id 53, and Fletching 1"
         }
         CoreCase::BankFletcherString => {
             "Varrock West bank, exact ids 60x2 and 1777x2, no id 849, and Fletching 35"
@@ -1602,7 +1655,7 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
             "west magics, Woodcutting 75, Fletching 85, knife 946, steel axe, empty pack of 1513/70"
         }
         CoreCase::CoalTrucks => {
-            "coal mine (2582,3481,0), Mining 30, steel pickaxe 1269, and empty pack of 453"
+            "coal mine (2582,3481,0), native combat level >=55, Mining 30, steel pickaxe 1269, and empty pack of 453"
         }
         CoreCase::CookBot => {
             "Catherby bank (2809,3441,0), Cooking 80, empty pack of 331/329"
@@ -1676,8 +1729,10 @@ struct CoreWitness {
     post_start_observations: u64,
     bone_bank_cycle: BoneBankCycle,
     bank_fletcher_cycle: BankFletcherCycle,
+    bank_fletcher_option_cycle: BankFletcherOptionCycle,
     bank_fletcher_string_cycle: BankFletcherStringCycle,
     bank_fletcher_cut_string_cycle: BankFletcherCutStringCycle,
+    alcher_defaults_cycle: AlcherGeneratedCustomCycle,
     alcher_generated_custom_cycle: AlcherGeneratedCustomCycle,
     dart_fletcher_cycle: DartFletcherCycle,
     herb_cleaner_cycle: HerbCleanerCycle,
@@ -1802,6 +1857,95 @@ impl BankFletcherCycle {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct BankFletcherOptionSpec {
+    primary: i32,
+    secondary: Option<i32>,
+    product: i32,
+    first_product_count: i32,
+}
+
+fn bank_fletcher_option_spec(case: CoreCase) -> Option<BankFletcherOptionSpec> {
+    match case {
+        CoreCase::BankFletcherShafts => Some(BankFletcherOptionSpec {
+            primary: LOGS_ID,
+            secondary: None,
+            product: ARROW_SHAFT_ID,
+            first_product_count: 405,
+        }),
+        CoreCase::BankFletcherHeadless => Some(BankFletcherOptionSpec {
+            primary: FEATHER_ID,
+            secondary: Some(ARROW_SHAFT_ID),
+            product: HEADLESS_ARROW_ID,
+            first_product_count: 30,
+        }),
+        _ => None,
+    }
+}
+
+/// Exact option output, fresh-bank deposit/restock, closed return, and further
+/// production. A seeded product or a first batch alone cannot qualify.
+#[derive(Debug, Clone, Default, Serialize)]
+struct BankFletcherOptionCycle {
+    first: Option<Observation>,
+    deposited: Option<Observation>,
+    restocked: Option<Observation>,
+    further: bool,
+}
+
+impl BankFletcherOptionCycle {
+    fn observe(&mut self, spec: BankFletcherOptionSpec, baseline: &Observation, now: &Observation) {
+        if self.first.is_none()
+            && now.item_id(spec.product) >= spec.first_product_count
+            && now.item_id(spec.primary) < baseline.item_id(spec.primary)
+            && spec
+                .secondary
+                .is_none_or(|id| now.item_id(id) < baseline.item_id(id))
+            && now.skill_xp("fletching") > baseline.skill_xp("fletching")
+        {
+            self.first = Some(now.clone());
+        }
+        if self.first.is_some()
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(spec.product) == 0
+            && now.bank_item_id(spec.product) >= spec.first_product_count
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            if self.restocked.is_none()
+                && now.bank_open
+                && now.bank_loaded
+                && now.bank_generation == deposited.bank_generation
+                && now.item_id(spec.primary) > 0
+                && now.bank_item_id(spec.primary) < deposited.bank_item_id(spec.primary)
+                && spec.secondary.is_none_or(|id| {
+                    now.item_id(id) > 0 && now.bank_item_id(id) < deposited.bank_item_id(id)
+                })
+            {
+                self.restocked = Some(now.clone());
+            }
+        }
+        if let Some(restocked) = &self.restocked {
+            self.further |= !now.bank_open
+                && !now.bank_loaded
+                && now.item_id(spec.product) >= 1
+                && now.item_id(spec.primary) < restocked.item_id(spec.primary)
+                && spec
+                    .secondary
+                    .is_none_or(|id| now.item_id(id) < restocked.item_id(id))
+                && now.skill_xp("fletching") > restocked.skill_xp("fletching");
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.further && self.first.is_some() && self.deposited.is_some() && self.restocked.is_some()
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 struct BankFletcherStringCycle {
     initial_pairs_strung: bool,
@@ -1915,25 +2059,41 @@ struct AlcherGeneratedCustomCycle {
 
 impl AlcherGeneratedCustomCycle {
     fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        self.observe_target(
+            baseline,
+            now,
+            ADAMANT_SCIMITAR_ID,
+            CERT_ADAMANT_SCIMITAR_ID,
+            ADAMANT_SCIMITAR_ALCH_COINS,
+        );
+    }
+
+    fn observe_target(
+        &mut self,
+        baseline: &Observation,
+        now: &Observation,
+        unnoted: i32,
+        noted: i32,
+        alch_coins: i32,
+    ) {
         if self.withdrawn.is_none()
             && now.bank_generation > baseline.bank_generation
-            && now.item_id(CERT_ADAMANT_SCIMITAR_ID) >= 1
-            && now.item_id(ADAMANT_SCIMITAR_ID) == 0
-            && now.item_id(CERT_ADAMANT_SCIMITAR_ID) > baseline.item_id(CERT_ADAMANT_SCIMITAR_ID)
+            && now.item_id(noted) >= 1
+            && now.item_id(unnoted) == 0
+            && now.item_id(noted) > baseline.item_id(noted)
             && now.item_id(NATURE_RUNE_ID) >= 1
+            && now.item("Rune chainbody") == 0
         {
             self.withdrawn = Some(now.clone());
         }
         if let Some(withdrawn) = &self.withdrawn {
             self.consumed |= !now.bank_open
                 && !now.bank_loaded
-                && now.item_id(CERT_ADAMANT_SCIMITAR_ID)
-                    < withdrawn.item_id(CERT_ADAMANT_SCIMITAR_ID)
+                && now.item_id(noted) < withdrawn.item_id(noted)
                 && now.item_id(NATURE_RUNE_ID) < withdrawn.item_id(NATURE_RUNE_ID)
-                && now.item_id(COINS_ID) - baseline.item_id(COINS_ID)
-                    == ADAMANT_SCIMITAR_ALCH_COINS
+                && now.item_id(COINS_ID) - baseline.item_id(COINS_ID) == alch_coins
                 && now.skill_xp("magic") - baseline.skill_xp("magic") >= HIGH_ALCH_MAGIC_XP
-                && now.item("Rune chainbody") == withdrawn.item("Rune chainbody");
+                && now.item("Rune chainbody") == 0;
         }
     }
 }
@@ -4085,8 +4245,10 @@ impl CoreWitness {
             post_start_observations: 0,
             bone_bank_cycle: BoneBankCycle::default(),
             bank_fletcher_cycle: BankFletcherCycle::default(),
+            bank_fletcher_option_cycle: BankFletcherOptionCycle::default(),
             bank_fletcher_string_cycle: BankFletcherStringCycle::default(),
             bank_fletcher_cut_string_cycle: BankFletcherCutStringCycle::default(),
+            alcher_defaults_cycle: AlcherGeneratedCustomCycle::default(),
             alcher_generated_custom_cycle: AlcherGeneratedCustomCycle::default(),
             dart_fletcher_cycle: DartFletcherCycle::default(),
             herb_cleaner_cycle: HerbCleanerCycle::default(),
@@ -4131,6 +4293,10 @@ impl CoreWitness {
             self.bank_fletcher_cycle
                 .observe(&self.baseline, observation);
         }
+        if let Some(spec) = bank_fletcher_option_spec(self.case) {
+            self.bank_fletcher_option_cycle
+                .observe(spec, &self.baseline, observation);
+        }
         if matches!(self.case, CoreCase::BankFletcherString) {
             self.bank_fletcher_string_cycle
                 .observe(&self.baseline, observation);
@@ -4145,6 +4311,15 @@ impl CoreWitness {
         ) {
             self.alcher_generated_custom_cycle
                 .observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::AlcherDefaults) {
+            self.alcher_defaults_cycle.observe_target(
+                &self.baseline,
+                observation,
+                YEW_LONGBOW_ID,
+                CERT_YEW_LONGBOW_ID,
+                YEW_LONGBOW_ALCH_COINS,
+            );
         }
         if matches!(self.case, CoreCase::DartFletcher) {
             self.dart_fletcher_cycle.observe(
@@ -4495,11 +4670,15 @@ impl CoreWitness {
             CoreCase::AlcherCustomAlias | CoreCase::AlcherCustomName => {
                 self.alcher_generated_custom_cycle.consumed
             }
+            CoreCase::AlcherDefaults => self.alcher_defaults_cycle.consumed,
             CoreCase::BankFletcher => {
                 self.bank_fletcher_cycle.crafted_after_withdrawal
                     && self.xp_gained("fletching")
                     && self.item_consumed_from_baseline("Willow logs")
                     && self.item_increased("Willow shortbow")
+            }
+            CoreCase::BankFletcherShafts | CoreCase::BankFletcherHeadless => {
+                self.bank_fletcher_option_cycle.qualified()
             }
             CoreCase::BankFletcherString => self.bank_fletcher_string_cycle.strung_after_withdrawal,
             CoreCase::BankFletcherCutString => {
@@ -4576,8 +4755,10 @@ impl CoreWitness {
             "post_start_observations": self.post_start_observations,
             "bone_bank_cycle": self.bone_bank_cycle,
             "bank_fletcher_cycle": self.bank_fletcher_cycle,
+            "bank_fletcher_option_cycle": self.bank_fletcher_option_cycle,
             "bank_fletcher_string_cycle": self.bank_fletcher_string_cycle,
             "bank_fletcher_cut_string_cycle": self.bank_fletcher_cut_string_cycle,
+            "alcher_defaults_cycle": self.alcher_defaults_cycle,
             "alcher_generated_custom_cycle": self.alcher_generated_custom_cycle,
             "dart_fletcher_cycle": self.dart_fletcher_cycle,
             "herb_cleaner_cycle": self.herb_cleaner_cycle,
@@ -5154,6 +5335,7 @@ mod tests {
             scene_state: 2,
             player: Some("catalogtest".into()),
             tile: Some((3220, 3212, 0)),
+            combat_level: 0,
             tick: 10,
             bank: BTreeMap::new(),
             bank_ids: BTreeMap::new(),
@@ -5855,6 +6037,107 @@ mod tests {
         let mut seeded_outcome = baseline.clone();
         seeded_outcome.item_ids.insert(60, 2);
         assert!(validate_case_baseline(CoreCase::BankFletcherCutString, &seeded_outcome).is_err());
+    }
+
+    #[test]
+    fn remaining_production_options_require_exact_ordered_native_outcomes() {
+        let defaults = CoreCase::parse("alcher_defaults").unwrap();
+        let mut baseline = alcher_generated_obs(&[], 10_000);
+        baseline.bank_generation = 1;
+        validate_case_baseline(defaults, &baseline).unwrap();
+        let mut withdrawn = alcher_generated_obs(&[(856, 1), (NATURE_RUNE_ID, 1)], 10_000);
+        withdrawn.bank_generation = 2;
+        let mut consumed = alcher_generated_obs(&[(COINS_ID, 768)], 10_065);
+        consumed.bank_generation = 2;
+        assert!(witness(defaults, &baseline, [&withdrawn, &consumed])
+            .qualify()
+            .is_ok());
+        assert!(witness(defaults, &baseline, [&withdrawn])
+            .qualify()
+            .is_err());
+        let mut raw = withdrawn.clone();
+        raw.item_ids.remove(&856);
+        raw.item_ids.insert(855, 1);
+        assert!(witness(defaults, &baseline, [&raw, &consumed])
+            .qualify()
+            .is_err());
+        let mut chainbody = withdrawn.clone();
+        chainbody.items.insert("Rune chainbody".into(), 1);
+        assert!(witness(defaults, &baseline, [&chainbody, &consumed])
+            .qualify()
+            .is_err());
+
+        for (name, initial, product, first_count, restock) in [
+            (
+                "bank_fletcher_shafts",
+                vec![(1511, 27)],
+                52,
+                405,
+                vec![(1511, 27)],
+            ),
+            (
+                "bank_fletcher_headless",
+                vec![(314, 30), (52, 30)],
+                53,
+                30,
+                vec![(314, 60), (52, 60)],
+            ),
+        ] {
+            let case = CoreCase::parse(name).unwrap();
+            let mut baseline = observation_ids(&initial, &[], 20_000);
+            baseline.tile = Some((3185, 3440, 0));
+            baseline.levels.insert("fletching".into(), 1);
+            if name == "bank_fletcher_shafts" {
+                baseline.items.insert("Knife".into(), 1);
+            }
+            validate_case_baseline(case, &baseline).unwrap();
+
+            let first = observation_ids(&[(product, first_count)], &[], 20_100);
+            let mut deposited = observation_ids(&[], &[(product, first_count)], 20_100);
+            deposited.bank_open = true;
+            deposited.bank_loaded = true;
+            deposited.bank_generation = 1;
+            for (id, count) in &restock {
+                deposited.bank_ids.insert(*id, *count * 2);
+            }
+            let mut withdrawn = observation_ids(&restock, &[(product, first_count)], 20_100);
+            withdrawn.bank_open = true;
+            withdrawn.bank_loaded = true;
+            withdrawn.bank_generation = 1;
+            for (id, count) in &restock {
+                withdrawn.bank_ids.insert(*id, *count);
+            }
+            let mut further_ids = restock.clone();
+            for (_, count) in &mut further_ids {
+                *count -= 1;
+            }
+            further_ids.push((product, 1));
+            let further = observation_ids(&further_ids, &[(product, first_count)], 20_101);
+            assert!(
+                witness(case, &baseline, [&first, &deposited, &withdrawn, &further])
+                    .qualify()
+                    .is_ok()
+            );
+            assert!(witness(case, &baseline, [&first]).qualify().is_err());
+            assert!(witness(case, &baseline, [&first, &deposited, &withdrawn])
+                .qualify()
+                .is_err());
+            assert!(witness(case, &baseline, [&baseline]).qualify().is_err());
+            let mut seeded_product = baseline.clone();
+            seeded_product.item_ids.insert(product, first_count);
+            assert!(validate_case_baseline(case, &seeded_product).is_err());
+        }
+    }
+
+    #[test]
+    fn coal_trucks_requires_the_documented_native_combat_level() {
+        let mut baseline = observation_ids(&[(STEEL_PICKAXE_ID, 1)], &[], 0);
+        baseline.tile = Some(COAL_MINE);
+        baseline.levels.insert("mining".into(), 30);
+        baseline.combat_level = 54;
+        assert!(validate_case_baseline(CoreCase::CoalTrucks, &baseline).is_err());
+        baseline.combat_level = 55;
+        validate_case_baseline(CoreCase::CoalTrucks, &baseline).unwrap();
     }
 
     fn alcher_generated_obs(item_ids: &[(i32, i32)], magic_xp: i32) -> Observation {
@@ -8259,7 +8542,7 @@ mod tests {
     #[test]
     fn coal_trucks_requires_mining_xp_truck_deposit_not_bank_and_further_mine() {
         let levels = [("mining", 30)];
-        let baseline = resource_obs(
+        let mut baseline = resource_obs(
             COAL_MINE,
             &[(STEEL_PICKAXE_ID, 1)],
             &[],
@@ -8267,6 +8550,7 @@ mod tests {
             &[("mining", 0)],
             &levels,
         );
+        baseline.combat_level = 55;
         validate_case_baseline(CoreCase::CoalTrucks, &baseline).unwrap();
 
         let mined = resource_obs(
