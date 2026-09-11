@@ -1,0 +1,109 @@
+{
+  "task": "t_aa061a28",
+  "retry": "r1286",
+  "prior_run": "1278 crashed disk-full; reused exclusively owned target after overlay sha256 matched",
+  "brief": "docs/compat/briefs/83-resource-world-fixtures.md",
+  "brief_sha256": "c0880de7873957ca0f4613f49a261aa62d913356b3aee35533da6c2397f4a311",
+  "export_host_commit": "8bd34675b61c94707e6c5ed07a943102bf06cac5",
+  "client": "9d090ed04957e4efc254f073cda97bc5510ca72b",
+  "isolated_build": true,
+  "empty_started": false,
+  "export": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_aa061a28-resource",
+  "cargo_target_dir": "/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_aa061a28-resource-target",
+  "export_method": "docs/compat/evidence/build-isolation/export_git_files.py regular Git blobs",
+  "shared_campaign_target": false,
+  "live": false,
+  "scenarios": [
+    "gnome_chop",
+    "gnome_fletch_short",
+    "gnome_fletch_long",
+    "coal_trucks"
+  ],
+  "catalogs": {
+    "100adccc037d9f6898080e1cad58fcfc43364775": {
+      "GnomeMagicChopper.ts": "3b0d034c761f9b98361561627817a6d806d359f659000cbccdf22e25772471e1",
+      "CoalTrucks.ts": "d20112f0bfb44612ae53e0c56009c6b3e50808375c2a54dc43ed2160e55fcf36",
+      "CoalTrucksLogic.ts": "d6ed36c14e276cc9f85ffdc59fe910a1ec00eb63c162cd19c7cd27a021bc97b5"
+    },
+    "8e7d965be2071d6ec65c3265e12af797082d720a": {
+      "GnomeMagicChopper.ts": "3b0d034c761f9b98361561627817a6d806d359f659000cbccdf22e25772471e1",
+      "CoalTrucks.ts": "d20112f0bfb44612ae53e0c56009c6b3e50808375c2a54dc43ed2160e55fcf36",
+      "CoalTrucksLogic.ts": "d6ed36c14e276cc9f85ffdc59fe910a1ec00eb63c162cd19c7cd27a021bc97b5"
+    }
+  },
+  "selected_ids": {
+    "magic_logs": 1513,
+    "noted_magic_logs": 1514,
+    "unstrung_magic_shortbow": 72,
+    "unstrung_magic_longbow": 70,
+    "noted_unstrung_magic_shortbow": 73,
+    "noted_unstrung_magic_longbow": 71,
+    "magic_shortbow_strung_rejected": 861,
+    "magic_longbow_strung_rejected": 859,
+    "knife": 946,
+    "steel_axe": 1353,
+    "coal": 453,
+    "noted_coal": 454,
+    "steel_pickaxe": 1269,
+    "woodcutting_stat": 8,
+    "fletching_stat": 9,
+    "mining_stat": 14,
+    "coal_rock_loc_ids_script": [2096, 2097],
+    "item_2096_2097_namespace": "Odd cocktail"
+  },
+  "stands": {
+    "gnome_west_magics": [2372, 3425, 0],
+    "gnome_bank": [2445, 3425, 1],
+    "gnome_bank_stair_south": [2444, 3416, 0],
+    "coal_mine": [2582, 3481, 0],
+    "coal_mine_truck_stand": [2575, 3486, 0],
+    "seers_bank_not_claimed": [2725, 3491, 0]
+  },
+  "gold_bounds": {
+    "SCRIPT_GOLD_DEADLINE_secs": 180,
+    "SCRIPT_GOLD_WATCH_TICKS": 150,
+    "unchanged": true
+  },
+  "coal_partial": {
+    "truck_max": 120,
+    "reason": "filling 120 coal at measured ~2-3s/swing plus deposit trips exceeds 180s; no truck-content seed primitive (give/givebank only)",
+    "claimed": "mine XP + coal 453 + mine-truck deposit + further mining",
+    "not_claimed": "Seers Remove-coal / Seers booth / return-to-mine after haul"
+  },
+  "overlay_sha256": {
+    "crates/scenario/src/lib.rs": "4b123efaf2f17078081c792b5e1c61efad276d0afc56e8ac70e736fa7b1bbfa6",
+    "crates/host-play/tests/catalog_boundary_live.rs": "c05c7623d7008d63559265dda2012aa86f65b8a4df22b1af8873a5d5f93288e4",
+    "docs/compat/05n-resource-world-fixtures.md": "452a5604a09d52f86324311f92342be7797e1d9c5d5a1ff4bf1e674815ca9717"
+  },
+  "checks": [
+    "cargo test -p scenario --lib: 94 passed",
+    "resource_world_cases_register_gnome_log_bank_fletch_and_coal_truck: passed",
+    "cargo test -p host-play --features memory-profile --test catalog_boundary_live: 31 passed, 1 ignored LIVE",
+    "checked_in_frozen_core_sources_match_both_catalog_ledgers: passed from isolated export with .superpowers/inputs symlink",
+    "gnome_chop_requires_log_xp_upstairs_deposit_ground_return_and_further_chop: passed",
+    "gnome_fletch_requires_unstrung_product_xp_deposit_return_and_further_chop: passed",
+    "coal_trucks_requires_mining_xp_truck_deposit_not_bank_and_further_mine: passed",
+    "cargo clippy -p scenario -- -D warnings: pass",
+    "cargo clippy -p host-play --features memory-profile --test catalog_boundary_live -- -D warnings: pass",
+    "cargo fmt --check scenario and catalog harness: clean"
+  ],
+  "limits": [
+    "no live client run",
+    "Seers haul/bank/return not claimed; truck 120 exceeds SCRIPT_GOLD_DEADLINE 180s from empty truck",
+    "no truck-content seed primitive; root coordination requested",
+    "script-owned death/boat/shop recovery and missing-knife stop stay out of ordinary core",
+    "SCRIPT_GOLD_DEADLINE and SCRIPT_GOLD_WATCH_TICKS unchanged",
+    "git export does not include gitignored catalog inputs; frozen-ledger identity rechecked with inputs symlink",
+    "retry-r1286 reused t_aa061a28-resource-target after source hashes matched; not independently empty-started",
+    "Superheater Attack-30 6c7075ce preserved",
+    "vial/potion e4f5352ab preserved",
+    "8fd0f138 chicken melee preserved",
+    "bank-close generation f33703d5e preserved",
+    "1ec25b521 seed-order preserved",
+    "TannerBot 3a34f879f preserved",
+    "Falador West vial start 3368 (2f1bd9cf) preserved",
+    "RuneCrafter/Mule 6750713b8 preserved",
+    "rune observation 4cc6cc27d preserved",
+    "Ardy stall/pickpocket 43749c42f preserved"
+  ]
+}

@@ -423,6 +423,10 @@ pub fn get(name: &str) -> Option<Scenario> {
         "ardy_cakes" => Some(ardy_cakes_scenario()),
         "ardy_thiever" => Some(ardy_thiever_scenario()),
         "ardy_thiever_knight" => Some(ardy_thiever_knight_scenario()),
+        "gnome_chop" => Some(gnome_chop_scenario()),
+        "gnome_fletch_short" => Some(gnome_fletch_short_scenario()),
+        "gnome_fletch_long" => Some(gnome_fletch_long_scenario()),
+        "coal_trucks" => Some(coal_trucks_scenario()),
         "script_trade" => Some(script_trade_scenario()),
         _ => None,
     }
@@ -481,6 +485,10 @@ pub fn names() -> Vec<&'static str> {
         "ardy_cakes",
         "ardy_thiever",
         "ardy_thiever_knight",
+        "gnome_chop",
+        "gnome_fletch_short",
+        "gnome_fletch_long",
+        "coal_trucks",
         "script_trade",
     ]
 }
@@ -6379,6 +6387,553 @@ fn ardy_thiever_variant(spec: ArdyThieverSpec) -> Scenario {
     }
 }
 
+const WOODCUTTING_STAT: i32 = 8;
+const MINING_STAT: i32 = 14;
+const MAGIC_LOGS_ID: i32 = 1513;
+const NOTED_MAGIC_LOGS_ID: i32 = 1514;
+const UNSTRUNG_MAGIC_SHORTBOW_ID: i32 = 72;
+const UNSTRUNG_MAGIC_LONGBOW_ID: i32 = 70;
+const MAGIC_SHORTBOW_ID: i32 = 861;
+const MAGIC_LONGBOW_ID: i32 = 859;
+const NOTED_UNSTRUNG_MAGIC_SHORTBOW_ID: i32 = 73;
+const NOTED_UNSTRUNG_MAGIC_LONGBOW_ID: i32 = 71;
+const KNIFE_ID: i32 = 946;
+const STEEL_AXE_ID: i32 = 1353;
+const STEEL_PICKAXE_ID: i32 = 1269;
+const NOTED_COAL_ID: i32 = 454;
+
+const GNOME_WEST_MAGICS: WorldTile = WorldTile {
+    x: 2372,
+    z: 3425,
+    level: 0,
+};
+const GNOME_BANK_STAND: WorldTile = WorldTile {
+    x: 2445,
+    z: 3425,
+    level: 1,
+};
+const GNOME_BANK_STAIR_SOUTH: WorldTile = WorldTile {
+    x: 2444,
+    z: 3416,
+    level: 0,
+};
+const COAL_MINE: WorldTile = WorldTile {
+    x: 2582,
+    z: 3481,
+    level: 0,
+};
+const COAL_MINE_TRUCK_STAND: WorldTile = WorldTile {
+    x: 2575,
+    z: 3486,
+    level: 0,
+};
+
+const GNOME_CHOP_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "fletchLogs",
+    value: ScriptInjectValue::Bool(false),
+}];
+
+const GNOME_FLETCH_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
+    id: "fletchLogs",
+    value: ScriptInjectValue::Bool(true),
+}];
+
+/// Empty pack at west magics. fletchLogs off. Seed WC 75 and steel axe
+/// 1353. Script chops magic logs 1513 with Woodcutting XP, deposits them
+/// at the upstairs gnome booth, returns to ground and chops again.
+/// Death/boat/shop recovery stays out of this core.
+fn gnome_chop_scenario() -> Scenario {
+    let stand = GNOME_WEST_MAGICS;
+    let first_xp = Proof::StatXpGain {
+        id: WOODCUTTING_STAT,
+        min: 1,
+    };
+    let logs = Proof::ItemId {
+        id: MAGIC_LOGS_ID,
+        count: 1,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed woodcutting, steel axe, empty pack and west magics before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "setstat woodcutting 75");
+                cheat(c, "give steel_axe 1");
+                cheat(c, &tele_args(stand.level, stand.x, stand.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: stand.x,
+                z: stand.z,
+                level: stand.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm Woodcutting 75 before Start",
+            Proof::Stat {
+                id: WOODCUTTING_STAT,
+                min: 75,
+            },
+        ),
+        (
+            "confirm steel axe 1353 before Start",
+            Proof::ItemId {
+                id: STEEL_AXE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "confirm no seeded magic logs in pack before Start",
+            Proof::ItemIdAtMost {
+                id: MAGIC_LOGS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded unstrung magic shortbow in pack before Start",
+            Proof::ItemIdAtMost {
+                id: UNSTRUNG_MAGIC_SHORTBOW_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded unstrung magic longbow in pack before Start",
+            Proof::ItemIdAtMost {
+                id: UNSTRUNG_MAGIC_LONGBOW_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded noted magic logs in pack before Start",
+            Proof::ItemIdAtMost {
+                id: NOTED_MAGIC_LOGS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded noted unstrung magic shortbow in pack before Start",
+            Proof::ItemIdAtMost {
+                id: NOTED_UNSTRUNG_MAGIC_SHORTBOW_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded noted unstrung magic longbow in pack before Start",
+            Proof::ItemIdAtMost {
+                id: NOTED_UNSTRUNG_MAGIC_LONGBOW_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        (
+            "watch Woodcutting XP from a Magic tree after Start",
+            first_xp,
+        ),
+        ("watch exact Magic logs 1513 chopped after Start", logs),
+        (
+            "watch arrival at the upstairs gnome booth after the log fill",
+            Proof::ArrivedNear {
+                x: GNOME_BANK_STAND.x,
+                z: GNOME_BANK_STAND.z,
+                level: GNOME_BANK_STAND.level,
+                radius: 8,
+            },
+        ),
+        (
+            "watch script-chopped magic logs enter a fresh gnome bank",
+            Proof::BankItemId {
+                id: MAGIC_LOGS_ID,
+                count: 1,
+            },
+        ),
+        (
+            "watch the pack empty of magic logs after deposit",
+            Proof::ItemIdAtMost {
+                id: MAGIC_LOGS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "watch ground return at the gnome bank stairs after deposit",
+            Proof::ArrivedNear {
+                x: GNOME_BANK_STAIR_SOUTH.x,
+                z: GNOME_BANK_STAIR_SOUTH.z,
+                level: GNOME_BANK_STAIR_SOUTH.level,
+                radius: 30,
+            },
+        ),
+        (
+            "watch the gnome log bank close after deposit",
+            Proof::BankClosed,
+        ),
+        ("watch another exact Magic logs 1513 after return", logs),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name: "gnome_chop",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: logs,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("GnomeMagicChopper"),
+            script_settings_inject: Some(GNOME_CHOP_INJECT),
+            terminal_shot: Some("gnome_chop"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+struct GnomeFletchSpec {
+    name: &'static str,
+    fletching: i32,
+    fletching_max: Option<i32>,
+    product_id: i32,
+}
+
+fn gnome_fletch_short_scenario() -> Scenario {
+    gnome_fletch_variant(GnomeFletchSpec {
+        name: "gnome_fletch_short",
+        fletching: 80,
+        fletching_max: Some(84),
+        product_id: UNSTRUNG_MAGIC_SHORTBOW_ID,
+    })
+}
+
+fn gnome_fletch_long_scenario() -> Scenario {
+    gnome_fletch_variant(GnomeFletchSpec {
+        name: "gnome_fletch_long",
+        fletching: 85,
+        fletching_max: None,
+        product_id: UNSTRUNG_MAGIC_LONGBOW_ID,
+    })
+}
+
+/// fletchLogs on. Seed WC 75, Fletching 80/85, steel axe and knife.
+/// Script chops logs 1513, consumes them into exact unstrung 72/70 with
+/// Fletching XP, deposits the bows upstairs, returns to ground and chops
+/// again. Missing knife is a stop, not a pass. Strung 861/859 are not
+/// the unstrung product.
+fn gnome_fletch_variant(spec: GnomeFletchSpec) -> Scenario {
+    let GnomeFletchSpec {
+        name,
+        fletching,
+        fletching_max,
+        product_id,
+    } = spec;
+    let stand = GNOME_WEST_MAGICS;
+    let first_wc = Proof::StatXpGain {
+        id: WOODCUTTING_STAT,
+        min: 1,
+    };
+    let first_fletch = Proof::StatXpGain {
+        id: FLETCHING_STAT,
+        min: 1,
+    };
+    let logs = Proof::ItemId {
+        id: MAGIC_LOGS_ID,
+        count: 1,
+    };
+    let product = Proof::ItemId {
+        id: product_id,
+        count: 1,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed woodcutting, fletching, axe, knife, empty pack and west magics before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "setstat woodcutting 75");
+                cheat(c, &format!("setstat fletching {fletching}"));
+                cheat(c, "give steel_axe 1");
+                cheat(c, "give knife 1");
+                cheat(c, &tele_args(stand.level, stand.x, stand.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: stand.x,
+                z: stand.z,
+                level: stand.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
+    let mut seed_arms = vec![
+        (
+            "confirm Woodcutting 75 before Start",
+            Proof::Stat {
+                id: WOODCUTTING_STAT,
+                min: 75,
+            },
+        ),
+        (
+            "confirm prepared Fletching before Start",
+            Proof::Stat {
+                id: FLETCHING_STAT,
+                min: fletching,
+            },
+        ),
+        (
+            "confirm steel axe 1353 before Start",
+            Proof::ItemId {
+                id: STEEL_AXE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "confirm knife 946 before Start",
+            Proof::ItemId {
+                id: KNIFE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "confirm no seeded magic logs in pack before Start",
+            Proof::ItemIdAtMost {
+                id: MAGIC_LOGS_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded unstrung product in pack before Start",
+            Proof::ItemIdAtMost {
+                id: product_id,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded strung magic shortbow in pack before Start",
+            Proof::ItemIdAtMost {
+                id: MAGIC_SHORTBOW_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded strung magic longbow in pack before Start",
+            Proof::ItemIdAtMost {
+                id: MAGIC_LONGBOW_ID,
+                count: 0,
+            },
+        ),
+    ];
+    if let Some(max) = fletching_max {
+        seed_arms.insert(
+            2,
+            (
+                "confirm Fletching below longbow 85 before Start",
+                Proof::StatAtMost {
+                    id: FLETCHING_STAT,
+                    max,
+                },
+            ),
+        );
+    }
+    for (step_name, arm) in seed_arms {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        (
+            "watch Woodcutting XP from a Magic tree after Start",
+            first_wc,
+        ),
+        ("watch exact Magic logs 1513 chopped after Start", logs),
+        ("watch Fletching XP after Start", first_fletch),
+        (
+            "watch exact unstrung magic bow after logs are consumed",
+            product,
+        ),
+        (
+            "watch script-fletched bows enter a fresh gnome bank",
+            Proof::BankItemId {
+                id: product_id,
+                count: 1,
+            },
+        ),
+        (
+            "watch the pack empty of unstrung bows after deposit",
+            Proof::ItemIdAtMost {
+                id: product_id,
+                count: 0,
+            },
+        ),
+        (
+            "watch ground return at the gnome bank stairs after deposit",
+            Proof::ArrivedNear {
+                x: GNOME_BANK_STAIR_SOUTH.x,
+                z: GNOME_BANK_STAIR_SOUTH.z,
+                level: GNOME_BANK_STAIR_SOUTH.level,
+                radius: 30,
+            },
+        ),
+        (
+            "watch the gnome fletch bank close after deposit",
+            Proof::BankClosed,
+        ),
+        ("watch another exact Magic logs 1513 after return", logs),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name,
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: logs,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("GnomeMagicChopper"),
+            script_settings_inject: Some(GNOME_FLETCH_INJECT),
+            terminal_shot: Some(name),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+/// Seed Mining 30 and steel pickaxe 1269 at the coal mine. Observe real
+/// mining XP and exact coal 453, then a mine-truck deposit (pack empty of
+/// coal at the truck stand, not a Seers bank), then further mining.
+/// Filling truck 120 then Seers haul/bank/return cannot fit
+/// SCRIPT_GOLD_DEADLINE 180s from an empty truck; no truck-content seed
+/// primitive exists. Death/combat recovery is not this core.
+fn coal_trucks_scenario() -> Scenario {
+    let stand = COAL_MINE;
+    let first_xp = Proof::StatXpGain {
+        id: MINING_STAT,
+        min: 1,
+    };
+    let coal = Proof::ItemId {
+        id: COAL_ID,
+        count: 1,
+    };
+    let mut steps = script_live_seed_steps();
+    steps.push(Step {
+        name: "seed mining, steel pickaxe, empty pack and coal mine before Start",
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "~clearinv");
+                cheat(c, "setstat mining 30");
+                cheat(c, "give steel_pickaxe 1");
+                cheat(c, &tele_args(stand.level, stand.x, stand.z));
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::ArrivedNear {
+                x: stand.x,
+                z: stand.z,
+                level: stand.level,
+                radius: 8,
+            },
+            budget_ticks: 200,
+        },
+    });
+    for (step_name, arm) in [
+        (
+            "confirm Mining 30 before Start",
+            Proof::Stat {
+                id: MINING_STAT,
+                min: 30,
+            },
+        ),
+        (
+            "confirm steel pickaxe 1269 before Start",
+            Proof::ItemId {
+                id: STEEL_PICKAXE_ID,
+                count: 1,
+            },
+        ),
+        (
+            "confirm no seeded coal in pack before Start",
+            Proof::ItemIdAtMost {
+                id: COAL_ID,
+                count: 0,
+            },
+        ),
+        (
+            "confirm no seeded noted coal in pack before Start",
+            Proof::ItemIdAtMost {
+                id: NOTED_COAL_ID,
+                count: 0,
+            },
+        ),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    steps.push(start_catalog_step());
+    for (step_name, arm) in [
+        ("watch Mining XP from coal rocks after Start", first_xp),
+        ("watch exact Coal 453 mined after Start", coal),
+        (
+            "watch arrival at the mine coal truck after the pack fill",
+            Proof::ArrivedNear {
+                x: COAL_MINE_TRUCK_STAND.x,
+                z: COAL_MINE_TRUCK_STAND.z,
+                level: COAL_MINE_TRUCK_STAND.level,
+                radius: 4,
+            },
+        ),
+        (
+            "watch the pack empty of coal after the mine-truck deposit",
+            Proof::ItemIdAtMost {
+                id: COAL_ID,
+                count: 0,
+            },
+        ),
+        ("watch another exact Coal 453 after the truck deposit", coal),
+    ] {
+        steps.push(bank_fletcher_watch(step_name, arm));
+    }
+    Scenario {
+        name: "coal_trucks",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: coal,
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("CoalTrucks"),
+            terminal_shot: Some("coal_trucks"),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
 /// Lumbridge courtyard stand where the two-bot trade meets.
 const TRADE_COURTYARD: WorldTile = WorldTile {
     x: 3220,
@@ -6917,6 +7472,10 @@ mod tests {
                 "ardy_cakes",
                 "ardy_thiever",
                 "ardy_thiever_knight",
+                "gnome_chop",
+                "gnome_fletch_short",
+                "gnome_fletch_long",
+                "coal_trucks",
                 "script_trade",
             ]
         );
@@ -9120,6 +9679,303 @@ mod tests {
     }
 
     #[test]
+    fn resource_world_cases_register_gnome_log_bank_fletch_and_coal_truck() {
+        let chop = get("gnome_chop").expect("gnome_chop");
+        assert_eq!(chop.settings.start_script, Some("GnomeMagicChopper"));
+        assert_eq!(chop.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        let inject = settings_inject_map(chop.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("fletchLogs"), Some(&Value::Bool(false)));
+        let start = chop
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let seed = chop.steps[..start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(seed.contains(&Proof::ArrivedNear {
+            x: 2372,
+            z: 3425,
+            level: 0,
+            radius: 8,
+        }));
+        assert!(seed.contains(&Proof::Stat {
+            id: WOODCUTTING_STAT,
+            min: 75,
+        }));
+        assert!(seed.contains(&Proof::ItemId {
+            id: STEEL_AXE_ID,
+            count: 1,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: MAGIC_LOGS_ID,
+            count: 0,
+        }));
+        assert!(seed.contains(&Proof::ItemIdAtMost {
+            id: UNSTRUNG_MAGIC_SHORTBOW_ID,
+            count: 0,
+        }));
+        let watch = chop.steps[start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        let logs = Proof::ItemId {
+            id: MAGIC_LOGS_ID,
+            count: 1,
+        };
+        let pack_empty_logs = Proof::ItemIdAtMost {
+            id: MAGIC_LOGS_ID,
+            count: 0,
+        };
+        let upstairs = Proof::ArrivedNear {
+            x: GNOME_BANK_STAND.x,
+            z: GNOME_BANK_STAND.z,
+            level: GNOME_BANK_STAND.level,
+            radius: 8,
+        };
+        let ground = Proof::ArrivedNear {
+            x: GNOME_BANK_STAIR_SOUTH.x,
+            z: GNOME_BANK_STAIR_SOUTH.z,
+            level: GNOME_BANK_STAIR_SOUTH.level,
+            radius: 30,
+        };
+        assert_eq!(
+            watch,
+            vec![
+                Proof::StatXpGain {
+                    id: WOODCUTTING_STAT,
+                    min: 1
+                },
+                logs,
+                upstairs,
+                Proof::BankItemId {
+                    id: MAGIC_LOGS_ID,
+                    count: 1
+                },
+                pack_empty_logs,
+                ground,
+                Proof::BankClosed,
+                logs,
+            ]
+        );
+        let first_logs = watch.iter().position(|arm| *arm == logs).unwrap();
+        let bank_logs = watch
+            .iter()
+            .position(|arm| {
+                *arm == Proof::BankItemId {
+                    id: MAGIC_LOGS_ID,
+                    count: 1,
+                }
+            })
+            .unwrap();
+        let pack_empty = watch
+            .iter()
+            .position(|arm| *arm == pack_empty_logs)
+            .unwrap();
+        let further_logs = watch.iter().rposition(|arm| *arm == logs).unwrap();
+        assert!(first_logs < bank_logs);
+        assert!(bank_logs < pack_empty);
+        assert!(pack_empty < further_logs);
+        assert_ne!(first_logs, further_logs);
+        assert_eq!(chop.proof, logs);
+        assert_eq!(GNOME_BANK_STAND.level, 1);
+        assert_eq!(GNOME_BANK_STAIR_SOUTH.level, 0);
+
+        let short = get("gnome_fletch_short").expect("gnome_fletch_short");
+        assert_eq!(short.settings.start_script, Some("GnomeMagicChopper"));
+        let inject = settings_inject_map(short.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("fletchLogs"), Some(&Value::Bool(true)));
+        let short_start = short
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let short_seed = short.steps[..short_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(short_seed.contains(&Proof::Stat {
+            id: FLETCHING_STAT,
+            min: 80,
+        }));
+        assert!(short_seed.contains(&Proof::StatAtMost {
+            id: FLETCHING_STAT,
+            max: 84,
+        }));
+        assert!(short_seed.contains(&Proof::ItemId {
+            id: KNIFE_ID,
+            count: 1,
+        }));
+        assert!(!short_seed.contains(&Proof::Stat {
+            id: FLETCHING_STAT,
+            min: 85,
+        }));
+        let short_watch = short.steps[short_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        let unstrung_short = Proof::ItemId {
+            id: UNSTRUNG_MAGIC_SHORTBOW_ID,
+            count: 1,
+        };
+        assert_eq!(
+            short_watch[0],
+            Proof::StatXpGain {
+                id: WOODCUTTING_STAT,
+                min: 1
+            }
+        );
+        assert_eq!(short_watch[1], logs);
+        assert_eq!(
+            short_watch[2],
+            Proof::StatXpGain {
+                id: FLETCHING_STAT,
+                min: 1
+            }
+        );
+        assert_eq!(short_watch[3], unstrung_short);
+        assert!(short_watch.contains(&Proof::BankItemId {
+            id: UNSTRUNG_MAGIC_SHORTBOW_ID,
+            count: 1,
+        }));
+        assert!(!short_watch.contains(&Proof::BankItemId {
+            id: UNSTRUNG_MAGIC_LONGBOW_ID,
+            count: 1,
+        }));
+        assert!(!short_watch.contains(&Proof::ItemId {
+            id: MAGIC_SHORTBOW_ID,
+            count: 1,
+        }));
+        let first_product = short_watch
+            .iter()
+            .position(|arm| *arm == unstrung_short)
+            .unwrap();
+        let further_chop = short_watch.iter().rposition(|arm| *arm == logs).unwrap();
+        assert!(first_product < further_chop);
+        assert_eq!(short.proof, logs);
+
+        let long = get("gnome_fletch_long").expect("gnome_fletch_long");
+        let inject = settings_inject_map(long.settings.script_settings_inject).unwrap();
+        assert_eq!(inject.get("fletchLogs"), Some(&Value::Bool(true)));
+        let long_start = long
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let long_seed = long.steps[..long_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(long_seed.contains(&Proof::Stat {
+            id: FLETCHING_STAT,
+            min: 85,
+        }));
+        assert!(!long_seed.contains(&Proof::StatAtMost {
+            id: FLETCHING_STAT,
+            max: 84,
+        }));
+        let long_watch = long.steps[long_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(long_watch.contains(&Proof::ItemId {
+            id: UNSTRUNG_MAGIC_LONGBOW_ID,
+            count: 1,
+        }));
+        assert!(long_watch.contains(&Proof::BankItemId {
+            id: UNSTRUNG_MAGIC_LONGBOW_ID,
+            count: 1,
+        }));
+        assert!(!long_watch.contains(&unstrung_short));
+        assert_eq!(long.proof, logs);
+
+        let coal = get("coal_trucks").expect("coal_trucks");
+        assert_eq!(coal.settings.start_script, Some("CoalTrucks"));
+        assert_eq!(coal.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        assert!(coal.settings.script_settings_inject.is_none());
+        let coal_start = coal
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let coal_seed = coal.steps[..coal_start]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        assert!(coal_seed.contains(&Proof::ArrivedNear {
+            x: 2582,
+            z: 3481,
+            level: 0,
+            radius: 8,
+        }));
+        assert!(coal_seed.contains(&Proof::Stat {
+            id: MINING_STAT,
+            min: 30,
+        }));
+        assert!(coal_seed.contains(&Proof::ItemId {
+            id: STEEL_PICKAXE_ID,
+            count: 1,
+        }));
+        assert!(coal_seed.contains(&Proof::ItemIdAtMost {
+            id: COAL_ID,
+            count: 0,
+        }));
+        let coal_watch = coal.steps[coal_start + 1..]
+            .iter()
+            .map(|step| step.wait.arm)
+            .collect::<Vec<_>>();
+        let coal_item = Proof::ItemId {
+            id: COAL_ID,
+            count: 1,
+        };
+        let truck = Proof::ArrivedNear {
+            x: COAL_MINE_TRUCK_STAND.x,
+            z: COAL_MINE_TRUCK_STAND.z,
+            level: COAL_MINE_TRUCK_STAND.level,
+            radius: 4,
+        };
+        assert_eq!(
+            coal_watch,
+            vec![
+                Proof::StatXpGain {
+                    id: MINING_STAT,
+                    min: 1
+                },
+                coal_item,
+                truck,
+                Proof::ItemIdAtMost {
+                    id: COAL_ID,
+                    count: 0
+                },
+                coal_item,
+            ]
+        );
+        assert!(!coal_watch.contains(&Proof::BankItemId {
+            id: COAL_ID,
+            count: 1,
+        }));
+        let first_coal = coal_watch.iter().position(|arm| *arm == coal_item).unwrap();
+        let truck_i = coal_watch.iter().position(|arm| *arm == truck).unwrap();
+        let further_coal = coal_watch
+            .iter()
+            .rposition(|arm| *arm == coal_item)
+            .unwrap();
+        assert!(first_coal < truck_i);
+        assert!(truck_i < further_coal);
+        assert_eq!(coal.proof, coal_item);
+
+        for name in [
+            "gnome_chop",
+            "gnome_fletch_short",
+            "gnome_fletch_long",
+            "coal_trucks",
+        ] {
+            assert!(names().contains(&name));
+        }
+    }
+
+    #[test]
     fn bone_burier_requires_banking_between_burial_cycles() {
         let s = get("bone_burier").unwrap();
         assert_eq!(s.settings.start_script, Some("BoneBurier"));
@@ -9201,6 +10057,10 @@ mod tests {
             "ardy_cakes",
             "ardy_thiever",
             "ardy_thiever_knight",
+            "gnome_chop",
+            "gnome_fletch_short",
+            "gnome_fletch_long",
+            "coal_trucks",
             "script_trade",
         ] {
             let s = get(name).unwrap_or_else(|| panic!("{name} registered"));

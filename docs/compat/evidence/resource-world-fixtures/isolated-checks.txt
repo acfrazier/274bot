@@ -1,0 +1,28 @@
+retry=r1286
+prior_run=1278 crashed disk-full during catalog/clippy; sources and export retained
+isolated_build=true
+empty_started=false
+export=/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_aa061a28-resource
+cargo_target_dir=/Users/acfrazier/experiments/274bot/.worktrees/rs2b0t-multirevision/.superpowers/review-exports/t_aa061a28-resource-target
+host=8bd34675b61c94707e6c5ed07a943102bf06cac5
+client=9d090ed04957e4efc254f073cda97bc5510ca72b
+inputs_symlink=.superpowers/inputs -> campaign .superpowers/inputs
+shared_campaign_target=false
+source_hashes_matched_before_reuse=true
+
+CARGO_TARGET_DIR=$cargo_target_dir cargo test --manifest-path $export/Cargo.toml -p scenario --lib
+  94 passed; 0 failed; 0 ignored
+
+CARGO_TARGET_DIR=$cargo_target_dir cargo test --manifest-path $export/Cargo.toml -p host-play --features memory-profile --test catalog_boundary_live
+  31 passed; 0 failed; 1 ignored (LIVE)
+
+CARGO_TARGET_DIR=$cargo_target_dir cargo clippy --manifest-path $export/Cargo.toml -p scenario -- -D warnings
+  pass
+
+CARGO_TARGET_DIR=$cargo_target_dir cargo clippy --manifest-path $export/Cargo.toml -p host-play --features memory-profile --test catalog_boundary_live -- -D warnings
+  pass
+
+rustfmt --check crates/scenario/src/lib.rs crates/host-play/tests/catalog_boundary_live.rs
+  clean
+
+live=false

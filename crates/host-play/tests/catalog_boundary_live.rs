@@ -19,7 +19,7 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings};
 
 const SUPPORT_MATRIX: &str = include_str!("../../../docs/compat/support-matrix.json");
-const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_thiever|ardy_thiever_knight";
+const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|bank_fletcher|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_thiever|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks";
 const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -113,6 +113,24 @@ const NOTED_CHOCOLATE_SLICE_ID: i32 = 1902;
 const ARDY_CAKES_STAND: (i32, i32, i32) = (2668, 3312, 0);
 const ARDY_THIEVER_STAND: (i32, i32, i32) = (2661, 3306, 0);
 const ARDY_BANK: (i32, i32, i32) = (2655, 3286, 0);
+const MAGIC_LOGS_ID: i32 = 1513;
+const NOTED_MAGIC_LOGS_ID: i32 = 1514;
+const UNSTRUNG_MAGIC_SHORTBOW_ID: i32 = 72;
+const UNSTRUNG_MAGIC_LONGBOW_ID: i32 = 70;
+const MAGIC_SHORTBOW_ID: i32 = 861;
+const MAGIC_LONGBOW_ID: i32 = 859;
+const NOTED_UNSTRUNG_MAGIC_SHORTBOW_ID: i32 = 73;
+const NOTED_UNSTRUNG_MAGIC_LONGBOW_ID: i32 = 71;
+const KNIFE_ID: i32 = 946;
+const STEEL_AXE_ID: i32 = 1353;
+const STEEL_PICKAXE_ID: i32 = 1269;
+const NOTED_COAL_ID: i32 = 454;
+const GNOME_WEST_MAGICS: (i32, i32, i32) = (2372, 3425, 0);
+const GNOME_BANK_STAND: (i32, i32, i32) = (2445, 3425, 1);
+const GNOME_BANK_STAIR_SOUTH: (i32, i32, i32) = (2444, 3416, 0);
+const COAL_MINE: (i32, i32, i32) = (2582, 3481, 0);
+const COAL_MINE_TRUCK_STAND: (i32, i32, i32) = (2575, 3486, 0);
+const SEERS_BANK: (i32, i32, i32) = (2725, 3491, 0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -156,6 +174,10 @@ enum CoreCase {
     ArdyCakes,
     ArdyThiever,
     ArdyThieverKnight,
+    GnomeChop,
+    GnomeFletchShort,
+    GnomeFletchLong,
+    CoalTrucks,
 }
 
 impl CoreCase {
@@ -200,6 +222,10 @@ impl CoreCase {
             "ardy_cakes" => Ok(Self::ArdyCakes),
             "ardy_thiever" => Ok(Self::ArdyThiever),
             "ardy_thiever_knight" => Ok(Self::ArdyThieverKnight),
+            "gnome_chop" => Ok(Self::GnomeChop),
+            "gnome_fletch_short" => Ok(Self::GnomeFletchShort),
+            "gnome_fletch_long" => Ok(Self::GnomeFletchLong),
+            "coal_trucks" => Ok(Self::CoalTrucks),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -247,6 +273,10 @@ impl CoreCase {
             Self::ArdyCakes => "ardy_cakes",
             Self::ArdyThiever => "ardy_thiever",
             Self::ArdyThieverKnight => "ardy_thiever_knight",
+            Self::GnomeChop => "gnome_chop",
+            Self::GnomeFletchShort => "gnome_fletch_short",
+            Self::GnomeFletchLong => "gnome_fletch_long",
+            Self::CoalTrucks => "coal_trucks",
         }
     }
 
@@ -280,6 +310,8 @@ impl CoreCase {
             Self::MuleCrafter => "MuleCrafter",
             Self::ArdyCakes => "ArdyCakes",
             Self::ArdyThiever | Self::ArdyThieverKnight => "ArdyThiever",
+            Self::GnomeChop | Self::GnomeFletchShort | Self::GnomeFletchLong => "GnomeMagicChopper",
+            Self::CoalTrucks => "CoalTrucks",
         }
     }
 }
@@ -668,6 +700,55 @@ fn ardy_thiever_baseline_ready(baseline: &Observation, thieving: i32) -> bool {
         && baseline.item_id(CAKE_ID) == 0
 }
 
+fn held_id(observation: &Observation, id: i32) -> i32 {
+    observation.item_id(id) + observation.equipment_id(id)
+}
+
+fn gnome_wrong_bows(observation: &Observation) -> bool {
+    observation.item_id(MAGIC_SHORTBOW_ID) > 0
+        || observation.bank_item_id(MAGIC_SHORTBOW_ID) > 0
+        || observation.item_id(MAGIC_LONGBOW_ID) > 0
+        || observation.bank_item_id(MAGIC_LONGBOW_ID) > 0
+}
+
+fn gnome_noted(observation: &Observation) -> bool {
+    observation.item_id(NOTED_MAGIC_LOGS_ID) > 0
+        || observation.bank_item_id(NOTED_MAGIC_LOGS_ID) > 0
+        || observation.item_id(NOTED_UNSTRUNG_MAGIC_SHORTBOW_ID) > 0
+        || observation.bank_item_id(NOTED_UNSTRUNG_MAGIC_SHORTBOW_ID) > 0
+        || observation.item_id(NOTED_UNSTRUNG_MAGIC_LONGBOW_ID) > 0
+        || observation.bank_item_id(NOTED_UNSTRUNG_MAGIC_LONGBOW_ID) > 0
+}
+
+fn gnome_chop_baseline_ready(baseline: &Observation) -> bool {
+    near(baseline.tile, GNOME_WEST_MAGICS, 8)
+        && baseline.level("woodcutting") >= 75
+        && held_id(baseline, STEEL_AXE_ID) >= 1
+        && baseline.item_id(MAGIC_LOGS_ID) == 0
+        && baseline.item_id(UNSTRUNG_MAGIC_SHORTBOW_ID) == 0
+        && baseline.item_id(UNSTRUNG_MAGIC_LONGBOW_ID) == 0
+        && !gnome_wrong_bows(baseline)
+        && !gnome_noted(baseline)
+}
+
+fn gnome_fletch_baseline_ready(baseline: &Observation, fletching: i32, max: Option<i32>) -> bool {
+    gnome_chop_baseline_ready(baseline)
+        && baseline.level("fletching") >= fletching
+        && max
+            .map(|max| baseline.level("fletching") <= max)
+            .unwrap_or(true)
+        && baseline.item_id(KNIFE_ID) >= 1
+}
+
+fn coal_trucks_baseline_ready(baseline: &Observation) -> bool {
+    near(baseline.tile, COAL_MINE, 8)
+        && baseline.level("mining") >= 30
+        && held_id(baseline, STEEL_PICKAXE_ID) >= 1
+        && baseline.item_id(COAL_ID) == 0
+        && baseline.item_id(NOTED_COAL_ID) == 0
+        && baseline.bank_item_id(COAL_ID) == 0
+}
+
 fn superheater_baseline_ready(
     baseline: &Observation,
     bar: i32,
@@ -926,6 +1007,10 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         }
         CoreCase::ArdyThiever => ardy_thiever_baseline_ready(baseline, 40),
         CoreCase::ArdyThieverKnight => ardy_thiever_baseline_ready(baseline, 55),
+        CoreCase::GnomeChop => gnome_chop_baseline_ready(baseline),
+        CoreCase::GnomeFletchShort => gnome_fletch_baseline_ready(baseline, 80, Some(84)),
+        CoreCase::GnomeFletchLong => gnome_fletch_baseline_ready(baseline, 85, None),
+        CoreCase::CoalTrucks => coal_trucks_baseline_ready(baseline),
     };
     if ready {
         return Ok(());
@@ -1015,6 +1100,18 @@ fn validate_case_baseline(case: CoreCase, baseline: &Observation) -> Result<(), 
         CoreCase::ArdyThieverKnight => {
             "Ardougne Knight stand (2661,3306,0), Thieving 55, and empty pack of 995/1891"
         }
+        CoreCase::GnomeChop => {
+            "west magics (2372,3425,0), Woodcutting 75, steel axe 1353, empty pack of 1513/72/70"
+        }
+        CoreCase::GnomeFletchShort => {
+            "west magics, Woodcutting 75, Fletching 80-84, knife 946, steel axe, empty pack of 1513/72"
+        }
+        CoreCase::GnomeFletchLong => {
+            "west magics, Woodcutting 75, Fletching 85, knife 946, steel axe, empty pack of 1513/70"
+        }
+        CoreCase::CoalTrucks => {
+            "coal mine (2582,3481,0), Mining 30, steel pickaxe 1269, and empty pack of 453"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -1050,6 +1147,9 @@ struct CoreWitness {
     rune_crafter_cycle: RuneCrafterCycle,
     ardy_cakes_cycle: ArdyCakesCycle,
     ardy_thiever_cycle: ArdyThieverCycle,
+    gnome_chop_cycle: GnomeChopCycle,
+    gnome_fletch_cycle: GnomeFletchCycle,
+    coal_trucks_cycle: CoalTrucksCycle,
     ordered_first_exhausted: bool,
 }
 
@@ -2209,6 +2309,189 @@ impl ArdyThieverCycle {
     }
 }
 
+/// Chop magic logs 1513 with Woodcutting XP, deposit upstairs, return to
+/// ground, chop again. Strung bows and noted logs fail.
+#[derive(Debug, Clone, Default, Serialize)]
+struct GnomeChopCycle {
+    chopped: Option<Observation>,
+    deposited: Option<Observation>,
+    returned: bool,
+    further: bool,
+    wrong_product: bool,
+    noted: bool,
+}
+
+impl GnomeChopCycle {
+    fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        self.wrong_product |= gnome_wrong_bows(now)
+            || now.item_id(UNSTRUNG_MAGIC_SHORTBOW_ID) > 0
+            || now.bank_item_id(UNSTRUNG_MAGIC_SHORTBOW_ID) > 0
+            || now.item_id(UNSTRUNG_MAGIC_LONGBOW_ID) > 0
+            || now.bank_item_id(UNSTRUNG_MAGIC_LONGBOW_ID) > 0;
+        self.noted |= gnome_noted(now);
+        if self.chopped.is_none()
+            && now.item_id(MAGIC_LOGS_ID) >= 1
+            && baseline.item_id(MAGIC_LOGS_ID) == 0
+            && now.skill_xp("woodcutting") > baseline.skill_xp("woodcutting")
+            && !gnome_wrong_bows(now)
+            && !gnome_noted(now)
+        {
+            self.chopped = Some(now.clone());
+        }
+        if self.chopped.is_some()
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(MAGIC_LOGS_ID) == 0
+            && now.bank_item_id(MAGIC_LOGS_ID) >= 1
+            && near(now.tile, GNOME_BANK_STAND, 8)
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            self.returned |= !now.bank_open
+                && !now.bank_loaded
+                && now.bank_generation > deposited.bank_generation
+                && near(now.tile, GNOME_BANK_STAIR_SOUTH, 30);
+        }
+        if self.returned {
+            self.further |= !now.bank_open && now.item_id(MAGIC_LOGS_ID) >= 1;
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.further
+            && self.chopped.is_some()
+            && self.deposited.is_some()
+            && !self.wrong_product
+            && !self.noted
+    }
+}
+
+/// Chop logs, consume them into exact unstrung 72 or 70 with Fletching XP,
+/// deposit upstairs, return, chop again. The other unstrung id and strung
+/// 861/859 fail. Missing knife cannot qualify.
+#[derive(Debug, Clone, Default, Serialize)]
+struct GnomeFletchCycle {
+    chopped: Option<Observation>,
+    fletched: Option<Observation>,
+    deposited: Option<Observation>,
+    returned: bool,
+    further: bool,
+    wrong_product: bool,
+    noted: bool,
+}
+
+impl GnomeFletchCycle {
+    fn observe(&mut self, product: i32, other: i32, baseline: &Observation, now: &Observation) {
+        self.wrong_product |=
+            gnome_wrong_bows(now) || now.item_id(other) > 0 || now.bank_item_id(other) > 0;
+        self.noted |= gnome_noted(now);
+        if self.chopped.is_none()
+            && now.item_id(MAGIC_LOGS_ID) >= 1
+            && baseline.item_id(MAGIC_LOGS_ID) == 0
+            && now.skill_xp("woodcutting") > baseline.skill_xp("woodcutting")
+            && now.item_id(product) == 0
+            && !gnome_wrong_bows(now)
+            && !gnome_noted(now)
+        {
+            self.chopped = Some(now.clone());
+        }
+        if self.chopped.is_some()
+            && self.fletched.is_none()
+            && now.item_id(product) >= 1
+            && now.item_id(MAGIC_LOGS_ID)
+                < self
+                    .chopped
+                    .as_ref()
+                    .map(|row| row.item_id(MAGIC_LOGS_ID))
+                    .unwrap_or(0)
+            && now.skill_xp("fletching") > baseline.skill_xp("fletching")
+            && now.item_id(other) == 0
+            && !gnome_wrong_bows(now)
+            && !gnome_noted(now)
+        {
+            self.fletched = Some(now.clone());
+        }
+        if self.fletched.is_some()
+            && self.deposited.is_none()
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(product) == 0
+            && now.bank_item_id(product) >= 1
+            && near(now.tile, GNOME_BANK_STAND, 8)
+        {
+            self.deposited = Some(now.clone());
+        }
+        if let Some(deposited) = &self.deposited {
+            self.returned |= !now.bank_open
+                && !now.bank_loaded
+                && now.bank_generation > deposited.bank_generation
+                && near(now.tile, GNOME_BANK_STAIR_SOUTH, 30);
+        }
+        if self.returned {
+            self.further |= !now.bank_open && now.item_id(MAGIC_LOGS_ID) >= 1;
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.further
+            && self.chopped.is_some()
+            && self.fletched.is_some()
+            && self.deposited.is_some()
+            && !self.wrong_product
+            && !self.noted
+    }
+}
+
+/// Mine coal 453 with Mining XP, deposit to the mine truck (pack empty at
+/// the truck, bank closed, bank coal unchanged), then mine again. A Seers
+/// bank deposit is not the truck proof.
+#[derive(Debug, Clone, Default, Serialize)]
+struct CoalTrucksCycle {
+    mined: Option<Observation>,
+    trucked: Option<Observation>,
+    further: bool,
+    noted: bool,
+    banked: bool,
+}
+
+impl CoalTrucksCycle {
+    fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        self.noted |= now.item_id(NOTED_COAL_ID) > 0 || now.bank_item_id(NOTED_COAL_ID) > 0;
+        self.banked |= now.bank_item_id(COAL_ID) > baseline.bank_item_id(COAL_ID);
+        if self.mined.is_none()
+            && now.item_id(COAL_ID) >= 1
+            && baseline.item_id(COAL_ID) == 0
+            && now.skill_xp("mining") > baseline.skill_xp("mining")
+            && now.item_id(NOTED_COAL_ID) == 0
+        {
+            self.mined = Some(now.clone());
+        }
+        if self.mined.is_some()
+            && self.trucked.is_none()
+            && now.item_id(COAL_ID) == 0
+            && !now.bank_open
+            && now.bank_item_id(COAL_ID) == baseline.bank_item_id(COAL_ID)
+            && near(now.tile, COAL_MINE_TRUCK_STAND, 4)
+            && !near(now.tile, SEERS_BANK, 8)
+        {
+            self.trucked = Some(now.clone());
+        }
+        if self.trucked.is_some() {
+            self.further |= !now.bank_open
+                && now.item_id(COAL_ID) >= 1
+                && now.skill_xp("mining") > baseline.skill_xp("mining");
+        }
+    }
+
+    fn qualified(&self) -> bool {
+        self.further && self.mined.is_some() && self.trucked.is_some() && !self.noted
+    }
+}
+
 impl CoreWitness {
     fn new(case: CoreCase, baseline: Observation) -> Self {
         Self {
@@ -2238,6 +2521,9 @@ impl CoreWitness {
             rune_crafter_cycle: RuneCrafterCycle::default(),
             ardy_cakes_cycle: ArdyCakesCycle::default(),
             ardy_thiever_cycle: ArdyThieverCycle::default(),
+            gnome_chop_cycle: GnomeChopCycle::default(),
+            gnome_fletch_cycle: GnomeFletchCycle::default(),
+            coal_trucks_cycle: CoalTrucksCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -2480,6 +2766,28 @@ impl CoreWitness {
         ) {
             self.ardy_thiever_cycle.observe(&self.baseline, observation);
         }
+        if matches!(self.case, CoreCase::GnomeChop) {
+            self.gnome_chop_cycle.observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::GnomeFletchShort) {
+            self.gnome_fletch_cycle.observe(
+                UNSTRUNG_MAGIC_SHORTBOW_ID,
+                UNSTRUNG_MAGIC_LONGBOW_ID,
+                &self.baseline,
+                observation,
+            );
+        }
+        if matches!(self.case, CoreCase::GnomeFletchLong) {
+            self.gnome_fletch_cycle.observe(
+                UNSTRUNG_MAGIC_LONGBOW_ID,
+                UNSTRUNG_MAGIC_SHORTBOW_ID,
+                &self.baseline,
+                observation,
+            );
+        }
+        if matches!(self.case, CoreCase::CoalTrucks) {
+            self.coal_trucks_cycle.observe(&self.baseline, observation);
+        }
         let baseline_sequence = self
             .baseline
             .chat
@@ -2604,6 +2912,11 @@ impl CoreWitness {
             CoreCase::ArdyThiever | CoreCase::ArdyThieverKnight => {
                 self.ardy_thiever_cycle.qualified()
             }
+            CoreCase::GnomeChop => self.gnome_chop_cycle.qualified(),
+            CoreCase::GnomeFletchShort | CoreCase::GnomeFletchLong => {
+                self.gnome_fletch_cycle.qualified()
+            }
+            CoreCase::CoalTrucks => self.coal_trucks_cycle.qualified(),
         };
         if !ok {
             return Err(format!(
@@ -2638,6 +2951,9 @@ impl CoreWitness {
             "rune_crafter_cycle": self.rune_crafter_cycle,
             "ardy_cakes_cycle": self.ardy_cakes_cycle,
             "ardy_thiever_cycle": self.ardy_thiever_cycle,
+            "gnome_chop_cycle": self.gnome_chop_cycle,
+            "gnome_fletch_cycle": self.gnome_fletch_cycle,
+            "coal_trucks_cycle": self.coal_trucks_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -5686,6 +6002,485 @@ mod tests {
         .is_err());
     }
 
+    fn resource_obs(
+        tile: (i32, i32, i32),
+        item_ids: &[(i32, i32)],
+        bank_ids: &[(i32, i32)],
+        equipment_ids: &[(i32, i32)],
+        xp: &[(&str, i32)],
+        levels: &[(&str, i32)],
+    ) -> Observation {
+        let mut observation = observation(&[], xp, &[]);
+        observation.tile = Some(tile);
+        observation.item_ids = item_ids.iter().copied().collect();
+        observation.bank_ids = bank_ids.iter().copied().collect();
+        observation.equipment_ids = equipment_ids.iter().copied().collect();
+        for (name, level) in levels {
+            observation.levels.insert((*name).into(), *level);
+        }
+        observation
+    }
+
+    #[test]
+    fn gnome_chop_requires_log_xp_upstairs_deposit_ground_return_and_further_chop() {
+        let levels = [("woodcutting", 75), ("fletching", 1)];
+        let baseline = resource_obs(
+            GNOME_WEST_MAGICS,
+            &[(STEEL_AXE_ID, 1)],
+            &[],
+            &[],
+            &[("woodcutting", 0)],
+            &levels,
+        );
+        validate_case_baseline(CoreCase::GnomeChop, &baseline).unwrap();
+
+        let chopped = resource_obs(
+            GNOME_WEST_MAGICS,
+            &[(STEEL_AXE_ID, 1), (MAGIC_LOGS_ID, 4)],
+            &[],
+            &[],
+            &[("woodcutting", 250)],
+            &levels,
+        );
+        let mut deposited = resource_obs(
+            GNOME_BANK_STAND,
+            &[(STEEL_AXE_ID, 1)],
+            &[(MAGIC_LOGS_ID, 4)],
+            &[],
+            &[("woodcutting", 250)],
+            &levels,
+        );
+        deposited.bank_open = true;
+        deposited.bank_loaded = true;
+        deposited.bank_generation = 1;
+        let mut returned = resource_obs(
+            GNOME_BANK_STAIR_SOUTH,
+            &[(STEEL_AXE_ID, 1)],
+            &[],
+            &[],
+            &[("woodcutting", 250)],
+            &levels,
+        );
+        returned.bank_generation = 2;
+        let mut further = resource_obs(
+            GNOME_WEST_MAGICS,
+            &[(STEEL_AXE_ID, 1), (MAGIC_LOGS_ID, 1)],
+            &[],
+            &[],
+            &[("woodcutting", 500)],
+            &levels,
+        );
+        further.bank_generation = 2;
+
+        assert!(witness(
+            CoreCase::GnomeChop,
+            &baseline,
+            [&chopped, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_ok());
+        assert!(witness(CoreCase::GnomeChop, &baseline, [&baseline])
+            .qualify()
+            .is_err());
+        assert!(witness(CoreCase::GnomeChop, &baseline, [&chopped])
+            .qualify()
+            .is_err());
+        assert!(witness(
+            CoreCase::GnomeChop,
+            &baseline,
+            [&chopped, &deposited, &returned]
+        )
+        .qualify()
+        .is_err());
+
+        let mut unclosed_return = returned.clone();
+        unclosed_return.bank_generation = deposited.bank_generation;
+        let mut unclosed_further = further.clone();
+        unclosed_further.bank_generation = deposited.bank_generation;
+        assert!(witness(
+            CoreCase::GnomeChop,
+            &baseline,
+            [&chopped, &deposited, &unclosed_return, &unclosed_further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut name_only = chopped.clone();
+        name_only.item_ids.clear();
+        name_only.items.insert("Magic logs".into(), 4);
+        assert!(witness(
+            CoreCase::GnomeChop,
+            &baseline,
+            [&name_only, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut stale = deposited.clone();
+        stale.bank_loaded = false;
+        assert!(witness(
+            CoreCase::GnomeChop,
+            &baseline,
+            [&chopped, &stale, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+        let mut closed = deposited.clone();
+        closed.bank_open = false;
+        assert!(witness(
+            CoreCase::GnomeChop,
+            &baseline,
+            [&chopped, &closed, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let xp_only = resource_obs(
+            GNOME_WEST_MAGICS,
+            &[(STEEL_AXE_ID, 1)],
+            &[],
+            &[],
+            &[("woodcutting", 250)],
+            &levels,
+        );
+        assert!(witness(
+            CoreCase::GnomeChop,
+            &baseline,
+            [&xp_only, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut wrong = chopped.clone();
+        wrong.item_ids.insert(MAGIC_SHORTBOW_ID, 1);
+        assert!(witness(
+            CoreCase::GnomeChop,
+            &baseline,
+            [&wrong, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut noted = chopped.clone();
+        noted.item_ids.insert(NOTED_MAGIC_LOGS_ID, 1);
+        assert!(witness(
+            CoreCase::GnomeChop,
+            &baseline,
+            [&noted, &deposited, &returned, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut seeded = baseline.clone();
+        seeded.item_ids.insert(MAGIC_LOGS_ID, 1);
+        assert!(validate_case_baseline(CoreCase::GnomeChop, &seeded).is_err());
+        let low = resource_obs(
+            GNOME_WEST_MAGICS,
+            &[(STEEL_AXE_ID, 1)],
+            &[],
+            &[],
+            &[("woodcutting", 0)],
+            &[("woodcutting", 74), ("fletching", 1)],
+        );
+        assert!(validate_case_baseline(CoreCase::GnomeChop, &low).is_err());
+        let no_axe = resource_obs(
+            GNOME_WEST_MAGICS,
+            &[],
+            &[],
+            &[],
+            &[("woodcutting", 0)],
+            &levels,
+        );
+        assert!(validate_case_baseline(CoreCase::GnomeChop, &no_axe).is_err());
+        let wielded = resource_obs(
+            GNOME_WEST_MAGICS,
+            &[],
+            &[],
+            &[(STEEL_AXE_ID, 1)],
+            &[("woodcutting", 0)],
+            &levels,
+        );
+        validate_case_baseline(CoreCase::GnomeChop, &wielded).unwrap();
+        let flax = resource_obs(
+            FLAX_FIELD,
+            &[(STEEL_AXE_ID, 1)],
+            &[],
+            &[],
+            &[("woodcutting", 0)],
+            &levels,
+        );
+        assert!(validate_case_baseline(CoreCase::GnomeChop, &flax).is_err());
+    }
+
+    #[test]
+    fn gnome_fletch_requires_unstrung_product_xp_deposit_return_and_further_chop() {
+        for (case, fletching, product, other) in [
+            (
+                CoreCase::GnomeFletchShort,
+                80,
+                UNSTRUNG_MAGIC_SHORTBOW_ID,
+                UNSTRUNG_MAGIC_LONGBOW_ID,
+            ),
+            (
+                CoreCase::GnomeFletchLong,
+                85,
+                UNSTRUNG_MAGIC_LONGBOW_ID,
+                UNSTRUNG_MAGIC_SHORTBOW_ID,
+            ),
+        ] {
+            let levels = [("woodcutting", 75), ("fletching", fletching)];
+            let baseline = resource_obs(
+                GNOME_WEST_MAGICS,
+                &[(STEEL_AXE_ID, 1), (KNIFE_ID, 1)],
+                &[],
+                &[],
+                &[("woodcutting", 0), ("fletching", 0)],
+                &levels,
+            );
+            validate_case_baseline(case, &baseline).unwrap();
+
+            let chopped = resource_obs(
+                GNOME_WEST_MAGICS,
+                &[(STEEL_AXE_ID, 1), (KNIFE_ID, 1), (MAGIC_LOGS_ID, 4)],
+                &[],
+                &[],
+                &[("woodcutting", 250), ("fletching", 0)],
+                &levels,
+            );
+            let fletched = resource_obs(
+                GNOME_WEST_MAGICS,
+                &[(STEEL_AXE_ID, 1), (KNIFE_ID, 1), (product, 4)],
+                &[],
+                &[],
+                &[("woodcutting", 250), ("fletching", 168)],
+                &levels,
+            );
+            let mut deposited = resource_obs(
+                GNOME_BANK_STAND,
+                &[(STEEL_AXE_ID, 1), (KNIFE_ID, 1)],
+                &[(product, 4)],
+                &[],
+                &[("woodcutting", 250), ("fletching", 168)],
+                &levels,
+            );
+            deposited.bank_open = true;
+            deposited.bank_loaded = true;
+            deposited.bank_generation = 1;
+            let mut returned = resource_obs(
+                GNOME_BANK_STAIR_SOUTH,
+                &[(STEEL_AXE_ID, 1), (KNIFE_ID, 1)],
+                &[],
+                &[],
+                &[("woodcutting", 250), ("fletching", 168)],
+                &levels,
+            );
+            returned.bank_generation = 2;
+            let mut further = resource_obs(
+                GNOME_WEST_MAGICS,
+                &[(STEEL_AXE_ID, 1), (KNIFE_ID, 1), (MAGIC_LOGS_ID, 1)],
+                &[],
+                &[],
+                &[("woodcutting", 500), ("fletching", 168)],
+                &levels,
+            );
+            further.bank_generation = 2;
+
+            assert!(witness(
+                case,
+                &baseline,
+                [&chopped, &fletched, &deposited, &returned, &further]
+            )
+            .qualify()
+            .is_ok());
+            assert!(witness(case, &baseline, [&baseline]).qualify().is_err());
+            assert!(witness(case, &baseline, [&chopped]).qualify().is_err());
+            assert!(witness(case, &baseline, [&chopped, &fletched])
+                .qualify()
+                .is_err());
+            assert!(witness(
+                case,
+                &baseline,
+                [&chopped, &fletched, &deposited, &returned]
+            )
+            .qualify()
+            .is_err());
+
+            let mut strung = fletched.clone();
+            strung.item_ids.insert(MAGIC_SHORTBOW_ID, 1);
+            assert!(witness(
+                case,
+                &baseline,
+                [&chopped, &strung, &deposited, &returned, &further]
+            )
+            .qualify()
+            .is_err());
+
+            let mut cross = fletched.clone();
+            cross.item_ids.insert(other, 1);
+            assert!(witness(
+                case,
+                &baseline,
+                [&chopped, &cross, &deposited, &returned, &further]
+            )
+            .qualify()
+            .is_err());
+
+            let mut no_knife = baseline.clone();
+            no_knife.item_ids.remove(&KNIFE_ID);
+            assert!(validate_case_baseline(case, &no_knife).is_err());
+        }
+
+        let short_high = resource_obs(
+            GNOME_WEST_MAGICS,
+            &[(STEEL_AXE_ID, 1), (KNIFE_ID, 1)],
+            &[],
+            &[],
+            &[("woodcutting", 0), ("fletching", 0)],
+            &[("woodcutting", 75), ("fletching", 85)],
+        );
+        assert!(validate_case_baseline(CoreCase::GnomeFletchShort, &short_high).is_err());
+        validate_case_baseline(CoreCase::GnomeFletchLong, &short_high).unwrap();
+        let long_low = resource_obs(
+            GNOME_WEST_MAGICS,
+            &[(STEEL_AXE_ID, 1), (KNIFE_ID, 1)],
+            &[],
+            &[],
+            &[("woodcutting", 0), ("fletching", 0)],
+            &[("woodcutting", 75), ("fletching", 84)],
+        );
+        assert!(validate_case_baseline(CoreCase::GnomeFletchLong, &long_low).is_err());
+        validate_case_baseline(CoreCase::GnomeFletchShort, &long_low).unwrap();
+    }
+
+    #[test]
+    fn coal_trucks_requires_mining_xp_truck_deposit_not_bank_and_further_mine() {
+        let levels = [("mining", 30)];
+        let baseline = resource_obs(
+            COAL_MINE,
+            &[(STEEL_PICKAXE_ID, 1)],
+            &[],
+            &[],
+            &[("mining", 0)],
+            &levels,
+        );
+        validate_case_baseline(CoreCase::CoalTrucks, &baseline).unwrap();
+
+        let mined = resource_obs(
+            COAL_MINE,
+            &[(STEEL_PICKAXE_ID, 1), (COAL_ID, 27)],
+            &[],
+            &[],
+            &[("mining", 1350)],
+            &levels,
+        );
+        let trucked = resource_obs(
+            COAL_MINE_TRUCK_STAND,
+            &[(STEEL_PICKAXE_ID, 1)],
+            &[],
+            &[],
+            &[("mining", 1350)],
+            &levels,
+        );
+        let further = resource_obs(
+            COAL_MINE,
+            &[(STEEL_PICKAXE_ID, 1), (COAL_ID, 1)],
+            &[],
+            &[],
+            &[("mining", 1400)],
+            &levels,
+        );
+
+        assert!(witness(
+            CoreCase::CoalTrucks,
+            &baseline,
+            [&mined, &trucked, &further]
+        )
+        .qualify()
+        .is_ok());
+        assert!(witness(CoreCase::CoalTrucks, &baseline, [&baseline])
+            .qualify()
+            .is_err());
+        assert!(witness(CoreCase::CoalTrucks, &baseline, [&mined])
+            .qualify()
+            .is_err());
+        assert!(witness(CoreCase::CoalTrucks, &baseline, [&mined, &trucked])
+            .qualify()
+            .is_err());
+
+        let mut name_only = mined.clone();
+        name_only.item_ids.clear();
+        name_only.items.insert("Coal".into(), 27);
+        assert!(witness(
+            CoreCase::CoalTrucks,
+            &baseline,
+            [&name_only, &trucked, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let xp_only = resource_obs(
+            COAL_MINE,
+            &[(STEEL_PICKAXE_ID, 1)],
+            &[],
+            &[],
+            &[("mining", 1350)],
+            &levels,
+        );
+        assert!(witness(
+            CoreCase::CoalTrucks,
+            &baseline,
+            [&xp_only, &trucked, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut banked = trucked.clone();
+        banked.bank_open = true;
+        banked.bank_loaded = true;
+        banked.bank_generation = 1;
+        banked.bank_ids.insert(COAL_ID, 27);
+        banked.tile = Some(SEERS_BANK);
+        assert!(
+            witness(CoreCase::CoalTrucks, &baseline, [&mined, &banked, &further])
+                .qualify()
+                .is_err()
+        );
+
+        let mut noted = mined.clone();
+        noted.item_ids.insert(NOTED_COAL_ID, 1);
+        assert!(witness(
+            CoreCase::CoalTrucks,
+            &baseline,
+            [&noted, &trucked, &further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut seeded = baseline.clone();
+        seeded.item_ids.insert(COAL_ID, 1);
+        assert!(validate_case_baseline(CoreCase::CoalTrucks, &seeded).is_err());
+        let low = resource_obs(
+            COAL_MINE,
+            &[(STEEL_PICKAXE_ID, 1)],
+            &[],
+            &[],
+            &[("mining", 0)],
+            &[("mining", 29)],
+        );
+        assert!(validate_case_baseline(CoreCase::CoalTrucks, &low).is_err());
+        let no_pick = resource_obs(COAL_MINE, &[], &[], &[], &[("mining", 0)], &levels);
+        assert!(validate_case_baseline(CoreCase::CoalTrucks, &no_pick).is_err());
+        let wrong_stand = resource_obs(
+            SEERS_BANK,
+            &[(STEEL_PICKAXE_ID, 1)],
+            &[],
+            &[],
+            &[("mining", 0)],
+            &levels,
+        );
+        assert!(validate_case_baseline(CoreCase::CoalTrucks, &wrong_stand).is_err());
+    }
+
     #[test]
     fn old_catalog_explicitly_refuses_cut_string_mode() {
         let error =
@@ -5732,6 +6527,10 @@ mod tests {
             CoreCase::ArdyCakes,
             CoreCase::ArdyThiever,
             CoreCase::ArdyThieverKnight,
+            CoreCase::GnomeChop,
+            CoreCase::GnomeFletchShort,
+            CoreCase::GnomeFletchLong,
+            CoreCase::CoalTrucks,
         ] {
             validate_case_catalog(case, CATALOG_COMMIT_A).unwrap();
             validate_case_catalog(case, CATALOG_COMMIT_B).unwrap();
