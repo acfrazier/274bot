@@ -125,6 +125,19 @@ export const reader = proxy('reader', {
         if (!tile || !finiteInt(tile.x) || !finiteInt(tile.z)) return null;
         return { x: tile.x, z: tile.z };
     },
+    npcBox(index) {
+        if (!finiteInt(index) || index < 0) return null;
+        const rows = snap().npc_boxes;
+        if (!Array.isArray(rows)) return null;
+        const row = rows.find((candidate) => candidate && candidate.index === index);
+        if (!row || !Array.isArray(row.points) || row.points.length !== 8) return null;
+        const out = [];
+        for (const point of row.points) {
+            if (!point || !finiteInt(point.x) || !finiteInt(point.y)) return null;
+            out.push({ x: point.x, y: point.y });
+        }
+        return out;
+    },
     retaliateControls() {
         const controls = snap().retaliate_controls;
         if (!controls || !finiteInt(controls.onComId) || !finiteInt(controls.offComId)) {

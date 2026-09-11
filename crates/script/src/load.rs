@@ -2381,6 +2381,20 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         } else if !had {
             set(&mut scope, obj, "quest_statuses", none)?;
         }
+        if snap.has_npc_boxes_update() {
+            if snap.npc_boxes_available() {
+                let boxes = npc_box_array(&mut scope, &snap.npc_boxes())?;
+                set(&mut scope, obj, "npc_boxes", boxes)?;
+            } else {
+                set(&mut scope, obj, "npc_boxes", none)?;
+            }
+        } else if snap.has_npc_boxes() {
+            // Accept buffers from an additive vector-only draft as available.
+            let boxes = npc_box_array(&mut scope, &snap.npc_boxes())?;
+            set(&mut scope, obj, "npc_boxes", boxes)?;
+        } else if !had {
+            set(&mut scope, obj, "npc_boxes", none)?;
+        }
         if snap.has_self_chat() {
             let self_chat = match snap.self_chat() {
                 Some("") | None => v8::null(&mut scope).into(),
@@ -3090,6 +3104,34 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             set(scope, o, "name", name)?;
             let status = js_string(scope, row.status())?;
             set(scope, o, "status", status)?;
+            arr.set_index(scope, i as u32, o.into())
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        Ok(arr.into())
+    }
+
+    fn npc_box_array<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        rows: &[crate::isolate_fb::NpcBoxReader<'_>],
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let arr = v8::Array::new(scope, rows.len() as i32);
+        for (i, row) in rows.iter().enumerate() {
+            let o = v8::Object::new(scope);
+            let index = num(scope, row.index() as f64);
+            set(scope, o, "index", index)?;
+            let points = row.points();
+            let point_arr = v8::Array::new(scope, points.len() as i32);
+            for (j, (x, y)) in points.into_iter().enumerate() {
+                let point = v8::Object::new(scope);
+                let x = num(scope, x as f64);
+                set(scope, point, "x", x)?;
+                let y = num(scope, y as f64);
+                set(scope, point, "y", y)?;
+                point_arr
+                    .set_index(scope, j as u32, point.into())
+                    .ok_or_else(|| "v8 array set failed".to_string())?;
+            }
+            set(scope, o, "points", point_arr.into())?;
             arr.set_index(scope, i as u32, o.into())
                 .ok_or_else(|| "v8 array set failed".to_string())?;
         }

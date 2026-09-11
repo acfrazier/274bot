@@ -165,6 +165,8 @@ const VT_SNAP_RETALIATE_ON_COM_ID: VOffsetT = 146;
 const VT_SNAP_RETALIATE_OFF_COM_ID: VOffsetT = 148;
 const VT_SNAP_QUEST_STATUSES: VOffsetT = 150;
 const VT_SNAP_QUEST_STATUSES_AVAILABLE: VOffsetT = 152;
+const VT_SNAP_NPC_BOXES: VOffsetT = 154;
+const VT_SNAP_NPC_BOXES_AVAILABLE: VOffsetT = 156;
 
 // WidgetText: { component_id, text }
 const VT_WT_COMPONENT: VOffsetT = 4;
@@ -173,6 +175,10 @@ const VT_WT_TEXT: VOffsetT = 6;
 // QuestStatus: { name, status }
 const VT_QUEST_NAME: VOffsetT = 4;
 const VT_QUEST_STATUS: VOffsetT = 6;
+
+// NpcBox: { index, points }
+const VT_NPC_BOX_INDEX: VOffsetT = 4;
+const VT_NPC_BOX_POINTS: VOffsetT = 6;
 
 // Reach: { available, base_x, base_z, level, width, height, walkable,
 //          reachable, reachable_adj, step, exact_rank, adjacent_rank }
@@ -550,6 +556,14 @@ pub struct NativeFactsInput<'a> {
     pub hint_tile: Option<(i32, i32)>,
     pub retaliate_controls: Option<(i32, i32)>,
     pub quest_statuses: Option<&'a [QuestStatusInput<'a>]>,
+    pub npc_boxes: Option<&'a [NpcBoxInput]>,
+}
+
+/// One native NPC projection in overlay-canvas pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NpcBoxInput {
+    pub index: i32,
+    pub points: [(i32, i32); 8],
 }
 
 /// One quest-tab row after Rust resolves the native display colour.
@@ -1115,6 +1129,12 @@ impl Verifiable for SnapshotReader<'_> {
                 VT_SNAP_QUEST_STATUSES_AVAILABLE,
                 false,
             )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<NpcBoxReader>>>>(
+                "npc_boxes",
+                VT_SNAP_NPC_BOXES,
+                false,
+            )?
+            .visit_field::<bool>("npc_boxes_available", VT_SNAP_NPC_BOXES_AVAILABLE, false)?
             .finish();
         Ok(())
     }
@@ -1495,6 +1515,26 @@ impl SnapshotReader<'_> {
         unsafe {
             self.tab
                 .get::<bool>(VT_SNAP_QUEST_STATUSES_AVAILABLE, Some(false))
+        }
+        .unwrap_or(false)
+    }
+    pub fn has_npc_boxes(&self) -> bool {
+        rows_present::<NpcBoxReader>(&self.tab, VT_SNAP_NPC_BOXES)
+    }
+    pub fn npc_boxes(&self) -> Vec<NpcBoxReader<'_>> {
+        rows::<NpcBoxReader>(&self.tab, VT_SNAP_NPC_BOXES)
+    }
+    pub fn has_npc_boxes_update(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<bool>(VT_SNAP_NPC_BOXES_AVAILABLE, None)
+                .is_some()
+        }
+    }
+    pub fn npc_boxes_available(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<bool>(VT_SNAP_NPC_BOXES_AVAILABLE, Some(false))
         }
         .unwrap_or(false)
     }
@@ -1924,6 +1964,7 @@ pub struct SnapshotFingerprint {
     pub hint_tile: Option<(i32, i32)>,
     pub retaliate_controls: Option<(i32, i32)>,
     pub quest_statuses: Option<Vec<(String, String)>>,
+    pub npc_boxes: Option<Vec<NpcBoxInput>>,
 }
 
 impl SnapshotFingerprint {
@@ -2124,6 +2165,7 @@ impl SnapshotFingerprint {
                     .map(|q| (q.name.to_string(), q.status.to_string()))
                     .collect()
             }),
+            npc_boxes: native.npc_boxes.map(<[NpcBoxInput]>::to_vec),
         }
     }
 }
@@ -2206,6 +2248,7 @@ pub struct DeltaMask {
     pub hint_tile: bool,
     pub retaliate_controls: bool,
     pub quest_statuses: bool,
+    pub npc_boxes: bool,
 }
 
 impl DeltaMask {
@@ -2283,6 +2326,7 @@ impl DeltaMask {
             hint_tile: true,
             retaliate_controls: true,
             quest_statuses: true,
+            npc_boxes: true,
         }
     }
 
@@ -2370,6 +2414,7 @@ impl DeltaMask {
             hint_tile: next.hint_tile != last.hint_tile,
             retaliate_controls: next.retaliate_controls != last.retaliate_controls,
             quest_statuses: next.quest_statuses != last.quest_statuses,
+            npc_boxes: next.npc_boxes != last.npc_boxes,
         }
     }
 }
@@ -2778,6 +2823,17 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let npc_boxes_off = if mask.npc_boxes {
+        native.npc_boxes.map(|rows| {
+            let offs = rows
+                .iter()
+                .map(|row| npc_box_off(b, row))
+                .collect::<Vec<_>>();
+            b.create_vector(&offs)
+        })
+    } else {
+        None
+    };
     let tab = b.start_table();
     b.push_slot_always(VT_SNAP_TICK, input.tick);
     if mask.here {
@@ -3031,6 +3087,12 @@ fn encode_snapshot_masked_into(
             b.push_slot_always(VT_SNAP_QUEST_STATUSES, off);
         }
     }
+    if mask.npc_boxes {
+        b.push_slot_always(VT_SNAP_NPC_BOXES_AVAILABLE, native.npc_boxes.is_some());
+        if let Some(off) = npc_boxes_off {
+            b.push_slot_always(VT_SNAP_NPC_BOXES, off);
+        }
+    }
     let root = b.end_table(tab);
     b.finish(root, None);
 }
@@ -3171,6 +3233,22 @@ fn quest_status_off<'b>(
     let tab = b.start_table();
     b.push_slot_always(VT_QUEST_NAME, name_off);
     b.push_slot_always(VT_QUEST_STATUS, status_off);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+fn npc_box_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    row: &NpcBoxInput,
+) -> WIPOffset<NpcBoxReader<'b>> {
+    let points = row
+        .points
+        .iter()
+        .flat_map(|&(x, y)| [x, y])
+        .collect::<Vec<_>>();
+    let points_off = b.create_vector(&points);
+    let tab = b.start_table();
+    b.push_slot_always(VT_NPC_BOX_INDEX, row.index);
+    b.push_slot_always(VT_NPC_BOX_POINTS, points_off);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -3531,6 +3609,49 @@ impl Verifiable for QuestStatusReader<'_> {
         v.visit_table(pos)?
             .visit_field::<ForwardsUOffset<&str>>("name", VT_QUEST_NAME, false)?
             .visit_field::<ForwardsUOffset<&str>>("status", VT_QUEST_STATUS, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct NpcBoxReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for NpcBoxReader<'a> {
+    type Inner = NpcBoxReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl NpcBoxReader<'_> {
+    pub fn index(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_NPC_BOX_INDEX, None) }.unwrap_or(-1)
+    }
+
+    pub fn points(&self) -> Vec<(i32, i32)> {
+        let values = match unsafe {
+            self.tab
+                .get::<ForwardsUOffset<Vector<i32>>>(VT_NPC_BOX_POINTS, None)
+        } {
+            Some(values) if values.len() == 16 => values,
+            _ => return Vec::new(),
+        };
+        (0..8)
+            .map(|i| (values.get(i * 2), values.get(i * 2 + 1)))
+            .collect()
+    }
+}
+
+impl Verifiable for NpcBoxReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i32>("index", VT_NPC_BOX_INDEX, false)?
+            .visit_field::<ForwardsUOffset<Vector<i32>>>("points", VT_NPC_BOX_POINTS, false)?
             .finish();
         Ok(())
     }
