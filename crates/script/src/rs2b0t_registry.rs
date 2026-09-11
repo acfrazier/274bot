@@ -613,18 +613,19 @@ fn parse_string_array(s: &str) -> Option<Vec<String>> {
         }
         let q = rest.chars().next()?;
         if q != '\'' && q != '"' {
-            break;
+            // Mixed, computed, or unquoted remainder is not a literal string array.
+            return None;
         }
-        let Some((value, n)) = scan_quoted(rest) else {
-            break;
-        };
+        let (value, n) = scan_quoted(rest)?;
         out.push(value);
         rest = &rest[n..];
         rest = rest.trim_start();
         if rest.starts_with(',') {
             rest = &rest[1..];
-        } else {
+        } else if rest.is_empty() {
             break;
+        } else {
+            return None;
         }
     }
     Some(out)
@@ -814,12 +815,13 @@ fn const_eq_rhs<'a>(src: &'a str, ident: &str) -> Option<&'a str> {
     for needle in needles {
         let mut search = src;
         while let Some(idx) = search.find(&needle) {
+            let abs = src.len() - search.len() + idx;
             let after = &search[idx + needle.len()..];
             let cont = after
                 .chars()
                 .next()
                 .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$');
-            if cont {
+            if cont || !const_decl_is_live(src, abs) {
                 search = &search[idx + 1..];
                 continue;
             }
@@ -834,6 +836,53 @@ fn const_eq_rhs<'a>(src: &'a str, ident: &str) -> Option<&'a str> {
     None
 }
 
+/// `const` / `export const` at `idx` is a live declaration, not a comment.
+fn const_decl_is_live(src: &str, idx: usize) -> bool {
+    let line_start = src[..idx].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    if !src[line_start..idx].trim().is_empty() {
+        return false;
+    }
+    !in_unclosed_block_comment(&src[..idx])
+}
+
+fn in_unclosed_block_comment(before: &str) -> bool {
+    let bytes = before.as_bytes();
+    let mut i = 0;
+    let mut in_block = false;
+    let mut in_line = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if in_line {
+            if b == b'\n' {
+                in_line = false;
+            }
+            i += 1;
+            continue;
+        }
+        if in_block {
+            if b == b'*' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                in_block = false;
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        if b == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+            in_line = true;
+            i += 2;
+            continue;
+        }
+        if b == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+            in_block = true;
+            i += 2;
+            continue;
+        }
+        i += 1;
+    }
+    in_block
+}
+
 fn string_array_literal_in(src: &str, ident: &str) -> Option<Vec<String>> {
     let rhs = const_eq_rhs(src, ident)?;
     parse_string_array(rhs)
@@ -844,6 +893,45 @@ fn string_array_alias_in(src: &str, ident: &str) -> Option<String> {
     if rhs.starts_with('[') {
         return None;
     }
+    ident_alias_rhs(rhs)
+}
+
+/// Quoted string `const NAME = 'x'` (or a same-file alias of one).
+fn resolve_string_const_ident(file_src: &str, ident: &str) -> Option<String> {
+    resolve_string_const_ident_visited(file_src, ident, &mut Vec::new())
+}
+
+fn resolve_string_const_ident_visited(
+    file_src: &str,
+    ident: &str,
+    stack: &mut Vec<String>,
+) -> Option<String> {
+    if stack.iter().any(|s| s == ident) {
+        return None;
+    }
+    stack.push(ident.to_string());
+    if let Some(value) = string_const_literal_in(file_src, ident) {
+        return Some(value);
+    }
+    if let Some(alias) = string_const_alias_in(file_src, ident) {
+        return resolve_string_const_ident_visited(file_src, &alias, stack);
+    }
+    None
+}
+
+fn string_const_literal_in(src: &str, ident: &str) -> Option<String> {
+    quoted_after(const_eq_rhs(src, ident)?)
+}
+
+fn string_const_alias_in(src: &str, ident: &str) -> Option<String> {
+    let rhs = const_eq_rhs(src, ident)?;
+    if quoted_after(rhs).is_some() || rhs.starts_with('[') || rhs.starts_with('{') {
+        return None;
+    }
+    ident_alias_rhs(rhs)
+}
+
+fn ident_alias_rhs(rhs: &str) -> Option<String> {
     let (alias, rest) = take_ident(rhs)?;
     if alias == "Object" || alias == "new" {
         return None;
@@ -909,16 +997,74 @@ fn quoted_keys_in_object(rhs: &str) -> Option<Vec<String>> {
 fn scan_key_show_if(obj: &str, file_src: &str) -> Option<String> {
     let raw = scan_key_raw_value(obj, "showIf")?;
     if raw.starts_with('{') {
-        return Some(raw);
+        return Some(rewrite_show_if_any_of_idents(&raw, file_src));
     }
     if let Some(rhs) = const_eq_rhs(file_src, &raw) {
         if rhs.starts_with('{') {
             if let Some(end) = find_matching_bracket(rhs, '{', '}') {
-                return Some(rhs[..=end].to_string());
+                return Some(rewrite_show_if_any_of_idents(&rhs[..=end], file_src));
             }
         }
     }
     Some(raw)
+}
+
+/// Rewrite resolvable string-const idents inside `anyOf: […]`. Unknown or
+/// computed elements leave the object unchanged so the condition is not dropped
+/// and is not a partial successful parse.
+fn rewrite_show_if_any_of_idents(raw: &str, file_src: &str) -> String {
+    let Some(any_idx) = raw.find("anyOf:") else {
+        return raw.to_string();
+    };
+    let after_key = &raw[any_idx + "anyOf:".len()..];
+    let trimmed = after_key.trim_start();
+    if !trimmed.starts_with('[') {
+        return raw.to_string();
+    }
+    let Some(end) = find_matching_bracket(trimmed, '[', ']') else {
+        return raw.to_string();
+    };
+    let Some(new_inner) = rewrite_any_of_elements(&trimmed[1..end], file_src) else {
+        return raw.to_string();
+    };
+    let pad = after_key.len() - trimmed.len();
+    format!(
+        "{}{}[{}]{}",
+        &raw[..any_idx + "anyOf:".len()],
+        &after_key[..pad],
+        new_inner,
+        &trimmed[end + 1..]
+    )
+}
+
+fn rewrite_any_of_elements(inner: &str, file_src: &str) -> Option<String> {
+    let mut parts = Vec::new();
+    let mut rest = inner;
+    loop {
+        rest = rest.trim_start();
+        if rest.is_empty() {
+            break;
+        }
+        if let Some((value, n)) = scan_quoted(rest) {
+            parts.push(format!("'{value}'"));
+            rest = &rest[n..];
+        } else if let Some((ident, after)) = take_ident(rest) {
+            let value = resolve_string_const_ident(file_src, ident)?;
+            parts.push(format!("'{value}'"));
+            rest = after;
+        } else {
+            return None;
+        }
+        rest = rest.trim_start();
+        if rest.starts_with(',') {
+            rest = &rest[1..];
+        } else if rest.is_empty() {
+            break;
+        } else {
+            return None;
+        }
+    }
+    Some(parts.join(", "))
 }
 
 fn parse_settings_object(obj: &str, file_src: &str) -> Vec<SettingDef> {
@@ -982,7 +1128,7 @@ fn parse_setting_def(id: &str, obj: &str, file_src: &str) -> SettingDef {
     SettingDef {
         id: id.to_string(),
         ty: scan_key_quoted(obj, "type").unwrap_or_default(),
-        default: scan_key_literal(obj, "default"),
+        default: scan_key_literal(obj, "default", Some(file_src)),
         label: scan_key_quoted(obj, "label"),
         min: scan_key_number(obj, "min"),
         max: scan_key_number(obj, "max"),
@@ -998,7 +1144,7 @@ fn parse_setting_def(id: &str, obj: &str, file_src: &str) -> SettingDef {
     }
 }
 
-fn scan_key_literal(block: &str, key: &str) -> Option<String> {
+fn scan_key_literal(block: &str, key: &str, file_src: Option<&str>) -> Option<String> {
     let mut rest = block;
     while let Some(idx) = rest.find(key) {
         let after = &rest[idx + key.len()..];
@@ -1026,13 +1172,25 @@ fn scan_key_literal(block: &str, key: &str) -> Option<String> {
         if !num.is_empty() {
             return Some(num);
         }
+        if let Some(src) = file_src {
+            if let Some((ident, _)) = take_ident(after) {
+                if let Some(value) = resolve_string_const_ident(src, ident) {
+                    return Some(value);
+                }
+                if let Some(arr) = resolve_string_array_ident(src, ident) {
+                    return Some(serde_json::to_string(&arr).expect("string array default json"));
+                }
+                // Unresolved ident is not a scalar value.
+                return None;
+            }
+        }
         rest = after;
     }
     None
 }
 
 fn scan_key_number(block: &str, key: &str) -> Option<String> {
-    scan_key_literal(block, key)
+    scan_key_literal(block, key, None)
 }
 
 fn scan_key_options(block: &str, key: &str, file_src: &str) -> Vec<String> {

@@ -1,0 +1,38 @@
+task t_7bb8a58a
+date 2026-09-11 09:04 UTC
+branch codex/rs2b0t-multirevision
+export_host_commit 78cc99d07046a781fe8cd5ebf66bb63e663d23ea
+client_commit 9d090ed04957e4efc254f073cda97bc5510ca72b
+isolated_export /tmp/t_7bb8a58a-src-20260911045854
+isolated_target /tmp/t_7bb8a58a-target-20260911045854
+isolated_build true
+target_empty_before_compile true
+overlay_only crates/script/src/rs2b0t_registry.rs crates/script/src/settings_store.rs crates/script/tests/rs2b0t_registry.rs
+no_campaign_target
+no_LIVE
+
+commands:
+  git archive HEAD (host) + git archive HEAD (client) into empty export
+  copy owned overlay
+  CARGO_TARGET_DIR=/tmp/t_7bb8a58a-target-20260911045854
+  cargo test -p script --locked --test rs2b0t_registry --lib -- focused names
+  cargo test -p script --locked --test rs2b0t_registry
+  cargo clippy -p script --locked --no-deps --lib --tests -- -D warnings
+  cargo run -q -p script --locked --example catalog_inventory -- frozen 100adccc and 8e7d965b
+
+results:
+  focused lib settings_store tests: 3 passed (merge_bag, show_if_any_of_hides_when_value_mismatch, show_if_array_membership_is_case_sensitive_scalar)
+  rs2b0t_registry: 22 passed, 0 failed
+  clippy -D warnings: Finished dev profile, no warnings
+  frozen Alcher both catalogs:
+    source_sha256 1a09baa1117544a2bb80da145829e69c9ced029ad5af533616afa8e7a36f2032
+    items.default = 11 DEFAULT_ALCH_ITEMS keys as JSON
+    items.options = []
+    customItem.show_if = { key: 'items', anyOf: ['custom'] }
+    alchs default 27 min 1 max 1000
+  AutoFighter coordinates show_if rode along as { key: 'spot', anyOf: ['Custom coordinates'] }
+
+not_claimed_fixed:
+  ALCH_OPTIONS / FODDER / ITEM_DB choices
+  optionLabels Record
+  native Params UI

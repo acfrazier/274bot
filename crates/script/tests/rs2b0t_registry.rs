@@ -712,3 +712,212 @@ export const PRODUCT_OPTIONS = ['Arrow shafts', 'Short bow'];
         .unwrap();
     assert_eq!(product.options, vec!["Arrow shafts", "Short bow"]);
 }
+
+const ALCHER_DEFAULT_KEYS: [&str; 11] = [
+    "black_dragonhide_body",
+    "red_dragonhide_body",
+    "blue_dragonhide_body",
+    "dragonhide_body",
+    "black_dragonhide_chaps",
+    "red_dragonhide_chaps",
+    "blue_dragonhide_chaps",
+    "dragonhide_chaps",
+    "magic_longbow",
+    "steel_platebody",
+    "yew_longbow",
+];
+
+#[test]
+fn parse_registry_inlines_alcher_literal_defaults_and_anyof_const() {
+    let index = r#"
+import Alcher, { ALCHER_SETTINGS } from './Alcher/Alcher.js';
+ScriptRegistry.register({
+    name: 'Alcher',
+    settingsSchema: ALCHER_SETTINGS,
+    create: () => new Alcher()
+});
+"#;
+    let alcher = r#"
+import { DEFAULT_ALCH_ITEMS, ALCH_OPTIONS, CUSTOM_ALCH_KEY } from './AlcherLogic.js';
+export const ALCHER_SETTINGS = {
+    items: { type: 'string[]', default: DEFAULT_ALCH_ITEMS, options: ALCH_OPTIONS },
+    customItem: { type: 'string', default: '', showIf: { key: 'items', anyOf: [CUSTOM_ALCH_KEY] } },
+    alchs: { type: 'number', default: 27, min: 1, max: 1000 },
+};
+export default class Alcher {}
+"#;
+    let logic = r#"
+export const CUSTOM_ALCH_KEY = 'custom';
+export const DEFAULT_ALCH_ITEMS = [
+    'black_dragonhide_body',
+    'red_dragonhide_body',
+    'blue_dragonhide_body',
+    'dragonhide_body',
+    'black_dragonhide_chaps',
+    'red_dragonhide_chaps',
+    'blue_dragonhide_chaps',
+    'dragonhide_chaps',
+    'magic_longbow',
+    'steel_platebody',
+    'yew_longbow',
+];
+export const ALCH_ITEMS = [];
+export const ALCH_OPTIONS = [CUSTOM_ALCH_KEY, ...ALCH_ITEMS.map(i => i.key)];
+"#;
+    let mut sources = HashMap::new();
+    sources.insert("./Alcher/Alcher.js".to_string(), alcher.to_string());
+    sources.insert("./Alcher/AlcherLogic.js".to_string(), logic.to_string());
+    let cards = script::parse_registry_with_sources(index, &sources).expect("alcher parses");
+    let items = cards[0]
+        .settings_schema
+        .iter()
+        .find(|s| s.id == "items")
+        .unwrap();
+    let default: Vec<String> =
+        serde_json::from_str(items.default.as_deref().expect("items default")).unwrap();
+    assert_eq!(
+        default,
+        ALCHER_DEFAULT_KEYS
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>(),
+        "sibling literal DEFAULT_ALCH_ITEMS must inline unchanged"
+    );
+    assert!(
+        items.options.is_empty(),
+        "computed ALCH_OPTIONS must stay unresolved, got {:?}",
+        items.options
+    );
+    let custom = cards[0]
+        .settings_schema
+        .iter()
+        .find(|s| s.id == "customItem")
+        .unwrap();
+    let show = custom.show_if.as_deref().expect("customItem showIf");
+    assert!(
+        show.contains("'custom'") && !show.contains("CUSTOM_ALCH_KEY"),
+        "anyOf const must rewrite to quoted custom, got {show:?}"
+    );
+    let bag = script::merge_bag(&cards[0].settings_schema, &serde_json::Map::new(), None);
+    assert_eq!(
+        bag.get("items"),
+        Some(&serde_json::json!(ALCHER_DEFAULT_KEYS))
+    );
+    assert!(
+        !script::setting_visible(custom.show_if.as_deref(), &bag),
+        "default fodder keys must not reveal Custom item"
+    );
+    let mut selected = bag.clone();
+    selected.insert("items".into(), serde_json::json!(["custom"]));
+    assert!(script::setting_visible(
+        custom.show_if.as_deref(),
+        &selected
+    ));
+}
+
+#[test]
+fn parse_registry_resolves_quoted_string_const_default() {
+    let index = r#"
+import Bot, { SETTINGS } from './Bot/Bot.js';
+ScriptRegistry.register({ name: 'Bot', settingsSchema: SETTINGS, create: () => new Bot() });
+"#;
+    let bot = r#"
+export const SETTINGS = {
+    food: { type: 'string', default: DEFAULT_FOOD, options: ['Lobster', 'Shark'] },
+};
+export default class Bot {}
+"#;
+    let logic = r#"
+export const DEFAULT_FOOD = 'Lobster';
+"#;
+    let mut sources = HashMap::new();
+    sources.insert("./Bot/Bot.js".to_string(), bot.to_string());
+    sources.insert("./Bot/BotLogic.js".to_string(), logic.to_string());
+    let cards = script::parse_registry_with_sources(index, &sources).expect("parses");
+    assert_eq!(
+        cards[0].settings_schema[0].default.as_deref(),
+        Some("Lobster")
+    );
+}
+
+#[test]
+fn parse_registry_rejects_wrong_names_cycles_mixed_and_comments() {
+    let index = r#"
+import Bot, { SETTINGS } from './Bot/Bot.js';
+ScriptRegistry.register({ name: 'Bot', settingsSchema: SETTINGS, create: () => new Bot() });
+"#;
+    let bot = r#"
+export const SETTINGS = {
+    items: { type: 'string[]', default: DEFAULT_ALCH_ITEMS, options: MIXED_OPTIONS },
+    aliasItems: { type: 'string[]', default: LOOP_A },
+    missing: { type: 'string', default: NO_SUCH_CONST },
+    empty: { type: 'string[]', default: EMPTY_ARR, options: [] },
+    commentHit: { type: 'string', default: COMMENTED_ONLY },
+    otherDir: { type: 'string[]', default: OTHER_DIR_ITEMS },
+    customItem: { type: 'string', default: '', showIf: { key: 'items', anyOf: [UNKNOWN_ALCH_KEY, ...REST] } },
+};
+export default class Bot {}
+"#;
+    let logic = r#"
+// const DEFAULT_ALCH_ITEMS = ['from_comment'];
+const DEFAULT_ALCH_ITEMS_OLD = ['old_name'];
+/* const COMMENTED_ONLY = 'block'; */
+export const DEFAULT_ALCH_ITEMS = ['keep_me'];
+export const MIXED_OPTIONS = ['custom', ...ITEMS.map(i => i.key)];
+export const LOOP_A = LOOP_B;
+export const LOOP_B = LOOP_A;
+export const EMPTY_ARR = [];
+"#;
+    let other = r#"
+export const OTHER_DIR_ITEMS = ['should_not_inline'];
+export const COMMENTED_ONLY = 'should_not_inline';
+"#;
+    let mut sources = HashMap::new();
+    sources.insert("./Bot/Bot.js".to_string(), bot.to_string());
+    sources.insert("./Bot/BotLogic.js".to_string(), logic.to_string());
+    sources.insert("./Other/Other.js".to_string(), other.to_string());
+    let cards = script::parse_registry_with_sources(index, &sources).expect("parses");
+    let schema = &cards[0].settings_schema;
+    let items = schema.iter().find(|s| s.id == "items").unwrap();
+    let default: Vec<String> =
+        serde_json::from_str(items.default.as_deref().expect("literal default")).unwrap();
+    assert_eq!(default, vec!["keep_me"]);
+    assert!(
+        items.options.is_empty(),
+        "mixed computed options must not partially resolve, got {:?}",
+        items.options
+    );
+    let alias = schema.iter().find(|s| s.id == "aliasItems").unwrap();
+    assert!(
+        alias.default.is_none(),
+        "cyclic alias must not resolve, got {:?}",
+        alias.default
+    );
+    let missing = schema.iter().find(|s| s.id == "missing").unwrap();
+    assert!(
+        missing.default.is_none(),
+        "unknown ident must not become a value, got {:?}",
+        missing.default
+    );
+    let empty = schema.iter().find(|s| s.id == "empty").unwrap();
+    assert_eq!(empty.default.as_deref(), Some("[]"));
+    assert!(empty.options.is_empty(), "literal empty options stay empty");
+    let comment_hit = schema.iter().find(|s| s.id == "commentHit").unwrap();
+    assert!(
+        comment_hit.default.is_none(),
+        "comment/other-dir const must not resolve, got {:?}",
+        comment_hit.default
+    );
+    let other_dir = schema.iter().find(|s| s.id == "otherDir").unwrap();
+    assert!(
+        other_dir.default.is_none(),
+        "other-directory sibling is outside settings blob scope, got {:?}",
+        other_dir.default
+    );
+    let custom = schema.iter().find(|s| s.id == "customItem").unwrap();
+    let show = custom.show_if.as_deref().expect("showIf kept");
+    assert!(
+        show.contains("UNKNOWN_ALCH_KEY") && show.contains("...REST"),
+        "partial computed anyOf must stay unresolved, got {show:?}"
+    );
+}
