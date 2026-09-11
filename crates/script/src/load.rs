@@ -2335,6 +2335,20 @@ globalThis.__rs2b0t_tick_async = async (n) => {
         } else if !had {
             set(&mut scope, obj, "widgets", empty_rows)?;
         }
+        if snap.has_quest_statuses_update() {
+            if snap.quest_statuses_available() {
+                let quests = quest_status_array(&mut scope, &snap.quest_statuses())?;
+                set(&mut scope, obj, "quest_statuses", quests)?;
+            } else {
+                set(&mut scope, obj, "quest_statuses", none)?;
+            }
+        } else if snap.has_quest_statuses() {
+            // Accept buffers from the additive vector-only draft as available.
+            let quests = quest_status_array(&mut scope, &snap.quest_statuses())?;
+            set(&mut scope, obj, "quest_statuses", quests)?;
+        } else if !had {
+            set(&mut scope, obj, "quest_statuses", none)?;
+        }
         if snap.has_self_chat() {
             let self_chat = match snap.self_chat() {
                 Some("") | None => v8::null(&mut scope).into(),
@@ -3006,6 +3020,23 @@ globalThis.__rs2b0t_tick_async = async (n) => {
             set(scope, o, "component_id", component_id)?;
             let text = js_string(scope, row.text())?;
             set(scope, o, "text", text)?;
+            arr.set_index(scope, i as u32, o.into())
+                .ok_or_else(|| "v8 array set failed".to_string())?;
+        }
+        Ok(arr.into())
+    }
+
+    fn quest_status_array<'s>(
+        scope: &mut v8::HandleScope<'s>,
+        rows: &[crate::isolate_fb::QuestStatusReader<'_>],
+    ) -> Result<v8::Local<'s, v8::Value>, String> {
+        let arr = v8::Array::new(scope, rows.len() as i32);
+        for (i, row) in rows.iter().enumerate() {
+            let o = v8::Object::new(scope);
+            let name = js_string(scope, row.name())?;
+            set(scope, o, "name", name)?;
+            let status = js_string(scope, row.status())?;
+            set(scope, o, "status", status)?;
             arr.set_index(scope, i as u32, o.into())
                 .ok_or_else(|| "v8 array set failed".to_string())?;
         }

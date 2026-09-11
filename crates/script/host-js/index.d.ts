@@ -83,6 +83,12 @@ export interface ToggleControls {
   offComId: number;
 }
 
+/** One native quest-tab row with its Rust-resolved coarse status. */
+export interface QuestStatusRow {
+  name: string;
+  status: 'notStarted' | 'inProgress' | 'complete' | 'unknown';
+}
+
 export interface VarpRow {
   index: number;
   value: number;
@@ -211,6 +217,7 @@ export interface Snapshot {
   run_enabled: boolean;
   retaliate_enabled: boolean;
   retaliate_controls: ToggleControls | null;
+  quest_statuses: QuestStatusRow[] | null;
   my_name: string | null;
   in_combat: boolean;
   animating: boolean;
